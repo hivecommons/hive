@@ -31,15 +31,17 @@ func main() {
 	}
 
 	handler := func(evt apiproxy.Event) {
-		summary := struct {
-			Timestamp string `json:"ts"`
-			Agent     string `json:"agent,omitempty"`
-			Direction string `json:"direction"`
-			Method    string `json:"method,omitempty"`
-			Path      string `json:"path"`
-			Status    int    `json:"status,omitempty"`
-			Model     string `json:"model,omitempty"`
-			BodySize  int    `json:"body_size"`
+		entry := struct {
+			Timestamp string          `json:"ts"`
+			Agent     string          `json:"agent,omitempty"`
+			Direction string          `json:"direction"`
+			Method    string          `json:"method,omitempty"`
+			Path      string          `json:"path"`
+			Status    int             `json:"status,omitempty"`
+			Model     string          `json:"model,omitempty"`
+			SSEType   string          `json:"sse_type,omitempty"`
+			BodySize  int             `json:"body_size"`
+			Body      json.RawMessage `json:"body,omitempty"`
 		}{
 			Timestamp: evt.Timestamp.Format(time.RFC3339),
 			Agent:     evt.Agent,
@@ -48,12 +50,20 @@ func main() {
 			Path:      evt.Path,
 			Status:    evt.Status,
 			Model:     evt.Model,
+			SSEType:   evt.SSEType,
 			BodySize:  len(evt.Body),
 		}
-		logWriter.Encode(summary)
+		if evt.SSEType != "" && len(evt.Body) > 0 {
+			entry.Body = evt.Body
+		}
+		logWriter.Encode(entry)
 	}
 
-	proxy, err := apiproxy.New(*upstream, handler)
+	authToken := os.Getenv("PROXY_AUTH_TOKEN")
+	if authToken == "" {
+		authToken = os.Getenv("ANTHROPIC_API_KEY")
+	}
+	proxy, err := apiproxy.New(*upstream, handler, authToken)
 	if err != nil {
 		log.Fatalf("failed to create proxy: %v", err)
 	}
