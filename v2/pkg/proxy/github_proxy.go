@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -45,6 +46,8 @@ type GitHubProxy struct {
 
 	certMu    sync.RWMutex
 	certCache map[string]cachedCert
+
+	inference *inferenceRouter
 }
 
 type cachedCert struct {
@@ -78,6 +81,7 @@ func NewGitHubProxy(logger *slog.Logger) (*GitHubProxy, error) {
 		uidMap:     uidMap,
 		violations: make(map[string]int),
 		certCache:  make(map[string]cachedCert),
+		inference:  newInferenceRouter(),
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -418,6 +422,14 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 	}
 
 	agentName := p.identifyAgentFromReq(r)
+
+	// Anthropic hosts with an inference route: reroute to self-hosted backend.
+	if IsAnthropicHost(host) {
+		if route := p.inference.Get(agentName); route != nil {
+			p.handleAnthropicReroute(conn, r, host, agentName, route)
+			return
+		}
+	}
 
 	// Non-GitHub hosts: tunnel without inspection.
 	if !IsGitHubHost(host) {
@@ -780,4 +792,140 @@ func newBufferedConn(c net.Conn) *bufio.Reader {
 
 func newBufferedReader(c net.Conn) *bufio.Reader {
 	return bufio.NewReader(c)
+}
+
+// SetInferenceRoute configures an agent to use a self-hosted inference backend.
+func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
+	p.inference.Set(agentName, route)
+	p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model)
+}
+
+// ClearInferenceRoute removes an agent's inference backend override.
+func (p *GitHubProxy) ClearInferenceRoute(agentName string) {
+	p.inference.Clear(agentName)
+	p.logger.Info("inference route cleared", "agent", agentName)
+}
+
+// handleAnthropicReroute performs MITM on an Anthropic API connection and
+// reroutes requests to a self-hosted vLLM/llm-d endpoint, translating
+// between Anthropic and OpenAI API formats.
+func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, host, agentName string, route *InferenceRoute) {
+	p.logger.Info("inference reroute", "agent", agentName, "backend", route.Backend, "host", host)
+
+	if _, err := fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
+		p.logger.Error("inference reroute: CONNECT response failed", "error", err)
+		return
+	}
+
+	tlsCert, err := p.forgeCert(host)
+	if err != nil {
+		p.logger.Error("inference reroute: forge cert failed", "host", host, "error", err)
+		return
+	}
+
+	tlsConn := tls.Server(conn, &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+	})
+	if err := tlsConn.Handshake(); err != nil {
+		p.logger.Warn("inference reroute: TLS handshake failed", "error", err)
+		return
+	}
+	defer tlsConn.Close()
+
+	clientBuf := bufio.NewReader(tlsConn)
+	for {
+		req, err := http.ReadRequest(clientBuf)
+		if err != nil {
+			return
+		}
+
+		p.handleInferenceRequest(tlsConn, req, agentName, route)
+	}
+}
+
+// handleInferenceRequest translates a single Anthropic API request and
+// forwards it to the inference backend.
+func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
+	body, err := io.ReadAll(req.Body)
+	if req.Body != nil {
+		req.Body.Close()
+	}
+	if err != nil {
+		p.writeHTTPError(conn, http.StatusBadGateway, "failed to read request body")
+		return
+	}
+
+	openaiBody, err := translateAnthropicToOpenAI(body, route.Model)
+	if err != nil {
+		p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
+		p.writeHTTPError(conn, http.StatusBadGateway, "translation error: "+err.Error())
+		return
+	}
+
+	upstreamURL := strings.TrimRight(route.Endpoint, "/") + "/v1/chat/completions"
+	upstreamReq, err := http.NewRequestWithContext(req.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
+	if err != nil {
+		p.writeHTTPError(conn, http.StatusBadGateway, "failed to create upstream request")
+		return
+	}
+	upstreamReq.Header.Set("Content-Type", "application/json")
+
+	p.logger.Info("inference forward", "agent", agentName, "backend", route.Backend, "model", route.Model, "url", upstreamURL)
+
+	resp, err := http.DefaultClient.Do(upstreamReq)
+	if err != nil {
+		p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
+		p.writeHTTPError(conn, http.StatusBadGateway, "inference backend unreachable: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+
+	if isStreaming {
+		hdr := "HTTP/1.1 200 OK\r\n" +
+			"Content-Type: text/event-stream; charset=utf-8\r\n" +
+			"Cache-Control: no-cache\r\n" +
+			"Connection: keep-alive\r\n\r\n"
+		if _, err := conn.Write([]byte(hdr)); err != nil {
+			return
+		}
+		if err := translateOpenAISSEToAnthropic(resp.Body, conn, route.Model); err != nil {
+			p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
+		}
+		return
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		p.writeHTTPError(conn, http.StatusBadGateway, "failed to read inference response")
+		return
+	}
+
+	translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
+	if err != nil {
+		p.logger.Error("inference translate response failed", "agent", agentName, "error", err)
+		p.writeHTTPError(conn, http.StatusBadGateway, "response translation error")
+		return
+	}
+
+	httpResp := &http.Response{
+		StatusCode: http.StatusOK,
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(translated)),
+	}
+	httpResp.Write(conn)
+}
+
+func (p *GitHubProxy) writeHTTPError(conn net.Conn, status int, msg string) {
+	resp := &http.Response{
+		StatusCode: status,
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, msg))),
+	}
+	resp.Write(conn)
 }

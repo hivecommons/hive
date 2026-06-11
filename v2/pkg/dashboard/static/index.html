@@ -2348,13 +2348,13 @@
           <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill this agent's tmux session — supervisor will respawn it with fresh context">↻ restart</button>
           <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" style="font-size:1rem;opacity:0.7" title="Open configuration dialog for this agent (cadences, model, pipeline, hooks, etc.)">⚙️</button>
           <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" style="margin-left:auto" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
-          <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different CLI backend">
-            <option value="" disabled selected>cli ▾</option>
-            ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${b}</option>`).join('')}
+          <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different method (CLI or inference backend)">
+            <option value="" disabled selected>method ▾</option>
+            ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>
           <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model">
             <option value="" disabled selected>model ▾</option>
-            ${KNOWN_MODELS.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
+            ${modelsForBackend(a.cli).map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
           </select>
         </div>
         <div class="oc-detail-fields">
@@ -3244,13 +3244,13 @@
             <input type="text" class="kick-prompt" id="kick-prompt-${esc(a.name)}" placeholder="custom prompt (optional)" data-enter-action="kick" data-agent="${esc(a.name)}" title="Type a custom prompt to send to this agent instead of its default kick prompt. Press Enter to send." />
             <button class="btn" data-action="kick" data-agent="${esc(a.name)}" title="Send the custom prompt above to this agent immediately, bypassing the governor cadence timer">send</button>
             <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
-            <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different CLI backend. Free backends (copilot, goose) do not count toward token budget.">
-              <option value="" disabled selected>cli ▾</option>
-              ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${b}</option>`).join('')}
+            <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different method (CLI or inference backend). Free backends (copilot, goose) do not count toward token budget.">
+              <option value="" disabled selected>method ▾</option>
+              ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
             </select>
             <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model. Higher-tier models (Opus) cost more tokens; lower-tier (Haiku) are cheaper but less capable.">
               <option value="" disabled selected>model ▾</option>
-              ${KNOWN_MODELS.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
+              ${modelsForBackend(a.cli).map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
             </select>
           </div>
         </div>`;
@@ -3587,8 +3587,9 @@
     }
 
     // ── Centralized backend/model config (mirrors backends.conf) ──────────
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider'];
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d'];
     const FREE_BACKENDS = ['copilot', 'goose'];
+    const INFERENCE_BACKENDS = ['vllm', 'llm-d'];
     const KNOWN_MODELS = [
       { value: 'claude-opus-4-6', label: 'Opus 4.6' },
       { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
@@ -3597,6 +3598,37 @@
       { value: 'gpt-5.4', label: 'GPT-5.4' },
       { value: 'gpt-5.2', label: 'GPT-5.2' },
     ];
+    const INFERENCE_MODELS = {
+      'vllm': [{ value: 'Qwen/Qwen2.5-1.5B-Instruct', label: 'Qwen 2.5 1.5B' }],
+      'llm-d': [{ value: 'Qwen/Qwen2.5-1.5B-Instruct', label: 'Qwen 2.5 1.5B' }],
+    };
+    function backendLabel(b) {
+      if (INFERENCE_BACKENDS.includes(b)) return b + ' ⚡';
+      return b;
+    }
+    function modelsForBackend(backend) {
+      if (INFERENCE_BACKENDS.includes(backend)) return INFERENCE_MODELS[backend] || [];
+      return KNOWN_MODELS;
+    }
+
+    let _cachedInferenceModels = null;
+    async function fetchInferenceModels() {
+      if (_cachedInferenceModels) return _cachedInferenceModels;
+      try {
+        const resp = await fetch('/api/config/backends');
+        const backends = await resp.json();
+        const models = {};
+        for (const b of backends) {
+          if (b.inference) {
+            models[b.id] = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() }));
+          }
+        }
+        _cachedInferenceModels = models;
+        Object.assign(INFERENCE_MODELS, models);
+      } catch (e) { /* use defaults */ }
+      return INFERENCE_MODELS;
+    }
+    fetchInferenceModels();
 
     function _normalizeModel(m) { return (m || '').replace(/(\d+)\.(\d+)$/, '$1-$2'); }
     function _modelsEqual(a, b) { return _normalizeModel(a) === _normalizeModel(b); }
@@ -7739,11 +7771,23 @@ function burnAreaChart() {
 
     async function switchCli(agent, backend) {
       if (!backend) return;
-      const toast = showToast(`Switching ${agent} → ${backend}...`, 'info', true);
+      const label = INFERENCE_BACKENDS.includes(backend) ? 'method' : 'CLI';
+      const toast = showToast(`Switching ${agent} ${label} → ${backend}...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error'); return; }
-      dismissToast(toast, `${agent} CLI → ${backend}`, 'success');
+      dismissToast(toast, `${agent} ${label} → ${backend}`, 'success');
+      updateModelDropdown(agent, backend);
+    }
+
+    function updateModelDropdown(agent, backend) {
+      const modelSelects = document.querySelectorAll(`select[data-change-action="switchModel"][data-agent="${agent}"]`);
+      const isInference = INFERENCE_BACKENDS.includes(backend);
+      const models = isInference ? (INFERENCE_MODELS[backend] || []) : KNOWN_MODELS;
+      modelSelects.forEach(sel => {
+        sel.innerHTML = '<option value="">model ▾</option>' +
+          models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
+      });
     }
 
     async function switchModel(agent, model) {
@@ -8753,7 +8797,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label>CLI Pin Value <span class="config-info">i<span class="config-tooltip">Which CLI backend to pin this agent to when CLI Pinned is on. Options: claude, copilot, bob, gemini, codex, amazonq, goose, aider. copilot and goose are free backends (no token cost).</span></span></label>
           <select id="cfg-pin-value" onchange="markDirty('general','cliPinValue',this.value);updateLaunchCmd(this.value)">
-            ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${g.cliPinValue === b ? 'selected' : ''}>${b}</option>`).join('')}
+            ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${g.cliPinValue === b ? 'selected' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>
         </div>
         <div class="config-field-row">

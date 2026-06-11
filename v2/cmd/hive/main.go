@@ -848,6 +848,26 @@ func main() {
 		logger.Error("failed to create github proxy", "error", err)
 	} else {
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
+
+		vllmEndpoint := envOrDefault("HIVE_VLLM_ENDPOINT", "http://vllm-svc.hive.svc.cluster.local:8000")
+		llmdEndpoint := envOrDefault("HIVE_LLMD_ENDPOINT", "http://llm-d-epp.hive.svc.cluster.local:8000")
+		agentMgr.SetInferenceCallbacks(
+			func(agentName, backend, model string) {
+				endpoint := vllmEndpoint
+				if backend == "llm-d" {
+					endpoint = llmdEndpoint
+				}
+				githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
+					Backend:  backend,
+					Endpoint: endpoint,
+					Model:    model,
+				})
+			},
+			func(agentName string) {
+				githubProxy.ClearInferenceRoute(agentName)
+			},
+		)
+
 		go func() {
 			if err := githubProxy.Start(); err != nil {
 				logger.Error("github proxy failed", "error", err)
@@ -1992,4 +2012,11 @@ func runHub(logger *slog.Logger) {
 		os.Exit(1)
 	}
 	logger.Info("hub server stopped")
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

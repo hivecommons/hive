@@ -2624,12 +2624,29 @@ func (s *Server) saveSidebarToDisk(sb interface{}) {
 }
 
 func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
+	vllmModels := inferenceModelsFromEnv("HIVE_VLLM_MODELS", "Qwen/Qwen2.5-1.5B-Instruct")
+	llmdModels := inferenceModelsFromEnv("HIVE_LLMD_MODELS", "Qwen/Qwen2.5-1.5B-Instruct")
+
 	jsonResponse(w, []map[string]interface{}{
 		{"id": "claude", "name": "Claude Code", "models": []string{"opus", "sonnet", "haiku"}},
 		{"id": "copilot", "name": "GitHub Copilot", "models": []string{"gpt-4o", "gpt-4o-mini"}},
 		{"id": "gemini", "name": "Gemini", "models": []string{"gemini-2.5-pro", "gemini-2.5-flash"}},
 		{"id": "goose", "name": "Goose", "models": []string{"default"}},
+		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
+		{"id": "llm-d", "name": "llm-d (self-hosted)", "models": llmdModels, "inference": true},
 	})
+}
+
+func inferenceModelsFromEnv(envVar, defaultModel string) []string {
+	val := os.Getenv(envVar)
+	if val == "" {
+		return []string{defaultModel}
+	}
+	models := strings.Split(val, ",")
+	for i := range models {
+		models[i] = strings.TrimSpace(models[i])
+	}
+	return models
 }
 
 // --- Knowledge endpoints ---

@@ -98,6 +98,27 @@ type Manager struct {
 	project          ProjectContext
 	copilotAuthToken string
 	uidMap           *UIDMap
+
+	inferenceRouteCallback      func(agentName, backend, model string)
+	clearInferenceRouteCallback func(agentName string)
+}
+
+// IsInferenceBackend returns true if the backend is a self-hosted inference
+// backend (vllm, llm-d) rather than a CLI tool.
+func IsInferenceBackend(backend string) bool {
+	return backend == "vllm" || backend == "llm-d"
+}
+
+// SetInferenceCallbacks registers callbacks that the manager uses to
+// configure/clear inference routing on the proxy when launching agents.
+func (m *Manager) SetInferenceCallbacks(
+	setRoute func(agentName, backend, model string),
+	clearRoute func(agentName string),
+) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.inferenceRouteCallback = setRoute
+	m.clearInferenceRouteCallback = clearRoute
 }
 
 func truncateStr(s string, maxRunes int) string {
@@ -391,6 +412,18 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	mode := m.agentMode(agent)
 	agent.LaunchedMode = mode
 	agent.HasLaunched = true
+
+	// Inference backends (vllm, llm-d) use Claude Code as the CLI tool
+	// and route API traffic through the proxy to the self-hosted endpoint.
+	if IsInferenceBackend(backend) {
+		binary = "claude"
+		if m.inferenceRouteCallback != nil {
+			m.inferenceRouteCallback(agent.Name, backend, model)
+		}
+		backend = "claude"
+	} else if m.clearInferenceRouteCallback != nil {
+		m.clearInferenceRouteCallback(agent.Name)
+	}
 
 	switch backend {
 	case "claude":
@@ -1712,6 +1745,8 @@ func backendBinary(backend string) (string, error) {
 		"gemini":  "gemini",
 		"goose":   "goose",
 		"bob":     "bob",
+		"vllm":    "claude",
+		"llm-d":   "claude",
 	}
 
 	binary, ok := binaries[backend]
