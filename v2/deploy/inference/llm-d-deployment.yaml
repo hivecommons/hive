@@ -1,0 +1,154 @@
+---
+# llm-d deployment for Hive inference routing.
+# llm-d is a routing/load-balancing layer that sits in front of model servers
+# (like vLLM). It provides intelligent request routing via the Endpoint Picker
+# Policy (EPP) component.
+#
+# Prerequisites:
+#   - vLLM deployment must be running (vllm-svc in hive-inference namespace)
+#   - llm-d CRDs installed: InferencePool, InferenceModel
+#   - Gateway API CRDs installed (for HTTPRoute)
+#
+# For CPU-only testing, llm-d routes to the CPU vLLM instance.
+# When GPU nodes are added, update the InferencePool to target GPU vLLM pods.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-d-config
+  namespace: hive-inference
+data:
+  # Pool name used by EPP to discover model server pods
+  pool-name: "hive-vllm-pool"
+  # Scheduling algorithm for request routing
+  scheduling-algorithm: "least-load"
+
+---
+# InferencePool defines the set of model server backends that llm-d routes to.
+# This targets the vLLM pods via label selector.
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferencePool
+metadata:
+  name: hive-vllm-pool
+  namespace: hive-inference
+spec:
+  targetPortNumber: 8000
+  selector:
+    app: vllm
+
+---
+# InferenceModel maps a model name to the pool that serves it.
+apiVersion: inference.networking.x-k8s.io/v1alpha2
+kind: InferenceModel
+metadata:
+  name: qwen-1-5b
+  namespace: hive-inference
+spec:
+  modelName: "Qwen/Qwen2.5-1.5B-Instruct"
+  poolRef:
+    name: hive-vllm-pool
+  criticality: Default
+
+---
+# EPP (Endpoint Picker Policy) — the llm-d routing component.
+# It watches InferencePool/InferenceModel CRDs and routes requests
+# to the optimal model server pod based on load metrics.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-d-epp
+  namespace: hive-inference
+  labels:
+    app: llm-d-epp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: llm-d-epp
+  template:
+    metadata:
+      labels:
+        app: llm-d-epp
+    spec:
+      serviceAccountName: llm-d-epp
+      containers:
+        - name: epp
+          image: ghcr.io/llm-d/llm-d-inference-scheduler:latest
+          args:
+            - "--pool-name=hive-vllm-pool"
+            - "--pool-namespace=hive-inference"
+            - "--scheduling-algorithm=least-load"
+          ports:
+            - containerPort: 9002
+              name: grpc
+              protocol: TCP
+            - containerPort: 9003
+              name: http-ext
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http-ext
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llm-d-epp
+  namespace: hive-inference
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: llm-d-epp
+rules:
+  - apiGroups: ["inference.networking.x-k8s.io"]
+    resources: ["inferencepools", "inferencemodels"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: llm-d-epp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: llm-d-epp
+subjects:
+  - kind: ServiceAccount
+    name: llm-d-epp
+    namespace: hive-inference
+
+---
+# Service for the EPP — this is the endpoint Hive's proxy routes to
+# when an agent selects llm-d as the inference backend.
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-d-epp
+  namespace: hive-inference
+  labels:
+    app: llm-d-epp
+spec:
+  selector:
+    app: llm-d-epp
+  ports:
+    - port: 8000
+      targetPort: http-ext
+      protocol: TCP
+      name: http
+  type: ClusterIP

@@ -48,6 +48,14 @@ spec:
                   name: hive-secrets
                   key: HIVE_DASHBOARD_TOKEN
                   optional: true
+            - name: HIVE_VLLM_ENDPOINT
+              value: "http://vllm-svc.hive-inference.svc.cluster.local:8000"
+            - name: HIVE_LLMD_ENDPOINT
+              value: "http://llm-d-epp.hive-inference.svc.cluster.local:8000"
+            - name: HIVE_VLLM_MODELS
+              value: "Qwen/Qwen2.5-1.5B-Instruct"
+            - name: HIVE_LLMD_MODELS
+              value: "Qwen/Qwen2.5-1.5B-Instruct"
           volumeMounts:
             - name: config
               mountPath: /etc/hive
