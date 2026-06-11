@@ -11,8 +11,12 @@ metadata:
   namespace: hive-inference
 type: Opaque
 stringData:
-  token: "${HF_TOKEN}"
+  token: "placeholder"
 ---
+# vLLM-compatible inference backend using llama.cpp server.
+# llama.cpp provides the same OpenAI Chat Completions API that vLLM does,
+# but runs natively on ARM64 CPU without CUDA dependencies.
+# The proxy translation layer (Anthropic <-> OpenAI) works identically.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -30,51 +34,77 @@ spec:
       labels:
         app: vllm
     spec:
+      initContainers:
+        - name: model-download
+          image: curlimages/curl:8.13.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "[model-download] Downloading Qwen2.5-0.5B-Instruct GGUF..."
+              curl -L -o /models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+                "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+              ls -lh /models/
+              echo "[model-download] Done."
+          volumeMounts:
+            - name: models
+              mountPath: /models
       containers:
-        - name: vllm
-          image: vllm/vllm-openai:latest
+        - name: llama-server
+          image: ghcr.io/ggml-org/llama.cpp:server
           args:
             - "--model"
-            - "Qwen/Qwen2.5-1.5B-Instruct"
-            - "--device"
-            - "cpu"
-            - "--dtype"
-            - "float32"
-            - "--max-model-len"
-            - "2048"
-            - "--trust-remote-code"
+            - "/models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--ctx-size"
+            - "1024"
+            - "--threads"
+            - "2"
+            - "--chat-template"
+            - "chatml"
           ports:
             - containerPort: 8000
               name: http
               protocol: TCP
-          env:
-            - name: HF_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: hf-token
-                  key: token
-                  optional: true
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
           resources:
             requests:
-              cpu: "4"
-              memory: 8Gi
+              cpu: "2"
+              memory: 2Gi
             limits:
-              cpu: "8"
-              memory: 16Gi
+              cpu: "3"
+              memory: 4Gi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 60
+            timeoutSeconds: 5
           readinessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 120
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
               port: http
-            initialDelaySeconds: 180
+            initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 5
+      volumes:
+        - name: models
+          emptyDir:
+            sizeLimit: 2Gi
 ---
 apiVersion: v1
 kind: Service

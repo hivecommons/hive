@@ -2624,8 +2624,8 @@ func (s *Server) saveSidebarToDisk(sb interface{}) {
 }
 
 func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
-	vllmModels := inferenceModelsFromEnv("HIVE_VLLM_MODELS", "Qwen/Qwen2.5-1.5B-Instruct")
-	llmdModels := inferenceModelsFromEnv("HIVE_LLMD_MODELS", "Qwen/Qwen2.5-1.5B-Instruct")
+	vllmModels := inferenceModelsFromEnv("HIVE_VLLM_MODELS", "qwen2.5-0.5b-instruct")
+	llmdModels := inferenceModelsFromEnv("HIVE_LLMD_MODELS", "qwen2.5-0.5b-instruct")
 
 	jsonResponse(w, []map[string]interface{}{
 		{"id": "claude", "name": "Claude Code", "models": []string{"opus", "sonnet", "haiku"}},

@@ -1,58 +1,85 @@
 ---
-# llm-d deployment for Hive inference routing.
-# llm-d is a routing/load-balancing layer that sits in front of model servers
-# (like vLLM). It provides intelligent request routing via the Endpoint Picker
-# Policy (EPP) component.
+# llm-d EPP (Endpoint Picker Policy) deployment.
 #
-# Prerequisites:
-#   - vLLM deployment must be running (vllm-svc in hive-inference namespace)
-#   - llm-d CRDs installed: InferencePool, InferenceModel
-#   - Gateway API CRDs installed (for HTTPRoute)
-#
-# For CPU-only testing, llm-d routes to the CPU vLLM instance.
-# When GPU nodes are added, update the InferencePool to target GPU vLLM pods.
-
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: llm-d-config
-  namespace: hive-inference
-data:
-  # Pool name used by EPP to discover model server pods
-  pool-name: "hive-vllm-pool"
-  # Scheduling algorithm for request routing
-  scheduling-algorithm: "least-load"
+# Prerequisites (applied separately before this manifest):
+#   1. Gateway API CRDs v1.2+:
+#      kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+#   2. Gateway API Inference Extension CRDs v1.5.0:
+#      kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api-inference-extension/releases/download/v1.5.0/manifests.yaml
+#   3. vLLM deployment running in hive-inference namespace
 
 ---
-# InferencePool defines the set of model server backends that llm-d routes to.
-# This targets the vLLM pods via label selector.
-apiVersion: inference.networking.x-k8s.io/v1alpha2
+# InferencePool (GA v1): targets vLLM pods by label, with EPP as endpoint picker
+apiVersion: inference.networking.k8s.io/v1
 kind: InferencePool
 metadata:
   name: hive-vllm-pool
   namespace: hive-inference
 spec:
-  targetPortNumber: 8000
+  targetPorts:
+    - number: 8000
   selector:
-    app: vllm
+    matchLabels:
+      app: vllm
+  endpointPickerRef:
+    name: llm-d-epp
+    port:
+      number: 9002
 
 ---
-# InferenceModel maps a model name to the pool that serves it.
+# InferenceModel (v1alpha2): maps model name to pool
 apiVersion: inference.networking.x-k8s.io/v1alpha2
 kind: InferenceModel
 metadata:
-  name: qwen-1-5b
+  name: qwen-0-5b
   namespace: hive-inference
 spec:
-  modelName: "Qwen/Qwen2.5-1.5B-Instruct"
+  modelName: "qwen2.5-0.5b-instruct"
   poolRef:
     name: hive-vllm-pool
-  criticality: Default
+  criticality: Standard
 
 ---
-# EPP (Endpoint Picker Policy) — the llm-d routing component.
-# It watches InferencePool/InferenceModel CRDs and routes requests
-# to the optimal model server pod based on load metrics.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llm-d-epp
+  namespace: hive-inference
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: llm-d-epp
+rules:
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["inference.networking.x-k8s.io"]
+    resources: ["inferencepools", "inferencemodels", "inferencemodelrewrites", "inferenceobjectives", "inferencepoolimports"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints", "services"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: llm-d-epp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: llm-d-epp
+subjects:
+  - kind: ServiceAccount
+    name: llm-d-epp
+    namespace: hive-inference
+
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -77,65 +104,33 @@ spec:
           args:
             - "--pool-name=hive-vllm-pool"
             - "--pool-namespace=hive-inference"
-            - "--scheduling-algorithm=least-load"
+            - "--secure-serving=false"
           ports:
             - containerPort: 9002
               name: grpc
               protocol: TCP
             - containerPort: 9003
-              name: http-ext
+              name: health
               protocol: TCP
           resources:
             requests:
               cpu: "250m"
               memory: 256Mi
             limits:
-              cpu: "1"
+              cpu: "500m"
               memory: 512Mi
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: http-ext
+            grpc:
+              port: 9003
             initialDelaySeconds: 5
             periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 30
 
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: llm-d-epp
-  namespace: hive-inference
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: llm-d-epp
-rules:
-  - apiGroups: ["inference.networking.x-k8s.io"]
-    resources: ["inferencepools", "inferencemodels"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "watch"]
-
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: llm-d-epp
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: llm-d-epp
-subjects:
-  - kind: ServiceAccount
-    name: llm-d-epp
-    namespace: hive-inference
-
----
-# Service for the EPP — this is the endpoint Hive's proxy routes to
-# when an agent selects llm-d as the inference backend.
 apiVersion: v1
 kind: Service
 metadata:
@@ -147,8 +142,12 @@ spec:
   selector:
     app: llm-d-epp
   ports:
-    - port: 8000
-      targetPort: http-ext
+    - port: 9002
+      targetPort: grpc
       protocol: TCP
-      name: http
+      name: grpc
+    - port: 9003
+      targetPort: health
+      protocol: TCP
+      name: health
   type: ClusterIP

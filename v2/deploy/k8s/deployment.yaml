@@ -53,9 +53,9 @@ spec:
             - name: HIVE_LLMD_ENDPOINT
               value: "http://llm-d-epp.hive-inference.svc.cluster.local:8000"
             - name: HIVE_VLLM_MODELS
-              value: "Qwen/Qwen2.5-1.5B-Instruct"
+              value: "qwen2.5-0.5b-instruct"
             - name: HIVE_LLMD_MODELS
-              value: "Qwen/Qwen2.5-1.5B-Instruct"
+              value: "qwen2.5-0.5b-instruct"
           volumeMounts:
             - name: config
               mountPath: /etc/hive
