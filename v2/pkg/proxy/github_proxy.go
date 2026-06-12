@@ -26,10 +26,11 @@ import (
 )
 
 const (
-	proxyListenPort = 18443
-	modeFilePrefix  = "/tmp/.hive-mode-"
-	maxViolationLog = 1000
-	CACertPath      = "/data/proxy-ca.pem"
+	proxyListenPort         = 18443
+	InferenceTranslatePort  = 18444
+	modeFilePrefix          = "/tmp/.hive-mode-"
+	maxViolationLog         = 1000
+	CACertPath              = "/data/proxy-ca.pem"
 )
 
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
@@ -804,6 +805,97 @@ func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute)
 func (p *GitHubProxy) ClearInferenceRoute(agentName string) {
 	p.inference.Clear(agentName)
 	p.logger.Info("inference route cleared", "agent", agentName)
+}
+
+// StartInferenceTranslator runs a plain HTTP server that accepts Anthropic
+// Messages API requests and translates+forwards them to the configured
+// inference backend. Agents use ANTHROPIC_BASE_URL=http://127.0.0.1:18444
+// to reach this server instead of api.anthropic.com.
+func (p *GitHubProxy) StartInferenceTranslator() error {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		apiKey := r.Header.Get("x-api-key")
+		agentName := strings.TrimPrefix(apiKey, "sk-hive-")
+
+		route := p.inference.Get(agentName)
+		if route == nil {
+			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
+			return
+		}
+
+		body, err := io.ReadAll(r.Body)
+		if r.Body != nil {
+			r.Body.Close()
+		}
+		if err != nil {
+			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read request"}}`, http.StatusBadRequest)
+			return
+		}
+
+		openaiBody, err := translateAnthropicToOpenAI(body, route.Model)
+		if err != nil {
+			p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
+			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+
+		upstreamURL := strings.TrimRight(route.Endpoint, "/") + "/v1/chat/completions"
+		upstreamReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(openaiBody))
+		if err != nil {
+			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to create upstream request"}}`, http.StatusBadGateway)
+			return
+		}
+		upstreamReq.Header.Set("Content-Type", "application/json")
+
+		p.logger.Info("inference forward", "agent", agentName, "backend", route.Backend, "model", route.Model, "url", upstreamURL)
+
+		resp, err := http.DefaultClient.Do(upstreamReq)
+		if err != nil {
+			p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
+			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+
+		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
+
+		if isStreaming {
+			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			if err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model); err != nil {
+				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
+			}
+			return
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read inference response"}}`, http.StatusBadGateway)
+			return
+		}
+
+		translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
+		if err != nil {
+			p.logger.Error("inference translate response failed", "agent", agentName, "error", err)
+			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"response translation error"}}`, http.StatusBadGateway)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(translated)
+	})
+
+	addr := fmt.Sprintf("127.0.0.1:%d", InferenceTranslatePort)
+	p.logger.Info("inference translation server starting", "addr", addr)
+	server := &http.Server{Addr: addr, Handler: mux}
+	return server.ListenAndServe()
 }
 
 // handleAnthropicReroute performs MITM on an Anthropic API connection and

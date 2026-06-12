@@ -873,6 +873,11 @@ func main() {
 				logger.Error("github proxy failed", "error", err)
 			}
 		}()
+		go func() {
+			if err := githubProxy.StartInferenceTranslator(); err != nil {
+				logger.Error("inference translation server failed", "error", err)
+			}
+		}()
 		logger.Info("github proxy started", "addr", githubProxy.ListenAddr())
 	}
 

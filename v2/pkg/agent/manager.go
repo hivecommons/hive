@@ -2210,9 +2210,10 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"HIVE_ADVISORY_ISSUE", advisory, false})
 	}
 	if IsInferenceBackend(backend) {
-		if os.Getenv("ANTHROPIC_API_KEY") == "" {
-			vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-inference-proxy", true})
-		}
+		const inferenceTranslatePort = 18444
+		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, true})
+		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
+		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", baseURL, false})
 	}
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{"COPILOT_GITHUB_TOKEN", m.copilotAuthToken, true})
