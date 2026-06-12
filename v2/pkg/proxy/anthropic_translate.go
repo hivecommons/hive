@@ -55,17 +55,23 @@ func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, erro
 	}
 
 	anthropicResp := anthropicResponse{
-		ID:         resp.ID,
-		Type:       "message",
-		Role:       "assistant",
-		Model:      model,
-		StopReason: mapFinishReason(resp.Choices[0].FinishReason),
+		ID:   resp.ID,
+		Type: "message",
+		Role: "assistant",
+		Model: model,
 	}
 
 	if len(resp.Choices) > 0 {
+		anthropicResp.StopReason = mapFinishReason(resp.Choices[0].FinishReason)
 		anthropicResp.Content = []anthropicContentBlock{{
 			Type: "text",
 			Text: resp.Choices[0].Message.Content,
+		}}
+	} else {
+		anthropicResp.StopReason = "end_turn"
+		anthropicResp.Content = []anthropicContentBlock{{
+			Type: "text",
+			Text: "",
 		}}
 	}
 
