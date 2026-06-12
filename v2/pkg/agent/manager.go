@@ -443,7 +443,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	case "claude":
 		bareFlag := ""
 		if isInference {
-			bareFlag = " --bare --settings /data/home/.claude/settings.json"
+			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
 		}
 		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
 		switch {
@@ -562,6 +562,16 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	m.tmuxSendLiteralForAgent(agent, fullCmd)
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
+
+	if isInference {
+		// Claude Code --bare shows a "Press Enter to continue" onboarding screen.
+		// Send an extra Enter after startup to dismiss it.
+		const onboardingDismissDelay = 5 * time.Second
+		go func() {
+			time.Sleep(onboardingDismissDelay)
+			m.tmuxSendEntersForAgent(agent)
+		}()
+	}
 
 	now := time.Now()
 	agent.State = StateRunning
@@ -2017,20 +2027,16 @@ func (m *Manager) fixSharedConfigPerms(agent *AgentProcess) {
 	}
 }
 
-// ensureClaudeSettings creates /data/home/.claude/settings.json if missing.
-// Inference agents run Claude Code with --bare --dangerously-skip-permissions,
-// which requires pre-accepted settings to skip interactive dialogs.
+const claudeInferenceSettingsPath = "/tmp/.claude-inference-settings.json"
+
+// ensureClaudeSettings creates a Claude settings file in /tmp for inference agents.
+// Uses /tmp because /data/home is owned by root and agent UIDs can't traverse it.
 func (m *Manager) ensureClaudeSettings() {
-	const settingsPath = "/data/home/.claude/settings.json"
-	if _, err := os.Stat(settingsPath); err == nil {
-		return
-	}
-	if err := os.MkdirAll("/data/home/.claude", 0o777); err != nil {
-		m.logger.Warn("failed to create .claude dir", "error", err)
+	if _, err := os.Stat(claudeInferenceSettingsPath); err == nil {
 		return
 	}
 	settings := `{"permissions":{"allow":["*"],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
-	if err := os.WriteFile(settingsPath, []byte(settings), 0o666); err != nil {
+	if err := os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o644); err != nil {
 		m.logger.Warn("failed to write claude settings", "error", err)
 	}
 }
