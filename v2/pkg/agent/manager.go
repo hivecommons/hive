@@ -440,7 +440,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	switch backend {
 	case "claude":
-		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions", binary, model)
+		bareFlag := ""
+		if isInference {
+			bareFlag = " --bare"
+		}
+		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
 		switch {
 		case mode >= ModeIssuesAndPRs:
 			launchCmd = base
@@ -515,18 +519,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 				// Write a launcher script instead of using $(cat) in send-keys.
 				// $(cat file) fails when the tmux shell hasn't fully initialized.
 				launcherFile := fmt.Sprintf("/tmp/.hive-launch-%s.sh", agent.Name)
-				promptFlag := ""
-				if isInference {
-					promptFlag = " -p"
-				}
-				launcherContent := fmt.Sprintf("#!/bin/sh\nexec %s%s \"$(cat %s)\"\n", launchCmd, promptFlag, promptFile)
+				launcherContent := fmt.Sprintf("#!/bin/sh\nexec %s \"$(cat %s)\"\n", launchCmd, promptFile)
 				if err := os.WriteFile(launcherFile, []byte(launcherContent), 0o755); err != nil {
 					m.logger.Warn("failed to write launcher script", "error", err)
-					if isInference {
-						launchCmd += fmt.Sprintf(" -p \"$(cat %s)\"", promptFile)
-					} else {
-						launchCmd += fmt.Sprintf(" \"$(cat %s)\"", promptFile)
-					}
+					launchCmd += fmt.Sprintf(" \"$(cat %s)\"", promptFile)
 				} else {
 					launchCmd = launcherFile
 				}
@@ -645,7 +641,8 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// Detect copilot hung: if running long enough with no CLI prompt,
 			// launch bare `copilot` to diagnose the error. Only clear the
 			// token if the diagnostic shows an auth error.
-			if agent.Config.Backend == "copilot" && agent.StartedAt != nil &&
+			// Skip for inference backends — they use Claude -p mode (non-interactive).
+			if agent.Config.Backend == "copilot" && !IsInferenceBackend(agent.BackendOverride) && agent.StartedAt != nil &&
 				time.Since(*agent.StartedAt).Seconds() >= expiredTokenHangTimeoutSec &&
 				!paneShowsCLIReady(filtered) {
 				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
