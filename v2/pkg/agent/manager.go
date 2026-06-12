@@ -2209,6 +2209,11 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if advisory := os.Getenv("HIVE_ADVISORY_ISSUE"); advisory != "" {
 		vars = append(vars, agentEnvPair{"HIVE_ADVISORY_ISSUE", advisory, false})
 	}
+	if IsInferenceBackend(backend) {
+		if os.Getenv("ANTHROPIC_API_KEY") == "" {
+			vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-inference-proxy", true})
+		}
+	}
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{"COPILOT_GITHUB_TOKEN", m.copilotAuthToken, true})
 	}
