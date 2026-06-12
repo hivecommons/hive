@@ -2035,7 +2035,7 @@ func (m *Manager) ensureClaudeSettings() {
 	if _, err := os.Stat(claudeInferenceSettingsPath); err == nil {
 		return
 	}
-	settings := `{"permissions":{"allow":["*"],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
+	settings := `{"permissions":{"allow":[],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
 	if err := os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o644); err != nil {
 		m.logger.Warn("failed to write claude settings", "error", err)
 	}
@@ -2263,6 +2263,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
 		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
 		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", baseURL, false})
+		vars = append(vars, agentEnvPair{"NO_PROXY", "127.0.0.1,localhost", false})
 	}
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{"COPILOT_GITHUB_TOKEN", m.copilotAuthToken, true})

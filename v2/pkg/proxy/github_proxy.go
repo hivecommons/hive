@@ -818,8 +818,17 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 		apiKey := r.Header.Get("x-api-key")
 		agentName := strings.TrimPrefix(apiKey, "sk-hive-")
 
+		p.logger.Info("inference request",
+			"agent", agentName,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"content-type", r.Header.Get("Content-Type"),
+			"anthropic-version", r.Header.Get("anthropic-version"),
+		)
+
 		route := p.inference.Get(agentName)
 		if route == nil {
+			p.logger.Warn("inference no route", "agent", agentName)
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
 			return
 		}
@@ -832,6 +841,8 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read request"}}`, http.StatusBadRequest)
 			return
 		}
+
+		p.logger.Info("inference request body", "agent", agentName, "len", len(body), "preview", truncateBytes(body, 200))
 
 		openaiBody, err := translateAnthropicToOpenAI(body, route.Model)
 		if err != nil {
@@ -848,7 +859,13 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 		}
 		upstreamReq.Header.Set("Content-Type", "application/json")
 
-		p.logger.Info("inference forward", "agent", agentName, "backend", route.Backend, "model", route.Model, "url", upstreamURL)
+		p.logger.Info("inference forward",
+			"agent", agentName,
+			"backend", route.Backend,
+			"model", route.Model,
+			"url", upstreamURL,
+			"openai_body", truncateBytes(openaiBody, 300),
+		)
 
 		resp, err := http.DefaultClient.Do(upstreamReq)
 		if err != nil {
@@ -857,6 +874,12 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			return
 		}
 		defer resp.Body.Close()
+
+		p.logger.Info("inference upstream response",
+			"agent", agentName,
+			"status", resp.StatusCode,
+			"content-type", resp.Header.Get("Content-Type"),
+		)
 
 		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
@@ -880,12 +903,24 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			return
 		}
 
+		p.logger.Info("inference upstream raw response",
+			"agent", agentName,
+			"len", len(respBody),
+			"preview", truncateBytes(respBody, 500),
+		)
+
 		translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 		if err != nil {
 			p.logger.Error("inference translate response failed", "agent", agentName, "error", err)
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"response translation error"}}`, http.StatusBadGateway)
 			return
 		}
+
+		p.logger.Info("inference translated response",
+			"agent", agentName,
+			"len", len(translated),
+			"preview", truncateBytes(translated, 500),
+		)
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -1020,4 +1055,11 @@ func (p *GitHubProxy) writeHTTPError(conn net.Conn, status int, msg string) {
 		Body:       io.NopCloser(strings.NewReader(fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, msg))),
 	}
 	resp.Write(conn)
+}
+
+func truncateBytes(b []byte, max int) string {
+	if len(b) <= max {
+		return string(b)
+	}
+	return string(b[:max]) + "..."
 }
