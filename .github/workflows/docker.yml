@@ -4,13 +4,12 @@ on:
   push:
     branches:
       - v2
+      - v3
   workflow_dispatch:
 
-# Serialize Docker builds so concurrent merges don't race to tag v2-latest.
-# If a newer commit triggers a build while one is in progress, the older
-# build is cancelled — only the latest commit tags v2-latest.
+# Serialize Docker builds per branch so concurrent merges don't race.
 concurrency:
-  group: docker-build-v2
+  group: docker-build-${{ github.ref_name }}
   cancel-in-progress: true
 
 permissions:
@@ -96,12 +95,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify build commit is still HEAD of v2
+      - name: Verify build commit is still HEAD of branch
         id: head-check
         run: |
-          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} v2 | awk '{print $1}')
+          BRANCH="${{ github.ref_name }}"
+          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} "$BRANCH" | awk '{print $1}')
           if [ "${{ github.sha }}" != "$CURRENT_HEAD" ]; then
-            echo "Build is stale (built ${{ github.sha }} but v2 HEAD is $CURRENT_HEAD) — skipping tag"
+            echo "Build is stale (built ${{ github.sha }} but $BRANCH HEAD is $CURRENT_HEAD) — skipping tag"
             echo "stale=true" >> "$GITHUB_OUTPUT"
           else
             echo "stale=false" >> "$GITHUB_OUTPUT"
@@ -118,7 +118,7 @@ jobs:
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
-            -t ghcr.io/kubestellar/hive:v2-latest \
+            -t ghcr.io/kubestellar/hive:${{ github.ref_name }}-latest \
             -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' *)
 
@@ -197,12 +197,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify build commit is still HEAD of v2
+      - name: Verify build commit is still HEAD of branch
         id: head-check
         run: |
-          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} v2 | awk '{print $1}')
+          BRANCH="${{ github.ref_name }}"
+          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} "$BRANCH" | awk '{print $1}')
           if [ "${{ github.sha }}" != "$CURRENT_HEAD" ]; then
-            echo "Build is stale (built ${{ github.sha }} but v2 HEAD is $CURRENT_HEAD) — skipping tag"
+            echo "Build is stale (built ${{ github.sha }} but $BRANCH HEAD is $CURRENT_HEAD) — skipping tag"
             echo "stale=true" >> "$GITHUB_OUTPUT"
           else
             echo "stale=false" >> "$GITHUB_OUTPUT"
@@ -220,7 +221,7 @@ jobs:
         run: |
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-contributor:latest \
-            -t ghcr.io/kubestellar/hive-contributor:v2-latest \
+            -t ghcr.io/kubestellar/hive-contributor:${{ github.ref_name }}-latest \
             -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' *)
 
@@ -301,12 +302,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Verify build commit is still HEAD of v2
+      - name: Verify build commit is still HEAD of branch
         id: head-check
         run: |
-          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} v2 | awk '{print $1}')
+          BRANCH="${{ github.ref_name }}"
+          CURRENT_HEAD=$(git ls-remote https://github.com/${{ github.repository }} "$BRANCH" | awk '{print $1}')
           if [ "${{ github.sha }}" != "$CURRENT_HEAD" ]; then
-            echo "Build is stale (built ${{ github.sha }} but v2 HEAD is $CURRENT_HEAD) — skipping tag"
+            echo "Build is stale (built ${{ github.sha }} but $BRANCH HEAD is $CURRENT_HEAD) — skipping tag"
             echo "stale=true" >> "$GITHUB_OUTPUT"
           else
             echo "stale=false" >> "$GITHUB_OUTPUT"
@@ -324,6 +326,6 @@ jobs:
         run: |
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-hub:latest \
-            -t ghcr.io/kubestellar/hive-hub:v2-latest \
+            -t ghcr.io/kubestellar/hive-hub:${{ github.ref_name }}-latest \
             -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-hub@sha256:%s ' *)
