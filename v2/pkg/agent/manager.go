@@ -564,13 +564,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	m.tmuxSendEntersForAgent(agent)
 
 	if isInference {
-		// Claude Code --bare shows a "Press Enter to continue" onboarding screen.
-		// Send an extra Enter after startup to dismiss it.
-		const onboardingDismissDelay = 5 * time.Second
-		go func() {
-			time.Sleep(onboardingDismissDelay)
-			m.tmuxSendEntersForAgent(agent)
-		}()
+		go m.dismissInferencePrompts(agent)
 	}
 
 	now := time.Now()
@@ -1490,6 +1484,67 @@ func (m *Manager) SendKick(name string, message string) error {
 // tmuxSendLiteralForAgent sends text using the agent's tmux socket.
 func (m *Manager) tmuxSendLiteralForAgent(agent *AgentProcess, text string) {
 	_ = m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", text).Run()
+}
+
+// dismissInferencePrompts polls the tmux pane for Claude Code interactive
+// prompts and sends the correct keystrokes to dismiss each one. Claude Code
+// in --bare mode shows up to 4 prompts on first launch:
+//  1. Settings Error ("Continue without these settings") → "3" + Enter
+//  2. API key detected ("Yes") → "1" + Enter
+//  3. Bypass Permissions warning ("Yes, I accept") → "2" + Enter
+//  4. Onboarding screen → Enter
+func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
+	const (
+		promptPollInterval   = 500 * time.Millisecond
+		promptDismissTimeout = 30 * time.Second
+		postKeystrokeDelay   = 300 * time.Millisecond
+	)
+
+	type promptRule struct {
+		match string
+		key   string
+	}
+
+	rules := []promptRule{
+		{"Continue without these settings", "3"},
+		{"Do you want to use this API key", "1"},
+		{"Yes, I accept", "2"},
+		{"Press Enter to continue", ""},
+	}
+
+	deadline := time.Now().Add(promptDismissTimeout)
+	rulesMatched := 0
+
+	for time.Now().Before(deadline) && rulesMatched < len(rules) {
+		time.Sleep(promptPollInterval)
+
+		pane := m.captureVisiblePaneForAgent(agent)
+		if pane == "" {
+			continue
+		}
+
+		rule := rules[rulesMatched]
+		if !strings.Contains(pane, rule.match) {
+			continue
+		}
+
+		m.logger.Info("inference prompt detected",
+			"agent", agent.Name,
+			"prompt", rule.match,
+			"key", rule.key,
+		)
+
+		if rule.key != "" {
+			m.tmuxSendKeysForAgent(agent, rule.key)
+			time.Sleep(postKeystrokeDelay)
+		}
+		m.tmuxSendKeysForAgent(agent, "Enter")
+		rulesMatched++
+	}
+
+	if rulesMatched > 0 {
+		m.logger.Info("inference prompts dismissed", "agent", agent.Name, "count", rulesMatched)
+	}
 }
 
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.
