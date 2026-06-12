@@ -430,6 +430,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	isInference := IsInferenceBackend(backend)
 	if isInference {
 		binary = "claude"
+		m.ensureClaudeSettings()
 		if m.inferenceRouteCallback != nil {
 			m.inferenceRouteCallback(agent.Name, backend, model)
 		}
@@ -518,8 +519,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			case "claude":
 				// Write a launcher script instead of using $(cat) in send-keys.
 				// $(cat file) fails when the tmux shell hasn't fully initialized.
+				// Use -- to separate options from the positional prompt argument,
+				// otherwise --disallowed-tools consumes the prompt as tool names.
 				launcherFile := fmt.Sprintf("/tmp/.hive-launch-%s.sh", agent.Name)
-				launcherContent := fmt.Sprintf("#!/bin/sh\nexec %s \"$(cat %s)\"\n", launchCmd, promptFile)
+				launcherContent := fmt.Sprintf("#!/bin/sh\nexec %s -- \"$(cat %s)\"\n", launchCmd, promptFile)
 				if err := os.WriteFile(launcherFile, []byte(launcherContent), 0o755); err != nil {
 					m.logger.Warn("failed to write launcher script", "error", err)
 					launchCmd += fmt.Sprintf(" \"$(cat %s)\"", promptFile)
@@ -2011,6 +2014,24 @@ func (m *Manager) fixSharedConfigPerms(agent *AgentProcess) {
 		"fix", fmt.Sprintf("%04o", sharedConfigDesiredMode))
 	if err := os.Chmod(sharedCopilotConfigPath, sharedConfigDesiredMode); err != nil {
 		m.logger.Warn("failed to fix config.json perms", "error", err)
+	}
+}
+
+// ensureClaudeSettings creates /data/home/.claude/settings.json if missing.
+// Inference agents run Claude Code with --bare --dangerously-skip-permissions,
+// which requires pre-accepted settings to skip interactive dialogs.
+func (m *Manager) ensureClaudeSettings() {
+	const settingsPath = "/data/home/.claude/settings.json"
+	if _, err := os.Stat(settingsPath); err == nil {
+		return
+	}
+	if err := os.MkdirAll("/data/home/.claude", 0o777); err != nil {
+		m.logger.Warn("failed to create .claude dir", "error", err)
+		return
+	}
+	settings := `{"permissions":{"allow":["*"],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
+	if err := os.WriteFile(settingsPath, []byte(settings), 0o666); err != nil {
+		m.logger.Warn("failed to write claude settings", "error", err)
 	}
 }
 
