@@ -1487,64 +1487,86 @@ func (m *Manager) tmuxSendLiteralForAgent(agent *AgentProcess, text string) {
 }
 
 // dismissInferencePrompts polls the tmux pane for Claude Code interactive
-// prompts and sends the correct keystrokes to dismiss each one. Claude Code
-// in --bare mode shows up to 4 prompts on first launch:
-//  1. Settings Error ("Continue without these settings") → "3" + Enter
-//  2. API key detected ("Yes") → "1" + Enter
-//  3. Bypass Permissions warning ("Yes, I accept") → "2" + Enter
-//  4. Onboarding screen → Enter
+// prompts and auto-dismisses them. Works dynamically regardless of prompt
+// text changes between Claude Code versions by:
+//  1. Detecting "Enter to confirm" (universal prompt footer)
+//  2. Finding the selected option (line with "❯" marker)
+//  3. If selected option looks negative (contains "No" or "exit"), navigate
+//     away from it before confirming
+//  4. For "Press Enter to continue" screens, just press Enter
+//
+// Stops when the main Claude Code input prompt appears ("esc to interrupt").
 func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 	const (
-		promptPollInterval   = 500 * time.Millisecond
-		promptDismissTimeout = 30 * time.Second
-		postKeystrokeDelay   = 300 * time.Millisecond
+		promptPollInterval   = 1 * time.Second
+		promptDismissTimeout = 60 * time.Second
+		postKeystrokeDelay   = 500 * time.Millisecond
 	)
 
-	type promptRule struct {
-		match string
-		key   string
-	}
-
-	rules := []promptRule{
-		{"Continue without these settings", "3"},
-		{"Do you want to use this API key", "1"},
-		{"Yes, I accept", "2"},
-		{"Press Enter to continue", ""},
-	}
-
 	deadline := time.Now().Add(promptDismissTimeout)
-	rulesMatched := 0
+	lastPane := ""
 
-	for time.Now().Before(deadline) && rulesMatched < len(rules) {
+	for time.Now().Before(deadline) {
 		time.Sleep(promptPollInterval)
 
 		pane := m.captureVisiblePaneForAgent(agent)
-		if pane == "" {
+		if pane == "" || pane == lastPane {
+			continue
+		}
+		lastPane = pane
+
+		// Main prompt visible — agent is ready
+		if strings.Contains(pane, "bypass permissions on") || strings.Contains(pane, "esc to interrupt") {
+			m.logger.Info("inference agent ready", "agent", agent.Name)
+			return
+		}
+
+		// "Press Enter to continue" screens
+		if strings.Contains(pane, "Press Enter to continue") {
+			m.logger.Info("inference prompt: press enter", "agent", agent.Name)
+			m.tmuxSendKeysForAgent(agent, "Enter")
 			continue
 		}
 
-		rule := rules[rulesMatched]
-		if !strings.Contains(pane, rule.match) {
+		// Selection prompts have "Enter to confirm" footer
+		if !strings.Contains(pane, "Enter to confirm") {
 			continue
+		}
+
+		// Find the currently selected option (marked with ❯)
+		selected := ""
+		for _, line := range strings.Split(pane, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "❯") {
+				selected = trimmed
+				break
+			}
 		}
 
 		m.logger.Info("inference prompt detected",
 			"agent", agent.Name,
-			"prompt", rule.match,
-			"key", rule.key,
+			"selected", selected,
 		)
 
-		if rule.key != "" {
-			m.tmuxSendKeysForAgent(agent, rule.key)
+		// If current selection looks negative, navigate away from it
+		selectedLower := strings.ToLower(selected)
+		if strings.Contains(selectedLower, "no,") || strings.Contains(selectedLower, "no ") ||
+			strings.Contains(selectedLower, "exit") {
+			// Try moving down first (most prompts put the positive option below)
+			m.tmuxSendKeysForAgent(agent, "Down")
+			time.Sleep(postKeystrokeDelay)
+		} else if strings.Contains(selectedLower, "fix with") {
+			// Settings error: skip past "Fix with Claude" and "Exit" to "Continue without"
+			m.tmuxSendKeysForAgent(agent, "Down")
+			time.Sleep(postKeystrokeDelay)
+			m.tmuxSendKeysForAgent(agent, "Down")
 			time.Sleep(postKeystrokeDelay)
 		}
+
 		m.tmuxSendKeysForAgent(agent, "Enter")
-		rulesMatched++
 	}
 
-	if rulesMatched > 0 {
-		m.logger.Info("inference prompts dismissed", "agent", agent.Name, "count", rulesMatched)
-	}
+	m.logger.Warn("inference prompt dismissal timed out", "agent", agent.Name)
 }
 
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.
@@ -2082,17 +2104,38 @@ func (m *Manager) fixSharedConfigPerms(agent *AgentProcess) {
 	}
 }
 
-const claudeInferenceSettingsPath = "/tmp/.claude-inference-settings.json"
+const (
+	claudeInferenceSettingsPath = "/tmp/.claude-inference-settings.json"
+	claudeInferenceHomePath     = "/tmp/.claude-inference-home"
+)
 
-// ensureClaudeSettings creates a Claude settings file in /tmp for inference agents.
-// Uses /tmp because /data/home is owned by root and agent UIDs can't traverse it.
+// ensureClaudeSettings creates a writable HOME directory for inference agents
+// with pre-populated .claude/settings.json. This avoids ALL interactive prompts
+// (settings error, theme, API key, bypass permissions, trust folder, onboarding)
+// because Claude Code reads hasCompletedOnboarding/hasAcknowledgedDisclaimer/
+// bypassPermissions from the settings file at $HOME/.claude/settings.json.
+// The default /data/home is root:root 770 so agent UIDs can't access it.
 func (m *Manager) ensureClaudeSettings() {
-	if _, err := os.Stat(claudeInferenceSettingsPath); err == nil {
+	settingsDir := filepath.Join(claudeInferenceHomePath, ".claude")
+	settingsFile := filepath.Join(settingsDir, "settings.json")
+	if _, err := os.Stat(settingsFile); err == nil {
+		return
+	}
+	if err := os.MkdirAll(settingsDir, 0o777); err != nil {
+		m.logger.Warn("failed to create claude inference home", "error", err)
 		return
 	}
 	settings := `{"permissions":{"allow":[],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
-	if err := os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o644); err != nil {
+	if err := os.WriteFile(settingsFile, []byte(settings), 0o644); err != nil {
 		m.logger.Warn("failed to write claude settings", "error", err)
+	}
+	// Also write the standalone settings file for --settings flag
+	_ = os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o644)
+	// Pre-populate .claude.json to skip first-run setup (GrowthBook, migrations)
+	userConfig := filepath.Join(claudeInferenceHomePath, ".claude.json")
+	if _, err := os.Stat(userConfig); err != nil {
+		cfg := `{"hasCompletedOnboarding":true,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"migrationVersion":13}`
+		_ = os.WriteFile(userConfig, []byte(cfg), 0o644)
 	}
 }
 
@@ -2333,7 +2376,11 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {
-		vars = append(vars, agentEnvPair{"HOME", "/data/home", false})
+		home := "/data/home"
+		if IsInferenceBackend(backend) {
+			home = claudeInferenceHomePath
+		}
+		vars = append(vars, agentEnvPair{"HOME", home, false})
 	}
 	return vars
 }
