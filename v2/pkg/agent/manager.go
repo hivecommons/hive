@@ -2236,7 +2236,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	}
 	if IsInferenceBackend(backend) {
 		const inferenceTranslatePort = 18444
-		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, true})
+		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
 		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
 		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", baseURL, false})
 	}
