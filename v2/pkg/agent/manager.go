@@ -443,7 +443,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	case "claude":
 		bareFlag := ""
 		if isInference {
-			bareFlag = " --bare"
+			bareFlag = " --bare --settings /data/home/.claude/settings.json"
 		}
 		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
 		switch {
