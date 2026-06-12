@@ -235,9 +235,18 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		return err
 	}
 
+	backend := agent.Config.Backend
+	if agent.BackendOverride != "" {
+		backend = agent.BackendOverride
+	}
 	if agent.Paused {
-		agent.State = StatePaused
-		return nil
+		if IsInferenceBackend(backend) {
+			agent.Paused = false
+			m.logger.Info("auto-unpaused inference agent", "name", agent.Name, "backend", backend)
+		} else {
+			agent.State = StatePaused
+			return nil
+		}
 	}
 
 	return m.launchInTmux(ctx, agent)
@@ -315,7 +324,10 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		_ = os.MkdirAll("/var/run/pluk/logs", 0o1777)
 		_ = os.MkdirAll("/var/run/pluk/commands", 0o1777)
 		backend := agent.Config.Backend
-		if backend == "" {
+		if agent.BackendOverride != "" {
+			backend = agent.BackendOverride
+		}
+		if backend == "" || IsInferenceBackend(backend) {
 			backend = "claude"
 		}
 		pipePaneCmd := fmt.Sprintf("%s --session %s --cli %s", plukPath, agent.tmuxSession, backend)
