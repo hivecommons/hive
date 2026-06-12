@@ -415,7 +415,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	// Inference backends (vllm, llm-d) use Claude Code as the CLI tool
 	// and route API traffic through the proxy to the self-hosted endpoint.
-	if IsInferenceBackend(backend) {
+	isInference := IsInferenceBackend(backend)
+	if isInference {
 		binary = "claude"
 		if m.inferenceRouteCallback != nil {
 			m.inferenceRouteCallback(agent.Name, backend, model)
@@ -472,6 +473,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		launchCmd = binary
 	}
 
+	if bootstrapPrompt == "" && isInference {
+		bootstrapPrompt = "You are an AI agent. Await further instructions."
+	}
+
 	if bootstrapPrompt != "" {
 		now := time.Now()
 		agent.LastKick = &now
@@ -498,10 +503,18 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 				// Write a launcher script instead of using $(cat) in send-keys.
 				// $(cat file) fails when the tmux shell hasn't fully initialized.
 				launcherFile := fmt.Sprintf("/tmp/.hive-launch-%s.sh", agent.Name)
-				launcherContent := fmt.Sprintf("#!/bin/sh\nexec %s \"$(cat %s)\"\n", launchCmd, promptFile)
+				promptFlag := ""
+				if isInference {
+					promptFlag = " -p"
+				}
+				launcherContent := fmt.Sprintf("#!/bin/sh\nexec %s%s \"$(cat %s)\"\n", launchCmd, promptFlag, promptFile)
 				if err := os.WriteFile(launcherFile, []byte(launcherContent), 0o755); err != nil {
 					m.logger.Warn("failed to write launcher script", "error", err)
-					launchCmd += fmt.Sprintf(" \"$(cat %s)\"", promptFile)
+					if isInference {
+						launchCmd += fmt.Sprintf(" -p \"$(cat %s)\"", promptFile)
+					} else {
+						launchCmd += fmt.Sprintf(" \"$(cat %s)\"", promptFile)
+					}
 				} else {
 					launchCmd = launcherFile
 				}
