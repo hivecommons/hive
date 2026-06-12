@@ -2828,6 +2828,30 @@ func (s *Server) handleKnowledgeLayer(w http.ResponseWriter, r *http.Request) {
 	layer := r.PathValue("layer")
 	typeFilter := r.URL.Query().Get("type")
 
+	const gitSourcePrefix = "git_source:"
+	if strings.HasPrefix(layer, gitSourcePrefix) {
+		name := strings.TrimPrefix(layer, gitSourcePrefix)
+		store := s.deps.Knowledge.GetGitSourceStore(name)
+		if store == nil {
+			jsonResponse(w, map[string]interface{}{
+				"layer": layer,
+				"count": 0,
+				"facts": []interface{}{},
+			})
+			return
+		}
+		facts := store.ListPages(typeFilter)
+		for i := range facts {
+			facts[i].Layer = knowledge.LayerType(layer)
+		}
+		jsonResponse(w, map[string]interface{}{
+			"layer": layer,
+			"count": len(facts),
+			"facts": facts,
+		})
+		return
+	}
+
 	knowledgeLayer := knowledge.LayerType(layer)
 	facts := s.deps.Knowledge.LayerFacts(s.deps.Ctx, knowledgeLayer, typeFilter)
 	if facts == nil {
@@ -3275,6 +3299,27 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+
+	alreadyInConfig := false
+	for _, gs := range s.deps.Config.Knowledge.GitSources {
+		if gs.URL == req.URL && gs.Subpath == req.Subpath {
+			alreadyInConfig = true
+			break
+		}
+	}
+	if !alreadyInConfig {
+		s.deps.Config.Knowledge.GitSources = append(s.deps.Config.Knowledge.GitSources, config.GitSourceConfigYAML{
+			Name:    req.Name,
+			URL:     req.URL,
+			Branch:  req.Branch,
+			Subpath: req.Subpath,
+			Layer:   req.Layer,
+		})
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist git source to config", "error", err)
+	}
+
 	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name, "url": req.URL})
 }
 
@@ -3301,6 +3346,19 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
+
+	filtered := make([]config.GitSourceConfigYAML, 0, len(s.deps.Config.Knowledge.GitSources))
+	for _, gs := range s.deps.Config.Knowledge.GitSources {
+		if gs.URL == req.URL && gs.Subpath == req.Subpath {
+			continue
+		}
+		filtered = append(filtered, gs)
+	}
+	s.deps.Config.Knowledge.GitSources = filtered
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist git source removal", "error", err)
+	}
+
 	jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.URL})
 }
 
