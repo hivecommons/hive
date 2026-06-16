@@ -17,6 +17,11 @@ import (
 
 func newFullServer(t *testing.T) *Server {
 	t.Helper()
+	orig := privateURLResolver
+	privateURLResolver = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"93.184.216.34"}, nil
+	}
+	t.Cleanup(func() { privateURLResolver = orig })
 	level := 2
 	cfg := &config.Config{
 		ACMMLevel: &level,
@@ -892,10 +897,12 @@ func TestHandleHivesRegisterValidWS(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleHivesRegister(w, req)
 
-	// Should pass URL validation (may fail at federation registry save)
+	// Should pass URL scheme validation — only check for the scheme-specific
+	// error message to avoid false failures when DNS is unavailable in CI
+	// (the fail-closed DNS check returns a different "private" error).
 	if w.Code == http.StatusBadRequest {
-		body := w.Body.String()
-		if strings.Contains(body, "url") {
+		respBody := w.Body.String()
+		if strings.Contains(respBody, "must start with") {
 			t.Error("wss:// should be accepted as valid scheme")
 		}
 	}

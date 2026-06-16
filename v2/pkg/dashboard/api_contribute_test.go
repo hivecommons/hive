@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,13 @@ func setupContributeEnv(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("HIVE_CONTRIBUTORS_DIR", filepath.Join(tmpDir, "contributors"))
 	t.Setenv("HIVE_FEDERATION_REGISTRY_PATH", filepath.Join(tmpDir, "federation", "registry.json"))
+
+	// Stub DNS so tests with fake hostnames don't hit the fail-closed resolver.
+	orig := privateURLResolver
+	privateURLResolver = func(_ context.Context, _ string) ([]string, error) {
+		return []string{"93.184.216.34"}, nil
+	}
+	t.Cleanup(func() { privateURLResolver = orig })
 }
 
 func TestContributeRegister(t *testing.T) {

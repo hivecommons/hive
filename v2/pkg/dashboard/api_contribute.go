@@ -1698,6 +1698,16 @@ func isValidUsername(s string) bool {
 // slow or malicious DNS server cannot block the handler indefinitely.
 const privateURLDNSTimeout = 5 * time.Second
 
+type hostResolver func(ctx context.Context, host string) ([]string, error)
+
+var privateURLResolver hostResolver = defaultHostResolver
+
+func defaultHostResolver(ctx context.Context, host string) ([]string, error) {
+	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
+	defer cancel()
+	return (&net.Resolver{}).LookupHost(resolveCtx, host)
+}
+
 func isPrivateURL(ctx context.Context, rawURL string) bool {
 	for _, scheme := range []string{"https://", "http://", "wss://", "ws://"} {
 		if strings.HasPrefix(rawURL, scheme) {
@@ -1719,11 +1729,7 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 		}
 	}
 
-	// Resolve hostname to catch DNS names that map to private IPs (DNS rebinding).
-	resolveCtx, cancel := context.WithTimeout(ctx, privateURLDNSTimeout)
-	defer cancel()
-	resolver := &net.Resolver{}
-	addrs, err := resolver.LookupHost(resolveCtx, host)
+	addrs, err := privateURLResolver(ctx, host)
 	if err != nil {
 		// If DNS fails, treat as private (fail-closed) to prevent bypass.
 		return true
