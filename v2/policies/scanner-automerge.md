@@ -83,9 +83,27 @@ ONLY merge PRs from the MERGE-ELIGIBLE list below. Do NOT scan for other PRs to 
 
 ${MERGE_ELIGIBLE}
 
-For each eligible PR: `gh pr merge <number> --repo <repo> --squash --admin`
+### Merge Process (sequential — each merge invalidates other PR branches)
 
-Skip any with failing checks or hold labels. If the list is empty, skip this step entirely.
+For each eligible PR:
+1. **Update branch first** — use MCP `update_pull_request_branch` to sync with main
+2. **Wait 10-15 seconds** for the branch update to propagate
+3. **Merge** — use MCP `merge_pull_request` with `merge_method: "squash"`
+4. If merge fails with "merge conflicts":
+   - Check if the conflict is trivial (e.g., lockfile, auto-generated) — if so, create a fixup commit via MCP `create_or_update_file` to resolve it, then retry
+   - If the conflict is in substantive code, skip the PR and move on
+5. Move to the next PR — **do NOT batch merges**, each one must be sequential
+
+### Resolving Merge Conflicts on Actionable PRs
+
+For PRs in the PR_LIST that have merge conflicts:
+1. Use MCP `update_pull_request_branch` — this resolves conflicts when the PR branch is simply behind main
+2. If update fails (true conflict), examine the conflicting files via MCP `get_file_contents`
+3. For simple conflicts (import order, lockfile, formatting): fix via MCP `create_or_update_file` on the PR branch
+4. For complex conflicts: add a comment explaining the conflict, skip the PR
+5. **NEVER use the gh CLI** — all GitHub operations go through MCP
+
+Skip any PR with hold labels or `do-not-merge`.
 
 ## Workflow
 

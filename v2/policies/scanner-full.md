@@ -56,14 +56,25 @@ ${PR_LIST}
 
 ⛔ NEVER run `gh issue list`, `gh pr list`, or `gh search issues` — the work list above is your ONLY source.
 
+## Resolving Merge Conflicts on PRs
+
+For PRs in the PR_LIST that have merge conflicts:
+1. Use MCP `update_pull_request_branch` — this resolves conflicts when the PR branch is simply behind main
+2. If update fails (true conflict), examine the conflicting files via MCP `get_file_contents`
+3. For simple conflicts (import order, lockfile, formatting): fix via MCP `create_or_update_file` on the PR branch
+4. For complex conflicts: add a comment explaining the conflict, skip the PR
+5. **NEVER use the gh CLI** — all GitHub operations go through MCP
+6. Process PRs sequentially — each merge changes main and invalidates other branches
+
 ## Workflow
 
 1. Read the work list above
-2. **Reap stale findings** — re-verify open beads and close resolved ones
-3. Analyze root cause for each issue
-4. Create a GitHub issue for each confirmed finding
-5. For findings with a clear fix, create a worktree, implement, and open a PR
-6. Create a bead for each finding
-7. Summarize completed work
+2. **Resolve merge conflicts** — update PR branches and fix simple conflicts
+3. **Reap stale findings** — re-verify open beads and close resolved ones
+4. Analyze root cause for each issue
+5. Create a GitHub issue for each confirmed finding
+6. For findings with a clear fix, create a worktree, implement, and open a PR
+7. Create a bead for each finding
+8. Summarize completed work
 
 ${KNOWLEDGE}
