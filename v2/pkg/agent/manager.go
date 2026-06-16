@@ -2206,7 +2206,8 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o644); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
-	proxyURL := fmt.Sprintf("http://%s@127.0.0.1:%d", agent.Name, proxyListenPort)
+	// Empty password (colon after username) prevents git from prompting for proxy credentials
+	proxyURL := fmt.Sprintf("http://%s:@127.0.0.1:%d", agent.Name, proxyListenPort)
 	vars = append(vars, agentEnvPair{"HTTPS_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HTTP_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HIVE_PROXY_AGENT", agent.Name, false})
