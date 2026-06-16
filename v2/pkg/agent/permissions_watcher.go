@@ -19,11 +19,12 @@ const (
 	// NodeGID is the gid of the "node" group shared by all agent users.
 	NodeGID = 1000
 
-	// DirPerms is the minimum permission bits required on directories (u+rwx).
-	DirPerms = 0o700
+	// DirPerms is the minimum permission bits required on directories (u+rwx, g+rwx).
+	// Group access is essential because agents run as different users sharing the node group.
+	DirPerms = 0o770
 
-	// FilePerms is the minimum permission bits required on files (u+rw).
-	FilePerms = 0o600
+	// FilePerms is the minimum permission bits required on files (u+rw, g+rw).
+	FilePerms = 0o660
 )
 
 // WatchedHomeDirs are the subdirectories under the shared home that tools
@@ -123,18 +124,30 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		return
 	}
 
-	// Fix ownership if owned by root (uid 0).
+	// Fix group ownership if not in the node group — all agents share this group.
+	// Also fix root-owned files (uid 0) to the dev user.
+	needsChown := false
+	newUID := int(stat.Uid)
 	if stat.Uid == 0 {
-		if err := os.Chown(path, DevUID, NodeGID); err != nil {
+		newUID = DevUID
+		needsChown = true
+	}
+	if stat.Gid != uint32(NodeGID) {
+		needsChown = true
+	}
+	if needsChown {
+		if err := os.Chown(path, newUID, NodeGID); err != nil {
 			logger.Warn("permissions watcher: chown failed",
 				"path", path,
 				"error", err,
 			)
 		} else {
-			logger.Warn("permissions watcher: fixed root-owned entry",
+			logger.Warn("permissions watcher: fixed ownership",
 				"path", path,
 				"was_uid", stat.Uid,
-				"new_uid", DevUID,
+				"was_gid", stat.Gid,
+				"new_uid", newUID,
+				"new_gid", NodeGID,
 			)
 		}
 	}
