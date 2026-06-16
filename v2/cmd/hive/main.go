@@ -58,11 +58,6 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
-	// Start background permissions watcher for /data/home/ subdirectories.
-	// Copilot and other tools create files as root, breaking agent access.
-	// Runs on all pods (hub and spoke).
-	go agent.StartPermissionsWatcher(logger)
-
 	if os.Getenv("HIVE_MODE") == "hub" {
 		runHub(logger)
 		return
@@ -864,9 +859,34 @@ func main() {
 		logger.Error("failed to create github proxy", "error", err)
 	} else {
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
+
+		vllmEndpoint := envOrDefault("HIVE_VLLM_ENDPOINT", "http://vllm-svc.hive.svc.cluster.local:8000")
+		llmdEndpoint := envOrDefault("HIVE_LLMD_ENDPOINT", "http://llm-d-epp.hive.svc.cluster.local:8000")
+		agentMgr.SetInferenceCallbacks(
+			func(agentName, backend, model string) {
+				endpoint := vllmEndpoint
+				if backend == "llm-d" {
+					endpoint = llmdEndpoint
+				}
+				githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
+					Backend:  backend,
+					Endpoint: endpoint,
+					Model:    model,
+				})
+			},
+			func(agentName string) {
+				githubProxy.ClearInferenceRoute(agentName)
+			},
+		)
+
 		go func() {
 			if err := githubProxy.Start(); err != nil {
 				logger.Error("github proxy failed", "error", err)
+			}
+		}()
+		go func() {
+			if err := githubProxy.StartInferenceTranslator(); err != nil {
+				logger.Error("inference translation server failed", "error", err)
 			}
 		}()
 		logger.Info("github proxy started", "addr", githubProxy.ListenAddr())
@@ -990,7 +1010,7 @@ func main() {
 				}(),
 				SnapshotURL:  cfg.Hub.SnapshotURL,
 				IsPublic:     cfg.Hub.IsPublic,
-				Version:      "2.0.0",
+				Version:           "3.0.0",
 				GitHash:           gitShort,
 				GitBranch:         gitBranch,
 				GitHubAppRequired: dashSrv.IsGitHubAppRequired(),
@@ -2027,4 +2047,11 @@ func runHub(logger *slog.Logger) {
 		os.Exit(1)
 	}
 	logger.Info("hub server stopped")
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

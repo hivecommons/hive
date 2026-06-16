@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - v2
+      - v3
   workflow_dispatch:
 
 # Serialize Docker builds so concurrent merges don't race to tag v2-latest.

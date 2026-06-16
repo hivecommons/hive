@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"time"
 )
 
@@ -126,12 +128,30 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 	}
 }
 
+var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
 func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) {
 	payload := collect()
 	if payload == nil {
 		return
 	}
 	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
+
+	filtered := payload.Leaderboard[:0]
+	for _, lb := range payload.Leaderboard {
+		if lb.GitHubUsername != "" && validNamePattern.MatchString(lb.GitHubUsername) {
+			filtered = append(filtered, lb)
+		}
+	}
+	payload.Leaderboard = filtered
+
+	filteredAgents := payload.Agents[:0]
+	for _, a := range payload.Agents {
+		if a.Name != "" && validNamePattern.MatchString(a.Name) {
+			filteredAgents = append(filteredAgents, a)
+		}
+	}
+	payload.Agents = filteredAgents
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -160,7 +180,8 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
 	}
 }
 
