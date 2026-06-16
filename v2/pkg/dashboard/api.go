@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
@@ -94,6 +95,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/agents", s.handleAgentsList)
 	s.mux.HandleFunc("POST /api/agents", s.handleAgentCreate)
 	s.mux.HandleFunc("DELETE /api/agents/{name}", s.handleAgentDelete)
+	s.mux.HandleFunc("POST /api/agents/import", s.handleAgentImport)
 
 	s.mux.HandleFunc("GET /api/packs", s.handlePacksList)
 	s.mux.HandleFunc("POST /api/packs/{level}/apply", s.handlePackApply)
@@ -301,6 +303,60 @@ func sanitizeString(s string) string {
 var envVarEscapePattern = regexp.MustCompile(`\$\{[^}]*\}`)
 
 var tokenRedactor = regexp.MustCompile(`(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]{10,}`)
+
+// ghcrTagExistsCached checks whether a container tag exists on ghcr.io/kubestellar/hive,
+// caching the result to avoid repeated network calls on each version poll.
+var (
+	ghcrCacheMu     sync.RWMutex
+	ghcrCacheResult = map[string]bool{}
+	ghcrCacheExpiry = map[string]time.Time{}
+)
+
+const ghcrCacheTTL = 2 * time.Minute
+const ghcrCheckTimeout = 5 * time.Second
+
+func ghcrTagExistsCached(tag string) bool {
+	ghcrCacheMu.RLock()
+	if exp, ok := ghcrCacheExpiry[tag]; ok && time.Now().Before(exp) {
+		result := ghcrCacheResult[tag]
+		ghcrCacheMu.RUnlock()
+		return result
+	}
+	ghcrCacheMu.RUnlock()
+
+	result := ghcrTagExists(tag)
+	ghcrCacheMu.Lock()
+	ghcrCacheResult[tag] = result
+	ghcrCacheExpiry[tag] = time.Now().Add(ghcrCacheTTL)
+	ghcrCacheMu.Unlock()
+	return result
+}
+
+func ghcrTagExists(tag string) bool {
+	client := &http.Client{Timeout: ghcrCheckTimeout}
+	tokenResp, err := client.Get("https://ghcr.io/token?scope=repository:kubestellar/hive:pull")
+	if err != nil {
+		return false
+	}
+	defer tokenResp.Body.Close()
+	var tok struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(tokenResp.Body).Decode(&tok); err != nil {
+		return false
+	}
+
+	manifestURL := fmt.Sprintf("https://ghcr.io/v2/kubestellar/hive/manifests/%s", tag)
+	req, _ := http.NewRequest("HEAD", manifestURL, nil)
+	req.Header.Set("Authorization", "Bearer "+tok.Token)
+	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
+}
 
 func redactTokensInLine(s string) string {
 	return tokenRedactor.ReplaceAllStringFunc(s, func(m string) string {
@@ -3068,7 +3124,7 @@ func (s *Server) handleKnowledgeSubsAdd(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "url must use http or https scheme", http.StatusBadRequest)
 		return
 	}
-	if isPrivateURL(sub.URL) {
+	if isPrivateURL(r.Context(), sub.URL) {
 		jsonError(w, "subscription url must not point to private/internal addresses", http.StatusBadRequest)
 		return
 	}

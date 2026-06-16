@@ -13,6 +13,16 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
+const promptTemplateSaveDir = "/data/policies"
+const exportKind = "AgentDefinition"
+
+func valueOrDefault(v, dflt string) string {
+	if v != "" {
+		return v
+	}
+	return dflt
+}
+
 type agentListEntry struct {
 	Name        string `json:"name"`
 	ID          string `json:"id"`
