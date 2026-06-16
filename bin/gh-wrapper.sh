@@ -19,6 +19,18 @@ set -euo pipefail
 REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
 
+# Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
+if [[ ! -x "$REAL_GH" ]]; then
+  echo "⚠️  gh CLI is not available in this environment." >&2
+  echo "   Use the GitHub MCP server instead:" >&2
+  echo "   • create_pull_request, merge_pull_request, get_pull_request" >&2
+  echo "   • create_issue, get_issue, list_issues" >&2
+  echo "   • create_or_update_file, get_file_contents" >&2
+  echo "   • search_code, search_repositories" >&2
+  echo "   Do NOT attempt to install, symlink, or download the gh binary." >&2
+  exit 1
+fi
+
 # Inject GitHub App token for agent gh calls (15k/hr vs PAT's 5k/hr).
 # Contributors keep their personal token — they fork+PR with their own identity.
 GH_APP_TOKEN_CACHE="/var/run/hive-metrics/gh-app-token.cache"
