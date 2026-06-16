@@ -36,6 +36,8 @@ const PROGRESS_REPORT_INTERVAL_MS = 120000;
 const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
+const MAX_TASK_DURATION_MS = 1800000;
+const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 
 if (!REG_TOKEN) {
   console.error('FATAL: HIVE_REGISTRATION_TOKEN not set. Run `just contribute-register` first.');
@@ -296,6 +298,14 @@ function checkTmuxIdle() {
       hasCompletionMarker = /completed|Done|finished/i.test(text);
       isWorking = /Thinking|Running|Searching/i.test(text);
     } else if (BACKEND === 'goose') {
+      const hasNetworkError = /Network error:|Please resend your message|Could not connect/i.test(text);
+      if (hasNetworkError && /> Enter to send/.test(text)) {
+        console.log('Goose network error detected — pressing Enter to retry');
+        try {
+          execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: 15000 });
+        } catch (_) {}
+        return false;
+      }
       hasIdlePrompt = /goose is ready|> Enter to send|>\s*$|goose>|G\s*>/.test(text);
       hasCompletionMarker = true;
       isWorking = /working|running|executing|calling/i.test(text);
@@ -326,11 +336,36 @@ const TASK_GRACE_PERIOD_MS = 180000;
 let taskAssignedAt = 0;
 let tasksCompletedCount = 0;
 const PR_REVIEW_EVERY_N = 5;
+let taskTimeoutHandle = null;
+let lastProgressTick = 0;
+
+function failCurrentTask(reason) {
+  if (!currentTask) return;
+  const taskId = currentTask.task_id;
+  const tmuxLines = captureTmuxLines(TMUX_TAIL_LINES);
+  console.error(`Task ${taskId} failed: ${reason}`);
+  send({ type: 'task_failed', seq: nextSeq(), task_id: taskId, reason, tmux_output: tmuxLines });
+  currentTask = null;
+  taskAssignedAt = 0;
+  if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+  if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
+  send({ type: 'ready', seq: nextSeq() });
+}
 
 function startProgressReporting() {
   if (progressInterval) clearInterval(progressInterval);
+  if (taskTimeoutHandle) clearTimeout(taskTimeoutHandle);
   if (!taskAssignedAt) taskAssignedAt = Date.now();
+  lastProgressTick = Date.now();
+
+  taskTimeoutHandle = setTimeout(() => {
+    if (currentTask) {
+      failCurrentTask(`task exceeded max duration (${MAX_TASK_DURATION_MS / 60000}min)`);
+    }
+  }, MAX_TASK_DURATION_MS);
+
   progressInterval = setInterval(() => {
+    lastProgressTick = Date.now();
     if (!currentTask) return;
     if (Date.now() - taskAssignedAt < TASK_GRACE_PERIOD_MS) return;
 
@@ -358,12 +393,7 @@ function startProgressReporting() {
         } catch (e) {
           console.error('Failed to restart CLI:', e.message);
         }
-        send({ type: 'task_failed', seq: nextSeq(), task_id: currentTask.task_id, reason: 'CLI process exited — restarted' });
-        currentTask = null;
-        taskAssignedAt = 0;
-        clearInterval(progressInterval);
-        progressInterval = null;
-        send({ type: 'ready', seq: nextSeq() });
+        failCurrentTask('CLI process exited — restarted');
         return;
       }
     } catch (_) {}
@@ -378,6 +408,7 @@ function startProgressReporting() {
       taskAssignedAt = 0;
       clearInterval(progressInterval);
       progressInterval = null;
+      if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
       tasksCompletedCount++;
       if (tasksCompletedCount % PR_REVIEW_EVERY_N === 0) {
         console.log(`PR review cycle (${tasksCompletedCount} tasks completed) — checking open PRs`);
