@@ -1439,7 +1439,12 @@ func (s *HubServer) StartLatestSHAPoller() {
 func (s *HubServer) triggerAutoUpgrades() {
 	hives := listSaaSHives()
 	for _, h := range hives {
-		if !h.AutoUpgrade || h.Status != "running" {
+		if !h.AutoUpgrade {
+			continue
+		}
+		// Skip hives that are actively provisioning or in error state.
+		// Empty status means the hive predates the provisioning system — treat as eligible.
+		if h.Status == "provisioning" || h.Status == "error" {
 			continue
 		}
 		s.mu.RLock()
