@@ -1414,6 +1414,8 @@ func (s *HubServer) StartLatestSHAPoller() {
 		oldSHAs := getLatestSHAs()
 		fetchAllBranchSHAs(s.logger)
 		newSHAs := getLatestSHAs()
+		// Always check for pending auto-upgrades (retries failed/missed hives).
+		s.triggerAutoUpgrades()
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
@@ -1422,7 +1424,6 @@ func (s *HubServer) StartLatestSHAPoller() {
 			}
 		}
 		if changed {
-			s.triggerAutoUpgrades()
 			// Hub auto-upgrade (hub runs on v2)
 			hubBranchSHA := getLatestSHAForBranch("v2")
 			if isHubAutoUpgrade() && hubBranchSHA != "" && hubBranchSHA != s.hubGitHash {
@@ -1459,6 +1460,9 @@ func (s *HubServer) triggerAutoUpgrades() {
 		s.mu.RUnlock()
 		if branch == "" {
 			branch = "v2"
+		}
+		if currentSHA == "" {
+			continue
 		}
 		latestSHA := getLatestSHAForBranch(branch)
 		if latestSHA == "" || currentSHA == latestSHA {

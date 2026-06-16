@@ -364,6 +364,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			s.registry.Hives[i] = entry
 			found = true
+			// Clear stale "error" status on SaaS hives that are actively heartbeating.
+			if strings.HasPrefix(payload.HiveID, "hosted-") {
+				if sh := loadSaaSHive(payload.HiveID); sh != nil && sh.Status == "error" {
+					sh.Status = "running"
+					sh.Error = ""
+					_ = saveSaaSHive(sh)
+				}
+			}
 			break
 		}
 	}
