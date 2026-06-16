@@ -165,6 +165,11 @@ VOLUME ["/data", "/secrets"]
 COPY v2/deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# Pre-create /data/home/ subdirectories with correct ownership so the
+# permissions watcher doesn't have to create them at runtime.
+RUN mkdir -p /data/home/.copilot /data/home/.cache /data/home/.config /data/home/.local && \
+    chown -R dev:node /data/home/
+
 RUN chown -R dev:node /data /home/dev 2>/dev/null || true
 
 ENTRYPOINT ["entrypoint.sh"]

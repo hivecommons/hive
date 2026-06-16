@@ -58,6 +58,11 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
+	// Start background permissions watcher for /data/home/ subdirectories.
+	// Copilot and other tools create files as root, breaking agent access.
+	// Runs on all pods (hub and spoke).
+	go agent.StartPermissionsWatcher(logger)
+
 	if os.Getenv("HIVE_MODE") == "hub" {
 		runHub(logger)
 		return
