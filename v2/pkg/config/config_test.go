@@ -221,7 +221,30 @@ func TestApplyDefaults_AgentBeadsDir(t *testing.T) {
 }
 
 func TestApplyDefaults_AgentEnabled(t *testing.T) {
-	// An agent with enabled: false gets flipped to true by applyDefaults.
+	// An agent without an explicit enabled field defaults to true.
+	yaml := `
+project:
+  org: my-org
+  repos:
+    - repo-a
+github:
+  token: ghp_tok
+agents:
+  scanner:
+    backend: claude
+`
+	path := writeTempConfig(t, yaml)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.Agents["scanner"].Enabled {
+		t.Errorf("Agents[scanner].Enabled = false, want true (applyDefaults should set it)")
+	}
+}
+
+func TestApplyDefaults_AgentExplicitlyDisabled(t *testing.T) {
+	// An agent with enabled: false explicitly set stays disabled.
 	yaml := `
 project:
   org: my-org
@@ -239,8 +262,8 @@ agents:
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if !cfg.Agents["scanner"].Enabled {
-		t.Errorf("Agents[scanner].Enabled = false, want true (applyDefaults should set it)")
+	if cfg.Agents["scanner"].Enabled {
+		t.Errorf("Agents[scanner].Enabled = true, want false (explicit enabled: false must be preserved)")
 	}
 }
 
