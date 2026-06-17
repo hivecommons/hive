@@ -70,17 +70,27 @@ type HeartbeatPayload struct {
 
 type StatusCollector func() *HeartbeatPayload
 
-func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, interval time.Duration, logger *slog.Logger) {
+// UpgradeCallback is called when the hub instructs this hive to upgrade
+// to a specific SHA via the heartbeat response.
+type UpgradeCallback func(targetSHA string)
+
+func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, interval time.Duration, logger *slog.Logger, opts ...UpgradeCallback) {
 	if hubURL == "" {
 		logger.Info("hub heartbeat disabled (no HIVE_HUB_URL)")
 		return
+	}
+	var onUpgrade UpgradeCallback
+	if len(opts) > 0 {
+		onUpgrade = opts[0]
 	}
 
 	logger.Info("hub heartbeat enabled", "url", hubURL, "interval", interval)
 
 	waitForReady(ctx, logger)
 
-	sendHeartbeat(ctx, hubURL, collect, logger)
+	if target := sendHeartbeat(ctx, hubURL, collect, logger); target != "" && onUpgrade != nil {
+		onUpgrade(target)
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -91,7 +101,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			logger.Info("hub heartbeat stopped")
 			return
 		case <-ticker.C:
-			sendHeartbeat(ctx, hubURL, collect, logger)
+			if target := sendHeartbeat(ctx, hubURL, collect, logger); target != "" && onUpgrade != nil {
+				onUpgrade(target)
+			}
 		}
 	}
 }
@@ -131,10 +143,12 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
-func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) {
+// sendHeartbeat posts the heartbeat payload and returns the upgrade target SHA
+// if the hub instructs this hive to upgrade (empty string otherwise).
+func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) string {
 	payload := collect()
 	if payload == nil {
-		return
+		return ""
 	}
 	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
 
@@ -157,7 +171,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
-		return
+		return ""
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, heartbeatTimeout)
@@ -166,7 +180,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, hubURL+"/api/heartbeat", bytes.NewReader(body))
 	if err != nil {
 		logger.Warn("hub heartbeat request failed", "error", err)
-		return
+		return ""
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
@@ -176,14 +190,24 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logger.Debug("hub heartbeat unreachable", "error", err)
-		return
+		return ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
+		return ""
 	}
+
+	var hbResp struct {
+		UpgradeTo string `json:"upgrade_to"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil && hbResp.UpgradeTo != "" {
+		logger.Info("hub instructed upgrade via heartbeat", "target", hbResp.UpgradeTo)
+		return hbResp.UpgradeTo
+	}
+	return ""
 }
 
 const taskPushInterval = 30 * time.Second

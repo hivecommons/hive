@@ -1081,7 +1081,10 @@ func main() {
 				GitBranch:         gitBranch,
 				GitHubAppRequired: dashSrv.IsGitHubAppRequired(),
 			}
-		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger)
+		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, func(targetSHA string) {
+			logger.Info("hub requested upgrade via heartbeat — restarting", "target", targetSHA, "current", gitShort)
+			os.Exit(0)
+		})
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {
 			reg, active := dashSrv.ContributorSummary()

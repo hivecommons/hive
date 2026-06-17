@@ -423,8 +423,26 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		"agents", len(payload.Agents),
 	)
 
+	// Check if the hive should upgrade (auto-upgrade enabled and behind latest).
+	resp := struct {
+		OK        bool   `json:"ok"`
+		UpgradeTo string `json:"upgrade_to,omitempty"`
+	}{OK: true}
+	if sh := loadSaaSHive(payload.HiveID); sh != nil && sh.AutoUpgrade {
+		branch := payload.GitBranch
+		if branch == "" {
+			branch = "v2"
+		}
+		latestSHA := getLatestSHAForBranch(branch)
+		if latestSHA != "" && payload.GitHash != "" && payload.GitHash != latestSHA {
+			resp.UpgradeTo = latestSHA
+			s.logger.Info("heartbeat: instructing hive to upgrade", "hive_id", payload.HiveID, "from", payload.GitHash, "to", latestSHA)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"ok":true}`))
+	data, _ := json.Marshal(resp)
+	w.Write(data)
 }
 
 func (s *HubServer) handleRegistry(w http.ResponseWriter, r *http.Request) {

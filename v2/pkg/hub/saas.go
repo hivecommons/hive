@@ -1365,49 +1365,90 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	username := s.getAuthUser(r)
 	h := loadSaaSHive(id)
 	if h == nil {
-		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
-		return
+		// Hive may exist in registry via heartbeat but have no SaaS entry yet.
+		// Create a minimal entry so the auto-upgrade preference can be stored
+		// and delivered via heartbeat response.
+		s.mu.RLock()
+		var regEntry *RegistryEntry
+		for i := range s.registry.Hives {
+			if s.registry.Hives[i].ID == id {
+				regEntry = &s.registry.Hives[i]
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if regEntry == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"hive not found"}`)
+			return
+		}
+		h = &SaaSHive{
+			ID:    id,
+			Owner: regEntry.Owner,
+			Org:   regEntry.Org,
+			Repos: regEntry.Repos,
+		}
 	}
 	if h.Owner != username && username != hubAdminUsername {
-		http.Error(w, `{"error":"only the owner can change auto-upgrade"}`, http.StatusForbidden)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":"only the owner can change auto-upgrade"}`)
 		return
 	}
 	var body struct {
 		AutoUpgrade bool `json:"auto_upgrade"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"invalid request body"}`)
 		return
 	}
 	h.AutoUpgrade = body.AutoUpgrade
 	if err := saveSaaSHive(h); err != nil {
-		http.Error(w, `{"error":"failed to save"}`, http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprint(w, `{"error":"failed to save"}`)
 		return
 	}
 	s.logger.Info("audit: auto-upgrade toggled", "hive_id", id, "auto_upgrade", body.AutoUpgrade, "by", username)
 
-	// If enabling auto-upgrade and hive is behind, trigger immediately
+	// If enabling auto-upgrade and hive is behind, trigger immediately via kubectl
+	// for hosted hives. For heartbeat-connected hives, the upgrade instruction
+	// is delivered via the heartbeat response.
 	if body.AutoUpgrade {
-		latestSHA := getLatestSHA()
-		if latestSHA != "" {
-			s.mu.RLock()
-			var currentSHA string
-			for _, reg := range s.registry.Hives {
-				if reg.ID == id {
-					currentSHA = reg.GitHash
+		s.mu.RLock()
+		var currentSHA, branch string
+		for _, reg := range s.registry.Hives {
+			if reg.ID == id {
+				currentSHA = reg.GitHash
+				branch = reg.GitBranch
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if branch == "" {
+			branch = "v2"
+		}
+		latestSHA := getLatestSHAForBranch(branch)
+		if latestSHA != "" && currentSHA != "" && currentSHA != latestSHA {
+			s.logger.Info("audit: auto-upgrade initial trigger", "hive_id", id, "from", currentSHA, "to", latestSHA)
+			s.mu.Lock()
+			for i := range s.registry.Hives {
+				if s.registry.Hives[i].ID == id {
+					s.registry.Hives[i].Upgrading = true
+					s.registry.Hives[i].UpgradeTarget = latestSHA
 					break
 				}
 			}
-			s.mu.RUnlock()
-			if currentSHA != "" && currentSHA != latestSHA {
-				s.logger.Info("audit: auto-upgrade initial trigger", "hive_id", id, "from", currentSHA, "to", latestSHA)
-				hiveCluster := s.clusterForHive(h)
-				if hiveCluster != nil {
-					ns := "hive-hosted-" + id
-					cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
-					if out, err := cmd.CombinedOutput(); err != nil {
-						s.logger.Warn("auto-upgrade initial trigger failed", "hive", id, "cluster", hiveCluster.ID, "output", string(out))
-					}
+			s.mu.Unlock()
+			hiveCluster := s.clusterForHive(h)
+			if hiveCluster != nil {
+				ns := "hive-hosted-" + id
+				cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					s.logger.Warn("auto-upgrade initial trigger failed (will retry via heartbeat)", "hive", id, "cluster", hiveCluster.ID, "output", string(out))
 				}
 			}
 		}
@@ -1565,7 +1606,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		ns := "hive-hosted-" + h.ID
 		cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			s.logger.Warn("auto-upgrade failed", "hive", h.ID, "cluster", hiveCluster.ID, "output", string(out))
+			s.logger.Warn("auto-upgrade failed (will retry via heartbeat)", "hive", h.ID, "cluster", hiveCluster.ID, "output", string(out))
 			s.mu.Lock()
 			for i := range s.registry.Hives {
 				if s.registry.Hives[i].ID == h.ID {
