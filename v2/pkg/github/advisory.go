@@ -140,29 +140,35 @@ func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issu
 }
 
 func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int, error) {
-	opts := &gh.IssueListByRepoOptions{
-		State:  "open",
-		Labels: []string{advisoryLabelName},
+	// Use search API to find the advisory issue across all open issues,
+	// regardless of how many issues the repo has.
+	query := fmt.Sprintf(`repo:%s/%s is:issue is:open in:title "%s"`, owner, repo, advisoryTitle)
+	result, _, err := c.client.Search.Issues(ctx, query, &gh.SearchOptions{
 		ListOptions: gh.ListOptions{PerPage: 5},
-	}
-	issues, _, err := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
+	})
 	if err == nil {
-		for _, issue := range issues {
+		for _, issue := range result.Issues {
 			if issue.GetTitle() == advisoryTitle {
 				return issue.GetNumber(), nil
 			}
 		}
+	} else {
+		c.logger.Warn("search API failed, falling back to label filter", slog.String("error", err.Error()))
 	}
 
-	// Fallback: search by title if label-based search failed or found nothing
-	// (label may not exist if we don't have permission to create it)
-	titleOpts := &gh.IssueListByRepoOptions{
-		State:       "open",
-		ListOptions: gh.ListOptions{PerPage: 20},
+	// Fallback: list by label (works even when search API is unavailable,
+	// e.g. GitHub App tokens without search scope)
+	opts := &gh.IssueListByRepoOptions{
+		State:  "open",
+		Labels: []string{advisoryLabelName},
+		ListOptions: gh.ListOptions{PerPage: 10},
 	}
-	issues, _, err = c.client.Issues.ListByRepo(ctx, owner, repo, titleOpts)
-	if err != nil {
-		return 0, err
+	issues, _, listErr := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
+	if listErr != nil {
+		if err != nil {
+			return 0, fmt.Errorf("search failed: %w; list fallback also failed: %w", err, listErr)
+		}
+		return 0, listErr
 	}
 	for _, issue := range issues {
 		if issue.GetTitle() == advisoryTitle {
