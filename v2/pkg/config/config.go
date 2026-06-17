@@ -343,6 +343,7 @@ type HubConfig struct {
 	IsPublic               bool     `yaml:"is_public"`
 	SnapshotURL            string   `yaml:"snapshot_url"`
 	DashboardURL           string   `yaml:"dashboard_url"`
+	HiveType               string   `yaml:"hive_type"`
 	AutoSnapshot           bool     `yaml:"auto_snapshot"`
 	ContributeSuspended    bool     `yaml:"contribute_suspended"`
 	ContributeAllowLabels  []string `yaml:"contribute_allow_labels"`

@@ -292,6 +292,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ActiveContributors: clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:              sanitizeHeartbeatField(payload.Owner),
 		HiveType: func() string {
+			if payload.HiveType != "" {
+				return sanitizeHeartbeatField(payload.HiveType)
+			}
 			if strings.HasPrefix(payload.HiveID, "hosted-") || strings.HasPrefix(payload.HiveID, "saas-") {
 				return "hosted"
 			}
