@@ -2832,6 +2832,20 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, fmt.Sprintf("invalid repo name: %s", repo), http.StatusBadRequest)
 				return
 			}
+			if parsed, err := url.Parse(repo); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+				parts := strings.SplitN(strings.TrimPrefix(parsed.Path, "/"), "/", 3)
+				if len(parts) >= 2 {
+					if parts[0] != "" {
+						org = parts[0]
+						s.deps.Config.Project.Org = org
+					}
+					repo = parts[1]
+					if parsed.Host != "github.com" {
+						s.deps.Config.GitHub.BaseURL = parsed.Scheme + "://" + parsed.Host
+						s.deps.Config.GitHub.APIURL = parsed.Scheme + "://" + parsed.Host + "/api/v3"
+					}
+				}
+			}
 			if org != "" && strings.HasPrefix(repo, org+"/") {
 				stripped = append(stripped, strings.TrimPrefix(repo, org+"/"))
 			} else {
@@ -2846,6 +2860,12 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 
 	if body.PrimaryRepo != nil {
 		newPrimary := sanitizeString(*body.PrimaryRepo)
+		if parsed, err := url.Parse(newPrimary); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+			parts := strings.SplitN(strings.TrimPrefix(parsed.Path, "/"), "/", 3)
+			if len(parts) >= 2 {
+				newPrimary = parts[1]
+			}
+		}
 		if org != "" && strings.HasPrefix(newPrimary, org+"/") {
 			newPrimary = strings.TrimPrefix(newPrimary, org+"/")
 		}
