@@ -3237,7 +3237,8 @@
         const mergedPairs = pairs.filter(p => p.state === 'merged');
         const _org = (window._primaryRepo || 'kubestellar/console').split('/')[0];
         const _defaultRepo = (window._primaryRepo || 'kubestellar/console').split('/')[1];
-        const _ghUrl = (p, type) => `https://github.com/${encodeURIComponent(_org)}/${encodeURIComponent(p.repo || _defaultRepo)}/${type}/${type === 'issues' ? p.issue : p.pr}`;
+        const _ghBase = window._githubBaseUrl || 'https://github.com';
+        const _ghUrl = (p, type) => `${_ghBase}/${encodeURIComponent(_org)}/${encodeURIComponent(p.repo || _defaultRepo)}/${type}/${type === 'issues' ? p.issue : p.pr}`;
         const _repoTag = (p) => (p.repo && p.repo !== _defaultRepo) ? `<span style="color:var(--muted);font-size:0.65rem">${esc(p.repo)}/</span>` : '';
         const renderPair = (p) => {
           const issueLabel = p.issueTitle ? `⊙ #${p.issue} — ${esc(p.issueTitle.length > 48 ? p.issueTitle.slice(0, 48) + '…' : p.issueTitle)}` : `⊙ #${p.issue}`;
@@ -3267,7 +3268,7 @@
           const title = ip.title ? esc(ip.title.length > 48 ? ip.title.slice(0, 48) + '…' : ip.title) : '';
           const label = title ? `⏳ #${ip.number} — ${title}` : `⏳ #${ip.number}`;
           return `<div class="ind-pair">
-          <a class="ind-tag ind-wip" href="https://github.com/${_org}/${_defaultRepo}/issues/${ip.number}" target="_blank" title="${ip.title ? esc(ip.title) : ''}">${label}</a>
+          <a class="ind-tag ind-wip" href="${_ghBase}/${_org}/${_defaultRepo}/issues/${ip.number}" target="_blank" title="${ip.title ? esc(ip.title) : ''}">${label}</a>
         </div>`;
         };
         const standaloneMerged = m.mergedPrs || [];
@@ -3723,7 +3724,7 @@
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), '#58a6ff');
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), '#bc8cff');
-        const repoUrl = 'https://github.com/' + (r.full || r.name);
+        const repoUrl = (window._githubBaseUrl || 'https://github.com') + '/' + (r.full || r.name);
         const MAX_PILL_TITLE_LEN = 50;
         const issuePills = (r.actionableIssues || []).map(i => {
           const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
@@ -8281,6 +8282,8 @@ function burnAreaChart() {
 
     // Set project name and repo from API
     fetch("/api/config").then(r => r.json()).then(cfg => {
+      const ghBase = cfg.github_base_url || 'https://github.com';
+      window._githubBaseUrl = ghBase;
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');
@@ -9795,6 +9798,9 @@ function burnAreaChart() {
 
     function renderGovRepos(repos) {
       const primary = _configState.data.primaryRepo || '';
+      const ghBase = window._githubBaseUrl || 'https://github.com';
+      const ghHost = ghBase.replace(/^https?:\/\//, '');
+      const isGHE = ghHost !== 'github.com';
       const list = repos.map((r, i) => {
         const isDefault = r === primary;
         const starStyle = isDefault
@@ -9803,7 +9809,8 @@ function burnAreaChart() {
         const starTitle = isDefault
           ? 'Default repo (advisory issue lives here)'
           : 'Set as default repo for advisory issue';
-        return `<div class="config-list-item" style="align-items:center"><span onclick="setDefaultRepo('${esc(r)}')" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1">${esc(r)}</span><button class="remove-item" onclick="removeListItem('repos','list',${i})">&#x2715;</button></div>`;
+        const displayName = isGHE ? ghHost + '/' + r : r;
+        return `<div class="config-list-item" style="align-items:center"><span onclick="setDefaultRepo('${esc(r)}')" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1">${esc(displayName)}</span><button class="remove-item" onclick="removeListItem('repos','list',${i})">&#x2715;</button></div>`;
       }).join('');
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive. Click the star to set the default repo where the advisory issue is maintained.</p>

@@ -475,6 +475,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if primaryRepo != "" && cfg.Project.Org != "" && !strings.Contains(primaryRepo, "/") {
 		primaryRepo = cfg.Project.Org + "/" + primaryRepo
 	}
+	githubBaseURL := cfg.GitHub.BaseURL
+	if githubBaseURL == "" {
+		githubBaseURL = "https://github.com"
+	}
 	jsonResponse(w, map[string]interface{}{
 		"org":              cfg.Project.Org,
 		"repos":            cfg.Project.Repos,
@@ -484,6 +488,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		"primaryRepo":      primaryRepo,
 		"hub_url":          cfg.Hub.URL,
 		"hive_id":          cfg.HiveID,
+		"github_base_url":  githubBaseURL,
 	})
 }
 
