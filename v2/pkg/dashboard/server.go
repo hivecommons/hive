@@ -417,7 +417,7 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
 }
 
-const GitHubAppInstallURL = "https://github.com/apps/hive-hub/installations/select_target_repositories"
+const GitHubAppInstallURL = "https://github.com/apps/kubestellar-hive/installations/new"
 
 func (s *Server) SetGitHubAppRequired(required bool) {
 	s.githubAppMu.Lock()
