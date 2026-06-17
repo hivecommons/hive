@@ -28,7 +28,7 @@ func TestStartDeviceFlowSuccess(t *testing.T) {
 		}
 		return jsonBodyResponse(200, resp), nil
 	}, func() {
-		state, err := StartDeviceFlow("test-client-id")
+		state, err := StartDeviceFlow("test-client-id", "", "")
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -53,7 +53,7 @@ func TestStartDeviceFlowDefaultInterval(t *testing.T) {
 		}
 		return jsonBodyResponse(200, resp), nil
 	}, func() {
-		state, err := StartDeviceFlow("test-client-id")
+		state, err := StartDeviceFlow("test-client-id", "", "")
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -67,7 +67,7 @@ func TestStartDeviceFlowServerError(t *testing.T) {
 	withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
 		return jsonBodyResponse(500, map[string]string{"error": "server error"}), nil
 	}, func() {
-		_, err := StartDeviceFlow("test-client-id")
+		_, err := StartDeviceFlow("test-client-id", "", "")
 		if err == nil {
 			t.Error("expected error on 500")
 		}
@@ -82,7 +82,7 @@ func TestPollDeviceFlowComplete(t *testing.T) {
 			Scope:       "repo",
 		}), nil
 	}, func() {
-		token, status, err := PollDeviceFlow("client-id", "device-code")
+		token, status, err := PollDeviceFlow("client-id", "device-code", "", "")
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -102,7 +102,7 @@ func TestPollDeviceFlowPending(t *testing.T) {
 			ErrorDesc: "waiting for user",
 		}), nil
 	}, func() {
-		token, status, err := PollDeviceFlow("client-id", "device-code")
+		token, status, err := PollDeviceFlow("client-id", "device-code", "", "")
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -121,7 +121,7 @@ func TestPollDeviceFlowSlowDown(t *testing.T) {
 			Error: "slow_down",
 		}), nil
 	}, func() {
-		_, status, err := PollDeviceFlow("client-id", "device-code")
+		_, status, err := PollDeviceFlow("client-id", "device-code", "", "")
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestPollDeviceFlowError(t *testing.T) {
 			ErrorDesc: "user denied",
 		}), nil
 	}, func() {
-		_, _, err := PollDeviceFlow("client-id", "device-code")
+		_, _, err := PollDeviceFlow("client-id", "device-code", "", "")
 		if err == nil {
 			t.Error("expected error on access_denied")
 		}
@@ -152,7 +152,7 @@ func TestValidateTokenSuccess(t *testing.T) {
 			AvatarURL: "https://example.com/avatar.png",
 		}), nil
 	}, func() {
-		user, err := ValidateToken("gho_valid_token")
+		user, err := ValidateToken("gho_valid_token", "")
 		if err != nil {
 			t.Fatalf("error: %v", err)
 		}
@@ -166,7 +166,7 @@ func TestValidateTokenInvalid(t *testing.T) {
 	withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
 		return jsonBodyResponse(401, map[string]string{"message": "Bad credentials"}), nil
 	}, func() {
-		_, err := ValidateToken("invalid-token")
+		_, err := ValidateToken("invalid-token", "")
 		if err == nil {
 			t.Error("expected error on 401")
 		}
