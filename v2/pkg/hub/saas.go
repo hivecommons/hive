@@ -2588,7 +2588,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (accessModal && accessModal.style.display === 'flex') { accessModal.style.display = 'none'; }
     });
 
-    var ACMM_LABELS = {1:'L1 Idea',2:'L2 Measured',3:'L3 CI/CD',4:'L4 Auto PR',5:'L5 Self-Governing',6:'L6 Fully Autonomous'};
+    var ACMM_LABELS = {1:'L1 Assisted',2:'L2 Instructed',3:'L3 Measured',4:'L4 Adaptive',5:'L5 Semi-Automated',6:'L6 Autonomous'};
     function sparkline(points, color, w, h) {
       if (!points || points.length < 2) return '';
       var vals = points.map(function(p) { return p.v; });
@@ -2606,7 +2606,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function acmmBadge(level) {
       var l = level || 0;
-      var tips = {1:'L1 Idea — Advisory only.',2:'L2 Measured — Can open issues.',3:'L3 CI/CD — Hold-gated PRs.',4:'L4 Auto PR — Merge on green CI.',5:'L5 Self-Governing — Full autonomy.',6:'L6 Fully Autonomous — Multi-loop.'};
+      var tips = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
       return '<span class="acmm-badge acmm-' + l + '" title="' + esc(tips[l] || '') + '">' + (ACMM_LABELS[l] || 'L' + l) + '</span>';
     }
     function roleBadge(role) {
@@ -3720,8 +3720,8 @@ const dashboardHTML = `<!DOCTYPE html>
         <div style="flex:1">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">ACMM Level</label>
           <select id="f-level" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-            <option value="1">L1 — Idea</option>
-            <option value="2">L2 — Measured</option>
+            <option value="1">L1 — Assisted</option>
+            <option value="2">L2 — Instructed</option>
             <option value="3" selected>L3 — CI/CD</option>
             <option value="4">L4 — Auto PR</option>
             <option value="5">L5 — Self-Governing</option>
@@ -3818,8 +3818,8 @@ const dashboardHTML = `<!DOCTYPE html>
         <div style="margin-bottom:12px">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">ACMM Level</label>
           <select id="rq-level" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-            <option value="1">L1 &#x2014; Idea</option>
-            <option value="2">L2 &#x2014; Measured</option>
+            <option value="1">L1 &#x2014; Assisted</option>
+            <option value="2">L2 &#x2014; Instructed</option>
             <option value="3" selected>L3 &#x2014; CI/CD</option>
             <option value="4">L4 &#x2014; Auto PR</option>
             <option value="5">L5 &#x2014; Self-Governing</option>

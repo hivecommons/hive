@@ -8553,7 +8553,7 @@ function burnAreaChart() {
       const errEl = document.getElementById('acmm-apply-error');
       errEl.style.display = 'none';
 
-      const levelNames = ['', 'Idea', 'Development', 'CI/CD', 'Managed', 'Guarded Autonomy', 'Full Autonomy'];
+      const levelNames = ['', 'Assisted', 'Instructed', 'Measured', 'Adaptive', 'Semi-Automated', 'Autonomous'];
       const name = levelNames[level] || 'Level ' + level;
       if (!(await hiveConfirm(`Preview ACMM Level ${level} (${name})?\n\nThis changes the dashboard display to show what this level looks like. Running agents are not affected — use Apply to create agents and change their state.`))) return;
 
@@ -8584,7 +8584,7 @@ function burnAreaChart() {
     }
 
     function updateACMMBadge(level, packAgents) {
-      const levelNames = ['', 'L1 Idea', 'L2 Dev', 'L3 CI/CD', 'L4 Managed', 'L5 Guarded', 'L6 Full Auto'];
+      const levelNames = ['', 'L1 Assisted', 'L2 Instructed', 'L3 Measured', 'L4 Adaptive', 'L5 Semi-Automated', 'L6 Autonomous'];
       const text = levelNames[level] || 'L' + level;
       const badge = document.getElementById('acmm-badge');
       if (badge) badge.textContent = 'ACMM ' + text;
