@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"text/template"
 	"time"
 )
@@ -32,6 +31,103 @@ const (
 	rolloutMaxSurge       = 1
 	rolloutMaxUnavailable = 0
 )
+
+// defaultClusterID is the cluster ID assigned to hives that predate
+// multi-cluster support.
+const defaultClusterID = "hive-oke"
+
+// clustersConfigPath is the on-disk location where the hub reads cluster
+// definitions. It is a JSON array of ClusterConfig objects.
+const clustersConfigPath = "/data/saas/clusters.json"
+
+// ClusterConfig describes a Kubernetes cluster that the hub can provision
+// hive spokes onto. Each cluster has its own kubeconfig, storage backend,
+// ingress style, and optional platform-specific settings (OCI, OpenShift).
+type ClusterConfig struct {
+	ID              string `json:"id" yaml:"id"`
+	Name            string `json:"name" yaml:"name"`
+	KubeconfigPath  string `json:"kubeconfig_path,omitempty" yaml:"kubeconfig_path,omitempty"`
+	Context         string `json:"context" yaml:"context"`
+	InCluster       bool   `json:"in_cluster" yaml:"in_cluster"`
+	StorageClass    string `json:"storage_class" yaml:"storage_class"`
+	StorageType     string `json:"storage_type" yaml:"storage_type"`
+	NFSMountIP      string `json:"nfs_mount_ip,omitempty" yaml:"nfs_mount_ip,omitempty"`
+	IngressType     string `json:"ingress_type" yaml:"ingress_type"`
+	IngressClass    string `json:"ingress_class,omitempty" yaml:"ingress_class,omitempty"`
+	CertIssuer      string `json:"cert_issuer,omitempty" yaml:"cert_issuer,omitempty"`
+	Domain          string `json:"domain" yaml:"domain"`
+	DomainPrefix    string `json:"domain_prefix,omitempty" yaml:"domain_prefix,omitempty"`
+	OCICompartment  string `json:"oci_compartment,omitempty" yaml:"oci_compartment,omitempty"`
+	OCIAvailDomain  string `json:"oci_avail_domain,omitempty" yaml:"oci_avail_domain,omitempty"`
+	OCIMountTarget  string `json:"oci_mount_target,omitempty" yaml:"oci_mount_target,omitempty"`
+	OCIExportSet    string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
+	RequiresSCC     bool   `json:"requires_scc" yaml:"requires_scc"`
+	SCCName         string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
+	HasGPU          bool   `json:"has_gpu" yaml:"has_gpu"`
+	Arch            string `json:"arch" yaml:"arch"`
+	ImageTag        string `json:"image_tag" yaml:"image_tag"`
+	ImagePullPolicy string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`
+}
+
+// kubectlForCluster builds an exec.Cmd that targets a specific cluster.
+// For in-cluster configs (InCluster == true) it runs plain kubectl;
+// for remote clusters it injects --kubeconfig and --context flags.
+func kubectlForCluster(cluster *ClusterConfig, args ...string) *exec.Cmd {
+	fullArgs := []string{}
+	if !cluster.InCluster {
+		fullArgs = append(fullArgs, "--kubeconfig", cluster.KubeconfigPath, "--context", cluster.Context)
+	}
+	fullArgs = append(fullArgs, args...)
+	return exec.Command("kubectl", fullArgs...)
+}
+
+// loadClusters reads the clusters config file and returns a validated
+// map of cluster ID → ClusterConfig. If the file does not exist, it
+// returns a single default entry for hive-oke (backward compatibility).
+func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
+	clusters := make(map[string]ClusterConfig)
+
+	data, err := os.ReadFile(clustersConfigPath)
+	if err != nil {
+		logger.Info("no clusters config found, using default hive-oke cluster", "path", clustersConfigPath)
+		clusters[defaultClusterID] = ClusterConfig{
+			ID:          defaultClusterID,
+			Name:        "OKE (default)",
+			InCluster:   true,
+			StorageType: "nfs",
+			IngressType: "nginx",
+			Domain:      "hive.kubestellar.io",
+			Arch:        "arm64",
+			ImageTag:    "v2-latest",
+		}
+		return clusters
+	}
+
+	var configs []ClusterConfig
+	if err := json.Unmarshal(data, &configs); err != nil {
+		logger.Error("failed to parse clusters config", "path", clustersConfigPath, "error", err)
+		return clusters
+	}
+
+	for _, c := range configs {
+		if c.ID == "" {
+			logger.Warn("skipping cluster config with empty ID")
+			continue
+		}
+		if !c.InCluster && c.KubeconfigPath == "" {
+			logger.Warn("skipping remote cluster with no kubeconfig_path", "cluster", c.ID)
+			continue
+		}
+		if c.Domain == "" {
+			logger.Warn("skipping cluster with no domain", "cluster", c.ID)
+			continue
+		}
+		clusters[c.ID] = c
+	}
+
+	logger.Info("loaded cluster configs", "count", len(clusters))
+	return clusters
+}
 
 type PendingAccessRequest struct {
 	Username    string `json:"username"`
@@ -54,6 +150,7 @@ type SaaSHive struct {
 	PendingRequests []PendingAccessRequest `json:"pending_requests,omitempty"`
 	OCIFileSystemID string                 `json:"oci_file_system_id,omitempty"`
 	OCIExportID     string                 `json:"oci_export_id,omitempty"`
+	ClusterID       string                 `json:"cluster_id,omitempty"`
 }
 
 type CreateHiveRequest struct {
@@ -91,6 +188,34 @@ func sanitize(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// clusterForHive returns the ClusterConfig for a given hive, falling back
+// to the default cluster if the hive has no cluster_id or the ID is unknown.
+func (s *HubServer) clusterForHive(h *SaaSHive) *ClusterConfig {
+	clusterID := h.ClusterID
+	if clusterID == "" {
+		clusterID = defaultClusterID
+	}
+	if c, ok := s.clusters[clusterID]; ok {
+		return &c
+	}
+	// Fallback: return the default cluster if it exists.
+	if c, ok := s.clusters[defaultClusterID]; ok {
+		return &c
+	}
+	return nil
+}
+
+// hubCluster returns the cluster config for the hub itself (always the
+// default in-cluster config). Hub operations like self-upgrade always
+// target this cluster.
+func (s *HubServer) hubCluster() *ClusterConfig {
+	if c, ok := s.clusters[defaultClusterID]; ok {
+		return &c
+	}
+	// Fallback: synthesize an in-cluster config so hub operations still work.
+	return &ClusterConfig{ID: defaultClusterID, InCluster: true}
 }
 
 func loadSaaSHive(id string) *SaaSHive {
@@ -155,7 +280,7 @@ func countUserHives(username string) int {
 	return count
 }
 
-func provisionHive(h *SaaSHive, req *CreateHiveRequest, logger *slog.Logger) error {
+func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, logger *slog.Logger) error {
 	dir := filepath.Join(saasHivesDir, h.ID, "manifests")
 	os.MkdirAll(dir, 0o755)
 
@@ -256,7 +381,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, logger *slog.Logger) err
 	}
 	f.Close()
 
-	cmd := exec.Command("kubectl", "apply", "-f", manifestPath)
+	cmd := kubectlForCluster(cluster, "apply", "-f", manifestPath)
 	out, err := cmd.CombinedOutput()
 
 	// Remove manifest immediately — it contains GitHub tokens in plaintext
@@ -265,11 +390,11 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, logger *slog.Logger) err
 	}
 
 	if err != nil {
-		logger.Warn("kubectl apply failed", "hive", h.ID, "output", string(out), "error", err)
+		logger.Warn("kubectl apply failed", "hive", h.ID, "cluster", cluster.ID, "output", string(out), "error", err)
 		return fmt.Errorf("provisioning failed — check hub logs for details")
 	}
 
-	logger.Info("audit: saas hive provisioned", "hive_id", h.ID, "owner", h.Owner, "org", h.Org)
+	logger.Info("audit: saas hive provisioned", "hive_id", h.ID, "owner", h.Owner, "org", h.Org, "cluster", cluster.ID)
 	return nil
 }
 
@@ -279,14 +404,14 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, logger *slog.Logger) err
 // and the on-disk SaaS hive record. It also decrements the owner's quota.
 // Order matters: namespace before PV, export before file system.
 // Errors are logged but do not stop the remaining cleanup steps.
-func deprovisionHive(h *SaaSHive, logger *slog.Logger) {
+func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 	hiveID := h.ID
 
 	// Step 1: Delete K8s namespace (cascading delete removes deployment, service,
 	// ingress, configmap, secret, and PVC).
 	ns := "hive-hosted-" + hiveID
-	logger.Info("deprovision: deleting namespace", "namespace", ns)
-	cmd := exec.Command("kubectl", "delete", "namespace", ns, "--ignore-not-found")
+	logger.Info("deprovision: deleting namespace", "namespace", ns, "cluster", cluster.ID)
+	cmd := kubectlForCluster(cluster, "delete", "namespace", ns, "--ignore-not-found")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		logger.Warn("deprovision: namespace delete failed", "namespace", ns, "output", string(out), "error", err)
 	}
@@ -294,7 +419,7 @@ func deprovisionHive(h *SaaSHive, logger *slog.Logger) {
 	// Step 2: Delete cluster-scoped PV (not removed by namespace deletion).
 	pvName := "hive-" + hiveID + "-fss-pv"
 	logger.Info("deprovision: deleting PV", "pv", pvName)
-	cmd = exec.Command("kubectl", "delete", "pv", pvName, "--ignore-not-found")
+	cmd = kubectlForCluster(cluster, "delete", "pv", pvName, "--ignore-not-found")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		logger.Warn("deprovision: PV delete failed", "pv", pvName, "output", string(out), "error", err)
 	}
@@ -334,7 +459,7 @@ func deprovisionHive(h *SaaSHive, logger *slog.Logger) {
 	logger.Info("audit: hive deprovisioned", "hive_id", hiveID, "owner", h.Owner)
 }
 
-func StartProvisionWatcher(logger *slog.Logger, mu *sync.RWMutex) {
+func (s *HubServer) startProvisionWatcher() {
 	ticker := time.NewTicker(provisionPollInterval)
 	defer ticker.Stop()
 
@@ -349,12 +474,17 @@ func StartProvisionWatcher(logger *slog.Logger, mu *sync.RWMutex) {
 				h.Status = "error"
 				h.Error = "provisioning timed out"
 				saveSaaSHive(&h)
-				logger.Warn("saas hive provision timeout", "hive_id", h.ID)
+				s.logger.Warn("saas hive provision timeout", "hive_id", h.ID)
 				continue
 			}
 
+			cluster := s.clusterForHive(&h)
+			if cluster == nil {
+				s.logger.Warn("no cluster config for hive", "hive_id", h.ID, "cluster_id", h.ClusterID)
+				continue
+			}
 			ns := "hive-hosted-" + h.ID
-			cmd := exec.Command("kubectl", "get", "deployment", "hive", "-n", ns, "-o", "jsonpath={.status.availableReplicas}")
+			cmd := kubectlForCluster(cluster, "get", "deployment", "hive", "-n", ns, "-o", "jsonpath={.status.availableReplicas}")
 			out, err := cmd.Output()
 			if err != nil {
 				continue
@@ -362,7 +492,7 @@ func StartProvisionWatcher(logger *slog.Logger, mu *sync.RWMutex) {
 			if strings.TrimSpace(string(out)) == "1" {
 				h.Status = "running"
 				saveSaaSHive(&h)
-				logger.Info("audit: saas hive running", "hive_id", h.ID)
+				s.logger.Info("audit: saas hive running", "hive_id", h.ID, "cluster", cluster.ID)
 			}
 		}
 	}

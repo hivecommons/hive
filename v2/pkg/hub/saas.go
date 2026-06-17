@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -133,7 +132,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 
-	go StartProvisionWatcher(s.logger, &s.mu)
+	go s.startProvisionWatcher()
 	go s.StartLatestSHAPoller()
 }
 
@@ -503,14 +502,16 @@ func (s *HubServer) handleClusterHealth(w http.ResponseWriter, r *http.Request) 
 }
 
 func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
+	hubC := s.hubCluster()
+
 	// Run kubectl top nodes
-	topOut, err := exec.Command("kubectl", "top", "nodes", "--no-headers").Output()
+	topOut, err := kubectlForCluster(hubC, "top", "nodes", "--no-headers").Output()
 	if err != nil {
 		return nil, fmt.Errorf("kubectl top nodes: %w", err)
 	}
 
 	// Run kubectl get nodes -o json
-	getOut, err := exec.Command("kubectl", "get", "nodes", "-o", "json").Output()
+	getOut, err := kubectlForCluster(hubC, "get", "nodes", "-o", "json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("kubectl get nodes: %w", err)
 	}
@@ -613,7 +614,7 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 	}
 
 	// Count running pods per node
-	podOut, _ := exec.Command("kubectl", "get", "pods", "--all-namespaces", "--field-selector=status.phase=Running", "-o", "json").Output()
+	podOut, _ := kubectlForCluster(hubC, "get", "pods", "--all-namespaces", "--field-selector=status.phase=Running", "-o", "json").Output()
 	if len(podOut) > 0 {
 		var podsJSON struct {
 			Items []struct {
@@ -1078,7 +1079,15 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	saveSaaSUser(user)
 
 	go func() {
-		if err := provisionHive(h, &req, s.logger); err != nil {
+		cluster := s.clusterForHive(h)
+		if cluster == nil {
+			h.Status = "error"
+			h.Error = "no cluster config available"
+			saveSaaSHive(h)
+			s.logger.Error("no cluster config for provisioning", "hive_id", hiveID, "cluster_id", h.ClusterID)
+			return
+		}
+		if err := provisionHive(h, &req, cluster, s.logger); err != nil {
 			h.Status = "error"
 			h.Error = err.Error()
 			saveSaaSHive(h)
@@ -1139,7 +1148,13 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Full de-provisioning: namespace, PV, OCI export, OCI file system, disk record, user cleanup.
-	deprovisionHive(h, s.logger)
+	cluster := s.clusterForHive(h)
+	if cluster == nil {
+		s.logger.Error("no cluster config for deprovision", "hive_id", id, "cluster_id", h.ClusterID)
+		http.Error(w, `{"error":"no cluster config — cannot deprovision"}`, http.StatusInternalServerError)
+		return
+	}
+	deprovisionHive(h, cluster, s.logger)
 
 	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username)
 	w.Header().Set("Content-Type", "application/json")
@@ -1176,7 +1191,7 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 		latestSHA := getLatestSHA()
 		if latestSHA != "" && latestSHA != s.hubGitHash {
 			s.logger.Info("audit: hub auto-upgrade initial trigger", "from", s.hubGitHash, "to", latestSHA)
-			cmd := exec.Command("kubectl", "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
+			cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				s.logger.Warn("hub auto-upgrade failed", "output", string(out))
 			}
@@ -1190,7 +1205,7 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
 	s.logger.Info("audit: hub self-upgrade triggered", "by", username)
-	cmd := exec.Command("kubectl", "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
+	cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		s.logger.Warn("hub self-upgrade failed", "output", string(out))
@@ -1224,15 +1239,20 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"only the owner can upgrade"}`, http.StatusForbidden)
 		return
 	}
+	cluster := s.clusterForHive(h)
+	if cluster == nil {
+		http.Error(w, `{"error":"no cluster config for this hive"}`, http.StatusInternalServerError)
+		return
+	}
 	ns := "hive-hosted-" + id
-	cmd := exec.Command("kubectl", "rollout", "restart", "deployment/hive", "-n", ns)
+	cmd := kubectlForCluster(cluster, "rollout", "restart", "deployment/hive", "-n", ns)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		s.logger.Warn("upgrade failed", "hive", id, "output", string(out))
+		s.logger.Warn("upgrade failed", "hive", id, "cluster", cluster.ID, "output", string(out))
 		http.Error(w, `{"error":"upgrade failed — check hub logs for details"}`, http.StatusInternalServerError)
 		return
 	}
-	s.logger.Info("audit: hosted hive upgraded", "hive_id", id, "by", username)
+	s.logger.Info("audit: hosted hive upgraded", "hive_id", id, "by", username, "cluster", cluster.ID)
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
@@ -1366,10 +1386,13 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			s.mu.RUnlock()
 			if currentSHA != "" && currentSHA != latestSHA {
 				s.logger.Info("audit: auto-upgrade initial trigger", "hive_id", id, "from", currentSHA, "to", latestSHA)
-				ns := "hive-hosted-" + id
-				cmd := exec.Command("kubectl", "rollout", "restart", "deployment/hive", "-n", ns)
-				if out, err := cmd.CombinedOutput(); err != nil {
-					s.logger.Warn("auto-upgrade initial trigger failed", "hive", id, "output", string(out))
+				hiveCluster := s.clusterForHive(h)
+				if hiveCluster != nil {
+					ns := "hive-hosted-" + id
+					cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
+					if out, err := cmd.CombinedOutput(); err != nil {
+						s.logger.Warn("auto-upgrade initial trigger failed", "hive", id, "cluster", hiveCluster.ID, "output", string(out))
+					}
 				}
 			}
 		}
@@ -1464,7 +1487,7 @@ func (s *HubServer) StartLatestSHAPoller() {
 			hubBranchSHA := getLatestSHAForBranch("v2")
 			if isHubAutoUpgrade() && hubBranchSHA != "" && hubBranchSHA != s.hubGitHash {
 				s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
-				cmd := exec.Command("kubectl", "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
+				cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
 				if out, err := cmd.CombinedOutput(); err != nil {
 					s.logger.Warn("hub auto-upgrade failed", "output", string(out))
 				}
@@ -1509,7 +1532,12 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if latestSHA == "" || currentSHA == latestSHA {
 			continue
 		}
-		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA)
+		hiveCluster := s.clusterForHive(&h)
+		if hiveCluster == nil {
+			s.logger.Warn("auto-upgrade skipped — no cluster config", "hive_id", h.ID, "cluster_id", h.ClusterID)
+			continue
+		}
+		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID)
 		s.mu.Lock()
 		for i := range s.registry.Hives {
 			if s.registry.Hives[i].ID == h.ID {
@@ -1520,9 +1548,9 @@ func (s *HubServer) triggerAutoUpgrades() {
 		}
 		s.mu.Unlock()
 		ns := "hive-hosted-" + h.ID
-		cmd := exec.Command("kubectl", "rollout", "restart", "deployment/hive", "-n", ns)
+		cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			s.logger.Warn("auto-upgrade failed", "hive", h.ID, "output", string(out))
+			s.logger.Warn("auto-upgrade failed", "hive", h.ID, "cluster", hiveCluster.ID, "output", string(out))
 			s.mu.Lock()
 			for i := range s.registry.Hives {
 				if s.registry.Hives[i].ID == h.ID {
