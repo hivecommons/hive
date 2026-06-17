@@ -1485,14 +1485,19 @@ func (s *HubServer) triggerAutoUpgrades() {
 		}
 		s.mu.RLock()
 		var currentSHA, branch string
+		var alreadyUpgrading bool
 		for _, reg := range s.registry.Hives {
 			if reg.ID == h.ID {
 				currentSHA = reg.GitHash
 				branch = reg.GitBranch
+				alreadyUpgrading = reg.Upgrading
 				break
 			}
 		}
 		s.mu.RUnlock()
+		if alreadyUpgrading {
+			continue
+		}
 		if branch == "" {
 			branch = "v2"
 		}
