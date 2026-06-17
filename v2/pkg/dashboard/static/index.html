@@ -1828,6 +1828,14 @@
       <div class="oc-tree-children" id="oc-agent-tree">
         <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
       </div>
+      <div id="nous-sidebar-config" style="padding:2px 8px 6px 24px;font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
+        <div><span id="nous-sb-scope" style="font-weight:600"></span> · <span id="nous-sb-mode"></span></div>
+        <div id="nous-sb-phase" style="opacity:0.8"></div>
+      </div>
+      <div style="display:flex;gap:4px;margin:4px 10px">
+        <a class="oc-nav-item" style="color:#6b7280;font-style:italic;flex:1" onclick="openAddAgentDialog()">+ agent</a>
+        <a class="oc-nav-item" style="color:#6b7280;font-style:italic;flex:1" onclick="ocAddSidebarGroup()">+ group</a>
+      </div>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Resources</div>
@@ -2954,14 +2962,6 @@
           html += `</div>`;
         }
       }
-
-      html += `<div id="nous-sidebar-config" style="padding:2px 8px 6px 24px;font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">`;
-      html += `<div><span id="nous-sb-scope" style="font-weight:600"></span> · <span id="nous-sb-mode"></span></div>`;
-      html += `<div id="nous-sb-phase" style="opacity:0.8"></div></div>`;
-      html += `<div style="display:flex;gap:4px;margin:4px 10px">`;
-      html += `<a class="oc-nav-item" style="color:#6b7280;font-style:italic;flex:1" onclick="openAddAgentDialog()">+ agent</a>`;
-      html += `<a class="oc-nav-item" style="color:#6b7280;font-style:italic;flex:1" onclick="ocAddSidebarGroup()">+ group</a>`;
-      html += `</div>`;
 
       tree.innerHTML = html;
       const collapsed = safeJsonParse(localStorage.getItem('hive-sidebar-collapsed') || '{}', {});
