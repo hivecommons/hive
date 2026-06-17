@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive: Hub &amp; Spoke</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#e6edf3;overflow:hidden}
+.deck{width:100vw;height:100vh;overflow:hidden;position:relative}
+.slide{width:100vw;height:100vh;padding:60px 80px;display:none;flex-direction:column;justify-content:flex-start;position:absolute;top:0;left:0}
+.slide.active{display:flex}
+.slide.center{justify-content:center;align-items:center;text-align:center}
+h1{font-size:3.2rem;font-weight:700;margin-bottom:20px}
+h2{font-size:2.4rem;font-weight:600;margin-bottom:16px}
+h3{font-size:1.8rem;font-weight:600;margin-bottom:12px}
+p,.desc{font-size:1.5rem;line-height:1.6;color:#c9d1d9}
+.accent{color:#f0a030}
+.accent2{color:#58a6ff}
+a{color:#58a6ff;text-decoration:none}
+a:hover{text-decoration:underline}
+code{background:#1c2128;padding:1px 6px;border-radius:4px;font-family:'SF Mono','Cascadia Code',monospace;font-size:inherit;color:#f0a030}
+table{border-collapse:collapse;margin:20px 0}
+th{background:#1c2128;color:#f0a030;padding:10px 20px;text-align:left;font-weight:600;border:1px solid #30363d}
+td{padding:10px 20px;border:1px solid #30363d;color:#c9d1d9}
+ul,ol{margin:16px 0 16px 24px}
+li{margin:8px 0;font-size:1.4rem;line-height:1.5;color:#c9d1d9}
+blockquote{border-left:3px solid #f0a030;padding-left:16px;margin:16px 0;font-style:italic;color:#f0a030}
+.nav{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:16px;z-index:100;background:rgba(13,17,23,0.8);padding:8px 16px;border-radius:24px;border:1px solid #30363d}
+.nav button{background:none;border:none;color:#8b949e;font-size:1.2rem;cursor:pointer;padding:4px 8px}
+.nav button:hover{color:#e6edf3}
+.nav span{color:#8b949e;font-size:1.2rem;min-width:90px;text-align:center}
+.page-num{position:fixed;bottom:20px;right:40px;color:#30363d;font-size:1.5rem;z-index:100}
+.logo-text{font-size:2.4rem;color:#8b949e;font-weight:300;letter-spacing:2px;margin-right:24px}
+.logo-text.purple{color:#a371f7}
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+<!-- Slide 1: Title -->
+<div class="slide center active" id="s1">
+<h1>Hive: Hub &amp; Spoke</h1>
+<p class="accent" style="font-size:1.8rem;font-weight:600;margin-bottom:24px">AI Agent Orchestration for Open Source</p>
+<p style="margin-bottom:4px">From brainstorming to full autonomy and everything in-between.</p>
+<p style="margin-bottom:32px">A fully customizable fleet of AI agents covering every level of project maintenance.</p>
+<p style="color:#8b949e">hive.kubestellar.io</p>
+</div>
+
+<!-- Slide 2: Hub & Spoke Architecture -->
+<div class="slide" id="s2">
+<h1>Hub &amp; Spoke Architecture</h1>
+<p><span class="accent">Hub</span> (hive.kubestellar.io) - central registry, cross-hive leaderboard, contributor directory</p>
+<p style="margin-bottom:20px"><span class="accent">Spoke</span> - independent hive instance with its own agents, repos, and GitHub App</p>
+<table>
+<tr><th></th><th>Hub</th><th>Spoke</th></tr>
+<tr><td class="accent" style="font-weight:600">Role</td><td>Registry, federation, leaderboard</td><td>Runs agents, manages repos</td></tr>
+<tr><td class="accent" style="font-weight:600">Auth</td><td>Contributor directory</td><td>Own GitHub App + scoped tokens</td></tr>
+<tr><td class="accent" style="font-weight:600">Data</td><td>Aggregated metrics</td><td>Local beads, wiki, snapshots</td></tr>
+</table>
+<ul>
+<li>Spokes register with hub, send heartbeats, share contributor metrics</li>
+<li>Each spoke is fully independent - hub coordinates, never controls</li>
+<li>Contributors can register with multiple spokes across the network</li>
+</ul>
+</div>
+
+<!-- Slide 3: Agents & the Governor -->
+<div class="slide" id="s3">
+<h1>Agents &amp; the Governor</h1>
+<p style="margin-bottom:16px">10 built-in agents, each with a lane, a policy, and boundaries. <span class="accent">Custom agents can be added easily.</span></p>
+<div style="display:flex;gap:24px">
+<table>
+<tr><th>Agent</th><th>Role</th></tr>
+<tr><td class="accent" style="font-weight:600">Supervisor</td><td>Prioritizes, dispatches work</td></tr>
+<tr><td class="accent" style="font-weight:600">Scanner</td><td>Inbound triage, bug fixes</td></tr>
+<tr><td class="accent" style="font-weight:600">Quality</td><td>Test coverage, code quality</td></tr>
+<tr><td class="accent" style="font-weight:600">CI-Maintainer</td><td>Build health, workflows</td></tr>
+<tr><td class="accent" style="font-weight:600">Sec-Check</td><td>Security screening</td></tr>
+</table>
+<table>
+<tr><th>Agent</th><th>Role</th></tr>
+<tr><td class="accent" style="font-weight:600">Architect</td><td>RFCs, refactors</td></tr>
+<tr><td class="accent" style="font-weight:600">Strategist</td><td>Cross-agent coordination</td></tr>
+<tr><td class="accent" style="font-weight:600">Outreach</td><td>Community, ADOPTERS</td></tr>
+<tr><td class="accent" style="font-weight:600">Guide</td><td>Repo setup advice (L1)</td></tr>
+<tr><td class="accent" style="font-weight:600">Brainstorm</td><td>Ideas to knowledge (L1)</td></tr>
+</table>
+</div>
+<p style="margin-top:24px"><span class="accent">Governor</span> adapts cadence based on queue depth (thresholds fully customizable):</p>
+<table style="width:100%;max-width:900px">
+<tr><th style="text-align:center">SURGE (&gt; 20)</th><th style="text-align:center">BUSY (10-20)</th><th style="text-align:center">QUIET (2-10)</th><th style="text-align:center">IDLE (&lt;= 2)</th></tr>
+<tr><td style="text-align:center">Scanner only, all-hands triage</td><td style="text-align:center">Scanner + Reviewer, reduced</td><td style="text-align:center">All agents active</td><td style="text-align:center">Architect + Outreach, deep work</td></tr>
+</table>
+</div>
+
+<!-- Slide 4: ACMM Levels & the Proxy -->
+<div class="slide" id="s4">
+<h1>ACMM Levels &amp; the Proxy</h1>
+<p>The <span class="accent">AI-native Codebase Maturity Model</span> - 6 levels from brainstorming to fully autonomous.</p>
+<p style="margin-bottom:16px">The <span class="accent">ACMM Proxy</span> sits between agents and GitHub, enforcing level constraints and preventing rogue behavior.</p>
+<table>
+<tr><th>Level</th><th>Name</th><th>Agents</th><th>Allowed Actions</th></tr>
+<tr><td class="accent" style="font-weight:600">L1</td><td>Assisted</td><td>2</td><td>Advisory only. Guide + Brainstorm.</td></tr>
+<tr><td class="accent" style="font-weight:600">L2</td><td>Instructed</td><td>5</td><td>Advisory beads on dashboard. No GitHub writes.</td></tr>
+<tr><td class="accent" style="font-weight:600">L3</td><td>Measured</td><td>6</td><td>Quality opens hold-gated PRs. CI gates begin.</td></tr>
+<tr><td class="accent" style="font-weight:600">L4</td><td>Adaptive</td><td>7</td><td>Agents open issues. Sec-check joins.</td></tr>
+<tr><td class="accent" style="font-weight:600">L5</td><td>Semi-Automated</td><td>9</td><td>PRs with <code>hold</code> label. Human batch-review.</td></tr>
+<tr><td class="accent" style="font-weight:600">L6</td><td>Autonomous</td><td>10</td><td>Auto-merge on green CI. Full fleet.</td></tr>
+</table>
+<p style="margin-top:16px">Agents cannot bypass their level - the proxy blocks unauthorized PRs, issues, and merges.</p>
+<blockquote>Paper: <a href="https://arxiv.org/abs/2604.09388">The AI Codebase Maturity Model</a></blockquote>
+</div>
+
+<!-- Slide 5: Level 1: Inception & Spec-Kit -->
+<div class="slide" id="s5">
+<h1>Level 1: Inception (Brainstorming) &amp; Spec-Kit</h1>
+<h3>Inception - onboarding a project into Hive</h3>
+<table>
+<tr><th>Phase</th><th>What Happens</th></tr>
+<tr><td class="accent" style="font-weight:600">Capture</td><td>Provide the raw idea or existing repo URL</td></tr>
+<tr><td class="accent" style="font-weight:600">Clarify</td><td>Brainstorm generates 5-7 questions; you answer</td></tr>
+<tr><td class="accent" style="font-weight:600">Structure</td><td>Creates knowledge base facts (vision, requirements, constraints)</td></tr>
+<tr><td class="accent" style="font-weight:600">Scaffold</td><td>Generates bootstrap files (README, CLAUDE.md, CI, tests)</td></tr>
+<tr><td class="accent" style="font-weight:600">Complete</td><td>Inception done, agents ready</td></tr>
+</table>
+<p style="margin-top:16px">Two modes: <span class="accent" style="font-weight:600">greenfield</span> (new idea, no repo) or <span class="accent" style="font-weight:600">brownfield</span> (existing repo, extract facts).</p>
+<h3 style="margin-top:24px">Spec-Kit - structured artifacts generated at L1</h3>
+<p><code>specs/CONSTITUTION.md</code> - immutable principles | <code>specs/SPEC.md</code> - requirements</p>
+<p><code>specs/PLAN.md</code> - implementation steps | <code>specs/TASKS.md</code> - task breakdown</p>
+<p style="margin-top:16px">These artifacts bootstrap the <span class="accent" style="font-weight:600">LLM-Wiki</span> knowledge layer.</p>
+</div>
+
+<!-- Slide 6: LLM-Wiki: The Knowledge Layer -->
+<div class="slide" id="s6">
+<h1>LLM-Wiki: The Knowledge Layer</h1>
+<p>A 4-layer wiki (powered by <code>llm-wiki</code>) giving agents <span class="accent" style="font-weight:600">shared memory</span>.</p>
+<p style="margin-bottom:16px">Injected as markdown into every agent's work order from L2 onward.</p>
+<table>
+<tr><th>Layer</th><th>Scope</th><th>Source</th></tr>
+<tr><td class="accent" style="font-weight:600">Personal</td><td>Private</td><td>User edits</td></tr>
+<tr><td class="accent" style="font-weight:600">Project</td><td>Repo</td><td>Auto-extracted from merged PRs</td></tr>
+<tr><td class="accent" style="font-weight:600">Org</td><td>Team</td><td>Auto-promoted (confidence >= 0.9)</td></tr>
+<tr><td class="accent" style="font-weight:600">Community</td><td>Public</td><td>PR-based contributions</td></tr>
+</table>
+<p style="margin-top:16px">Precedence: personal &gt; project &gt; org &gt; community</p>
+<h3 style="margin-top:24px">Fact types evolve as the project matures</h3>
+<table>
+<tr><th>Ideation (L1)</th><th>Operational (L2+)</th><th>Evolution</th></tr>
+<tr><td>idea, vision, constitution</td><td>pattern, gotcha, decision</td><td>acceptance -&gt; test_scaffold</td></tr>
+<tr><td>requirement, constraint</td><td>regression, integration</td><td>constraint -&gt; gotcha</td></tr>
+<tr><td>stakeholder, acceptance</td><td>test_scaffold, coverage_rule</td><td>constitution -&gt; decision</td></tr>
+</table>
+</div>
+
+<!-- Slide 7: Beads & Advisory Mode -->
+<div class="slide" id="s7">
+<h1>Beads &amp; Advisory Mode</h1>
+<h3>Beads - the coordination ledger</h3>
+<p style="margin-bottom:16px">A git-backed work tracker that keeps agents from stepping on each other.</p>
+<table>
+<tr><th>Field</th><th>Values</th></tr>
+<tr><td class="accent" style="font-weight:600">type</td><td>bug, feature, task, advisory</td></tr>
+<tr><td class="accent" style="font-weight:600">status</td><td>open, in_progress, blocked, done, closed</td></tr>
+<tr><td class="accent" style="font-weight:600">priority</td><td>0 (critical) to 4 (minor)</td></tr>
+<tr><td class="accent" style="font-weight:600">actor</td><td>scanner, quality, architect, ...</td></tr>
+<tr><td class="accent" style="font-weight:600">metadata</td><td>pr_ref, test_status, contributor_engaged</td></tr>
+</table>
+<p style="margin-top:16px">Agents <strong>claim</strong> beads before work. Skip what peers claimed. Dashboard shows real-time progress.</p>
+<h2 style="margin-top:24px;font-size:1.8rem">Advisory Mode (L1-L3)</h2>
+<ul>
+<li>All findings go to beads, not GitHub - proxy blocks writes</li>
+<li>Governor posts a single <span class="accent" style="font-weight:600">Advisory Digest Issue</span> consolidating all agent findings</li>
+<li>Operators review and decide what to act on - system proposes, humans dispose</li>
+</ul>
+</div>
+
+<!-- Slide 8: Relay, Snapshots & Leaderboard -->
+<div class="slide" id="s8">
+<h1>Relay, Snapshots &amp; Leaderboard</h1>
+<h3>Relay - contributors donate compute to hives they care about</h3>
+<ol>
+<li>Browse hives</li>
+<li>Authenticate with GitHub</li>
+<li>WebSocket relay connects CLI to hive</li>
+<li>Hive assigns tasks</li>
+<li>Report back, get next</li>
+</ol>
+<p style="margin-top:12px">Credentials never leave your machine. Relay is scoped to the contributor's GitHub permissions for each repo.</p>
+<p style="margin-top:16px"><span class="accent" style="font-weight:600">Trust tiers</span> (auto-promote): Newcomer -&gt; Contributor (5 tasks) -&gt; Trusted (20 + vouched)</p>
+<h3 style="margin-top:24px">Dashboard Snapshots</h3>
+<ul>
+<li>15-min intervals, 30-day retention (2,880 data points)</li>
+<li>Governor mode, agent states, token usage, CI health</li>
+<li>Published as self-contained HTML pages</li>
+</ul>
+<h3 style="margin-top:24px">Cross-Hive Leaderboard</h3>
+<ul>
+<li>Hub aggregates contributor metrics across all registered hives</li>
+<li>Tracks tasks completed, trust tier, last active - sorted by contribution</li>
+<li>Contributors build reputation across the entire Hive network</li>
+</ul>
+</div>
+
+<!-- Slide 9: Hive: Enterprise Scale -->
+<div class="slide" id="s9">
+<h1>Hive: Enterprise Scale</h1>
+<div style="display:flex;align-items:center;gap:40px;margin-bottom:16px">
+<img src="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/assets/logos/vllm-logo-text-light.png" alt="vLLM" style="height:56px">
+<img src="https://raw.githubusercontent.com/llm-d/llm-d/main/docs/assets/images/llm-d-logo.png" alt="llm-d" style="height:56px">
+</div>
+<p style="margin-bottom:20px">Hive supports <span class="accent" style="font-weight:600">self-hosted LLM inference on Kubernetes GPU clusters</span>.</p>
+<ul style="margin-bottom:28px">
+<li><span class="accent" style="font-weight:600">vLLM</span> - high-throughput serving on GPU (or llama.cpp on CPU)</li>
+<li><span class="accent" style="font-weight:600">llm-d</span> - Kubernetes-native inference routing via InferencePool + EPP</li>
+<li><span class="accent" style="font-weight:600">API Proxy</span> - translates Anthropic Messages API to OpenAI Chat Completions</li>
+<li><span class="accent" style="font-weight:600">ACP</span> - agent-to-agent communication protocol</li>
+</ul>
+<table>
+<tr><th></th><th>Docker/Kubernetes</th><th>Kubernetes + vLLM + llm-d</th></tr>
+<tr><td class="accent" style="font-weight:600">Inference</td><td>Cloud API</td><td>Self-hosted GPU clusters</td></tr>
+<tr><td class="accent" style="font-weight:600">Scale</td><td>1 hive, ~10 repos</td><td>Hundreds of hives, thousands of repos</td></tr>
+<tr><td class="accent" style="font-weight:600">Cost</td><td>Per-token billing</td><td>Fixed GPU fleet, amortized</td></tr>
+<tr><td class="accent" style="font-weight:600">Privacy</td><td>Code sent to provider</td><td>Code stays on-prem</td></tr>
+</table>
+</div>
+
+<!-- Slide 10: Demo Time -->
+<div class="slide center" id="s10">
+<h1 style="font-size:3.2rem">Demo Time</h1>
+<p style="font-size:1.2rem;color:#8b949e;margin-bottom:24px">hive.kubestellar.io</p>
+<p><span class="accent" style="font-weight:600;font-size:1.5rem">Andy Anderson</span> - <a href="mailto:andy@clubanderson.com" style="font-size:1.3rem">andy@clubanderson.com</a></p>
+<p style="margin-top:8px"><a href="https://arxiv.org/abs/2604.09388">arxiv.org/abs/2604.09388</a> | <a href="https://github.com/kubestellar/hive">github.com/kubestellar/hive</a></p>
+</div>
+
+</div>
+
+<!-- Navigation -->
+<div class="nav">
+<button onclick="prev()">&#9664;</button>
+<span id="counter">Page 1 of 10</span>
+<button onclick="next()">&#9654;</button>
+</div>
+<div class="page-num" id="pageNum">1</div>
+
+<script>
+let current=0;const total=10;
+function show(n){
+  document.querySelectorAll('.slide').forEach(s=>s.classList.remove('active'));
+  document.getElementById('s'+(n+1)).classList.add('active');
+  document.getElementById('counter').textContent='Page '+(n+1)+' of '+total;
+  document.getElementById('pageNum').textContent=n+1;
+  history.replaceState(null,null,'#'+(n+1));
+}
+function next(){if(current<total-1){current++;show(current)}}
+function prev(){if(current>0){current--;show(current)}}
+document.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'||e.key===' ')next();
+  if(e.key==='ArrowLeft')prev();
+});
+// Handle hash on load
+const h=parseInt(location.hash.replace('#',''));
+if(h>=1&&h<=total){current=h-1;show(current)}
+</script>
+</body>
+</html>
