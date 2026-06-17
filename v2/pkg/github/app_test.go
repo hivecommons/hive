@@ -37,7 +37,7 @@ func TestNewAppAuth_ValidKey(t *testing.T) {
 	tmpFile.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	auth, err := NewAppAuth(12345, 67890, tmpFile.Name(), logger)
+	auth, err := NewAppAuth(12345, 67890, tmpFile.Name(), logger, "")
 	if err != nil {
 		t.Fatalf("NewAppAuth: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestNewAppAuth_PKCS8Key(t *testing.T) {
 	tmpFile.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	auth, err := NewAppAuth(1, 2, tmpFile.Name(), logger)
+	auth, err := NewAppAuth(1, 2, tmpFile.Name(), logger, "")
 	if err != nil {
 		t.Fatalf("NewAppAuth PKCS8: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestNewAppAuth_PKCS8Key(t *testing.T) {
 
 func TestNewAppAuth_FileNotFound(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	_, err := NewAppAuth(1, 2, "/nonexistent/key.pem", logger)
+	_, err := NewAppAuth(1, 2, "/nonexistent/key.pem", logger, "")
 	if err == nil {
 		t.Error("expected error for missing file")
 	}
@@ -104,7 +104,7 @@ func TestNewAppAuth_NoPEMBlock(t *testing.T) {
 	tmpFile.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	_, err = NewAppAuth(1, 2, tmpFile.Name(), logger)
+	_, err = NewAppAuth(1, 2, tmpFile.Name(), logger, "")
 	if err == nil {
 		t.Error("expected error for invalid PEM")
 	}
@@ -123,7 +123,7 @@ func TestNewAppAuth_InvalidKeyBytes(t *testing.T) {
 	tmpFile.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	_, err = NewAppAuth(1, 2, tmpFile.Name(), logger)
+	_, err = NewAppAuth(1, 2, tmpFile.Name(), logger, "")
 	if err == nil {
 		t.Error("expected error for garbage key bytes")
 	}

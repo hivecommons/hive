@@ -598,7 +598,7 @@ func (s *Server) handleContributeReissueToken(w http.ResponseWriter, r *http.Req
 		token = ""
 	}
 
-	username := validateGitHubToken(token)
+	username := validateGitHubToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
 	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -1759,7 +1759,9 @@ type ghTokenCacheEntry struct {
 	expiresAt time.Time
 }
 
-func validateGitHubToken(token string) string {
+// validateGitHubToken checks a token against the GitHub API user endpoint.
+// apiURL overrides the API base for GHE; pass empty for default github.com.
+func validateGitHubToken(token, apiURL string) string {
 	if token == "" {
 		return ""
 	}
@@ -1771,8 +1773,14 @@ func validateGitHubToken(token string) string {
 	}
 	ghTokenCacheMu.RUnlock()
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	userEndpoint := "https://api.github.com/user"
+	if apiURL != "" && apiURL != "https://api.github.com" {
+		userEndpoint = apiURL + "/user"
+	}
+
+	const tokenValidateTimeout = 10 * time.Second
+	client := &http.Client{Timeout: tokenValidateTimeout}
+	req, err := http.NewRequest("GET", userEndpoint, nil)
 	if err != nil {
 		return ""
 	}
@@ -1809,7 +1817,7 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		token = r.URL.Query().Get("token")
 	}
 
-	username := validateGitHubToken(token)
+	username := validateGitHubToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
 	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)

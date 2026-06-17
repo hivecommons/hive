@@ -15,11 +15,31 @@ const deviceFlowHTTPTimeout = 15 * time.Second
 var deviceFlowClient = &http.Client{Timeout: deviceFlowHTTPTimeout}
 
 const (
-	deviceCodeURL = "https://github.com/login/device/code"
-	tokenURL      = "https://github.com/login/oauth/access_token"
-	userURL       = "https://api.github.com/user"
-	deviceScope   = "repo"
+	// defaultDeviceCodeURL is the GitHub.com device flow code endpoint.
+	defaultDeviceCodeURL = "https://github.com/login/device/code"
+	// defaultTokenURL is the GitHub.com OAuth token exchange endpoint.
+	defaultTokenURL = "https://github.com/login/oauth/access_token"
+	// defaultUserURL is the GitHub.com API user endpoint.
+	defaultUserURL = "https://api.github.com/user"
+	deviceScope    = "repo"
 )
+
+// deviceFlowURLs derives the device flow endpoints from a custom base URL.
+// If baseURL is empty or the default (https://github.com), the standard
+// github.com URLs are returned.
+func deviceFlowURLs(baseURL, apiURL string) (codeURL, tokURL, uURL string) {
+	codeURL = defaultDeviceCodeURL
+	tokURL = defaultTokenURL
+	uURL = defaultUserURL
+	if baseURL != "" && baseURL != "https://github.com" {
+		codeURL = baseURL + "/login/device/code"
+		tokURL = baseURL + "/login/oauth/access_token"
+	}
+	if apiURL != "" && apiURL != "https://api.github.com" {
+		uURL = apiURL + "/user"
+	}
+	return
+}
 
 type DeviceFlowState struct {
 	DeviceCode      string `json:"device_code"`
@@ -29,12 +49,16 @@ type DeviceFlowState struct {
 	Interval        int    `json:"interval"`
 }
 
-func StartDeviceFlow(clientID string) (*DeviceFlowState, error) {
+// StartDeviceFlow initiates GitHub device flow authentication.
+// baseURL and apiURL allow overriding endpoints for GHE; pass empty strings
+// for default github.com behavior.
+func StartDeviceFlow(clientID, baseURL, apiURL string) (*DeviceFlowState, error) {
+	codeURL, _, _ := deviceFlowURLs(baseURL, apiURL)
 	data := url.Values{
 		"client_id": {clientID},
 		"scope":     {deviceScope},
 	}
-	req, err := http.NewRequest("POST", deviceCodeURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", codeURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -73,13 +97,17 @@ type pollResponse struct {
 	ErrorDesc   string `json:"error_description"`
 }
 
-func PollDeviceFlow(clientID, deviceCode string) (token string, status string, err error) {
+// PollDeviceFlow polls for a completed device flow token exchange.
+// baseURL and apiURL allow overriding endpoints for GHE; pass empty strings
+// for default github.com behavior.
+func PollDeviceFlow(clientID, deviceCode, baseURL, apiURL string) (token string, status string, err error) {
+	_, tokURL, _ := deviceFlowURLs(baseURL, apiURL)
 	data := url.Values{
 		"client_id":   {clientID},
 		"device_code": {deviceCode},
 		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 	}
-	req, err := http.NewRequest("POST", tokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", tokURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", "", err
 	}
@@ -116,8 +144,12 @@ type GitHubUser struct {
 	AvatarURL string `json:"avatar_url"`
 }
 
-func ValidateToken(token string) (*GitHubUser, error) {
-	req, err := http.NewRequest("GET", userURL, nil)
+// ValidateToken validates a GitHub token by fetching the authenticated user.
+// apiURL allows overriding the API endpoint for GHE; pass empty string for
+// default github.com behavior.
+func ValidateToken(token, apiURL string) (*GitHubUser, error) {
+	_, _, uURL := deviceFlowURLs("", apiURL)
+	req, err := http.NewRequest("GET", uURL, nil)
 	if err != nil {
 		return nil, err
 	}

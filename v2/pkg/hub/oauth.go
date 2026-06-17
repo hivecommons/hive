@@ -12,9 +12,12 @@ import (
 )
 
 const (
-	ghAuthorizeURL   = "https://github.com/login/oauth/authorize"
-	ghTokenURL       = "https://github.com/login/oauth/access_token"
-	ghUserURL        = "https://api.github.com/user"
+	// defaultGHAuthorizeURL is the GitHub.com OAuth authorization endpoint.
+	defaultGHAuthorizeURL = "https://github.com/login/oauth/authorize"
+	// defaultGHTokenURL is the GitHub.com OAuth token exchange endpoint.
+	defaultGHTokenURL = "https://github.com/login/oauth/access_token"
+	// defaultGHUserURL is the GitHub.com API user endpoint.
+	defaultGHUserURL = "https://api.github.com/user"
 	oauthTimeout     = 10 * time.Second
 	cookieMaxAgeDays = 7 // login session cookie lifetime
 )
@@ -43,7 +46,7 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	state := url.QueryEscape(redirect)
 	authURL := fmt.Sprintf("%s?client_id=%s&scope=read:user&redirect_uri=%s&state=%s",
-		ghAuthorizeURL, clientID, "https://hive.kubestellar.io/api/auth/callback", state)
+		defaultGHAuthorizeURL, clientID, "https://hive.kubestellar.io/api/auth/callback", state)
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }
 
@@ -57,7 +60,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("HIVE_HUB_OAUTH_CLIENT_SECRET")
 
-	tokenReq, _ := http.NewRequest("POST", ghTokenURL, nil)
+	tokenReq, _ := http.NewRequest("POST", defaultGHTokenURL, nil)
 	q := tokenReq.URL.Query()
 	q.Set("client_id", clientID)
 	q.Set("client_secret", clientSecret)
@@ -93,7 +96,7 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	userReq, _ := http.NewRequest("GET", ghUserURL, nil)
+	userReq, _ := http.NewRequest("GET", defaultGHUserURL, nil)
 	userReq.Header.Set("Authorization", "Bearer "+tokenResp.AccessToken)
 	userResp, err := client.Do(userReq)
 	if err != nil {

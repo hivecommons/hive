@@ -30,17 +30,18 @@ type AppAuth struct {
 	key            *rsa.PrivateKey
 	logger         *slog.Logger
 	cachePath      string
+	apiURL         string // custom GitHub API URL for GHE; empty means default (github.com)
 
 	mu          sync.RWMutex
 	cachedToken string
 	tokenExpiry time.Time
 }
 
-func NewAppAuth(appID, installationID int64, keyFile string, logger *slog.Logger) (*AppAuth, error) {
-	return NewAppAuthWithCache(appID, installationID, keyFile, TokenCachePath, logger)
+func NewAppAuth(appID, installationID int64, keyFile string, logger *slog.Logger, apiURL string) (*AppAuth, error) {
+	return NewAppAuthWithCache(appID, installationID, keyFile, TokenCachePath, logger, apiURL)
 }
 
-func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string, logger *slog.Logger) (*AppAuth, error) {
+func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string, logger *slog.Logger, apiURL string) (*AppAuth, error) {
 	keyData, err := os.ReadFile(keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("reading app key %s: %w", keyFile, err)
@@ -70,6 +71,7 @@ func NewAppAuthWithCache(appID, installationID int64, keyFile, cachePath string,
 		key:            key,
 		logger:         logger,
 		cachePath:      cachePath,
+		apiURL:         apiURL,
 	}, nil
 }
 
@@ -107,6 +109,7 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	}
 
 	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
+	setBaseURL(jwtClient, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, nil)
 	if err != nil {
 		return "", fmt.Errorf("creating installation token: %w", err)
@@ -175,6 +178,7 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 
 	opts := &gh.InstallationTokenOptions{Permissions: perms}
 	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
+	setBaseURL(jwtClient, a.apiURL)
 	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, opts)
 	if err != nil {
 		return "", fmt.Errorf("creating scoped token for tier %s: %w", tier, err)
@@ -208,6 +212,7 @@ func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Lo
 	const appClientTimeout = 30 * time.Second
 	httpClient := &http.Client{Transport: transport, Timeout: appClientTimeout}
 	client := gh.NewClient(httpClient)
+	setBaseURL(client, auth.apiURL)
 
 	return &Client{
 		client: client,

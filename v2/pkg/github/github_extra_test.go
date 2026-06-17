@@ -8,7 +8,7 @@ import (
 )
 
 func TestSetRepos(t *testing.T) {
-	c := NewClient("token", "testorg", []string{"repo1"}, slog.Default())
+	c := NewClient("token", "testorg", []string{"repo1"}, slog.Default(), "")
 	repos := c.getRepos()
 	if len(repos) != 1 || repos[0] != "repo1" {
 		t.Errorf("initial repos = %v", repos)
@@ -22,7 +22,7 @@ func TestSetRepos(t *testing.T) {
 }
 
 func TestSplitRepo(t *testing.T) {
-	c := NewClient("token", "defaultorg", nil, slog.Default())
+	c := NewClient("token", "defaultorg", nil, slog.Default(), "")
 
 	owner, repo := c.splitRepo("myorg/myrepo")
 	if owner != "myorg" || repo != "myrepo" {
@@ -36,19 +36,19 @@ func TestSplitRepo(t *testing.T) {
 }
 
 func TestPrimaryRepoExtended(t *testing.T) {
-	c := NewClient("token", "org", []string{"first", "second"}, slog.Default())
+	c := NewClient("token", "org", []string{"first", "second"}, slog.Default(), "")
 	if got := c.primaryRepo(); got != "first" {
 		t.Errorf("primaryRepo = %q, want first", got)
 	}
 
-	c2 := NewClient("token", "org", nil, slog.Default())
+	c2 := NewClient("token", "org", nil, slog.Default(), "")
 	if got := c2.primaryRepo(); got != "console" {
 		t.Errorf("primaryRepo empty = %q, want console", got)
 	}
 }
 
 func TestGetReposCopy(t *testing.T) {
-	c := NewClient("token", "org", []string{"a", "b"}, slog.Default())
+	c := NewClient("token", "org", []string{"a", "b"}, slog.Default(), "")
 	repos := c.getRepos()
 	repos[0] = "modified"
 	original := c.getRepos()
@@ -90,7 +90,7 @@ func TestIsHeldExtended(t *testing.T) {
 }
 
 func TestNewClientBasic(t *testing.T) {
-	c := NewClient("token", "org", []string{"repo"}, slog.Default())
+	c := NewClient("token", "org", []string{"repo"}, slog.Default(), "")
 	if c == nil {
 		t.Fatal("NewClient returned nil")
 	}

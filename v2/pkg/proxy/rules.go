@@ -22,6 +22,15 @@ var githubHosts = map[string]bool{
 	"github.com":     true,
 }
 
+// RegisterGitHubHost adds a custom hostname (e.g. GHE instance) to the
+// allowlist so that the proxy applies mode enforcement to it.
+func RegisterGitHubHost(host string) {
+	if host == "" {
+		return
+	}
+	githubHosts[host] = true
+}
+
 // IsGitHubHost returns true if the host should be subject to mode enforcement.
 func IsGitHubHost(host string) bool {
 	return githubHosts[host]

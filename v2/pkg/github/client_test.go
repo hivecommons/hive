@@ -20,7 +20,7 @@ import (
 func newTestClient(t *testing.T, server *httptest.Server, org string, repos []string) *Client {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	c := NewClient("fake-token", org, repos, logger)
+	c := NewClient("fake-token", org, repos, logger, "")
 	base, err := url.Parse(server.URL + "/")
 	if err != nil {
 		t.Fatalf("parse server URL: %v", err)
@@ -86,7 +86,7 @@ func hoursAgo(h float64) string {
 
 func TestNewClient(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	c := NewClient("tok", "myorg", []string{"repo1", "repo2"}, logger)
+	c := NewClient("tok", "myorg", []string{"repo1", "repo2"}, logger, "")
 	if c == nil {
 		t.Fatal("NewClient returned nil")
 	}
@@ -229,7 +229,7 @@ func TestEnumerateActionable_EmptyRepos(t *testing.T) {
 	defer server.Close()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	c := NewClient("tok", "org", []string{}, logger)
+	c := NewClient("tok", "org", []string{}, logger, "")
 	base, _ := url.Parse(server.URL + "/")
 	c.client.BaseURL = base
 

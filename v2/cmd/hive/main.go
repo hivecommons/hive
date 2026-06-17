@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -108,7 +109,7 @@ func main() {
 			keyFile = "/secrets/gh-app-key.pem"
 		}
 		var err error
-		appAuth, err = github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyFile, logger)
+		appAuth, err = github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyFile, logger, cfg.GitHub.ResolvedAPIURL())
 		if err != nil {
 			logger.Error("failed to init GitHub App auth", "error", err)
 			os.Exit(1)
@@ -119,7 +120,7 @@ func main() {
 		if cfg.GitHub.DocsInstallationID != 0 {
 			docsAuth, err := github.NewAppAuthWithCache(
 				cfg.GitHub.AppID, cfg.GitHub.DocsInstallationID,
-				keyFile, github.DocsTokenCachePath, logger,
+				keyFile, github.DocsTokenCachePath, logger, cfg.GitHub.ResolvedAPIURL(),
 			)
 			if err != nil {
 				logger.Warn("failed to init docs org token", "error", err)
@@ -155,7 +156,7 @@ func main() {
 			logger.Error("no GitHub token configured (set github.token or github.app_id in config)")
 			os.Exit(1)
 		}
-		ghClient = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger)
+		ghClient = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
 	}
 	if len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
@@ -165,8 +166,8 @@ func main() {
 	if tokenData, err := os.ReadFile("/data/gh-user-token"); err == nil {
 		userToken := strings.TrimSpace(string(tokenData))
 		if userToken != "" {
-			if username, err := github.ValidateToken(userToken); err == nil {
-				uc := github.NewClient(userToken, cfg.Project.Org, cfg.Project.Repos, logger)
+			if username, err := github.ValidateToken(userToken, cfg.GitHub.ResolvedAPIURL()); err == nil {
+				uc := github.NewClient(userToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
 				userGHClient.Store(uc)
 				logger.Info("user GitHub token loaded for advisory posting", "username", username)
 			} else {
@@ -714,7 +715,7 @@ func main() {
 			initAgentConfigDrivenSystems(cfg)
 		},
 		SetUserClient: func(token string) {
-			uc := github.NewClient(token, cfg.Project.Org, cfg.Project.Repos, logger)
+			uc := github.NewClient(token, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
 			userGHClient.Store(uc)
 			logger.Info("user GitHub client updated via device flow")
 		},
@@ -853,6 +854,14 @@ func main() {
 	}, logger)
 	dashSrv.SetSkipReloadFunc(configWatcher.SkipNext)
 	go configWatcher.Start(ctx)
+
+	// Register custom GHE hostnames with the proxy allowlist so mode
+	// enforcement applies to GitHub Enterprise API and web requests.
+	for _, rawURL := range []string{cfg.GitHub.ResolvedAPIURL(), cfg.GitHub.ResolvedBaseURL()} {
+		if parsed, err := url.Parse(rawURL); err == nil && parsed.Host != "" {
+			proxy.RegisterGitHubHost(parsed.Host)
+		}
+	}
 
 	githubProxy, err := proxy.NewGitHubProxy(logger, cfg.Project.Org, cfg.Project.Repos)
 	if err != nil {
@@ -994,7 +1003,7 @@ func main() {
 					if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
 						tok := strings.TrimSpace(string(td))
 						if tok != "" {
-							if u, err := github.ValidateToken(tok); err == nil {
+							if u, err := github.ValidateToken(tok, cfg.GitHub.ResolvedAPIURL()); err == nil {
 								return u.Login
 							}
 						}

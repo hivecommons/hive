@@ -1153,7 +1153,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	token := strings.TrimSpace(string(tokenData))
-	user, err := github.ValidateToken(token)
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
 	if err != nil {
 		jsonResponse(w, map[string]interface{}{"logged_in": false, "error": "token expired or revoked"})
 		return
@@ -1171,7 +1171,7 @@ func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
 	s.deviceFlowMu.Lock()
 	defer s.deviceFlowMu.Unlock()
 
-	state, err := github.StartDeviceFlow(clientID)
+	state, err := github.StartDeviceFlow(clientID, s.deps.Config.GitHub.ResolvedBaseURL(), s.deps.Config.GitHub.ResolvedAPIURL())
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1195,7 +1195,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientID := s.deps.Config.GitHub.OAuthClientID
-	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode)
+	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.ResolvedBaseURL(), s.deps.Config.GitHub.ResolvedAPIURL())
 	if err != nil {
 		s.deviceFlowState = nil
 		jsonResponse(w, map[string]interface{}{"status": "error", "error": err.Error()})
@@ -1220,7 +1220,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, _ := github.ValidateToken(token)
+	user, _ := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
 	s.deviceFlowState = nil
 	username := ""
 	avatarURL := ""
@@ -1261,7 +1261,7 @@ func (s *Server) restoreGHUserSession() {
 		return
 	}
 
-	user, err := github.ValidateToken(token)
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
 	if err != nil {
 		s.deps.Logger.Warn("saved GitHub user token is invalid, removing", "error", err)
 		os.Remove(userTokenPath)

@@ -102,8 +102,12 @@ var exemptFiles = []string{"ADOPTERS.md", "ADOPTERS.MD"}
 
 const slaThresholdMinutes = 30
 
-func NewClient(token string, org string, repos []string, logger *slog.Logger) *Client {
+// NewClient creates a GitHub API client. If apiURL is non-empty and differs
+// from the default (https://api.github.com), the client's BaseURL and
+// UploadURL are overridden for GitHub Enterprise compatibility.
+func NewClient(token string, org string, repos []string, logger *slog.Logger, apiURL string) *Client {
 	client := gh.NewClient(nil).WithAuthToken(token)
+	setBaseURL(client, apiURL)
 	return &Client{
 		client: client,
 		org:    org,
@@ -112,10 +116,30 @@ func NewClient(token string, org string, repos []string, logger *slog.Logger) *C
 	}
 }
 
+// setBaseURL configures a go-github client for a custom API URL (GHE).
+// If apiURL is empty or the default, no change is made.
+func setBaseURL(client *gh.Client, apiURL string) {
+	if apiURL == "" || apiURL == "https://api.github.com" {
+		return
+	}
+	// Ensure trailing slash for url.Parse compatibility.
+	normalized := apiURL
+	if !strings.HasSuffix(normalized, "/") {
+		normalized += "/"
+	}
+	base, err := url.Parse(normalized)
+	if err != nil {
+		return
+	}
+	client.BaseURL = base
+	// Upload URL follows the same base for GHE instances.
+	client.UploadURL = base
+}
+
 // NewClientForTest creates a client pointing at a test server. Exported for
 // cross-package testing (e.g. dashboard tests that need a mock GH client).
 func NewClientForTest(serverURL string, org string, repos []string, logger *slog.Logger) *Client {
-	c := NewClient("fake", org, repos, logger)
+	c := NewClient("fake", org, repos, logger, "")
 	base, err := url.Parse(serverURL + "/")
 	if err != nil {
 		panic("bad test server URL: " + err.Error())

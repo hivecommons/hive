@@ -314,6 +314,35 @@ type GitHubConfig struct {
 	KeyFile              string `yaml:"key_file"`
 	Token                string `yaml:"token"`
 	OAuthClientID        string `yaml:"oauth_client_id"`
+	// APIURL is the GitHub API base URL. Defaults to DefaultGitHubAPIURL.
+	// For GitHub Enterprise, set to e.g. "https://github.ibm.com/api/v3".
+	APIURL string `yaml:"api_url"`
+	// BaseURL is the GitHub web base URL. Defaults to DefaultGitHubBaseURL.
+	// For GitHub Enterprise, set to e.g. "https://github.ibm.com".
+	BaseURL string `yaml:"base_url"`
+}
+
+const (
+	// DefaultGitHubAPIURL is the default GitHub API endpoint (public github.com).
+	DefaultGitHubAPIURL = "https://api.github.com"
+	// DefaultGitHubBaseURL is the default GitHub web URL (public github.com).
+	DefaultGitHubBaseURL = "https://github.com"
+)
+
+// ResolvedAPIURL returns the configured API URL or the default for github.com.
+func (g GitHubConfig) ResolvedAPIURL() string {
+	if g.APIURL != "" {
+		return g.APIURL
+	}
+	return DefaultGitHubAPIURL
+}
+
+// ResolvedBaseURL returns the configured base URL or the default for github.com.
+func (g GitHubConfig) ResolvedBaseURL() string {
+	if g.BaseURL != "" {
+		return g.BaseURL
+	}
+	return DefaultGitHubBaseURL
 }
 
 type NotificationsConfig struct {

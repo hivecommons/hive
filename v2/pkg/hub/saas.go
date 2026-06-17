@@ -245,7 +245,8 @@ func (s *HubServer) validateGitHubToken(token string) string {
 	ghTokenCacheMu.RUnlock()
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	// Hub always validates tokens against github.com (the hub is a SaaS service).
+	req, err := http.NewRequest("GET", defaultGHUserURL, nil)
 	if err != nil {
 		return ""
 	}
