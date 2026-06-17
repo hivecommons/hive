@@ -1921,6 +1921,7 @@
       <div class="gh-app-title">GitHub App Not Installed</div>
       <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.</div>
     </div>
+    <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:#374151;margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
   <div class="governor" id="governor"></div>
@@ -3463,6 +3464,25 @@
       } else {
         banner.setAttribute('hidden', '');
         banner.style.cssText = 'display:none';
+      }
+    }
+
+    async function recheckGitHubApp() {
+      var btn = document.getElementById('gh-app-recheck-btn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+      try {
+        var resp = await fetch('/api/github-app/recheck', { method: 'POST' });
+        var data = await resp.json();
+        if (data.status === 'installed') {
+          var banner = document.getElementById('gh-app-install-banner');
+          if (banner) { banner.setAttribute('hidden', ''); banner.style.cssText = 'display:none'; }
+        } else {
+          if (btn) btn.textContent = 'Not found — try again';
+        }
+      } catch(e) {
+        if (btn) btn.textContent = 'Error — try again';
+      } finally {
+        if (btn) { btn.disabled = false; setTimeout(function() { btn.textContent = 'Re-check'; }, 3000); }
       }
     }
 

@@ -742,6 +742,62 @@ func main() {
 
 	dashSrv.SetGitHubAppRequired(githubAppRequired)
 
+	// Wire up the manual re-check callback for the dashboard button.
+	{
+		recheckRepo := cfg.Project.PrimaryRepo
+		if recheckRepo == "" && len(cfg.Project.Repos) > 0 {
+			recheckRepo = cfg.Project.Repos[0]
+		}
+		if recheckRepo != "" {
+			dashSrv.SetGitHubAppRecheckFn(func() bool {
+				num, err := ghClient.EnsureAdvisoryIssue(ctx, recheckRepo)
+				if err != nil {
+					logger.Debug("github app recheck: not accessible", "repo", recheckRepo, "error", err)
+					return false
+				}
+				advisoryIssues[recheckRepo] = num
+				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+				logger.Info("github app recheck: app detected", "repo", recheckRepo, "number", num)
+				return true
+			})
+		}
+	}
+
+	// Retry GitHub App check every 10 minutes when the flag is set.
+	// Stops retrying once the app is detected (advisory issue created successfully).
+	{
+		primaryRepo := cfg.Project.PrimaryRepo
+		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
+			primaryRepo = cfg.Project.Repos[0]
+		}
+		if primaryRepo != "" {
+			const appRetryInterval = 10 * time.Minute
+			go func() {
+				ticker := time.NewTicker(appRetryInterval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if !dashSrv.IsGitHubAppRequired() {
+							continue
+						}
+						num, err := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
+						if err != nil {
+							logger.Debug("github app retry: still not accessible", "repo", primaryRepo, "error", err)
+							continue
+						}
+						advisoryIssues[primaryRepo] = num
+						os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+						dashSrv.SetGitHubAppRequired(false)
+						logger.Info("github app retry: app detected, advisory issue ready", "repo", primaryRepo, "number", num)
+					}
+				}
+			}()
+		}
+	}
+
 	if brainstormBeads, ok := beadStores["brainstorm"]; ok {
 		inceptionWatcher := dashboard.NewInceptionWatcher(brainstormBeads, inceptionEngine, sched, agentMgr, gov, logger)
 		go inceptionWatcher.Run(ctx)

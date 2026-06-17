@@ -72,6 +72,8 @@ type Server struct {
 	githubAppMu         sync.RWMutex
 	githubAppRequired   bool
 	githubAppInstallURL string
+
+	githubAppRecheckFn func() bool
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
@@ -307,6 +309,7 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/health/deep", s.handleHealthDeep)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
+	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
 }
 
 func (s *Server) Start() error {
@@ -434,6 +437,25 @@ func (s *Server) IsGitHubAppRequired() bool {
 	s.githubAppMu.RLock()
 	defer s.githubAppMu.RUnlock()
 	return s.githubAppRequired
+}
+
+func (s *Server) SetGitHubAppRecheckFn(fn func() bool) {
+	s.githubAppRecheckFn = fn
+}
+
+func (s *Server) handleGitHubAppRecheck(w http.ResponseWriter, r *http.Request) {
+	if s.githubAppRecheckFn == nil {
+		http.Error(w, "recheck not configured", http.StatusNotImplemented)
+		return
+	}
+	ok := s.githubAppRecheckFn()
+	w.Header().Set("Content-Type", "application/json")
+	if ok {
+		s.SetGitHubAppRequired(false)
+		w.Write([]byte(`{"status":"installed"}`))
+	} else {
+		w.Write([]byte(`{"status":"not_installed"}`))
+	}
 }
 
 // BroadcastAgentStatus sends a lightweight agent-only SSE event on a fast
