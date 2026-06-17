@@ -1057,6 +1057,20 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hiveID := generateHiveID(req.Org, primaryRepo)
+
+	// Determine which cluster to provision on. Default to hive-oke if unspecified.
+	clusterID := req.ClusterID
+	if clusterID == "" {
+		clusterID = defaultClusterID
+	}
+	// Look up the cluster to get its domain for the subdomain.
+	cluster, clusterFound := s.clusters[clusterID]
+	if !clusterFound {
+		http.Error(w, `{"error":"unknown cluster_id"}`, http.StatusBadRequest)
+		return
+	}
+	subdomain := hiveID + "." + cluster.Domain
+
 	h := &SaaSHive{
 		ID:          hiveID,
 		Owner:       username,
@@ -1067,7 +1081,8 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		ACMMLevel:   acmm,
 		Status:      "provisioning",
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
-		Subdomain:   hiveID + ".hive.kubestellar.io",
+		Subdomain:   subdomain,
+		ClusterID:   clusterID,
 	}
 
 	if err := saveSaaSHive(h); err != nil {

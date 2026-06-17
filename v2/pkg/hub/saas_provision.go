@@ -30,6 +30,36 @@ const (
 	nfsExportPathPrefix   = "/hive-"
 	rolloutMaxSurge       = 1
 	rolloutMaxUnavailable = 0
+
+	// dynamicPVCStorage is the storage request for dynamically-provisioned PVCs (e.g. CephFS).
+	dynamicPVCStorage = "50Gi"
+
+	// dashboardPort is the port the hive dashboard listens on.
+	dashboardPort = 3002
+
+	// terminalPort is the port the hive terminal/API listens on.
+	terminalPort = 3001
+
+	// dashboardTokenBytes is the number of random bytes for dashboard auth tokens.
+	dashboardTokenBytes = 32
+
+	// ingressTypeOpenShiftRoute selects OpenShift Route generation.
+	ingressTypeOpenShiftRoute = "openshift-route"
+
+	// storageTypeDynamic selects dynamic PVC provisioning (no NFS PV).
+	storageTypeDynamic = "dynamic"
+
+	// storageTypeNFS selects NFS-backed PV + PVC provisioning.
+	storageTypeNFS = "nfs"
+
+	// initContainerUID is the UID used by the init container for chown.
+	initContainerUID = 1001
+
+	// initContainerGID is the GID used by the init container for chown.
+	initContainerGID = 1000
+
+	// sccServiceAccountName is the ServiceAccount name created for SCC-requiring clusters.
+	sccServiceAccountName = "hive-sa"
 )
 
 // defaultClusterID is the cluster ID assigned to hives that predate
@@ -63,10 +93,13 @@ type ClusterConfig struct {
 	OCIExportSet    string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
 	RequiresSCC     bool   `json:"requires_scc" yaml:"requires_scc"`
 	SCCName         string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
-	HasGPU          bool   `json:"has_gpu" yaml:"has_gpu"`
-	Arch            string `json:"arch" yaml:"arch"`
-	ImageTag        string `json:"image_tag" yaml:"image_tag"`
-	ImagePullPolicy string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`
+	HasGPU              bool   `json:"has_gpu" yaml:"has_gpu"`
+	Arch                string `json:"arch" yaml:"arch"`
+	ImageTag            string `json:"image_tag" yaml:"image_tag"`
+	ImagePullPolicy     string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`
+	InferenceEndpoint   string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
+	GitHubBaseURL       string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
+	GitHubAPIURL        string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
 }
 
 // kubectlForCluster builds an exec.Cmd that targets a specific cluster.
@@ -96,6 +129,8 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 			InCluster:   true,
 			StorageType: "nfs",
 			IngressType: "nginx",
+			IngressClass: "nginx",
+			CertIssuer:  "letsencrypt-prod",
 			Domain:      "hive.kubestellar.io",
 			Arch:        "arm64",
 			ImageTag:    "v2-latest",
@@ -164,6 +199,8 @@ type CreateHiveRequest struct {
 	AppID          string `json:"app_id"`
 	InstallationID string `json:"installation_id"`
 	AppPrivateKey  string `json:"app_private_key"`
+	ClusterID      string `json:"cluster_id"`
+	IsPublic       bool   `json:"is_public"`
 }
 
 func generateHiveID(org, repo string) string {
@@ -301,6 +338,26 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 
 	useApp := req.AuthMethod == "app" && req.AppID != "" && req.InstallationID != "" && req.AppPrivateKey != ""
 
+	// Determine the dashboard URL based on cluster domain.
+	dashboardHost := h.ID + "." + cluster.Domain
+	dashboardURL := "https://" + dashboardHost
+
+	// Determine image pull policy: explicit config wins, then remote clusters default to Always.
+	imagePullPolicy := cluster.ImagePullPolicy
+	if imagePullPolicy == "" {
+		if !cluster.InCluster {
+			imagePullPolicy = "Always"
+		} else {
+			imagePullPolicy = "IfNotPresent"
+		}
+	}
+
+	// Determine image tag from cluster config, falling back to v2-latest.
+	imageTag := cluster.ImageTag
+	if imageTag == "" {
+		imageTag = "v2-latest"
+	}
+
 	data := map[string]any{
 		"ID":             h.ID,
 		"Namespace":      "hive-hosted-" + h.ID,
@@ -319,19 +376,14 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return strings.Join(lines, "\n")
 		}(),
-		"CPURequest":           cpuRequest,
-		"CPULimit":             cpuLimit,
-		"MemRequest":           memRequest,
-		"MemLimit":             memLimit,
-		"NFSStorageCapacity":   nfsStorageCapacity,
-		"NFSMountTargetIP":     nfsMountTargetIP,
-		"NFSExportPath":        nfsExportPathPrefix + h.ID,
-		"PVName":               "hive-" + h.ID + "-fss-pv",
-		"RolloutMaxSurge":      rolloutMaxSurge,
+		"CPURequest":            cpuRequest,
+		"CPULimit":              cpuLimit,
+		"MemRequest":            memRequest,
+		"MemLimit":              memLimit,
+		"RolloutMaxSurge":       rolloutMaxSurge,
 		"RolloutMaxUnavailable": rolloutMaxUnavailable,
 		"DashboardToken": func() string {
-			const tokenBytes = 32
-			b := make([]byte, tokenBytes)
+			b := make([]byte, dashboardTokenBytes)
 			if _, err := cryptoRand.Read(b); err != nil {
 				logger.Error("failed to generate dashboard token", "error", err)
 				return ""
@@ -347,21 +399,60 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return ""
 		}(),
+		// Cluster-aware fields.
+		"DashboardHost":     dashboardHost,
+		"DashboardURL":      dashboardURL,
+		"DashboardPort":     dashboardPort,
+		"TerminalPort":      terminalPort,
+		"ImagePullPolicy":   imagePullPolicy,
+		"ImageTag":          imageTag,
+		"IsOpenShiftRoute":  cluster.IngressType == ingressTypeOpenShiftRoute,
+		"IsNginxIngress":    cluster.IngressType != ingressTypeOpenShiftRoute,
+		"IsDynamicStorage":  cluster.StorageType == storageTypeDynamic,
+		"IsNFSStorage":      cluster.StorageType == storageTypeNFS || cluster.StorageType == "",
+		"StorageClass":      cluster.StorageClass,
+		"DynamicPVCStorage": dynamicPVCStorage,
+		"NFSStorageCapacity": nfsStorageCapacity,
+		"NFSMountTargetIP":  nfsMountTargetIP,
+		"NFSExportPath":     nfsExportPathPrefix + h.ID,
+		"PVName":            "hive-" + h.ID + "-fss-pv",
+		"RequiresSCC":       cluster.RequiresSCC,
+		"SCCName": func() string {
+			if cluster.SCCName != "" {
+				return cluster.SCCName
+			}
+			return "anyuid"
+		}(),
+		"InitContainerUID":  initContainerUID,
+		"InitContainerGID":  initContainerGID,
+		"InferenceEndpoint": cluster.InferenceEndpoint,
+		"HasInference":      cluster.InferenceEndpoint != "",
+		"IsPublic":          req.IsPublic,
+		"HiveType":          "hosted",
+		"HasGHE":            cluster.GitHubBaseURL != "",
+		"GitHubBaseURL":     cluster.GitHubBaseURL,
+		"GitHubAPIURL":      cluster.GitHubAPIURL,
+		"CertIssuer":        cluster.CertIssuer,
+		"IngressClass":      cluster.IngressClass,
+		"Domain":            cluster.Domain,
+		"InCluster":         cluster.InCluster,
 	}
 
-	// Auto-create OCI File System + NFS export for this hive.
+	// For NFS storage: auto-create OCI File System + NFS export.
 	// Failures are non-fatal — the admin can create them manually.
-	exportPath := nfsExportPathPrefix + h.ID
-	fsID, err := createOCIFileSystem("hive-"+h.ID, logger)
-	if err != nil {
-		logger.Warn("OCI FSS creation failed — admin must create manually", "hive", h.ID, "error", err)
-	} else {
-		h.OCIFileSystemID = fsID
-		exportID, exportErr := createOCIExport(fsID, exportPath, logger)
-		if exportErr != nil {
-			logger.Warn("OCI export creation failed — admin must create manually", "hive", h.ID, "error", exportErr)
+	if cluster.StorageType == storageTypeNFS || cluster.StorageType == "" {
+		exportPath := nfsExportPathPrefix + h.ID
+		fsID, err := createOCIFileSystem("hive-"+h.ID, logger)
+		if err != nil {
+			logger.Warn("OCI FSS creation failed — admin must create manually", "hive", h.ID, "error", err)
 		} else {
-			h.OCIExportID = exportID
+			h.OCIFileSystemID = fsID
+			exportID, exportErr := createOCIExport(fsID, exportPath, logger)
+			if exportErr != nil {
+				logger.Warn("OCI export creation failed — admin must create manually", "hive", h.ID, "error", exportErr)
+			} else {
+				h.OCIExportID = exportID
+			}
 		}
 	}
 
@@ -407,8 +498,8 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 	hiveID := h.ID
 
-	// Step 1: Delete K8s namespace (cascading delete removes deployment, service,
-	// ingress, configmap, secret, and PVC).
+	// Step 1: Delete K8s namespace. Cascading delete removes deployment, service,
+	// ingress/route, configmap, secret, PVC, and (for OpenShift) routes.
 	ns := "hive-hosted-" + hiveID
 	logger.Info("deprovision: deleting namespace", "namespace", ns, "cluster", cluster.ID)
 	cmd := kubectlForCluster(cluster, "delete", "namespace", ns, "--ignore-not-found")
@@ -416,37 +507,58 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		logger.Warn("deprovision: namespace delete failed", "namespace", ns, "output", string(out), "error", err)
 	}
 
-	// Step 2: Delete cluster-scoped PV (not removed by namespace deletion).
-	pvName := "hive-" + hiveID + "-fss-pv"
-	logger.Info("deprovision: deleting PV", "pv", pvName)
-	cmd = kubectlForCluster(cluster, "delete", "pv", pvName, "--ignore-not-found")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		logger.Warn("deprovision: PV delete failed", "pv", pvName, "output", string(out), "error", err)
-	}
+	// Step 2: NFS storage requires extra cleanup — PV is cluster-scoped and
+	// OCI FSS resources live outside K8s. Dynamic storage (CephFS) cascades
+	// with the namespace delete, so no extra steps needed.
+	if cluster.StorageType == storageTypeNFS || cluster.StorageType == "" {
+		// Delete cluster-scoped PV (not removed by namespace deletion).
+		pvName := "hive-" + hiveID + "-fss-pv"
+		logger.Info("deprovision: deleting PV", "pv", pvName)
+		cmd = kubectlForCluster(cluster, "delete", "pv", pvName, "--ignore-not-found")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			logger.Warn("deprovision: PV delete failed", "pv", pvName, "output", string(out), "error", err)
+		}
 
-	// Step 3: Delete OCI NFS export (must happen before file system deletion).
-	if h.OCIExportID != "" {
-		logger.Info("deprovision: deleting OCI export", "exportID", h.OCIExportID)
-		if err := deleteOCIExport(h.OCIExportID, logger); err != nil {
-			logger.Warn("deprovision: OCI export delete failed", "exportID", h.OCIExportID, "error", err)
+		// Delete OCI NFS export (must happen before file system deletion).
+		if h.OCIExportID != "" {
+			logger.Info("deprovision: deleting OCI export", "exportID", h.OCIExportID)
+			if err := deleteOCIExport(h.OCIExportID, logger); err != nil {
+				logger.Warn("deprovision: OCI export delete failed", "exportID", h.OCIExportID, "error", err)
+			}
+		}
+
+		// Delete OCI file system (must be empty of exports first).
+		if h.OCIFileSystemID != "" {
+			logger.Info("deprovision: deleting OCI file system", "fileSystemID", h.OCIFileSystemID)
+			if err := deleteOCIFileSystem(h.OCIFileSystemID, logger); err != nil {
+				logger.Warn("deprovision: OCI file system delete failed", "fileSystemID", h.OCIFileSystemID, "error", err)
+			}
 		}
 	}
 
-	// Step 4: Delete OCI file system (must be empty of exports first).
-	if h.OCIFileSystemID != "" {
-		logger.Info("deprovision: deleting OCI file system", "fileSystemID", h.OCIFileSystemID)
-		if err := deleteOCIFileSystem(h.OCIFileSystemID, logger); err != nil {
-			logger.Warn("deprovision: OCI file system delete failed", "fileSystemID", h.OCIFileSystemID, "error", err)
+	// Step 3: For OpenShift with SCC, remove the SCC binding. The ServiceAccount
+	// is already gone with the namespace, but the cluster-scoped SCC binding may linger.
+	if cluster.RequiresSCC {
+		sccName := cluster.SCCName
+		if sccName == "" {
+			sccName = "anyuid"
+		}
+		logger.Info("deprovision: removing SCC binding", "scc", sccName, "namespace", ns)
+		cmd = kubectlForCluster(cluster, "adm", "policy", "remove-scc-from-user", sccName,
+			fmt.Sprintf("system:serviceaccount:%s:%s", ns, sccServiceAccountName))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			// oc adm may not be available via kubectl; log but don't fail.
+			logger.Warn("deprovision: SCC removal failed (may need manual cleanup)", "output", string(out), "error", err)
 		}
 	}
 
-	// Step 5: Remove the on-disk SaaS hive record.
+	// Step 4: Remove the on-disk SaaS hive record.
 	hiveDir := filepath.Join(saasHivesDir, hiveID)
 	if err := os.RemoveAll(hiveDir); err != nil {
 		logger.Warn("deprovision: failed to remove hive directory", "path", hiveDir, "error", err)
 	}
 
-	// Step 6: Remove hive from all user records (decrement quota).
+	// Step 5: Remove hive from all user records (decrement quota).
 	for _, u := range listAllSaaSUsers() {
 		if _, ok := u.Hives[hiveID]; ok {
 			delete(u.Hives, hiveID)
@@ -456,7 +568,7 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 		}
 	}
 
-	logger.Info("audit: hive deprovisioned", "hive_id", hiveID, "owner", h.Owner)
+	logger.Info("audit: hive deprovisioned", "hive_id", hiveID, "owner", h.Owner, "cluster", cluster.ID)
 }
 
 func (s *HubServer) startProvisionWatcher() {
@@ -503,6 +615,28 @@ kind: Namespace
 metadata:
   name: {{.Namespace}}
 ---
+{{- if .RequiresSCC}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hive-sa
+  namespace: {{.Namespace}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-sa-scc-{{.SCCName}}
+  namespace: {{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:{{.SCCName}}
+subjects:
+- kind: ServiceAccount
+  name: hive-sa
+  namespace: {{.Namespace}}
+---
+{{- end}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -542,12 +676,18 @@ data:
 {{- else}}
       token: "${HIVE_GITHUB_TOKEN}"
 {{- end}}
+{{- if .HasGHE}}
+      base_url: {{.GitHubBaseURL}}
+      api_url: {{.GitHubAPIURL}}
+{{- end}}
     dashboard:
-      port: 3002
+      port: {{.DashboardPort}}
     hub:
       enabled: true
       url: https://hive.kubestellar.io
-      is_public: true
+      dashboard_url: {{.DashboardURL}}
+      hive_type: {{.HiveType}}
+      is_public: {{.IsPublic}}
     acmm_level: {{.ACMMLevel}}
 ---
 apiVersion: v1
@@ -565,6 +705,7 @@ stringData:
   github-token: {{.Token}}
 {{- end}}
 ---
+{{- if .IsNFSStorage}}
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -592,6 +733,21 @@ spec:
       storage: {{.NFSStorageCapacity}}
   volumeName: {{.PVName}}
   storageClassName: ""
+{{- end}}
+{{- if .IsDynamicStorage}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hive-data
+  namespace: {{.Namespace}}
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: {{.StorageClass}}
+  resources:
+    requests:
+      storage: {{.DynamicPVCStorage}}
+{{- end}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -615,10 +771,13 @@ spec:
         app: hive
         hive-id: {{.ID}}
     spec:
+{{- if .RequiresSCC}}
+      serviceAccountName: hive-sa
+{{- end}}
       initContainers:
       - name: copy-config
-        image: ghcr.io/kubestellar/hive:v2-latest
-        imagePullPolicy: Always
+        image: ghcr.io/kubestellar/hive:{{.ImageTag}}
+        imagePullPolicy: {{.ImagePullPolicy}}
         command: ["sh", "-c", "cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi"]
         volumeMounts:
         - name: config
@@ -628,10 +787,21 @@ spec:
           mountPath: /etc/hive
         - name: data
           mountPath: /data
+{{- if .RequiresSCC}}
+      - name: init-permissions
+        image: ghcr.io/kubestellar/hive:{{.ImageTag}}
+        imagePullPolicy: {{.ImagePullPolicy}}
+        command: ["sh", "-c", "chown -R {{.InitContainerUID}}:{{.InitContainerGID}} /data && echo permissions-set"]
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: data
+          mountPath: /data
+{{- end}}
       containers:
       - name: hive
-        image: ghcr.io/kubestellar/hive:v2-latest
-        imagePullPolicy: Always
+        image: ghcr.io/kubestellar/hive:{{.ImageTag}}
+        imagePullPolicy: {{.ImagePullPolicy}}
         securityContext:
           capabilities:
             add:
@@ -639,21 +809,21 @@ spec:
         readinessProbe:
           httpGet:
             path: /api/health
-            port: 3001
+            port: {{.TerminalPort}}
           initialDelaySeconds: 5
           periodSeconds: 5
           failureThreshold: 3
         startupProbe:
           httpGet:
             path: /api/health
-            port: 3001
+            port: {{.TerminalPort}}
           initialDelaySeconds: 10
           periodSeconds: 5
           failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /api/health
-            port: 3001
+            port: {{.TerminalPort}}
           periodSeconds: 30
           failureThreshold: 3
         env:
@@ -677,8 +847,15 @@ spec:
           value: https://hive.kubestellar.io
         - name: HIVE_HUB_SECRET
           value: "{{.HubSecret}}"
+{{- if .HasInference}}
+        - name: HIVE_VLLM_ENDPOINT
+          value: "{{.InferenceEndpoint}}"
+{{- end}}
         ports:
-        - containerPort: 3001
+        - name: terminal
+          containerPort: {{.TerminalPort}}
+        - name: dashboard
+          containerPort: {{.DashboardPort}}
         resources:
           requests:
             cpu: {{.CPURequest}}
@@ -721,10 +898,14 @@ spec:
     app: hive
     hive-id: {{.ID}}
   ports:
-  - name: http
-    port: 3001
-    targetPort: 3001
+  - name: terminal
+    port: {{.TerminalPort}}
+    targetPort: {{.TerminalPort}}
+  - name: dashboard
+    port: {{.DashboardPort}}
+    targetPort: {{.DashboardPort}}
   type: ClusterIP
+{{- if .IsNginxIngress}}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -732,16 +913,16 @@ metadata:
   name: hive
   namespace: {{.Namespace}}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: {{.CertIssuer}}
     nginx.ingress.kubernetes.io/auth-url: "https://hive.kubestellar.io/api/saas/auth-check?hive={{.ID}}&uri=$request_uri"
     nginx.ingress.kubernetes.io/custom-http-errors: "502,503"
     nginx.ingress.kubernetes.io/default-backend: hive-error-pages
     nginx.ingress.kubernetes.io/auth-signin: "https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri"
     nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role"
 spec:
-  ingressClassName: nginx
+  ingressClassName: {{.IngressClass}}
   rules:
-  - host: {{.ID}}.hive.kubestellar.io
+  - host: {{.DashboardHost}}
     http:
       paths:
       - path: /
@@ -750,10 +931,10 @@ spec:
           service:
             name: hive
             port:
-              number: 3001
+              number: {{.TerminalPort}}
   tls:
   - hosts:
-    - {{.ID}}.hive.kubestellar.io
+    - {{.DashboardHost}}
     secretName: hive-tls
 ---
 apiVersion: networking.k8s.io/v1
@@ -762,13 +943,13 @@ metadata:
   name: hive-contribute
   namespace: {{.Namespace}}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: {{.CertIssuer}}
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
-  ingressClassName: nginx
+  ingressClassName: {{.IngressClass}}
   rules:
-  - host: {{.ID}}.hive.kubestellar.io
+  - host: {{.DashboardHost}}
     http:
       paths:
       - path: /api/contribute
@@ -777,10 +958,10 @@ spec:
           service:
             name: hive
             port:
-              number: 3001
+              number: {{.TerminalPort}}
   tls:
   - hosts:
-    - {{.ID}}.hive.kubestellar.io
+    - {{.DashboardHost}}
     secretName: hive-tls
 ---
 apiVersion: networking.k8s.io/v1
@@ -789,13 +970,13 @@ metadata:
   name: hive-terminal
   namespace: {{.Namespace}}
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    cert-manager.io/cluster-issuer: {{.CertIssuer}}
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
-  ingressClassName: nginx
+  ingressClassName: {{.IngressClass}}
   rules:
-  - host: {{.ID}}.hive.kubestellar.io
+  - host: {{.DashboardHost}}
     http:
       paths:
       - path: /terminal
@@ -804,9 +985,48 @@ spec:
           service:
             name: hive
             port:
-              number: 3001
+              number: {{.TerminalPort}}
   tls:
   - hosts:
-    - {{.ID}}.hive.kubestellar.io
+    - {{.DashboardHost}}
     secretName: hive-tls
+{{- end}}
+{{- if .IsOpenShiftRoute}}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hive-dashboard
+  namespace: {{.Namespace}}
+spec:
+  host: {{.DashboardHost}}
+  path: /
+  to:
+    kind: Service
+    name: hive
+    weight: 100
+  port:
+    targetPort: dashboard
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hive-terminal
+  namespace: {{.Namespace}}
+spec:
+  host: {{.DashboardHost}}
+  path: /terminal
+  to:
+    kind: Service
+    name: hive
+    weight: 100
+  port:
+    targetPort: terminal
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+{{- end}}
 `
