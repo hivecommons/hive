@@ -36,6 +36,11 @@ var WatchedHomeDirs = []string{
 	"/data/home/.local",
 }
 
+// GooseLogsDir is the rolling log directory goose 1.37 creates on startup.
+// Goose panics if this directory doesn't exist, so the watcher ensures it
+// is created at startup with correct permissions.
+const GooseLogsDir = "/data/home/.local/state/goose/logs/cli"
+
 // StartPermissionsWatcher runs a background goroutine that periodically
 // scans WatchedHomeDirs and fixes files/directories that were created
 // with wrong ownership (e.g., root-owned by Copilot CLI).
@@ -65,7 +70,8 @@ func StartPermissionsWatcher(logger *slog.Logger) {
 // ensureWatchedDirs creates each watched directory if it does not exist
 // and sets correct ownership.
 func ensureWatchedDirs(logger *slog.Logger) {
-	for _, dir := range WatchedHomeDirs {
+	allDirs := append([]string{GooseLogsDir}, WatchedHomeDirs...)
+	for _, dir := range allDirs {
 		if err := os.MkdirAll(dir, DirPerms|0o070); err != nil {
 			logger.Warn("permissions watcher: failed to create directory",
 				"path", dir,
@@ -150,6 +156,13 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 				"new_gid", NodeGID,
 			)
 		}
+	}
+
+	// Only fix permissions on files we own or just chowned.
+	// Skipping files owned by other users avoids "operation not permitted"
+	// spam when agents create files as their own users.
+	if newUID != DevUID && stat.Uid != uint32(DevUID) {
+		return
 	}
 
 	mode := fi.Mode()
