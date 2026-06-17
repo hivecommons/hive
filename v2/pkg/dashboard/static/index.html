@@ -8069,7 +8069,8 @@ function burnAreaChart() {
         const v = await res.json();
         const el = document.getElementById('git-version');
         const ocEl = document.getElementById('oc-git-version');
-        let html = `<a href="https://github.com/kubestellar/hive/commit/${escapeHtml(v.hash)}" target="_blank" style="color:inherit;text-decoration:none" title="${escapeHtml(v.hash)}">${escapeHtml(v.short)}</a>`;
+        const commitTooltip = v.latestMessage ? escapeHtml(v.latestMessage) : escapeHtml(v.hash);
+        let html = `<a href="https://github.com/kubestellar/hive/commit/${escapeHtml(v.hash)}" target="_blank" style="color:inherit;text-decoration:none" title="${commitTooltip}">${escapeHtml(v.short)}</a>`;
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;

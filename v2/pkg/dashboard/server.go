@@ -59,9 +59,10 @@ type Server struct {
 
 	audit *AuditLog
 
-	versionMu       sync.RWMutex
-	cachedLatestHash string
-	cachedLatestAt   time.Time
+	versionMu           sync.RWMutex
+	cachedLatestHash    string
+	cachedLatestMessage string
+	cachedLatestAt      time.Time
 
 	contributeHub *ContributeWSHub
 

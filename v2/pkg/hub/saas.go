@@ -885,11 +885,13 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"saas_quota":       user.SaaSQuota,
 		"saas_used":        saasCount,
 		"is_admin":         isAdmin,
-		"latest_sha":       getLatestSHA(),
-		"latest_shas":      getLatestSHAs(),
-		"hub_git_hash":     s.hubGitHash,
-		"hub_auto_upgrade": isHubAutoUpgrade(),
-		"show_my_hives":    true,
+		"latest_sha":          getLatestSHA(),
+		"latest_shas":         getLatestSHAs(),
+		"latest_sha_messages": getLatestSHAMessages(),
+		"commit_messages":     getCommitMessages(),
+		"hub_git_hash":        s.hubGitHash,
+		"hub_auto_upgrade":    isHubAutoUpgrade(),
+		"show_my_hives":       true,
 	}
 
 	myReq := loadProvisionRequest(username)
@@ -964,11 +966,13 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"authenticated": true,
-		"show_my_hives": true,
-		"hives":         hiveAccess,
-		"latest_sha":    getLatestSHA(),
-		"latest_shas":   getLatestSHAs(),
+		"authenticated":       true,
+		"show_my_hives":       true,
+		"hives":               hiveAccess,
+		"latest_sha":          getLatestSHA(),
+		"latest_shas":         getLatestSHAs(),
+		"latest_sha_messages": getLatestSHAMessages(),
+		"commit_messages":     getCommitMessages(),
 	})
 }
 
@@ -1374,9 +1378,17 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
 }
 
+// branchSHAInfo holds a short SHA and the first line of its commit message.
+type branchSHAInfo struct {
+	SHA     string `json:"sha"`
+	Message string `json:"message"`
+}
+
 var (
 	latestSHAMu    sync.RWMutex
-	latestSHAByBranch = map[string]string{}
+	latestSHAByBranch = map[string]branchSHAInfo{}
+	// commitMsgBySHA caches the first line of each commit message, keyed by short SHA.
+	commitMsgBySHA = map[string]string{}
 )
 
 // trackedBranches lists branches that produce Docker images via CI.
@@ -1391,14 +1403,37 @@ func getLatestSHA() string {
 func getLatestSHAForBranch(branch string) string {
 	latestSHAMu.RLock()
 	defer latestSHAMu.RUnlock()
-	return latestSHAByBranch[branch]
+	return latestSHAByBranch[branch].SHA
 }
 
+// getLatestSHAs returns a branch→SHA map (backward-compatible string values).
 func getLatestSHAs() map[string]string {
 	latestSHAMu.RLock()
 	defer latestSHAMu.RUnlock()
 	cp := make(map[string]string, len(latestSHAByBranch))
 	for k, v := range latestSHAByBranch {
+		cp[k] = v.SHA
+	}
+	return cp
+}
+
+// getLatestSHAMessages returns a branch→commit-message map for tooltip display.
+func getLatestSHAMessages() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(latestSHAByBranch))
+	for k, v := range latestSHAByBranch {
+		cp[k] = v.Message
+	}
+	return cp
+}
+
+// getCommitMessages returns a short-SHA→commit-message map for tooltip display.
+func getCommitMessages() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(commitMsgBySHA))
+	for k, v := range commitMsgBySHA {
 		cp[k] = v
 	}
 	return cp
@@ -1511,7 +1546,10 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	}
 	var branchResult struct {
 		Commit struct {
-			SHA string `json:"sha"`
+			SHA    string `json:"sha"`
+			Commit struct {
+				Message string `json:"message"`
+			} `json:"commit"`
 		} `json:"commit"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&branchResult); err != nil {
@@ -1524,6 +1562,11 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		return
 	}
 	candidateSHA := branchResult.Commit.SHA[:shortSHALen]
+	// Extract only the first line of the commit message for tooltip display.
+	commitMsg := branchResult.Commit.Commit.Message
+	if idx := strings.Index(commitMsg, "\n"); idx >= 0 {
+		commitMsg = commitMsg[:idx]
+	}
 
 	// Step 2: verify that a container image with this SHA tag exists on GHCR
 	if !ghcrTagExists(client, candidateSHA, logger) {
@@ -1532,7 +1575,8 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	}
 
 	latestSHAMu.Lock()
-	latestSHAByBranch[branch] = candidateSHA
+	latestSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
+	commitMsgBySHA[candidateSHA] = commitMsg
 	latestSHAMu.Unlock()
 	logger.Info("SHA poll: latest image verified on GHCR", "branch", branch, "sha", candidateSHA)
 }
@@ -2685,6 +2729,8 @@ const dashboardHTML = `<!DOCTYPE html>
     var _userQuota = 0, _userUsed = 0, _isAdmin = false;
     var _latestSHA = '';
     var _latestSHAs = {};
+    var _latestSHAMessages = {};
+    var _commitMessages = {};
     var _allDashHives = [];
     var _dashSortKey = '', _dashSortAsc = true;
     var _hivesLoading = false;
@@ -2717,6 +2763,8 @@ const dashboardHTML = `<!DOCTYPE html>
         _hiveRegistry = data.hives || [];
         _latestSHA = data.latest_sha || _latestSHA;
         if (data.latest_shas) _latestSHAs = data.latest_shas;
+        if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
+        if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
         var shaEl = document.getElementById('latest-image-sha');
         if (shaEl) {
@@ -2725,7 +2773,8 @@ const dashboardHTML = `<!DOCTYPE html>
           if (branches.length) {
             for (var bi = 0; bi < branches.length; bi++) {
               var br = branches[bi];
-              lines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(br) + '</span><span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHAs[br]) + '</span></div>';
+              var brMsg = _latestSHAMessages[br] || '';
+              lines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(br) + '</span><span style="font-family:monospace;color:var(--muted)" title="' + esc(brMsg) + '">' + esc(_latestSHAs[br]) + '</span></div>';
             }
           } else if (_latestSHA) {
             lines = '<span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHA) + '</span>';
@@ -2748,7 +2797,8 @@ const dashboardHTML = `<!DOCTYPE html>
             if (_isAdmin) {
               hubAutoCheck = ' <label style="margin-left:6px;font-size:0.6rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
             }
-            el.innerHTML = '<span style="font-family:monospace;font-size:0.7rem;color:var(--muted)">' + esc(hubHash) + '</span>' +
+            var hubMsg = _latestSHAMessages['v2'] || '';
+            el.innerHTML = '<span style="font-family:monospace;font-size:0.7rem;color:var(--muted)" title="' + esc(hubMsg) + '">' + esc(hubHash) + '</span>' +
               (isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(_latestSHA) + '">↑</span>') + hubUpgradeBtn + hubAutoCheck;
           }
         }
@@ -2910,7 +2960,8 @@ const dashboardHTML = `<!DOCTYPE html>
           if (isHosted && h.role === 'owner') {
             autoUpgradeCheck = ' <label style="margin-left:8px;font-size:0.65rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Automatically upgrade when a new version is available"><input type="checkbox" ' + (h.autoUpgrade ? 'checked' : '') + ' onchange="toggleAutoUpgrade(\'' + esc(h.id) + '\',this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
           }
-          versionCell = branch + '<span style="font-family:monospace;color:var(--muted)">' + esc(sha) + '</span>' + status + upgradeIcon + autoUpgradeCheck;
+          var shaMsg = _commitMessages[sha] || _latestSHAMessages[branchName] || '';
+          versionCell = branch + '<span style="font-family:monospace;color:var(--muted)" title="' + esc(shaMsg) + '">' + esc(sha) + '</span>' + status + upgradeIcon + autoUpgradeCheck;
         } else { versionCell = '<span style="color:var(--muted)">—</span>'; }
         var pendingBadge = (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write'))
           ? '<span style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:0.6rem;display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'

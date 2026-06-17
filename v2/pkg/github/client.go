@@ -447,6 +447,19 @@ func (c *Client) LatestCommitHash(ctx context.Context, owner, repo, branch strin
 	return ref.GetObject().GetSHA(), nil
 }
 
+// CommitMessage returns the first line of the commit message for the given SHA.
+func (c *Client) CommitMessage(ctx context.Context, owner, repo, sha string) (string, error) {
+	commit, _, err := c.client.Repositories.GetCommit(ctx, owner, repo, sha, nil)
+	if err != nil {
+		return "", fmt.Errorf("fetching commit %s/%s@%s: %w", owner, repo, sha, err)
+	}
+	msg := commit.GetCommit().GetMessage()
+	if idx := strings.Index(msg, "\n"); idx >= 0 {
+		msg = msg[:idx]
+	}
+	return msg, nil
+}
+
 func (c *Client) GetRepo(ctx context.Context, owner, repo string) (*gh.Repository, *gh.Response, error) {
 	return c.client.Repositories.Get(ctx, owner, repo)
 }

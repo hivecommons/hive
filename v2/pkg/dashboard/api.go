@@ -350,17 +350,21 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 
 	s.versionMu.RLock()
 	cached := s.cachedLatestHash
+	cachedMsg := s.cachedLatestMessage
 	cacheAge := time.Since(s.cachedLatestAt)
 	s.versionMu.RUnlock()
 
 	const versionCacheTTL = 5 * time.Minute
 	if cacheAge > versionCacheTTL || cached == "" {
 		if latest, err := s.fetchLatestRemoteHash(); err == nil && latest != "" {
+			msg := s.fetchCommitMessage(latest)
 			s.versionMu.Lock()
 			s.cachedLatestHash = latest
+			s.cachedLatestMessage = msg
 			s.cachedLatestAt = time.Now()
 			s.versionMu.Unlock()
 			cached = latest
+			cachedMsg = msg
 		}
 	}
 
@@ -375,6 +379,9 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		resp["latestHash"] = cached
 		resp["latestShort"] = latestShort
 		resp["behind"] = containerReady && cached != versionHash
+		if cachedMsg != "" {
+			resp["latestMessage"] = cachedMsg
+		}
 	}
 
 	jsonResponse(w, resp)
@@ -389,6 +396,20 @@ func (s *Server) fetchLatestRemoteHash() (string, error) {
 		return "", fmt.Errorf("no context")
 	}
 	return s.deps.GHClient.LatestCommitHash(ctx, "kubestellar", "hive", "v2")
+}
+
+// fetchCommitMessage returns the first line of the commit message for a given SHA.
+// Returns empty string on any error (best-effort for tooltip display).
+func (s *Server) fetchCommitMessage(sha string) string {
+	if s.deps == nil || s.deps.GHClient == nil || s.deps.Ctx == nil {
+		return ""
+	}
+	msg, err := s.deps.GHClient.CommitMessage(s.deps.Ctx, "kubestellar", "hive", sha)
+	if err != nil {
+		s.logger.Warn("failed to fetch commit message", "sha", sha, "error", err)
+		return ""
+	}
+	return msg
 }
 
 // ghcrTagExistsCached checks whether a container tag exists on ghcr.io/kubestellar/hive,
