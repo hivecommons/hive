@@ -976,9 +976,15 @@ func (c *Config) Save() error {
 		return fmt.Errorf("closing config: %w", err)
 	}
 
+	// Write a rolling backup to the PVC. This is NOT the primary config —
+	// it exists for disaster recovery (e.g. ConfigMap deleted in K8s, or
+	// Watchtower wiping a bind mount in Docker). The entrypoint determines
+	// which source is authoritative based on the runtime environment.
 	backupPath := "/data/hive.yaml.bak"
 	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
-		log.Printf("[config] warning: failed to write PVC backup: %v", err)
+		log.Printf("[config] warning: failed to write PVC backup to %s: %v", backupPath, err)
+	} else {
+		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupPath)
 	}
 	return nil
 }

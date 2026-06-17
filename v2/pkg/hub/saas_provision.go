@@ -489,7 +489,7 @@ spec:
       - name: copy-config
         image: ghcr.io/kubestellar/hive:v2-latest
         imagePullPolicy: Always
-        command: ["sh", "-c", "if [ -f /data/hive.yaml.bak ]; then cp /data/hive.yaml.bak /etc/hive/hive.yaml; echo override-used; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml; echo seed-copied; fi"]
+        command: ["sh", "-c", "cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi"]
         volumeMounts:
         - name: config
           mountPath: /etc/hive-seed

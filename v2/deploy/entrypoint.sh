@@ -12,34 +12,66 @@ export HIVE_STATIC_DIR="${HIVE_STATIC_DIR:-/opt/hive/proxy/public}"
 # the bind-mounted hive.yaml during shutdown or early startup, wiping the
 # host file. /data/ is a Docker named volume that persists across container
 # recreations, so we keep a rolling backup there.
+#
+# In Kubernetes, the ConfigMap is the source of truth — admins update it to
+# change settings like acmm_level, is_public, etc. The PVC backup is only
+# used for disaster recovery if the ConfigMap volume is missing or empty.
 HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
 HIVE_CONFIG_BACKUP="/data/hive.yaml.bak"
 
-if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ ! -f "$HIVE_CONFIG_BACKUP" ]; then
-  # First boot: config exists but no PVC backup yet — seed the backup
-  cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"
-  echo "[entrypoint] First boot — config seeded to PVC: $HIVE_CONFIG_BACKUP"
-elif [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
-  # PVC backup is the source of truth (updated by Save()).
-  # Try to copy it over the config path; if read-only (Docker bind mount),
-  # override HIVE_CONFIG so the Go binary reads from the backup directly.
-  if cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH" 2>/dev/null; then
-    echo "[entrypoint] PVC backup restored to config path"
+# Detect Kubernetes vs Docker environment
+IS_KUBERNETES=false
+if [ -n "${KUBERNETES_SERVICE_HOST:-}" ] || [ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]; then
+  IS_KUBERNETES=true
+fi
+
+if [ "$IS_KUBERNETES" = "true" ]; then
+  # ── Kubernetes mode: ConfigMap is the source of truth ──────────────
+  if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ]; then
+    # ConfigMap is present and non-empty — use it as-is, write a backup for recovery
+    cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
+    echo "[entrypoint] K8s mode — ConfigMap is source of truth, backup written to $HIVE_CONFIG_BACKUP"
+  elif [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
+    # ConfigMap is missing or empty but a PVC backup exists — recover
+    if cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH" 2>/dev/null; then
+      echo "[entrypoint] K8s mode — ConfigMap missing/empty, RECOVERED from PVC backup"
+    else
+      export HIVE_CONFIG="$HIVE_CONFIG_BACKUP"
+      echo "[entrypoint] K8s mode — ConfigMap missing/empty and read-only, using PVC backup directly"
+    fi
   else
-    export HIVE_CONFIG="$HIVE_CONFIG_BACKUP"
-    echo "[entrypoint] Config path is read-only — using PVC backup directly"
+    echo "[entrypoint] ERROR: No ConfigMap at $HIVE_CONFIG_PATH and no PVC backup at $HIVE_CONFIG_BACKUP."
+    echo "[entrypoint] Ensure the hive ConfigMap is created before deploying."
+    exit 1
   fi
-elif [ -f "$HIVE_CONFIG_PATH" ] && [ ! -s "$HIVE_CONFIG_PATH" ] && [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
-  # Config was wiped to 0 bytes (Watchtower recreation) but backup exists — restore
-  cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH"
-  echo "[entrypoint] RECOVERED: $HIVE_CONFIG_PATH was empty (0 bytes), restored from $HIVE_CONFIG_BACKUP"
-elif [ -f "$HIVE_CONFIG_PATH" ] && [ ! -s "$HIVE_CONFIG_PATH" ]; then
-  # Config is empty and no backup exists — fatal, cannot recover
-  echo "[entrypoint] ERROR: $HIVE_CONFIG_PATH exists but is empty (0 bytes)."
-  echo "[entrypoint] No backup found at $HIVE_CONFIG_BACKUP."
-  echo "[entrypoint] This usually happens after 'docker compose down -v' wipes the data volume."
-  echo "[entrypoint] Restore your hive.yaml from backup or version control and restart."
-  exit 1
+else
+  # ── Docker mode: PVC backup is the source of truth ─────────────────
+  if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ ! -f "$HIVE_CONFIG_BACKUP" ]; then
+    # First boot: config exists but no PVC backup yet — seed the backup
+    cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"
+    echo "[entrypoint] First boot — config seeded to PVC: $HIVE_CONFIG_BACKUP"
+  elif [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
+    # PVC backup is the source of truth (updated by Save()).
+    # Try to copy it over the config path; if read-only (Docker bind mount),
+    # override HIVE_CONFIG so the Go binary reads from the backup directly.
+    if cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH" 2>/dev/null; then
+      echo "[entrypoint] PVC backup restored to config path"
+    else
+      export HIVE_CONFIG="$HIVE_CONFIG_BACKUP"
+      echo "[entrypoint] Config path is read-only — using PVC backup directly"
+    fi
+  elif [ -f "$HIVE_CONFIG_PATH" ] && [ ! -s "$HIVE_CONFIG_PATH" ] && [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
+    # Config was wiped to 0 bytes (Watchtower recreation) but backup exists — restore
+    cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH"
+    echo "[entrypoint] RECOVERED: $HIVE_CONFIG_PATH was empty (0 bytes), restored from $HIVE_CONFIG_BACKUP"
+  elif [ -f "$HIVE_CONFIG_PATH" ] && [ ! -s "$HIVE_CONFIG_PATH" ]; then
+    # Config is empty and no backup exists — fatal, cannot recover
+    echo "[entrypoint] ERROR: $HIVE_CONFIG_PATH exists but is empty (0 bytes)."
+    echo "[entrypoint] No backup found at $HIVE_CONFIG_BACKUP."
+    echo "[entrypoint] This usually happens after 'docker compose down -v' wipes the data volume."
+    echo "[entrypoint] Restore your hive.yaml from backup or version control and restart."
+    exit 1
+  fi
 fi
 
 # ── Root-only setup (runs once, then re-execs as dev) ──────────────────
