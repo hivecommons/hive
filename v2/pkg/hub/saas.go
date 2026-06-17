@@ -1551,6 +1551,8 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		logger.Warn("SHA poll: branch API non-200", "branch", branch, "status", resp.StatusCode)
+		// Backfill missing commit messages for already-cached SHAs
+		backfillCommitMessage(client, branch, logger)
 		return
 	}
 	var branchResult struct {
@@ -1583,11 +1585,69 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		return
 	}
 
+	// If commit message is empty (rate-limited or missing), fetch it separately
+	// from the commits API using the full SHA (one-shot, only on new SHAs).
+	if commitMsg == "" {
+		commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
+	}
+
 	latestSHAMu.Lock()
 	latestSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
 	commitMsgBySHA[candidateSHA] = commitMsg
 	latestSHAMu.Unlock()
 	logger.Info("SHA poll: latest image verified on GHCR", "branch", branch, "sha", candidateSHA)
+}
+
+// fetchCommitMessage fetches the first line of a commit message from the GitHub API.
+// Uses a separate endpoint that's less likely to be rate-limited since it's called
+// only once per new SHA (not every poll cycle).
+func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger) string {
+	commitURL := fmt.Sprintf("https://api.github.com/repos/kubestellar/hive/commits/%s", fullSHA)
+	req, _ := http.NewRequest("GET", commitURL, nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("SHA poll: commit message fetch non-200", "sha", fullSHA[:7], "status", resp.StatusCode)
+		return ""
+	}
+	var result struct {
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return ""
+	}
+	msg := result.Commit.Message
+	if idx := strings.Index(msg, "\n"); idx >= 0 {
+		msg = msg[:idx]
+	}
+	return msg
+}
+
+// backfillCommitMessage fills in a missing commit message for an already-cached SHA.
+// Called when the branches API is rate-limited but we have the SHA from a prior poll.
+func backfillCommitMessage(client *http.Client, branch string, logger *slog.Logger) {
+	latestSHAMu.RLock()
+	info := latestSHAByBranch[branch]
+	latestSHAMu.RUnlock()
+	if info.SHA == "" || info.Message != "" {
+		return // no SHA cached, or message already present
+	}
+	msg := fetchCommitMessage(client, info.SHA, logger)
+	if msg == "" {
+		return
+	}
+	latestSHAMu.Lock()
+	info.Message = msg
+	latestSHAByBranch[branch] = info
+	commitMsgBySHA[info.SHA] = msg
+	latestSHAMu.Unlock()
+	logger.Info("SHA poll: backfilled commit message", "branch", branch, "sha", info.SHA, "message", msg)
 }
 
 // ghcrTagExists checks whether a container tag exists on ghcr.io/kubestellar/hive.
