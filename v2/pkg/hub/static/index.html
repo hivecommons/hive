@@ -329,10 +329,22 @@
         var htype = (h.hiveType || 'local') === 'hosted'
           ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)" title="Hosted on hive.kubestellar.io">hosted</span>'
           : '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)" title="Self-hosted by the owner">local</span>';
+        var clsBadge = (function() {
+          var cid = h.clusterId || 'hive-oke';
+          var label = cid.replace(/^hive-/, '').toUpperCase();
+          var isGPU = label === 'VLLM-D' || (h.clusterName || '').toLowerCase().indexOf('gpu') >= 0;
+          if (isGPU) label = 'GPU';
+          var bg = isGPU ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)';
+          var color = isGPU ? '#3fb950' : '#60a5fa';
+          var border = isGPU ? 'rgba(34,197,94,0.3)' : 'rgba(59,130,246,0.3)';
+          var title = h.clusterName || cid;
+          return '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:' + bg + ';color:' + color + ';border:1px solid ' + border + '" title="' + esc(title) + '">' + esc(label) + '</span>';
+        })();
         return '<tr>' +
           '<td style="white-space:nowrap">' + contributeButton(h) + '</td>' +
           '<td style="display:flex;align-items:center;gap:10px"><img src="https://github.com/' + esc(h.org) + '.png" style="width:36px;height:36px;border-radius:6px;flex-shrink:0" onerror="this.style.display=\'none\'">' + dot + '<div><span class="hive-name">' + esc(h.name || h.id) + '</span></div></td>' +
           '<td>' + htype + '</td>' +
+          '<td>' + clsBadge + '</td>' +
           '<td>' + repoLink + '</td>' +
           '<td>' + repoCount + '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
@@ -346,7 +358,7 @@
       }).join('');
       document.getElementById('hive-table-container').innerHTML =
         '<table class="hive-table"><thead><tr>' +
-        '<th></th><th onclick="sortMainHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortMainHives(\'hiveType\')" style="cursor:pointer">Type ⇅</th><th>Repo</th><th>Repos</th><th onclick="sortMainHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortMainHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortMainHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortMainHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortMainHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortMainHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th><th>Preview</th>' +
+        '<th></th><th onclick="sortMainHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortMainHives(\'hiveType\')" style="cursor:pointer">Type ⇅</th><th onclick="sortMainHives(\'clusterId\')" style="cursor:pointer">Cluster ⇅</th><th>Repo</th><th>Repos</th><th onclick="sortMainHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortMainHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortMainHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortMainHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortMainHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortMainHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th><th>Preview</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
 

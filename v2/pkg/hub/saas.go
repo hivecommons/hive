@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -131,6 +132,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
+	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAdmin(s.handleListClusters))
 
 	go s.startProvisionWatcher()
 	go s.StartLatestSHAPoller()
@@ -397,6 +399,54 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
 
+// --- Cluster Helpers ---
+
+// clusterIDForSaaSHive returns the cluster ID for a SaaS hive, defaulting to
+// the default cluster when the field is empty (backward compatibility).
+func clusterIDForSaaSHive(sh SaaSHive) string {
+	if sh.ClusterID != "" {
+		return sh.ClusterID
+	}
+	return defaultClusterID
+}
+
+// clusterNameForID returns the human-readable name for a cluster ID.
+// Returns empty string when the cluster is not found.
+func (s *HubServer) clusterNameForID(clusterID string) string {
+	if c, ok := s.clusters[clusterID]; ok {
+		return c.Name
+	}
+	return ""
+}
+
+// --- Cluster List API ---
+
+// ClusterListEntry is the JSON response for the clusters list endpoint.
+type ClusterListEntry struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	HasGPU bool   `json:"has_gpu"`
+	Arch   string `json:"arch"`
+}
+
+func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
+	var entries []ClusterListEntry
+	for _, c := range s.clusters {
+		entries = append(entries, ClusterListEntry{
+			ID:     c.ID,
+			Name:   c.Name,
+			HasGPU: c.HasGPU,
+			Arch:   c.Arch,
+		})
+	}
+	// Sort for deterministic API output.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].ID < entries[j].ID
+	})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
 // --- Cluster Health ---
 
 const clusterHealthCacheTTL = 30 * time.Second
@@ -463,9 +513,29 @@ type ClusterHealthSummary struct {
 	HiveCount     int `json:"hive_count"`
 }
 
+// GPUSummary reports aggregate GPU counts for a cluster.
+type GPUSummary struct {
+	TotalGPUs       int `json:"total_gpus"`
+	AllocatableGPUs int `json:"allocatable_gpus"`
+}
+
+// PerClusterHealth holds health data for a single cluster.
+type PerClusterHealth struct {
+	ID        string              `json:"id"`
+	Name      string              `json:"name"`
+	Nodes     []ClusterHealthNode `json:"nodes"`
+	Summary   ClusterHealthSummary `json:"summary"`
+	GPUSummary *GPUSummary         `json:"gpu_summary,omitempty"`
+	HiveCount int                 `json:"hive_count"`
+	Error     string              `json:"error,omitempty"`
+}
+
 type ClusterHealthResponse struct {
-	Nodes   []ClusterHealthNode  `json:"nodes"`
-	Summary ClusterHealthSummary `json:"summary"`
+	// Flat fields for backward compatibility (aggregate across all clusters).
+	Nodes    []ClusterHealthNode  `json:"nodes"`
+	Summary  ClusterHealthSummary `json:"summary"`
+	// Per-cluster breakdown.
+	Clusters []PerClusterHealth   `json:"clusters,omitempty"`
 }
 
 var (
@@ -501,19 +571,127 @@ func (s *HubServer) handleClusterHealth(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(resp)
 }
 
-func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
-	hubC := s.hubCluster()
+// clusterHealthQueryTimeout limits how long we wait for any single cluster's
+// kubectl calls before giving up.
+const clusterHealthQueryTimeout = 15 * time.Second
 
+// gpuResourceKey is the extended resource name for NVIDIA GPUs on Kubernetes nodes.
+const gpuResourceKey = "nvidia.com/gpu"
+
+func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
+	// Count hives per cluster from SaaS records.
+	hiveCounts := make(map[string]int)
+	for _, sh := range listSaaSHives() {
+		cid := clusterIDForSaaSHive(sh)
+		hiveCounts[cid]++
+	}
+	// Also count registry hives that have a ClusterID.
+	s.mu.RLock()
+	totalHiveCount := len(s.registry.Hives)
+	for _, h := range s.registry.Hives {
+		if h.ClusterID != "" {
+			hiveCounts[h.ClusterID]++
+		}
+	}
+	s.mu.RUnlock()
+
+	// Query all clusters in parallel.
+	type clusterResult struct {
+		health PerClusterHealth
+		err    error
+	}
+	results := make(map[string]chan clusterResult)
+	for _, c := range s.clusters {
+		ch := make(chan clusterResult, 1)
+		results[c.ID] = ch
+		go func(cluster ClusterConfig) {
+			health, err := buildSingleClusterHealth(&cluster, hiveCounts[cluster.ID], s.logger)
+			ch <- clusterResult{health: health, err: err}
+		}(c)
+	}
+
+	// Collect results with timeout.
+	var allNodes []ClusterHealthNode
+	var perCluster []PerClusterHealth
+	var aggCPUCores int
+	var aggCPUUsed int64
+	var aggCPUAlloc int64
+	var aggMemAlloc int64
+	var aggMemUsed int64
+
+	for cID, ch := range results {
+		select {
+		case res := <-ch:
+			if res.err != nil {
+				s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
+				perCluster = append(perCluster, PerClusterHealth{
+					ID:    cID,
+					Name:  s.clusterNameForID(cID),
+					Error: res.err.Error(),
+				})
+				continue
+			}
+			pch := res.health
+			pch.ID = cID
+			pch.Name = s.clusterNameForID(cID)
+			perCluster = append(perCluster, pch)
+			allNodes = append(allNodes, pch.Nodes...)
+			aggCPUCores += pch.Summary.TotalCPUCores
+			aggCPUUsed += int64(pch.Summary.TotalCPUPct) * int64(pch.Summary.TotalCPUCores) * millicoresPerCore / percentMultiplier
+			aggCPUAlloc += int64(pch.Summary.TotalCPUCores) * millicoresPerCore
+			aggMemAlloc += int64(pch.Summary.TotalMemGB) * giToBytes
+			aggMemUsed += int64(pch.Summary.TotalMemPct) * int64(pch.Summary.TotalMemGB) * giToBytes / percentMultiplier
+		case <-time.After(clusterHealthQueryTimeout):
+			s.logger.Warn("cluster health query timed out", "cluster", cID)
+			perCluster = append(perCluster, PerClusterHealth{
+				ID:    cID,
+				Name:  s.clusterNameForID(cID),
+				Error: "query timed out",
+			})
+		}
+	}
+
+	aggCPUPct := 0
+	if aggCPUAlloc > 0 {
+		aggCPUPct = int(aggCPUUsed * percentMultiplier / aggCPUAlloc)
+	}
+	aggMemPct := 0
+	if aggMemAlloc > 0 {
+		aggMemPct = int(aggMemUsed * percentMultiplier / aggMemAlloc)
+	}
+	aggMemGB := int(aggMemAlloc / giToBytes)
+
+	// Sort clusters by ID for deterministic output.
+	sort.Slice(perCluster, func(i, j int) bool {
+		return perCluster[i].ID < perCluster[j].ID
+	})
+
+	return &ClusterHealthResponse{
+		Nodes: allNodes,
+		Summary: ClusterHealthSummary{
+			TotalNodes:    len(allNodes),
+			TotalCPUCores: aggCPUCores,
+			TotalCPUPct:   aggCPUPct,
+			TotalMemGB:    aggMemGB,
+			TotalMemPct:   aggMemPct,
+			HiveCount:     totalHiveCount,
+		},
+		Clusters: perCluster,
+	}, nil
+}
+
+// buildSingleClusterHealth queries a single cluster for node health data.
+func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slog.Logger) (PerClusterHealth, error) {
 	// Run kubectl top nodes
-	topOut, err := kubectlForCluster(hubC, "top", "nodes", "--no-headers").Output()
+	topOut, err := kubectlForCluster(cluster, "top", "nodes", "--no-headers").Output()
 	if err != nil {
-		return nil, fmt.Errorf("kubectl top nodes: %w", err)
+		return PerClusterHealth{}, fmt.Errorf("kubectl top nodes on %s: %w", cluster.ID, err)
 	}
 
 	// Run kubectl get nodes -o json
-	getOut, err := kubectlForCluster(hubC, "get", "nodes", "-o", "json").Output()
+	getOut, err := kubectlForCluster(cluster, "get", "nodes", "-o", "json").Output()
 	if err != nil {
-		return nil, fmt.Errorf("kubectl get nodes: %w", err)
+		return PerClusterHealth{}, fmt.Errorf("kubectl get nodes on %s: %w", cluster.ID, err)
 	}
 
 	// Parse kubectl get nodes output
@@ -533,23 +711,30 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(getOut, &nodesJSON); err != nil {
-		return nil, fmt.Errorf("parse nodes JSON: %w", err)
+		return PerClusterHealth{}, fmt.Errorf("parse nodes JSON on %s: %w", cluster.ID, err)
 	}
 
-	// Build a map of node info from kubectl get
+	// Build a map of node info from kubectl get.
 	type nodeInfo struct {
 		cpuAllocatable  int64 // millicores
 		memAllocatable  int64 // bytes
 		podCapacity     int
 		diskPressure    bool
 		conditions      []string
+		gpuCapacity     int
+		gpuAllocatable  int
 	}
 	nodeMap := make(map[string]*nodeInfo)
+	var totalGPUCapacity, totalGPUAllocatable int
 	for _, item := range nodesJSON.Items {
 		ni := &nodeInfo{}
 		ni.cpuAllocatable = parseK8sCPU(item.Status.Allocatable["cpu"])
 		ni.memAllocatable = parseK8sMemory(item.Status.Allocatable["memory"])
 		ni.podCapacity = parseInt(item.Status.Capacity["pods"])
+		ni.gpuCapacity = parseInt(item.Status.Capacity[gpuResourceKey])
+		ni.gpuAllocatable = parseInt(item.Status.Allocatable[gpuResourceKey])
+		totalGPUCapacity += ni.gpuCapacity
+		totalGPUAllocatable += ni.gpuAllocatable
 		for _, cond := range item.Status.Conditions {
 			if cond.Type == "DiskPressure" && cond.Status == "True" {
 				ni.diskPressure = true
@@ -566,7 +751,7 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		nodeMap[item.Metadata.Name] = ni
 	}
 
-	// Parse kubectl top nodes output
+	// Parse kubectl top nodes output.
 	// Format: NAME  CPU(cores)  CPU%  MEMORY(bytes)  MEMORY%
 	var nodes []ClusterHealthNode
 	lines := strings.Split(strings.TrimSpace(string(topOut)), "\n")
@@ -577,8 +762,8 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 			continue
 		}
 		name := fields[0]
-		cpuUsed := parseTopCPU(fields[1])     // e.g. "1200m" or "2"
-		memUsed := parseTopMemory(fields[3])   // e.g. "4096Mi"
+		cpuUsed := parseTopCPU(fields[1])
+		memUsed := parseTopMemory(fields[3])
 
 		ni, ok := nodeMap[name]
 		if !ok {
@@ -613,8 +798,8 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		})
 	}
 
-	// Count running pods per node
-	podOut, _ := kubectlForCluster(hubC, "get", "pods", "--all-namespaces", "--field-selector=status.phase=Running", "-o", "json").Output()
+	// Count running pods per node.
+	podOut, _ := kubectlForCluster(cluster, "get", "pods", "--all-namespaces", "--field-selector=status.phase=Running", "-o", "json").Output()
 	if len(podOut) > 0 {
 		var podsJSON struct {
 			Items []struct {
@@ -634,12 +819,7 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		}
 	}
 
-	// Count hives from registry
-	s.mu.RLock()
-	hiveCount := len(s.registry.Hives)
-	s.mu.RUnlock()
-
-	// Build summary
+	// Build summary.
 	var totalCPUCores int
 	var totalCPUUsed int64
 	var totalCPUAlloc int64
@@ -665,7 +845,7 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 	}
 	totalMemGB := int(totalMemAlloc / giToBytes)
 
-	return &ClusterHealthResponse{
+	result := PerClusterHealth{
 		Nodes: nodes,
 		Summary: ClusterHealthSummary{
 			TotalNodes:    len(nodes),
@@ -675,7 +855,18 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 			TotalMemPct:   totalMemPct,
 			HiveCount:     hiveCount,
 		},
-	}, nil
+		HiveCount: hiveCount,
+	}
+
+	// Include GPU summary for clusters with GPUs.
+	if totalGPUCapacity > 0 {
+		result.GPUSummary = &GPUSummary{
+			TotalGPUs:       totalGPUCapacity,
+			AllocatableGPUs: totalGPUAllocatable,
+		}
+	}
+
+	return result, nil
 }
 
 // parseK8sCPU parses Kubernetes CPU resource strings (e.g. "4", "4000m").
@@ -814,6 +1005,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 						PrimaryRepo: sh.PrimaryRepo,
 						ACMMLevel:   sh.ACMMLevel,
 						HiveType:    "hosted",
+						ClusterID:   clusterIDForSaaSHive(*sh),
+						ClusterName: s.clusterNameForID(clusterIDForSaaSHive(*sh)),
 					},
 					Role: role,
 				}
@@ -842,6 +1035,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 					PrimaryRepo: sh.PrimaryRepo,
 					ACMMLevel:   sh.ACMMLevel,
 					HiveType:    "hosted",
+					ClusterID:   clusterIDForSaaSHive(sh),
+					ClusterName: s.clusterNameForID(clusterIDForSaaSHive(sh)),
 				},
 				Role: "owner",
 			}
@@ -1056,6 +1251,16 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		acmm = 1
 	}
 
+	// Validate and default the target cluster.
+	targetCluster := req.ClusterID
+	if targetCluster == "" {
+		targetCluster = defaultClusterID
+	}
+	if _, ok := s.clusters[targetCluster]; !ok {
+		http.Error(w, `{"error":"unknown cluster_id"}`, http.StatusBadRequest)
+		return
+	}
+
 	hiveID := generateHiveID(req.Org, primaryRepo)
 
 	// Determine which cluster to provision on. Default to hive-oke if unspecified.
@@ -1079,6 +1284,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		Repos:       repos,
 		PrimaryRepo: primaryRepo,
 		ACMMLevel:   acmm,
+		ClusterID:   targetCluster,
 		Status:      "provisioning",
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 		Subdomain:   subdomain,
@@ -2807,6 +3013,18 @@ const dashboardHTML = `<!DOCTYPE html>
       var cls = role === 'owner' ? 'role-owner' : role === 'read-write' ? 'role-read-write' : 'role-read';
       return '<span class="role-badge ' + cls + '">' + esc(role) + '</span>';
     }
+    function clusterBadge(clusterId, clusterName) {
+      var cid = clusterId || 'hive-oke';
+      var label = cid.replace(/^hive-/, '').toUpperCase();
+      // GPU clusters get a special color scheme.
+      var isGPU = label === 'VLLM-D' || (clusterName || '').toLowerCase().indexOf('gpu') >= 0;
+      if (isGPU) label = 'GPU';
+      var bg = isGPU ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)';
+      var color = isGPU ? '#3fb950' : '#60a5fa';
+      var border = isGPU ? 'rgba(34,197,94,0.3)' : 'rgba(59,130,246,0.3)';
+      var title = clusterName || cid;
+      return '<span class="cluster-badge" style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:' + bg + ';color:' + color + ';border:1px solid ' + border + '" title="' + esc(title) + '">' + esc(label) + '</span>';
+    }
     function modeBadge(mode) {
       var m = (mode || 'idle').toUpperCase();
       var levels = {IDLE:0, QUIET:1, BUSY:2, SURGE:3};
@@ -3129,7 +3347,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write')) {
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
-        var TOTAL_COLUMNS = 14;
+        var TOTAL_COLUMNS = 15;
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
@@ -3148,6 +3366,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible"><span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div></td>' +
           '<td style="text-align:left;line-height:1.4">' + (function() { var dh = isHosted ? 'https://' + esc(h.id) + '.hive.kubestellar.io' : (h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? esc(h.dashboardUrl) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return dh ? '<a href="' + dh + '" target="_blank" style="' + s + ';text-decoration:none">' + esc(text) + '</a>' : '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + '</div>'; return line1 + line2; })() + '</td>' +
           '<td>' + typeBadge + '</td>' +
+          '<td>' + clusterBadge(h.clusterId, h.clusterName) + '</td>' +
           '<td>' + (function() { var pub = !!h.isPublic; var tid = 'vis-' + esc(h.id); if (isHosted && h.role === 'owner') { return '<label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer"><input type="checkbox" id="' + tid + '" ' + (pub ? 'checked' : '') + ' onchange="toggleVisibility(\'' + esc(h.id) + '\',this.checked)" style="opacity:0;width:0;height:0"><span style="position:absolute;inset:0;background:' + (pub ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;transition:background 0.2s"></span><span style="position:absolute;top:2px;left:' + (pub ? '18px' : '2px') + ';width:16px;height:16px;background:#fff;border-radius:50%;transition:left 0.2s"></span></label>'; } if (isLocal) { var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : ''; var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>'; return dh ? '<a href="' + esc(dh) + '#config/governor/Hub" target="_blank" title="Change in Governor Config → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>' : badge; } return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>'; })() + '</td>' +
           '<td style="font-size:0.7rem;white-space:nowrap">' + versionCell + '</td>' +
           '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
@@ -3161,7 +3380,7 @@ const dashboardHTML = `<!DOCTYPE html>
       }).join('');
       document.getElementById('hives-container').innerHTML =
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
-        '<th></th><th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'hiveType\')" style="cursor:pointer">Type ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'hiveType\')" style="cursor:pointer">Type ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Cluster ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       setTimeout(function() {
         var tw = document.querySelector('.table-wrap');
@@ -3524,6 +3743,29 @@ const dashboardHTML = `<!DOCTYPE html>
         '</span></div>';
     }
 
+    function renderNodeCard(n) {
+      var nk = n.name;
+      var readyBadge = (n.conditions || []).indexOf('Ready') >= 0
+        ? '<span style="color:var(--green);font-size:0.7rem;font-weight:600">Ready</span>'
+        : '<span style="color:var(--red);font-size:0.7rem;font-weight:600">NotReady</span>';
+      var diskWarn = n.disk_pressure
+        ? '<div style="margin-top:6px;padding:4px 8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:4px;font-size:0.7rem;color:var(--red)">⚠ Disk Pressure</div>'
+        : '';
+      var cpuUsed = (n.cpu_used_millicores / 1000).toFixed(1);
+      var memUsedGB = (n.mem_used_mb / 1024).toFixed(1);
+      var memTotalGB = Math.round(n.mem_total_mb / 1024);
+      return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
+        '<span style="font-family:monospace;font-size:0.8rem;color:var(--text)">' + esc(nk) + '</span>' +
+        '<span style="display:flex;align-items:center;gap:6px">' + readyBadge +
+        '<span style="padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;color:var(--muted)">' + (n.pods || 0) + '/' + (n.pod_capacity || 0) + ' pods</span>' +
+        '</span></div>' +
+        renderHealthMetric('CPU', cpuUsed, n.cpu_cores, 'cores', n.cpu_percent, CLUSTER_CPU_WARN_PCT, CLUSTER_CPU_DANGER_PCT, nk, 'cpu') +
+        renderHealthMetric('MEM', memUsedGB, memTotalGB, 'GB', n.mem_percent, CLUSTER_MEM_WARN_PCT, CLUSTER_MEM_DANGER_PCT, nk, 'mem') +
+        diskWarn +
+        '</div>';
+    }
+
     async function loadClusterHealth() {
       if (!_isAdmin) return;
       try {
@@ -3543,7 +3785,9 @@ const dashboardHTML = `<!DOCTYPE html>
           pushSparkPoint('_cluster', 'mem', s.total_mem_percent || 0);
           var cpuColor = healthBarColor(s.total_cpu_percent || 0, CLUSTER_CPU_WARN_PCT, CLUSTER_CPU_DANGER_PCT);
           var memColor = healthBarColor(s.total_mem_percent || 0, CLUSTER_MEM_WARN_PCT, CLUSTER_MEM_DANGER_PCT);
-          summaryBar.innerHTML = (s.total_nodes || 0) + ' nodes · ' + (s.total_cpu_cores || 0) + ' vCPU · ' +
+          var clusterCount = (data.clusters || []).length;
+          summaryBar.innerHTML = clusterCount + ' cluster' + (clusterCount !== 1 ? 's' : '') + ' · ' +
+            (s.total_nodes || 0) + ' nodes · ' + (s.total_cpu_cores || 0) + ' vCPU · ' +
             renderUnicodeSparkline('_cluster', 'cpu', cpuColor) + ' <span style="color:' + cpuColor + '">' + (s.total_cpu_percent || 0) + '% cpu</span> · ' +
             renderUnicodeSparkline('_cluster', 'mem', memColor) + ' <span style="color:' + memColor + '">' + (s.total_mem_percent || 0) + '% mem</span> · ' +
             (s.hive_count || 0) + ' hives';
@@ -3558,37 +3802,67 @@ const dashboardHTML = `<!DOCTYPE html>
 
         var grid = document.getElementById('cluster-health-grid');
         if (!grid) return;
-        var nodes = data.nodes || [];
-        if (!nodes.length) {
-          grid.innerHTML = '<div style="color:var(--muted);font-size:0.85rem;grid-column:span 2">No node data available</div>';
-          return;
-        }
 
-        grid.innerHTML = nodes.map(function(n) {
-          var nk = n.name;
-          var readyBadge = (n.conditions || []).indexOf('Ready') >= 0
-            ? '<span style="color:var(--green);font-size:0.7rem;font-weight:600">Ready</span>'
-            : '<span style="color:var(--red);font-size:0.7rem;font-weight:600">NotReady</span>';
-          var diskWarn = n.disk_pressure
-            ? '<div style="margin-top:6px;padding:4px 8px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:4px;font-size:0.7rem;color:var(--red)">⚠ Disk Pressure</div>'
-            : '';
-          var cpuUsed = (n.cpu_used_millicores / 1000).toFixed(1);
-          var memUsedGB = (n.mem_used_mb / 1024).toFixed(1);
-          var memTotalGB = Math.round(n.mem_total_mb / 1024);
-          return '<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px">' +
-            '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">' +
-            '<span style="font-family:monospace;font-size:0.8rem;color:var(--text)">' + esc(nk) + '</span>' +
-            '<span style="display:flex;align-items:center;gap:6px">' + readyBadge +
-            '<span style="padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;color:var(--muted)">' + (n.pods || 0) + '/' + (n.pod_capacity || 0) + ' pods</span>' +
-            '</span></div>' +
-            renderHealthMetric('CPU', cpuUsed, n.cpu_cores, 'cores', n.cpu_percent, CLUSTER_CPU_WARN_PCT, CLUSTER_CPU_DANGER_PCT, nk, 'cpu') +
-            renderHealthMetric('MEM', memUsedGB, memTotalGB, 'GB', n.mem_percent, CLUSTER_MEM_WARN_PCT, CLUSTER_MEM_DANGER_PCT, nk, 'mem') +
-            diskWarn +
-            '</div>';
-        }).join('');
+        // Render per-cluster sections if available, otherwise fall back to flat nodes.
+        var clusters = data.clusters || [];
+        if (clusters.length > 0) {
+          grid.style.display = 'block';
+          grid.innerHTML = clusters.map(function(c) {
+            var cLabel = c.name || c.id;
+            var cs = c.summary || {};
+            var cCpuColor = healthBarColor(cs.total_cpu_percent || 0, CLUSTER_CPU_WARN_PCT, CLUSTER_CPU_DANGER_PCT);
+            var cMemColor = healthBarColor(cs.total_mem_percent || 0, CLUSTER_MEM_WARN_PCT, CLUSTER_MEM_DANGER_PCT);
+            var gpuLine = '';
+            if (c.gpu_summary) {
+              gpuLine = ' · <span style="color:var(--green)">' + c.gpu_summary.allocatable_gpus + '/' + c.gpu_summary.total_gpus + ' GPUs</span>';
+            }
+            var errorLine = c.error ? '<div style="margin:8px 0;padding:6px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;font-size:0.75rem;color:var(--red)">' + esc(c.error) + '</div>' : '';
+            var headerHtml = '<div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px">' +
+              clusterBadge(c.id, c.name) +
+              '<span style="font-size:0.85rem;color:var(--text);font-weight:600">' + esc(cLabel) + '</span>' +
+              '<span style="font-size:0.75rem;color:var(--muted)">' +
+              (cs.total_nodes || 0) + ' nodes · ' + (cs.total_cpu_cores || 0) + ' vCPU · ' +
+              '<span style="color:' + cCpuColor + '">' + (cs.total_cpu_percent || 0) + '% cpu</span> · ' +
+              '<span style="color:' + cMemColor + '">' + (cs.total_mem_percent || 0) + '% mem</span> · ' +
+              (c.hive_count || 0) + ' hives' + gpuLine +
+              '</span></div>';
+            var nodesHtml = (c.nodes || []).length > 0
+              ? '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">' + (c.nodes || []).map(renderNodeCard).join('') + '</div>'
+              : '';
+            return headerHtml + errorLine + nodesHtml;
+          }).join('');
+        } else {
+          // Fallback: flat node list (single cluster / backward compat).
+          grid.style.display = 'grid';
+          grid.style.gridTemplateColumns = 'repeat(2,1fr)';
+          var nodes = data.nodes || [];
+          if (!nodes.length) {
+            grid.innerHTML = '<div style="color:var(--muted);font-size:0.85rem;grid-column:span 2">No node data available</div>';
+            return;
+          }
+          grid.innerHTML = nodes.map(renderNodeCard).join('');
+        }
       } catch(e) {
         console.error('cluster health error:', e);
       }
+    }
+
+    async function loadClusters() {
+      try {
+        var resp = await fetch('/api/hub/clusters');
+        if (!resp.ok) return;
+        var clusters = await resp.json();
+        var sel = document.getElementById('f-cluster');
+        if (!sel || !clusters || !clusters.length) return;
+        sel.innerHTML = clusters.map(function(c) {
+          var caps = [];
+          if (c.has_gpu) caps.push('GPU');
+          if (c.arch) caps.push(c.arch);
+          var label = c.name || c.id;
+          if (caps.length) label += ' (' + caps.join(', ') + ')';
+          return '<option value="' + esc(c.id) + '">' + esc(label) + '</option>';
+        }).join('');
+      } catch(e) { /* cluster dropdown stays at default */ }
     }
 
     async function init() {
@@ -3598,6 +3872,7 @@ const dashboardHTML = `<!DOCTYPE html>
       await loadAdminUsers();
       if (!_adminLoaded) setTimeout(loadAdminUsers, 2000);
       loadClusterHealth();
+      loadClusters();
     }
     init();
     var POLL_INTERVAL_MS = 30000;
@@ -3818,19 +4093,21 @@ const dashboardHTML = `<!DOCTYPE html>
       var primary = document.getElementById('f-primary').value.trim();
       var name = document.getElementById('f-name').value.trim();
       var level = parseInt(document.getElementById('f-level').value) || 1;
+      var clusterSel = document.getElementById('f-cluster');
+      var clusterId = clusterSel ? clusterSel.value : '';
       var method = document.querySelector('input[name="auth-method"]:checked').value;
       var token = document.getElementById('f-token').value.trim();
       var appId = (document.getElementById('f-app-id') || {}).value || '';
       var installId = (document.getElementById('f-install-id') || {}).value || '';
       var appKey = (document.getElementById('f-app-key') || {}).value || '';
 
-      gtag('event','hive_create_started',{org:org,primary_repo:primary,acmm_level:level});
+      gtag('event','hive_create_started',{org:org,primary_repo:primary,acmm_level:level,cluster_id:clusterId});
       if (!org || !repos) { hiveToast('Org and repos are required', 'error'); _createInProgress = false; document.getElementById('btn-go').disabled = false; document.getElementById('btn-go').textContent = 'Go'; return; }
       if (method === 'pat' && !token) { hiveToast('GitHub token is required', 'error'); _createInProgress = false; document.getElementById('btn-go').disabled = false; document.getElementById('btn-go').textContent = 'Go'; return; }
       if (method === 'app' && (!appId || !installId || !appKey)) { hiveToast('App ID, Installation ID, and Private Key are required', 'error'); _createInProgress = false; document.getElementById('btn-go').disabled = false; document.getElementById('btn-go').textContent = 'Go'; return; }
 
       try {
-        var body = {org: org, repos: repos, primary_repo: primary || repos.split(',')[0].trim(), project_name: name, acmm_level: level, auth_method: method};
+        var body = {org: org, repos: repos, primary_repo: primary || repos.split(',')[0].trim(), project_name: name, acmm_level: level, cluster_id: clusterId, auth_method: method};
         if (method === 'pat') body.github_token = token;
         else { body.app_id = appId.trim(); body.installation_id = installId.trim(); body.app_private_key = appKey.trim(); }
 
@@ -3960,6 +4237,12 @@ const dashboardHTML = `<!DOCTYPE html>
             <option value="4">L4 — Auto PR</option>
             <option value="5">L5 — Self-Governing</option>
             <option value="6">L6 — Fully Autonomous</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Target Cluster</label>
+          <select id="f-cluster" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+            <option value="">Loading clusters...</option>
           </select>
         </div>
       </div>

@@ -55,6 +55,7 @@ type RegistryEntry struct {
 	ActiveContributors int            `json:"activeContributors"`
 	Owner              string         `json:"owner,omitempty"`
 	ClusterID          string         `json:"clusterId,omitempty"`
+	ClusterName        string         `json:"clusterName,omitempty"`
 	HiveType           string         `json:"hiveType,omitempty"`
 	IsPublic           bool           `json:"isPublic"`
 	RegisteredAt       string         `json:"registeredAt"`
@@ -333,13 +334,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppRequired: payload.GitHubAppRequired,
 	}
 
-	// Populate ClusterID from the SaaS hive record (if this is a hosted hive).
+	// Populate ClusterID and ClusterName from the SaaS hive record (if this is a hosted hive).
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		clusterID := sh.ClusterID
 		if clusterID == "" {
 			clusterID = defaultClusterID
 		}
 		entry.ClusterID = clusterID
+		if c, ok := s.clusters[clusterID]; ok {
+			entry.ClusterName = c.Name
+		}
 	}
 
 	s.mu.Lock()
