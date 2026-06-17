@@ -2755,13 +2755,13 @@ const dashboardHTML = `<!DOCTYPE html>
       return '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span></span>';
     }
     function dashboardLink(h) {
-      var isHosted = h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'));
+      var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
+      if (h.dashboardUrl && !h.dashboardUrl.includes('localhost'))
+        return '<a href="' + esc(h.dashboardUrl) + '" target="_blank" class="dash-link">' + esc(h.dashboardUrl.replace(/^https?:\/\//,'').substring(0,30)) + '...</a>';
       if (isHosted) {
         var url = 'https://' + esc(h.id) + '.hive.kubestellar.io';
         return '<a href="' + url + '" target="_blank" class="dash-link">' + esc(h.id) + '.hive...</a>';
       }
-      if (h.dashboardUrl && !h.dashboardUrl.includes('localhost'))
-        return '<a href="' + esc(h.dashboardUrl) + '" target="_blank" class="dash-link">' + esc(h.dashboardUrl.replace('http://','')) + '</a>';
       return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
     }
     function snapshotLink(h) {
@@ -2769,12 +2769,12 @@ const dashboardHTML = `<!DOCTYPE html>
       return '';
     }
     function apiLink(h) {
-      var isHosted = h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'));
+      var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
       var base = '';
-      if (isHosted) {
-        base = 'https://' + esc(h.id) + '.hive.kubestellar.io';
-      } else if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) {
+      if (h.dashboardUrl && !h.dashboardUrl.includes('localhost')) {
         base = esc(h.dashboardUrl);
+      } else if (isHosted) {
+        base = 'https://' + esc(h.id) + '.hive.kubestellar.io';
       }
       if (!base) return '';
       return '<a href="' + base + '/api/docs" target="_blank" style="padding:3px 10px;background:rgba(88,166,255,0.15);color:#58a6ff;border:1px solid rgba(88,166,255,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;white-space:nowrap">API ↗</a>';
@@ -2962,7 +2962,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var rp = repoPath(h);
         var repoLink = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '';
         var repoCount = (h.repos || []).length;
-        var isHosted = h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'));
+        var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
         var isLocal = !isHosted;
         var canConvert = isLocal && h.role === 'owner' && (_userQuota < 0 || _userQuota > _userUsed);
         var typeBadge = isHosted
