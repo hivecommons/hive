@@ -3532,6 +3532,41 @@ const dashboardHTML = `<!DOCTYPE html>
     var _adminLoaded = false;
     var _adminExpandedUsers = {};
     var _hiveRegistry = [];
+    var _userSortKey = 'created_at', _userSortAsc = false;
+
+    function fmtUserTS(ts) {
+      if (!ts) return '';
+      var d = new Date(ts);
+      if (isNaN(d.getTime())) return ts.substring(0, 10);
+      return d.toLocaleString('en-US', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'America/New_York'}).replace(',','') + ' EDT';
+    }
+
+    function sortUsers(key) {
+      if (_userSortKey === key) { _userSortAsc = !_userSortAsc; } else { _userSortKey = key; _userSortAsc = true; }
+      applySortUsers();
+    }
+
+    function applySortUsers() {
+      var key = _userSortKey;
+      var q = (document.getElementById('user-search') ? document.getElementById('user-search').value : '').toLowerCase();
+      var filtered = _allUsers.filter(function(u) { return !q || u.github_username.toLowerCase().includes(q); });
+      var sorted = filtered.slice().sort(function(a, b) {
+        var va, vb;
+        if (key === 'hiveCount') {
+          var regIds = new Set((_hiveRegistry || []).map(function(h) { return h.id; }));
+          va = Object.keys(a.hives || {}).filter(function(h) { return regIds.has(h); }).length;
+          vb = Object.keys(b.hives || {}).filter(function(h) { return regIds.has(h); }).length;
+        } else if (key === 'status') {
+          va = a.blocked ? 1 : 0;
+          vb = b.blocked ? 1 : 0;
+        } else {
+          va = a[key] || ''; vb = b[key] || '';
+        }
+        if (typeof va === 'number' && typeof vb === 'number') return _userSortAsc ? va - vb : vb - va;
+        return _userSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+      });
+      renderUsers(sorted, true);
+    }
 
     function toggleAdminExpand(username) {
       _adminExpandedUsers[username] = !_adminExpandedUsers[username];
@@ -3552,7 +3587,7 @@ const dashboardHTML = `<!DOCTYPE html>
         document.getElementById('admin-section').style.display = '';
         var data = await resp.json();
         _allUsers = data.users || [];
-        try { renderUsers(_allUsers); } catch(re) { console.error('renderUsers error:', re); }
+        try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
       } catch(e) {
         if (!_adminLoaded) document.getElementById('admin-section').style.display = 'none';
       } finally {
@@ -3561,9 +3596,7 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     function filterUsers() {
-      var q = (document.getElementById('user-search').value || '').toLowerCase();
-      var filtered = _allUsers.filter(function(u) { return u.github_username.toLowerCase().includes(q); });
-      renderUsers(filtered, true);
+      applySortUsers();
     }
 
     function renderUsers(users, force) {
@@ -3600,8 +3633,8 @@ const dashboardHTML = `<!DOCTYPE html>
 
         return '<tr>' +
           '<td>' + avatar + '<a href="https://github.com/' + esc(u.github_username) + '" target="_blank">' + esc(u.github_username) + '</a>' + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
-          '<td style="font-size:0.75rem;color:var(--muted)">' + esc((u.created_at || '').substring(0, 10)) + '</td>' +
-          '<td style="font-size:0.75rem;color:var(--muted)">' + esc((u.last_login || '').substring(0, 10)) + '</td>' +
+          '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
+          '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td>' + blocked + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
@@ -3610,7 +3643,7 @@ const dashboardHTML = `<!DOCTYPE html>
       }).join('');
       document.getElementById('users-container').innerHTML =
         '<table class="hive-table"><thead><tr>' +
-        '<th>User</th><th>Joined</th><th>Last Login</th><th>Status</th><th>Quota</th><th>Hives</th><th>Actions</th>' +
+        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
     }
 
