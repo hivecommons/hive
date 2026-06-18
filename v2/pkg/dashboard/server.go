@@ -65,6 +65,8 @@ type Server struct {
 
 	contributeHub *ContributeWSHub
 
+	inferenceEndpoints map[string]string // backend id → base URL (e.g. "vllm" → "http://vllm-svc...")
+
 	ready   bool
 	readyAt time.Time
 }
@@ -284,6 +286,12 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 	}
 	s.registerCoreRoutes()
 	return s
+}
+
+// SetInferenceEndpoints registers the base URLs for inference backends
+// so the dashboard can query them for available models at runtime.
+func (s *Server) SetInferenceEndpoints(endpoints map[string]string) {
+	s.inferenceEndpoints = endpoints
 }
 
 // SetSkipReloadFunc sets the callback used by saveConfig to skip the
