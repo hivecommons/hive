@@ -93,9 +93,18 @@ type StatusPayload struct {
 	ACMMPackAgents   []string            `json:"acmmPackAgents"`
 	AdvisoryDigest   any                 `json:"advisoryDigest,omitempty"`
 	ContributorPool    *ContributorPoolStatus `json:"contributorPool,omitempty"`
-	SystemResources    *SystemResources    `json:"systemResources,omitempty"`
-	GitHubAppRequired  bool                `json:"githubAppRequired,omitempty"`
+	SystemResources     *SystemResources    `json:"systemResources,omitempty"`
+	GitHubAppRequired   bool               `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string             `json:"githubAppInstallURL,omitempty"`
+	InferenceBackends   []InferenceBackend `json:"inferenceBackends,omitempty"`
+}
+
+// InferenceBackend describes a live inference endpoint and its available models.
+type InferenceBackend struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Inference bool     `json:"inference"`
+	Models    []string `json:"models"`
 }
 
 type FrontendAgent struct {

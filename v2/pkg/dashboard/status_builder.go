@@ -105,9 +105,49 @@ func BuildFrontendStatus(
 		IssueToMerge: issueToMerge,
 		ACMMLevel:       detectACMMLevel(cfg),
 		ACMMPackAgents:  buildACMMPackAgents(cfg),
-		SystemResources: collectSystemResources(),
+		SystemResources:   collectSystemResources(),
+		InferenceBackends: buildInferenceBackends(),
 	}
 	return payload
+}
+
+var (
+	inferenceCache   []InferenceBackend
+	inferenceCacheMu sync.RWMutex
+)
+
+func init() {
+	const inferenceRefreshInterval = 5 * time.Second
+	go func() {
+		for {
+			backends := refreshInferenceBackends()
+			inferenceCacheMu.Lock()
+			inferenceCache = backends
+			inferenceCacheMu.Unlock()
+			time.Sleep(inferenceRefreshInterval)
+		}
+	}()
+}
+
+func refreshInferenceBackends() []InferenceBackend {
+	vllmEndpoint := os.Getenv("HIVE_VLLM_ENDPOINT")
+	if vllmEndpoint == "" {
+		vllmEndpoint = "http://hive-vllm-svc:8000"
+	}
+	llmdEndpoint := os.Getenv("HIVE_LLMD_ENDPOINT")
+	if llmdEndpoint == "" {
+		llmdEndpoint = "http://hive-llm-d-epp:9002"
+	}
+	return []InferenceBackend{
+		{ID: "vllm", Name: "vLLM (self-hosted)", Inference: true, Models: discoverModelsMulti(vllmEndpoint)},
+		{ID: "llm-d", Name: "llm-d (self-hosted)", Inference: true, Models: discoverModelsMulti(llmdEndpoint)},
+	}
+}
+
+func buildInferenceBackends() []InferenceBackend {
+	inferenceCacheMu.RLock()
+	defer inferenceCacheMu.RUnlock()
+	return inferenceCache
 }
 
 func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, govState governor.State) []FrontendAgent {
