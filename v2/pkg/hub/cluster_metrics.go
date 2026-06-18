@@ -1,10 +1,15 @@
 package hub
 
 import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
-	"os/exec"
+	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -52,17 +57,17 @@ func CollectClusterHealth(logger *slog.Logger) *HeartbeatClusterHealthReport {
 }
 
 func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthReport {
-	// Run kubectl top nodes (requires metrics-server).
-	topOut, err := runKubectlLocal("top", "nodes", "--no-headers")
+	// Query metrics API for node resource usage (requires metrics-server).
+	topOut, err := k8sAPIGet("/apis/metrics.k8s.io/v1beta1/nodes")
 	if err != nil {
-		logger.Debug("spoke metrics: kubectl top nodes failed (metrics-server may not be installed)", "error", err)
+		logger.Debug("spoke metrics: metrics API failed (metrics-server may not be installed)", "error", err)
 		return nil
 	}
 
-	// Run kubectl get nodes for capacity, allocatable, conditions, GPU resources.
-	getOut, err := runKubectlLocal("get", "nodes", "-o", "json")
+	// Query nodes API for capacity, allocatable, conditions, GPU resources.
+	getOut, err := k8sAPIGet("/api/v1/nodes")
 	if err != nil {
-		logger.Debug("spoke metrics: kubectl get nodes failed", "error", err)
+		logger.Debug("spoke metrics: nodes API failed", "error", err)
 		return nil
 	}
 
@@ -136,19 +141,25 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		nodeMap[item.Metadata.Name] = ni
 	}
 
-	// Parse kubectl top nodes output.
-	// Format: NAME  CPU(cores)  CPU%  MEMORY(bytes)  MEMORY%
+	// Parse metrics API JSON response.
+	var metricsJSON struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Usage map[string]string `json:"usage"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(topOut, &metricsJSON); err != nil {
+		logger.Debug("spoke metrics: failed to parse metrics API response", "error", err)
+		return nil
+	}
+
 	var nodes []HeartbeatNodeMetric
-	lines := strings.Split(strings.TrimSpace(string(topOut)), "\n")
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		const topFieldCount = 5
-		if len(fields) < topFieldCount {
-			continue
-		}
-		name := fields[0]
-		cpuUsed := parseTopCPU(fields[1])
-		memUsed := parseTopMemory(fields[3])
+	for _, item := range metricsJSON.Items {
+		name := item.Metadata.Name
+		cpuUsed := parseK8sCPU(item.Usage["cpu"])
+		memUsed := parseK8sMemory(item.Usage["memory"])
 
 		ni, ok := nodeMap[name]
 		if !ok {
@@ -189,7 +200,7 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	}
 
 	// Count running pods per node.
-	podOut, err := runKubectlLocal("get", "pods", "--all-namespaces", "--field-selector=status.phase=Running", "-o", "json")
+	podOut, err := k8sAPIGet("/api/v1/pods?fieldSelector=status.phase%3DRunning")
 	if err == nil && len(podOut) > 0 {
 		var podsJSON struct {
 			Items []struct {
@@ -277,13 +288,60 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	return report
 }
 
-// runKubectlLocal runs kubectl in-cluster (no kubeconfig needed) and returns
-// stdout. Used by spokes to collect local cluster metrics.
-func runKubectlLocal(args ...string) ([]byte, error) {
-	cmd := exec.Command("kubectl", args...)
-	out, err := cmd.Output()
+const (
+	k8sAPIServer  = "https://kubernetes.default.svc"
+	k8sTokenPath  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	k8sCACertPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+)
+
+func k8sAPIGet(path string) ([]byte, error) {
+	token, err := os.ReadFile(k8sTokenPath)
 	if err != nil {
-		return nil, fmt.Errorf("kubectl %s: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("reading service account token: %w", err)
 	}
-	return out, nil
+
+	tlsConfig := &tls.Config{}
+	if caCert, err := os.ReadFile(k8sCACertPath); err == nil {
+		pool := x509.NewCertPool()
+		pool.AppendCertsFromPEM(caCert)
+		tlsConfig.RootCAs = pool
+	} else {
+		tlsConfig.InsecureSkipVerify = true
+	}
+
+	client := &http.Client{
+		Timeout:   metricsCollectionTimeout,
+		Transport: &http.Transport{TLSClientConfig: tlsConfig},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), metricsCollectionTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, k8sAPIServer+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("k8s API %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response from %s: %w", path, err)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("k8s API %s: HTTP %d: %s", path, resp.StatusCode, string(body[:minInt(len(body), 200)]))
+	}
+	return body, nil
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
