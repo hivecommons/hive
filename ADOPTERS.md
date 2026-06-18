@@ -14,6 +14,7 @@ Listed below are organizations that have adopted, or benefitted from, KubeStella
 
 | Organization | Description | Maturity Level | Further Information |
 | --- | --- | --- | --- |
+| [Tuna OS](https://github.com/tuna-os) | Autonomous development operations for tuna-os projects | Pre-production | |
 
 ## Adopter Tiers
 
