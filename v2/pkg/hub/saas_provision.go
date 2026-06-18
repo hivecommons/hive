@@ -2,6 +2,7 @@ package hub
 
 import (
 	cryptoRand "crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -186,6 +187,12 @@ type SaaSHive struct {
 	OCIFileSystemID string                 `json:"oci_file_system_id,omitempty"`
 	OCIExportID     string                 `json:"oci_export_id,omitempty"`
 	ClusterID       string                 `json:"cluster_id,omitempty"`
+
+	// Migration tracking fields (Phase 7).
+	MigrationStatus    string `json:"migration_status,omitempty"`     // "migrating", "completed", "failed"
+	MigrationFrom      string `json:"migration_from,omitempty"`       // source cluster ID
+	MigrationTo        string `json:"migration_to,omitempty"`         // target cluster ID
+	MigrationStartedAt string `json:"migration_started_at,omitempty"` // RFC3339 timestamp
 }
 
 type CreateHiveRequest struct {
@@ -571,6 +578,133 @@ func deprovisionHive(h *SaaSHive, cluster *ClusterConfig, logger *slog.Logger) {
 	logger.Info("audit: hive deprovisioned", "hive_id", hiveID, "owner", h.Owner, "cluster", cluster.ID)
 }
 
+// migrateHive moves a hive from one cluster to another. For v1 this is a
+// "fresh provision on target, deprovision on source" approach — no data copy.
+// The hive rebuilds its state from GitHub on the new cluster.
+func (s *HubServer) migrateHive(h *SaaSHive, fromCluster, toCluster *ClusterConfig) {
+	logger := s.logger.With("hive_id", h.ID, "from", fromCluster.ID, "to", toCluster.ID)
+	logger.Info("audit: migration started")
+
+	// Step 1: Build a synthetic CreateHiveRequest from the existing hive metadata
+	// so we can reuse the standard provisioning path.
+	req := &CreateHiveRequest{
+		Org:         h.Org,
+		Repos:       strings.Join(h.Repos, ","),
+		PrimaryRepo: h.PrimaryRepo,
+		ACMMLevel:   h.ACMMLevel,
+		ClusterID:   toCluster.ID,
+	}
+
+	// Read the existing secret from the source cluster to pass credentials through.
+	ns := "hive-hosted-" + h.ID
+	tokenOut, err := kubectlForCluster(fromCluster, "get", "secret", "hive-secrets", "-n", ns,
+		"-o", "jsonpath={.data.github-token}").Output()
+	if err == nil && len(tokenOut) > 0 {
+		// Token is base64-encoded in the secret; kubectl jsonpath returns raw base64.
+		decoded, decErr := base64Decode(string(tokenOut))
+		if decErr == nil {
+			req.GitHubToken = decoded
+		}
+	}
+
+	// Check for GitHub App credentials.
+	appKeyOut, err := kubectlForCluster(fromCluster, "get", "secret", "hive-secrets", "-n", ns,
+		"-o", "jsonpath={.data.gh-app-key\\.pem}").Output()
+	if err == nil && len(appKeyOut) > 0 {
+		decoded, decErr := base64Decode(string(appKeyOut))
+		if decErr == nil && strings.HasPrefix(strings.TrimSpace(decoded), "-----BEGIN") {
+			req.AppPrivateKey = decoded
+			req.AuthMethod = "app"
+			// Read app_id and installation_id from the ConfigMap.
+			appIDOut, _ := kubectlForCluster(fromCluster, "get", "configmap", "hive-config", "-n", ns,
+				"-o", "jsonpath={.data.hive\\.yaml}").Output()
+			if len(appIDOut) > 0 {
+				configStr := string(appIDOut)
+				req.AppID = extractYAMLValue(configStr, "app_id")
+				req.InstallationID = extractYAMLValue(configStr, "installation_id")
+			}
+		}
+	}
+
+	// Determine visibility from the source (is_public).
+	s.mu.RLock()
+	for _, re := range s.registry.Hives {
+		if re.ID == h.ID {
+			req.IsPublic = re.IsPublic
+			break
+		}
+	}
+	s.mu.RUnlock()
+
+	// Update the hive subdomain and dashboard URL for the new cluster.
+	h.Subdomain = h.ID + "." + toCluster.Domain
+
+	// Step 2: Provision on target cluster.
+	logger.Info("migration: provisioning on target cluster")
+	if provErr := provisionHive(h, req, toCluster, logger); provErr != nil {
+		logger.Error("migration: provisioning on target failed", "error", provErr)
+		h.MigrationStatus = "failed"
+		h.Error = fmt.Sprintf("migration failed during provisioning on %s: %s", toCluster.ID, provErr.Error())
+		h.Status = "running" // restore previous status
+		saveSaaSHive(h)
+		return
+	}
+
+	// Step 3: Deprovision on source cluster (best-effort cleanup).
+	logger.Info("migration: deprovisioning source cluster")
+	deprovisionHive(h, fromCluster, logger)
+
+	// Step 4: Update hive records to point to the new cluster.
+	h.ClusterID = toCluster.ID
+	h.Status = "provisioning" // will flip to "running" via the provision watcher
+	h.MigrationStatus = "completed"
+	h.Error = ""
+	if saveErr := saveSaaSHive(h); saveErr != nil {
+		logger.Error("migration: failed to save updated hive record", "error", saveErr)
+	}
+
+	// Update the registry entry's ClusterID and ClusterName in-memory.
+	s.mu.Lock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == h.ID {
+			s.registry.Hives[i].ClusterID = toCluster.ID
+			s.registry.Hives[i].ClusterName = toCluster.Name
+			s.registry.Hives[i].DashboardURL = "https://" + h.Subdomain
+			break
+		}
+	}
+	s.mu.Unlock()
+	s.requestSave()
+
+	logger.Info("audit: migration completed", "new_cluster", toCluster.ID, "subdomain", h.Subdomain)
+}
+
+// base64Decode decodes a standard base64 string. Returns empty string on error.
+func base64Decode(s string) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
+	if err != nil {
+		// Try URL-safe encoding as fallback.
+		data, err = base64.URLEncoding.DecodeString(strings.TrimSpace(s))
+		if err != nil {
+			return "", err
+		}
+	}
+	return string(data), nil
+}
+
+// extractYAMLValue does a simple line-based extraction of a key: value from
+// a YAML string. This avoids pulling in a YAML parser for two fields.
+func extractYAMLValue(yamlStr, key string) string {
+	for _, line := range strings.Split(yamlStr, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, key+":") {
+			val := strings.TrimPrefix(trimmed, key+":")
+			return strings.TrimSpace(val)
+		}
+	}
+	return ""
+}
+
 func (s *HubServer) startProvisionWatcher() {
 	ticker := time.NewTicker(provisionPollInterval)
 	defer ticker.Stop()
@@ -603,6 +737,14 @@ func (s *HubServer) startProvisionWatcher() {
 			}
 			if strings.TrimSpace(string(out)) == "1" {
 				h.Status = "running"
+				// Clear migration tracking once the hive is running on the new cluster.
+				if h.MigrationStatus == "completed" || h.MigrationStatus == "migrating" {
+					s.logger.Info("audit: post-migration hive running", "hive_id", h.ID, "cluster", cluster.ID)
+					h.MigrationStatus = ""
+					h.MigrationFrom = ""
+					h.MigrationTo = ""
+					h.MigrationStartedAt = ""
+				}
 				saveSaaSHive(&h)
 				s.logger.Info("audit: saas hive running", "hive_id", h.ID, "cluster", cluster.ID)
 			}

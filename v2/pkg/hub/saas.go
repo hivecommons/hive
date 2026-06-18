@@ -131,8 +131,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/deny-provision/{username}", s.requireAdmin(s.handleDenyProvision))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
-	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAdmin(s.handleListClusters))
+	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAuth(s.handleListClusters))
 
 	go s.startProvisionWatcher()
 	go s.StartLatestSHAPoller()
@@ -942,6 +943,11 @@ type MyHiveEntry struct {
 	AutoUpgrade         bool                   `json:"autoUpgrade"`
 	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
 	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
+
+	// Migration tracking (Phase 7).
+	MigrationStatus string `json:"migrationStatus,omitempty"`
+	MigrationFrom   string `json:"migrationFrom,omitempty"`
+	MigrationTo     string `json:"migrationTo,omitempty"`
 }
 
 func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
@@ -1017,6 +1023,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 					entry.GovernorMode = "ERROR"
 					entry.ProvError = sh.Error
 				}
+				entry.MigrationStatus = sh.MigrationStatus
+				entry.MigrationFrom = sh.MigrationFrom
+				entry.MigrationTo = sh.MigrationTo
 				result = append(result, entry)
 				seen[sh.ID] = true
 			}
@@ -1047,6 +1056,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 				entry.GovernorMode = "ERROR"
 				entry.ProvError = sh.Error
 			}
+			entry.MigrationStatus = sh.MigrationStatus
+			entry.MigrationFrom = sh.MigrationFrom
+			entry.MigrationTo = sh.MigrationTo
 			result = append(result, entry)
 			seen[sh.ID] = true
 		}
@@ -1379,6 +1391,93 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username)
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"deleted"}`))
+}
+
+// MigrateRequest is the JSON body for POST /api/saas/hives/{id}/migrate.
+type MigrateRequest struct {
+	TargetClusterID string `json:"target_cluster_id"`
+}
+
+// migrateMaxBodyBytes limits the migrate request body size.
+const migrateMaxBodyBytes = 1024
+
+func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
+	username := s.getAuthUser(r)
+	id := r.PathValue("id")
+	if strings.Contains(id, "..") || strings.Contains(id, "/") {
+		http.Error(w, `{"error":"invalid hive id"}`, http.StatusBadRequest)
+		return
+	}
+
+	h := loadSaaSHive(id)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	if h.Owner != username && username != hubAdminUsername {
+		http.Error(w, `{"error":"only the owner can migrate this hive"}`, http.StatusForbidden)
+		return
+	}
+
+	// Reject if already migrating.
+	if h.MigrationStatus == "migrating" {
+		http.Error(w, `{"error":"migration already in progress"}`, http.StatusConflict)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, migrateMaxBodyBytes)
+	var req MigrateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetClusterID == "" {
+		http.Error(w, `{"error":"target_cluster_id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate target cluster exists.
+	toCluster, ok := s.clusters[req.TargetClusterID]
+	if !ok {
+		http.Error(w, `{"error":"unknown target cluster"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Validate target is different from current.
+	currentClusterID := clusterIDForSaaSHive(*h)
+	if req.TargetClusterID == currentClusterID {
+		http.Error(w, `{"error":"target cluster is the same as current cluster"}`, http.StatusBadRequest)
+		return
+	}
+
+	fromCluster, ok := s.clusters[currentClusterID]
+	if !ok {
+		http.Error(w, `{"error":"current cluster config not found"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Set migration status and launch background goroutine.
+	h.MigrationStatus = "migrating"
+	h.MigrationFrom = currentClusterID
+	h.MigrationTo = req.TargetClusterID
+	h.MigrationStartedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSaaSHive(h); err != nil {
+		http.Error(w, `{"error":"failed to save migration state"}`, http.StatusInternalServerError)
+		return
+	}
+
+	s.logger.Info("audit: hive migration initiated",
+		"hive_id", id, "from", currentClusterID, "to", req.TargetClusterID, "by", username)
+
+	go s.migrateHive(h, &fromCluster, &toCluster)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "migrating",
+		"from":   currentClusterID,
+		"to":     req.TargetClusterID,
+	})
 }
 
 const hubAutoUpgradePath = "/data/saas/hub-auto-upgrade"
@@ -3106,6 +3205,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var _latestSHA = '';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
+    var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
     var _dashSortKey = '', _dashSortAsc = true;
@@ -3279,6 +3379,10 @@ const dashboardHTML = `<!DOCTYPE html>
           ? '<span style="color:var(--red);cursor:help;white-space:nowrap" title="' + esc(h.provError || '') + '">⚠ ERROR</span>'
           : h.provStatus === 'provisioning'
           ? '<span style="color:var(--accent);white-space:nowrap">⏳ Provisioning</span>'
+          : h.migrationStatus === 'migrating'
+          ? '<span style="color:var(--accent);white-space:nowrap"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Migrating to ' + esc(h.migrationTo || '?') + '</span>'
+          : h.migrationStatus === 'failed'
+          ? '<span style="color:var(--red);cursor:help;white-space:nowrap" title="' + esc(h.provError || '') + '">⚠ Migration failed</span>'
           : modeBadge(h.governorMode);
         var contributeUrl = isHosted ? 'https://' + esc(h.id) + '.hive.kubestellar.io/contribute' : (h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl + '/contribute' : '');
         var contributeCell = '';
@@ -3314,6 +3418,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
         if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\')" style="' + mi + '">Permissions</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
+        if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
         var sha = h.gitHash || '';
         var versionCell = '';
@@ -3362,7 +3467,7 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         return '<tr>' +
           '<td style="white-space:nowrap">' + contributeCell + (pendingPill ? '<div style="margin-top:4px">' + pendingPill + '</div>' : '') + '</td>' +
-          '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible"><span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div></td>' +
+          '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
           '<td style="text-align:left;line-height:1.4">' + (function() { var dh = isHosted ? 'https://' + esc(h.id) + '.hive.kubestellar.io' : (h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? esc(h.dashboardUrl) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return dh ? '<a href="' + dh + '" target="_blank" style="' + s + ';text-decoration:none">' + esc(text) + '</a>' : '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + '</div>'; return line1 + line2; })() + '</td>' +
           '<td>' + typeBadge + '</td>' +
           '<td>' + clusterBadge(h.clusterId, h.clusterName) + '</td>' +
@@ -3851,6 +3956,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var resp = await fetch('/api/hub/clusters');
         if (!resp.ok) return;
         var clusters = await resp.json();
+        _clusterList = clusters || [];
         var sel = document.getElementById('f-cluster');
         if (!sel || !clusters || !clusters.length) return;
         sel.innerHTML = clusters.map(function(c) {
@@ -4043,6 +4149,57 @@ const dashboardHTML = `<!DOCTYPE html>
         document.querySelectorAll('[id^="hive-menu-"]').forEach(function(m) { m.style.display = 'none'; });
       }
     });
+
+    function openMigrateModal(hiveId, currentClusterId) {
+      var targets = (_clusterList || []).filter(function(c) { return c.id !== currentClusterId; });
+      if (!targets.length) { hiveToast('No other clusters available', 'error'); return; }
+      var currentName = (_clusterList || []).reduce(function(n, c) { return c.id === currentClusterId ? (c.name || c.id) : n; }, currentClusterId);
+      var options = targets.map(function(c) {
+        var caps = [];
+        if (c.has_gpu) caps.push('GPU');
+        if (c.arch) caps.push(c.arch);
+        var label = c.name || c.id;
+        if (caps.length) label += ' (' + caps.join(', ') + ')';
+        return '<option value="' + esc(c.id) + '">' + esc(label) + '</option>';
+      }).join('');
+      var content = '<div style="margin-bottom:12px">Move <strong>' + esc(hiveId) + '</strong> from <strong>' + esc(currentName) + '</strong> to:</div>' +
+        '<select id="migrate-target" style="width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;margin-bottom:12px">' + options + '</select>' +
+        '<div style="padding:8px 12px;background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);border-radius:6px;font-size:0.8rem;color:#eab308;margin-bottom:12px">The hive will be reprovisioned on the target cluster. This may take a few minutes. The hive will rebuild its state from GitHub.</div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button onclick="closeMigrateModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
+        '<button onclick="confirmMigrate(\'' + esc(hiveId) + '\')" style="padding:6px 16px;background:var(--accent);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Move</button>' +
+        '</div>';
+      var overlay = document.createElement('div');
+      overlay.id = 'migrate-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
+      overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:420px;width:90%">' +
+        '<h3 style="margin:0 0 16px 0;font-size:1rem">Move to cluster</h3>' + content + '</div>';
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeMigrateModal(); });
+      document.body.appendChild(overlay);
+    }
+    function closeMigrateModal() {
+      var ov = document.getElementById('migrate-overlay');
+      if (ov) ov.remove();
+    }
+    async function confirmMigrate(hiveId) {
+      var sel = document.getElementById('migrate-target');
+      if (!sel) return;
+      var targetId = sel.value;
+      closeMigrateModal();
+      hiveToast('Migrating ' + hiveId + '...', 'info');
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/migrate', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target_cluster_id: targetId})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Migration failed', 'error'); return; }
+        gtag('event', 'hive_migrate', {hive_id: hiveId, from: data.from, to: data.to});
+        hiveToast('Migration started: ' + hiveId + ' moving to ' + targetId, 'success');
+        loadHives();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
 
     async function removeLocalHive(id) {
       if (!await hiveConfirm('Remove ' + id + ' from the registry? The hive itself is not affected — it will reappear if it sends another heartbeat.')) return;
