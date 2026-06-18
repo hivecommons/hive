@@ -3898,51 +3898,44 @@
     }
     INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b));
 
-    const INFERENCE_MODEL_POLL_MS = 60000;
     const _lastKnownModels = {};
     const _dismissedModelBanners = new Set();
-    async function pollInferenceModelChanges() {
-      for (const backend of INFERENCE_BACKENDS) {
-        try {
-          const resp = await fetch(`/api/inference/models/${encodeURIComponent(backend)}`);
-          const data = await resp.json();
-          const currentIds = (data.models || []).sort();
-          const prevIds = (_lastKnownModels[backend] || []).sort();
-          if (prevIds.length === 0) { _lastKnownModels[backend] = currentIds; continue; }
-          if (JSON.stringify(currentIds) === JSON.stringify(prevIds)) continue;
 
+    // Called from render() on every SSE push — updates inference model
+    // dropdowns instantly when vLLM/llm-d endpoints come online or change.
+    function updateInferenceModelsFromSSE(inferenceBackends) {
+      if (!inferenceBackends) return;
+      for (const b of inferenceBackends) {
+        const currentIds = (b.models || []).sort();
+        const prevIds = (_lastKnownModels[b.id] || []).sort();
+
+        if (prevIds.length > 0 && JSON.stringify(currentIds) !== JSON.stringify(prevIds)) {
           const added = currentIds.filter(m => !prevIds.includes(m));
           const removed = prevIds.filter(m => !currentIds.includes(m));
 
           added.forEach(m => {
-            const key = `added:${backend}:${m}`;
+            const key = `added:${b.id}:${m}`;
             if (_dismissedModelBanners.has(key)) return;
-            const label = m.split('/').pop();
-            showToast(`New model available on ${backend}: ${label}`, 'success');
+            showToast(`New model available on ${b.id}: ${m.split('/').pop()}`, 'success');
             _dismissedModelBanners.add(key);
           });
 
           removed.forEach(m => {
-            const label = m.split('/').pop();
-            showToast(`Model removed from ${backend}: ${label}`, 'error');
+            showToast(`Model removed from ${b.id}: ${m.split('/').pop()}`, 'error');
             if (window._lastAgents) {
-              const affected = (window._lastAgents || []).filter(a =>
-                a.cli === backend && a.model === m
-              );
-              affected.forEach(a => {
-                showToast(`⚠ ${a.displayName || a.name} uses removed model ${label} — update its model selection`, 'error');
+              (window._lastAgents || []).filter(a => a.cli === b.id && a.model === m).forEach(a => {
+                showToast(`⚠ ${a.displayName || a.name} uses removed model ${m.split('/').pop()} — update its model selection`, 'error');
               });
             }
           });
+        }
 
-          _lastKnownModels[backend] = currentIds;
-          const models = currentIds.map(m => ({ value: m, label: m.split('/').pop() }));
-          INFERENCE_MODELS[backend] = models;
-          _inferenceModelCache[backend] = { models, ts: Date.now() };
-        } catch (e) { /* skip on error */ }
+        _lastKnownModels[b.id] = currentIds;
+        const models = currentIds.map(m => ({ value: m, label: m.split('/').pop() }));
+        INFERENCE_MODELS[b.id] = models;
+        _inferenceModelCache[b.id] = { models, ts: Date.now() };
       }
     }
-    setInterval(pollInferenceModelChanges, INFERENCE_MODEL_POLL_MS);
 
     function _normalizeModel(m) { return (m || '').replace(/(\d+)\.(\d+)$/, '$1-$2'); }
     function _modelsEqual(a, b) { return _normalizeModel(a) === _normalizeModel(b); }
@@ -6877,6 +6870,7 @@ function burnAreaChart() {
         }
       }
       window._lastBudget = data.budget || {};
+      updateInferenceModelsFromSSE(data.inferenceBackends);
       if (data.agents) injectAgentStyles(data.agents);
       // Display the Hive ID in header badges
       const hiveId = data.hiveId || '';
@@ -8106,11 +8100,11 @@ function burnAreaChart() {
     async function switchCli(agent, backend) {
       if (!backend) return;
       const label = INFERENCE_BACKENDS.includes(backend) ? 'method' : 'CLI';
-      const toast = showToast(`Switching ${agent} ${label} → ${backend}...`, 'info', true);
+      const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error'); return; }
-      dismissToast(toast, `${agent} ${label} → ${backend}`, 'success');
+      dismissToast(toast, `${agent} ${label} → ${backend} (session restarted)`, 'success');
       await updateModelDropdown(agent, backend);
       if (window._lastAgents) {
         const a = window._lastAgents.find(x => x.name === agent);
@@ -8142,11 +8136,11 @@ function burnAreaChart() {
 
     async function switchModel(agent, model) {
       if (!model) return;
-      const toast = showToast(`Switching ${agent} model → ${model}...`, 'info', true);
+      const toast = showToast(`Switching ${agent} model → ${model} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/model/${agent}/${encodeURIComponent(model)}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Model switch failed: ${data.error || 'unknown'}`, 'error'); return; }
-      dismissToast(toast, `${agent} model → ${model}`, 'success');
+      dismissToast(toast, `${agent} model → ${model} (session restarted)`, 'success');
       if (window._lastAgents) {
         const a = window._lastAgents.find(x => x.name === agent);
         if (a) { a.model = model; renderAgents(window._lastAgents); }

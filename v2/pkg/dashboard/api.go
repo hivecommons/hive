@@ -927,6 +927,12 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 
 	s.deps.Logger.Info("audit: backend switched", "agent", name, "backend", backend, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
+
+	// Restart the agent session so the new backend takes effect immediately.
+	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+		s.deps.Logger.Warn("restart after backend switch failed", "agent", name, "error", err)
+	}
+
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "switched", "agent": name, "backend": backend})
 }
@@ -942,6 +948,12 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 
 	s.deps.Logger.Info("audit: model set", "agent", name, "model", model, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
+
+	// Restart the agent session so the new model takes effect immediately.
+	if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+		s.deps.Logger.Warn("restart after model switch failed", "agent", name, "error", err)
+	}
+
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "model_set", "agent": name, "model": model})
 }

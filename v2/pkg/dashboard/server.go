@@ -98,9 +98,18 @@ type StatusPayload struct {
 	ACMMPackAgents   []string            `json:"acmmPackAgents"`
 	AdvisoryDigest   any                 `json:"advisoryDigest,omitempty"`
 	ContributorPool    *ContributorPoolStatus `json:"contributorPool,omitempty"`
-	SystemResources    *SystemResources    `json:"systemResources,omitempty"`
-	GitHubAppRequired  bool                `json:"githubAppRequired,omitempty"`
+	SystemResources     *SystemResources    `json:"systemResources,omitempty"`
+	GitHubAppRequired   bool               `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string             `json:"githubAppInstallURL,omitempty"`
+	InferenceBackends   []InferenceBackend `json:"inferenceBackends,omitempty"`
+}
+
+// InferenceBackend describes a live inference endpoint and its available models.
+type InferenceBackend struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Inference bool     `json:"inference"`
+	Models    []string `json:"models"`
 }
 
 type FrontendAgent struct {
@@ -303,6 +312,20 @@ func (s *Server) SetInferenceEndpoints(endpoints map[string][]string) {
 	s.inferenceEndpoints = endpoints
 }
 
+func (s *Server) buildInferenceBackends() []InferenceBackend {
+	var backends []InferenceBackend
+	for _, b := range []struct{ id, name string }{
+		{"vllm", "vLLM (self-hosted)"},
+		{"llm-d", "llm-d (self-hosted)"},
+	} {
+		models := s.queryInferenceModels(b.id)
+		backends = append(backends, InferenceBackend{
+			ID: b.id, Name: b.name, Inference: true, Models: models,
+		})
+	}
+	return backends
+}
+
 // SetSkipReloadFunc sets the callback used by saveConfig to skip the
 // config watcher's next reload after a programmatic save. Call after
 // the watcher is created but before it starts.
@@ -410,6 +433,8 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	status.GitHubAppRequired = s.githubAppRequired
 	status.GitHubAppInstallURL = s.githubAppInstallURL
 	s.githubAppMu.RUnlock()
+
+	status.InferenceBackends = s.buildInferenceBackends()
 
 	s.statusMu.Lock()
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
