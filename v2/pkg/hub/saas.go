@@ -3113,15 +3113,12 @@ const dashboardHTML = `<!DOCTYPE html>
     }
     function clusterBadge(clusterId, clusterName) {
       var cid = clusterId || 'hive-oke';
-      var label = cid.replace(/^hive-/, '').toUpperCase();
-      // GPU clusters get a special color scheme.
-      var isGPU = label === 'VLLM-D' || (clusterName || '').toLowerCase().indexOf('gpu') >= 0;
-      if (isGPU) label = 'GPU';
+      var isGPU = cid === 'vllm-d' || (clusterName || '').toLowerCase().indexOf('gpu') >= 0;
       var bg = isGPU ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)';
       var color = isGPU ? '#3fb950' : '#60a5fa';
       var border = isGPU ? 'rgba(34,197,94,0.3)' : 'rgba(59,130,246,0.3)';
       var title = clusterName || cid;
-      return '<span class="cluster-badge" style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:' + bg + ';color:' + color + ';border:1px solid ' + border + '" title="' + esc(title) + '">' + esc(label) + '</span>';
+      return '<span class="cluster-badge" style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:' + bg + ';color:' + color + ';border:1px solid ' + border + '" title="' + esc(title) + '">' + esc(cid) + '</span>';
     }
     function modeBadge(mode) {
       var m = (mode || 'idle').toUpperCase();

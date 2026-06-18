@@ -373,6 +373,7 @@ type HubConfig struct {
 	SnapshotURL            string   `yaml:"snapshot_url"`
 	DashboardURL           string   `yaml:"dashboard_url"`
 	HiveType               string   `yaml:"hive_type"`
+	ClusterID              string   `yaml:"cluster_id"`
 	AutoSnapshot           bool     `yaml:"auto_snapshot"`
 	AutoUpgrade            bool     `yaml:"auto_upgrade"`
 	ContributeSuspended    bool     `yaml:"contribute_suspended"`

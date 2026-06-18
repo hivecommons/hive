@@ -334,16 +334,20 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppRequired: payload.GitHubAppRequired,
 	}
 
-	// Populate ClusterID and ClusterName from the SaaS hive record (if this is a hosted hive).
+	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
+	clusterID := ""
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
-		clusterID := sh.ClusterID
-		if clusterID == "" {
-			clusterID = defaultClusterID
-		}
-		entry.ClusterID = clusterID
-		if c, ok := s.clusters[clusterID]; ok {
-			entry.ClusterName = c.Name
-		}
+		clusterID = sh.ClusterID
+	}
+	if clusterID == "" && payload.ClusterID != "" {
+		clusterID = sanitizeHeartbeatField(payload.ClusterID)
+	}
+	if clusterID == "" {
+		clusterID = defaultClusterID
+	}
+	entry.ClusterID = clusterID
+	if c, ok := s.clusters[clusterID]; ok {
+		entry.ClusterName = c.Name
 	}
 
 	s.mu.Lock()

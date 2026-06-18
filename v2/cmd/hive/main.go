@@ -1076,6 +1076,7 @@ func main() {
 				}(),
 				SnapshotURL:  cfg.Hub.SnapshotURL,
 				HiveType:     cfg.Hub.HiveType,
+				ClusterID:    cfg.Hub.ClusterID,
 				IsPublic:     cfg.Hub.IsPublic,
 				Version:           "3.0.0",
 				GitHash:           gitShort,

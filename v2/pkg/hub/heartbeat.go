@@ -60,6 +60,7 @@ type HeartbeatPayload struct {
 	SnapshotURL  string             `json:"snapshot_url"`
 	Owner        string             `json:"owner,omitempty"`
 	HiveType     string             `json:"hive_type,omitempty"`
+	ClusterID    string             `json:"cluster_id,omitempty"`
 	IsPublic     bool               `json:"is_public"`
 	Version      string             `json:"version"`
 	GitHash      string             `json:"git_hash"`
