@@ -115,6 +115,8 @@ type HeartbeatPayload struct {
 	Timestamp          string         `json:"timestamp"`
 	GitHubAppRequired  bool           `json:"github_app_required,omitempty"`
 	AutoUpgrade        bool           `json:"auto_upgrade,omitempty"`
+	Upgrading          bool           `json:"upgrading,omitempty"`
+	UpgradeTargetSHA   string         `json:"upgrade_target_sha,omitempty"`
 	ClusterHealth      *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
 }
 
@@ -261,6 +263,44 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		}
 	}
 	return ""
+}
+
+// SendUpgradingHeartbeat sends a final heartbeat to the hub indicating this
+// spoke is about to restart for an upgrade. The hub uses this to show the
+// "Upgrading" spinner instead of requiring an assumption.
+func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA string, logger *slog.Logger) {
+	payload := collect()
+	if payload == nil {
+		return
+	}
+	payload.Upgrading = true
+	payload.UpgradeTargetSHA = targetSHA
+	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), heartbeatTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hubURL+"/api/heartbeat", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logger.Debug("upgrading heartbeat failed", "error", err)
+		return
+	}
+	resp.Body.Close()
+	logger.Info("upgrading heartbeat sent to hub", "target", targetSHA)
 }
 
 // HeartbeatResponse is the JSON body returned by the hub's heartbeat endpoint.

@@ -364,6 +364,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.ClusterName = c.Name
 	}
 
+	if payload.Upgrading {
+		entry.Upgrading = true
+	}
+
 	s.mu.Lock()
 	found := false
 	for i, h := range s.registry.Hives {

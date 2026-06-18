@@ -1121,11 +1121,38 @@ func main() {
 				logger.Warn("failed to write upgrade marker", "path", upgradeMarkerPath, "error", err)
 			}
 
-			logger.Info("self-upgrade triggered: exiting to pull new image",
+			logger.Info("self-upgrade triggered: sending upgrading heartbeat then exiting",
 				"current", gitShort,
 				"latest", targetSHA,
 				"uptime", uptime.Round(time.Second),
 			)
+
+			hub.SendUpgradingHeartbeat(hubURL, func() *hub.HeartbeatPayload {
+				if !cfg.Hub.Enabled {
+					return nil
+				}
+				statuses := agentMgr.AllStatuses()
+				agents := make([]hub.AgentSummary, 0, len(statuses))
+				for name, proc := range statuses {
+					agents = append(agents, hub.AgentSummary{Name: name, State: string(proc.State)})
+				}
+				acmmLvl := 0
+				if cfg.ACMMLevel != nil {
+					acmmLvl = *cfg.ACMMLevel
+				}
+				return &hub.HeartbeatPayload{
+					HiveID:    cfg.HiveID,
+					Org:       cfg.Project.Org,
+					ACMMLevel: acmmLvl,
+					Agents:    agents,
+					GitHash:   gitShort,
+					ClusterID: cfg.Hub.ClusterID,
+					HiveType:  cfg.Hub.HiveType,
+					IsPublic:  cfg.Hub.IsPublic,
+					Version:   "3.0.0",
+				}
+			}, targetSHA, logger)
+
 			os.Exit(0)
 		})
 
