@@ -1092,7 +1092,12 @@ func main() {
 				GitBranch:         gitBranch,
 				GitHubAppRequired: dashSrv.IsGitHubAppRequired(),
 				AutoUpgrade:       cfg.Hub.AutoUpgrade,
-				ClusterHealth:     hub.CollectClusterHealth(logger),
+				ClusterHealth: func() *hub.HeartbeatClusterHealthReport {
+					if os.Getenv("HIVE_CLUSTER_ID") == "" {
+						return nil
+					}
+					return hub.CollectClusterHealth(logger)
+				}(),
 			}
 		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, func(targetSHA string) {
 			// Minimum uptime before allowing self-upgrade to avoid restart loops.
