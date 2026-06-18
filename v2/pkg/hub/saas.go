@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1005,9 +1006,15 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 	return pch
 }
 
-// parseK8sCPU parses Kubernetes CPU resource strings (e.g. "4", "4000m").
+// parseK8sCPU parses Kubernetes CPU resource strings (e.g. "4", "4000m", "5866711668n").
+// Returns millicores.
 func parseK8sCPU(s string) int64 {
 	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "n") {
+		v, _ := strconv.ParseInt(strings.TrimSuffix(s, "n"), 10, 64)
+		const nanocoresPerMillicore = 1_000_000
+		return v / nanocoresPerMillicore
+	}
 	if strings.HasSuffix(s, "m") {
 		v := parseInt(strings.TrimSuffix(s, "m"))
 		return int64(v)
