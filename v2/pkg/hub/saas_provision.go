@@ -19,7 +19,7 @@ import (
 const (
 	saasHivesDir          = "/data/saas/hives"
 	maxHivesPerUser       = 3
-	maxSaaSHivesTotal     = 5
+	maxSaaSHivesTotal     = 0 // 0 = unlimited
 	provisionPollInterval = 30 * time.Second
 	provisionTimeout      = 5 * time.Minute
 	cpuRequest            = "500m"
