@@ -3624,7 +3624,7 @@
         const displayLabel = (agentData && agentData.displayName) || aname;
         const cliPinBtn = (agentData && !cliPinned) ? `<button class="pin-toggle" data-action="togglePin" data-agent="${aname}" data-pin-type="cli" data-unpin="false" title="Pin CLI" style="font-size:0.65rem;border:none;background:none;cursor:pointer;opacity:0.3;padding:0 2px">📌</button>` : '';
         const modelPinBtn = (agentData && !modelPinned) ? `<button class="pin-toggle" data-action="togglePin" data-agent="${aname}" data-pin-type="model" data-unpin="false" title="Pin model" style="font-size:0.65rem;border:none;background:none;cursor:pointer;opacity:0.3;padding:0 2px">📌</button>` : '';
-        return `<tr style="cursor:pointer" onclick="openConfigDialog('agent','${aname}','Cadences')" title="Click to adjust ${displayLabel} cadences"><td>${nameDot}${displayLabel}${pauseBadge}</td>${cells}<td onclick="event.stopPropagation()">${cChip} ${cliPinBtn}</td><td onclick="event.stopPropagation()">${mChip} ${modelPinBtn}</td></tr>`;
+        return `<tr style="cursor:pointer" data-action="openConfigDialog" data-config-type="agent" data-agent="${aname}" data-tab="Cadences" title="Click to adjust ${displayLabel} cadences"><td>${nameDot}${displayLabel}${pauseBadge}</td>${cells}<td>${cChip} ${cliPinBtn}</td><td>${mChip} ${modelPinBtn}</td></tr>`;
       }).join('');
       const headers = modes.map(m => {
         const isActive = m === currentMode;
@@ -3632,7 +3632,7 @@
         return `<th class="${cls}">${m}${isActive ? ' ◀' : ''}</th>`;
       }).join('');
       return `<table class="gov-matrix">
-        <thead><tr><th></th>${headers}<th>cli</th><th>model</th></tr></thead>
+        <thead><tr><th></th>${headers}<th>method</th><th>model</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>`;
     }
@@ -7850,7 +7850,7 @@ function burnAreaChart() {
       switch (action) {
         case 'toggleAgent': toggleAgent(agent, el.dataset.paused === 'true'); break;
         case 'restartAgent': restartAgent(agent); break;
-        case 'openConfigDialog': { const ct = el.dataset.configType || 'agent'; if (el.classList.contains('agent-link')) { closeConfigDialog(); setTimeout(() => openConfigDialog(ct, agent), 100); } else { openConfigDialog(ct, agent); } } break;
+        case 'openConfigDialog': { const ct = el.dataset.configType || 'agent'; const tab = el.dataset.tab || null; if (el.classList.contains('agent-link')) { closeConfigDialog(); setTimeout(() => openConfigDialog(ct, agent, tab), 100); } else { openConfigDialog(ct, agent, tab); } } break;
         case 'ocSendKick': ocSendKick(agent); break;
         case 'ocSelectAgent': { if (!e.target.closest('.oc-nav-actions')) ocSelectAgent(agent); } break;
         case 'kick': kick(agent); break;
