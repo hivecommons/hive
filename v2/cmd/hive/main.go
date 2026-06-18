@@ -1081,6 +1081,11 @@ func main() {
 					if cfg.Hub.DashboardURL != "" {
 						return cfg.Hub.DashboardURL
 					}
+					if cfg.HiveID != "" && cfg.Hub.URL != "" {
+						if u, err := url.Parse(cfg.Hub.URL); err == nil && u.Host != "" {
+							return fmt.Sprintf("https://%s.%s", cfg.HiveID, u.Host)
+						}
+					}
 					return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 				}(),
 				SnapshotURL:  cfg.Hub.SnapshotURL,
