@@ -374,6 +374,7 @@ type HubConfig struct {
 	DashboardURL           string   `yaml:"dashboard_url"`
 	HiveType               string   `yaml:"hive_type"`
 	AutoSnapshot           bool     `yaml:"auto_snapshot"`
+	AutoUpgrade            bool     `yaml:"auto_upgrade"`
 	ContributeSuspended    bool     `yaml:"contribute_suspended"`
 	ContributeAllowLabels  []string `yaml:"contribute_allow_labels"`
 	ContributeDenyLabels   []string `yaml:"contribute_deny_labels"`

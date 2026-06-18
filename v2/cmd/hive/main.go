@@ -48,6 +48,7 @@ var (
 )
 
 func main() {
+	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
 	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" {
 		defaultConfig = envCfg
@@ -1080,9 +1081,35 @@ func main() {
 				GitHash:           gitShort,
 				GitBranch:         gitBranch,
 				GitHubAppRequired: dashSrv.IsGitHubAppRequired(),
+				AutoUpgrade:       cfg.Hub.AutoUpgrade,
 			}
 		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, func(targetSHA string) {
-			logger.Info("hub requested upgrade via heartbeat — restarting", "target", targetSHA, "current", gitShort)
+			// Minimum uptime before allowing self-upgrade to avoid restart loops.
+			const minUptimeBeforeUpgrade = 5 * time.Minute
+			uptime := time.Since(startTime)
+			if uptime < minUptimeBeforeUpgrade {
+				logger.Warn("self-upgrade deferred: minimum uptime not reached",
+					"target", targetSHA,
+					"current", gitShort,
+					"uptime", uptime.Round(time.Second),
+					"min_uptime", minUptimeBeforeUpgrade,
+				)
+				return
+			}
+
+			// Write upgrade marker so the entrypoint can detect intentional restart.
+			const upgradeMarkerPath = "/data/upgrade-requested"
+			marker := fmt.Sprintf(`{"target_sha":"%s","current_sha":"%s","requested_at":"%s"}`,
+				targetSHA, gitShort, time.Now().UTC().Format(time.RFC3339))
+			if err := os.WriteFile(upgradeMarkerPath, []byte(marker), 0o644); err != nil {
+				logger.Warn("failed to write upgrade marker", "path", upgradeMarkerPath, "error", err)
+			}
+
+			logger.Info("self-upgrade triggered: exiting to pull new image",
+				"current", gitShort,
+				"latest", targetSHA,
+				"uptime", uptime.Round(time.Second),
+			)
 			os.Exit(0)
 		})
 

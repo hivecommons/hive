@@ -2357,6 +2357,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"snapshot_url":             cfg.Hub.SnapshotURL,
 			"is_public":               cfg.Hub.IsPublic,
 			"auto_snapshot":           cfg.Hub.AutoSnapshot,
+			"auto_upgrade":            cfg.Hub.AutoUpgrade,
 			"snapshot_interval_min":   cfg.Hub.SnapshotIntervalMin,
 			"contribute_suspended":             cfg.Hub.ContributeSuspended,
 			"contribute_allow_labels":          cfg.Hub.ContributeAllowLabels,
@@ -2680,6 +2681,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		SnapshotURL                   string              `json:"snapshot_url"`
 		IsPublic                      *bool               `json:"is_public"`
 		AutoSnapshot                  *bool               `json:"auto_snapshot"`
+		AutoUpgrade                   *bool               `json:"auto_upgrade"`
 		ContributeSuspended           *bool               `json:"contribute_suspended"`
 		ContributeAllowLabels         []string            `json:"contribute_allow_labels"`
 		ContributeDenyLabels          []string            `json:"contribute_deny_labels"`
@@ -2711,6 +2713,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.AutoSnapshot != nil {
 		cfg.Hub.AutoSnapshot = *body.AutoSnapshot
+	}
+	if body.AutoUpgrade != nil {
+		cfg.Hub.AutoUpgrade = *body.AutoUpgrade
 	}
 	if body.ContributeSuspended != nil {
 		cfg.Hub.ContributeSuspended = *body.ContributeSuspended

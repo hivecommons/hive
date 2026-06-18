@@ -235,3 +235,69 @@ func TestSendHeartbeatCancelledContext(t *testing.T) {
 		return &HeartbeatPayload{HiveID: "test"}
 	}, slog.Default())
 }
+
+func TestSendHeartbeatUpgradeResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := HeartbeatResponse{
+			OK:         true,
+			UpgradeTo:  "abc1234",
+			HubGitHash: "hub-xyz",
+			LatestSHA:  "abc1234",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	target := sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+		return &HeartbeatPayload{HiveID: "test", GitHash: "old123"}
+	}, slog.Default())
+
+	if target != "abc1234" {
+		t.Errorf("expected upgrade target 'abc1234', got %q", target)
+	}
+}
+
+func TestSendHeartbeatNoUpgrade(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := HeartbeatResponse{
+			OK:         true,
+			HubGitHash: "hub-xyz",
+			LatestSHA:  "current123",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	target := sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+		return &HeartbeatPayload{HiveID: "test", GitHash: "current123"}
+	}, slog.Default())
+
+	if target != "" {
+		t.Errorf("expected empty upgrade target, got %q", target)
+	}
+}
+
+func TestSendHeartbeatAutoUpgradeInPayload(t *testing.T) {
+	var gotAutoUpgrade bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload HeartbeatPayload
+		json.NewDecoder(r.Body).Decode(&payload)
+		gotAutoUpgrade = payload.AutoUpgrade
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(HeartbeatResponse{OK: true})
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+		return &HeartbeatPayload{HiveID: "test", AutoUpgrade: true}
+	}, slog.Default())
+
+	if !gotAutoUpgrade {
+		t.Error("expected auto_upgrade=true in heartbeat payload")
+	}
+}

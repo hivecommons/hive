@@ -427,21 +427,35 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		"agents", len(payload.Agents),
 	)
 
-	// Check if the hive should upgrade (auto-upgrade enabled and behind latest).
-	resp := struct {
-		OK        bool   `json:"ok"`
-		UpgradeTo string `json:"upgrade_to,omitempty"`
-	}{OK: true}
+	// Build the heartbeat response with version info for all spokes.
+	branch := payload.GitBranch
+	if branch == "" {
+		branch = "v2"
+	}
+	latestSHA := getLatestSHAForBranch(branch)
+	resp := HeartbeatResponse{
+		OK:         true,
+		HubGitHash: s.hubGitHash,
+		LatestSHA:  latestSHA,
+	}
+
+	// Check if the hive should upgrade. Two paths:
+	// 1. Hub-managed (SaaS hive with AutoUpgrade enabled on the hub)
+	// 2. Spoke-managed (spoke declares auto_upgrade in its heartbeat payload)
+	autoUpgrade := false
 	if sh := loadSaaSHive(payload.HiveID); sh != nil && sh.AutoUpgrade {
-		branch := payload.GitBranch
-		if branch == "" {
-			branch = "v2"
-		}
-		latestSHA := getLatestSHAForBranch(branch)
-		if latestSHA != "" && payload.GitHash != "" && payload.GitHash != latestSHA {
-			resp.UpgradeTo = latestSHA
-			s.logger.Info("heartbeat: instructing hive to upgrade", "hive_id", payload.HiveID, "from", payload.GitHash, "to", latestSHA)
-		}
+		autoUpgrade = true
+	} else if payload.AutoUpgrade {
+		autoUpgrade = true
+	}
+	if autoUpgrade && latestSHA != "" && payload.GitHash != "" && payload.GitHash != latestSHA {
+		resp.UpgradeTo = latestSHA
+		s.logger.Info("heartbeat: instructing hive to upgrade",
+			"hive_id", payload.HiveID,
+			"from", payload.GitHash,
+			"to", latestSHA,
+			"spoke_requested", payload.AutoUpgrade,
+		)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

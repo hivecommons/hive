@@ -66,6 +66,7 @@ type HeartbeatPayload struct {
 	GitBranch    string             `json:"git_branch,omitempty"`
 	Timestamp          string         `json:"timestamp"`
 	GitHubAppRequired  bool           `json:"github_app_required,omitempty"`
+	AutoUpgrade        bool           `json:"auto_upgrade,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload
@@ -200,14 +201,28 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		return ""
 	}
 
-	var hbResp struct {
-		UpgradeTo string `json:"upgrade_to"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil && hbResp.UpgradeTo != "" {
-		logger.Info("hub instructed upgrade via heartbeat", "target", hbResp.UpgradeTo)
-		return hbResp.UpgradeTo
+	var hbResp HeartbeatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil {
+		if hbResp.HubGitHash != "" {
+			logger.Debug("hub version info", "hub_git_hash", hbResp.HubGitHash, "latest_sha", hbResp.LatestSHA)
+		}
+		if hbResp.UpgradeTo != "" {
+			logger.Info("hub instructed upgrade via heartbeat", "target", hbResp.UpgradeTo)
+			return hbResp.UpgradeTo
+		}
 	}
 	return ""
+}
+
+// HeartbeatResponse is the JSON body returned by the hub's heartbeat endpoint.
+// It includes version info so the spoke can display hub version on its dashboard
+// and self-upgrade when behind.
+type HeartbeatResponse struct {
+	OK         bool   `json:"ok"`
+	UpgradeTo  string `json:"upgrade_to,omitempty"`
+	HubGitHash string `json:"hub_git_hash,omitempty"`
+	LatestSHA  string `json:"latest_sha,omitempty"`
+	LatestTag  string `json:"latest_tag,omitempty"`
 }
 
 const taskPushInterval = 30 * time.Second
