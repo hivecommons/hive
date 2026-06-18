@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -2901,12 +2902,81 @@ func (s *Server) saveSidebarToDisk(sb interface{}) {
 }
 
 func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
-	jsonResponse(w, []map[string]interface{}{
+	backends := []map[string]interface{}{
 		{"id": "claude", "name": "Claude Code", "models": []string{"opus", "sonnet", "haiku"}},
 		{"id": "copilot", "name": "GitHub Copilot", "models": []string{"gpt-4o", "gpt-4o-mini"}},
 		{"id": "gemini", "name": "Gemini", "models": []string{"gemini-2.5-pro", "gemini-2.5-flash"}},
 		{"id": "goose", "name": "Goose", "models": []string{"default"}},
-	})
+	}
+
+	vllmEndpoint := os.Getenv("HIVE_VLLM_ENDPOINT")
+	if vllmEndpoint == "" {
+		vllmEndpoint = "http://hive-vllm-svc:8000"
+	}
+	llmdEndpoint := os.Getenv("HIVE_LLMD_ENDPOINT")
+	if llmdEndpoint == "" {
+		llmdEndpoint = "http://hive-llm-d-epp:9002"
+	}
+
+	vllmModels := discoverModelsMulti(vllmEndpoint)
+	llmdModels := discoverModelsMulti(llmdEndpoint)
+
+	backends = append(backends,
+		map[string]interface{}{"id": "vllm", "name": "vLLM (self-hosted)", "inference": true, "models": vllmModels},
+		map[string]interface{}{"id": "llm-d", "name": "llm-d (self-hosted)", "inference": true, "models": llmdModels},
+	)
+
+	jsonResponse(w, backends)
+}
+
+func discoverModelsMulti(endpoints string) []string {
+	seen := make(map[string]bool)
+	var models []string
+	for _, ep := range strings.Split(endpoints, ",") {
+		ep = strings.TrimSpace(ep)
+		if ep == "" {
+			continue
+		}
+		for _, m := range discoverModels(ep) {
+			if !seen[m] {
+				seen[m] = true
+				models = append(models, m)
+			}
+		}
+	}
+	return models
+}
+
+func discoverModels(endpoint string) []string {
+	const discoverTimeout = 3 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), discoverTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/models", nil)
+	if err != nil {
+		return nil
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil
+	}
+	models := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	return models
 }
 
 // --- Knowledge endpoints ---

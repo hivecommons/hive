@@ -261,22 +261,27 @@ func main() {
 		policyDir = policyDir + "/" + cfg.Policies.Path
 	}
 
-	// Write brainstorm policy to disk so the agent can find it.
-	// The policy is embedded in the binary but the agent searches the filesystem.
-	brainstormPolicyDir := policyDir
-	if brainstormPolicyDir == "" {
-		brainstormPolicyDir = "/data/policies/examples/kubestellar/agents"
+	// Extract all embedded kick templates to disk so agents can find them.
+	kickPolicyDir := policyDir
+	if kickPolicyDir == "" {
+		kickPolicyDir = "/data/policies/examples/kubestellar/agents"
 	}
-	os.MkdirAll(brainstormPolicyDir, 0o755)
-	if policyData, err := policies.DefaultPolicies.ReadFile("defaults/brainstorm-advisory.md"); err == nil {
-		policyPath := filepath.Join(brainstormPolicyDir, "brainstorm-advisory.md")
-		// Always overwrite — the embedded policy may have been updated
-		// (e.g., inception reaping guard added in bug #113 fix).
-		if err := os.WriteFile(policyPath, policyData, 0o644); err != nil {
-			logger.Warn("failed to write brainstorm policy", "path", policyPath, "error", err)
-		} else {
-			logger.Info("wrote brainstorm policy to disk", "path", policyPath)
+	os.MkdirAll(kickPolicyDir, 0o755)
+	if entries, err := policies.DefaultPolicies.ReadDir("defaults"); err == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			policyData, err := policies.DefaultPolicies.ReadFile("defaults/" + entry.Name())
+			if err != nil {
+				continue
+			}
+			policyPath := filepath.Join(kickPolicyDir, entry.Name())
+			if err := os.WriteFile(policyPath, policyData, 0o644); err != nil {
+				logger.Warn("failed to write policy", "path", policyPath, "error", err)
+			}
 		}
+		logger.Info("extracted embedded kick templates", "dir", kickPolicyDir, "count", len(entries))
 	}
 
 	projectCtx := agent.ProjectContext{
@@ -860,14 +865,15 @@ func main() {
 	} else {
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
 
-		vllmEndpoint := envOrDefault("HIVE_VLLM_ENDPOINT", "http://vllm-svc.hive.svc.cluster.local:8000")
-		llmdEndpoint := envOrDefault("HIVE_LLMD_ENDPOINT", "http://llm-d-epp.hive.svc.cluster.local:8000")
+		vllmEndpoints := envOrDefault("HIVE_VLLM_ENDPOINT", "http://vllm-svc.hive.svc.cluster.local:8000")
+		llmdEndpoints := envOrDefault("HIVE_LLMD_ENDPOINT", "http://llm-d-epp.hive.svc.cluster.local:8000")
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
-				endpoint := vllmEndpoint
+				endpoints := vllmEndpoints
 				if backend == "llm-d" {
-					endpoint = llmdEndpoint
+					endpoints = llmdEndpoints
 				}
+				endpoint := pickHealthyEndpoint(endpoints, model, logger)
 				githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
 					Backend:  backend,
 					Endpoint: endpoint,
@@ -1010,6 +1016,8 @@ func main() {
 				}(),
 				SnapshotURL:  cfg.Hub.SnapshotURL,
 				IsPublic:     cfg.Hub.IsPublic,
+				HiveType:     cfg.Hub.HiveType,
+				ClusterID:    cfg.Hub.ClusterID,
 				Version:           "3.0.0",
 				GitHash:           gitShort,
 				GitBranch:         gitBranch,
@@ -2054,4 +2062,57 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// pickHealthyEndpoint iterates comma-separated endpoints and returns the first
+// one that has the requested model available (or any model if model is empty).
+// Falls back to the first endpoint if none respond.
+func pickHealthyEndpoint(endpoints, model string, logger *slog.Logger) string {
+	const healthCheckTimeout = 3 * time.Second
+	parts := strings.Split(endpoints, ",")
+	var first string
+	for _, ep := range parts {
+		ep = strings.TrimSpace(ep)
+		if ep == "" {
+			continue
+		}
+		if first == "" {
+			first = ep
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), healthCheckTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep+"/v1/models", nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+		if err != nil {
+			logger.Debug("endpoint unreachable", "endpoint", ep, "error", err)
+			continue
+		}
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if decodeErr != nil {
+			continue
+		}
+		if model == "" || len(result.Data) == 0 {
+			logger.Info("picked healthy endpoint", "endpoint", ep)
+			return ep
+		}
+		for _, m := range result.Data {
+			if m.ID == model {
+				logger.Info("picked healthy endpoint with model", "endpoint", ep, "model", model)
+				return ep
+			}
+		}
+		logger.Debug("endpoint healthy but model not found", "endpoint", ep, "model", model)
+	}
+	logger.Warn("no healthy endpoint found, using first", "endpoint", first)
+	return first
 }

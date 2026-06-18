@@ -55,6 +55,7 @@ type RegistryEntry struct {
 	ActiveContributors int            `json:"activeContributors"`
 	Owner              string         `json:"owner,omitempty"`
 	HiveType           string         `json:"hiveType,omitempty"`
+	ClusterID          string         `json:"clusterId,omitempty"`
 	IsPublic           bool           `json:"isPublic"`
 	RegisteredAt       string         `json:"registeredAt"`
 	LastHeartbeat      string         `json:"lastHeartbeat"`
@@ -292,11 +293,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ActiveContributors: clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:              sanitizeHeartbeatField(payload.Owner),
 		HiveType: func() string {
+			if payload.HiveType == "hosted" || payload.HiveType == "local" {
+				return payload.HiveType
+			}
 			if strings.HasPrefix(payload.HiveID, "hosted-") || strings.HasPrefix(payload.HiveID, "saas-") {
 				return "hosted"
 			}
 			return "local"
 		}(),
+		ClusterID: sanitizeHeartbeatField(payload.ClusterID),
 		IsPublic: payload.IsPublic,
 		LastHeartbeat:      time.Now().UTC().Format(time.RFC3339),
 		Health:             payload.Health,

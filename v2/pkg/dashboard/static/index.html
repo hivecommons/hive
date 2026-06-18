@@ -3860,9 +3860,9 @@
       return KNOWN_MODELS;
     }
 
+    const MODEL_DISCOVERY_INTERVAL_MS = 30000;
     let _cachedInferenceModels = null;
     async function fetchInferenceModels() {
-      if (_cachedInferenceModels) return _cachedInferenceModels;
       try {
         const resp = await fetch('/api/config/backends');
         const backends = await resp.json();
@@ -3872,12 +3872,40 @@
             models[b.id] = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() }));
           }
         }
+        const prev = _cachedInferenceModels;
         _cachedInferenceModels = models;
         Object.assign(INFERENCE_MODELS, models);
+        if (prev) {
+          for (const [bid, mList] of Object.entries(models)) {
+            const prevIds = new Set((prev[bid] || []).map(m => m.value));
+            const newModels = mList.filter(m => !prevIds.has(m.value));
+            if (newModels.length > 0) {
+              for (const m of newModels) {
+                showToast(`New model discovered: ${m.label} (${bid})`, 'success', false, true);
+              }
+              refreshInferenceDropdowns(bid);
+            }
+          }
+        }
       } catch (e) { /* use defaults */ }
       return INFERENCE_MODELS;
     }
     fetchInferenceModels();
+    setInterval(fetchInferenceModels, MODEL_DISCOVERY_INTERVAL_MS);
+
+    function refreshInferenceDropdowns(backend) {
+      if (!window._lastAgents) return;
+      const models = INFERENCE_MODELS[backend] || [];
+      for (const a of window._lastAgents) {
+        if (a.cli !== backend) continue;
+        const selects = document.querySelectorAll(`select[data-change-action="switchModel"][data-agent="${a.name}"]`);
+        selects.forEach(sel => {
+          const current = sel.value;
+          sel.innerHTML = '<option value="">model ▾</option>' +
+            models.map(m => `<option value="${m.value}"${m.value === current ? ' selected' : ''}>${m.label}</option>`).join('');
+        });
+      }
+    }
 
     function _normalizeModel(m) { return (m || '').replace(/(\d+)\.(\d+)$/, '$1-$2'); }
     function _modelsEqual(a, b) { return _normalizeModel(a) === _normalizeModel(b); }
@@ -7936,12 +7964,22 @@ function burnAreaChart() {
         overlay.querySelector('.primary').focus();
       });
     }
-    function showToast(msg, type = 'info', persistent = false) {
+    function showToast(msg, type = 'info', persistent = false, dismissable = false) {
       const container = document.getElementById('toast-container');
       const el = document.createElement('div');
       el.className = `toast ${type}`;
       el.textContent = msg;
       container.appendChild(el);
+      if (dismissable) {
+        el.style.cursor = 'pointer';
+        const closeBtn = document.createElement('span');
+        closeBtn.textContent = ' ✕';
+        closeBtn.style.marginLeft = '8px';
+        closeBtn.style.opacity = '0.7';
+        el.appendChild(closeBtn);
+        el.addEventListener('click', () => dismissToast(el));
+        return el;
+      }
       if (persistent) {
         const spinner = document.createElement('span');
         spinner.className = 'toast-spinner';
