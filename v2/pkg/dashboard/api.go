@@ -2972,21 +2972,15 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "backend required", http.StatusBadRequest)
 		return
 	}
-	endpoint, ok := s.inferenceEndpoints[backend]
+	endpoints, ok := s.inferenceEndpoints[backend]
 	if !ok {
 		jsonError(w, "unknown inference backend: "+backend, http.StatusNotFound)
 		return
 	}
 
-	models, err := fetchModelsFromEndpoint(endpoint)
-	if err != nil {
-		s.logger.Warn("failed to query inference models", "backend", backend, "error", err)
-		jsonResponse(w, map[string]interface{}{
-			"backend": backend,
-			"models":  []string{},
-			"error":   err.Error(),
-		})
-		return
+	models := fetchModelsFromEndpoints(endpoints)
+	if len(models) == 0 {
+		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
 	}
 	jsonResponse(w, map[string]interface{}{
 		"backend": backend,
@@ -2995,9 +2989,9 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) queryInferenceModels(backend string) []string {
-	if endpoint, ok := s.inferenceEndpoints[backend]; ok {
-		models, err := fetchModelsFromEndpoint(endpoint)
-		if err == nil && len(models) > 0 {
+	if endpoints, ok := s.inferenceEndpoints[backend]; ok {
+		models := fetchModelsFromEndpoints(endpoints)
+		if len(models) > 0 {
 			return models
 		}
 	}
@@ -3010,6 +3004,26 @@ func (s *Server) queryInferenceModels(backend string) []string {
 }
 
 const inferenceModelQueryTimeout = 5 * time.Second
+
+// fetchModelsFromEndpoints queries /v1/models on each endpoint and returns
+// a deduplicated, combined list of all model IDs found.
+func fetchModelsFromEndpoints(endpoints []string) []string {
+	seen := make(map[string]bool)
+	var all []string
+	for _, ep := range endpoints {
+		models, err := fetchModelsFromEndpoint(ep)
+		if err != nil {
+			continue
+		}
+		for _, m := range models {
+			if !seen[m] {
+				seen[m] = true
+				all = append(all, m)
+			}
+		}
+	}
+	return all
+}
 
 func fetchModelsFromEndpoint(baseURL string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"

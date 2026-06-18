@@ -66,7 +66,7 @@ type Server struct {
 
 	contributeHub *ContributeWSHub
 
-	inferenceEndpoints map[string]string // backend id → base URL
+	inferenceEndpoints map[string][]string // backend id → list of base URLs
 
 	ready   bool
 	readyAt time.Time
@@ -299,7 +299,7 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 
 // SetInferenceEndpoints registers base URLs for inference backends
 // so the dashboard can query them for available models at runtime.
-func (s *Server) SetInferenceEndpoints(endpoints map[string]string) {
+func (s *Server) SetInferenceEndpoints(endpoints map[string][]string) {
 	s.inferenceEndpoints = endpoints
 }
 

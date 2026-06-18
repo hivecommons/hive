@@ -926,12 +926,14 @@ func main() {
 	} else {
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
 
-		vllmEndpoint := envOrDefault("HIVE_VLLM_ENDPOINT", "http://vllm-svc.hive.svc.cluster.local:8000")
-		llmdEndpoint := envOrDefault("HIVE_LLMD_ENDPOINT", "http://llm-d-epp.hive.svc.cluster.local:8000")
-		dashSrv.SetInferenceEndpoints(map[string]string{
-			"vllm":  vllmEndpoint,
-			"llm-d": llmdEndpoint,
+		vllmEndpoints := parseEndpointList(envOrDefault("HIVE_VLLM_ENDPOINT", "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000"))
+		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"))
+		dashSrv.SetInferenceEndpoints(map[string][]string{
+			"vllm":  vllmEndpoints,
+			"llm-d": llmdEndpoints,
 		})
+		vllmEndpoint := vllmEndpoints[0]
+		llmdEndpoint := llmdEndpoints[0]
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
 				endpoint := vllmEndpoint
@@ -2158,4 +2160,21 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseEndpointList splits a comma-separated list of URLs into a slice.
+// A single URL is returned as a one-element slice.
+func parseEndpointList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return []string{raw}
+	}
+	return out
 }
