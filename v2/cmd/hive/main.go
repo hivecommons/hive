@@ -1092,6 +1092,7 @@ func main() {
 				GitBranch:         gitBranch,
 				GitHubAppRequired: dashSrv.IsGitHubAppRequired(),
 				AutoUpgrade:       cfg.Hub.AutoUpgrade,
+				ClusterHealth:     hub.CollectClusterHealth(logger),
 			}
 		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, func(targetSHA string) {
 			// Minimum uptime before allowing self-upgrade to avoid restart loops.

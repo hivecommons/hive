@@ -44,6 +44,53 @@ type LeaderboardEntry struct {
 	HiveName       string `json:"hive_name,omitempty"`
 }
 
+// HeartbeatClusterHealthReport contains cluster node and GPU metrics
+// collected by the spoke in-cluster and sent to the hub via heartbeat.
+// This allows the hub to display health data for firewalled clusters
+// that it cannot query directly via kubectl.
+type HeartbeatClusterHealthReport struct {
+	Nodes      []HeartbeatNodeMetric      `json:"nodes"`
+	Summary    HeartbeatClusterSummary    `json:"summary"`
+	GPUSummary *HeartbeatGPUSummary       `json:"gpu_summary,omitempty"`
+	CollectedAt string                    `json:"collected_at"`
+}
+
+// HeartbeatNodeMetric holds per-node resource usage collected on the spoke.
+type HeartbeatNodeMetric struct {
+	Name           string   `json:"name"`
+	CPUCores       int      `json:"cpu_cores"`
+	CPUUsedMillis  int64    `json:"cpu_used_millicores"`
+	CPUPercent     int      `json:"cpu_percent"`
+	MemTotalMB     int64    `json:"mem_total_mb"`
+	MemUsedMB      int64    `json:"mem_used_mb"`
+	MemPercent     int      `json:"mem_percent"`
+	Pods           int      `json:"pods"`
+	PodCapacity    int      `json:"pod_capacity"`
+	Ready          bool     `json:"ready"`
+	Conditions     []string `json:"conditions"`
+	DiskPressure   bool     `json:"disk_pressure"`
+	GPUs           int      `json:"gpus,omitempty"`
+	GPUType        string   `json:"gpu_type,omitempty"`
+}
+
+// HeartbeatClusterSummary aggregates node-level data into cluster totals.
+type HeartbeatClusterSummary struct {
+	TotalNodes    int `json:"total_nodes"`
+	ReadyNodes    int `json:"ready_nodes"`
+	TotalCPUCores int `json:"total_cpu_cores"`
+	TotalCPUPct   int `json:"total_cpu_percent"`
+	TotalMemGB    int `json:"total_mem_gb"`
+	TotalMemPct   int `json:"total_mem_percent"`
+	TotalPods     int `json:"total_pods"`
+}
+
+// HeartbeatGPUSummary reports aggregate GPU counts collected on the spoke.
+type HeartbeatGPUSummary struct {
+	Total     int      `json:"total"`
+	Allocated int      `json:"allocated"`
+	Types     []string `json:"types"`
+}
+
 type HeartbeatPayload struct {
 	HiveID       string             `json:"hive_id"`
 	Org          string             `json:"org"`
@@ -68,6 +115,7 @@ type HeartbeatPayload struct {
 	Timestamp          string         `json:"timestamp"`
 	GitHubAppRequired  bool           `json:"github_app_required,omitempty"`
 	AutoUpgrade        bool           `json:"auto_upgrade,omitempty"`
+	ClusterHealth      *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload

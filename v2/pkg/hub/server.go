@@ -98,16 +98,29 @@ func secureCompareHub(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// heartbeatHealthStaleness is the maximum age of heartbeat-reported health
+// data before it is considered stale and displayed with a warning.
+const heartbeatHealthStaleness = 5 * time.Minute
+
+// HeartbeatHealthEntry stores heartbeat-reported cluster health along with
+// the timestamp it was received, so the hub can detect staleness.
+type HeartbeatHealthEntry struct {
+	Report     *HeartbeatClusterHealthReport
+	ReceivedAt time.Time
+}
+
 type HubServer struct {
-	mux        *http.ServeMux
-	registry   Registry
-	mu         sync.RWMutex
-	logger     *slog.Logger
-	saveCh     chan struct{}
-	hubGitHash string
-	hubSecret  string
-	httpServer *http.Server
-	clusters   map[string]ClusterConfig
+	mux            *http.ServeMux
+	registry       Registry
+	mu             sync.RWMutex
+	logger         *slog.Logger
+	saveCh         chan struct{}
+	hubGitHash     string
+	hubSecret      string
+	httpServer     *http.Server
+	clusters       map[string]ClusterConfig
+	heartbeatHealth   map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
+	heartbeatHealthMu sync.RWMutex
 }
 
 func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
@@ -129,12 +142,13 @@ func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
 		logger.Info("generated hub secret", "path", "/data/saas/hub-secret.key")
 	}
 	s := &HubServer{
-		mux:        http.NewServeMux(),
-		logger:     logger,
-		saveCh:     make(chan struct{}, 1),
-		hubGitHash: gitHash,
-		hubSecret:  secret,
-		clusters:   loadClusters(logger),
+		mux:             http.NewServeMux(),
+		logger:          logger,
+		saveCh:          make(chan struct{}, 1),
+		hubGitHash:      gitHash,
+		hubSecret:       secret,
+		clusters:        loadClusters(logger),
+		heartbeatHealth: make(map[string]*HeartbeatHealthEntry),
 	}
 
 	s.loadRegistry()
@@ -423,6 +437,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	s.requestSave()
 
+	// Store heartbeat-reported cluster health so the hub can use it as a
+	// fallback when it cannot reach the cluster directly via kubectl.
+	if payload.ClusterHealth != nil && entry.ClusterID != "" {
+		s.heartbeatHealthMu.Lock()
+		s.heartbeatHealth[entry.ClusterID] = &HeartbeatHealthEntry{
+			Report:     payload.ClusterHealth,
+			ReceivedAt: time.Now(),
+		}
+		s.heartbeatHealthMu.Unlock()
+		s.logger.Debug("stored heartbeat cluster health",
+			"hive_id", payload.HiveID,
+			"cluster_id", entry.ClusterID,
+			"nodes", len(payload.ClusterHealth.Nodes),
+		)
+	}
 
 	s.logger.Info("audit: hub heartbeat received",
 		"hive_id", payload.HiveID,

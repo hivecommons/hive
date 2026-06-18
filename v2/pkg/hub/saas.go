@@ -522,13 +522,16 @@ type GPUSummary struct {
 
 // PerClusterHealth holds health data for a single cluster.
 type PerClusterHealth struct {
-	ID        string              `json:"id"`
-	Name      string              `json:"name"`
-	Nodes     []ClusterHealthNode `json:"nodes"`
-	Summary   ClusterHealthSummary `json:"summary"`
-	GPUSummary *GPUSummary         `json:"gpu_summary,omitempty"`
-	HiveCount int                 `json:"hive_count"`
-	Error     string              `json:"error,omitempty"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Nodes      []ClusterHealthNode `json:"nodes"`
+	Summary    ClusterHealthSummary `json:"summary"`
+	GPUSummary *GPUSummary          `json:"gpu_summary,omitempty"`
+	HiveCount  int                  `json:"hive_count"`
+	Error      string               `json:"error,omitempty"`
+	DataSource string               `json:"data_source,omitempty"` // "heartbeat" when data comes from spoke heartbeat instead of kubectl
+	DataStale  bool                 `json:"data_stale,omitempty"`  // true when heartbeat data is older than heartbeatHealthStaleness
+	DataAge    string               `json:"data_age,omitempty"`    // human-readable age or collection timestamp
 }
 
 type ClusterHealthResponse struct {
@@ -625,6 +628,19 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		case res := <-ch:
 			if res.err != nil {
 				s.logger.Warn("cluster health query failed", "cluster", cID, "error", res.err)
+				// Fall back to heartbeat-reported health if available.
+				if hbHealth := s.getHeartbeatHealthForCluster(cID); hbHealth != nil {
+					pch := convertHeartbeatToPerClusterHealth(cID, s.clusterNameForID(cID), hbHealth, hiveCounts[cID])
+					perCluster = append(perCluster, pch)
+					allNodes = append(allNodes, pch.Nodes...)
+					aggCPUCores += pch.Summary.TotalCPUCores
+					aggCPUUsed += int64(pch.Summary.TotalCPUPct) * int64(pch.Summary.TotalCPUCores) * millicoresPerCore / percentMultiplier
+					aggCPUAlloc += int64(pch.Summary.TotalCPUCores) * millicoresPerCore
+					aggMemAlloc += int64(pch.Summary.TotalMemGB) * giToBytes
+					aggMemUsed += int64(pch.Summary.TotalMemPct) * int64(pch.Summary.TotalMemGB) * giToBytes / percentMultiplier
+					s.logger.Info("cluster health: using heartbeat fallback", "cluster", cID)
+					continue
+				}
 				perCluster = append(perCluster, PerClusterHealth{
 					ID:    cID,
 					Name:  s.clusterNameForID(cID),
@@ -644,6 +660,19 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 			aggMemUsed += int64(pch.Summary.TotalMemPct) * int64(pch.Summary.TotalMemGB) * giToBytes / percentMultiplier
 		case <-time.After(clusterHealthQueryTimeout):
 			s.logger.Warn("cluster health query timed out", "cluster", cID)
+			// Fall back to heartbeat-reported health if available.
+			if hbHealth := s.getHeartbeatHealthForCluster(cID); hbHealth != nil {
+				pch := convertHeartbeatToPerClusterHealth(cID, s.clusterNameForID(cID), hbHealth, hiveCounts[cID])
+				perCluster = append(perCluster, pch)
+				allNodes = append(allNodes, pch.Nodes...)
+				aggCPUCores += pch.Summary.TotalCPUCores
+				aggCPUUsed += int64(pch.Summary.TotalCPUPct) * int64(pch.Summary.TotalCPUCores) * millicoresPerCore / percentMultiplier
+				aggCPUAlloc += int64(pch.Summary.TotalCPUCores) * millicoresPerCore
+				aggMemAlloc += int64(pch.Summary.TotalMemGB) * giToBytes
+				aggMemUsed += int64(pch.Summary.TotalMemPct) * int64(pch.Summary.TotalMemGB) * giToBytes / percentMultiplier
+				s.logger.Info("cluster health: using heartbeat fallback after timeout", "cluster", cID)
+				continue
+			}
 			perCluster = append(perCluster, PerClusterHealth{
 				ID:    cID,
 				Name:  s.clusterNameForID(cID),
@@ -661,6 +690,40 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		aggMemPct = int(aggMemUsed * percentMultiplier / aggMemAlloc)
 	}
 	aggMemGB := int(aggMemAlloc / giToBytes)
+
+	// Include heartbeat-only clusters that are NOT in s.clusters but do have
+	// heartbeat-reported health data. This handles firewalled spokes whose
+	// cluster isn't in the hub's clusters.json.
+	clusterSeen := make(map[string]bool, len(results))
+	for cID := range results {
+		clusterSeen[cID] = true
+	}
+	s.heartbeatHealthMu.RLock()
+	for cID, entry := range s.heartbeatHealth {
+		if clusterSeen[cID] || entry == nil || entry.Report == nil {
+			continue
+		}
+		pch := convertHeartbeatToPerClusterHealth(cID, s.clusterNameForID(cID), entry, hiveCounts[cID])
+		perCluster = append(perCluster, pch)
+		allNodes = append(allNodes, pch.Nodes...)
+		aggCPUCores += pch.Summary.TotalCPUCores
+		aggCPUUsed += int64(pch.Summary.TotalCPUPct) * int64(pch.Summary.TotalCPUCores) * millicoresPerCore / percentMultiplier
+		aggCPUAlloc += int64(pch.Summary.TotalCPUCores) * millicoresPerCore
+		aggMemAlloc += int64(pch.Summary.TotalMemGB) * giToBytes
+		aggMemUsed += int64(pch.Summary.TotalMemPct) * int64(pch.Summary.TotalMemGB) * giToBytes / percentMultiplier
+	}
+	s.heartbeatHealthMu.RUnlock()
+
+	// Recompute aggregates after including heartbeat-only clusters.
+	aggCPUPct = 0
+	if aggCPUAlloc > 0 {
+		aggCPUPct = int(aggCPUUsed * percentMultiplier / aggCPUAlloc)
+	}
+	aggMemPct = 0
+	if aggMemAlloc > 0 {
+		aggMemPct = int(aggMemUsed * percentMultiplier / aggMemAlloc)
+	}
+	aggMemGB = int(aggMemAlloc / giToBytes)
 
 	// Sort clusters by ID for deterministic output.
 	sort.Slice(perCluster, func(i, j int) bool {
@@ -868,6 +931,78 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 	}
 
 	return result, nil
+}
+
+// getHeartbeatHealthForCluster retrieves the latest heartbeat-reported health
+// for a cluster. Returns nil if no data exists or the data is too old.
+func (s *HubServer) getHeartbeatHealthForCluster(clusterID string) *HeartbeatHealthEntry {
+	s.heartbeatHealthMu.RLock()
+	entry, ok := s.heartbeatHealth[clusterID]
+	s.heartbeatHealthMu.RUnlock()
+	if !ok || entry == nil || entry.Report == nil {
+		return nil
+	}
+	return entry
+}
+
+// convertHeartbeatToPerClusterHealth converts heartbeat-reported health data
+// into the hub's PerClusterHealth format for display. If the data is older
+// than heartbeatHealthStaleness, it is marked with a staleness warning.
+func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *HeartbeatHealthEntry, hiveCount int) PerClusterHealth {
+	report := entry.Report
+
+	// Convert HeartbeatNodeMetric to ClusterHealthNode.
+	nodes := make([]ClusterHealthNode, len(report.Nodes))
+	for i, n := range report.Nodes {
+		nodes[i] = ClusterHealthNode{
+			Name:          n.Name,
+			CPUCores:      n.CPUCores,
+			CPUUsedMillis: n.CPUUsedMillis,
+			CPUPercent:    n.CPUPercent,
+			MemTotalMB:    n.MemTotalMB,
+			MemUsedMB:     n.MemUsedMB,
+			MemPercent:    n.MemPercent,
+			DiskPressure:  n.DiskPressure,
+			Pods:          n.Pods,
+			PodCapacity:   n.PodCapacity,
+			Conditions:    n.Conditions,
+		}
+	}
+
+	pch := PerClusterHealth{
+		ID:   clusterID,
+		Name: clusterName,
+		Nodes: nodes,
+		Summary: ClusterHealthSummary{
+			TotalNodes:    report.Summary.TotalNodes,
+			TotalCPUCores: report.Summary.TotalCPUCores,
+			TotalCPUPct:   report.Summary.TotalCPUPct,
+			TotalMemGB:    report.Summary.TotalMemGB,
+			TotalMemPct:   report.Summary.TotalMemPct,
+			HiveCount:     hiveCount,
+		},
+		HiveCount:    hiveCount,
+		DataSource:   "heartbeat",
+	}
+
+	// Mark staleness if heartbeat data is too old.
+	age := time.Since(entry.ReceivedAt)
+	if age > heartbeatHealthStaleness {
+		pch.DataStale = true
+		pch.DataAge = fmt.Sprintf("%dm ago", int(age.Minutes()))
+	} else if report.CollectedAt != "" {
+		pch.DataAge = report.CollectedAt
+	}
+
+	// Convert GPU summary.
+	if report.GPUSummary != nil {
+		pch.GPUSummary = &GPUSummary{
+			TotalGPUs:       report.GPUSummary.Total,
+			AllocatableGPUs: report.GPUSummary.Total - report.GPUSummary.Allocated,
+		}
+	}
+
+	return pch
 }
 
 // parseK8sCPU parses Kubernetes CPU resource strings (e.g. "4", "4000m").
