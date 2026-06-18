@@ -1013,6 +1013,9 @@ func main() {
 		cfg.Hub.Enabled = true
 		cfg.Hub.URL = envHub
 	}
+	if envCluster := os.Getenv("HIVE_CLUSTER_ID"); envCluster != "" {
+		cfg.Hub.ClusterID = envCluster
+	}
 	if cfg.Hub.Enabled && hubURL != "" {
 		go hub.StartHeartbeat(ctx, hubURL, func() *hub.HeartbeatPayload {
 			if !cfg.Hub.Enabled {
