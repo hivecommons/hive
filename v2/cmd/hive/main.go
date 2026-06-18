@@ -928,6 +928,10 @@ func main() {
 
 		vllmEndpoint := envOrDefault("HIVE_VLLM_ENDPOINT", "http://vllm-svc.hive.svc.cluster.local:8000")
 		llmdEndpoint := envOrDefault("HIVE_LLMD_ENDPOINT", "http://llm-d-epp.hive.svc.cluster.local:8000")
+		dashSrv.SetInferenceEndpoints(map[string]string{
+			"vllm":  vllmEndpoint,
+			"llm-d": llmdEndpoint,
+		})
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
 				endpoint := vllmEndpoint

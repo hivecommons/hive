@@ -106,6 +106,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/sidebar", s.handleSidebarGet)
 	s.mux.HandleFunc("PUT /api/config/sidebar", s.handleSidebarSet)
 	s.mux.HandleFunc("GET /api/config/backends", s.handleBackends)
+	s.mux.HandleFunc("GET /api/inference/models/{backend}", s.handleInferenceModels)
 
 	s.mux.HandleFunc("GET /api/knowledge", s.handleKnowledgeList)
 	s.mux.HandleFunc("GET /api/knowledge/export", s.handleKnowledgeExport)
@@ -2952,12 +2953,110 @@ func (s *Server) saveSidebarToDisk(sb interface{}) {
 }
 
 func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
+	vllmModels := s.queryInferenceModels("vllm")
+	llmdModels := s.queryInferenceModels("llm-d")
+
 	jsonResponse(w, []map[string]interface{}{
 		{"id": "claude", "name": "Claude Code", "models": []string{"opus", "sonnet", "haiku"}},
 		{"id": "copilot", "name": "GitHub Copilot", "models": []string{"gpt-4o", "gpt-4o-mini"}},
 		{"id": "gemini", "name": "Gemini", "models": []string{"gemini-2.5-pro", "gemini-2.5-flash"}},
 		{"id": "goose", "name": "Goose", "models": []string{"default"}},
+		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
+		{"id": "llm-d", "name": "llm-d (self-hosted)", "models": llmdModels, "inference": true},
 	})
+}
+
+func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
+	backend := r.PathValue("backend")
+	if backend == "" {
+		jsonError(w, "backend required", http.StatusBadRequest)
+		return
+	}
+	endpoint, ok := s.inferenceEndpoints[backend]
+	if !ok {
+		jsonError(w, "unknown inference backend: "+backend, http.StatusNotFound)
+		return
+	}
+
+	models, err := fetchModelsFromEndpoint(endpoint)
+	if err != nil {
+		s.logger.Warn("failed to query inference models", "backend", backend, "error", err)
+		jsonResponse(w, map[string]interface{}{
+			"backend": backend,
+			"models":  []string{},
+			"error":   err.Error(),
+		})
+		return
+	}
+	jsonResponse(w, map[string]interface{}{
+		"backend": backend,
+		"models":  models,
+	})
+}
+
+func (s *Server) queryInferenceModels(backend string) []string {
+	if endpoint, ok := s.inferenceEndpoints[backend]; ok {
+		models, err := fetchModelsFromEndpoint(endpoint)
+		if err == nil && len(models) > 0 {
+			return models
+		}
+	}
+	envVar := "HIVE_VLLM_MODELS"
+	defaultModel := "qwen2.5-0.5b-instruct"
+	if backend == "llm-d" {
+		envVar = "HIVE_LLMD_MODELS"
+	}
+	return inferenceModelsFromEnv(envVar, defaultModel)
+}
+
+const inferenceModelQueryTimeout = 5 * time.Second
+
+func fetchModelsFromEndpoint(baseURL string) ([]string, error) {
+	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
+	client := &http.Client{Timeout: inferenceModelQueryTimeout}
+	resp, err := client.Get(modelsURL)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream returned %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+
+	models := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	return models, nil
+}
+
+func inferenceModelsFromEnv(envVar, defaultModel string) []string {
+	val := os.Getenv(envVar)
+	if val == "" {
+		return []string{defaultModel}
+	}
+	models := strings.Split(val, ",")
+	for i := range models {
+		models[i] = strings.TrimSpace(models[i])
+	}
+	return models
 }
 
 // --- Knowledge endpoints ---

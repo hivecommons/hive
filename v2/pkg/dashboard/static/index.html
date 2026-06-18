@@ -3868,10 +3868,9 @@
       { value: 'gpt-5.4', label: 'GPT-5.4' },
       { value: 'gpt-5.2', label: 'GPT-5.2' },
     ];
-    const INFERENCE_MODELS = {
-      'vllm': [{ value: 'qwen2.5-0.5b-instruct', label: 'Qwen 2.5 0.5B' }],
-      'llm-d': [{ value: 'qwen2.5-0.5b-instruct', label: 'Qwen 2.5 0.5B' }],
-    };
+    const INFERENCE_MODELS = {};
+    const INFERENCE_MODEL_CACHE_TTL_MS = 30000;
+    const _inferenceModelCache = {};
     function backendLabel(b) {
       if (INFERENCE_BACKENDS.includes(b)) return b + ' ⚡';
       return b;
@@ -3880,25 +3879,70 @@
       if (INFERENCE_BACKENDS.includes(backend)) return INFERENCE_MODELS[backend] || [];
       return KNOWN_MODELS;
     }
-
-    let _cachedInferenceModels = null;
-    async function fetchInferenceModels() {
-      if (_cachedInferenceModels) return _cachedInferenceModels;
+    async function fetchInferenceModels(backend) {
+      const now = Date.now();
+      const cached = _inferenceModelCache[backend];
+      if (cached && (now - cached.ts) < INFERENCE_MODEL_CACHE_TTL_MS) {
+        return cached.models;
+      }
       try {
-        const resp = await fetch('/api/config/backends');
-        const backends = await resp.json();
-        const models = {};
-        for (const b of backends) {
-          if (b.inference) {
-            models[b.id] = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() }));
-          }
-        }
-        _cachedInferenceModels = models;
-        Object.assign(INFERENCE_MODELS, models);
-      } catch (e) { /* use defaults */ }
-      return INFERENCE_MODELS;
+        const resp = await fetch(`/api/inference/models/${encodeURIComponent(backend)}`);
+        const data = await resp.json();
+        const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() }));
+        INFERENCE_MODELS[backend] = models;
+        _inferenceModelCache[backend] = { models, ts: now };
+        return models;
+      } catch (e) {
+        return INFERENCE_MODELS[backend] || [];
+      }
     }
-    fetchInferenceModels();
+    INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b));
+
+    const INFERENCE_MODEL_POLL_MS = 60000;
+    const _lastKnownModels = {};
+    const _dismissedModelBanners = new Set();
+    async function pollInferenceModelChanges() {
+      for (const backend of INFERENCE_BACKENDS) {
+        try {
+          const resp = await fetch(`/api/inference/models/${encodeURIComponent(backend)}`);
+          const data = await resp.json();
+          const currentIds = (data.models || []).sort();
+          const prevIds = (_lastKnownModels[backend] || []).sort();
+          if (prevIds.length === 0) { _lastKnownModels[backend] = currentIds; continue; }
+          if (JSON.stringify(currentIds) === JSON.stringify(prevIds)) continue;
+
+          const added = currentIds.filter(m => !prevIds.includes(m));
+          const removed = prevIds.filter(m => !currentIds.includes(m));
+
+          added.forEach(m => {
+            const key = `added:${backend}:${m}`;
+            if (_dismissedModelBanners.has(key)) return;
+            const label = m.split('/').pop();
+            showToast(`New model available on ${backend}: ${label}`, 'success');
+            _dismissedModelBanners.add(key);
+          });
+
+          removed.forEach(m => {
+            const label = m.split('/').pop();
+            showToast(`Model removed from ${backend}: ${label}`, 'error');
+            if (window._lastAgents) {
+              const affected = (window._lastAgents || []).filter(a =>
+                a.cli === backend && a.model === m
+              );
+              affected.forEach(a => {
+                showToast(`⚠ ${a.displayName || a.name} uses removed model ${label} — update its model selection`, 'error');
+              });
+            }
+          });
+
+          _lastKnownModels[backend] = currentIds;
+          const models = currentIds.map(m => ({ value: m, label: m.split('/').pop() }));
+          INFERENCE_MODELS[backend] = models;
+          _inferenceModelCache[backend] = { models, ts: Date.now() };
+        } catch (e) { /* skip on error */ }
+      }
+    }
+    setInterval(pollInferenceModelChanges, INFERENCE_MODEL_POLL_MS);
 
     function _normalizeModel(m) { return (m || '').replace(/(\d+)\.(\d+)$/, '$1-$2'); }
     function _modelsEqual(a, b) { return _normalizeModel(a) === _normalizeModel(b); }
@@ -8067,21 +8111,33 @@ function burnAreaChart() {
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       dismissToast(toast, `${agent} ${label} → ${backend}`, 'success');
-      updateModelDropdown(agent, backend);
+      await updateModelDropdown(agent, backend);
       if (window._lastAgents) {
         const a = window._lastAgents.find(x => x.name === agent);
         if (a) { a.cli = backend; renderAgents(window._lastAgents); }
       }
     }
 
-    function updateModelDropdown(agent, backend) {
+    async function updateModelDropdown(agent, backend) {
       const modelSelects = document.querySelectorAll(`select[data-change-action="switchModel"][data-agent="${agent}"]`);
       const isInference = INFERENCE_BACKENDS.includes(backend);
-      const models = isInference ? (INFERENCE_MODELS[backend] || []) : KNOWN_MODELS;
-      modelSelects.forEach(sel => {
-        sel.innerHTML = '<option value="">model ▾</option>' +
-          models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
-      });
+      if (isInference) {
+        modelSelects.forEach(sel => {
+          sel.innerHTML = '<option value="">loading models…</option>';
+          sel.disabled = true;
+        });
+        const models = await fetchInferenceModels(backend);
+        modelSelects.forEach(sel => {
+          sel.innerHTML = '<option value="">model ▾</option>' +
+            models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
+          sel.disabled = false;
+        });
+      } else {
+        modelSelects.forEach(sel => {
+          sel.innerHTML = '<option value="">model ▾</option>' +
+            KNOWN_MODELS.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
+        });
+      }
     }
 
     async function switchModel(agent, model) {
