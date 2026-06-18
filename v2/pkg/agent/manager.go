@@ -656,6 +656,30 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				}
 			}
 
+			// Detect fatal TLS/network errors that leave the agent visually
+			// "ready" (the Copilot chrome shows ❯ and / commands) but actually
+			// dead. These errors are transient — a restart will succeed once
+			// the network recovers.
+			if agent.Config.Backend == "copilot" && paneShowsFatalNetworkError(filtered) {
+				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
+				if sinceLastRestart >= float64(tlsErrorRestartCooldownSec) {
+					m.logger.Warn("fatal network/TLS error detected, restarting agent",
+						"agent", agent.Name,
+					)
+					agent.lastTokenRestart = time.Now()
+					agent.LastError = "transient TLS/network error"
+					go func() {
+						if err := m.Restart(ctx, agent.Name); err != nil {
+							m.logger.Warn("tls-error-triggered restart failed",
+								"agent", agent.Name,
+								"error", err,
+							)
+						}
+					}()
+					return
+				}
+			}
+
 			// Detect copilot hung: if running long enough with no CLI prompt,
 			// launch bare `copilot` to diagnose the error. Only clear the
 			// token if the diagnostic shows an auth error.
@@ -1922,6 +1946,7 @@ const (
 	sharedConfigDesiredMode    = 0o660
 	tokenRestartCooldownSec    = 60  // minimum seconds between token-triggered restarts per agent
 	expiredTokenHangTimeoutSec = 180 // blank pane after this many seconds triggers token purge + restart
+	tlsErrorRestartCooldownSec = 120 // minimum seconds between TLS-error-triggered restarts per agent
 )
 
 // loginPromptPatterns are substrings that indicate an agent is stuck on the
@@ -1934,6 +1959,29 @@ var loginPromptPatterns = []string{
 	"Authenticate to use",
 	"log in to use",
 	"Log in to use",
+}
+
+// fatalNetworkErrorPatterns are substrings that indicate a transient TLS or
+// network failure killed the agent at startup. These errors leave the Copilot
+// chrome visible (❯, / commands) so paneShowsCLIReady returns true, but the
+// agent is dead and will never recover without a restart.
+var fatalNetworkErrorPatterns = []string{
+	"invalid peer certificate",
+	"BadSignature",
+	"fetch failed",
+}
+
+// paneShowsFatalNetworkError returns true if any line contains a fatal
+// TLS/network error pattern that requires an agent restart.
+func paneShowsFatalNetworkError(lines []string) bool {
+	for _, line := range lines {
+		for _, pat := range fatalNetworkErrorPatterns {
+			if strings.Contains(line, pat) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // configHasTokens reads the shared Copilot config.json, strips single-line

@@ -221,6 +221,40 @@ func TestPaneShowsLoginPromptUnit(t *testing.T) {
 	}
 }
 
+func TestPaneShowsFatalNetworkErrorUnit(t *testing.T) {
+	tlsError := []string{
+		"Copilot v1.0.63 uses AI.",
+		"Error auto updating: Failed to fetch latest release: HttpError: request failed: error sending request for url",
+		"(https://api.github.com/repos/github/copilot-cli/releases/latest): client error (Connect): invalid peer certificate: BadSignature",
+		"❯",
+		"/ commands · ? help",
+	}
+	if !paneShowsFatalNetworkError(tlsError) {
+		t.Error("should detect BadSignature TLS error")
+	}
+
+	fetchFailed := []string{
+		"Error during sign-in: TypeError: fetch failed",
+		"Press any key to retry",
+	}
+	if !paneShowsFatalNetworkError(fetchFailed) {
+		t.Error("should detect fetch failed error")
+	}
+
+	normalLines := []string{
+		"normal output",
+		"❯",
+		"/ commands · ? help",
+	}
+	if paneShowsFatalNetworkError(normalLines) {
+		t.Error("should not detect error in normal output")
+	}
+
+	if paneShowsFatalNetworkError(nil) {
+		t.Error("nil pane should not show error")
+	}
+}
+
 func TestSeedRestartCountUnit(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{
 		"scanner": {Backend: "claude"},
