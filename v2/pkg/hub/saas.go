@@ -1288,7 +1288,6 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		Status:      "provisioning",
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 		Subdomain:   subdomain,
-		ClusterID:   clusterID,
 	}
 
 	if err := saveSaaSHive(h); err != nil {

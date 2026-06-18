@@ -200,7 +200,6 @@ type CreateHiveRequest struct {
 	AppID          string `json:"app_id"`
 	InstallationID string `json:"installation_id"`
 	AppPrivateKey  string `json:"app_private_key"`
-	ClusterID      string `json:"cluster_id"`
 	IsPublic       bool   `json:"is_public"`
 }
 
