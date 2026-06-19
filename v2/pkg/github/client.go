@@ -49,6 +49,8 @@ type PullRequest struct {
 	CreatedAt time.Time `json:"created_at"`
 	URL       string    `json:"url"`
 	Mergeable bool      `json:"mergeable"`
+	CIStatus  string    `json:"ci_status"`
+	HeadSHA   string    `json:"head_sha,omitempty"`
 }
 
 type ActionableResult struct {
@@ -330,6 +332,11 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			continue
 		}
 
+		headSHA := ""
+		if pr.GetHead() != nil {
+			headSHA = pr.GetHead().GetSHA()
+		}
+
 		actionable = append(actionable, PullRequest{
 			Repo:      repo,
 			Number:    pr.GetNumber(),
@@ -340,10 +347,59 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			CreatedAt: pr.GetCreatedAt().Time,
 			URL:       pr.GetHTMLURL(),
 			Mergeable: pr.GetMergeable(),
+			HeadSHA:   headSHA,
 		})
 	}
 
 	return actionable, held, totalPRs, nil
+}
+
+// EnrichCIStatus fetches check-run results for each PR's HEAD commit
+// and sets the CIStatus field to "success", "failure", or "pending".
+func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
+	const ciStatusSuccess = "success"
+	const ciStatusFailure = "failure"
+	const ciStatusPending = "pending"
+
+	for i := range prs {
+		if prs[i].HeadSHA == "" {
+			prs[i].CIStatus = ciStatusPending
+			continue
+		}
+		owner, repoName := c.splitRepo(prs[i].Repo)
+		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, prs[i].HeadSHA, &gh.ListCheckRunsOptions{
+			ListOptions: gh.ListOptions{PerPage: 100},
+		})
+		if err != nil {
+			c.logger.Warn("failed to fetch check runs", "repo", prs[i].Repo, "pr", prs[i].Number, "error", err)
+			prs[i].CIStatus = ciStatusPending
+			continue
+		}
+		if checkRuns.GetTotal() == 0 {
+			prs[i].CIStatus = ciStatusPending
+			continue
+		}
+		hasFail := false
+		allDone := true
+		for _, cr := range checkRuns.CheckRuns {
+			if cr.GetStatus() != "completed" {
+				allDone = false
+				continue
+			}
+			conclusion := cr.GetConclusion()
+			if conclusion == "failure" || conclusion == "action_required" {
+				hasFail = true
+			}
+		}
+		switch {
+		case hasFail:
+			prs[i].CIStatus = ciStatusFailure
+		case allDone:
+			prs[i].CIStatus = ciStatusSuccess
+		default:
+			prs[i].CIStatus = ciStatusPending
+		}
+	}
 }
 
 func extractLabels(labels []*gh.Label) []string {

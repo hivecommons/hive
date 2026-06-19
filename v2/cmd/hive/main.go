@@ -1301,6 +1301,9 @@ func runEvalCycle(
 		logger.Error("failed to enumerate actionable items", "error", err)
 		return
 	}
+
+	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+
 	lastActionable.Store(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
 		atomicWrite("/data/last-actionable.json", data)
@@ -1826,6 +1829,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 }
 
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
+const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
 func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
@@ -1844,7 +1848,16 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		DCO       string   `json:"dco"`
 	}
 
+	type failingPR struct {
+		Number  int    `json:"number"`
+		Repo    string `json:"repo"`
+		Title   string `json:"title"`
+		Author  string `json:"author"`
+		HeadSHA string `json:"head_sha,omitempty"`
+	}
+
 	var eligible []eligiblePR
+	var failing []failingPR
 	for _, pr := range actionable.PRs.Items {
 		if pr.Draft {
 			continue
@@ -1857,6 +1870,18 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		if !strings.Contains(fullRepo, "/") && org != "" {
 			fullRepo = org + "/" + fullRepo
 		}
+
+		if pr.CIStatus == "failure" {
+			failing = append(failing, failingPR{
+				Number:  pr.Number,
+				Repo:    fullRepo,
+				Title:   pr.Title,
+				Author:  pr.Author,
+				HeadSHA: pr.HeadSHA,
+			})
+			continue
+		}
+
 		dco := "unknown"
 		for _, l := range pr.Labels {
 			if l == "dco-signoff: yes" {
@@ -1876,6 +1901,8 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		})
 	}
 
+	_ = os.MkdirAll("/var/run/hive-metrics", 0o755)
+
 	payload := map[string]any{
 		"generated_at":   time.Now().UTC().Format(time.RFC3339),
 		"merge_eligible": eligible,
@@ -1885,9 +1912,19 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		logger.Warn("failed to marshal merge-eligible", "error", err)
 		return
 	}
-	_ = os.MkdirAll("/var/run/hive-metrics", 0o755)
 	atomicWrite(mergeEligiblePath, data)
-	logger.Info("merge-eligible.json updated", "eligible", len(eligible), "total_prs", len(actionable.PRs.Items))
+	logger.Info("merge-eligible.json updated", "eligible", len(eligible), "ci_failing", len(failing), "total_prs", len(actionable.PRs.Items))
+
+	failPayload := map[string]any{
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"ci_failing":   failing,
+	}
+	failData, err := json.Marshal(failPayload)
+	if err != nil {
+		logger.Warn("failed to marshal ci-failing", "error", err)
+		return
+	}
+	atomicWrite(ciFailingPath, failData)
 }
 
 func atomicWrite(path string, data []byte) {

@@ -105,14 +105,53 @@ For PRs in the PR_LIST that have merge conflicts:
 
 Skip any PR with hold labels or `do-not-merge`.
 
+## CI Repair — Fix Failing PRs
+
+The CI_FAILING list below contains PRs with failed `build-gate` checks. These PRs are **excluded from merge-eligible** until CI passes. Your job is to fix them.
+
+For each PR in CI_FAILING:
+1. **Read the CI log** — use MCP `list_workflow_runs_for_repo` to find the failed run, then `download_workflow_run_logs` to get the log
+2. **Identify the error** — lint errors, type errors, build failures, import issues
+3. **Fix it** — push a fixup commit to the PR branch using MCP `create_or_update_file` or by checking out the branch in a worktree, fixing, and pushing
+4. **Move on** — do NOT wait for CI to re-run. The next kick cycle will check again.
+
+If a PR has failed CI **3 or more times** (check commit count on the PR), close it as unfixable and reopen the linked issue.
+
+**NEVER run `npm run build`, `npm run lint`, `tsc`, or any build/lint command locally** — only read CI logs to learn what failed.
+
+## File-Overlap Detection — Prevent Cascading Conflicts
+
+Before dispatching new fix agents, check for file overlaps between:
+- PRs in the CI_FAILING list
+- PRs in the MERGE-ELIGIBLE list
+- Issues you are about to dispatch agents for
+
+Use MCP `list_pull_request_files` on each open PR to get its changed files. Then:
+1. **Build a file map** — map each changed file to the list of PRs that touch it
+2. **Identify overlapping groups** — PRs that share one or more changed files
+3. **For overlapping PRs**: merge them **sequentially** in order of PR number (oldest first). After each merge, the next PR in the group will likely have conflicts — update its branch first.
+4. **For new issues**: if an issue would touch files already modified by an open PR, do NOT dispatch a separate agent. Instead, either:
+   - Add the fix to the existing PR (push to its branch), OR
+   - Wait for the existing PR to merge before dispatching
+
+This prevents the cyclical failure pattern where 5 PRs touch the same files, each merge invalidates the others, and all of them fail CI in a loop.
+
 ## Workflow
 
-1. **Merge sweep** — process MERGE-ELIGIBLE list (5 min cap)
-2. **Group + dispatch fixes** — group related issues, launch one background agent per group using the Agent tool with `run_in_background: true`
-3. **Final merge sweep** — re-check MERGE-ELIGIBLE plus any new PRs from sub-agents
-4. **Beads + summary** — create beads, report PRs opened/merged/pending
+1. **CI repair** — fix PRs in CI_FAILING list first (they're blocking the pipeline)
+2. **File-overlap scan** — build a file map across all open PRs
+3. **Merge sweep** — process MERGE-ELIGIBLE list, respecting overlap ordering (sequential for overlapping groups)
+4. **Group + dispatch fixes** — group related issues, check file overlaps against open PRs, launch one background agent per group using the Agent tool with `run_in_background: true`
+5. **Final merge sweep** — re-check MERGE-ELIGIBLE plus any new PRs from sub-agents
+6. **Beads + summary** — create beads, report PRs opened/merged/pending
 
-## Work List
+## Work Lists
+
+CI-FAILING PRs (fix these first — they are NOT merge-eligible until CI passes):
+${CI_FAILING}
+
+MERGE-ELIGIBLE PRs (CI passing, ready to merge):
+${MERGE_ELIGIBLE}
 
 ACTIONABLE ISSUES:
 ${ISSUE_LIST}

@@ -161,6 +161,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	inceptionIdea, inceptionPhase, inceptionMode, inceptionAnswers, inceptionSlug, inceptionRepoURL := s.inceptionVars()
 
 	mergeEligibleList := s.buildMergeEligibleList()
+	ciFailingList := s.buildCIFailingList()
 
 	replacer := strings.NewReplacer(
 		"${AGENT_NAME}", agentName,
@@ -193,6 +194,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"${INCEPTION_SLUG}", inceptionSlug,
 		"${INCEPTION_REPO_URL}", inceptionRepoURL,
 		"${MERGE_ELIGIBLE}", mergeEligibleList,
+		"${CI_FAILING}", ciFailingList,
 	)
 	return replacer.Replace(template)
 }
@@ -472,6 +474,7 @@ func (s *Scheduler) buildSupervisorMessage(actionable *github.ActionableResult) 
 }
 
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
+const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
 func (s *Scheduler) buildMergeEligibleList() string {
 	data, err := os.ReadFile(mergeEligiblePath)
@@ -491,6 +494,30 @@ func (s *Scheduler) buildMergeEligibleList() string {
 	var b strings.Builder
 	for _, pr := range payload.Items {
 		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+	}
+	return b.String()
+}
+
+func (s *Scheduler) buildCIFailingList() string {
+	data, err := os.ReadFile(ciFailingPath)
+	if err != nil {
+		return "(none)\n"
+	}
+	var payload struct {
+		Items []struct {
+			Number  int    `json:"number"`
+			Repo    string `json:"repo"`
+			Title   string `json:"title"`
+			Author  string `json:"author"`
+			HeadSHA string `json:"head_sha"`
+		} `json:"ci_failing"`
+	}
+	if json.Unmarshal(data, &payload) != nil || len(payload.Items) == 0 {
+		return "(none)\n"
+	}
+	var b strings.Builder
+	for _, pr := range payload.Items {
+		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s) — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, pr.Title))
 	}
 	return b.String()
 }
