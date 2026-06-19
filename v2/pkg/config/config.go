@@ -314,6 +314,9 @@ type GitHubConfig struct {
 	KeyFile              string `yaml:"key_file"`
 	Token                string `yaml:"token"`
 	OAuthClientID        string `yaml:"oauth_client_id"`
+	// AppSlug is the GitHub App URL slug for the install link.
+	// For public GitHub: "kubestellar-hive". For GHE: your app's slug.
+	AppSlug string `yaml:"app_slug"`
 	// APIURL is the GitHub API base URL. Defaults to DefaultGitHubAPIURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com/api/v3".
 	APIURL string `yaml:"api_url"`
@@ -327,6 +330,8 @@ const (
 	DefaultGitHubAPIURL = "https://api.github.com"
 	// DefaultGitHubBaseURL is the default GitHub web URL (public github.com).
 	DefaultGitHubBaseURL = "https://github.com"
+	// DefaultGitHubAppSlug is the public Hive GitHub App slug.
+	DefaultGitHubAppSlug = "kubestellar-hive"
 )
 
 // ResolvedAPIURL returns the configured API URL or the default for github.com.
@@ -343,6 +348,31 @@ func (g GitHubConfig) ResolvedBaseURL() string {
 		return g.BaseURL
 	}
 	return DefaultGitHubBaseURL
+}
+
+// IsGHE returns true if the configured base URL points to a GitHub Enterprise instance.
+func (g GitHubConfig) IsGHE() bool {
+	return g.BaseURL != "" && g.BaseURL != DefaultGitHubBaseURL
+}
+
+// ResolvedAppSlug returns the configured app slug or the default public Hive app slug.
+func (g GitHubConfig) ResolvedAppSlug() string {
+	if g.AppSlug != "" {
+		return g.AppSlug
+	}
+	return DefaultGitHubAppSlug
+}
+
+// AppInstallURL returns the full URL to install the GitHub App.
+// For GHE: {base_url}/github-apps/{slug}/installations/new
+// For github.com: https://github.com/apps/{slug}/installations/new
+func (g GitHubConfig) AppInstallURL() string {
+	base := strings.TrimRight(g.ResolvedBaseURL(), "/")
+	slug := g.ResolvedAppSlug()
+	if g.IsGHE() {
+		return base + "/github-apps/" + slug + "/installations/new"
+	}
+	return base + "/apps/" + slug + "/installations/new"
 }
 
 type NotificationsConfig struct {

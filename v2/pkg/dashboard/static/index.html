@@ -1691,7 +1691,7 @@
   <div class="gh-setup-modal">
     <h3>GitHub App Setup Required</h3>
     <p>Hive needs a GitHub App to authenticate. Choose an option:</p>
-    <div class="setup-option" onclick="showSetupDetails('public')">
+    <div id="setup-option-public" class="setup-option" onclick="showSetupDetails('public')">
       <h4>Use the public Hive App (quickest)</h4>
       <p>Dashboard login only. Agents can read repos but cannot create issues, PRs, or merge.</p>
     </div>
@@ -1714,7 +1714,7 @@
       <div class="setup-steps">
         <strong>Create a GitHub App:</strong>
         <ol>
-          <li>Go to <a href="https://github.com/settings/apps/new" target="_blank" rel="noopener" style="color:#238636">github.com/settings/apps/new</a> (or your org's Settings &rarr; Developer settings &rarr; GitHub Apps)</li>
+          <li>Go to <a id="setup-custom-apps-link" href="https://github.com/settings/apps/new" target="_blank" rel="noopener" style="color:#238636">github.com/settings/apps/new</a> (or your org's Settings &rarr; Developer settings &rarr; GitHub Apps)</li>
           <li>Set the app name (e.g. <code>my-hive</code>)</li>
           <li>Homepage URL: any URL (e.g. <code>https://github.com/kubestellar/hive</code>)</li>
           <li>Uncheck "Webhook &rarr; Active" (not needed)</li>
@@ -3460,6 +3460,13 @@
       if (data.githubAppRequired && data.githubAppInstallURL) {
         var link = document.getElementById('gh-app-install-link');
         if (link) link.href = data.githubAppInstallURL;
+        var isGHE = data.githubBaseURL && data.githubBaseURL !== 'https://github.com';
+        var title = document.querySelector('#gh-app-install-banner .gh-app-title');
+        var desc = document.querySelector('#gh-app-install-banner .gh-app-desc');
+        if (title) title.textContent = isGHE ? 'GitHub App Not Installed on ' + data.githubBaseURL.replace('https://', '') : 'GitHub App Not Installed';
+        if (desc) desc.textContent = isGHE
+          ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org to enable full functionality.'
+          : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.';
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
@@ -10728,9 +10735,15 @@ function burnAreaChart() {
         const data = await resp.json();
         if (data.error) {
           if (data.error.includes('oauth_client_id')) {
+            var ghBase = window._lastStatus && window._lastStatus.githubBaseURL || 'https://github.com';
+            var isGHE = ghBase !== 'https://github.com';
+            var publicOption = document.getElementById('setup-option-public');
+            if (publicOption) publicOption.style.display = isGHE ? 'none' : '';
+            var customLink = document.getElementById('setup-custom-apps-link');
+            if (customLink) { customLink.href = ghBase + '/settings/apps/new'; customLink.textContent = ghBase.replace('https://', '') + '/settings/apps/new'; }
             document.getElementById('gh-setup-overlay').style.display = 'flex';
             document.getElementById('setup-details-public').style.display = 'none';
-            document.getElementById('setup-details-custom').style.display = 'none';
+            document.getElementById('setup-details-custom').style.display = isGHE ? 'block' : 'none';
           } else {
             showToast('Login error: ' + data.error, 'error');
           }

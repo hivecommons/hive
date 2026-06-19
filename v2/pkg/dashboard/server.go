@@ -101,6 +101,7 @@ type StatusPayload struct {
 	SystemResources     *SystemResources    `json:"systemResources,omitempty"`
 	GitHubAppRequired   bool               `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string             `json:"githubAppInstallURL,omitempty"`
+	GitHubBaseURL       string             `json:"githubBaseURL,omitempty"`
 	InferenceBackends   []InferenceBackend `json:"inferenceBackends,omitempty"`
 }
 
@@ -426,6 +427,7 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	if s.deps != nil && s.deps.Config != nil {
 		status.ACMMLevel = detectACMMLevel(s.deps.Config)
 		status.ACMMPackAgents = buildACMMPackAgents(s.deps.Config)
+		status.GitHubBaseURL = s.deps.Config.GitHub.ResolvedBaseURL()
 	}
 	status.ContributorPool = s.BuildContributorPoolStatus()
 
@@ -453,14 +455,14 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
 }
 
-const GitHubAppInstallURL = "https://github.com/apps/kubestellar-hive/installations/new"
-
 func (s *Server) SetGitHubAppRequired(required bool) {
 	s.githubAppMu.Lock()
 	defer s.githubAppMu.Unlock()
 	s.githubAppRequired = required
-	if required {
-		s.githubAppInstallURL = GitHubAppInstallURL
+	if required && s.deps != nil && s.deps.Config != nil {
+		s.githubAppInstallURL = s.deps.Config.GitHub.AppInstallURL()
+	} else if required {
+		s.githubAppInstallURL = "https://github.com/apps/kubestellar-hive/installations/new"
 	} else {
 		s.githubAppInstallURL = ""
 	}
