@@ -1260,7 +1260,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 			MaxAge:   sessionCookieMaxAge,
 			HttpOnly: true,
 			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-			SameSite: http.SameSiteStrictMode,
+			SameSite: http.SameSiteLaxMode,
 		})
 	}
 
@@ -1275,7 +1275,7 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	})
 	s.deps.Logger.Info("GitHub user logged out")
 	jsonResponse(w, map[string]interface{}{"status": "logged_out"})
