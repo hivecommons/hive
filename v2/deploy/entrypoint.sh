@@ -398,6 +398,21 @@ if [ -f /data/proxy-ca.pem ]; then
   export NODE_EXTRA_CA_CERTS=/data/proxy-ca.pem
   echo "[entrypoint] NODE_EXTRA_CA_CERTS set for Node.js agents"
 fi
+# Watch for CA cert changes (Go binary may regenerate it) and re-install
+(
+  PREV_HASH=""
+  while true; do
+    sleep 10
+    [ -f /data/proxy-ca.pem ] || continue
+    CUR_HASH=$(sha256sum /data/proxy-ca.pem 2>/dev/null | cut -d' ' -f1)
+    if [ -n "$CUR_HASH" ] && [ "$CUR_HASH" != "$PREV_HASH" ]; then
+      cp /data/proxy-ca.pem /usr/local/share/ca-certificates/hive-proxy-ca.crt 2>/dev/null \
+        && update-ca-certificates 2>/dev/null \
+        && echo "[entrypoint] proxy CA re-installed to system trust store (hash changed)"
+      PREV_HASH="$CUR_HASH"
+    fi
+  done
+) &
 
 echo "[entrypoint] Starting Node.js proxy on :${HIVE_PROXY_PORT} → :${HIVE_API_PORT}"
 cd /opt/hive/proxy && node server.js &

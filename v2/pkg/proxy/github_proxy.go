@@ -31,6 +31,7 @@ const (
 	modeFilePrefix          = "/tmp/.hive-mode-"
 	maxViolationLog         = 1000
 	CACertPath              = "/data/proxy-ca.pem"
+	caKeyPath               = "/data/proxy-ca-key.pem"
 )
 
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
@@ -62,14 +63,9 @@ type cachedCert struct {
 // write operations. Repos should be bare names (e.g. "console"); the org
 // is prepended to form "org/repo" keys.
 func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubProxy, error) {
-	caCert, caX509, err := generateCA()
+	caCert, caX509, err := loadOrGenerateCA(logger)
 	if err != nil {
-		return nil, fmt.Errorf("generate CA: %w", err)
-	}
-
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caX509.Raw})
-	if err := os.WriteFile(CACertPath, caPEM, 0644); err != nil {
-		return nil, fmt.Errorf("write CA cert to %s: %w", CACertPath, err)
+		return nil, fmt.Errorf("CA setup: %w", err)
 	}
 
 	var uidMap *agent.UIDMap
@@ -750,6 +746,11 @@ func (p *GitHubProxy) forgeCert(host string) (tls.Certificate, error) {
 	if err != nil {
 		return cert, err
 	}
+	// Include the CA cert in the chain so clients that load system/extra
+	// certs asynchronously (e.g. GitHub Copilot's bundled undici) can
+	// verify the forged leaf without having the CA pre-loaded in their
+	// trust store.
+	cert.Certificate = append(cert.Certificate, p.caX509.Raw)
 
 	p.certMu.Lock()
 	if p.certCache == nil {
@@ -806,6 +807,53 @@ func generateCA() (tls.Certificate, *x509.Certificate, error) {
 		return tls.Certificate{}, nil, err
 	}
 
+	return tlsCert, x509Cert, nil
+}
+
+// loadOrGenerateCA reuses an existing CA key pair from disk if present and
+// valid, or generates a fresh one and persists both cert and key to the PVC.
+// Reusing the CA across pod restarts means the system trust store (populated
+// by entrypoint.sh before the Go binary starts) already contains the right
+// CA, so clients that load system certs asynchronously (GitHub Copilot's
+// bundled undici) can verify forged certificates immediately.
+func loadOrGenerateCA(logger *slog.Logger) (tls.Certificate, *x509.Certificate, error) {
+	certPEM, certErr := os.ReadFile(CACertPath)
+	keyPEM, keyErr := os.ReadFile(caKeyPath)
+	if certErr == nil && keyErr == nil {
+		tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+		if err == nil {
+			block, _ := pem.Decode(certPEM)
+			if block != nil {
+				x509Cert, err := x509.ParseCertificate(block.Bytes)
+				if err == nil && time.Now().Before(x509Cert.NotAfter) {
+					logger.Info("reusing persisted MITM CA", "expires", x509Cert.NotAfter)
+					return tlsCert, x509Cert, nil
+				}
+			}
+		}
+		logger.Warn("persisted CA unusable, generating fresh one", "err", err)
+	}
+
+	tlsCert, x509Cert, err := generateCA()
+	if err != nil {
+		return tls.Certificate{}, nil, err
+	}
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: x509Cert.Raw})
+	if err := os.WriteFile(CACertPath, caPEM, 0644); err != nil {
+		return tls.Certificate{}, nil, fmt.Errorf("write CA cert to %s: %w", CACertPath, err)
+	}
+
+	caKeyDER, err := x509.MarshalECPrivateKey(tlsCert.PrivateKey.(*ecdsa.PrivateKey))
+	if err != nil {
+		return tls.Certificate{}, nil, fmt.Errorf("marshal CA key: %w", err)
+	}
+	caKeyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: caKeyDER})
+	if err := os.WriteFile(caKeyPath, caKeyPEM, 0600); err != nil {
+		return tls.Certificate{}, nil, fmt.Errorf("write CA key to %s: %w", caKeyPath, err)
+	}
+
+	logger.Info("generated and persisted fresh MITM CA", "certPath", CACertPath, "keyPath", caKeyPath)
 	return tlsCert, x509Cert, nil
 }
 
