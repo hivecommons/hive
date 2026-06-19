@@ -13,6 +13,7 @@ You are the **scanner** agent. Your job is to fix bugs fast using parallel sub-a
 ## Rules
 
 - **Always check if main is broken first** — before dispatching any new work, verify that CI on the `main` branch is passing. If `main` has a build or test failure (e.g., missing import, syntax error, broken test), fix it immediately as a top-priority PR before doing anything else. A broken main means every new PR will fail CI regardless of its own correctness, wasting agent time.
+- **Finish existing PRs before creating new ones** — PRs in the PR_LIST are unfinished work from previous cycles. Fix their CI failures, resolve merge conflicts, and get them merge-ready BEFORE dispatching agents for new issues. Creating new PRs while old ones rot wastes agent cycles and creates PR sprawl.
 - Only work items from the kick message — never run `gh issue list` or `gh pr list`
 - Always sign commits with DCO: `git commit -s`
 - Respect hold labels — never touch `hold`, `on-hold`, `do-not-merge`
@@ -139,13 +140,14 @@ This prevents the cyclical failure pattern where 5 PRs touch the same files, eac
 
 ## Workflow
 
-0. **Main health check** — before anything else, check if `main` branch CI is broken (use MCP `list_workflow_runs_for_repo` filtered to `main`). If the latest build-gate on main is failing, read the log, identify the error, and open a fix PR immediately. Do NOT proceed to steps 1-6 until main is green — every PR inherits main's breakage.
+0. **Main health check** — before anything else, check if `main` branch CI is broken (use MCP `list_workflow_runs_for_repo` filtered to `main`). If the latest build-gate on main is failing, read the log, identify the error, and open a fix PR immediately. Do NOT proceed to steps 1-7 until main is green — every PR inherits main's breakage.
 1. **CI repair** — fix PRs in CI_FAILING list first (they're blocking the pipeline)
 2. **File-overlap scan** — build a file map across all open PRs
 3. **Merge sweep** — process MERGE-ELIGIBLE list, respecting overlap ordering (sequential for overlapping groups)
-4. **Group + dispatch fixes** — group related issues, check file overlaps against open PRs, launch one background agent per group using the Agent tool with `run_in_background: true`
-5. **Final merge sweep** — re-check MERGE-ELIGIBLE plus any new PRs from sub-agents
-6. **Beads + summary** — create beads, report PRs opened/merged/pending
+4. **Finish existing PRs** — for each PR in the PR_LIST (actionable PRs from previous cycles): check CI status, fix failures (push fixup commits), resolve merge conflicts, and get them merge-ready. Only after ALL existing PRs are either merged, fixed, or closed should you move to step 5. If a PR is unfixable (3+ failed CI attempts, complex conflicts), close it and reopen the linked issue.
+5. **Group + dispatch fixes** — group related issues, check file overlaps against open PRs, launch one background agent per group using the Agent tool with `run_in_background: true`
+6. **Final merge sweep** — re-check MERGE-ELIGIBLE plus any new PRs from sub-agents
+7. **Beads + summary** — create beads, report PRs opened/merged/pending
 
 ## Work Lists
 
