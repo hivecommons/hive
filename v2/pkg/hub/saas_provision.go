@@ -35,6 +35,9 @@ const (
 	// dynamicPVCStorage is the storage request for dynamically-provisioned PVCs (e.g. CephFS).
 	dynamicPVCStorage = "50Gi"
 
+	// publicGitHubOAuthClientID is the Hive GitHub App client ID for Device Flow login on public GitHub.
+	publicGitHubOAuthClientID = "Ov23ligE2p0gjXg6xAUf"
+
 	// dashboardPort is the port the hive dashboard listens on.
 	dashboardPort = 3002
 
@@ -101,6 +104,7 @@ type ClusterConfig struct {
 	InferenceEndpoint   string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
 	GitHubBaseURL       string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
 	GitHubAPIURL        string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
+	OAuthClientID       string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 }
 
 // kubectlForCluster builds an exec.Cmd that targets a specific cluster.
@@ -439,6 +443,15 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"HasGHE":            cluster.GitHubBaseURL != "",
 		"GitHubBaseURL":     cluster.GitHubBaseURL,
 		"GitHubAPIURL":      cluster.GitHubAPIURL,
+		"OAuthClientID": func() string {
+			if cluster.OAuthClientID != "" {
+				return cluster.OAuthClientID
+			}
+			if cluster.GitHubBaseURL == "" {
+				return publicGitHubOAuthClientID
+			}
+			return ""
+		}(),
 		"CertIssuer":        cluster.CertIssuer,
 		"IngressClass":      cluster.IngressClass,
 		"Domain":            cluster.Domain,
@@ -821,6 +834,9 @@ data:
 {{- if .HasGHE}}
       base_url: {{.GitHubBaseURL}}
       api_url: {{.GitHubAPIURL}}
+{{- end}}
+{{- if .OAuthClientID}}
+      oauth_client_id: {{.OAuthClientID}}
 {{- end}}
     dashboard:
       port: {{.DashboardPort}}
