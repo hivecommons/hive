@@ -2849,6 +2849,14 @@ func (m *Manager) SetModelOverride(name, model string) error {
 
 	agent.ModelOverride = model
 	m.logger.Info("agent model override set", "name", name, "model", model)
+
+	effectiveBackend := agent.Config.Backend
+	if agent.BackendOverride != "" {
+		effectiveBackend = agent.BackendOverride
+	}
+	if IsInferenceBackend(effectiveBackend) && m.inferenceRouteCallback != nil {
+		m.inferenceRouteCallback(name, effectiveBackend, model)
+	}
 	return nil
 }
 
@@ -2863,6 +2871,16 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 
 	agent.BackendOverride = backend
 	m.logger.Info("agent backend override set", "name", name, "backend", backend)
+
+	if IsInferenceBackend(backend) && m.inferenceRouteCallback != nil {
+		model := agent.ModelOverride
+		if model == "" {
+			model = agent.Config.Model
+		}
+		m.inferenceRouteCallback(name, backend, model)
+	} else if !IsInferenceBackend(backend) && m.clearInferenceRouteCallback != nil {
+		m.clearInferenceRouteCallback(name)
+	}
 	return nil
 }
 

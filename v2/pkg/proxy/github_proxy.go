@@ -895,6 +895,21 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			"content-type", resp.Header.Get("Content-Type"),
 		)
 
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			errBody, _ := io.ReadAll(resp.Body)
+			p.logger.Error("inference upstream error",
+				"agent", agentName,
+				"status", resp.StatusCode,
+				"body", truncateBytes(errBody, 500),
+			)
+			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend returned %d: %s"}}`,
+				resp.StatusCode, truncateBytes(errBody, 200))
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.StatusCode)
+			w.Write([]byte(anthropicErr))
+			return
+		}
+
 		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 		if isStreaming {

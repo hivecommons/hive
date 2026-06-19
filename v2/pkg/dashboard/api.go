@@ -3008,11 +3008,13 @@ func (s *Server) queryInferenceModels(backend string) []string {
 		}
 	}
 	envVar := "HIVE_VLLM_MODELS"
-	defaultModel := "qwen2.5-0.5b-instruct"
 	if backend == "llm-d" {
 		envVar = "HIVE_LLMD_MODELS"
 	}
-	return inferenceModelsFromEnv(envVar, defaultModel)
+	if val := os.Getenv(envVar); val != "" {
+		return inferenceModelsFromEnv(envVar, "")
+	}
+	return nil
 }
 
 const inferenceModelQueryTimeout = 5 * time.Second
