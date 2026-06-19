@@ -390,7 +390,14 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 				}
 				expected := "Bearer " + s.authToken
 				if !secureCompare(token, expected) && !secureCompare(token, s.authToken) {
-					http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+					if strings.HasPrefix(r.URL.Path, "/api/") {
+						w.Header().Set("Content-Type", "application/json")
+						http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+					} else {
+						w.Header().Set("Content-Type", "text/html; charset=utf-8")
+						w.WriteHeader(http.StatusUnauthorized)
+						w.Write([]byte(loginPage))
+					}
 					return
 				}
 			}
@@ -417,12 +424,97 @@ func isPublicPath(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/contribute"):
 		return true
-	case path == "/api/gh-user-auth/start" || path == "/api/gh-user-auth/status":
+	case strings.HasPrefix(path, "/api/gh-user-auth/"):
 		return true
 	default:
 		return false
 	}
 }
+
+// loginPage is a self-contained HTML page served to unauthenticated browser
+// requests. It drives the GitHub Device Flow so users can log in without
+// the full dashboard SPA being publicly accessible.
+const loginPage = `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hive — Sign In</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#1e293b;border-radius:12px;padding:40px;max-width:420px;width:90%;text-align:center;
+  box-shadow:0 4px 24px rgba(0,0,0,.4)}
+h1{font-size:1.5rem;margin-bottom:8px;color:#f8fafc}
+.subtitle{color:#94a3b8;margin-bottom:28px;font-size:.9rem}
+.logo{font-size:2.5rem;margin-bottom:16px}
+button{background:#238636;color:#fff;border:none;padding:12px 24px;border-radius:8px;font-size:1rem;
+  cursor:pointer;width:100%;font-weight:600;transition:background .15s}
+button:hover{background:#2ea043}
+button:disabled{background:#374151;cursor:wait}
+.code-box{background:#0f172a;border:2px solid #3b82f6;border-radius:8px;padding:16px;margin:20px 0;
+  font-family:monospace;font-size:1.8rem;letter-spacing:.3em;color:#60a5fa;font-weight:700}
+.instructions{color:#94a3b8;font-size:.85rem;line-height:1.6;margin-bottom:16px}
+a{color:#60a5fa;text-decoration:none}
+a:hover{text-decoration:underline}
+.status{margin-top:16px;font-size:.85rem;color:#94a3b8}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #475569;
+  border-top-color:#60a5fa;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.error{color:#f87171}
+</style></head><body>
+<div class="card">
+  <div class="logo">🐝</div>
+  <h1>Hive</h1>
+  <p class="subtitle">Sign in with GitHub to access this dashboard</p>
+  <div id="step-start">
+    <button id="btn-start" onclick="startFlow()">Sign in with GitHub</button>
+  </div>
+  <div id="step-code" style="display:none">
+    <p class="instructions">Enter this code at GitHub:</p>
+    <div class="code-box" id="user-code"></div>
+    <p class="instructions"><a id="verify-link" href="#" target="_blank" rel="noopener">Open GitHub verification page ↗</a></p>
+    <p class="status"><span class="spinner"></span> Waiting for authorization…</p>
+  </div>
+  <div id="step-done" style="display:none">
+    <p style="font-size:1.2rem;color:#4ade80;margin-bottom:16px">✓ Signed in</p>
+    <p class="instructions">Redirecting…</p>
+  </div>
+  <div id="step-error" style="display:none">
+    <p class="error" id="error-msg"></p>
+    <button onclick="location.reload()" style="margin-top:16px">Try again</button>
+  </div>
+</div>
+<script>
+function showStep(id){['step-start','step-code','step-done','step-error'].forEach(
+  s=>document.getElementById(s).style.display=s===id?'block':'none')}
+function showError(msg){document.getElementById('error-msg').textContent=msg;showStep('step-error')}
+async function startFlow(){
+  document.getElementById('btn-start').disabled=true;
+  try{
+    var r=await fetch('/api/gh-user-auth/start',{method:'POST'});
+    var d=await r.json();
+    if(!r.ok){showError(d.error||'Failed to start login');return}
+    document.getElementById('user-code').textContent=d.user_code;
+    document.getElementById('verify-link').href=d.verification_uri;
+    showStep('step-code');
+    poll(d.interval||5);
+  }catch(e){showError('Network error: '+e.message)}
+}
+async function poll(interval){
+  var ms=interval*1000;
+  async function check(){
+    try{
+      var r=await fetch('/api/gh-user-auth/poll',{method:'POST'});
+      var d=await r.json();
+      if(d.status==='complete'){showStep('step-done');setTimeout(function(){location.reload()},1000);return}
+      if(d.status==='error'){showError(d.error||'Authorization failed');return}
+      if(d.status==='slow_down'){ms=Math.min(ms+5000,30000)}
+      setTimeout(check,ms);
+    }catch(e){setTimeout(check,ms)}
+  }
+  setTimeout(check,ms);
+}
+</script></body></html>`
 
 func (s *Server) Handler() http.Handler {
 	return s.roleEnforcement(s.securityHeaders(s.mux))
