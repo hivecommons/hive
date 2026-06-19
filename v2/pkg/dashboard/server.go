@@ -451,14 +451,14 @@ button{background:#238636;color:#fff;border:none;padding:12px 24px;border-radius
   cursor:pointer;width:100%;font-weight:600;transition:background .15s}
 button:hover{background:#2ea043}
 button:disabled{background:#374151;cursor:wait}
-.code-wrap{position:relative;margin:20px 0}
-.code-box{background:#0f172a;border:2px solid #3b82f6;border-radius:8px;padding:16px;
-  font-family:monospace;font-size:1.8rem;letter-spacing:.3em;color:#60a5fa;font-weight:700;cursor:pointer}
-.code-box:hover{border-color:#93c5fd}
-.copy-btn{position:absolute;top:8px;right:8px;background:#334155;border:none;color:#94a3b8;
-  padding:4px 8px;border-radius:4px;font-size:.7rem;cursor:pointer;transition:all .15s}
-.copy-btn:hover{background:#475569;color:#e2e8f0}
-.copy-btn.copied{background:#166534;color:#4ade80}
+.code-wrap{position:relative;display:inline-block;margin:16px 0}
+.code-box{font-family:monospace;font-size:2rem;font-weight:800;color:#60a5fa;letter-spacing:4px;
+  padding:16px 48px 16px 16px;background:#0f172a;border-radius:8px;user-select:all}
+.copy-btn{position:absolute;top:4px;right:4px;background:#238636;color:#fff;border:none;
+  padding:3px 10px;border-radius:4px;cursor:pointer;font-size:.7rem;font-weight:600;width:auto;
+  transition:background .15s}
+.copy-btn:hover{background:#2ea043}
+.copy-btn.copied{background:#166534}
 .instructions{color:#94a3b8;font-size:.85rem;line-height:1.6;margin-bottom:16px}
 a{color:#60a5fa;text-decoration:none}
 a:hover{text-decoration:underline}
@@ -478,7 +478,7 @@ a:hover{text-decoration:underline}
   <div id="step-code" style="display:none">
     <p class="instructions">Enter this code at GitHub:</p>
     <div class="code-wrap">
-      <div class="code-box" id="user-code" onclick="copyCode()"></div>
+      <div class="code-box" id="user-code">--------</div>
       <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copy</button>
     </div>
     <p class="instructions"><a id="verify-link" href="#" target="_blank" rel="noopener">Open GitHub verification page ↗</a></p>
