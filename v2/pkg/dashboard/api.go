@@ -1252,11 +1252,31 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		s.deps.SetUserClient(token)
 	}
 
+	if s.authToken != "" {
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    s.authToken,
+			Path:     "/",
+			MaxAge:   sessionCookieMaxAge,
+			HttpOnly: true,
+			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+			SameSite: http.SameSiteStrictMode,
+		})
+	}
+
 	jsonResponse(w, map[string]interface{}{"status": "complete", "username": username, "avatar_url": avatarURL})
 }
 
 func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) {
 	os.Remove(userTokenPath)
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
 	s.deps.Logger.Info("GitHub user logged out")
 	jsonResponse(w, map[string]interface{}{"status": "logged_out"})
 }

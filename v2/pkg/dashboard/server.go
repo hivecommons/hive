@@ -25,6 +25,8 @@ func secureCompare(a, b string) bool {
 
 const agentSkipAfterFullBroadcastS = 5 * time.Second
 const maxSSEClients = 100
+const sessionCookieName = "hive_session"
+const sessionCookieMaxAge = 30 * 24 * 60 * 60 // 30 days
 
 type Server struct {
 	port       int
@@ -387,6 +389,11 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 				token := r.Header.Get("Authorization")
 				if token == "" {
 					token = r.URL.Query().Get("token")
+				}
+				if token == "" {
+					if c, err := r.Cookie(sessionCookieName); err == nil {
+						token = c.Value
+					}
 				}
 				expected := "Bearer " + s.authToken
 				if !secureCompare(token, expected) && !secureCompare(token, s.authToken) {
