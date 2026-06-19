@@ -1513,7 +1513,11 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 
 	h := loadSaaSHive(id)
 	if h == nil {
-		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		// SaaS entry already gone — still clean up the in-memory registry
+		// so the hive disappears from the listing immediately.
+		s.removeRegistryEntry(id, username)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"deleted"}`))
 		return
 	}
 	if h.Owner != username && username != hubAdminUsername {
@@ -1529,6 +1533,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deprovisionHive(h, cluster, s.logger)
+	s.removeRegistryEntry(id, username)
 
 	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username)
 	w.Header().Set("Content-Type", "application/json")

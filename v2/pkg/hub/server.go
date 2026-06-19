@@ -630,6 +630,21 @@ func (s *HubServer) handleStats(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// removeRegistryEntry removes a hive from the in-memory registry by ID.
+func (s *HubServer) removeRegistryEntry(id, by string) {
+	s.mu.Lock()
+	for i, h := range s.registry.Hives {
+		if h.ID == id {
+			s.registry.Hives = append(s.registry.Hives[:i], s.registry.Hives[i+1:]...)
+			s.mu.Unlock()
+			s.requestSave()
+			s.logger.Info("audit: registry entry removed", "id", id, "by", by)
+			return
+		}
+	}
+	s.mu.Unlock()
+}
+
 func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("hive_hub_user")
 	if err != nil || cookie.Value != hubAdminUsername {
