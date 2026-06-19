@@ -39,17 +39,145 @@ func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen i
 	}
 
 	for _, msg := range req.Messages {
-		text := extractTextFromContent(msg.Content)
-		totalChars += len(text)
-		openaiReq.Messages = append(openaiReq.Messages, openaiMessage{
-			Role:    msg.Role,
-			Content: text,
-		})
+		translated := translateAnthropicMessage(msg)
+		for _, tm := range translated {
+			totalChars += len(tm.Content)
+			if tm.ToolCallID != "" {
+				totalChars += len(tm.ToolCallID)
+			}
+			for _, tc := range tm.ToolCalls {
+				totalChars += len(tc.Function.Arguments)
+			}
+		}
+		openaiReq.Messages = append(openaiReq.Messages, translated...)
+	}
+
+	if len(req.Tools) > 0 {
+		openaiReq.Tools = translateAnthropicTools(req.Tools)
 	}
 
 	openaiReq.MaxTokens = capMaxTokensForInput(req.MaxTokens, maxContextLen, totalChars)
 
 	return json.Marshal(openaiReq)
+}
+
+// translateAnthropicMessage converts a single Anthropic message into one or
+// more OpenAI messages. An Anthropic assistant message can contain both text
+// and tool_use blocks; a user message can contain tool_result blocks.
+func translateAnthropicMessage(msg anthropicMessage) []openaiMessage {
+	var str string
+	if json.Unmarshal(msg.Content, &str) == nil {
+		return []openaiMessage{{Role: msg.Role, Content: str}}
+	}
+
+	var blocks []anthropicContentBlockRaw
+	if err := json.Unmarshal(msg.Content, &blocks); err != nil {
+		return []openaiMessage{{Role: msg.Role, Content: string(msg.Content)}}
+	}
+
+	if msg.Role == "assistant" {
+		return translateAssistantBlocks(blocks)
+	}
+
+	var toolResults []openaiMessage
+	var textParts []string
+
+	for _, block := range blocks {
+		switch block.Type {
+		case "tool_result":
+			content := ""
+			if block.Content != nil {
+				var s string
+				if json.Unmarshal(block.Content, &s) == nil {
+					content = s
+				} else {
+					var innerBlocks []struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					}
+					if json.Unmarshal(block.Content, &innerBlocks) == nil {
+						var b strings.Builder
+						for _, ib := range innerBlocks {
+							if ib.Type == "text" {
+								b.WriteString(ib.Text)
+							}
+						}
+						content = b.String()
+					} else {
+						content = string(block.Content)
+					}
+				}
+			}
+			toolResults = append(toolResults, openaiMessage{
+				Role:       "tool",
+				Content:    content,
+				ToolCallID: block.ToolUseID,
+			})
+		case "text":
+			if block.Text != "" {
+				textParts = append(textParts, block.Text)
+			}
+		}
+	}
+
+	var msgs []openaiMessage
+	if len(textParts) > 0 {
+		msgs = append(msgs, openaiMessage{
+			Role:    "user",
+			Content: strings.Join(textParts, "\n"),
+		})
+	}
+	msgs = append(msgs, toolResults...)
+	return msgs
+}
+
+// translateAssistantBlocks converts an assistant message's content blocks
+// (text + tool_use) into a single OpenAI assistant message with tool_calls.
+func translateAssistantBlocks(blocks []anthropicContentBlockRaw) []openaiMessage {
+	var text strings.Builder
+	var toolCalls []openaiToolCall
+
+	for _, block := range blocks {
+		switch block.Type {
+		case "text":
+			text.WriteString(block.Text)
+		case "tool_use":
+			args, _ := json.Marshal(block.Input)
+			toolCalls = append(toolCalls, openaiToolCall{
+				ID:   block.ID,
+				Type: "function",
+				Function: openaiFunction{
+					Name:      block.Name,
+					Arguments: string(args),
+				},
+			})
+		}
+	}
+
+	msg := openaiMessage{
+		Role:    "assistant",
+		Content: text.String(),
+	}
+	if len(toolCalls) > 0 {
+		msg.ToolCalls = toolCalls
+	}
+	return []openaiMessage{msg}
+}
+
+// translateAnthropicTools converts Anthropic tool definitions to OpenAI format.
+func translateAnthropicTools(tools []anthropicTool) []openaiTool {
+	result := make([]openaiTool, 0, len(tools))
+	for _, t := range tools {
+		result = append(result, openaiTool{
+			Type: "function",
+			Function: openaiToolFunction{
+				Name:        t.Name,
+				Description: t.Description,
+				Parameters:  t.InputSchema,
+			},
+		})
+	}
+	return result
 }
 
 // translateOpenAIResponseToAnthropic converts a non-streaming OpenAI Chat
@@ -61,24 +189,44 @@ func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, erro
 	}
 
 	anthropicResp := anthropicResponse{
-		ID:   resp.ID,
-		Type: "message",
-		Role: "assistant",
+		ID:    resp.ID,
+		Type:  "message",
+		Role:  "assistant",
 		Model: model,
 	}
 
 	if len(resp.Choices) > 0 {
-		anthropicResp.StopReason = mapFinishReason(resp.Choices[0].FinishReason)
-		anthropicResp.Content = []anthropicContentBlock{{
-			Type: "text",
-			Text: resp.Choices[0].Message.Content,
-		}}
+		choice := resp.Choices[0]
+		anthropicResp.StopReason = mapFinishReason(choice.FinishReason)
+
+		if choice.Message.Content != "" {
+			anthropicResp.Content = append(anthropicResp.Content, anthropicContentBlock{
+				Type: "text",
+				Text: choice.Message.Content,
+			})
+		}
+
+		for _, tc := range choice.Message.ToolCalls {
+			var input json.RawMessage
+			if tc.Function.Arguments != "" {
+				input = json.RawMessage(tc.Function.Arguments)
+			} else {
+				input = json.RawMessage("{}")
+			}
+			anthropicResp.Content = append(anthropicResp.Content, anthropicContentBlock{
+				Type:  "tool_use",
+				ID:    tc.ID,
+				Name:  tc.Function.Name,
+				Input: input,
+			})
+		}
+
+		if len(anthropicResp.Content) == 0 {
+			anthropicResp.Content = []anthropicContentBlock{{Type: "text", Text: ""}}
+		}
 	} else {
 		anthropicResp.StopReason = "end_turn"
-		anthropicResp.Content = []anthropicContentBlock{{
-			Type: "text",
-			Text: "",
-		}}
+		anthropicResp.Content = []anthropicContentBlock{{Type: "text", Text: ""}}
 	}
 
 	if resp.Usage != nil {
@@ -87,10 +235,7 @@ func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, erro
 			OutputTokens: resp.Usage.CompletionTokens,
 		}
 	} else {
-		anthropicResp.Usage = &anthropicUsage{
-			InputTokens:  0,
-			OutputTokens: 0,
-		}
+		anthropicResp.Usage = &anthropicUsage{}
 	}
 
 	return json.Marshal(anthropicResp)
@@ -105,19 +250,13 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error
 	writeSSE(w, "message_start", anthropicSSEMessageStart{
 		Type: "message_start",
 		Message: anthropicSSEMessage{
-			ID:    msgID,
-			Type:  "message",
-			Role:  "assistant",
-			Model: model,
+			ID:      msgID,
+			Type:    "message",
+			Role:    "assistant",
+			Model:   model,
 			Content: []anthropicContentBlock{},
-			Usage: &anthropicUsage{InputTokens: 0, OutputTokens: 0},
+			Usage:   &anthropicUsage{},
 		},
-	})
-
-	writeSSE(w, "content_block_start", map[string]interface{}{
-		"type":          "content_block_start",
-		"index":         0,
-		"content_block": map[string]string{"type": "text", "text": ""},
 	})
 
 	scanner := bufio.NewScanner(r)
@@ -125,6 +264,9 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error
 	scanner.Buffer(make([]byte, maxSSELine), maxSSELine)
 
 	var totalOutputTokens int
+	var contentBlockIndex int
+	textBlockStarted := false
+	toolCallState := make(map[int]*sseToolCallAccumulator)
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -143,10 +285,19 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error
 
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
+
 			if delta.Content != "" {
+				if !textBlockStarted {
+					writeSSE(w, "content_block_start", map[string]interface{}{
+						"type":          "content_block_start",
+						"index":         contentBlockIndex,
+						"content_block": map[string]string{"type": "text", "text": ""},
+					})
+					textBlockStarted = true
+				}
 				writeSSE(w, "content_block_delta", map[string]interface{}{
 					"type":  "content_block_delta",
-					"index": 0,
+					"index": contentBlockIndex,
 					"delta": map[string]string{
 						"type": "text_delta",
 						"text": delta.Content,
@@ -154,11 +305,64 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error
 				})
 			}
 
+			for _, tc := range delta.ToolCalls {
+				acc, exists := toolCallState[tc.Index]
+				if !exists {
+					if textBlockStarted {
+						writeSSE(w, "content_block_stop", map[string]interface{}{
+							"type":  "content_block_stop",
+							"index": contentBlockIndex,
+						})
+						contentBlockIndex++
+						textBlockStarted = false
+					}
+
+					acc = &sseToolCallAccumulator{
+						id:         tc.ID,
+						name:       tc.Function.Name,
+						blockIndex: contentBlockIndex,
+					}
+					toolCallState[tc.Index] = acc
+
+					writeSSE(w, "content_block_start", map[string]interface{}{
+						"type":  "content_block_start",
+						"index": contentBlockIndex,
+						"content_block": map[string]interface{}{
+							"type":  "tool_use",
+							"id":    tc.ID,
+							"name":  tc.Function.Name,
+							"input": map[string]interface{}{},
+						},
+					})
+					contentBlockIndex++
+				}
+
+				if tc.Function.Arguments != "" {
+					acc.args.WriteString(tc.Function.Arguments)
+					writeSSE(w, "content_block_delta", map[string]interface{}{
+						"type":  "content_block_delta",
+						"index": acc.blockIndex,
+						"delta": map[string]interface{}{
+							"type":         "input_json_delta",
+							"partial_json": tc.Function.Arguments,
+						},
+					})
+				}
+			}
+
 			if chunk.Choices[0].FinishReason != "" {
-				writeSSE(w, "content_block_stop", map[string]interface{}{
-					"type":  "content_block_stop",
-					"index": 0,
-				})
+				if textBlockStarted {
+					writeSSE(w, "content_block_stop", map[string]interface{}{
+						"type":  "content_block_stop",
+						"index": contentBlockIndex,
+					})
+				}
+				for _, acc := range toolCallState {
+					writeSSE(w, "content_block_stop", map[string]interface{}{
+						"type":  "content_block_stop",
+						"index": acc.blockIndex,
+					})
+				}
 
 				writeSSE(w, "message_delta", map[string]interface{}{
 					"type": "message_delta",
@@ -179,6 +383,13 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error
 
 	writeSSE(w, "message_stop", map[string]string{"type": "message_stop"})
 	return scanner.Err()
+}
+
+type sseToolCallAccumulator struct {
+	id         string
+	name       string
+	blockIndex int
+	args       strings.Builder
 }
 
 func writeSSE(w io.Writer, eventType string, data interface{}) {
@@ -235,6 +446,8 @@ func mapFinishReason(reason string) string {
 		return "end_turn"
 	case "length":
 		return "max_tokens"
+	case "tool_calls":
+		return "tool_use"
 	default:
 		return "end_turn"
 	}
@@ -330,11 +543,31 @@ type anthropicRequest struct {
 	Messages  []anthropicMessage `json:"messages"`
 	System    json.RawMessage    `json:"system,omitempty"`
 	Stream    bool               `json:"stream,omitempty"`
+	Tools     []anthropicTool    `json:"tools,omitempty"`
+}
+
+type anthropicTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
 }
 
 type anthropicMessage struct {
 	Role    string          `json:"role"`
 	Content json.RawMessage `json:"content"`
+}
+
+// anthropicContentBlockRaw is used to parse content blocks that may contain
+// text, tool_use, or tool_result entries.
+type anthropicContentBlockRaw struct {
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
+	ToolUseID string          `json:"tool_use_id,omitempty"`
+	Content   json.RawMessage `json:"content,omitempty"`
+	IsError   bool            `json:"is_error,omitempty"`
 }
 
 type anthropicResponse struct {
@@ -349,8 +582,11 @@ type anthropicResponse struct {
 }
 
 type anthropicContentBlock struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type  string          `json:"type"`
+	Text  string          `json:"text,omitempty"`
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -359,7 +595,7 @@ type anthropicUsage struct {
 }
 
 type anthropicSSEMessageStart struct {
-	Type    string            `json:"type"`
+	Type    string              `json:"type"`
 	Message anthropicSSEMessage `json:"message"`
 }
 
@@ -377,18 +613,44 @@ type openaiRequest struct {
 	Messages  []openaiMessage `json:"messages"`
 	MaxTokens int             `json:"max_tokens,omitempty"`
 	Stream    bool            `json:"stream,omitempty"`
+	Tools     []openaiTool    `json:"tools,omitempty"`
+}
+
+type openaiTool struct {
+	Type     string             `json:"type"`
+	Function openaiToolFunction `json:"function"`
+}
+
+type openaiToolFunction struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 type openaiMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content"`
+	ToolCalls  []openaiToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
+}
+
+type openaiToolCall struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Function openaiFunction `json:"function"`
+}
+
+type openaiFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type openaiResponse struct {
 	ID      string `json:"id"`
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string           `json:"content"`
+			ToolCalls []openaiToolCall `json:"tool_calls,omitempty"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -403,9 +665,20 @@ type openaiUsage struct {
 type openaiSSEChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content   string               `json:"content"`
+			ToolCalls []openaiSSEToolCall   `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage *openaiUsage `json:"usage,omitempty"`
+}
+
+type openaiSSEToolCall struct {
+	Index    int    `json:"index"`
+	ID       string `json:"id,omitempty"`
+	Type     string `json:"type,omitempty"`
+	Function struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} `json:"function"`
 }
