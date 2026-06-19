@@ -234,8 +234,8 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 		}
 	}
 
-	if !IsGitHubHost(host) {
-		// Non-GitHub: tunnel directly to the intended host.
+	if !IsGitHubHost(host) || !NeedsMITM(host) {
+		// Non-GitHub or non-API GitHub host: tunnel directly.
 		upstream, err := net.DialTimeout("tcp", host+":443", transparentProxyTimeout)
 		if err != nil {
 			return
@@ -445,6 +445,14 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 
 	// Non-GitHub hosts: tunnel without inspection.
 	if !IsGitHubHost(host) {
+		p.tunnelDirect(conn, r)
+		return
+	}
+
+	// github.com doesn't need MITM — OAuth device flow and git smart HTTP
+	// are handled by CLI --deny-tool flags. Only api.github.com needs
+	// request-level inspection for ACMM enforcement.
+	if !NeedsMITM(host) {
 		p.tunnelDirect(conn, r)
 		return
 	}

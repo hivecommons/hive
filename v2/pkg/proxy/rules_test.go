@@ -189,3 +189,20 @@ func TestIsGitHubHost(t *testing.T) {
 		}
 	}
 }
+
+func TestNeedsMITM(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"api.github.com", true},
+		{"github.com", false},
+		{"example.com", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := NeedsMITM(tt.host); got != tt.want {
+			t.Errorf("NeedsMITM(%q) = %v, want %v", tt.host, got, tt.want)
+		}
+	}
+}

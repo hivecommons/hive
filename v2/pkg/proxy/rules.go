@@ -36,6 +36,15 @@ func IsGitHubHost(host string) bool {
 	return githubHosts[host]
 }
 
+// NeedsMITM returns true if the host requires TLS interception for request-level
+// enforcement. Hosts like github.com are registered for awareness but only need
+// opaque tunneling — their traffic (OAuth device flow, git smart HTTP) either
+// doesn't require ACMM enforcement or is already gated by CLI --deny-tool flags.
+// Only api.github.com needs MITM for GraphQL/REST mutation inspection.
+func NeedsMITM(host string) bool {
+	return host == "api.github.com"
+}
+
 // rules defines every GitHub API operation and the minimum mode needed.
 // Order matters: more-specific patterns must come before less-specific ones
 // for the same method, because evaluation is first-match-wins.
