@@ -2208,7 +2208,8 @@ func inferenceHomePath(agentName string) string {
 // ensureClaudeSettings creates a per-agent writable HOME directory for inference
 // agents with pre-populated .claude/settings.json. Each agent gets its own dir
 // to avoid cross-agent permission conflicts when Claude Code creates session
-// files. The directory is chowned to the agent's UID so it can write freely.
+// files. Directories use 0o777 so the agent UID can create subdirs freely
+// (hive runs as dev, not root, so chown is not available).
 func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	homePath := inferenceHomePath(agentName)
 	settingsDir := filepath.Join(homePath, ".claude")
@@ -2217,39 +2218,41 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	settings := `{"permissions":{"allow":[],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
 
 	if _, err := os.Stat(settingsFile); err == nil {
-		m.chownRecursive(homePath, uid)
+		m.ensureWorldWritable(homePath)
 		return
 	}
-	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+	if err := os.MkdirAll(settingsDir, 0o777); err != nil {
 		m.logger.Warn("failed to create claude inference home", "agent", agentName, "error", err)
 		return
 	}
-	if err := os.WriteFile(settingsFile, []byte(settings), 0o644); err != nil {
+	if err := os.WriteFile(settingsFile, []byte(settings), 0o666); err != nil {
 		m.logger.Warn("failed to write claude settings", "agent", agentName, "error", err)
 	}
 	// Also write the standalone settings file for --settings flag
-	_ = os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o644)
+	_ = os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o666)
 	// Pre-populate .claude.json to skip first-run setup (GrowthBook, migrations)
 	userConfig := filepath.Join(homePath, ".claude.json")
 	if _, err := os.Stat(userConfig); err != nil {
 		cfg := `{"hasCompletedOnboarding":true,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"migrationVersion":13}`
-		_ = os.WriteFile(userConfig, []byte(cfg), 0o644)
+		_ = os.WriteFile(userConfig, []byte(cfg), 0o666)
 	}
-	m.chownRecursive(homePath, uid)
+	m.ensureWorldWritable(homePath)
 }
 
-// chownRecursive sets ownership of a directory tree to the given UID.
-func (m *Manager) chownRecursive(root string, uid int) {
-	if uid <= 0 {
-		return
-	}
-	gid := uid
+// ensureWorldWritable walks the tree and sets dirs to 0o777, files to 0o666.
+func (m *Manager) ensureWorldWritable(root string) {
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
-		if chErr := os.Chown(path, uid, gid); chErr != nil {
-			m.logger.Warn("failed to chown inference home path", "path", path, "uid", uid, "error", chErr)
+		if info.IsDir() {
+			if info.Mode().Perm() != 0o777 {
+				_ = os.Chmod(path, 0o777)
+			}
+		} else {
+			if info.Mode().Perm() != 0o666 {
+				_ = os.Chmod(path, 0o666)
+			}
 		}
 		return nil
 	})
