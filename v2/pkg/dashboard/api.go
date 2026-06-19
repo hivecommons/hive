@@ -66,6 +66,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/gh-user-auth/start", s.handleGHUserAuthStart)
 	s.mux.HandleFunc("POST /api/gh-user-auth/poll", s.handleGHUserAuthPoll)
 	s.mux.HandleFunc("POST /api/gh-user-auth/logout", s.handleGHUserAuthLogout)
+	s.mux.HandleFunc("GET /api/gh-user-auth/session", s.handleGHUserAuthSession)
 	s.mux.HandleFunc("GET /api/summaries", s.handleSummaries)
 
 	s.mux.HandleFunc("GET /api/config/agent/{name}", s.handleAgentConfigGet)
@@ -1279,6 +1280,28 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 	})
 	s.deps.Logger.Info("GitHub user logged out")
 	jsonResponse(w, map[string]interface{}{"status": "logged_out"})
+}
+
+func (s *Server) handleGHUserAuthSession(w http.ResponseWriter, r *http.Request) {
+	if s.authToken == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	tokenData, err := os.ReadFile(userTokenPath)
+	if err != nil || strings.TrimSpace(string(tokenData)) == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    s.authToken,
+		Path:     "/",
+		MaxAge:   sessionCookieMaxAge,
+		HttpOnly: true,
+		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 // restoreGHUserSession loads a previously-saved GitHub user OAuth token from

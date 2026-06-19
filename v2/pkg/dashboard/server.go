@@ -530,7 +530,7 @@ async function poll(interval){
     try{
       var r=await fetch('/api/gh-user-auth/poll',{method:'POST'});
       var d=await r.json();
-      if(d.status==='complete'){showStep('step-done');setTimeout(function(){location.reload()},1000);return}
+      if(d.status==='complete'){showStep('step-done');setTimeout(function(){location.href='/api/gh-user-auth/session'},1000);return}
       if(d.status==='error'){showError(d.error||'Authorization failed');return}
       if(d.status==='slow_down'){ms=Math.min(ms+5000,30000)}
       setTimeout(check,ms);
