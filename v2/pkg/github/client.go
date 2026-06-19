@@ -372,6 +372,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 
 // EnrichCIStatus fetches check-run results for each PR's HEAD commit
 // and sets the CIStatus field to "success", "failure", or "pending".
+// The "tide" check is skipped — it reports Prow merge-bot state, not CI.
 func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 	const ciStatusSuccess = "success"
 	const ciStatusFailure = "failure"
@@ -397,7 +398,12 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		}
 		hasFail := false
 		allDone := true
+		ciChecksFound := 0
 		for _, cr := range checkRuns.CheckRuns {
+			if cr.GetName() == "tide" {
+				continue
+			}
+			ciChecksFound++
 			if cr.GetStatus() != "completed" {
 				allDone = false
 				continue
@@ -406,6 +412,10 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			if conclusion == "failure" || conclusion == "action_required" {
 				hasFail = true
 			}
+		}
+		if ciChecksFound == 0 {
+			prs[i].CIStatus = ciStatusPending
+			continue
 		}
 		switch {
 		case hasFail:
