@@ -123,6 +123,18 @@ func truncateDigest(digest string) string {
 	return digest[:cutoff] + fmt.Sprintf("\n\n---\n⚠️ *Digest truncated: %d → %d characters (GitHub limit: %d)*\n", len(digest), cutoff, githubCommentCharLimit)
 }
 
+func (c *Client) ensureAdvisoryLabel(ctx context.Context, owner, repo string, issueNum int) {
+	_, _, labelErr := c.client.Issues.CreateLabel(ctx, owner, repo, &gh.Label{
+		Name:        gh.Ptr(advisoryLabelName),
+		Description: gh.Ptr(advisoryLabelDesc),
+		Color:       gh.Ptr(advisoryLabelClr),
+	})
+	if labelErr != nil && !strings.Contains(labelErr.Error(), "already_exists") {
+		return
+	}
+	_, _, _ = c.client.Issues.AddLabelsToIssue(ctx, owner, repo, issueNum, []string{advisoryLabelName})
+}
+
 func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issueNum int) (int, error) {
 	opts := &gh.IssueListCommentsOptions{
 		ListOptions: gh.ListOptions{PerPage: 50},
@@ -156,24 +168,49 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 		c.logger.Warn("search API failed, falling back to label filter", slog.String("error", err.Error()))
 	}
 
-	// Fallback: list by label (works even when search API is unavailable,
-	// e.g. GitHub App tokens without search scope)
+	// Fallback 1: list by label (works when search API is unavailable)
 	opts := &gh.IssueListByRepoOptions{
 		State:  "open",
 		Labels: []string{advisoryLabelName},
 		ListOptions: gh.ListOptions{PerPage: 10},
 	}
 	issues, _, listErr := c.client.Issues.ListByRepo(ctx, owner, repo, opts)
-	if listErr != nil {
-		if err != nil {
-			return 0, fmt.Errorf("search failed: %w; list fallback also failed: %w", err, listErr)
+	if listErr == nil {
+		for _, issue := range issues {
+			if issue.GetTitle() == advisoryTitle {
+				return issue.GetNumber(), nil
+			}
 		}
-		return 0, listErr
 	}
-	for _, issue := range issues {
-		if issue.GetTitle() == advisoryTitle {
-			return issue.GetNumber(), nil
+
+	// Fallback 2: scan recent open issues by title (handles the case where
+	// the label was never applied — prevents duplicate advisory issues)
+	const maxPagesToScan = 3
+	listOpts := &gh.IssueListByRepoOptions{
+		State:       "open",
+		Sort:        "created",
+		Direction:   "desc",
+		ListOptions: gh.ListOptions{PerPage: 50},
+	}
+	for page := 0; page < maxPagesToScan; page++ {
+		allIssues, _, scanErr := c.client.Issues.ListByRepo(ctx, owner, repo, listOpts)
+		if scanErr != nil {
+			break
 		}
+		for _, issue := range allIssues {
+			if issue.IsPullRequest() {
+				continue
+			}
+			if issue.GetTitle() == advisoryTitle {
+				c.logger.Info("found advisory issue via title scan (missing label)", slog.Int("number", issue.GetNumber()))
+				c.ensureAdvisoryLabel(ctx, owner, repo, issue.GetNumber())
+				return issue.GetNumber(), nil
+			}
+		}
+		if len(allIssues) < 50 {
+			break
+		}
+		listOpts.Page++
 	}
 	return 0, nil
 }
