@@ -375,7 +375,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 
-		if s.authToken != "" && strings.HasPrefix(r.URL.Path, "/api/") && !strings.HasPrefix(r.URL.Path, "/api/health") && r.URL.Path != "/api/auth/token" {
+		if s.authToken != "" && !isPublicPath(r.URL.Path) {
 			trusted := secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
 			if !trusted && r.Header.Get("X-Hive-User") != "" && r.Header.Get("X-Hive-Role") != "" {
 				// Trust nginx auth-url proxied requests that have both user
@@ -398,6 +398,30 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isPublicPath returns true for paths that should be accessible without
+// authentication even when DASHBOARD_AUTH_TOKEN is set. This covers health
+// checks, the snapshot preview, the contribute flow, and auth negotiation.
+func isPublicPath(path string) bool {
+	switch {
+	case strings.HasPrefix(path, "/api/health"):
+		return true
+	case path == "/api/auth/token":
+		return true
+	case path == "/snapshot" || strings.HasPrefix(path, "/snapshot/"):
+		return true
+	case strings.HasPrefix(path, "/api/snapshot"):
+		return true
+	case path == "/contribute" || strings.HasPrefix(path, "/contribute/"):
+		return true
+	case strings.HasPrefix(path, "/api/contribute"):
+		return true
+	case path == "/api/gh-user-auth/start" || path == "/api/gh-user-auth/status":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) Handler() http.Handler {
