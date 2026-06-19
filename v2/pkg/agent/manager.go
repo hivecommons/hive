@@ -464,15 +464,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	case "copilot":
 		switch {
 		case mode >= ModeIssuesAndPRs:
-			launchCmd = fmt.Sprintf("%s --model %s --allow-all --enable-all-github-mcp-tools",
+			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools",
 				binary, model)
 		case mode == ModeIssuesOnly:
-			launchCmd = fmt.Sprintf("%s --model %s --allow-all --enable-all-github-mcp-tools"+
+			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools"+
 				" --deny-tool='github(create_pull_request)'"+
 				" --deny-tool='github(merge_pull_request)'",
 				binary, model)
 		default:
-			launchCmd = fmt.Sprintf("%s --model %s --allow-all"+
+			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all"+
 				" --deny-tool='github(create_pull_request)'"+
 				" --deny-tool='github(create_issue)'"+
 				" --deny-tool='github(update_issue)'"+

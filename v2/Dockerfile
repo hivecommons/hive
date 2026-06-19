@@ -81,6 +81,10 @@ RUN ARCH=$(uname -m) && \
 ARG COPILOT_VERSION=1.0.59
 RUN npm install -g @github/copilot@${COPILOT_VERSION} && npm cache clean --force || \
     echo "WARN: GitHub Copilot CLI install failed — skipping"
+# Remove the native Rust binary so copilot falls back to the Node.js path.
+# The Rust binary embeds its own TLS stack (rustls + webpki-roots) which rejects
+# the MITM proxy's forged certificates. The Node.js path respects NODE_EXTRA_CA_CERTS.
+RUN rm -f /usr/local/lib/node_modules/@github/copilot/node_modules/@github/copilot-linux-*/copilot 2>/dev/null; true
 
 # --- Layer 7: Claude Code (most frequent updates) ---
 ARG CLAUDE_CODE_VERSION=latest
