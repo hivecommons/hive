@@ -431,7 +431,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	isInference := IsInferenceBackend(backend)
 	if isInference {
 		binary = "claude"
-		m.ensureClaudeSettings()
+		m.ensureClaudeSettings(agent.Name, agent.UID)
 		if m.inferenceRouteCallback != nil {
 			m.inferenceRouteCallback(agent.Name, backend, model)
 		}
@@ -2196,38 +2196,63 @@ func (m *Manager) fixSharedConfigPerms(agent *AgentProcess) {
 }
 
 const (
-	claudeInferenceSettingsPath = "/tmp/.claude-inference-settings.json"
-	claudeInferenceHomePath     = "/tmp/.claude-inference-home"
+	claudeInferenceSettingsPath  = "/tmp/.claude-inference-settings.json"
+	claudeInferenceHomePrefix = "/tmp/.claude-inference-home-"
 )
 
-// ensureClaudeSettings creates a writable HOME directory for inference agents
-// with pre-populated .claude/settings.json. This avoids ALL interactive prompts
-// (settings error, theme, API key, bypass permissions, trust folder, onboarding)
-// because Claude Code reads hasCompletedOnboarding/hasAcknowledgedDisclaimer/
-// bypassPermissions from the settings file at $HOME/.claude/settings.json.
-// The default /data/home is root:root 770 so agent UIDs can't access it.
-func (m *Manager) ensureClaudeSettings() {
-	settingsDir := filepath.Join(claudeInferenceHomePath, ".claude")
+// inferenceHomePath returns the per-agent inference HOME directory.
+func inferenceHomePath(agentName string) string {
+	return claudeInferenceHomePrefix + agentName
+}
+
+// ensureClaudeSettings creates a per-agent writable HOME directory for inference
+// agents with pre-populated .claude/settings.json. Each agent gets its own dir
+// to avoid cross-agent permission conflicts when Claude Code creates session
+// files. The directory is chowned to the agent's UID so it can write freely.
+func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
+	homePath := inferenceHomePath(agentName)
+	settingsDir := filepath.Join(homePath, ".claude")
 	settingsFile := filepath.Join(settingsDir, "settings.json")
-	if _, err := os.Stat(settingsFile); err == nil {
-		return
-	}
-	if err := os.MkdirAll(settingsDir, 0o777); err != nil {
-		m.logger.Warn("failed to create claude inference home", "error", err)
-		return
-	}
+
 	settings := `{"permissions":{"allow":[],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
+
+	if _, err := os.Stat(settingsFile); err == nil {
+		m.chownRecursive(homePath, uid)
+		return
+	}
+	if err := os.MkdirAll(settingsDir, 0o700); err != nil {
+		m.logger.Warn("failed to create claude inference home", "agent", agentName, "error", err)
+		return
+	}
 	if err := os.WriteFile(settingsFile, []byte(settings), 0o644); err != nil {
-		m.logger.Warn("failed to write claude settings", "error", err)
+		m.logger.Warn("failed to write claude settings", "agent", agentName, "error", err)
 	}
 	// Also write the standalone settings file for --settings flag
 	_ = os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o644)
 	// Pre-populate .claude.json to skip first-run setup (GrowthBook, migrations)
-	userConfig := filepath.Join(claudeInferenceHomePath, ".claude.json")
+	userConfig := filepath.Join(homePath, ".claude.json")
 	if _, err := os.Stat(userConfig); err != nil {
 		cfg := `{"hasCompletedOnboarding":true,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"migrationVersion":13}`
 		_ = os.WriteFile(userConfig, []byte(cfg), 0o644)
 	}
+	m.chownRecursive(homePath, uid)
+}
+
+// chownRecursive sets ownership of a directory tree to the given UID.
+func (m *Manager) chownRecursive(root string, uid int) {
+	if uid <= 0 {
+		return
+	}
+	gid := uid
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if chErr := os.Chown(path, uid, gid); chErr != nil {
+			m.logger.Warn("failed to chown inference home path", "path", path, "uid", uid, "error", chErr)
+		}
+		return nil
+	})
 }
 
 // normalizeModelName converts YAML-friendly model names (claude-sonnet-4-6) to
@@ -2470,7 +2495,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if agent.UID > 0 {
 		home := "/data/home"
 		if IsInferenceBackend(backend) {
-			home = claudeInferenceHomePath
+			home = inferenceHomePath(agent.Name)
 		}
 		vars = append(vars, agentEnvPair{"HOME", home, false})
 	}
