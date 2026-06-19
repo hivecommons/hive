@@ -112,19 +112,28 @@ func queryMaxModelLen(endpoint, model string) int {
 	return 0
 }
 
-// capMaxTokens adjusts max_tokens to fit within the model's context window.
-// It reserves space for input tokens by capping output to contextLen - inputEstimate.
-func capMaxTokens(maxTokens, maxContextLen int) int {
+// charsPerToken is a conservative estimate for tokenization overhead.
+// Most LLM tokenizers average ~3-4 chars/token; we use 3 to overestimate
+// input token count and avoid hitting the context ceiling.
+const charsPerToken = 3
+
+// safetyMarginTokens is subtracted from the available output budget to
+// account for tokenizer variance and special tokens.
+const safetyMarginTokens = 128
+
+// capMaxTokensForInput adjusts max_tokens based on estimated input size.
+// totalInputChars is the total character count of all messages + system prompt.
+func capMaxTokensForInput(maxTokens, maxContextLen, totalInputChars int) int {
 	if maxContextLen <= 0 || maxTokens <= 0 {
 		return maxTokens
 	}
-	inputReserve := maxContextLen / 4
-	limit := maxContextLen - inputReserve
-	if limit < 1 {
-		limit = 1
+	estimatedInputTokens := totalInputChars / charsPerToken
+	available := maxContextLen - estimatedInputTokens - safetyMarginTokens
+	if available < 1 {
+		available = 1
 	}
-	if maxTokens > limit {
-		return limit
+	if maxTokens > available {
+		return available
 	}
 	return maxTokens
 }

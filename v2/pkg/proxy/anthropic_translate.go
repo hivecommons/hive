@@ -21,14 +21,16 @@ func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen i
 	}
 
 	openaiReq := openaiRequest{
-		Model:     targetModel,
-		MaxTokens: capMaxTokens(req.MaxTokens, maxContextLen),
-		Stream:    req.Stream,
+		Model:  targetModel,
+		Stream: req.Stream,
 	}
+
+	var totalChars int
 
 	if len(req.System) > 0 {
 		systemText := extractSystemText(req.System)
 		if systemText != "" {
+			totalChars += len(systemText)
 			openaiReq.Messages = append(openaiReq.Messages, openaiMessage{
 				Role:    "system",
 				Content: systemText,
@@ -38,11 +40,14 @@ func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen i
 
 	for _, msg := range req.Messages {
 		text := extractTextFromContent(msg.Content)
+		totalChars += len(text)
 		openaiReq.Messages = append(openaiReq.Messages, openaiMessage{
 			Role:    msg.Role,
 			Content: text,
 		})
 	}
+
+	openaiReq.MaxTokens = capMaxTokensForInput(req.MaxTokens, maxContextLen, totalChars)
 
 	return json.Marshal(openaiReq)
 }
