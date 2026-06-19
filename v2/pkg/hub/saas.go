@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-const saasUsersDir = "/data/saas/users"
+var saasUsersDir = "/data/saas/users"
 
 const hubAdminUsername = "clubanderson"
 
@@ -35,7 +35,7 @@ type SaaSUser struct {
 	EncryptedToken string            `json:"encrypted_token,omitempty"`
 }
 
-const hmacKeyPath = "/data/saas/hmac.key"
+var hmacKeyPath = "/data/saas/hmac.key"
 const hmacKeySize = 32
 
 func loadOrCreateHMACKey() ([]byte, error) {
@@ -1658,7 +1658,7 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-const hubAutoUpgradePath = "/data/saas/hub-auto-upgrade"
+var hubAutoUpgradePath = "/data/saas/hub-auto-upgrade"
 
 func isHubAutoUpgrade() bool {
 	data, err := os.ReadFile(hubAutoUpgradePath)
@@ -2728,7 +2728,7 @@ func (s *HubServer) handleDenyAccess(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"ok":true}`))
 }
 
-const provisionRequestsDir = "/data/saas/provision-requests"
+var provisionRequestsDir = "/data/saas/provision-requests"
 
 const (
 	provisionStatusPending  = "pending"

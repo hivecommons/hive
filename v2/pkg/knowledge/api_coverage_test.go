@@ -1145,6 +1145,438 @@ func TestNewPrimer_SkipLocalOnlyLayer(t *testing.T) {
 	}
 }
 
+// makeReadyGitSource creates a GitSource with a pre-initialized FileStore.
+func makeReadyGitSource(t *testing.T, layer LayerType) *GitSource {
+	t.Helper()
+	dir := t.TempDir()
+	os.WriteFile(dir+"/guide.md", []byte("# Guide\nSome guide content about setup."), 0o644)
+
+	logger := coverageTestLogger()
+	store, err := NewFileStore(dir, "git-test", logger)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gs := &GitSource{
+		config: GitSourceConfig{
+			Name:  "test-git",
+			URL:   "https://example.com/repo.git",
+			Layer: layer,
+		},
+		store:  store,
+		ready:  true,
+		logger: logger,
+	}
+	return gs
+}
+
+func TestSearchAllWithVaults_WithGitSources(t *testing.T) {
+	logger := coverageTestLogger()
+	server := coverageWikiServer()
+	defer server.Close()
+
+	layers := []layerClient{
+		{layerType: LayerProject, client: NewClient(server.URL, logger)},
+	}
+
+	gs := makeReadyGitSource(t, LayerOrg)
+
+	api := &KnowledgeAPI{
+		layers:     layers,
+		config:     KnowledgeConfig{Enabled: true},
+		gitSources: []*GitSource{gs},
+		logger:     logger,
+	}
+
+	const searchLimit = 10
+	results := api.SearchAllWithVaults(context.Background(), "guide", "", searchLimit)
+	if len(results) == 0 {
+		t.Error("expected results from git source search")
+	}
+	// Check that at least one result has the git source layer
+	foundGitLayer := false
+	for _, r := range results {
+		if r.Layer == LayerOrg {
+			foundGitLayer = true
+			break
+		}
+	}
+	if !foundGitLayer {
+		t.Error("expected at least one result with git source layer")
+	}
+}
+
+func TestSearchAllWithVaults_EmptyQuery_GitSources(t *testing.T) {
+	logger := coverageTestLogger()
+
+	gs := makeReadyGitSource(t, LayerProject)
+
+	api := &KnowledgeAPI{
+		config:     KnowledgeConfig{Enabled: true},
+		gitSources: []*GitSource{gs},
+		logger:     logger,
+	}
+
+	const searchLimit = 10
+	results := api.SearchAllWithVaults(context.Background(), "", "", searchLimit)
+	if len(results) == 0 {
+		t.Error("expected results from git source list pages")
+	}
+}
+
+func TestSearchAllWithVaults_NotReadyGitSource(t *testing.T) {
+	logger := coverageTestLogger()
+
+	gs := &GitSource{
+		config: GitSourceConfig{Name: "not-ready", Layer: LayerProject},
+		ready:  false,
+		logger: logger,
+	}
+
+	api := &KnowledgeAPI{
+		config:     KnowledgeConfig{Enabled: true},
+		gitSources: []*GitSource{gs},
+		logger:     logger,
+	}
+
+	results := api.SearchAllWithVaults(context.Background(), "query", "", 10)
+	if len(results) != 0 {
+		t.Errorf("expected 0 results from not-ready git source, got %d", len(results))
+	}
+}
+
+func TestStats_WithVaultsAndGitSources(t *testing.T) {
+	server := coverageWikiServer()
+	defer server.Close()
+
+	logger := coverageTestLogger()
+	layers := []layerClient{
+		{layerType: LayerProject, client: NewClient(server.URL, logger)},
+	}
+
+	vaultDir := createVaultDir(t)
+	store, _ := NewFileStore(vaultDir, "test-vault", logger)
+
+	gs := makeReadyGitSource(t, LayerOrg)
+
+	api := &KnowledgeAPI{
+		layers:     layers,
+		config:     KnowledgeConfig{Enabled: true, Engine: "llm-wiki"},
+		vaults:     []*FileStore{store},
+		gitSources: []*GitSource{gs},
+		logger:     logger,
+	}
+
+	stats := api.Stats(context.Background())
+	if stats == nil {
+		t.Fatal("expected non-nil stats")
+	}
+	if stats["enabled"] != true {
+		t.Error("expected enabled=true")
+	}
+	layerStats, ok := stats["layers"].([]map[string]interface{})
+	if !ok {
+		t.Fatal("layers not found or wrong type")
+	}
+	// Should have wiki layer + vault + git source
+	if len(layerStats) < 3 {
+		t.Errorf("expected at least 3 layer stats, got %d", len(layerStats))
+	}
+}
+
+func TestTriggerVaultReindex_ExistingVault(t *testing.T) {
+	logger := coverageTestLogger()
+	dir := createVaultDir(t)
+	store, _ := NewFileStore(dir, "test-vault", logger)
+
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		vaults: []*FileStore{store},
+		logger: logger,
+	}
+
+	// Add a new file and trigger reindex
+	os.WriteFile(dir+"/new-fact.md", []byte("# New Fact\nNew content"), 0o644)
+	api.triggerVaultReindex(dir)
+
+	// The vault should have been reindexed — new file should appear
+	facts := store.ListPages("")
+	if len(facts) < 4 {
+		t.Errorf("expected at least 4 pages after reindex, got %d", len(facts))
+	}
+}
+
+func TestTriggerVaultReindex_NewVault(t *testing.T) {
+	logger := coverageTestLogger()
+
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		logger: logger,
+	}
+
+	// Create a new vault dir
+	newDir := t.TempDir()
+	os.WriteFile(newDir+"/fact.md", []byte("# Fact\nContent"), 0o644)
+
+	// Should create a new vault since dir doesn't match any existing
+	api.triggerVaultReindex(newDir)
+
+	if len(api.vaults) != 1 {
+		t.Errorf("expected 1 vault after trigger, got %d", len(api.vaults))
+	}
+}
+
+func TestListIdeationFacts_WithIdeation(t *testing.T) {
+	// Create a server that returns ideation-type facts
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/pages", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(searchResponse{
+			Results: []searchResult{
+				{Slug: "idea-1", Title: "Big Idea", Type: "idea"},
+				{Slug: "vision-1", Title: "Project Vision", Type: "vision"},
+				{Slug: "pattern-1", Title: "A Pattern", Type: "pattern"},
+				{Slug: "const-1", Title: "Constitution", Type: "constitution"},
+			},
+			Total: 4,
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	logger := coverageTestLogger()
+	client := NewClient(server.URL, logger)
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		layers: []layerClient{
+			{layerType: LayerProject, client: client},
+		},
+		logger: logger,
+	}
+
+	facts := api.ListIdeationFacts(context.Background())
+	// idea, vision, constitution are ideation types; pattern is not
+	if len(facts) != 3 {
+		t.Errorf("expected 3 ideation facts, got %d", len(facts))
+		for _, f := range facts {
+			t.Logf("  %s (%s)", f.Title, f.Type)
+		}
+	}
+}
+
+func TestListIdeationFacts_Empty(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/pages", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(searchResponse{
+			Results: []searchResult{
+				{Slug: "p1", Title: "Pattern", Type: "pattern"},
+			},
+			Total: 1,
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	logger := coverageTestLogger()
+	client := NewClient(server.URL, logger)
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		layers: []layerClient{
+			{layerType: LayerProject, client: client},
+		},
+		logger: logger,
+	}
+
+	facts := api.ListIdeationFacts(context.Background())
+	if len(facts) != 0 {
+		t.Errorf("expected 0 ideation facts, got %d", len(facts))
+	}
+}
+
+func TestGetConstitution_Found(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/pages", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(searchResponse{
+			Results: []searchResult{
+				{Slug: "const-1", Title: "Project Constitution", Type: "constitution"},
+			},
+			Total: 1,
+		})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	logger := coverageTestLogger()
+	client := NewClient(server.URL, logger)
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		layers: []layerClient{
+			{layerType: LayerProject, client: client},
+		},
+		logger: logger,
+	}
+
+	fact := api.GetConstitution(context.Background())
+	if fact == nil {
+		t.Fatal("expected non-nil constitution fact")
+	}
+	if fact.Title != "Project Constitution" {
+		t.Errorf("title = %q", fact.Title)
+	}
+}
+
+func TestGetConstitution_NotFound(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/pages", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(searchResponse{Results: []searchResult{}, Total: 0})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	logger := coverageTestLogger()
+	client := NewClient(server.URL, logger)
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		layers: []layerClient{
+			{layerType: LayerProject, client: client},
+		},
+		logger: logger,
+	}
+
+	fact := api.GetConstitution(context.Background())
+	if fact != nil {
+		t.Error("expected nil when no constitution exists")
+	}
+}
+
+func TestGitSources_Info(t *testing.T) {
+	logger := coverageTestLogger()
+	gs := makeReadyGitSource(t, LayerOrg)
+
+	api := &KnowledgeAPI{
+		config:     KnowledgeConfig{Enabled: true},
+		gitSources: []*GitSource{gs},
+		logger:     logger,
+	}
+
+	infos := api.GitSources()
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 git source info, got %d", len(infos))
+	}
+	if infos[0].Name != "test-git" {
+		t.Errorf("name = %q", infos[0].Name)
+	}
+	if !infos[0].Ready {
+		t.Error("expected Ready=true")
+	}
+}
+
+func TestGetGitSourceStore_Found(t *testing.T) {
+	logger := coverageTestLogger()
+	gs := makeReadyGitSource(t, LayerOrg)
+
+	api := &KnowledgeAPI{
+		config:     KnowledgeConfig{Enabled: true},
+		gitSources: []*GitSource{gs},
+		logger:     logger,
+	}
+
+	store := api.GetGitSourceStore("test-git")
+	if store == nil {
+		t.Error("expected non-nil store")
+	}
+}
+
+func TestGetGitSourceStore_NotFound(t *testing.T) {
+	logger := coverageTestLogger()
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		logger: logger,
+	}
+
+	store := api.GetGitSourceStore("nonexistent")
+	if store != nil {
+		t.Error("expected nil for unknown source")
+	}
+}
+
+func TestDisconnectGitSource_Found(t *testing.T) {
+	logger := coverageTestLogger()
+	gs := makeReadyGitSource(t, LayerOrg)
+
+	api := &KnowledgeAPI{
+		config:     KnowledgeConfig{Enabled: true},
+		gitSources: []*GitSource{gs},
+		logger:     logger,
+	}
+
+	err := api.DisconnectGitSource("https://example.com/repo.git", "")
+	if err != nil {
+		t.Fatalf("DisconnectGitSource: %v", err)
+	}
+	if len(api.gitSources) != 0 {
+		t.Error("expected 0 git sources after disconnect")
+	}
+}
+
+func TestDisconnectGitSource_NotFound(t *testing.T) {
+	logger := coverageTestLogger()
+	api := &KnowledgeAPI{
+		config: KnowledgeConfig{Enabled: true},
+		logger: logger,
+	}
+
+	err := api.DisconnectGitSource("https://example.com/nope.git", "")
+	if err == nil {
+		t.Error("expected error for unknown git source")
+	}
+}
+
+func TestCreateIdeationFact_Valid(t *testing.T) {
+	server := coverageWikiServer()
+	defer server.Close()
+
+	api := coverageKnowledgeAPI(server.URL)
+	err := api.CreateIdeationFact(context.Background(), CreateFactRequest{
+		Title: "My Idea",
+		Body:  "Idea description",
+		Type:  "idea",
+	})
+	if err != nil {
+		t.Fatalf("CreateIdeationFact: %v", err)
+	}
+}
+
+func TestCreateIdeationFact_NonIdeationType(t *testing.T) {
+	server := coverageWikiServer()
+	defer server.Close()
+
+	api := coverageKnowledgeAPI(server.URL)
+	err := api.CreateIdeationFact(context.Background(), CreateFactRequest{
+		Title: "A Pattern",
+		Body:  "Not ideation",
+		Type:  "pattern",
+	})
+	if err == nil {
+		t.Error("expected error for non-ideation type")
+	}
+}
+
+func TestCreateIdeationFact_DefaultLayer(t *testing.T) {
+	server := coverageWikiServer()
+	defer server.Close()
+
+	api := coverageKnowledgeAPI(server.URL)
+	err := api.CreateIdeationFact(context.Background(), CreateFactRequest{
+		Title: "Vision",
+		Body:  "Project vision",
+		Type:  "vision",
+		// Layer intentionally empty — should default to project
+	})
+	if err != nil {
+		t.Fatalf("CreateIdeationFact with default layer: %v", err)
+	}
+}
+
 func TestSearchAllWithVaults_NoVaults(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/search", func(w http.ResponseWriter, r *http.Request) {

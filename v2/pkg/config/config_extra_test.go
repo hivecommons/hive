@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestPRsAllowed(t *testing.T) {
@@ -604,6 +606,87 @@ func TestWatcherSkipNext(t *testing.T) {
 		t.Error("skipNext should be true after SkipNext()")
 	}
 	w.mu.Unlock()
+}
+
+func TestEnabledExplicitlySet_Default(t *testing.T) {
+	a := &AgentConfig{}
+	if a.EnabledExplicitlySet() {
+		t.Error("default AgentConfig should have enabledSet=false")
+	}
+}
+
+func TestEnabledExplicitlySet_ViaYAML(t *testing.T) {
+	yamlData := []byte("enabled: false\nbackend: claude\n")
+	var a AgentConfig
+	if err := yaml.Unmarshal(yamlData, &a); err != nil {
+		t.Fatal(err)
+	}
+	if !a.EnabledExplicitlySet() {
+		t.Error("after YAML with 'enabled' key, EnabledExplicitlySet should be true")
+	}
+}
+
+func TestResolvedAPIURL_Default(t *testing.T) {
+	g := GitHubConfig{}
+	if got := g.ResolvedAPIURL(); got != DefaultGitHubAPIURL {
+		t.Errorf("ResolvedAPIURL() = %q, want %q", got, DefaultGitHubAPIURL)
+	}
+}
+
+func TestResolvedAPIURL_Custom(t *testing.T) {
+	g := GitHubConfig{APIURL: "https://github.ibm.com/api/v3"}
+	if got := g.ResolvedAPIURL(); got != "https://github.ibm.com/api/v3" {
+		t.Errorf("ResolvedAPIURL() = %q", got)
+	}
+}
+
+func TestResolvedBaseURL_Default(t *testing.T) {
+	g := GitHubConfig{}
+	if got := g.ResolvedBaseURL(); got != DefaultGitHubBaseURL {
+		t.Errorf("ResolvedBaseURL() = %q, want %q", got, DefaultGitHubBaseURL)
+	}
+}
+
+func TestResolvedBaseURL_Custom(t *testing.T) {
+	g := GitHubConfig{BaseURL: "https://github.ibm.com"}
+	if got := g.ResolvedBaseURL(); got != "https://github.ibm.com" {
+		t.Errorf("ResolvedBaseURL() = %q", got)
+	}
+}
+
+func TestRemoveAgentFile_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	for _, bad := range []string{"../etc/passwd", "sub/agent", "back\\slash"} {
+		err := RemoveAgentFile(dir, bad)
+		if err == nil {
+			t.Errorf("RemoveAgentFile(%q) should reject path traversal", bad)
+		}
+	}
+}
+
+func TestSaveAgentFile_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	for _, bad := range []string{"../escape", "sub/dir", "back\\slash"} {
+		err := SaveAgentFile(dir, bad, AgentConfig{})
+		if err == nil {
+			t.Errorf("SaveAgentFile(%q) should reject path traversal", bad)
+		}
+	}
+}
+
+func TestSaveAgentFile_WriteFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can write anywhere")
+	}
+	dir := t.TempDir()
+	// Make dir read-only after creation
+	os.Chmod(dir, 0o555)
+	defer os.Chmod(dir, 0o755)
+
+	err := SaveAgentFile(dir, "test", AgentConfig{Backend: "claude"})
+	if err == nil {
+		t.Error("expected error writing to read-only dir")
+	}
 }
 
 func TestLoadWithOverridesFromFile(t *testing.T) {

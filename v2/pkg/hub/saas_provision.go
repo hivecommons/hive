@@ -17,8 +17,9 @@ import (
 	"time"
 )
 
+var saasHivesDir = "/data/saas/hives"
+
 const (
-	saasHivesDir          = "/data/saas/hives"
 	maxHivesPerUser       = 3
 	maxSaaSHivesTotal     = 0 // 0 = unlimited
 	provisionPollInterval = 30 * time.Second
