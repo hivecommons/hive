@@ -451,8 +451,14 @@ button{background:#238636;color:#fff;border:none;padding:12px 24px;border-radius
   cursor:pointer;width:100%;font-weight:600;transition:background .15s}
 button:hover{background:#2ea043}
 button:disabled{background:#374151;cursor:wait}
-.code-box{background:#0f172a;border:2px solid #3b82f6;border-radius:8px;padding:16px;margin:20px 0;
-  font-family:monospace;font-size:1.8rem;letter-spacing:.3em;color:#60a5fa;font-weight:700}
+.code-wrap{position:relative;margin:20px 0}
+.code-box{background:#0f172a;border:2px solid #3b82f6;border-radius:8px;padding:16px;
+  font-family:monospace;font-size:1.8rem;letter-spacing:.3em;color:#60a5fa;font-weight:700;cursor:pointer}
+.code-box:hover{border-color:#93c5fd}
+.copy-btn{position:absolute;top:8px;right:8px;background:#334155;border:none;color:#94a3b8;
+  padding:4px 8px;border-radius:4px;font-size:.7rem;cursor:pointer;transition:all .15s}
+.copy-btn:hover{background:#475569;color:#e2e8f0}
+.copy-btn.copied{background:#166534;color:#4ade80}
 .instructions{color:#94a3b8;font-size:.85rem;line-height:1.6;margin-bottom:16px}
 a{color:#60a5fa;text-decoration:none}
 a:hover{text-decoration:underline}
@@ -471,7 +477,10 @@ a:hover{text-decoration:underline}
   </div>
   <div id="step-code" style="display:none">
     <p class="instructions">Enter this code at GitHub:</p>
-    <div class="code-box" id="user-code"></div>
+    <div class="code-wrap">
+      <div class="code-box" id="user-code" onclick="copyCode()"></div>
+      <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copy</button>
+    </div>
     <p class="instructions"><a id="verify-link" href="#" target="_blank" rel="noopener">Open GitHub verification page ↗</a></p>
     <p class="status"><span class="spinner"></span> Waiting for authorization…</p>
   </div>
@@ -488,6 +497,14 @@ a:hover{text-decoration:underline}
 function showStep(id){['step-start','step-code','step-done','step-error'].forEach(
   s=>document.getElementById(s).style.display=s===id?'block':'none')}
 function showError(msg){document.getElementById('error-msg').textContent=msg;showStep('step-error')}
+function copyCode(){
+  var code=document.getElementById('user-code').textContent;
+  navigator.clipboard.writeText(code).then(function(){
+    var btn=document.getElementById('copy-btn');
+    btn.textContent='Copied!';btn.classList.add('copied');
+    setTimeout(function(){btn.textContent='Copy';btn.classList.remove('copied')},2000);
+  })
+}
 async function startFlow(){
   document.getElementById('btn-start').disabled=true;
   try{
