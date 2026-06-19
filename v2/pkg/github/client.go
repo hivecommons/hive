@@ -252,12 +252,20 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 
-	issues, _, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
-	if err != nil {
-		return nil, nil, 0, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
+	var allIssues []*gh.Issue
+	for {
+		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, repoName, opts)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("listing issues for %s/%s: %w", owner, repoName, err)
+		}
+		allIssues = append(allIssues, issues...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
 	}
 
-	for _, issue := range issues {
+	for _, issue := range allIssues {
 		if issue.IsPullRequest() {
 			continue
 		}
@@ -305,12 +313,20 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 
-	prs, _, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
-	if err != nil {
-		return nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+	var allPRs []*gh.PullRequest
+	for {
+		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
+		if err != nil {
+			return nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+		}
+		allPRs = append(allPRs, prs...)
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = resp.NextPage
 	}
 
-	for _, pr := range prs {
+	for _, pr := range allPRs {
 		totalPRs++
 		labels := extractPRLabels(pr.Labels)
 
