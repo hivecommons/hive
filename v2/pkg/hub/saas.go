@@ -3199,6 +3199,12 @@ const dashboardHTML = `<!DOCTYPE html>
       var t = document.createElement('div');
       t.className = 'hive-toast ' + (type || 'info');
       t.textContent = msg;
+      var toastBaseTop = 70;
+      var toastGap = 8;
+      var existing = document.querySelectorAll('.hive-toast');
+      var offset = 0;
+      existing.forEach(function(e) { offset += e.offsetHeight + toastGap; });
+      t.style.top = (toastBaseTop + offset) + 'px';
       document.body.appendChild(t);
       setTimeout(function() { t.remove(); }, 4000);
     }
