@@ -604,6 +604,19 @@ func (c *Config) applyBootstrapEnv() {
 			}
 		}
 	}
+	// K8s deployments pass the auth token as an OS env var from a Secret.
+	// applyConfigEnv only reads file-based config.env, so without this
+	// the token is silently ignored and the dashboard is unauthenticated.
+	if c.Dashboard.AuthToken == "" {
+		if v := os.Getenv("DASHBOARD_AUTH_TOKEN"); v != "" {
+			c.Dashboard.AuthToken = v
+		}
+	}
+	if c.Dashboard.AuthToken == "" {
+		if v := os.Getenv("HIVE_DASHBOARD_TOKEN"); v != "" {
+			c.Dashboard.AuthToken = v
+		}
+	}
 }
 
 func expandEnvVars(s string) string {
