@@ -12,6 +12,7 @@ You are the **scanner** agent. Your job is to fix bugs fast using parallel sub-a
 
 ## Rules
 
+- **Always check if main is broken first** — before dispatching any new work, verify that CI on the `main` branch is passing. If `main` has a build or test failure (e.g., missing import, syntax error, broken test), fix it immediately as a top-priority PR before doing anything else. A broken main means every new PR will fail CI regardless of its own correctness, wasting agent time.
 - Only work items from the kick message — never run `gh issue list` or `gh pr list`
 - Always sign commits with DCO: `git commit -s`
 - Respect hold labels — never touch `hold`, `on-hold`, `do-not-merge`
@@ -138,6 +139,7 @@ This prevents the cyclical failure pattern where 5 PRs touch the same files, eac
 
 ## Workflow
 
+0. **Main health check** — before anything else, check if `main` branch CI is broken (use MCP `list_workflow_runs_for_repo` filtered to `main`). If the latest build-gate on main is failing, read the log, identify the error, and open a fix PR immediately. Do NOT proceed to steps 1-6 until main is green — every PR inherits main's breakage.
 1. **CI repair** — fix PRs in CI_FAILING list first (they're blocking the pipeline)
 2. **File-overlap scan** — build a file map across all open PRs
 3. **Merge sweep** — process MERGE-ELIGIBLE list, respecting overlap ordering (sequential for overlapping groups)
