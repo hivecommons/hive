@@ -54,6 +54,7 @@ func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen i
 
 	if len(req.Tools) > 0 {
 		openaiReq.Tools = translateAnthropicTools(req.Tools)
+		openaiReq.ToolChoice = translateAnthropicToolChoice(req.ToolChoice)
 	}
 
 	openaiReq.MaxTokens = capMaxTokensForInput(req.MaxTokens, maxContextLen, totalChars)
@@ -178,6 +179,37 @@ func translateAnthropicTools(tools []anthropicTool) []openaiTool {
 		})
 	}
 	return result
+}
+
+// translateAnthropicToolChoice maps Anthropic tool_choice to OpenAI format.
+// Anthropic: {"type":"auto"}, {"type":"any"}, {"type":"tool","name":"X"}
+// OpenAI:    "auto",           "required",    {"type":"function","function":{"name":"X"}}
+func translateAnthropicToolChoice(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		autoJSON, _ := json.Marshal("auto")
+		return autoJSON
+	}
+
+	var choice anthropicToolChoice
+	if err := json.Unmarshal(raw, &choice); err != nil {
+		autoJSON, _ := json.Marshal("auto")
+		return autoJSON
+	}
+
+	switch choice.Type {
+	case "any":
+		result, _ := json.Marshal("required")
+		return result
+	case "tool":
+		result, _ := json.Marshal(openaiToolChoiceNamed{
+			Type:     "function",
+			Function: openaiToolChoiceFunction{Name: choice.Name},
+		})
+		return result
+	default:
+		result, _ := json.Marshal("auto")
+		return result
+	}
 }
 
 // translateOpenAIResponseToAnthropic converts a non-streaming OpenAI Chat
@@ -538,12 +570,18 @@ func (fw *flushResponseWriter) Write(p []byte) (int, error) {
 // --- Request/response types ---
 
 type anthropicRequest struct {
-	Model     string             `json:"model"`
-	MaxTokens int                `json:"max_tokens"`
-	Messages  []anthropicMessage `json:"messages"`
-	System    json.RawMessage    `json:"system,omitempty"`
-	Stream    bool               `json:"stream,omitempty"`
-	Tools     []anthropicTool    `json:"tools,omitempty"`
+	Model      string             `json:"model"`
+	MaxTokens  int                `json:"max_tokens"`
+	Messages   []anthropicMessage `json:"messages"`
+	System     json.RawMessage    `json:"system,omitempty"`
+	Stream     bool               `json:"stream,omitempty"`
+	Tools      []anthropicTool    `json:"tools,omitempty"`
+	ToolChoice json.RawMessage    `json:"tool_choice,omitempty"`
+}
+
+type anthropicToolChoice struct {
+	Type string `json:"type"`
+	Name string `json:"name,omitempty"`
 }
 
 type anthropicTool struct {
@@ -609,11 +647,21 @@ type anthropicSSEMessage struct {
 }
 
 type openaiRequest struct {
-	Model     string          `json:"model"`
-	Messages  []openaiMessage `json:"messages"`
-	MaxTokens int             `json:"max_tokens,omitempty"`
-	Stream    bool            `json:"stream,omitempty"`
-	Tools     []openaiTool    `json:"tools,omitempty"`
+	Model      string          `json:"model"`
+	Messages   []openaiMessage `json:"messages"`
+	MaxTokens  int             `json:"max_tokens,omitempty"`
+	Stream     bool            `json:"stream,omitempty"`
+	Tools      []openaiTool    `json:"tools,omitempty"`
+	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
+}
+
+type openaiToolChoiceNamed struct {
+	Type     string                    `json:"type"`
+	Function openaiToolChoiceFunction  `json:"function"`
+}
+
+type openaiToolChoiceFunction struct {
+	Name string `json:"name"`
 }
 
 type openaiTool struct {
