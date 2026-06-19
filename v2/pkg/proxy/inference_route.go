@@ -73,6 +73,40 @@ func IsInferenceBackend(backend string) bool {
 	return false
 }
 
+// FindEndpointForModel queries /v1/models on each endpoint and returns the
+// first one that serves the requested model. Returns "" if none match.
+func FindEndpointForModel(endpoints []string, model string) string {
+	client := &http.Client{Timeout: endpointQueryTimeout}
+	for _, ep := range endpoints {
+		url := strings.TrimRight(ep, "/") + "/v1/models"
+		resp, err := client.Get(url)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || err != nil {
+			continue
+		}
+		var result struct {
+			Data []struct {
+				ID string `json:"id"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(body, &result) != nil {
+			continue
+		}
+		for _, m := range result.Data {
+			if m.ID == model {
+				return ep
+			}
+		}
+	}
+	return ""
+}
+
+const endpointQueryTimeout = 3 * time.Second
+
 const maxModelLenQueryTimeout = 3 * time.Second
 
 // queryMaxModelLen queries the /v1/models endpoint and returns the

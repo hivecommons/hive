@@ -932,13 +932,17 @@ func main() {
 			"vllm":  vllmEndpoints,
 			"llm-d": llmdEndpoints,
 		})
-		vllmEndpoint := vllmEndpoints[0]
-		llmdEndpoint := llmdEndpoints[0]
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
-				endpoint := vllmEndpoint
+				endpoints := vllmEndpoints
 				if backend == "llm-d" {
-					endpoint = llmdEndpoint
+					endpoints = llmdEndpoints
+				}
+				endpoint := proxy.FindEndpointForModel(endpoints, model)
+				if endpoint == "" {
+					logger.Warn("no endpoint serves model, using first endpoint",
+						"agent", agentName, "model", model, "backend", backend)
+					endpoint = endpoints[0]
 				}
 				githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
 					Backend:  backend,
