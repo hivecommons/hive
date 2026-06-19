@@ -17,7 +17,7 @@ func TestTranslateAnthropicToOpenAI_StringSystem(t *testing.T) {
 		"stream": true
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "Qwen/Qwen2.5-1.5B-Instruct")
+	result, err := translateAnthropicToOpenAI([]byte(body), "Qwen/Qwen2.5-1.5B-Instruct", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestTranslateAnthropicToOpenAI_BlockSystem(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model")
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

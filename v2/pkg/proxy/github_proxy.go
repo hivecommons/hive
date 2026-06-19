@@ -810,9 +810,15 @@ func newBufferedReader(c net.Conn) *bufio.Reader {
 }
 
 // SetInferenceRoute configures an agent to use a self-hosted inference backend.
+// It also queries the model's max context length from the endpoint.
 func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
+	if route.MaxContextLen == 0 {
+		if maxLen := queryMaxModelLen(route.Endpoint, route.Model); maxLen > 0 {
+			route.MaxContextLen = maxLen
+		}
+	}
 	p.inference.Set(agentName, route)
-	p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model)
+	p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen)
 }
 
 // ClearInferenceRoute removes an agent's inference backend override.
@@ -858,7 +864,7 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 
 		p.logger.Info("inference request body", "agent", agentName, "len", len(body), "preview", truncateBytes(body, 200))
 
-		openaiBody, err := translateAnthropicToOpenAI(body, route.Model)
+		openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen)
 		if err != nil {
 			p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
@@ -1011,7 +1017,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 
-	openaiBody, err := translateAnthropicToOpenAI(body, route.Model)
+	openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen)
 	if err != nil {
 		p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
 		p.writeHTTPError(conn, http.StatusBadGateway, "translation error: "+err.Error())
