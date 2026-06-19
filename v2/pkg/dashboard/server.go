@@ -513,7 +513,7 @@ func (s *Server) BroadcastAgentStatus(payload *AgentStatusPayload) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.statusMu.RLock()
-	ready := s.status != nil && s.ready
+	ready := s.ready
 	s.statusMu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
