@@ -210,7 +210,7 @@ func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int
 		if len(allIssues) < 50 {
 			break
 		}
-		listOpts.Page++
+		listOpts.ListOptions.Page++
 	}
 	return 0, nil
 }
