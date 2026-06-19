@@ -112,6 +112,10 @@ RUN cd /opt/hive/proxy && npm install --omit=dev 2>/dev/null || true
 # are invalidated on every commit.
 ARG GIT_HASH=unknown
 
+# Go toolchain for agents that run `go test`, `go build`, etc.
+COPY --from=builder /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
+
 COPY --from=builder /hive /usr/local/bin/hive
 COPY --from=builder /bd /usr/local/bin/bd
 
