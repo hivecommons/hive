@@ -27,13 +27,15 @@ const (
 	FilePerms = 0o660
 )
 
-// WatchedHomeDirs are the subdirectories under the shared home that tools
-// (Copilot, Claude, etc.) frequently create with root ownership.
+// WatchedHomeDirs are the subdirectories under the shared home and data
+// volume that tools (Copilot, Claude, etc.) or init containers frequently
+// create with root ownership, locking out agent UIDs.
 var WatchedHomeDirs = []string{
 	"/data/home/.copilot",
 	"/data/home/.cache",
 	"/data/home/.config",
 	"/data/home/.local",
+	"/data/agents",
 }
 
 // GooseLogsDir is the rolling log directory goose 1.37 creates on startup.

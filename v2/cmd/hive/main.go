@@ -290,6 +290,8 @@ func main() {
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 
+	go agent.StartPermissionsWatcher(logger)
+
 	const statePath = "/data/hive-state.json"
 	var savedIssueCosts map[string]int64
 	saved, stateErr := snapshot.LoadState(statePath, logger)

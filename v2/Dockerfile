@@ -121,6 +121,7 @@ RUN chmod +x /opt/hive/dashboard/publish-snapshot*.sh
 COPY examples/kubestellar/hive-project.yaml /etc/hive/hive-project.yaml
 COPY examples/acmm/ /opt/hive/examples/acmm/
 COPY examples/agents/ /opt/hive/examples/agents/
+COPY v2/pkg/config/packs/ /opt/hive/packs/
 COPY v2/deploy/data/ /opt/hive/seed-data/
 COPY v2/deploy/ttyd-tmux.sh /usr/local/bin/ttyd-tmux.sh
 COPY bin/gh-app-token.sh bin/hive-config.sh bin/agent-launch.sh bin/git-credential-hive.sh /usr/local/bin/

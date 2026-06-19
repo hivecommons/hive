@@ -138,6 +138,8 @@ if [ "$(id -u)" = "0" ]; then
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
   mkdir -p /data/home/.config /data/home/.copilot /data/config/github-copilot /home/dev/.config
+  chmod 2770 /data/home/.copilot 2>/dev/null || true
+  chown dev:node /data/home/.copilot 2>/dev/null || true
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot
@@ -154,15 +156,16 @@ if [ "$(id -u)" = "0" ]; then
     NEED_PERM_FIX=true
   fi
   if [ "$NEED_PERM_FIX" = "true" ]; then
-    echo "[entrypoint] Fixing /data/home perms in background..."
-    (
-      chmod -R g+rwX /data/home 2>/dev/null
-      find /data/home -type d -exec chmod g+s {} + 2>/dev/null
-      if [ "$DATA_OWNER" != "1001" ]; then
-        chown -R dev:node /data/config /data/home 2>/dev/null
-      fi
-      echo "[entrypoint] background perm fix complete"
-    ) &
+    # Run synchronously — on fresh provisions /data/home is nearly empty so
+    # this completes in <1s. Running in background caused a race where agents
+    # started before perms were fixed, hitting EACCES on config.json.
+    echo "[entrypoint] Fixing /data/home perms..."
+    chmod -R g+rwX /data/home 2>/dev/null
+    find /data/home -type d -exec chmod g+s {} + 2>/dev/null
+    if [ "$DATA_OWNER" != "1001" ]; then
+      chown -R dev:node /data/config /data/home 2>/dev/null
+    fi
+    echo "[entrypoint] perm fix complete"
   else
     echo "[entrypoint] /data/home perms OK — skipping"
   fi
