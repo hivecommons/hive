@@ -3306,8 +3306,9 @@ const dashboardHTML = `<!DOCTYPE html>
         if (ck.detail) line += ': ' + ck.detail;
         lines.push(line);
       }
-      if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('⚠ GitHub App: insufficient permissions'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
+      if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
+      else if (!h.githubAppRequired) { lines.push('✓ GitHub App installed'); }
       if (!checks.length) lines.push('No check data');
       return '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span></span>';
     }
