@@ -26,12 +26,15 @@ if (htmlIdx >= 0) { skipIdxSet.add(htmlIdx); skipIdxSet.add(htmlIdx + 1); }
 const positional = args.filter((_, i) => !skipIdxSet.has(i));
 const dashboardUrl = positional[0] || process.env.HIVE_DASHBOARD_URL || 'http://localhost:3001';
 const outputFile = positional[1] || 'snapshot.html';
+const authToken = process.env.DASHBOARD_AUTH_TOKEN || '';
 
 async function fetchJson(endpoint, fallback = '{}') {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const res = await fetch(`${dashboardUrl}${endpoint}`, { signal: controller.signal });
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const res = await fetch(`${dashboardUrl}${endpoint}`, { signal: controller.signal, headers });
     clearTimeout(timer);
     return await res.text();
   } catch {
