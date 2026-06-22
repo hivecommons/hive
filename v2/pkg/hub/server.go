@@ -478,22 +478,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		LatestSHA:  latestSHA,
 	}
 
-	// Check if the hive should upgrade. Two paths:
-	// 1. Hub-managed (SaaS hive with AutoUpgrade enabled on the hub)
-	// 2. Spoke-managed (spoke declares auto_upgrade in its heartbeat payload)
-	autoUpgrade := false
+	// Check if the hive should self-upgrade via heartbeat response.
+	// Only spoke-managed hives (unreachable by kubectl) should get UpgradeTo.
+	// Hub-managed SaaS hives are upgraded via "kubectl rollout restart" in
+	// triggerAutoUpgrades() — telling them to os.Exit(0) via UpgradeTo causes
+	// the old pod to die before the new pod is Ready, producing a 503 window.
+	spokeManaged := payload.AutoUpgrade
 	if sh := loadSaaSHive(payload.HiveID); sh != nil && sh.AutoUpgrade {
-		autoUpgrade = true
-	} else if payload.AutoUpgrade {
-		autoUpgrade = true
+		spokeManaged = false
 	}
-	if autoUpgrade && latestSHA != "" && payload.GitHash != "" && payload.GitHash != latestSHA {
+	if spokeManaged && latestSHA != "" && payload.GitHash != "" && payload.GitHash != latestSHA {
 		resp.UpgradeTo = latestSHA
-		s.logger.Info("heartbeat: instructing hive to upgrade",
+		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
 			"to", latestSHA,
-			"spoke_requested", payload.AutoUpgrade,
 		)
 	}
 
