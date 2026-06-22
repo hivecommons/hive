@@ -573,6 +573,13 @@
     .gh-app-install-banner .gh-app-desc { font-size: 0.85rem; color: #fca5a5; }
     .gh-app-install-banner .gh-app-btn { padding: 8px 16px; background: #dc2626; color: #fff; border-radius: 6px; font-weight: 600; text-decoration: none; white-space: nowrap; border: none; cursor: pointer; font-size: 0.85rem; }
     .gh-app-install-banner .gh-app-btn:hover { background: #ef4444; }
+    .gh-app-install-banner.perm-issue { background: #78350f; border-color: #d97706; }
+    .gh-app-install-banner.perm-issue .gh-app-desc { color: #fcd34d; }
+    .gh-app-install-banner.perm-issue .gh-app-btn { background: #d97706; }
+    .gh-app-install-banner.perm-issue .gh-app-btn:hover { background: #f59e0b; }
+    .gh-app-perm-details { font-size: 0.8rem; margin-top: 6px; color: #fde68a; }
+    .gh-app-perm-details .perm-ok { color: #86efac; }
+    .gh-app-perm-details .perm-missing { color: #fca5a5; font-weight: 600; }
     .gh-auth-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 9999; display: flex; align-items: center; justify-content: center; }
     .gh-auth-modal { background: #fff; border-radius: 12px; padding: 32px; max-width: 420px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
     .gh-auth-modal h3 { margin: 0 0 8px; font-size: 1.2rem; color: #1a1a2e; }
@@ -3458,19 +3465,44 @@
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
-      if (data.githubAppRequired && data.githubAppInstallURL) {
+      var isPermIssue = data.githubAppRequired && data.githubAppPermIssue;
+      if (data.githubAppRequired && (data.githubAppInstallURL || isPermIssue)) {
         var link = document.getElementById('gh-app-install-link');
-        if (link) link.href = data.githubAppInstallURL;
-        var isGHE = data.githubBaseURL && data.githubBaseURL !== 'https://github.com';
         var title = document.querySelector('#gh-app-install-banner .gh-app-title');
         var desc = document.querySelector('#gh-app-install-banner .gh-app-desc');
-        if (title) title.textContent = isGHE ? 'GitHub App Not Installed on ' + data.githubBaseURL.replace('https://', '') : 'GitHub App Not Installed';
-        if (desc) desc.textContent = isGHE
-          ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org to enable full functionality.'
-          : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.';
+        var existingDetails = document.getElementById('gh-app-perm-details');
+        if (isPermIssue) {
+          banner.classList.add('perm-issue');
+          if (title) title.textContent = 'GitHub App — Insufficient Permissions';
+          if (desc) desc.textContent = 'The app is installed but cannot write to this repository. The org owner must approve updated permissions.';
+          if (link) { link.textContent = 'View App Settings'; link.href = data.githubAppInstallURL || 'https://github.com/apps/kubestellar-hive'; }
+          if (!existingDetails) {
+            var details = document.createElement('div');
+            details.id = 'gh-app-perm-details';
+            details.className = 'gh-app-perm-details';
+            details.innerHTML = '<strong>Current permissions:</strong><br>'
+              + '<span class="perm-ok">✓ Issues: Read</span> — can find and read issues<br>'
+              + '<span class="perm-missing">✗ Issues: Write</span> — cannot create or update issue comments<br>'
+              + '<br><strong>Required:</strong> Issues: Read &amp; Write<br>'
+              + '<em>The org owner must go to Organization Settings → GitHub Apps → kubestellar-hive → Configure and accept the updated permissions.</em>';
+            desc.parentElement.appendChild(details);
+          }
+        } else {
+          banner.classList.remove('perm-issue');
+          if (existingDetails) existingDetails.remove();
+          var isGHE = data.githubBaseURL && data.githubBaseURL !== 'https://github.com';
+          if (title) title.textContent = isGHE ? 'GitHub App Not Installed on ' + data.githubBaseURL.replace('https://', '') : 'GitHub App Not Installed';
+          if (desc) desc.textContent = isGHE
+            ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org to enable full functionality.'
+            : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.';
+          if (link) { link.textContent = 'Install GitHub App'; link.href = data.githubAppInstallURL; }
+        }
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
       } else {
+        banner.classList.remove('perm-issue');
+        var oldDetails = document.getElementById('gh-app-perm-details');
+        if (oldDetails) oldDetails.remove();
         banner.setAttribute('hidden', '');
         banner.style.cssText = 'display:none';
       }
@@ -3484,7 +3516,11 @@
         var data = await resp.json();
         if (data.status === 'installed') {
           var banner = document.getElementById('gh-app-install-banner');
-          if (banner) { banner.setAttribute('hidden', ''); banner.style.cssText = 'display:none'; }
+          if (banner) { banner.classList.remove('perm-issue'); banner.setAttribute('hidden', ''); banner.style.cssText = 'display:none'; }
+          var oldDetails = document.getElementById('gh-app-perm-details');
+          if (oldDetails) oldDetails.remove();
+        } else if (data.status === 'insufficient_permissions') {
+          if (btn) btn.textContent = 'Permissions insufficient';
         } else {
           if (btn) btn.textContent = 'Not found — try again';
         }

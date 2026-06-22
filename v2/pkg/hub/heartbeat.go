@@ -114,6 +114,7 @@ type HeartbeatPayload struct {
 	GitBranch    string             `json:"git_branch,omitempty"`
 	Timestamp          string         `json:"timestamp"`
 	GitHubAppRequired  bool           `json:"github_app_required,omitempty"`
+	GitHubAppPermIssue string         `json:"github_app_perm_issue,omitempty"`
 	AutoUpgrade        bool           `json:"auto_upgrade,omitempty"`
 	Upgrading          bool           `json:"upgrading,omitempty"`
 	UpgradeTargetSHA   string         `json:"upgrade_target_sha,omitempty"`

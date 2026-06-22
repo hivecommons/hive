@@ -1099,7 +1099,8 @@ func main() {
 				Version:           "3.0.0",
 				GitHash:           gitShort,
 				GitBranch:         gitBranch,
-				GitHubAppRequired: dashSrv.IsGitHubAppRequired(),
+				GitHubAppRequired:  dashSrv.IsGitHubAppRequired(),
+				GitHubAppPermIssue: dashSrv.GetGitHubAppPermIssue(),
 				AutoUpgrade:       cfg.Hub.AutoUpgrade,
 				ClusterHealth: func() *hub.HeartbeatClusterHealthReport {
 					if os.Getenv("HIVE_CLUSTER_ID") == "" {
@@ -1514,11 +1515,17 @@ func runEvalCycle(
 					}
 					if err := postClient.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); err != nil {
 						logger.Warn("failed to post advisory digest", "repo", primaryRepo, "issue", issueNum, "error", err)
-						if strings.Contains(err.Error(), "403") {
+						if strings.Contains(err.Error(), "403") && strings.Contains(err.Error(), "Resource not accessible by integration") {
+							// App is installed (we found the issue) but can't write — permission gap
+							dashSrv.SetGitHubAppPermIssue("The GitHub App is installed but lacks Issues: Read & Write permission. The org owner must approve updated permissions at the app installation settings page.")
+							dashSrv.SetGitHubAppRequired(true)
+							logger.Warn("GitHub App installed but insufficient permissions — cannot write issue comments", "repo", primaryRepo)
+						} else if strings.Contains(err.Error(), "403") {
 							dashSrv.SetGitHubAppRequired(true)
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount)
+						dashSrv.SetGitHubAppPermIssue("")
 					}
 				}
 			}

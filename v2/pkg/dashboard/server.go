@@ -76,6 +76,7 @@ type Server struct {
 	githubAppMu         sync.RWMutex
 	githubAppRequired   bool
 	githubAppInstallURL string
+	githubAppPermIssue  string // non-empty when app is installed but lacks required permissions
 
 	githubAppRecheckFn func() bool
 }
@@ -103,6 +104,7 @@ type StatusPayload struct {
 	SystemResources     *SystemResources    `json:"systemResources,omitempty"`
 	GitHubAppRequired   bool               `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string             `json:"githubAppInstallURL,omitempty"`
+	GitHubAppPermIssue  string             `json:"githubAppPermIssue,omitempty"`
 	GitHubBaseURL       string             `json:"githubBaseURL,omitempty"`
 	InferenceBackends   []InferenceBackend `json:"inferenceBackends,omitempty"`
 }
@@ -574,6 +576,7 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.githubAppMu.RLock()
 	status.GitHubAppRequired = s.githubAppRequired
 	status.GitHubAppInstallURL = s.githubAppInstallURL
+	status.GitHubAppPermIssue = s.githubAppPermIssue
 	s.githubAppMu.RUnlock()
 
 	status.InferenceBackends = s.buildInferenceBackends()
@@ -605,7 +608,23 @@ func (s *Server) SetGitHubAppRequired(required bool) {
 		s.githubAppInstallURL = "https://github.com/apps/kubestellar-hive/installations/new"
 	} else {
 		s.githubAppInstallURL = ""
+		s.githubAppPermIssue = ""
 	}
+}
+
+// SetGitHubAppPermIssue records that the app IS installed but lacks a specific
+// write permission. The banner shows an "Insufficient Permissions" message
+// instead of "Not Installed". Pass "" to clear.
+func (s *Server) SetGitHubAppPermIssue(issue string) {
+	s.githubAppMu.Lock()
+	defer s.githubAppMu.Unlock()
+	s.githubAppPermIssue = issue
+}
+
+func (s *Server) GetGitHubAppPermIssue() string {
+	s.githubAppMu.RLock()
+	defer s.githubAppMu.RUnlock()
+	return s.githubAppPermIssue
 }
 
 func (s *Server) IsGitHubAppRequired() bool {
@@ -627,9 +646,18 @@ func (s *Server) handleGitHubAppRecheck(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	if ok {
 		s.SetGitHubAppRequired(false)
+		s.SetGitHubAppPermIssue("")
 		w.Write([]byte(`{"status":"installed"}`))
 	} else {
-		w.Write([]byte(`{"status":"not_installed"}`))
+		s.githubAppMu.RLock()
+		permIssue := s.githubAppPermIssue
+		s.githubAppMu.RUnlock()
+		if permIssue != "" {
+			detail, _ := json.Marshal(permIssue)
+			w.Write([]byte(`{"status":"insufficient_permissions","detail":` + string(detail) + `}`))
+		} else {
+			w.Write([]byte(`{"status":"not_installed"}`))
+		}
 	}
 }
 

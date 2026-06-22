@@ -72,6 +72,7 @@ type RegistryEntry struct {
 	IssueHistory       []SparkPoint   `json:"issueHistory,omitempty"`
 	PRHistory          []SparkPoint   `json:"prHistory,omitempty"`
 	GitHubAppRequired  bool           `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue string         `json:"githubAppPermIssue,omitempty"`
 }
 
 type SparkPoint struct {
@@ -345,7 +346,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return payload.Leaderboard
 		}(),
 		Online:            true,
-		GitHubAppRequired: payload.GitHubAppRequired,
+		GitHubAppRequired:  payload.GitHubAppRequired,
+		GitHubAppPermIssue: sanitizeHeartbeatField(payload.GitHubAppPermIssue),
 	}
 
 	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
