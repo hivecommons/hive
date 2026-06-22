@@ -967,21 +967,21 @@ spec:
         readinessProbe:
           httpGet:
             path: /api/health
-            port: {{.TerminalPort}}
+            port: {{.DashboardPort}}
           initialDelaySeconds: 5
           periodSeconds: 5
           failureThreshold: 3
         startupProbe:
           httpGet:
             path: /api/health
-            port: {{.TerminalPort}}
+            port: {{.DashboardPort}}
           initialDelaySeconds: 10
           periodSeconds: 5
           failureThreshold: 30
         livenessProbe:
           httpGet:
             path: /api/health
-            port: {{.TerminalPort}}
+            port: {{.DashboardPort}}
           periodSeconds: 30
           failureThreshold: 3
         env:
@@ -1089,7 +1089,7 @@ spec:
           service:
             name: hive
             port:
-              number: {{.TerminalPort}}
+              number: {{.DashboardPort}}
   tls:
   - hosts:
     - {{.DashboardHost}}
@@ -1116,7 +1116,7 @@ spec:
           service:
             name: hive
             port:
-              number: {{.TerminalPort}}
+              number: {{.DashboardPort}}
   tls:
   - hosts:
     - {{.DashboardHost}}
