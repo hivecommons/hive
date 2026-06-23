@@ -870,6 +870,20 @@ data:
 {{- if .OAuthClientID}}
       oauth_client_id: {{.OAuthClientID}}
 {{- end}}
+    knowledge:
+      enabled: true
+      engine: llm-wiki
+      bead_synthesizer:
+        schedule: hourly
+        min_confidence: 0.5
+        target_layer: project
+        max_facts_per_cycle: 20
+        vault_path: /data/vaults/bead-synth-wiki
+      vaults:
+        - name: bead-synth-wiki
+          path: /data/vaults/bead-synth-wiki
+          auto_index: true
+          git_sync: false
     dashboard:
       port: {{.DashboardPort}}
     hub:
