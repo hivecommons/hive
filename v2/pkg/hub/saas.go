@@ -3422,12 +3422,13 @@ const dashboardHTML = `<!DOCTYPE html>
           if (el) {
             var isCurrent = _latestSHA && hubHash === _latestSHA;
             var hubUpgradeBtn = '';
-            if (!isCurrent && _latestSHA && _isAdmin && !_hubUpgrading) {
+            var hubIsUpgrading = _hubUpgrading || (!isCurrent && _latestSHA && _hubAutoUpgrade);
+            if (!isCurrent && _latestSHA && _isAdmin && !hubIsUpgrading) {
               hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
-            } else if (_hubUpgrading) {
+            } else if (hubIsUpgrading) {
               hubUpgradeBtn = ' <span title="Upgrading to ' + esc(_latestSHA || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
             }
-            if (isCurrent && _hubUpgrading) { _hubUpgrading = false; }
+            if (isCurrent) { _hubUpgrading = false; }
             var hubAutoCheck = '';
             if (_isAdmin) {
               hubAutoCheck = ' <label style="margin-left:6px;font-size:0.6rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
