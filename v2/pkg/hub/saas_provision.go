@@ -347,7 +347,8 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		}
 	}
 
-	useApp := req.AuthMethod == "app" && req.AppID != "" && req.InstallationID != "" && req.AppPrivateKey != ""
+	useApp := req.AuthMethod == "app" && req.AppID != ""
+	useAppFull := useApp && req.InstallationID != "" && req.AppPrivateKey != ""
 
 	// Determine the dashboard URL based on cluster domain.
 	dashboardHost := h.ID + "." + cluster.Domain
@@ -378,6 +379,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"ACMMLevel":      h.ACMMLevel,
 		"Token":          req.GitHubToken,
 		"UseApp":         useApp,
+		"UseAppFull":     useAppFull,
 		"AppID":          sanitize(req.AppID),
 		"InstallationID": sanitize(req.InstallationID),
 		"AppPrivateKey": func() string {
@@ -856,10 +858,10 @@ metadata:
 type: Opaque
 stringData:
   dashboard-token: {{.DashboardToken}}
-{{- if .UseApp}}
+{{- if .UseAppFull}}
   gh-app-key.pem: |
 {{.AppPrivateKey}}
-{{- else}}
+{{- else if not .UseApp}}
   github-token: {{.Token}}
 {{- end}}
 ---
