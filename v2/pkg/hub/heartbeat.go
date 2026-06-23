@@ -20,6 +20,7 @@ const (
 type AgentSummary struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
+	Mode  string `json:"mode,omitempty"`
 }
 
 type GovernorSummary struct {

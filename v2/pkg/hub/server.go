@@ -336,6 +336,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
 				payload.Agents[i].State = sanitizeHeartbeatField(payload.Agents[i].State)
+				payload.Agents[i].Mode = sanitizeHeartbeatField(payload.Agents[i].Mode)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {

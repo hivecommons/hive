@@ -1037,7 +1037,11 @@ func main() {
 			govState := gov.GetState()
 			agents := make([]hub.AgentSummary, 0, len(statuses))
 			for name, proc := range statuses {
-				agents = append(agents, hub.AgentSummary{Name: name, State: string(proc.State)})
+				as := hub.AgentSummary{Name: name, State: string(proc.State)}
+				if ac, ok := cfg.Agents[name]; (ok && ac.OnDemand) || onDemandFromPack[name] {
+					as.Mode = "on_demand"
+				}
+				agents = append(agents, as)
 			}
 			acmmLvl := 0
 			if cfg.ACMMLevel != nil {
@@ -1146,7 +1150,11 @@ func main() {
 				statuses := agentMgr.AllStatuses()
 				agents := make([]hub.AgentSummary, 0, len(statuses))
 				for name, proc := range statuses {
-					agents = append(agents, hub.AgentSummary{Name: name, State: string(proc.State)})
+					as := hub.AgentSummary{Name: name, State: string(proc.State)}
+					if ac, ok := cfg.Agents[name]; (ok && ac.OnDemand) || onDemandFromPack[name] {
+						as.Mode = "on_demand"
+					}
+					agents = append(agents, as)
 				}
 				acmmLvl := 0
 				if cfg.ACMMLevel != nil {
