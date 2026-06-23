@@ -16,7 +16,25 @@ type InferenceRoute struct {
 	Endpoint      string // e.g. "http://vllm-svc.hive.svc.cluster.local:8000"
 	Model         string // e.g. "Qwen/Qwen2.5-1.5B-Instruct"
 	MaxContextLen int    // from vLLM /v1/models max_model_len; 0 = unknown
+	Preamble      string // prepended to the system prompt for inference backends; empty = use DefaultInferencePreamble
 }
+
+// DefaultInferencePreamble is injected at the top of the system prompt when
+// requests are routed to a self-hosted inference backend (vLLM / llm-d).
+// It makes open-source models behave more agentically — calling tools
+// proactively, iterating autonomously, and never asking for permission.
+// CLI backends (claude, copilot, goose, etc.) are unaffected.
+const DefaultInferencePreamble = `You are an autonomous AI coding agent. You have access to tools (Bash, Read, Write/Edit, etc.) and MUST use them to accomplish every task.
+
+CRITICAL RULES:
+- ALWAYS call tools to gather information and take action. Never describe what you would do — actually do it.
+- NEVER ask for permission or clarification. Execute immediately with the information available.
+- After each tool result, decide your next action and call the next tool. Continue until the task is fully complete.
+- If a tool call fails, try an alternative approach. Do not stop or ask the user.
+- Produce concrete artifacts (files, commands, analysis) — not plans or proposals.
+- When you have completed the task, summarize what you did.
+
+`
 
 // inferenceRouter manages per-agent inference backend routing.
 type inferenceRouter struct {
@@ -173,5 +191,18 @@ func capMaxTokensForInput(maxTokens, maxContextLen, totalInputChars int) int {
 		return available
 	}
 	return maxTokens
+}
+
+// resolveInferencePreamble returns the preamble string to inject into the
+// system prompt for inference-backed requests. If the route has an explicit
+// Preamble it is used; otherwise DefaultInferencePreamble is returned.
+func resolveInferencePreamble(route *InferenceRoute) string {
+	if route == nil {
+		return ""
+	}
+	if route.Preamble != "" {
+		return route.Preamble
+	}
+	return DefaultInferencePreamble
 }
 

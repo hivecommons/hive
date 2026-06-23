@@ -14,7 +14,10 @@ import (
 // translateAnthropicToOpenAI converts an Anthropic Messages API request body
 // into an OpenAI Chat Completions API request body, overriding the model.
 // maxContextLen is the model's max context window (0 = no cap).
-func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen int) ([]byte, error) {
+// preamble, when non-empty, is prepended to the system message to steer
+// open-source models toward agentic tool-calling behaviour. Pass "" to
+// leave the system prompt unchanged (used by tests and non-inference paths).
+func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen int, preamble string) ([]byte, error) {
 	var req anthropicRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		return nil, fmt.Errorf("unmarshal anthropic request: %w", err)
@@ -30,12 +33,22 @@ func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen i
 	if len(req.System) > 0 {
 		systemText := extractSystemText(req.System)
 		if systemText != "" {
+			if preamble != "" {
+				systemText = preamble + systemText
+			}
 			totalChars += len(systemText)
 			openaiReq.Messages = append(openaiReq.Messages, openaiMessage{
 				Role:    "system",
 				Content: systemText,
 			})
 		}
+	} else if preamble != "" {
+		// No system prompt from the CLI — inject the preamble as the system message.
+		totalChars += len(preamble)
+		openaiReq.Messages = append(openaiReq.Messages, openaiMessage{
+			Role:    "system",
+			Content: preamble,
+		})
 	}
 
 	for _, msg := range req.Messages {
@@ -489,7 +502,7 @@ func mapFinishReason(reason string) string {
 // endpoint, translating the request and response formats. It writes the
 // translated response directly to the provided http.ResponseWriter.
 func forwardToInference(clientReq *http.Request, clientBody []byte, w http.ResponseWriter, route *InferenceRoute) error {
-	openaiBody, err := translateAnthropicToOpenAI(clientBody, route.Model, route.MaxContextLen)
+	openaiBody, err := translateAnthropicToOpenAI(clientBody, route.Model, route.MaxContextLen, resolveInferencePreamble(route))
 	if err != nil {
 		return fmt.Errorf("translate request: %w", err)
 	}

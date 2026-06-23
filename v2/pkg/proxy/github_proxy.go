@@ -920,7 +920,7 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 
 		p.logger.Info("inference request body", "agent", agentName, "len", len(body), "preview", truncateBytes(body, 200))
 
-		openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen)
+		openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route))
 		if err != nil {
 			p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
@@ -1073,7 +1073,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 
-	openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen)
+	openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route))
 	if err != nil {
 		p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
 		p.writeHTTPError(conn, http.StatusBadGateway, "translation error: "+err.Error())

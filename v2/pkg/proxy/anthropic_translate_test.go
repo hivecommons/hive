@@ -17,7 +17,7 @@ func TestTranslateAnthropicToOpenAI_StringSystem(t *testing.T) {
 		"stream": true
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "Qwen/Qwen2.5-1.5B-Instruct", 0)
+	result, err := translateAnthropicToOpenAI([]byte(body), "Qwen/Qwen2.5-1.5B-Instruct", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestTranslateAnthropicToOpenAI_BlockSystem(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0)
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestTranslateAnthropicToOpenAI_WithTools(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0)
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestTranslateAnthropicToOpenAI_ToolUseInAssistantMessage(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0)
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +196,7 @@ func TestTranslateAnthropicToOpenAI_ToolResultWithBlocks(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0)
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ func TestTranslateAnthropicToOpenAI_MixedTextAndToolResultInUser(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0)
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -473,5 +473,99 @@ func TestTranslateAnthropicToOpenAI_MixedTextAndToolResultInUser(t *testing.T) {
 	}
 	if req.Messages[1].Content != "42" {
 		t.Errorf("msg[1] content = %q, want '42'", req.Messages[1].Content)
+	}
+}
+
+func TestTranslateAnthropicToOpenAI_InferencePreamble(t *testing.T) {
+	body := `{
+		"model": "claude-sonnet-4-6",
+		"max_tokens": 1024,
+		"system": "You are Claude Code, Anthropic's official CLI for Claude.CWD: /data/agents/scanner\nDate: 2026-06-23",
+		"messages": [
+			{"role": "user", "content": "Check CI status"}
+		]
+	}`
+
+	preamble := "You are an autonomous agent.\n\n"
+
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, preamble)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var req openaiRequest
+	if err := json.Unmarshal(result, &req); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(req.Messages) != 2 {
+		t.Fatalf("messages count = %d, want 2", len(req.Messages))
+	}
+	sys := req.Messages[0]
+	if sys.Role != "system" {
+		t.Errorf("first message role = %q, want system", sys.Role)
+	}
+	if !strings.HasPrefix(sys.Content, preamble) {
+		t.Errorf("system prompt should start with preamble, got: %q", sys.Content[:80])
+	}
+	if !strings.Contains(sys.Content, "CWD: /data/agents/scanner") {
+		t.Error("original system content (CWD) should be preserved after preamble")
+	}
+}
+
+func TestTranslateAnthropicToOpenAI_NoPreamble(t *testing.T) {
+	body := `{
+		"model": "claude-sonnet-4-6",
+		"max_tokens": 1024,
+		"system": "You are Claude Code.",
+		"messages": [
+			{"role": "user", "content": "Hello"}
+		]
+	}`
+
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var req openaiRequest
+	if err := json.Unmarshal(result, &req); err != nil {
+		t.Fatal(err)
+	}
+
+	if req.Messages[0].Content != "You are Claude Code." {
+		t.Errorf("system prompt should be unchanged when preamble is empty, got: %q", req.Messages[0].Content)
+	}
+}
+
+func TestTranslateAnthropicToOpenAI_PreambleNoSystem(t *testing.T) {
+	body := `{
+		"model": "claude-sonnet-4-6",
+		"max_tokens": 1024,
+		"messages": [
+			{"role": "user", "content": "Hello"}
+		]
+	}`
+
+	preamble := "You are an autonomous agent.\n"
+
+	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, preamble)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var req openaiRequest
+	if err := json.Unmarshal(result, &req); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(req.Messages) != 2 {
+		t.Fatalf("messages count = %d, want 2 (system + user)", len(req.Messages))
+	}
+	if req.Messages[0].Role != "system" {
+		t.Errorf("first message role = %q, want system", req.Messages[0].Role)
+	}
+	if req.Messages[0].Content != preamble {
+		t.Errorf("system content = %q, want preamble", req.Messages[0].Content)
 	}
 }
