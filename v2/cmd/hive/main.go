@@ -101,7 +101,7 @@ func main() {
 
 	var ghClient *github.Client
 	var appAuth *github.AppAuth
-	if cfg.GitHub.AppID != 0 {
+	if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 {
 		keyFile := cfg.GitHub.KeyFile
 		if envKey := os.Getenv("GH_APP_KEY_FILE"); envKey != "" {
 			keyFile = envKey
@@ -153,7 +153,9 @@ func main() {
 		if ghToken == "" {
 			ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
 		}
-		if ghToken == "" {
+		if ghToken == "" && cfg.GitHub.AppID != 0 {
+			logger.Warn("GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.")
+		} else if ghToken == "" {
 			logger.Error("no GitHub token configured (set github.token or github.app_id in config)")
 			os.Exit(1)
 		}
