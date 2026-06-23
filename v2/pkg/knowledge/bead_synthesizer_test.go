@@ -607,6 +607,7 @@ func newTestSynthesizer(t *testing.T, stores map[string]*beads.Store, wikiURL st
 		MinConfidence:    0.5,
 		TargetLayer:      "project",
 		MaxFactsPerCycle: 20,
+		VaultPath:        t.TempDir(),
 	}, synthTestLogger())
 }
 
@@ -688,6 +689,7 @@ func TestRunSynthesis_MaxFactsPerCycle(t *testing.T) {
 		MinConfidence:    0.5,
 		TargetLayer:      "project",
 		MaxFactsPerCycle: 2,
+		VaultPath:        t.TempDir(),
 	}, synthTestLogger())
 
 	count, err := synth.RunSynthesis(context.Background())
@@ -720,6 +722,7 @@ func TestRunSynthesis_MinConfidenceFilter(t *testing.T) {
 		MinConfidence:    0.6,
 		TargetLayer:      "project",
 		MaxFactsPerCycle: 20,
+		VaultPath:        t.TempDir(),
 	}, synthTestLogger())
 
 	count, err := synth.RunSynthesis(context.Background())
@@ -941,7 +944,7 @@ func TestWriteFactToVault_Roundtrip(t *testing.T) {
 	}
 
 	slug := slugify(fact.Title)
-	path := filepath.Join(tmpDir, "project", slug+".md")
+	path := filepath.Join(tmpDir, slug+".md")
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read vault file: %v", err)
@@ -987,7 +990,7 @@ func TestWriteFactToVault_NoTags(t *testing.T) {
 	}
 
 	slug := slugify(fact.Title)
-	content, _ := os.ReadFile(filepath.Join(tmpDir, "project", slug+".md"))
+	content, _ := os.ReadFile(filepath.Join(tmpDir, slug+".md"))
 	if strings.Contains(string(content), "tags:") {
 		t.Error("file should not contain tags line when tags are empty")
 	}
@@ -1017,7 +1020,7 @@ func TestIngestFact_VaultFallbackOnNoEndpoint(t *testing.T) {
 	}
 
 	slug := slugify(fact.Title)
-	path := filepath.Join(tmpDir, "project", slug+".md")
+	path := filepath.Join(tmpDir, slug+".md")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Error("vault fallback file should exist")
 	}

@@ -44,7 +44,7 @@ func NewBeadSynthesizer(
 		knowledgeAPI: api,
 		config:       config,
 		logger:       logger,
-		vaultBaseDir: localKnowledgeDir,
+		vaultBaseDir: config.VaultPath,
 	}
 }
 
@@ -378,7 +378,7 @@ func (s *BeadSynthesizer) ingestFact(ctx context.Context, fact ExtractedFact) er
 // writeFactToVault writes a fact as a markdown file with YAML frontmatter,
 // following the pattern from obsidianSyncToFile.
 func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
-	dir := filepath.Join(s.vaultBaseDir, s.config.TargetLayer)
+	dir := s.vaultBaseDir
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating vault dir: %w", err)
 	}

@@ -65,6 +65,7 @@ type BeadSynthesizerConfig struct {
 	MinConfidence    float64 `yaml:"min_confidence"      json:"min_confidence"`
 	TargetLayer      string  `yaml:"target_layer"        json:"target_layer"`
 	MaxFactsPerCycle int     `yaml:"max_facts_per_cycle" json:"max_facts_per_cycle"`
+	VaultPath        string  `yaml:"vault_path"          json:"vault_path"`
 }
 
 // IsEnabled returns whether bead synthesis is enabled (defaults to true).

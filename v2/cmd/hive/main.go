@@ -649,16 +649,27 @@ func main() {
 	go gitSyncer.Start(ctx)
 
 	if cfg.Knowledge.Enabled && cfg.Knowledge.BeadSynthesizer.IsEnabled() && knowledgeAPI != nil && len(beadStores) > 0 {
+		synthVaultPath := cfg.Knowledge.BeadSynthesizer.VaultPath
+		if err := os.MkdirAll(synthVaultPath, 0o755); err != nil {
+			logger.Warn("failed to create bead-synth vault dir", "path", synthVaultPath, "error", err)
+		}
+		if connErr := knowledgeAPI.ConnectVault(synthVaultPath, "bead-synth-wiki"); connErr != nil {
+			logger.Warn("failed to auto-connect bead-synth vault", "path", synthVaultPath, "error", connErr)
+		} else {
+			logger.Info("auto-connected bead-synth vault", "path", synthVaultPath)
+		}
 		beadSynth := knowledge.NewBeadSynthesizer(beadStores, knowledgeAPI, knowledge.BeadSynthesizerConfig{
 			Schedule:         cfg.Knowledge.BeadSynthesizer.Schedule,
 			MinConfidence:    cfg.Knowledge.BeadSynthesizer.MinConfidence,
 			TargetLayer:      cfg.Knowledge.BeadSynthesizer.TargetLayer,
 			MaxFactsPerCycle: cfg.Knowledge.BeadSynthesizer.MaxFactsPerCycle,
+			VaultPath:        synthVaultPath,
 		}, logger)
 		go beadSynth.Start(ctx)
 		logger.Info("bead-to-wiki synthesizer started",
 			"schedule", cfg.Knowledge.BeadSynthesizer.Schedule,
 			"target_layer", cfg.Knowledge.BeadSynthesizer.TargetLayer,
+			"vault_path", synthVaultPath,
 			"bead_stores", len(beadStores),
 		)
 	}

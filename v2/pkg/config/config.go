@@ -48,6 +48,7 @@ type BeadSynthesizerConfig struct {
 	MinConfidence    float64 `yaml:"min_confidence"`
 	TargetLayer      string  `yaml:"target_layer"`
 	MaxFactsPerCycle int     `yaml:"max_facts_per_cycle"`
+	VaultPath        string  `yaml:"vault_path"`
 }
 
 // IsEnabled returns whether bead synthesis is enabled (defaults to true).
@@ -861,6 +862,9 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
 			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
+		}
+		if c.Knowledge.BeadSynthesizer.VaultPath == "" {
+			c.Knowledge.BeadSynthesizer.VaultPath = "/data/vaults/bead-synth-wiki"
 		}
 	}
 }

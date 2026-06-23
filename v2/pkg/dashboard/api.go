@@ -125,6 +125,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/{layer}", s.handleKnowledgeLayer)
 	s.mux.HandleFunc("GET /api/knowledge/{layer}/{slug}", s.handleKnowledgeFact)
 	s.mux.HandleFunc("PUT /api/knowledge/enabled", s.handleKnowledgeToggle)
+	s.mux.HandleFunc("GET /api/knowledge/bead-synthesizer", s.handleBeadSynthStatus)
+	s.mux.HandleFunc("PUT /api/knowledge/bead-synthesizer/enabled", s.handleBeadSynthToggle)
 	s.mux.HandleFunc("GET /api/knowledge/vaults", s.handleVaultsList)
 	s.mux.HandleFunc("POST /api/knowledge/vaults", s.handleVaultsConnect)
 	s.mux.HandleFunc("DELETE /api/knowledge/vaults", s.handleVaultsDisconnect)
@@ -3167,6 +3169,37 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 	}
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "enabled": fmt.Sprintf("%v", body.Enabled)})
+}
+
+func (s *Server) handleBeadSynthStatus(w http.ResponseWriter, r *http.Request) {
+	cfg := s.deps.Config.Knowledge.BeadSynthesizer
+	jsonResponse(w, map[string]interface{}{
+		"enabled":            cfg.IsEnabled(),
+		"schedule":           cfg.Schedule,
+		"min_confidence":     cfg.MinConfidence,
+		"target_layer":       cfg.TargetLayer,
+		"max_facts_per_cycle": cfg.MaxFactsPerCycle,
+		"vault_path":         cfg.VaultPath,
+	})
+}
+
+func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	enabled := body.Enabled
+	s.deps.Config.Knowledge.BeadSynthesizer.Enabled = &enabled
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after bead-synth toggle", "error", err)
+	}
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated", "bead_synthesizer_enabled": fmt.Sprintf("%v", enabled)})
 }
 
 func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {

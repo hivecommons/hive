@@ -31,6 +31,7 @@ type Dependencies struct {
 	Nous             *NousState
 	Scheduler        *scheduler.Scheduler
 	MetricsCollector *MetricsCollector
+	BeadSynthesizer  *knowledge.BeadSynthesizer
 	BeadStores       map[string]*beads.Store
 	Logger           *slog.Logger
 	Ctx              context.Context

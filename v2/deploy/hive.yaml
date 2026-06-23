@@ -214,11 +214,16 @@ knowledge:
     min_confidence: 0.5
     target_layer: project
     max_facts_per_cycle: 20
+    vault_path: /data/vaults/bead-synth-wiki
   vaults:
     - name: hive-wiki
       path: /data/vaults/hive-wiki
       auto_index: true
       git_sync: true
+    - name: bead-synth-wiki
+      path: /data/vaults/bead-synth-wiki
+      auto_index: true
+      git_sync: false
 
 dashboard:
   port: 3002
