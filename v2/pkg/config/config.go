@@ -35,8 +35,27 @@ type KnowledgeConfig struct {
 	Layers     []KnowledgeLayer    `yaml:"layers"`
 	Vaults     []VaultConfig       `yaml:"vaults"`
 	GitSources []GitSourceConfigYAML `yaml:"git_sources"`
-	Curator    KnowledgeCurator    `yaml:"curator"`
-	Primer     KnowledgePrimer     `yaml:"primer"`
+	Curator         KnowledgeCurator         `yaml:"curator"`
+	Primer          KnowledgePrimer          `yaml:"primer"`
+	BeadSynthesizer BeadSynthesizerConfig    `yaml:"bead_synthesizer"`
+}
+
+// BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.
+// Enabled defaults to true when knowledge is enabled; set to false to opt out.
+type BeadSynthesizerConfig struct {
+	Enabled          *bool   `yaml:"enabled,omitempty"`
+	Schedule         string  `yaml:"schedule"`
+	MinConfidence    float64 `yaml:"min_confidence"`
+	TargetLayer      string  `yaml:"target_layer"`
+	MaxFactsPerCycle int     `yaml:"max_facts_per_cycle"`
+}
+
+// IsEnabled returns whether bead synthesis is enabled (defaults to true).
+func (b BeadSynthesizerConfig) IsEnabled() bool {
+	if b.Enabled == nil {
+		return true
+	}
+	return *b.Enabled
 }
 
 // GitSourceConfigYAML describes a remote git repo (or subdirectory) to index
@@ -830,6 +849,18 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Knowledge.Curator.AutoPromoteThreshold == 0 {
 			c.Knowledge.Curator.AutoPromoteThreshold = defaultPromoteThreshold
+		}
+		if c.Knowledge.BeadSynthesizer.Schedule == "" {
+			c.Knowledge.BeadSynthesizer.Schedule = "hourly"
+		}
+		if c.Knowledge.BeadSynthesizer.MinConfidence == 0 {
+			c.Knowledge.BeadSynthesizer.MinConfidence = 0.5
+		}
+		if c.Knowledge.BeadSynthesizer.TargetLayer == "" {
+			c.Knowledge.BeadSynthesizer.TargetLayer = "project"
+		}
+		if c.Knowledge.BeadSynthesizer.MaxFactsPerCycle == 0 {
+			c.Knowledge.BeadSynthesizer.MaxFactsPerCycle = 20
 		}
 	}
 }

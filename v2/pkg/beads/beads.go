@@ -405,3 +405,27 @@ func (s *Store) Count() int {
 	defer s.mu.RUnlock()
 	return len(s.beads)
 }
+
+// Unsynthesized returns all done/closed beads that have not yet been
+// synthesized into wiki facts (i.e., missing the "synthesized_at" metadata key).
+func (s *Store) Unsynthesized() []*Bead {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*Bead
+	for _, b := range s.beads {
+		if b.Status != StatusDone && b.Status != StatusClosed {
+			continue
+		}
+		if _, ok := b.Metadata["synthesized_at"]; ok {
+			continue
+		}
+		result = append(result, b)
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.Before(result[j].CreatedAt.Time)
+	})
+
+	return result
+}

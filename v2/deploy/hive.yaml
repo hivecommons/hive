@@ -209,6 +209,11 @@ notifications:
 knowledge:
   enabled: true
   engine: llm-wiki
+  bead_synthesizer:
+    schedule: hourly
+    min_confidence: 0.5
+    target_layer: project
+    max_facts_per_cycle: 20
   vaults:
     - name: hive-wiki
       path: /data/vaults/hive-wiki

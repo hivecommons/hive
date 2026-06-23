@@ -648,6 +648,21 @@ func main() {
 
 	go gitSyncer.Start(ctx)
 
+	if cfg.Knowledge.Enabled && cfg.Knowledge.BeadSynthesizer.IsEnabled() && knowledgeAPI != nil && len(beadStores) > 0 {
+		beadSynth := knowledge.NewBeadSynthesizer(beadStores, knowledgeAPI, knowledge.BeadSynthesizerConfig{
+			Schedule:         cfg.Knowledge.BeadSynthesizer.Schedule,
+			MinConfidence:    cfg.Knowledge.BeadSynthesizer.MinConfidence,
+			TargetLayer:      cfg.Knowledge.BeadSynthesizer.TargetLayer,
+			MaxFactsPerCycle: cfg.Knowledge.BeadSynthesizer.MaxFactsPerCycle,
+		}, logger)
+		go beadSynth.Start(ctx)
+		logger.Info("bead-to-wiki synthesizer started",
+			"schedule", cfg.Knowledge.BeadSynthesizer.Schedule,
+			"target_layer", cfg.Knowledge.BeadSynthesizer.TargetLayer,
+			"bead_stores", len(beadStores),
+		)
+	}
+
 	os.MkdirAll(nousSnapshotDir, 0o755)
 	os.MkdirAll(nousGovernorDir, 0o755)
 	nousState := loadNousState(logger)

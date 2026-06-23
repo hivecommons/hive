@@ -48,12 +48,31 @@ func (l LayerConfig) Endpoint() string {
 
 // KnowledgeConfig is the top-level knowledge section of hive.yaml.
 type KnowledgeConfig struct {
-	Enabled    bool              `yaml:"enabled"     json:"enabled"`
-	Engine     string            `yaml:"engine"      json:"engine"`
-	Layers     []LayerConfig     `yaml:"layers"      json:"layers"`
-	GitSources []GitSourceConfig `yaml:"git_sources" json:"git_sources,omitempty"`
-	Curator    CuratorConfig     `yaml:"curator"     json:"curator"`
-	Primer     PrimerConfig      `yaml:"primer"      json:"primer"`
+	Enabled         bool                  `yaml:"enabled"          json:"enabled"`
+	Engine          string                `yaml:"engine"           json:"engine"`
+	Layers          []LayerConfig         `yaml:"layers"           json:"layers"`
+	GitSources      []GitSourceConfig     `yaml:"git_sources"      json:"git_sources,omitempty"`
+	Curator         CuratorConfig         `yaml:"curator"          json:"curator"`
+	Primer          PrimerConfig          `yaml:"primer"           json:"primer"`
+	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer" json:"bead_synthesizer"`
+}
+
+// BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.
+// Enabled defaults to true when knowledge is enabled; set to false to opt out.
+type BeadSynthesizerConfig struct {
+	Enabled          *bool   `yaml:"enabled,omitempty"   json:"enabled"`
+	Schedule         string  `yaml:"schedule"            json:"schedule"`
+	MinConfidence    float64 `yaml:"min_confidence"      json:"min_confidence"`
+	TargetLayer      string  `yaml:"target_layer"        json:"target_layer"`
+	MaxFactsPerCycle int     `yaml:"max_facts_per_cycle" json:"max_facts_per_cycle"`
+}
+
+// IsEnabled returns whether bead synthesis is enabled (defaults to true).
+func (b BeadSynthesizerConfig) IsEnabled() bool {
+	if b.Enabled == nil {
+		return true
+	}
+	return *b.Enabled
 }
 
 // CuratorConfig controls automated knowledge extraction from merged PRs.
