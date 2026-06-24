@@ -777,6 +777,8 @@ func main() {
 		}
 	}()
 
+	go dashboard.StartWorkspaceCleanup(ctx, logger)
+
 	os.MkdirAll(nousSnapshotDir, 0o755)
 	os.MkdirAll(nousGovernorDir, 0o755)
 	nousState := loadNousState(logger)
