@@ -2979,16 +2979,14 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	cfg := s.deps.Config
 
 	if body.PrivateKey != "" {
-		keyPath := cfg.GitHub.KeyFile
+		keyPath := body.KeyFile
 		if keyPath == "" {
-			keyPath = "/secrets/gh-app-key.pem"
-		}
-		if body.KeyFile != "" {
-			keyPath = body.KeyFile
+			keyPath = "/data/gh-app-key.pem"
 		}
 		if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
-			s.logger.Warn("could not create key directory, falling back to /data", "path", keyPath, "error", err)
-			keyPath = "/data/gh-app-key.pem"
+			s.logger.Warn("could not create key directory", "path", keyPath, "error", err)
+			jsonError(w, fmt.Sprintf("failed to create key directory: %v", err), http.StatusInternalServerError)
+			return
 		}
 		const keyFileMode = 0o600
 		if err := os.WriteFile(keyPath, []byte(body.PrivateKey), keyFileMode); err != nil {
