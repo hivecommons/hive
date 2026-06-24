@@ -43,12 +43,13 @@ func NewCurator(ghClient *gh.Client, wikiURL string, org string, repos []string,
 
 // ExtractedFact is a fact candidate extracted from a PR before ingestion.
 type ExtractedFact struct {
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Type       FactType `json:"type"`
-	Confidence float64  `json:"confidence"`
-	Tags       []string `json:"tags"`
-	SourcePR   string   `json:"source_pr"`
+	Title      string    `json:"title"`
+	Body       string    `json:"body"`
+	Type       FactType  `json:"type"`
+	Confidence float64   `json:"confidence"`
+	Tags       []string  `json:"tags"`
+	Related    []string  `json:"related,omitempty"`
+	SourcePR   string    `json:"source_pr"`
 	SourceDate time.Time `json:"source_date"`
 }
 

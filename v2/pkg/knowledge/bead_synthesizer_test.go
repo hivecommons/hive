@@ -1422,3 +1422,153 @@ func TestBeadSynthesizerConfig_IsEnabled_ExplicitFalse(t *testing.T) {
 		t.Error("IsEnabled() should be false when explicitly set to false")
 	}
 }
+
+func TestResolveBeadRelations(t *testing.T) {
+	store := newTestStore(t)
+	parent, _ := store.Create("auth handler fix", beads.TypeBug, beads.PriorityHigh, "scanner", "")
+	child, _ := store.Create("login validation", beads.TypeTask, beads.PriorityMedium, "scanner", "")
+	store.Close(parent.ID)
+	store.Close(child.ID)
+
+	store.Update(parent.ID, func(b *beads.Bead) {
+		b.DependsOn = []string{child.ID}
+	})
+
+	stores := map[string]*beads.Store{"scanner": store}
+	srv, _ := newMockWikiServer(t)
+	synth := newTestSynthesizer(t, stores, srv.URL)
+
+	reloaded, _ := store.Get(parent.ID)
+	related := synth.resolveBeadRelations(reloaded, "scanner")
+
+	if len(related) != 1 {
+		t.Fatalf("expected 1 related slug, got %d", len(related))
+	}
+	want := slugify("login validation")
+	if related[0] != want {
+		t.Errorf("related[0] = %q, want %q", related[0], want)
+	}
+}
+
+func TestResolveBeadRelations_NoDeps(t *testing.T) {
+	store := newTestStore(t)
+	b, _ := store.Create("standalone finding", beads.TypeBug, beads.PriorityMedium, "scanner", "")
+	store.Close(b.ID)
+
+	stores := map[string]*beads.Store{"scanner": store}
+	srv, _ := newMockWikiServer(t)
+	synth := newTestSynthesizer(t, stores, srv.URL)
+
+	got, _ := store.Get(b.ID)
+	related := synth.resolveBeadRelations(got, "scanner")
+	if related != nil {
+		t.Errorf("expected nil for bead with no deps, got %v", related)
+	}
+}
+
+func TestResolveBeadRelations_CrossStore(t *testing.T) {
+	storeA := newTestStore(t)
+	storeB := newTestStore(t)
+	dep, _ := storeB.Create("shared utility pattern", beads.TypeTask, beads.PriorityLow, "helper", "")
+	storeB.Close(dep.ID)
+
+	parent, _ := storeA.Create("main finding", beads.TypeBug, beads.PriorityHigh, "scanner", "")
+	storeA.Close(parent.ID)
+	storeA.Update(parent.ID, func(b *beads.Bead) {
+		b.DependsOn = []string{dep.ID}
+	})
+
+	stores := map[string]*beads.Store{"scanner": storeA, "helper": storeB}
+	srv, _ := newMockWikiServer(t)
+	synth := newTestSynthesizer(t, stores, srv.URL)
+
+	reloaded, _ := storeA.Get(parent.ID)
+	related := synth.resolveBeadRelations(reloaded, "scanner")
+
+	if len(related) != 1 {
+		t.Fatalf("expected 1 related slug from cross-store lookup, got %d", len(related))
+	}
+	want := slugify("shared utility pattern")
+	if related[0] != want {
+		t.Errorf("related[0] = %q, want %q", related[0], want)
+	}
+}
+
+func TestWriteFactToVault_RelatedFrontmatter(t *testing.T) {
+	srv, _ := newMockWikiServer(t)
+	store := newTestStore(t)
+	stores := map[string]*beads.Store{"scanner": store}
+	synth := newTestSynthesizer(t, stores, srv.URL)
+
+	fact := ExtractedFact{
+		Title:      "test fact with relations",
+		Body:       "some body content",
+		Type:       FactGotcha,
+		Confidence: 0.75,
+		Tags:       []string{"testing"},
+		Related:    []string{"auth-handler-fix", "login-validation"},
+		SourcePR:   "bead:scanner/abc123",
+		SourceDate: time.Now(),
+	}
+
+	if err := synth.writeFactToVault(fact); err != nil {
+		t.Fatalf("writeFactToVault failed: %v", err)
+	}
+
+	slug := slugify(fact.Title)
+	content, err := os.ReadFile(filepath.Join(synth.vaultBaseDir, slug+".md"))
+	if err != nil {
+		t.Fatalf("failed to read vault file: %v", err)
+	}
+
+	s := string(content)
+	if !strings.Contains(s, "related: [auth-handler-fix, login-validation]") {
+		t.Errorf("vault file missing related frontmatter, got:\n%s", s)
+	}
+}
+
+func TestWriteFactToVault_EmitsGraphTriples(t *testing.T) {
+	srv, _ := newMockWikiServer(t)
+	store := newTestStore(t)
+	stores := map[string]*beads.Store{"scanner": store}
+	synth := newTestSynthesizer(t, stores, srv.URL)
+
+	graphPath := filepath.Join(t.TempDir(), "test-graph.db")
+	gs, err := NewGraphStore(graphPath, synthTestLogger())
+	if err != nil {
+		t.Fatalf("failed to create graph store: %v", err)
+	}
+	defer gs.Close()
+	synth.SetGraphStore(gs)
+
+	fact := ExtractedFact{
+		Title:      "parent fact",
+		Body:       "body",
+		Type:       FactPattern,
+		Confidence: 0.9,
+		Related:    []string{"child-a", "child-b"},
+		SourcePR:   "bead:scanner/xyz",
+		SourceDate: time.Now(),
+	}
+
+	if err := synth.writeFactToVault(fact); err != nil {
+		t.Fatalf("writeFactToVault failed: %v", err)
+	}
+
+	factSlug := slugify(fact.Title)
+	outgoing := gs.Outgoing(factSlug)
+	if len(outgoing) != 2 {
+		t.Fatalf("expected 2 outgoing triples, got %d", len(outgoing))
+	}
+
+	objects := map[string]bool{}
+	for _, tr := range outgoing {
+		if tr.Predicate != "related_to" {
+			t.Errorf("unexpected predicate %q", tr.Predicate)
+		}
+		objects[tr.Object] = true
+	}
+	if !objects["child-a"] || !objects["child-b"] {
+		t.Errorf("expected child-a and child-b in triples, got %v", objects)
+	}
+}

@@ -39,10 +39,16 @@ type BeadSynthesizer struct {
 	vaultBaseDir     string
 	enricher         *PREnricher
 	lifecycleManager *BeadLifecycleManager
+	graphStore       *GraphStore
 
 	mu       sync.Mutex
 	cancel   context.CancelFunc
 	running  bool
+}
+
+// SetGraphStore attaches a graph store so synthesized facts emit relationship triples.
+func (s *BeadSynthesizer) SetGraphStore(gs *GraphStore) {
+	s.graphStore = gs
 }
 
 // NewBeadSynthesizer creates a synthesizer that bridges bead stores to the wiki.
@@ -202,6 +208,7 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			Type:       factType,
 			Confidence: confidence,
 			Tags:       extractBeadTags(c.bead),
+			Related:    s.resolveBeadRelations(c.bead, c.agent),
 			SourcePR:   fmt.Sprintf("bead:%s/%s", c.agent, c.bead.ID),
 			SourceDate: c.bead.UpdatedAt.Time,
 		}
@@ -479,6 +486,9 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 	if len(fact.Tags) > 0 {
 		fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(fact.Tags, ", "))
 	}
+	if len(fact.Related) > 0 {
+		fmt.Fprintf(&buf, "related: [%s]\n", strings.Join(fact.Related, ", "))
+	}
 	fmt.Fprintf(&buf, "source: %s\n", fact.SourcePR)
 	fmt.Fprintf(&buf, "synthesized: %s\n", time.Now().UTC().Format(time.RFC3339))
 	buf.WriteString("---\n\n")
@@ -493,7 +503,53 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 	}
 
 	s.knowledgeAPI.triggerVaultReindex(dir)
+
+	if s.graphStore != nil && len(fact.Related) > 0 {
+		factSlug := slugify(fact.Title)
+		for _, rel := range fact.Related {
+			if err := s.graphStore.AddTriple(Triple{
+				Subject:   factSlug,
+				Predicate: "related_to",
+				Object:    rel,
+			}); err != nil {
+				s.logger.Warn("failed to add graph triple",
+					"subject", factSlug,
+					"object", rel,
+					"error", err,
+				)
+			}
+		}
+	}
+
 	return nil
+}
+
+// resolveBeadRelations maps a bead's DependsOn IDs to fact slugs by looking up
+// each dependent bead across all stores and slugifying its title.
+func (s *BeadSynthesizer) resolveBeadRelations(b *beads.Bead, agent string) []string {
+	if len(b.DependsOn) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	var related []string
+
+	for _, depID := range b.DependsOn {
+		for _, store := range s.beadStores {
+			dep, err := store.Get(depID)
+			if err != nil || dep == nil {
+				continue
+			}
+			slug := slugify(dep.Title)
+			if slug != "" && !seen[slug] {
+				seen[slug] = true
+				related = append(related, slug)
+			}
+			break
+		}
+	}
+
+	return related
 }
 
 // buildEnrichedBody produces the fact body, enriching with GitHub PR data when possible.

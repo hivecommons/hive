@@ -757,6 +757,9 @@ func main() {
 		if knowledgeAPI != nil {
 			knowledgeAPI.SetGraphStore(graphStore)
 		}
+		if beadSynth != nil {
+			beadSynth.SetGraphStore(graphStore)
+		}
 		for _, ls := range knowledgeAPI.FileStores() {
 			if n, err := graphStore.SyncFromFileStore(ls); err != nil {
 				logger.Warn("graph sync failed", "store", ls.Name(), "error", err)
