@@ -501,26 +501,32 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 func (s *BeadSynthesizer) buildEnrichedBody(ctx context.Context, b *beads.Bead, agent string) string {
 	baseBody := BuildFactBody(b, agent)
 
+	enriched := ""
 	if s.enricher != nil && b.ExternalRef != "" {
-		enriched := s.enricher.EnrichBody(ctx, b, agent)
+		enriched = s.enricher.EnrichBody(ctx, b, agent)
 		if enriched != "" {
 			return enriched
 		}
 	}
 
-	if isLowQualityMergeBead(b) && s.enricher == nil {
-		s.logger.Debug("skipping low-quality merge bead without enricher",
-			"bead_id", b.ID, "title", b.Title)
+	if isLowQualityBead(b) {
+		s.logger.Debug("skipping low-quality bead",
+			"bead_id", b.ID, "title", b.Title, "enrichment_attempted", enriched == "" && s.enricher != nil)
 		return ""
 	}
 
 	return baseBody
 }
 
-// isLowQualityMergeBead detects beads that are just PR merge event titles
-// with no substantive content.
-func isLowQualityMergeBead(b *beads.Bead) bool {
-	return strings.HasPrefix(b.Title, "Merged:") && strings.TrimSpace(b.Notes) == ""
+// isLowQualityBead detects beads with no substantive content beyond the title.
+func isLowQualityBead(b *beads.Bead) bool {
+	if strings.TrimSpace(b.Notes) != "" {
+		return false
+	}
+	if b.Meta("detail") != "" || b.Meta("recommendation") != "" {
+		return false
+	}
+	return true
 }
 
 // CleanupVault removes low-quality facts from the vault directory that were
@@ -696,9 +702,6 @@ func (e *PREnricher) EnrichBody(ctx context.Context, b *beads.Bead, agent string
 func (e *PREnricher) parseRef(ref string) (string, string, int) {
 	if m := ghRefPattern.FindStringSubmatch(ref); m != nil {
 		n, _ := strconv.Atoi(m[1])
-		if len(e.repos) > 0 {
-			return e.org, e.repos[0], n
-		}
 		return e.org, "", n
 	}
 

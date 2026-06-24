@@ -289,11 +289,11 @@ type FactHistoryEntry struct {
 	Count     int   `json:"count"`
 }
 
-// factHistoryMaxEntries caps the fact sparkline to ~30 days at hourly intervals.
-const factHistoryMaxEntries = 720
+// factHistoryMaxEntries caps the fact sparkline to ~30 days at 5-min intervals.
+const factHistoryMaxEntries = 8640
 
-// factHistoryMinIntervalMs prevents recording more than once per hour (ms).
-const factHistoryMinIntervalMs = 3_600_000
+// factHistoryMinIntervalMs prevents recording more than once per 5 minutes (ms).
+const factHistoryMinIntervalMs = 300_000
 
 const sseRetryMs = 3000
 

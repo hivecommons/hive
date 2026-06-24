@@ -741,8 +741,8 @@ func TestPREnricher_ParseRef_GhFormat(t *testing.T) {
 	e := NewPREnricher(nil, "kubestellar", []string{"console", "docs"}, synthTestLogger())
 
 	owner, repo, num := e.parseRef("gh-42")
-	if owner != "kubestellar" || repo != "console" || num != 42 {
-		t.Errorf("parseRef(gh-42) = %q, %q, %d; want kubestellar, console, 42", owner, repo, num)
+	if owner != "kubestellar" || repo != "" || num != 42 {
+		t.Errorf("parseRef(gh-42) = %q, %q, %d; want kubestellar, (empty), 42", owner, repo, num)
 	}
 }
 
@@ -783,7 +783,7 @@ func TestPREnricher_FallbackOnNilClient(t *testing.T) {
 	}
 }
 
-func TestIsLowQualityMergeBead(t *testing.T) {
+func TestIsLowQualityBead(t *testing.T) {
 	tests := []struct {
 		title string
 		notes string
@@ -791,14 +791,16 @@ func TestIsLowQualityMergeBead(t *testing.T) {
 	}{
 		{"Merged: console#100 — add feature", "", true},
 		{"Merged: docs#5 — fix typo", "some notes", false},
-		{"Found a bug in auth handler", "", false},
+		{"Found a bug in auth handler", "", true},
+		{"XSS regression in sanitizeHtmlForMdx", "", true},
+		{"CSP connect-src bare wss: wildcard", "important detail here", false},
 	}
 
 	for _, tt := range tests {
 		b := &beads.Bead{Title: tt.title, Notes: tt.notes}
-		got := isLowQualityMergeBead(b)
+		got := isLowQualityBead(b)
 		if got != tt.want {
-			t.Errorf("isLowQualityMergeBead(%q, %q) = %v; want %v", tt.title, tt.notes, got, tt.want)
+			t.Errorf("isLowQualityBead(%q, %q) = %v; want %v", tt.title, tt.notes, got, tt.want)
 		}
 	}
 }
