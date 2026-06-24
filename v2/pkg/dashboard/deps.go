@@ -42,6 +42,7 @@ type Dependencies struct {
 	SetUserClient    func(token string)
 	EnumerateFunc      func()
 	AdvisoryResetFunc  func(newPrimaryRepo string)
+	ReinitGitHubFunc   func(appID, installationID int64, keyFile string) error
 }
 
 type NousState struct {

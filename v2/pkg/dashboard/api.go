@@ -94,6 +94,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
+	s.mux.HandleFunc("PUT /api/config/github", s.handleConfigGitHub)
 
 	s.mux.HandleFunc("GET /api/agents", s.handleAgentsList)
 	s.mux.HandleFunc("POST /api/agents", s.handleAgentCreate)
@@ -2953,6 +2954,87 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// --- GitHub config endpoint ---
+
+func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AppID          *int64  `json:"app_id"`
+		InstallationID *int64  `json:"installation_id"`
+		KeyFile        string  `json:"key_file"`
+		PrivateKey     string  `json:"private_key"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if body.AppID == nil && body.InstallationID == nil && body.KeyFile == "" && body.PrivateKey == "" {
+		jsonError(w, "at least one field required: app_id, installation_id, key_file, private_key", http.StatusBadRequest)
+		return
+	}
+
+	cfg := s.deps.Config
+
+	if body.PrivateKey != "" {
+		keyPath := cfg.GitHub.KeyFile
+		if keyPath == "" {
+			keyPath = "/secrets/gh-app-key.pem"
+		}
+		if body.KeyFile != "" {
+			keyPath = body.KeyFile
+		}
+		if err := os.MkdirAll(filepath.Dir(keyPath), 0o755); err != nil {
+			s.logger.Warn("could not create key directory, falling back to /data", "path", keyPath, "error", err)
+			keyPath = "/data/gh-app-key.pem"
+		}
+		const keyFileMode = 0o600
+		if err := os.WriteFile(keyPath, []byte(body.PrivateKey), keyFileMode); err != nil {
+			jsonError(w, fmt.Sprintf("failed to write key file: %v", err), http.StatusInternalServerError)
+			return
+		}
+		cfg.GitHub.KeyFile = keyPath
+		s.logger.Info("github app private key written", "path", keyPath)
+	} else if body.KeyFile != "" {
+		cfg.GitHub.KeyFile = body.KeyFile
+	}
+
+	if body.AppID != nil {
+		cfg.GitHub.AppID = *body.AppID
+	}
+	if body.InstallationID != nil {
+		cfg.GitHub.InstallationID = *body.InstallationID
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist github config", "error", err)
+		jsonError(w, "failed to save config", http.StatusInternalServerError)
+		return
+	}
+
+	result := map[string]interface{}{
+		"status":          "updated",
+		"app_id":          cfg.GitHub.AppID,
+		"installation_id": cfg.GitHub.InstallationID,
+		"key_file":        cfg.GitHub.KeyFile,
+	}
+
+	if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+		if s.deps.ReinitGitHubFunc != nil {
+			if err := s.deps.ReinitGitHubFunc(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile); err != nil {
+				s.logger.Error("github client reinit failed", "error", err)
+				result["reinit"] = "failed"
+				result["reinit_error"] = err.Error()
+			} else {
+				result["reinit"] = "ok"
+				s.SetGitHubAppRequired(false)
+			}
+		}
+	}
+
+	s.refreshAndPersist()
+	jsonResponse(w, result)
 }
 
 // --- Sidebar endpoints ---

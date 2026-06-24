@@ -633,6 +633,15 @@ func (s *Server) IsGitHubAppRequired() bool {
 	return s.githubAppRequired
 }
 
+// UpdateGitHubClient swaps the GitHub client and app auth references stored in
+// the dashboard dependencies. Called after the config API reinitializes app auth.
+func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth) {
+	if s.deps != nil {
+		s.deps.GHClient = client
+		s.deps.GHAppAuth = auth
+	}
+}
+
 func (s *Server) SetGitHubAppRecheckFn(fn func() bool) {
 	s.githubAppRecheckFn = fn
 }

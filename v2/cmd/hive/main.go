@@ -810,6 +810,37 @@ func main() {
 				}
 			}
 		},
+		ReinitGitHubFunc: func(newAppID, newInstallationID int64, keyFile string) error {
+			newAppAuth, err := github.NewAppAuth(newAppID, newInstallationID, keyFile, logger, cfg.GitHub.ResolvedAPIURL())
+			if err != nil {
+				return fmt.Errorf("initializing app auth: %w", err)
+			}
+			newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+			if len(cfg.Governor.Labels.Exempt) > 0 {
+				newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+			}
+
+			ghClient = newClient
+			appAuth = newAppAuth
+			dashSrv.UpdateGitHubClient(newClient, newAppAuth)
+			logger.Info("github client reinitialized via config API", "app_id", newAppID, "installation_id", newInstallationID)
+
+			primaryRepo := cfg.Project.PrimaryRepo
+			if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
+				primaryRepo = cfg.Project.Repos[0]
+			}
+			if primaryRepo != "" {
+				num, advErr := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
+				if advErr != nil {
+					logger.Warn("advisory issue creation failed after reinit", "repo", primaryRepo, "error", advErr)
+				} else {
+					advisoryIssues[primaryRepo] = num
+					os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+					logger.Info("advisory issue ready after reinit", "repo", primaryRepo, "number", num)
+				}
+			}
+			return nil
+		},
 	})
 
 	dashSrv.SetGitHubAppRequired(githubAppRequired)
