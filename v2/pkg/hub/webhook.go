@@ -18,7 +18,9 @@ const (
 	webhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET"
 	webhookSecretPath   = "/data/saas/webhook-secret.key"
 	webhookMaxBodyBytes = 256 * 1024
-	webhookPushTimeout  = 30 * time.Second
+	webhookPushTimeout    = 30 * time.Second
+	webhookPushRetries    = 3
+	webhookRetryDelay     = 5 * time.Second
 )
 
 type installationEvent struct {
@@ -165,43 +167,60 @@ func (s *HubServer) pushGitHubConfigToSpoke(hive *RegistryEntry, appID, installa
 	}
 
 	spokeURL := strings.TrimRight(hive.DashboardURL, "/") + "/api/config/github"
-
-	ctx, cancel := context.WithTimeout(context.Background(), webhookPushTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, spokeURL, bytes.NewReader(body))
-	if err != nil {
-		s.logger.Error("failed to create spoke request", "error", err)
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-
 	authToken := s.loadSpokeAuthToken(hive)
-	if authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+authToken)
-	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		s.logger.Error("failed to push config to spoke", "hive_id", hive.ID, "error", err)
-		return
-	}
-	defer resp.Body.Close()
+	var lastErr error
+	for attempt := 1; attempt <= webhookPushRetries; attempt++ {
+		if attempt > 1 {
+			s.logger.Info("retrying spoke config push", "hive_id", hive.ID, "attempt", attempt)
+			time.Sleep(webhookRetryDelay)
+		}
 
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if resp.StatusCode >= http.StatusBadRequest {
-		s.logger.Error("spoke rejected config push",
+		ctx, cancel := context.WithTimeout(context.Background(), webhookPushTimeout)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPut, spokeURL, bytes.NewReader(body))
+		if err != nil {
+			cancel()
+			s.logger.Error("failed to create spoke request", "error", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if authToken != "" {
+			req.Header.Set("Authorization", "Bearer "+authToken)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			cancel()
+			lastErr = err
+			s.logger.Warn("spoke config push failed", "hive_id", hive.ID, "attempt", attempt, "error", err)
+			continue
+		}
+
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		cancel()
+
+		if resp.StatusCode >= http.StatusBadRequest {
+			s.logger.Error("spoke rejected config push",
+				"hive_id", hive.ID,
+				"status", resp.StatusCode,
+				"body", string(respBody),
+			)
+			return
+		}
+
+		s.logger.Info("github app config pushed to spoke",
 			"hive_id", hive.ID,
 			"status", resp.StatusCode,
-			"body", string(respBody),
+			"response", string(respBody),
 		)
 		return
 	}
 
-	s.logger.Info("github app config pushed to spoke",
+	s.logger.Error("spoke config push failed after retries",
 		"hive_id", hive.ID,
-		"status", resp.StatusCode,
-		"response", string(respBody),
+		"attempts", webhookPushRetries,
+		"last_error", lastErr,
 	)
 }
 
