@@ -118,8 +118,9 @@ type HeartbeatPayload struct {
 	GitHubAppPermIssue string         `json:"github_app_perm_issue,omitempty"`
 	AutoUpgrade        bool           `json:"auto_upgrade,omitempty"`
 	Upgrading          bool           `json:"upgrading,omitempty"`
-	UpgradeTargetSHA   string         `json:"upgrade_target_sha,omitempty"`
-	ClusterHealth      *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
+	UpgradeTargetSHA        string         `json:"upgrade_target_sha,omitempty"`
+	PendingGitHubAppInstall bool           `json:"pending_github_app_install,omitempty"`
+	ClusterHealth           *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload

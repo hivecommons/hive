@@ -2958,6 +2958,12 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+func (s *Server) handleGitHubAppInstallClicked(w http.ResponseWriter, r *http.Request) {
+	s.SetPendingGitHubAppInstall()
+	s.deps.Logger.Info("github app install link clicked, flagging heartbeat")
+	okResponse(w, map[string]string{"status": "pending"})
+}
+
 // --- GitHub config endpoint ---
 
 func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
@@ -3029,6 +3035,7 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 			} else {
 				result["reinit"] = "ok"
 				s.SetGitHubAppRequired(false)
+				s.ClearPendingGitHubAppInstall()
 			}
 		}
 	}

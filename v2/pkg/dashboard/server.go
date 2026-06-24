@@ -76,10 +76,12 @@ type Server struct {
 	ready   bool
 	readyAt time.Time
 
-	githubAppMu         sync.RWMutex
-	githubAppRequired   bool
-	githubAppInstallURL string
-	githubAppPermIssue  string // non-empty when app is installed but lacks required permissions
+	githubAppMu                 sync.RWMutex
+	githubAppRequired           bool
+	githubAppInstallURL         string
+	githubAppPermIssue          string // non-empty when app is installed but lacks required permissions
+	pendingGitHubAppInstall     bool
+	pendingGitHubAppInstallAt   time.Time
 
 	systemAlertsMu sync.RWMutex
 	systemAlerts   []SystemAlert
@@ -372,6 +374,7 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
+	s.mux.HandleFunc("POST /api/github-app/install-clicked", s.handleGitHubAppInstallClicked)
 }
 
 func (s *Server) Start() error {
@@ -692,6 +695,32 @@ func (s *Server) IsGitHubAppRequired() bool {
 	return s.githubAppRequired
 }
 
+func (s *Server) SetPendingGitHubAppInstall() {
+	s.githubAppMu.Lock()
+	defer s.githubAppMu.Unlock()
+	s.pendingGitHubAppInstall = true
+	s.pendingGitHubAppInstallAt = time.Now()
+}
+
+func (s *Server) IsPendingGitHubAppInstall() bool {
+	s.githubAppMu.RLock()
+	defer s.githubAppMu.RUnlock()
+	if !s.pendingGitHubAppInstall {
+		return false
+	}
+	const pendingInstallExpiry = 10 * time.Minute
+	if time.Since(s.pendingGitHubAppInstallAt) > pendingInstallExpiry {
+		return false
+	}
+	return true
+}
+
+func (s *Server) ClearPendingGitHubAppInstall() {
+	s.githubAppMu.Lock()
+	defer s.githubAppMu.Unlock()
+	s.pendingGitHubAppInstall = false
+}
+
 // UpdateGitHubClient swaps the GitHub client and app auth references stored in
 // the dashboard dependencies. Called after the config API reinitializes app auth.
 func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth) {
@@ -715,6 +744,7 @@ func (s *Server) handleGitHubAppRecheck(w http.ResponseWriter, r *http.Request) 
 	if ok {
 		s.SetGitHubAppRequired(false)
 		s.SetGitHubAppPermIssue("")
+		s.ClearPendingGitHubAppInstall()
 		w.Write([]byte(`{"status":"installed"}`))
 	} else {
 		s.githubAppMu.RLock()

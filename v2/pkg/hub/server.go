@@ -73,8 +73,10 @@ type RegistryEntry struct {
 	UpgradeStartedAt   time.Time      `json:"upgradeStartedAt,omitempty"`
 	IssueHistory       []SparkPoint   `json:"issueHistory,omitempty"`
 	PRHistory          []SparkPoint   `json:"prHistory,omitempty"`
-	GitHubAppRequired  bool           `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue string         `json:"githubAppPermIssue,omitempty"`
+	GitHubAppRequired       bool           `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue      string         `json:"githubAppPermIssue,omitempty"`
+	PendingGitHubAppInstall bool           `json:"pendingGitHubAppInstall,omitempty"`
+	PendingGitHubAppInstallAt time.Time    `json:"pendingGitHubAppInstallAt,omitempty"`
 }
 
 type SparkPoint struct {
@@ -130,6 +132,11 @@ type HubServer struct {
 	// Key: hive ID, value: target SHA.  Cleared when the spoke reports the
 	// target SHA, proving the upgrade completed.
 	heartbeatUpgrade map[string]string
+
+	// pendingWebhooks stores GitHub App installation webhooks that arrived
+	// before the matching spoke heartbeat.  Key: lowercase org name.
+	pendingWebhooks   map[string]*pendingWebhookEntry
+	pendingWebhooksMu sync.Mutex
 }
 
 func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
@@ -159,6 +166,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
 		clusters:         loadClusters(logger),
 		heartbeatHealth:  make(map[string]*HeartbeatHealthEntry),
 		heartbeatUpgrade: make(map[string]string),
+		pendingWebhooks:  make(map[string]*pendingWebhookEntry),
 	}
 
 	s.loadRegistry()
@@ -357,8 +365,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return payload.Leaderboard
 		}(),
 		Online:            true,
-		GitHubAppRequired:  payload.GitHubAppRequired,
-		GitHubAppPermIssue: sanitizeHeartbeatField(payload.GitHubAppPermIssue),
+		GitHubAppRequired:       payload.GitHubAppRequired,
+		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
+		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
+		PendingGitHubAppInstallAt: func() time.Time {
+			if payload.PendingGitHubAppInstall {
+				return time.Now()
+			}
+			return time.Time{}
+		}(),
 	}
 
 	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
@@ -476,6 +491,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"cluster_id", entry.ClusterID,
 			"nodes", len(payload.ClusterHealth.Nodes),
 		)
+	}
+
+	// Check if a pending webhook matches this heartbeat's pending install flag.
+	if payload.PendingGitHubAppInstall {
+		s.checkPendingWebhookMatch(payload.Org, payload.HiveID)
 	}
 
 	s.logger.Info("audit: hub heartbeat received",

@@ -107,9 +107,21 @@ func (s *HubServer) handleInstallationEvent(body []byte) {
 		"repos", repos,
 	)
 
-	hive := s.findHiveByOrgRepos(org, repos)
+	// 1. Check for a spoke that recently signaled it's waiting for a GitHub App install.
+	hive := s.findHiveByPendingInstall(org)
+
+	// 2. Fall back to repo-name matching for hives that were already registered.
 	if hive == nil {
-		s.logger.Info("no matching hive found for installation", "org", org, "repos", repos)
+		hive = s.findHiveByOrgRepos(org, repos)
+	}
+
+	// 3. No match yet — store the webhook for deferred heartbeat matching.
+	if hive == nil {
+		s.storePendingWebhook(org, appID, installationID)
+		s.logger.Info("no matching hive found, storing webhook for deferred heartbeat matching",
+			"org", org,
+			"installation_id", installationID,
+		)
 		return
 	}
 
@@ -122,6 +134,12 @@ func (s *HubServer) handleInstallationEvent(body []byte) {
 		"hive_id", hive.ID,
 		"dashboard_url", hive.DashboardURL,
 		"installation_id", installationID,
+		"match_method", func() string {
+			if hive.PendingGitHubAppInstall {
+				return "pending-install-heartbeat"
+			}
+			return "org-repo-match"
+		}(),
 	)
 
 	go s.pushGitHubConfigToSpoke(hive, appID, installationID)
@@ -329,4 +347,75 @@ func verifyWebhookSignature(payload []byte, signature, secret string) bool {
 	mac.Write(payload)
 	expected := mac.Sum(nil)
 	return hmac.Equal(sig, expected)
+}
+
+const pendingWebhookExpiry = 5 * time.Minute
+
+type pendingWebhookEntry struct {
+	Org            string
+	AppID          int64
+	InstallationID int64
+	ReceivedAt     time.Time
+}
+
+func (s *HubServer) storePendingWebhook(org string, appID, installationID int64) {
+	s.pendingWebhooksMu.Lock()
+	defer s.pendingWebhooksMu.Unlock()
+	s.pendingWebhooks[strings.ToLower(org)] = &pendingWebhookEntry{
+		Org:            org,
+		AppID:          appID,
+		InstallationID: installationID,
+		ReceivedAt:     time.Now(),
+	}
+}
+
+func (s *HubServer) findHiveByPendingInstall(org string) *RegistryEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for i := range s.registry.Hives {
+		h := &s.registry.Hives[i]
+		if !h.PendingGitHubAppInstall {
+			continue
+		}
+		if strings.EqualFold(h.Org, org) {
+			return h
+		}
+	}
+	return nil
+}
+
+func (s *HubServer) checkPendingWebhookMatch(org, hiveID string) {
+	s.pendingWebhooksMu.Lock()
+	key := strings.ToLower(org)
+	pw, ok := s.pendingWebhooks[key]
+	if !ok || time.Since(pw.ReceivedAt) > pendingWebhookExpiry {
+		s.pendingWebhooksMu.Unlock()
+		return
+	}
+	delete(s.pendingWebhooks, key)
+	s.pendingWebhooksMu.Unlock()
+
+	s.mu.RLock()
+	var hive *RegistryEntry
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == hiveID {
+			hive = &s.registry.Hives[i]
+			break
+		}
+	}
+	s.mu.RUnlock()
+
+	if hive == nil || hive.DashboardURL == "" {
+		s.logger.Warn("pending webhook matched but hive not found or has no dashboard URL",
+			"hive_id", hiveID, "org", org)
+		return
+	}
+
+	s.logger.Info("pending webhook matched via heartbeat",
+		"hive_id", hiveID,
+		"org", org,
+		"installation_id", pw.InstallationID,
+	)
+
+	go s.pushGitHubConfigToSpoke(hive, pw.AppID, pw.InstallationID)
 }

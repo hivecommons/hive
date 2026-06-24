@@ -870,6 +870,7 @@ func main() {
 					advisoryIssues[newPrimaryRepo] = num
 					os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
 					dashSrv.SetGitHubAppRequired(false)
+					dashSrv.ClearPendingGitHubAppInstall()
 					logger.Info("advisory issue ready on new primary repo", "repo", newPrimaryRepo, "number", num)
 				}
 			}
@@ -958,6 +959,7 @@ func main() {
 						advisoryIssues[primaryRepo] = num
 						os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
 						dashSrv.SetGitHubAppRequired(false)
+						dashSrv.ClearPendingGitHubAppInstall()
 						logger.Info("github app retry: app detected, advisory issue ready", "repo", primaryRepo, "number", num)
 					}
 				}
@@ -1268,9 +1270,10 @@ func main() {
 				Version:           "3.0.0",
 				GitHash:           gitShort,
 				GitBranch:         gitBranch,
-				GitHubAppRequired:  dashSrv.IsGitHubAppRequired(),
-				GitHubAppPermIssue: dashSrv.GetGitHubAppPermIssue(),
-				AutoUpgrade:       cfg.Hub.AutoUpgrade,
+				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
+				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
+				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
+				AutoUpgrade:             cfg.Hub.AutoUpgrade,
 				ClusterHealth: func() *hub.HeartbeatClusterHealthReport {
 					if os.Getenv("HIVE_CLUSTER_ID") == "" {
 						return nil
