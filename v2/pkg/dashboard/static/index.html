@@ -1932,6 +1932,7 @@
     <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:#374151;margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
+  <div id="system-alerts-banner" style="display:none"></div>
   <div class="governor" id="governor"></div>
 
   <div id="advisory-section" style="margin-top: 16px; margin-bottom: 24px; display: none;">
@@ -3536,19 +3537,24 @@
       }
     }
 
-    var _activeSystemAlerts = {};
     function renderSystemAlerts(alerts) {
-      var seen = {};
-      (alerts || []).forEach(function(a) {
-        seen[a.id] = true;
-        if (!_activeSystemAlerts[a.id]) {
-          _activeSystemAlerts[a.id] = true;
-          showToast('⚠ ' + a.message, a.severity || 'error', true);
-        }
-      });
-      Object.keys(_activeSystemAlerts).forEach(function(id) {
-        if (!seen[id]) delete _activeSystemAlerts[id];
-      });
+      var banner = document.getElementById('system-alerts-banner');
+      if (!banner) return;
+      if (!alerts || alerts.length === 0) {
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+        return;
+      }
+      banner.style.display = 'block';
+      banner.innerHTML = alerts.map(function(a) {
+        var bg = a.severity === 'error' ? '#7f1d1d' : '#78350f';
+        var border = a.severity === 'error' ? '#dc2626' : '#d97706';
+        var textColor = a.severity === 'error' ? '#fca5a5' : '#fcd34d';
+        return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;font-size:0.85rem">'
+          + '<span style="font-size:1.3rem">⚠️</span>'
+          + '<span style="color:' + textColor + '">' + a.message.replace(/</g, '&lt;') + '</span>'
+          + '</div>';
+      }).join('');
     }
 
     async function recheckGitHubApp() {
