@@ -745,11 +745,17 @@ func main() {
 		}
 	}
 
+	// Open the graph store in a background goroutine. NewGraphStore acquires
+	// a SQLite file lock that blocks if the old pod still holds it. Deferring
+	// this lets the HTTP server start so the readiness probe passes, which
+	// tells Kubernetes to terminate the old pod and release the lock.
 	const graphStorePath = "/data/graph/knowledge.db"
-	graphStore, graphErr := knowledge.NewGraphStore(graphStorePath, logger)
-	if graphErr != nil {
-		logger.Warn("failed to open knowledge graph store", "path", graphStorePath, "error", graphErr)
-	} else {
+	go func() {
+		graphStore, graphErr := knowledge.NewGraphStore(graphStorePath, logger)
+		if graphErr != nil {
+			logger.Warn("failed to open knowledge graph store", "path", graphStorePath, "error", graphErr)
+			return
+		}
 		logger.Info("knowledge graph store opened", "path", graphStorePath)
 		if primer := sched.GetPrimer(); primer != nil {
 			primer.SetGraphStore(graphStore)
@@ -769,7 +775,7 @@ func main() {
 				}
 			}
 		}
-	}
+	}()
 
 	os.MkdirAll(nousSnapshotDir, 0o755)
 	os.MkdirAll(nousGovernorDir, 0o755)
