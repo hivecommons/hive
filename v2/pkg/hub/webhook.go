@@ -205,8 +205,10 @@ func (s *HubServer) pushGitHubConfigToSpoke(hive *RegistryEntry, appID, installa
 	)
 }
 
+const sharedKeyNamespace = "hive-shared"
+const sharedKeySecretName = "hive-app-key"
+
 func (s *HubServer) loadAppPrivateKey(hive *RegistryEntry) string {
-	ns := "hive-hosted-" + hive.ID
 	clusterID := hive.ClusterID
 	if clusterID == "" {
 		clusterID = "hive-oke"
@@ -218,6 +220,8 @@ func (s *HubServer) loadAppPrivateKey(hive *RegistryEntry) string {
 		return ""
 	}
 
+	// First: check the hive's own secret (already configured hives).
+	ns := "hive-hosted-" + hive.ID
 	out, err := kubectlForCluster(&cluster, "get", "secret", "hive-secrets", "-n", ns,
 		"-o", "jsonpath={.data.gh-app-key\\.pem}").Output()
 	if err == nil && len(out) > 0 {
@@ -226,37 +230,20 @@ func (s *HubServer) loadAppPrivateKey(hive *RegistryEntry) string {
 		}
 	}
 
-	consoleNS := s.findConsoleHiveNamespace()
-	if consoleNS == "" {
-		return ""
-	}
-	out, err = kubectlForCluster(&cluster, "get", "secret", "hive-secrets", "-n", consoleNS,
+	// Fallback: read from the shared namespace (cluster-scoped, independent of any hive).
+	out, err = kubectlForCluster(&cluster, "get", "secret", sharedKeySecretName, "-n", sharedKeyNamespace,
 		"-o", "jsonpath={.data.gh-app-key\\.pem}").Output()
 	if err != nil || len(out) == 0 {
+		s.logger.Warn("app key not found in shared namespace", "cluster_id", clusterID, "namespace", sharedKeyNamespace)
 		return ""
 	}
 
 	decoded, err := base64Decode(string(out))
 	if err != nil {
-		s.logger.Warn("failed to decode app key from console hive", "error", err)
+		s.logger.Warn("failed to decode app key from shared secret", "error", err)
 		return ""
 	}
 	return decoded
-}
-
-func (s *HubServer) findConsoleHiveNamespace() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, h := range s.registry.Hives {
-		if strings.EqualFold(h.Org, "kubestellar") {
-			for _, r := range h.Repos {
-				if r == "console" {
-					return "hive-hosted-" + h.ID
-				}
-			}
-		}
-	}
-	return ""
 }
 
 func (s *HubServer) loadSpokeAuthToken(hive *RegistryEntry) string {
