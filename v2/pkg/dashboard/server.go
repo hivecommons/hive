@@ -81,6 +81,9 @@ type Server struct {
 	githubAppInstallURL string
 	githubAppPermIssue  string // non-empty when app is installed but lacks required permissions
 
+	systemAlertsMu sync.RWMutex
+	systemAlerts   []SystemAlert
+
 	githubAppRecheckFn func() bool
 }
 
@@ -110,6 +113,14 @@ type StatusPayload struct {
 	GitHubAppPermIssue  string             `json:"githubAppPermIssue,omitempty"`
 	GitHubBaseURL       string             `json:"githubBaseURL,omitempty"`
 	InferenceBackends   []InferenceBackend `json:"inferenceBackends,omitempty"`
+	SystemAlerts        []SystemAlert      `json:"systemAlerts,omitempty"`
+}
+
+// SystemAlert represents a critical runtime problem surfaced to the dashboard.
+type SystemAlert struct {
+	ID       string `json:"id"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
 }
 
 // InferenceBackend describes a live inference endpoint and its available models.
@@ -596,6 +607,13 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 
 	status.InferenceBackends = s.buildInferenceBackends()
 
+	s.systemAlertsMu.RLock()
+	if len(s.systemAlerts) > 0 {
+		status.SystemAlerts = make([]SystemAlert, len(s.systemAlerts))
+		copy(status.SystemAlerts, s.systemAlerts)
+	}
+	s.systemAlertsMu.RUnlock()
+
 	s.statusMu.Lock()
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	s.status = status
@@ -611,6 +629,32 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	}
 
 	s.broadcastFrame(fmt.Sprintf("data: %s\n\n", data))
+}
+
+// AddSystemAlert adds a critical alert visible on the dashboard.
+func (s *Server) AddSystemAlert(id, severity, message string) {
+	s.systemAlertsMu.Lock()
+	defer s.systemAlertsMu.Unlock()
+	for i, a := range s.systemAlerts {
+		if a.ID == id {
+			s.systemAlerts[i].Message = message
+			s.systemAlerts[i].Severity = severity
+			return
+		}
+	}
+	s.systemAlerts = append(s.systemAlerts, SystemAlert{ID: id, Severity: severity, Message: message})
+}
+
+// ClearSystemAlert removes an alert by ID.
+func (s *Server) ClearSystemAlert(id string) {
+	s.systemAlertsMu.Lock()
+	defer s.systemAlertsMu.Unlock()
+	for i, a := range s.systemAlerts {
+		if a.ID == id {
+			s.systemAlerts = append(s.systemAlerts[:i], s.systemAlerts[i+1:]...)
+			return
+		}
+	}
 }
 
 func (s *Server) SetGitHubAppRequired(required bool) {

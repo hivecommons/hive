@@ -3536,6 +3536,21 @@
       }
     }
 
+    var _activeSystemAlerts = {};
+    function renderSystemAlerts(alerts) {
+      var seen = {};
+      (alerts || []).forEach(function(a) {
+        seen[a.id] = true;
+        if (!_activeSystemAlerts[a.id]) {
+          _activeSystemAlerts[a.id] = true;
+          showToast('⚠ ' + a.message, a.severity || 'error', true);
+        }
+      });
+      Object.keys(_activeSystemAlerts).forEach(function(id) {
+        if (!seen[id]) delete _activeSystemAlerts[id];
+      });
+    }
+
     async function recheckGitHubApp() {
       var btn = document.getElementById('gh-app-recheck-btn');
       if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
@@ -7014,6 +7029,7 @@ function burnAreaChart() {
       }
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
+      renderSystemAlerts(data.systemAlerts || []);
       if (!_dropdownOpen && !_configModalOpen) {
         applyPinOverrides(data.agents || []);
         renderAgents(data.agents || []);

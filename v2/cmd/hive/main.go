@@ -1933,6 +1933,12 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 
 	if err := cfg.Save(); err != nil {
 		logger.Error("failed to persist config to yaml", "error", err)
+		if dashSrv != nil {
+			dashSrv.AddSystemAlert("config-save-failed", "error",
+				"Config save failed — runtime state (ACMM level, agent config) will be lost on restart: "+err.Error())
+		}
+	} else if dashSrv != nil {
+		dashSrv.ClearSystemAlert("config-save-failed")
 	}
 
 	history := gov.EvalHistory()
