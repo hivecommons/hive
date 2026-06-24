@@ -36,6 +36,10 @@ type installationEvent struct {
 		Name     string `json:"name"`
 		FullName string `json:"full_name"`
 	} `json:"repositories"`
+	RepositoriesAdded []struct {
+		Name     string `json:"name"`
+		FullName string `json:"full_name"`
+	} `json:"repositories_added"`
 }
 
 func (s *HubServer) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
@@ -87,8 +91,11 @@ func (s *HubServer) handleInstallationEvent(body []byte) {
 	installationID := evt.Installation.ID
 	appID := evt.Installation.AppID
 
-	repos := make([]string, 0, len(evt.Repositories))
+	repos := make([]string, 0, len(evt.Repositories)+len(evt.RepositoriesAdded))
 	for _, r := range evt.Repositories {
+		repos = append(repos, r.Name)
+	}
+	for _, r := range evt.RepositoriesAdded {
 		repos = append(repos, r.Name)
 	}
 
@@ -129,11 +136,13 @@ func (s *HubServer) findHiveByOrgRepos(org string, repos []string) *RegistryEntr
 		repoSet[strings.ToLower(r)] = true
 	}
 
+	var orgMatch *RegistryEntry
 	for i := range s.registry.Hives {
 		h := &s.registry.Hives[i]
 		if !strings.EqualFold(h.Org, org) {
 			continue
 		}
+		// Exact repo match takes priority
 		for _, hiveRepo := range h.Repos {
 			if repoSet[strings.ToLower(hiveRepo)] {
 				return h
@@ -142,6 +151,14 @@ func (s *HubServer) findHiveByOrgRepos(org string, repos []string) *RegistryEntr
 		if repoSet[strings.ToLower(h.PrimaryRepo)] {
 			return h
 		}
+		// Track org-only match as fallback
+		if orgMatch == nil {
+			orgMatch = h
+		}
+	}
+	// Fall back to org-only match when repos list is empty
+	if len(repos) == 0 && orgMatch != nil {
+		return orgMatch
 	}
 	return nil
 }
