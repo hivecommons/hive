@@ -2055,32 +2055,34 @@ func (s *HubServer) triggerAutoUpgrades() {
 		}
 		s.mu.RUnlock()
 		if alreadyUpgrading {
-			// For hives on unreachable clusters, ensure the heartbeat upgrade
-			// map is populated so the UpgradeTo instruction is delivered.
-			// This handles the case where the hub restarted and lost the
-			// in-memory heartbeatUpgrade map while the hive is still upgrading.
-			// Also advances the target to the latest SHA if new commits arrived.
+			// Hive is still upgrading — do NOT advance UpgradeTarget.
+			// Advancing the target while upgrading creates a moving goalpost:
+			// the hive upgrades to SHA_A, but by the time it heartbeats back,
+			// the target has moved to SHA_B, so the clearing condition
+			// (payload.GitHash == UpgradeTarget) never matches and the hive
+			// stays stuck in Upgrading forever.
+			//
+			// Re-populate the heartbeatUpgrade map (in case the hub restarted)
+			// but keep the ORIGINAL target so the hive can satisfy it.
 			hiveCluster := s.clusterForHive(&h)
 			if hiveCluster != nil && !hiveCluster.InCluster {
-				latestSHA := getLatestSHAForBranch(func() string {
-					if branch != "" {
-						return branch
+				s.mu.RLock()
+				var target string
+				for _, reg := range s.registry.Hives {
+					if reg.ID == h.ID {
+						target = reg.UpgradeTarget
+						break
 					}
-					return "v2"
-				}())
-				if latestSHA != "" && latestSHA != currentSHA {
+				}
+				s.mu.RUnlock()
+				if target != "" {
 					s.mu.Lock()
-					s.heartbeatUpgrade[h.ID] = latestSHA
-					// Update registry target to latest
-					for i := range s.registry.Hives {
-						if s.registry.Hives[i].ID == h.ID {
-							s.registry.Hives[i].UpgradeTarget = latestSHA
-							break
-						}
-					}
+					s.heartbeatUpgrade[h.ID] = target
 					s.mu.Unlock()
 				}
 			}
+			s.logger.Debug("skipping target advance — upgrade still in progress",
+				"hive", h.ID, "current", currentSHA)
 			continue
 		}
 		if branch == "" {
