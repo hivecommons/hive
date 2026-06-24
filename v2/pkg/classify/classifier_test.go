@@ -209,6 +209,59 @@ func TestClassify_OutreachLane(t *testing.T) {
 	}
 }
 
+func TestClassify_TitlePrefixRoutesToLane(t *testing.T) {
+	cases := []struct {
+		title    string
+		wantLane Lane
+	}{
+		{"[quality] kernel-swap.sh has no test coverage", LaneQuality},
+		{"[quality] Add unit tests for Python scripts", LaneQuality},
+		{"[architect] Redesign the webhook subsystem", LaneArchitect},
+		{"[ci-maintainer] Fix nightly build", LaneCIMaintainer},
+		{"[outreach] Contact CNCF project leads", LaneOutreach},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.title, func(t *testing.T) {
+			got := Classify(makeIssue(tc.title))
+			if got.Lane != tc.wantLane {
+				t.Errorf("title %q: want %v, got %v", tc.title, tc.wantLane, got.Lane)
+			}
+		})
+	}
+}
+
+func TestClassify_LabelRoutesToLane(t *testing.T) {
+	cases := []struct {
+		desc     string
+		title    string
+		label    string
+		wantLane Lane
+	}{
+		{"quality label", "Some issue about testing", "quality", LaneQuality},
+		{"architect label", "Improve error handling", "architect", LaneArchitect},
+		{"outreach label", "Follow up with users", "outreach", LaneOutreach},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			got := Classify(makeIssue(tc.title, tc.label))
+			if got.Lane != tc.wantLane {
+				t.Errorf("%s: want %v, got %v", tc.desc, tc.wantLane, got.Lane)
+			}
+		})
+	}
+}
+
+func TestClassify_PrefixBeatsKeywordMismatch(t *testing.T) {
+	// Title has [quality] prefix but no quality keywords — prefix should win
+	issue := makeIssue("[quality] Build scripts lack test parity with bluefin main")
+	got := Classify(issue)
+	if got.Lane != LaneQuality {
+		t.Errorf("want LaneQuality (prefix routing), got %v", got.Lane)
+	}
+}
+
 func TestClassify_DefaultLaneIsScanner(t *testing.T) {
 	issue := makeIssue("Fix edge case in issue parser")
 	got := Classify(issue)

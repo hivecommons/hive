@@ -101,6 +101,23 @@ func Classify(issue github.Issue) Classification {
 }
 
 func classifyLane(titleLower, labelsStr string) Lane {
+	// Title-prefix routing: issues prefixed with [agent-name] route back to
+	// that agent's lane so agents see their own previously-filed issues.
+	for _, lane := range activeLanes() {
+		prefix := "[" + lane.Name + "]"
+		if strings.HasPrefix(titleLower, prefix) {
+			return Lane(lane.Name)
+		}
+	}
+
+	// Label-based routing: a label matching a lane name routes to that lane.
+	for _, lane := range activeLanes() {
+		if strings.Contains(labelsStr, lane.Name) {
+			return Lane(lane.Name)
+		}
+	}
+
+	// Keyword routing (original behavior).
 	for _, lane := range activeLanes() {
 		for _, kw := range lane.Keywords {
 			if strings.Contains(titleLower, kw) || strings.Contains(labelsStr, kw) {
