@@ -608,7 +608,7 @@ func newTestSynthesizer(t *testing.T, stores map[string]*beads.Store, wikiURL st
 		TargetLayer:      "project",
 		MaxFactsPerCycle: 20,
 		VaultPath:        t.TempDir(),
-	}, synthTestLogger())
+	}, synthTestLogger(), nil)
 }
 
 func TestRunSynthesis_BasicFlow(t *testing.T) {
@@ -690,7 +690,7 @@ func TestRunSynthesis_MaxFactsPerCycle(t *testing.T) {
 		TargetLayer:      "project",
 		MaxFactsPerCycle: 2,
 		VaultPath:        t.TempDir(),
-	}, synthTestLogger())
+	}, synthTestLogger(), nil)
 
 	count, err := synth.RunSynthesis(context.Background())
 	if err != nil {
@@ -723,7 +723,7 @@ func TestRunSynthesis_MinConfidenceFilter(t *testing.T) {
 		TargetLayer:      "project",
 		MaxFactsPerCycle: 20,
 		VaultPath:        t.TempDir(),
-	}, synthTestLogger())
+	}, synthTestLogger(), nil)
 
 	count, err := synth.RunSynthesis(context.Background())
 	if err != nil {
@@ -734,6 +734,218 @@ func TestRunSynthesis_MinConfidenceFilter(t *testing.T) {
 	}
 	if len(*ingested) != 0 {
 		t.Errorf("ingested = %d, want 0", len(*ingested))
+	}
+}
+
+func TestPREnricher_ParseRef_GhFormat(t *testing.T) {
+	e := NewPREnricher(nil, "kubestellar", []string{"console", "docs"}, synthTestLogger())
+
+	owner, repo, num := e.parseRef("gh-42")
+	if owner != "kubestellar" || repo != "console" || num != 42 {
+		t.Errorf("parseRef(gh-42) = %q, %q, %d; want kubestellar, console, 42", owner, repo, num)
+	}
+}
+
+func TestPREnricher_ParseRef_RepoHash(t *testing.T) {
+	e := NewPREnricher(nil, "kubestellar", []string{"console"}, synthTestLogger())
+
+	owner, repo, num := e.parseRef("docs#123")
+	if owner != "kubestellar" || repo != "docs" || num != 123 {
+		t.Errorf("parseRef(docs#123) = %q, %q, %d; want kubestellar, docs, 123", owner, repo, num)
+	}
+}
+
+func TestPREnricher_ParseRef_OrgRepoHash(t *testing.T) {
+	e := NewPREnricher(nil, "kubestellar", nil, synthTestLogger())
+
+	owner, repo, num := e.parseRef("other-org/my-repo#99")
+	if owner != "other-org" || repo != "my-repo" || num != 99 {
+		t.Errorf("parseRef(other-org/my-repo#99) = %q, %q, %d; want other-org, my-repo, 99", owner, repo, num)
+	}
+}
+
+func TestPREnricher_ParseRef_Invalid(t *testing.T) {
+	e := NewPREnricher(nil, "kubestellar", nil, synthTestLogger())
+
+	_, _, num := e.parseRef("not-a-ref")
+	if num != 0 {
+		t.Errorf("parseRef(not-a-ref) num = %d; want 0", num)
+	}
+}
+
+func TestPREnricher_FallbackOnNilClient(t *testing.T) {
+	e := NewPREnricher(nil, "kubestellar", []string{"console"}, synthTestLogger())
+
+	b := &beads.Bead{ID: "abc", ExternalRef: "gh-1"}
+	body := e.EnrichBody(context.Background(), b, "scanner")
+	if body != "" {
+		t.Errorf("EnrichBody with nil client should return empty, got %q", body)
+	}
+}
+
+func TestIsLowQualityMergeBead(t *testing.T) {
+	tests := []struct {
+		title string
+		notes string
+		want  bool
+	}{
+		{"Merged: console#100 — add feature", "", true},
+		{"Merged: docs#5 — fix typo", "some notes", false},
+		{"Found a bug in auth handler", "", false},
+	}
+
+	for _, tt := range tests {
+		b := &beads.Bead{Title: tt.title, Notes: tt.notes}
+		got := isLowQualityMergeBead(b)
+		if got != tt.want {
+			t.Errorf("isLowQualityMergeBead(%q, %q) = %v; want %v", tt.title, tt.notes, got, tt.want)
+		}
+	}
+}
+
+func TestIsJunkFact(t *testing.T) {
+	junk := "---\ntitle: Merged: console-marketplace#228\ntype: pattern\n---\n\n- External: gh-228\n- Source: bead:scanner/abc123\n"
+	if !isJunkFact(junk) {
+		t.Error("expected junk fact to be detected")
+	}
+
+	good := "---\ntitle: Auth handler pattern\ntype: pattern\n---\n\nAlways validate OAuth tokens before checking session cookies.\n- Source: bead:scanner/xyz\n"
+	if isJunkFact(good) {
+		t.Error("expected good fact not to be junk")
+	}
+
+	noMerge := "---\ntitle: Something else\ntype: gotcha\n---\n\n- External: gh-5\n- Source: bead:scanner/def\n"
+	if isJunkFact(noMerge) {
+		t.Error("non-merge fact with only metadata should not be junk")
+	}
+}
+
+func TestCleanupVault_RemovesJunk(t *testing.T) {
+	vaultDir := t.TempDir()
+
+	junk := "---\ntitle: Merged: console#100 — updated README\ntype: pattern\nconfidence: 0.70\nsource: bead:scanner/abc\n---\n\n- External: gh-100\n- Source: bead:scanner/abc\n"
+	good := "---\ntitle: Always check OAuth scopes\ntype: gotcha\nconfidence: 0.80\n---\n\nWhen handling OAuth callbacks, always verify the returned scopes match what was requested.\n- Source: bead:guide/xyz\n"
+
+	os.WriteFile(filepath.Join(vaultDir, "merged-console100.md"), []byte(junk), 0644)
+	os.WriteFile(filepath.Join(vaultDir, "oauth-scopes.md"), []byte(good), 0644)
+
+	api := NewKnowledgeAPI(nil, KnowledgeConfig{Enabled: true}, synthTestLogger())
+	synth := NewBeadSynthesizer(nil, api, BeadSynthesizerConfig{
+		VaultPath: vaultDir,
+	}, synthTestLogger(), nil)
+
+	removed, err := synth.CleanupVault()
+	if err != nil {
+		t.Fatalf("CleanupVault failed: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("removed = %d; want 1", removed)
+	}
+
+	entries, _ := os.ReadDir(vaultDir)
+	mdCount := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".md") {
+			mdCount++
+		}
+	}
+	if mdCount != 1 {
+		t.Errorf("remaining md files = %d; want 1", mdCount)
+	}
+}
+
+func TestRetentionScore_Priority(t *testing.T) {
+	policy := &RetentionPolicy{PreserveWithDeps: false}
+	stores := map[string]*beads.Store{}
+	lm := NewBeadLifecycleManager(stores, policy, synthTestLogger())
+
+	now := time.Now().UTC()
+	base := &beads.Bead{
+		Type:     beads.TypeTask,
+		Priority: beads.PriorityMinor,
+		Status:   beads.StatusClosed,
+	}
+
+	critical := *base
+	critical.Priority = beads.PriorityCritical
+
+	scoreLow := lm.retentionScore(base, "scanner", now)
+	scoreHigh := lm.retentionScore(&critical, "scanner", now)
+
+	if scoreHigh <= scoreLow {
+		t.Errorf("critical priority score (%f) should be higher than minor (%f)", scoreHigh, scoreLow)
+	}
+}
+
+func TestRetentionScore_SynthDecay(t *testing.T) {
+	policy := &RetentionPolicy{
+		ArchiveAfterSynthDays: 7,
+		PreserveWithDeps:      false,
+	}
+	stores := map[string]*beads.Store{}
+	lm := NewBeadLifecycleManager(stores, policy, synthTestLogger())
+
+	now := time.Now().UTC()
+	eightDaysAgo := now.Add(-8 * 24 * time.Hour)
+
+	unsynthed := &beads.Bead{
+		Type:     beads.TypeBug,
+		Priority: beads.PriorityMedium,
+		Status:   beads.StatusClosed,
+	}
+
+	synthed := *unsynthed
+	synthed.Metadata = map[string]interface{}{
+		"synthesized_at": eightDaysAgo.Format(time.RFC3339),
+	}
+
+	scoreUnsynthed := lm.retentionScore(unsynthed, "scanner", now)
+	scoreSynthed := lm.retentionScore(&synthed, "scanner", now)
+
+	if scoreSynthed >= scoreUnsynthed {
+		t.Errorf("synthesized bead score (%f) should be lower than unsynthesized (%f)", scoreSynthed, scoreUnsynthed)
+	}
+}
+
+func TestBeadArchive(t *testing.T) {
+	dir := t.TempDir()
+	store, err := beads.NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+
+	b, err := store.Create("test bead", beads.TypeBug, beads.PriorityHigh, "scanner", "gh-1")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	store.Close(b.ID)
+
+	if store.Count() != 1 {
+		t.Fatalf("count = %d before archive; want 1", store.Count())
+	}
+
+	if err := store.Archive(b.ID); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+
+	if store.Count() != 0 {
+		t.Errorf("count = %d after archive; want 0", store.Count())
+	}
+
+	archiveData, err := os.ReadFile(filepath.Join(dir, "archive.jsonl"))
+	if err != nil {
+		t.Fatalf("reading archive: %v", err)
+	}
+	if !strings.Contains(string(archiveData), "test bead") {
+		t.Error("archive.jsonl should contain the bead title")
+	}
+
+	var entry beads.ArchivedBead
+	if err := json.Unmarshal(archiveData[:len(archiveData)-1], &entry); err != nil {
+		t.Fatalf("unmarshal archive entry: %v", err)
+	}
+	if entry.ID != b.ID {
+		t.Errorf("archived ID = %q; want %q", entry.ID, b.ID)
 	}
 }
 

@@ -6,10 +6,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/kubestellar/hive/v2/pkg/beads"
 )
 
@@ -21,16 +24,21 @@ const (
 	beadSynthHighPriorityBoost    = 0.1
 
 	beadSynthMetaKeySynthesizedAt = "synthesized_at"
+
+	prDescriptionMaxLen = 300
+	prEnricherCacheSize = 200
 )
 
 // BeadSynthesizer periodically scans completed beads across all agents and
 // synthesizes them into wiki facts for the shared knowledge layer.
 type BeadSynthesizer struct {
-	beadStores   map[string]*beads.Store
-	knowledgeAPI *KnowledgeAPI
-	config       BeadSynthesizerConfig
-	logger       *slog.Logger
-	vaultBaseDir string
+	beadStores       map[string]*beads.Store
+	knowledgeAPI     *KnowledgeAPI
+	config           BeadSynthesizerConfig
+	logger           *slog.Logger
+	vaultBaseDir     string
+	enricher         *PREnricher
+	lifecycleManager *BeadLifecycleManager
 
 	mu       sync.Mutex
 	cancel   context.CancelFunc
@@ -43,14 +51,30 @@ func NewBeadSynthesizer(
 	api *KnowledgeAPI,
 	config BeadSynthesizerConfig,
 	logger *slog.Logger,
+	ghClient *gh.Client,
 ) *BeadSynthesizer {
-	return &BeadSynthesizer{
+	s := &BeadSynthesizer{
 		beadStores:   stores,
 		knowledgeAPI: api,
 		config:       config,
 		logger:       logger,
 		vaultBaseDir: config.VaultPath,
 	}
+
+	if ghClient != nil && config.Org != "" {
+		s.enricher = NewPREnricher(ghClient, config.Org, config.Repos, logger)
+	}
+
+	if config.RetentionPolicy != nil {
+		s.lifecycleManager = NewBeadLifecycleManager(stores, config.RetentionPolicy, logger)
+	}
+
+	return s
+}
+
+// SetLifecycleManager attaches or replaces the lifecycle manager.
+func (s *BeadSynthesizer) SetLifecycleManager(lm *BeadLifecycleManager) {
+	s.lifecycleManager = lm
 }
 
 // Start runs the synthesis loop in the background until ctx is cancelled.
@@ -116,6 +140,19 @@ func (s *BeadSynthesizer) runOnce(ctx context.Context) {
 	if count > 0 {
 		s.logger.Info("bead synthesis cycle complete", "facts_synthesized", count)
 	}
+
+	if s.lifecycleManager != nil {
+		archived, err := s.lifecycleManager.RunCulling(ctx)
+		if err != nil {
+			s.logger.Warn("bead lifecycle culling failed", "error", err)
+		} else if archived > 0 {
+			s.logger.Info("bead lifecycle culling complete", "beads_archived", archived)
+		}
+	}
+
+	if s.enricher != nil {
+		s.enricher.ClearCache()
+	}
 }
 
 // beadCandidate pairs a bead with its source agent for provenance tracking.
@@ -154,9 +191,14 @@ func (s *BeadSynthesizer) RunSynthesis(ctx context.Context) (int, error) {
 			continue
 		}
 
+		body := s.buildEnrichedBody(ctx, c.bead, c.agent)
+		if body == "" {
+			continue
+		}
+
 		fact := ExtractedFact{
 			Title:      c.bead.Title,
-			Body:       BuildFactBody(c.bead, c.agent),
+			Body:       body,
 			Type:       factType,
 			Confidence: confidence,
 			Tags:       extractBeadTags(c.bead),
@@ -451,6 +493,273 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 	}
 
 	s.knowledgeAPI.triggerVaultReindex(dir)
+	return nil
+}
+
+// buildEnrichedBody produces the fact body, enriching with GitHub PR data when possible.
+// Returns empty string if the bead is too low-quality to synthesize.
+func (s *BeadSynthesizer) buildEnrichedBody(ctx context.Context, b *beads.Bead, agent string) string {
+	baseBody := BuildFactBody(b, agent)
+
+	if s.enricher != nil && b.ExternalRef != "" {
+		enriched := s.enricher.EnrichBody(ctx, b, agent)
+		if enriched != "" {
+			return enriched
+		}
+	}
+
+	if isLowQualityMergeBead(b) && s.enricher == nil {
+		s.logger.Debug("skipping low-quality merge bead without enricher",
+			"bead_id", b.ID, "title", b.Title)
+		return ""
+	}
+
+	return baseBody
+}
+
+// isLowQualityMergeBead detects beads that are just PR merge event titles
+// with no substantive content.
+func isLowQualityMergeBead(b *beads.Bead) bool {
+	return strings.HasPrefix(b.Title, "Merged:") && strings.TrimSpace(b.Notes) == ""
+}
+
+// CleanupVault removes low-quality facts from the vault directory that were
+// previously synthesized without enrichment. Call at startup to purge junk.
+func (s *BeadSynthesizer) CleanupVault() (int, error) {
+	if s.vaultBaseDir == "" {
+		return 0, nil
+	}
+
+	entries, err := os.ReadDir(s.vaultBaseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("reading vault dir: %w", err)
+	}
+
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		path := filepath.Join(s.vaultBaseDir, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		content := string(data)
+		if isJunkFact(content) {
+			if err := os.Remove(path); err != nil {
+				s.logger.Warn("failed to remove junk fact", "path", path, "error", err)
+				continue
+			}
+			removed++
+		}
+	}
+
+	if removed > 0 {
+		s.knowledgeAPI.triggerVaultReindex(s.vaultBaseDir)
+	}
+
+	return removed, nil
+}
+
+// isJunkFact detects vault files that contain only merge titles and metadata
+// lines (External/Source) with no substantive knowledge content.
+func isJunkFact(content string) bool {
+	bodyStart := strings.Index(content, "---\n")
+	if bodyStart < 0 {
+		return false
+	}
+	secondFence := strings.Index(content[bodyStart+4:], "---\n")
+	if secondFence < 0 {
+		return false
+	}
+
+	body := strings.TrimSpace(content[bodyStart+4+secondFence+4:])
+	if body == "" {
+		return true
+	}
+
+	if !strings.Contains(strings.ToLower(content), "merged:") {
+		return false
+	}
+
+	lines := strings.Split(body, "\n")
+	substantiveLines := 0
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- External:") ||
+			strings.HasPrefix(trimmed, "- Source:") ||
+			strings.HasPrefix(trimmed, "- Severity:") ||
+			strings.HasPrefix(trimmed, "- File:") {
+			continue
+		}
+		substantiveLines++
+	}
+
+	return substantiveLines == 0
+}
+
+// PREnricher fetches structured PR data from GitHub to produce meaningful
+// fact bodies instead of just echoing bead titles.
+type PREnricher struct {
+	ghClient *gh.Client
+	org      string
+	repos    []string
+	logger   *slog.Logger
+	mu       sync.Mutex
+	cache    map[string]*gh.PullRequest
+}
+
+var (
+	ghRefPattern   = regexp.MustCompile(`^gh-(\d+)$`)
+	repoRefPattern = regexp.MustCompile(`^(?:([^/]+)/)?([^#]+)#(\d+)$`)
+)
+
+// NewPREnricher creates an enricher with the given GitHub client and repo context.
+func NewPREnricher(client *gh.Client, org string, repos []string, logger *slog.Logger) *PREnricher {
+	return &PREnricher{
+		ghClient: client,
+		org:      org,
+		repos:    repos,
+		logger:   logger,
+		cache:    make(map[string]*gh.PullRequest),
+	}
+}
+
+// ClearCache resets the in-memory PR cache between synthesis cycles.
+func (e *PREnricher) ClearCache() {
+	e.mu.Lock()
+	e.cache = make(map[string]*gh.PullRequest)
+	e.mu.Unlock()
+}
+
+// EnrichBody fetches PR data for a bead's ExternalRef and builds a fact body
+// with the PR description, labels, and change stats.
+func (e *PREnricher) EnrichBody(ctx context.Context, b *beads.Bead, agent string) string {
+	owner, repo, number := e.parseRef(b.ExternalRef)
+	if number == 0 {
+		return ""
+	}
+
+	pr := e.fetchPR(ctx, owner, repo, number)
+	if pr == nil {
+		return ""
+	}
+
+	var buf strings.Builder
+
+	desc := pr.GetBody()
+	if desc != "" {
+		desc = strings.TrimSpace(desc)
+		if len([]rune(desc)) > prDescriptionMaxLen {
+			desc = string([]rune(desc)[:prDescriptionMaxLen]) + "..."
+		}
+		buf.WriteString(desc)
+		buf.WriteString("\n")
+	}
+
+	buf.WriteString("\n")
+
+	if changed := pr.GetChangedFiles(); changed > 0 {
+		fmt.Fprintf(&buf, "- Changed: %d files (+%d, -%d)\n",
+			changed, pr.GetAdditions(), pr.GetDeletions())
+	}
+
+	var labelNames []string
+	for _, l := range pr.Labels {
+		labelNames = append(labelNames, l.GetName())
+	}
+	if len(labelNames) > 0 {
+		fmt.Fprintf(&buf, "- Labels: %s\n", strings.Join(labelNames, ", "))
+	}
+
+	if mergedAt := pr.GetMergedAt(); !mergedAt.IsZero() {
+		fmt.Fprintf(&buf, "- Merged: %s\n", mergedAt.Format("2006-01-02"))
+	}
+
+	fmt.Fprintf(&buf, "- Source: bead:%s/%s\n", agent, b.ID)
+
+	body := buf.String()
+	if len([]rune(body)) > beadSynthMaxBodyLen {
+		body = string([]rune(body)[:beadSynthMaxBodyLen]) + "..."
+	}
+
+	return body
+}
+
+// parseRef extracts owner, repo, and PR number from an ExternalRef string.
+func (e *PREnricher) parseRef(ref string) (string, string, int) {
+	if m := ghRefPattern.FindStringSubmatch(ref); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		if len(e.repos) > 0 {
+			return e.org, e.repos[0], n
+		}
+		return e.org, "", n
+	}
+
+	if m := repoRefPattern.FindStringSubmatch(ref); m != nil {
+		owner := m[1]
+		if owner == "" {
+			owner = e.org
+		}
+		repo := m[2]
+		n, _ := strconv.Atoi(m[3])
+		return owner, repo, n
+	}
+
+	return "", "", 0
+}
+
+// fetchPR retrieves a PR from GitHub, using the in-memory cache first.
+func (e *PREnricher) fetchPR(ctx context.Context, owner, repo string, number int) *gh.PullRequest {
+	if e.ghClient == nil {
+		return nil
+	}
+	if repo == "" {
+		return e.fetchPRFromRepos(ctx, owner, number)
+	}
+
+	key := fmt.Sprintf("%s/%s#%d", owner, repo, number)
+
+	e.mu.Lock()
+	if cached, ok := e.cache[key]; ok {
+		e.mu.Unlock()
+		return cached
+	}
+	e.mu.Unlock()
+
+	pr, _, err := e.ghClient.PullRequests.Get(ctx, owner, repo, number)
+	if err != nil {
+		e.logger.Debug("failed to fetch PR for enrichment",
+			"owner", owner, "repo", repo, "number", number, "error", err)
+		return nil
+	}
+
+	e.mu.Lock()
+	if len(e.cache) < prEnricherCacheSize {
+		e.cache[key] = pr
+	}
+	e.mu.Unlock()
+
+	return pr
+}
+
+// fetchPRFromRepos tries each configured repo to find the PR.
+func (e *PREnricher) fetchPRFromRepos(ctx context.Context, owner string, number int) *gh.PullRequest {
+	for _, repo := range e.repos {
+		pr := e.fetchPR(ctx, owner, repo, number)
+		if pr != nil {
+			return pr
+		}
+	}
 	return nil
 }
 

@@ -23,6 +23,14 @@ type Client struct {
 	logger       *slog.Logger
 }
 
+// GoGitHub returns the underlying go-github client for direct API access.
+func (c *Client) GoGitHub() *gh.Client {
+	if c == nil {
+		return nil
+	}
+	return c.client
+}
+
 type Issue struct {
 	Repo           string    `json:"repo"`
 	Number         int       `json:"number"`

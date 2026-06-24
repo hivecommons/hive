@@ -43,12 +43,21 @@ type KnowledgeConfig struct {
 // BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.
 // Enabled defaults to true when knowledge is enabled; set to false to opt out.
 type BeadSynthesizerConfig struct {
-	Enabled          *bool   `yaml:"enabled,omitempty"`
-	Schedule         string  `yaml:"schedule"`
-	MinConfidence    float64 `yaml:"min_confidence"`
-	TargetLayer      string  `yaml:"target_layer"`
-	MaxFactsPerCycle int     `yaml:"max_facts_per_cycle"`
-	VaultPath        string  `yaml:"vault_path"`
+	Enabled          *bool            `yaml:"enabled,omitempty"`
+	Schedule         string           `yaml:"schedule"`
+	MinConfidence    float64          `yaml:"min_confidence"`
+	TargetLayer      string           `yaml:"target_layer"`
+	MaxFactsPerCycle int              `yaml:"max_facts_per_cycle"`
+	VaultPath        string           `yaml:"vault_path"`
+	RetentionPolicy  *RetentionPolicy `yaml:"retention_policy"`
+}
+
+// RetentionPolicy controls intelligent bead lifecycle management.
+type RetentionPolicy struct {
+	MaxBeads               int  `yaml:"max_beads"`
+	ArchiveAfterSynthDays  int  `yaml:"archive_after_synth_days"`
+	HighPriorityRetainDays int  `yaml:"high_priority_retain_days"`
+	PreserveWithDeps       bool `yaml:"preserve_with_deps"`
 }
 
 // IsEnabled returns whether bead synthesis is enabled (defaults to true).

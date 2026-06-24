@@ -879,6 +879,11 @@ data:
         target_layer: project
         max_facts_per_cycle: 20
         vault_path: /data/vaults/bead-synth-wiki
+        retention_policy:
+          max_beads: 5000
+          archive_after_synth_days: 7
+          high_priority_retain_days: 30
+          preserve_with_deps: true
       vaults:
         - name: bead-synth-wiki
           path: /data/vaults/bead-synth-wiki

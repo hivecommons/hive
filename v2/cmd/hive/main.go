@@ -22,6 +22,8 @@ import (
 
 	"gopkg.in/natefinch/lumberjack.v2"
 
+	gh "github.com/google/go-github/v72/github"
+
 	"github.com/kubestellar/hive/v2/pkg/advisory"
 	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/agent"
@@ -664,13 +666,42 @@ func main() {
 				logger.Info("auto-connected bead-synth vault", "path", synthVaultPath)
 			}
 		}
+		var rawGH *gh.Client
+		if ghClient != nil {
+			rawGH = ghClient.GoGitHub()
+		}
+
+		var kRetention *knowledge.RetentionPolicy
+		if rp := cfg.Knowledge.BeadSynthesizer.RetentionPolicy; rp != nil {
+			kRetention = &knowledge.RetentionPolicy{
+				MaxBeads:               rp.MaxBeads,
+				ArchiveAfterSynthDays:  rp.ArchiveAfterSynthDays,
+				HighPriorityRetainDays: rp.HighPriorityRetainDays,
+				PreserveWithDeps:       rp.PreserveWithDeps,
+			}
+		} else {
+			kRetention = &knowledge.RetentionPolicy{
+				PreserveWithDeps: true,
+			}
+		}
+
 		beadSynth = knowledge.NewBeadSynthesizer(beadStores, knowledgeAPI, knowledge.BeadSynthesizerConfig{
 			Schedule:         cfg.Knowledge.BeadSynthesizer.Schedule,
 			MinConfidence:    cfg.Knowledge.BeadSynthesizer.MinConfidence,
 			TargetLayer:      cfg.Knowledge.BeadSynthesizer.TargetLayer,
 			MaxFactsPerCycle: cfg.Knowledge.BeadSynthesizer.MaxFactsPerCycle,
 			VaultPath:        synthVaultPath,
-		}, logger)
+			Org:              cfg.Project.Org,
+			Repos:            cfg.Project.Repos,
+			RetentionPolicy:  kRetention,
+		}, logger, rawGH)
+
+		if cleaned, err := beadSynth.CleanupVault(); err != nil {
+			logger.Warn("vault cleanup failed", "error", err)
+		} else if cleaned > 0 {
+			logger.Info("cleaned up low-quality bead-synth facts", "removed", cleaned)
+		}
+
 		if cfg.Knowledge.Enabled && cfg.Knowledge.BeadSynthesizer.IsEnabled() && knowledgeAPI != nil {
 			beadSynth.StartBackground(ctx)
 			logger.Info("bead-to-wiki synthesizer started",

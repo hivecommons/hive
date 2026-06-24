@@ -1,6 +1,7 @@
 package knowledge
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"sync"
 	"time"
 )
+
+const accessCountsFile = "access_counts.json"
 
 const (
 	maxFileSizeBytes = 512 * 1024 // skip files larger than 512KB
@@ -66,6 +69,7 @@ func NewFileStore(rootDir string, name string, logger *slog.Logger) (*FileStore,
 		accessCounts: make(map[string]int),
 	}
 
+	s.loadAccessCounts()
 	s.reindex()
 	return s, nil
 }
@@ -150,6 +154,8 @@ func (s *FileStore) reindex() {
 			"page_delta", len(pages)-prevCount,
 		)
 	}
+
+	s.persistAccessCounts()
 }
 
 func (s *FileStore) refreshIfStale() {
@@ -451,4 +457,47 @@ func containsTag(tags []string, tag string) bool {
 		}
 	}
 	return false
+}
+
+// loadAccessCounts reads persisted access counts from disk.
+func (s *FileStore) loadAccessCounts() {
+	path := filepath.Join(s.rootDir, accessCountsFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	var counts map[string]int
+	if err := json.Unmarshal(data, &counts); err != nil {
+		s.logger.Warn("corrupted access counts file, resetting", "path", path, "error", err)
+		return
+	}
+
+	s.mu.Lock()
+	s.accessCounts = counts
+	s.mu.Unlock()
+}
+
+// persistAccessCounts writes the current access counts to disk.
+func (s *FileStore) persistAccessCounts() {
+	s.mu.RLock()
+	if len(s.accessCounts) == 0 {
+		s.mu.RUnlock()
+		return
+	}
+	data, err := json.Marshal(s.accessCounts)
+	s.mu.RUnlock()
+
+	if err != nil {
+		s.logger.Warn("failed to marshal access counts", "error", err)
+		return
+	}
+
+	path := filepath.Join(s.rootDir, accessCountsFile)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		s.logger.Warn("failed to write access counts", "path", path, "error", err)
+		return
+	}
+	os.Rename(tmpPath, path)
 }

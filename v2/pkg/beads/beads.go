@@ -406,6 +406,88 @@ func (s *Store) Count() int {
 	return len(s.beads)
 }
 
+const archiveFileName = "archive.jsonl"
+
+// ArchivedBead is the compact representation written to the archive log.
+type ArchivedBead struct {
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Type        BeadType  `json:"type"`
+	Priority    Priority  `json:"priority"`
+	ExternalRef string    `json:"external_ref,omitempty"`
+	ClosedAt    time.Time `json:"closed_at,omitempty"`
+	ArchivedAt  time.Time `json:"archived_at"`
+}
+
+// Archive writes a compact summary of the bead to archive.jsonl, then removes
+// it from the store. This preserves an audit trail without the full bead weight.
+func (s *Store) Archive(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	b, ok := s.beads[id]
+	if !ok {
+		return fmt.Errorf("bead %s not found", id)
+	}
+
+	entry := ArchivedBead{
+		ID:          b.ID,
+		Title:       b.Title,
+		Type:        b.Type,
+		Priority:    b.Priority,
+		ExternalRef: b.ExternalRef,
+		ArchivedAt:  time.Now().UTC(),
+	}
+	if b.ClosedAt != nil {
+		entry.ClosedAt = b.ClosedAt.Time
+	}
+
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshaling archive entry: %w", err)
+	}
+
+	archivePath := filepath.Join(s.dir, archiveFileName)
+	f, err := os.OpenFile(archivePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("opening archive file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("writing archive entry: %w", err)
+	}
+
+	delete(s.beads, id)
+	return s.persist(nil)
+}
+
+// AllClosed returns all beads with done or closed status.
+func (s *Store) AllClosed() []*Bead {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var result []*Bead
+	for _, b := range s.beads {
+		if b.Status == StatusDone || b.Status == StatusClosed {
+			result = append(result, b)
+		}
+	}
+	return result
+}
+
+// HasOpenBead checks if a bead with the given ID exists and is not done/closed.
+func (s *Store) HasOpenBead(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	b, ok := s.beads[id]
+	if !ok {
+		return false
+	}
+	return b.Status != StatusDone && b.Status != StatusClosed
+}
+
 // Unsynthesized returns all done/closed beads that have not yet been
 // synthesized into wiki facts (i.e., missing the "synthesized_at" metadata key).
 func (s *Store) Unsynthesized() []*Bead {
