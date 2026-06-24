@@ -3438,13 +3438,11 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 	stats["vaults"] = s.deps.Knowledge.Vaults()
 	stats["git_sources"] = s.deps.Knowledge.GitSources()
 
-	if layers, ok := stats["layers"].([]interface{}); ok {
+	if layers, ok := stats["layers"].([]map[string]interface{}); ok {
 		total := 0
-		for _, l := range layers {
-			if m, ok := l.(map[string]interface{}); ok {
-				if p, ok := m["total_pages"].(int); ok {
-					total += p
-				}
+		for _, m := range layers {
+			if p, ok := m["total_pages"].(int); ok {
+				total += p
 			}
 		}
 		s.AppendFactHistory(total)
