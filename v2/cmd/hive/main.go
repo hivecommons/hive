@@ -760,11 +760,13 @@ func main() {
 		if beadSynth != nil {
 			beadSynth.SetGraphStore(graphStore)
 		}
-		for _, ls := range knowledgeAPI.FileStores() {
-			if n, err := graphStore.SyncFromFileStore(ls); err != nil {
-				logger.Warn("graph sync failed", "store", ls.Name(), "error", err)
-			} else if n > 0 {
-				logger.Info("graph synced from vault", "store", ls.Name(), "triples", n)
+		if knowledgeAPI != nil {
+			for _, ls := range knowledgeAPI.FileStores() {
+				if n, err := graphStore.SyncFromFileStore(ls); err != nil {
+					logger.Warn("graph sync failed", "store", ls.Name(), "error", err)
+				} else if n > 0 {
+					logger.Info("graph synced from vault", "store", ls.Name(), "triples", n)
+				}
 			}
 		}
 	}
