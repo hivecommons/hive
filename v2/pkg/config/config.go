@@ -1101,7 +1101,14 @@ func (c *Config) Save() error {
 	// which source is authoritative based on the runtime environment.
 	backupPath := "/data/hive.yaml.bak"
 	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
-		log.Printf("[config] warning: failed to write PVC backup to %s: %v", backupPath, err)
+		// Common cause: init container created .bak as root, runtime user can't overwrite.
+		// Remove and retry so runtime state is not silently lost.
+		os.Remove(backupPath)
+		if retryErr := os.WriteFile(backupPath, data, 0o644); retryErr != nil {
+			log.Printf("[config] warning: failed to write PVC backup to %s (even after remove): %v", backupPath, retryErr)
+		} else {
+			log.Printf("[config] PVC backup written to %s (recovered from permission error)", backupPath)
+		}
 	} else {
 		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupPath)
 	}
