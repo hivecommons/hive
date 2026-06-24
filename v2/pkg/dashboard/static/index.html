@@ -3042,6 +3042,34 @@
       return sparkSvg(series, '#f85149');
     }
 
+    // ── Fact count sparkline (30-day server-side history) ──
+    let _factHistory = [];
+    const FACT_SPARKLINE_W = 100, FACT_SPARKLINE_H = 24;
+    async function fetchFactHistory() {
+      try {
+        const r = await fetch('/api/knowledge/fact-history');
+        _factHistory = await r.json();
+      } catch { /* non-critical */ }
+    }
+    function factSparkSvg() {
+      if (!_factHistory || _factHistory.length < 2) return '';
+      const values = _factHistory.map(e => e.count);
+      const max = Math.max(...values);
+      const min = Math.min(...values);
+      const range = (max - min) || max || 1;
+      const pts = values.map((v, i) => {
+        const x = (i / (values.length - 1)) * FACT_SPARKLINE_W;
+        const y = FACT_SPARKLINE_H - ((v - min) / range) * (FACT_SPARKLINE_H - 2) - 1;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      });
+      const lastPt = pts[pts.length - 1].split(',');
+      return `<span class="sparkline" style="margin-left:0;margin-top:4px"><svg width="${FACT_SPARKLINE_W}" height="${FACT_SPARKLINE_H}" viewBox="0 0 ${FACT_SPARKLINE_W} ${FACT_SPARKLINE_H}">` +
+        `<polyline points="${pts.join(' ')}" fill="none" stroke="#2563eb" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+        `<circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="2" fill="#2563eb"/>` +
+        `</svg></span>`;
+    }
+    fetchFactHistory();
+
     async function fetchHistory() {
       try {
         const r = await fetch('/api/history');
@@ -5259,7 +5287,7 @@ function burnAreaChart() {
     let _kbRendered = false;
     async function fetchKnowledgeStats() {
       try {
-        const [r] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus()]);
+        const [r] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory()]);
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
@@ -5591,7 +5619,7 @@ function burnAreaChart() {
       const staleTotal = layers.reduce((sum, l) => sum + (l.stale || 0), 0);
       const orphanedTotal = layers.reduce((sum, l) => sum + (l.orphaned || 0), 0);
       html += '<div class="kb-stat-grid" style="margin-bottom:14px">';
-      html += `<div class="kb-stat"><div class="val">${totalPages}</div><div class="lbl">Total Facts</div></div>`;
+      html += `<div class="kb-stat"><div class="val">${totalPages}</div><div class="lbl">Total Facts</div>${factSparkSvg()}</div>`;
       html += `<div class="kb-stat"><div class="val">${healthyCount}/${layers.length}</div><div class="lbl">Layers Online</div></div>`;
       html += `<div class="kb-stat"><div class="val">${escapeHtml(_kbCache.engine || 'n/a')}</div><div class="lbl">Engine</div></div>`;
       if (staleTotal > 0) html += `<div class="kb-stat"><div class="val" style="color:#d97706">${staleTotal}</div><div class="lbl">Stale</div></div>`;

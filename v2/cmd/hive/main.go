@@ -213,6 +213,15 @@ func main() {
 		}
 	}
 
+	// Restore fact count history from disk so the knowledge sparkline survives restarts
+	const factHistoryPath = "/data/fact-history.json"
+	var pendingFactSeed []dashboard.FactHistoryEntry
+	if factData, err := os.ReadFile(factHistoryPath); err == nil {
+		if err := json.Unmarshal(factData, &pendingFactSeed); err == nil && len(pendingFactSeed) > 0 {
+			logger.Info("fact history loaded", "entries", len(pendingFactSeed))
+		}
+	}
+
 	if cfg.Knowledge.Enabled {
 		layers := convertKnowledgeLayers(cfg.Knowledge.Layers)
 		primerCfg := knowledge.PrimerConfig{
@@ -456,6 +465,11 @@ func main() {
 	if len(pendingTokenSeed) > 0 {
 		dashSrv.SeedTokenSparklineHistory(pendingTokenSeed)
 		logger.Info("token sparkline history restored", "entries", len(pendingTokenSeed))
+	}
+
+	if len(pendingFactSeed) > 0 {
+		dashSrv.SeedFactHistory(pendingFactSeed)
+		logger.Info("fact history restored", "entries", len(pendingFactSeed))
 	}
 
 	beadStores := make(map[string]*beads.Store)
@@ -1912,6 +1926,14 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 			tokenData, err := json.Marshal(tokenHistory)
 			if err == nil {
 				atomicWrite("/data/token-sparkline-history.json", tokenData)
+			}
+		}
+
+		factHist := dashSrv.FactHistory()
+		if len(factHist) > 0 {
+			factData, err := json.Marshal(factHist)
+			if err == nil {
+				atomicWrite("/data/fact-history.json", factData)
 			}
 		}
 	}

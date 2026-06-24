@@ -567,8 +567,8 @@ func (s *BeadSynthesizer) CleanupVault() (int, error) {
 	return removed, nil
 }
 
-// isJunkFact detects vault files that contain only merge titles and metadata
-// lines (External/Source) with no substantive knowledge content.
+// isJunkFact detects vault files whose body contains only metadata lines
+// (External/Source/Severity/File/Recommendation) with no substantive content.
 func isJunkFact(content string) bool {
 	bodyStart := strings.Index(content, "---\n")
 	if bodyStart < 0 {
@@ -584,10 +584,6 @@ func isJunkFact(content string) bool {
 		return true
 	}
 
-	if !strings.Contains(strings.ToLower(content), "merged:") {
-		return false
-	}
-
 	lines := strings.Split(body, "\n")
 	substantiveLines := 0
 	for _, line := range lines {
@@ -598,7 +594,8 @@ func isJunkFact(content string) bool {
 		if strings.HasPrefix(trimmed, "- External:") ||
 			strings.HasPrefix(trimmed, "- Source:") ||
 			strings.HasPrefix(trimmed, "- Severity:") ||
-			strings.HasPrefix(trimmed, "- File:") {
+			strings.HasPrefix(trimmed, "- File:") ||
+			strings.HasPrefix(trimmed, "- Recommendation:") {
 			continue
 		}
 		substantiveLines++

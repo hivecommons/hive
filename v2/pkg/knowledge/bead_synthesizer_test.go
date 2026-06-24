@@ -814,19 +814,21 @@ func TestIsJunkFact(t *testing.T) {
 		t.Error("expected good fact not to be junk")
 	}
 
-	noMerge := "---\ntitle: Something else\ntype: gotcha\n---\n\n- External: gh-5\n- Source: bead:scanner/def\n"
-	if isJunkFact(noMerge) {
-		t.Error("non-merge fact with only metadata should not be junk")
+	metadataOnly := "---\ntitle: Something else\ntype: gotcha\n---\n\n- External: gh-5\n- Source: bead:scanner/def\n"
+	if !isJunkFact(metadataOnly) {
+		t.Error("fact with only metadata lines and no substantive content should be junk")
 	}
 }
 
 func TestCleanupVault_RemovesJunk(t *testing.T) {
 	vaultDir := t.TempDir()
 
-	junk := "---\ntitle: Merged: console#100 — updated README\ntype: pattern\nconfidence: 0.70\nsource: bead:scanner/abc\n---\n\n- External: gh-100\n- Source: bead:scanner/abc\n"
+	mergeJunk := "---\ntitle: Merged: console#100 — updated README\ntype: pattern\nconfidence: 0.70\nsource: bead:scanner/abc\n---\n\n- External: gh-100\n- Source: bead:scanner/abc\n"
+	metadataOnlyJunk := "---\ntitle: console: merged CSP wss wildcard removal PR#17301\ntype: pattern\nconfidence: 0.60\n---\n\n- External: gh-17301\n- Source: bead:scanner/ef3346c5-501\n"
 	good := "---\ntitle: Always check OAuth scopes\ntype: gotcha\nconfidence: 0.80\n---\n\nWhen handling OAuth callbacks, always verify the returned scopes match what was requested.\n- Source: bead:guide/xyz\n"
 
-	os.WriteFile(filepath.Join(vaultDir, "merged-console100.md"), []byte(junk), 0644)
+	os.WriteFile(filepath.Join(vaultDir, "merged-console100.md"), []byte(mergeJunk), 0644)
+	os.WriteFile(filepath.Join(vaultDir, "csp-wss-removal.md"), []byte(metadataOnlyJunk), 0644)
 	os.WriteFile(filepath.Join(vaultDir, "oauth-scopes.md"), []byte(good), 0644)
 
 	api := NewKnowledgeAPI(nil, KnowledgeConfig{Enabled: true}, synthTestLogger())
@@ -838,8 +840,8 @@ func TestCleanupVault_RemovesJunk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CleanupVault failed: %v", err)
 	}
-	if removed != 1 {
-		t.Errorf("removed = %d; want 1", removed)
+	if removed != 2 {
+		t.Errorf("removed = %d; want 2", removed)
 	}
 
 	entries, _ := os.ReadDir(vaultDir)

@@ -53,6 +53,9 @@ type Server struct {
 	tokenHistory      []TokenSparklineEntry
 	lastFullBroadcast time.Time
 
+	factHistoryMu sync.RWMutex
+	factHistory   []FactHistoryEntry
+
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
 
@@ -279,6 +282,18 @@ type TokenSparklineEntry struct {
 
 // tokenSparklineMaxEntries caps the on-disk history to ~24h at 5-min intervals.
 const tokenSparklineMaxEntries = 288
+
+// FactHistoryEntry records a total-facts snapshot at a point in time.
+type FactHistoryEntry struct {
+	Timestamp int64 `json:"t"`
+	Count     int   `json:"count"`
+}
+
+// factHistoryMaxEntries caps the fact sparkline to ~30 days at hourly intervals.
+const factHistoryMaxEntries = 720
+
+// factHistoryMinIntervalMs prevents recording more than once per hour (ms).
+const factHistoryMinIntervalMs = 3_600_000
 
 const sseRetryMs = 3000
 
@@ -1043,6 +1058,48 @@ func (s *Server) SeedTokenSparklineHistory(entries []TokenSparklineEntry) {
 		entries = entries[len(entries)-tokenSparklineMaxEntries:]
 	}
 	s.tokenHistory = entries
+}
+
+// AppendFactHistory records a total-facts count if enough time has passed.
+func (s *Server) AppendFactHistory(count int) {
+	now := time.Now().UnixMilli()
+
+	s.factHistoryMu.Lock()
+	defer s.factHistoryMu.Unlock()
+
+	if len(s.factHistory) > 0 {
+		last := s.factHistory[len(s.factHistory)-1]
+		if now-last.Timestamp < factHistoryMinIntervalMs {
+			return
+		}
+	}
+
+	s.factHistory = append(s.factHistory, FactHistoryEntry{
+		Timestamp: now,
+		Count:     count,
+	})
+	if len(s.factHistory) > factHistoryMaxEntries {
+		s.factHistory = s.factHistory[len(s.factHistory)-factHistoryMaxEntries:]
+	}
+}
+
+// FactHistory returns a copy of the fact count history.
+func (s *Server) FactHistory() []FactHistoryEntry {
+	s.factHistoryMu.RLock()
+	defer s.factHistoryMu.RUnlock()
+	out := make([]FactHistoryEntry, len(s.factHistory))
+	copy(out, s.factHistory)
+	return out
+}
+
+// SeedFactHistory restores persisted fact history on startup.
+func (s *Server) SeedFactHistory(entries []FactHistoryEntry) {
+	s.factHistoryMu.Lock()
+	defer s.factHistoryMu.Unlock()
+	if len(entries) > factHistoryMaxEntries {
+		entries = entries[len(entries)-factHistoryMaxEntries:]
+	}
+	s.factHistory = entries
 }
 
 // SetAdvisoryDigest stores the latest advisory digest for SSE broadcast.

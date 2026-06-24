@@ -114,6 +114,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/search", s.handleKnowledgeSearch)
 	s.mux.HandleFunc("GET /api/knowledge/health", s.handleKnowledgeHealth)
 	s.mux.HandleFunc("GET /api/knowledge/stats", s.handleKnowledgeStats)
+	s.mux.HandleFunc("GET /api/knowledge/fact-history", s.handleFactHistory)
 	s.mux.HandleFunc("POST /api/knowledge/create", s.handleKnowledgeCreate)
 	s.mux.HandleFunc("POST /api/knowledge/import", s.handleKnowledgeImport)
 	s.mux.HandleFunc("POST /api/knowledge/promote", s.handleKnowledgePromote)
@@ -3355,7 +3356,24 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 	stats := s.deps.Knowledge.Stats(s.deps.Ctx)
 	stats["vaults"] = s.deps.Knowledge.Vaults()
 	stats["git_sources"] = s.deps.Knowledge.GitSources()
+
+	if layers, ok := stats["layers"].([]interface{}); ok {
+		total := 0
+		for _, l := range layers {
+			if m, ok := l.(map[string]interface{}); ok {
+				if p, ok := m["total_pages"].(int); ok {
+					total += p
+				}
+			}
+		}
+		s.AppendFactHistory(total)
+	}
+
 	jsonResponse(w, stats)
+}
+
+func (s *Server) handleFactHistory(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.FactHistory())
 }
 
 func (s *Server) handleKnowledgeLayer(w http.ResponseWriter, r *http.Request) {
