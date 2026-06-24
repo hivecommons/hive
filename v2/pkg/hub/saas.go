@@ -1757,6 +1757,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 			latestSHA := getLatestSHAForBranch(branch)
 			s.registry.Hives[i].Upgrading = true
 			s.registry.Hives[i].UpgradeTarget = latestSHA
+			s.registry.Hives[i].UpgradeStartedAt = time.Now()
 			break
 		}
 	}
@@ -1918,6 +1919,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 				if s.registry.Hives[i].ID == id {
 					s.registry.Hives[i].Upgrading = true
 					s.registry.Hives[i].UpgradeTarget = latestSHA
+					s.registry.Hives[i].UpgradeStartedAt = time.Now()
 					break
 				}
 			}
@@ -2043,41 +2045,67 @@ func (s *HubServer) triggerAutoUpgrades() {
 			continue
 		}
 		s.mu.RLock()
-		var currentSHA, branch string
+		var currentSHA, branch, upgradeTarget string
 		var alreadyUpgrading bool
+		var upgradeStartedAt time.Time
 		for _, reg := range s.registry.Hives {
 			if reg.ID == h.ID {
 				currentSHA = reg.GitHash
 				branch = reg.GitBranch
 				alreadyUpgrading = reg.Upgrading
+				upgradeTarget = reg.UpgradeTarget
+				upgradeStartedAt = reg.UpgradeStartedAt
 				break
 			}
 		}
 		s.mu.RUnlock()
 		if alreadyUpgrading {
-			// Hive is still upgrading — do NOT advance UpgradeTarget.
-			// Advancing the target while upgrading creates a moving goalpost:
-			// the hive upgrades to SHA_A, but by the time it heartbeats back,
-			// the target has moved to SHA_B, so the clearing condition
-			// (payload.GitHash == UpgradeTarget) never matches and the hive
-			// stays stuck in Upgrading forever.
-			//
-			// Re-populate the heartbeatUpgrade map (in case the hub restarted)
-			// but keep the ORIGINAL target so the hive can satisfy it.
+			if branch == "" {
+				branch = "v2"
+			}
+			upgradeAge := time.Since(upgradeStartedAt)
+			isStale := !upgradeStartedAt.IsZero() && upgradeAge > staleUpgradeTimeout
+
+			if isStale {
+				// Upgrade has been stuck longer than staleUpgradeTimeout.
+				// The target SHA may contain a crashing bug that a newer
+				// commit fixes. Advance the target to latest so the spoke
+				// can pick up the fix.
+				latestSHA := getLatestSHAForBranch(branch)
+				if latestSHA != "" && latestSHA != upgradeTarget {
+					s.logger.Warn("advancing upgrade target for stale upgrade",
+						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
+						"old_target", upgradeTarget, "new_target", latestSHA)
+					s.mu.Lock()
+					for i := range s.registry.Hives {
+						if s.registry.Hives[i].ID == h.ID {
+							s.registry.Hives[i].UpgradeTarget = latestSHA
+							s.registry.Hives[i].UpgradeStartedAt = time.Now()
+							break
+						}
+					}
+					s.heartbeatUpgrade[h.ID] = latestSHA
+					s.mu.Unlock()
+					hiveCluster := s.clusterForHive(&h)
+					if hiveCluster != nil && !hiveCluster.InCluster {
+						ns := "hive-hosted-" + h.ID
+						cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
+						if out, err := cmd.CombinedOutput(); err != nil {
+							s.logger.Warn("stale upgrade kubectl restart failed",
+								"hive", h.ID, "output", string(out))
+						}
+					}
+					continue
+				}
+			}
+
+			// Not stale — keep the original target so the hive can satisfy it.
+			// Re-populate the heartbeatUpgrade map in case the hub restarted.
 			hiveCluster := s.clusterForHive(&h)
 			if hiveCluster != nil && !hiveCluster.InCluster {
-				s.mu.RLock()
-				var target string
-				for _, reg := range s.registry.Hives {
-					if reg.ID == h.ID {
-						target = reg.UpgradeTarget
-						break
-					}
-				}
-				s.mu.RUnlock()
-				if target != "" {
+				if upgradeTarget != "" {
 					s.mu.Lock()
-					s.heartbeatUpgrade[h.ID] = target
+					s.heartbeatUpgrade[h.ID] = upgradeTarget
 					s.mu.Unlock()
 				}
 			}
@@ -2106,6 +2134,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			if s.registry.Hives[i].ID == h.ID {
 				s.registry.Hives[i].Upgrading = true
 				s.registry.Hives[i].UpgradeTarget = latestSHA
+				s.registry.Hives[i].UpgradeStartedAt = time.Now()
 				break
 			}
 		}

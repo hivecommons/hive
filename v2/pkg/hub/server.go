@@ -25,11 +25,12 @@ import (
 var staticFS embed.FS
 
 const (
-	registryPath       = "/data/hub-registry.json"
-	maxHeartbeatAge    = 5 * time.Minute
-	staleRemoveAge     = 24 * time.Hour
-	registrySaveDelay  = 5 * time.Second
-	maxPayloadBytes    = 1 << 20 // 1MB
+	registryPath           = "/data/hub-registry.json"
+	maxHeartbeatAge        = 5 * time.Minute
+	staleRemoveAge         = 24 * time.Hour
+	registrySaveDelay      = 5 * time.Second
+	maxPayloadBytes        = 1 << 20 // 1MB
+	staleUpgradeTimeout    = 10 * time.Minute
 )
 
 type Registry struct {
@@ -69,6 +70,7 @@ type RegistryEntry struct {
 	Online             bool           `json:"online"`
 	Upgrading          bool           `json:"upgrading,omitempty"`
 	UpgradeTarget      string         `json:"upgradeTarget,omitempty"`
+	UpgradeStartedAt   time.Time      `json:"upgradeStartedAt,omitempty"`
 	IssueHistory       []SparkPoint   `json:"issueHistory,omitempty"`
 	PRHistory          []SparkPoint   `json:"prHistory,omitempty"`
 	GitHubAppRequired  bool           `json:"githubAppRequired,omitempty"`
