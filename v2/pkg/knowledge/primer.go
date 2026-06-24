@@ -18,6 +18,7 @@ import (
 type Primer struct {
 	layers     []layerClient
 	fileStores []localStore
+	graphStore *GraphStore
 	config     PrimerConfig
 	logger     *slog.Logger
 	embedder   *EmbeddingCache
@@ -130,11 +131,14 @@ func (p *Primer) Prime(ctx context.Context, filePaths []string, keywords []strin
 		prioritized = prioritized[:p.config.MaxFacts]
 	}
 
+	prioritized = p.expandWithGraph(prioritized)
+
 	elapsed := time.Since(start).Milliseconds()
 	p.logger.Info("knowledge primed",
 		"facts", len(prioritized),
 		"http_layers", len(p.layers),
 		"file_stores", len(p.fileStores),
+		"graph", p.graphStore != nil,
 		"query_ms", elapsed,
 	)
 
@@ -216,6 +220,57 @@ func (p *Primer) applyPriority(facts []Fact) []Fact {
 		return facts[i].Confidence > facts[j].Confidence
 	})
 
+	return facts
+}
+
+// SetGraphStore attaches a graph store for one-hop related-fact expansion.
+func (p *Primer) SetGraphStore(gs *GraphStore) {
+	p.graphStore = gs
+	p.logger.Info("primer: graph store attached")
+}
+
+const graphExpansionConfidenceDecay = 0.8
+
+// expandWithGraph performs one-hop traversal from each primed fact's slug,
+// pulling in related facts that aren't already in the result set.
+func (p *Primer) expandWithGraph(facts []Fact) []Fact {
+	if p.graphStore == nil || len(facts) == 0 {
+		return facts
+	}
+
+	slugSet := make(map[string]bool, len(facts))
+	for _, f := range facts {
+		slugSet[f.Slug] = true
+	}
+
+	const graphTraversalDepth = 1
+	var expanded []Fact
+	for _, f := range facts {
+		neighbors := p.graphStore.Neighbors(f.Slug, graphTraversalDepth)
+		for _, t := range neighbors {
+			relSlug := t.Object
+			if t.Object == f.Slug {
+				relSlug = t.Subject
+			}
+			if slugSet[relSlug] {
+				continue
+			}
+			slugSet[relSlug] = true
+			for _, ls := range p.fileStores {
+				if relFact, err := ls.store.ReadPage(relSlug); err == nil {
+					relFact.Confidence *= graphExpansionConfidenceDecay
+					relFact.Layer = ls.layerType
+					expanded = append(expanded, *relFact)
+					break
+				}
+			}
+		}
+	}
+
+	facts = append(facts, expanded...)
+	if len(facts) > p.config.MaxFacts {
+		facts = facts[:p.config.MaxFacts]
+	}
 	return facts
 }
 

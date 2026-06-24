@@ -5306,6 +5306,8 @@ function burnAreaChart() {
 
     let _kbInitialLoad = true;
     let _kbRendered = false;
+    let _kbGraphView = false;
+    let _kbGraphData = null;
     async function fetchKnowledgeStats() {
       try {
         const [r] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory()]);
@@ -5392,6 +5394,178 @@ function burnAreaChart() {
         _kbSelectedFact = await r.json();
         renderKnowledgeDetail();
       } catch (e) { /* ignore */ }
+    }
+
+    function kbToggleGraph() {
+      _kbGraphView = !_kbGraphView;
+      renderKnowledge();
+    }
+
+    async function fetchKnowledgeGraph() {
+      try {
+        const r = await fetch('/api/knowledge/graph');
+        if (!r.ok) return;
+        _kbGraphData = await r.json();
+        renderKnowledgeGraphCanvas();
+      } catch (e) { console.error('graph fetch failed', e); }
+    }
+
+    function renderKnowledgeGraphCanvas() {
+      const container = document.getElementById('kb-graph-container');
+      if (!container || !_kbGraphData) return;
+      const nodes = _kbGraphData.nodes || [];
+      const edges = _kbGraphData.edges || [];
+      if (nodes.length === 0) {
+        container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:0.85rem">No graph data yet. Facts need <code>related:</code> frontmatter or <code>[[wikilinks]]</code> to form edges.</div>';
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      const dpr = window.devicePixelRatio || 1;
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      container.innerHTML = '';
+      container.appendChild(canvas);
+      const ctx = canvas.getContext('2d');
+      ctx.scale(dpr, dpr);
+
+      const GRAPH_NODE_RADIUS_MIN = 6;
+      const GRAPH_NODE_RADIUS_MAX = 18;
+      const GRAPH_REPULSION_STRENGTH = 500;
+      const GRAPH_ATTRACTION_STRENGTH = 0.05;
+      const GRAPH_GRAVITY_STRENGTH = 0.02;
+      const GRAPH_SIMULATION_STEPS = 100;
+      const GRAPH_LABEL_TRUNCATE_LEN = 24;
+      const GRAPH_DAMPING = 0.9;
+
+      const layerColors = {
+        personal: getComputedStyle(document.documentElement).getPropertyValue('--blue').trim() || '#58a6ff',
+        project: getComputedStyle(document.documentElement).getPropertyValue('--green').trim() || '#3fb950',
+        org: getComputedStyle(document.documentElement).getPropertyValue('--yellow').trim() || '#d29922',
+        community: getComputedStyle(document.documentElement).getPropertyValue('--purple').trim() || '#bc8cff',
+      };
+
+      const slugIdx = {};
+      const simNodes = nodes.map((n, i) => {
+        slugIdx[n.slug] = i;
+        const maxUsage = Math.max(1, ...nodes.map(x => x.usage_count || 0));
+        const ratio = (n.usage_count || 0) / maxUsage;
+        return {
+          x: w / 2 + (Math.cos(i * 2.399) * w * 0.3),
+          y: h / 2 + (Math.sin(i * 2.399) * h * 0.3),
+          vx: 0, vy: 0,
+          r: GRAPH_NODE_RADIUS_MIN + ratio * (GRAPH_NODE_RADIUS_MAX - GRAPH_NODE_RADIUS_MIN),
+          color: layerColors[n.layer] || layerColors.personal,
+          label: (n.title || n.slug).length > GRAPH_LABEL_TRUNCATE_LEN
+            ? (n.title || n.slug).slice(0, GRAPH_LABEL_TRUNCATE_LEN) + '...'
+            : (n.title || n.slug),
+          slug: n.slug,
+          data: n,
+        };
+      });
+
+      const simEdges = (edges || []).filter(e => slugIdx[e.from] !== undefined && slugIdx[e.to] !== undefined)
+        .map(e => ({ from: slugIdx[e.from], to: slugIdx[e.to], pred: e.predicate }));
+
+      for (let step = 0; step < GRAPH_SIMULATION_STEPS; step++) {
+        for (let i = 0; i < simNodes.length; i++) {
+          for (let j = i + 1; j < simNodes.length; j++) {
+            let dx = simNodes[j].x - simNodes[i].x;
+            let dy = simNodes[j].y - simNodes[i].y;
+            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            let force = GRAPH_REPULSION_STRENGTH / (dist * dist);
+            let fx = (dx / dist) * force;
+            let fy = (dy / dist) * force;
+            simNodes[i].vx -= fx; simNodes[i].vy -= fy;
+            simNodes[j].vx += fx; simNodes[j].vy += fy;
+          }
+        }
+        for (const e of simEdges) {
+          let dx = simNodes[e.to].x - simNodes[e.from].x;
+          let dy = simNodes[e.to].y - simNodes[e.from].y;
+          let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          let force = (dist - 100) * GRAPH_ATTRACTION_STRENGTH;
+          let fx = (dx / dist) * force;
+          let fy = (dy / dist) * force;
+          simNodes[e.from].vx += fx; simNodes[e.from].vy += fy;
+          simNodes[e.to].vx -= fx; simNodes[e.to].vy -= fy;
+        }
+        for (const n of simNodes) {
+          n.vx += (w / 2 - n.x) * GRAPH_GRAVITY_STRENGTH;
+          n.vy += (h / 2 - n.y) * GRAPH_GRAVITY_STRENGTH;
+          n.vx *= GRAPH_DAMPING; n.vy *= GRAPH_DAMPING;
+          n.x += n.vx; n.y += n.vy;
+          const pad = n.r + 2;
+          n.x = Math.max(pad, Math.min(w - pad, n.x));
+          n.y = Math.max(pad, Math.min(h - pad, n.y));
+        }
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, w, h);
+        ctx.strokeStyle = 'rgba(88,166,255,0.15)';
+        ctx.lineWidth = 1;
+        for (const e of simEdges) {
+          const a = simNodes[e.from], b = simNodes[e.to];
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+          ctx.fillStyle = 'rgba(139,148,158,0.5)';
+          ctx.font = '9px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(e.pred, mx, my - 4);
+        }
+        for (const n of simNodes) {
+          ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+          ctx.fillStyle = n.color; ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 1; ctx.stroke();
+          ctx.fillStyle = 'var(--text, #e6edf3)';
+          ctx.font = '10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(n.label, n.x, n.y + n.r + 12);
+        }
+      }
+      draw();
+
+      let hoveredNode = null;
+      const tooltip = document.createElement('div');
+      tooltip.style.cssText = 'position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:0.72rem;color:var(--text);pointer-events:none;display:none;z-index:10;max-width:250px';
+      container.appendChild(tooltip);
+
+      canvas.addEventListener('mousemove', (evt) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = evt.clientX - rect.left;
+        const my = evt.clientY - rect.top;
+        hoveredNode = null;
+        for (const n of simNodes) {
+          const dx = mx - n.x, dy = my - n.y;
+          if (dx * dx + dy * dy < n.r * n.r + 16) { hoveredNode = n; break; }
+        }
+        if (hoveredNode) {
+          canvas.style.cursor = 'pointer';
+          const d = hoveredNode.data;
+          const confPct = Math.round((d.confidence || 0) * 100);
+          tooltip.innerHTML = `<strong>${escapeHtml(d.title || d.slug)}</strong><br>Type: ${escapeHtml(d.type || 'pattern')}<br>Layer: ${escapeHtml(d.layer || 'personal')}<br>Confidence: ${confPct}%`;
+          tooltip.style.display = 'block';
+          tooltip.style.left = (hoveredNode.x + hoveredNode.r + 8) + 'px';
+          tooltip.style.top = (hoveredNode.y - 10) + 'px';
+        } else {
+          canvas.style.cursor = 'default';
+          tooltip.style.display = 'none';
+        }
+      });
+
+      canvas.addEventListener('click', (evt) => {
+        if (hoveredNode) {
+          _kbGraphView = false;
+          _kbSelectedLayer = 'all';
+          kbReadFact(hoveredNode.slug);
+          renderKnowledge();
+        }
+      });
     }
 
     // Setup view state: 'choose' (default), 'git', 'webhook', or 'none' (skip setup, show full KB)
@@ -5655,6 +5829,7 @@ function burnAreaChart() {
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenVaults()" title="Manage knowledge vaults — collections of facts organized by topic or project. Vaults can be shared across hive instances.">📂 Vaults</button>';
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenHowItWorks()">📖 How it works</button>';
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenObsidianSetup()" title="View step-by-step instructions for connecting Obsidian via Git sync or webhook.">🔮 Obsidian Setup</button>';
+      html += `<button class="nous-btn" style="background:${_kbGraphView ? 'var(--cyan)' : 'var(--surface)'};color:${_kbGraphView ? 'var(--bg)' : 'var(--fg)'};border:1px solid ${_kbGraphView ? 'var(--cyan)' : 'var(--border)'}" onclick="kbToggleGraph()" title="Toggle knowledge graph visualization showing relationships between facts.">🕸️ Graph</button>`;
       html += '</div>';
 
       // Main layout: sidebar + content
@@ -5716,15 +5891,23 @@ function burnAreaChart() {
 
       html += '</div>'; // kb-sidebar
 
-      // Right: fact list + detail
+      // Right: fact list + detail OR graph view
       html += '<div class="kb-main">';
-      html += '<div id="kb-fact-list" class="kb-fact-list"></div>';
-      html += '<div id="kb-fact-detail"></div>';
+      if (_kbGraphView) {
+        html += '<div id="kb-graph-container" style="width:100%;height:500px;position:relative;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)"></div>';
+      } else {
+        html += '<div id="kb-fact-list" class="kb-fact-list"></div>';
+        html += '<div id="kb-fact-detail"></div>';
+      }
       html += '</div>';
 
       html += '</div>'; // kb-layout
       panel.innerHTML = html;
-      kbSearch();
+      if (_kbGraphView) {
+        fetchKnowledgeGraph();
+      } else {
+        kbSearch();
+      }
     }
 
     function renderKnowledgeFacts() {

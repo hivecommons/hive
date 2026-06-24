@@ -24,6 +24,7 @@ type KnowledgeAPI struct {
 	subscriptions []Subscription
 	vaults        []*FileStore
 	gitSources    []*GitSource
+	graphStore    *GraphStore
 	logger        *slog.Logger
 }
 
@@ -479,6 +480,29 @@ func (k *KnowledgeAPI) GetVaultStore(rootDir string) *FileStore {
 		}
 	}
 	return nil
+}
+
+// SetGraphStore attaches the knowledge graph for relationship-based queries.
+func (k *KnowledgeAPI) SetGraphStore(gs *GraphStore) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.graphStore = gs
+}
+
+// GraphStore returns the attached graph store, or nil.
+func (k *KnowledgeAPI) GraphStore() *GraphStore {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.graphStore
+}
+
+// FileStores returns all connected vault FileStores.
+func (k *KnowledgeAPI) FileStores() []*FileStore {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	result := make([]*FileStore, len(k.vaults))
+	copy(result, k.vaults)
+	return result
 }
 
 // ReindexVault forces a re-scan of a specific vault.

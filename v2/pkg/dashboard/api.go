@@ -115,6 +115,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/search", s.handleKnowledgeSearch)
 	s.mux.HandleFunc("GET /api/knowledge/health", s.handleKnowledgeHealth)
 	s.mux.HandleFunc("GET /api/knowledge/stats", s.handleKnowledgeStats)
+	s.mux.HandleFunc("GET /api/knowledge/graph", s.handleKnowledgeGraph)
 	s.mux.HandleFunc("GET /api/knowledge/fact-history", s.handleFactHistory)
 	s.mux.HandleFunc("POST /api/knowledge/create", s.handleKnowledgeCreate)
 	s.mux.HandleFunc("POST /api/knowledge/import", s.handleKnowledgeImport)
@@ -3454,6 +3455,29 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFactHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.FactHistory())
+}
+
+func (s *Server) handleKnowledgeGraph(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonResponse(w, knowledge.GraphData{Nodes: []knowledge.GraphNode{}, Edges: []knowledge.GraphEdge{}})
+		return
+	}
+	gs := s.deps.Knowledge.GraphStore()
+	if gs == nil {
+		jsonResponse(w, knowledge.GraphData{Nodes: []knowledge.GraphNode{}, Edges: []knowledge.GraphEdge{}})
+		return
+	}
+	rootSlug := r.URL.Query().Get("root")
+	const defaultGraphDepth = 2
+	depth := defaultGraphDepth
+	if d := r.URL.Query().Get("depth"); d != "" {
+		if v, err := strconv.Atoi(d); err == nil && v > 0 {
+			depth = v
+		}
+	}
+	stores := s.deps.Knowledge.FileStores()
+	data := gs.BuildGraphData(stores, rootSlug, depth)
+	jsonResponse(w, data)
 }
 
 func (s *Server) handleKnowledgeLayer(w http.ResponseWriter, r *http.Request) {

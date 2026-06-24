@@ -598,6 +598,13 @@ func main() {
 				continue
 			}
 			logger.Info("vault auto-connected", "name", vc.Name, "path", vc.Path, "auto_index", vc.AutoIndex)
+			if primer := sched.GetPrimer(); primer != nil {
+				store := knowledgeAPI.GetVaultStore(vc.Path)
+				if store != nil {
+					primer.AddFileStore(vc.Name, store, knowledge.LayerPersonal)
+					logger.Info("vault registered with primer", "name", vc.Name)
+				}
+			}
 		}
 		if vc.GitSync {
 			// Find the store we just connected so the syncer can trigger reindex
@@ -678,6 +685,17 @@ func main() {
 				logger.Warn("failed to auto-connect bead-synth vault", "path", synthVaultPath, "error", connErr)
 			} else {
 				logger.Info("auto-connected bead-synth vault", "path", synthVaultPath)
+				if primer := sched.GetPrimer(); primer != nil {
+					store := knowledgeAPI.GetVaultStore(synthVaultPath)
+					if store != nil {
+						beadLayer := knowledge.LayerType(cfg.Knowledge.BeadSynthesizer.TargetLayer)
+						if beadLayer == "" {
+							beadLayer = knowledge.LayerPersonal
+						}
+						primer.AddFileStore("bead-synth-wiki", store, beadLayer)
+						logger.Info("bead-synth vault registered with primer", "layer", beadLayer)
+					}
+				}
 			}
 		}
 		var rawGH *gh.Client
@@ -724,6 +742,27 @@ func main() {
 				"vault_path", synthVaultPath,
 				"bead_stores", len(beadStores),
 			)
+		}
+	}
+
+	const graphStorePath = "/data/graph/knowledge.db"
+	graphStore, graphErr := knowledge.NewGraphStore(graphStorePath, logger)
+	if graphErr != nil {
+		logger.Warn("failed to open knowledge graph store", "path", graphStorePath, "error", graphErr)
+	} else {
+		logger.Info("knowledge graph store opened", "path", graphStorePath)
+		if primer := sched.GetPrimer(); primer != nil {
+			primer.SetGraphStore(graphStore)
+		}
+		if knowledgeAPI != nil {
+			knowledgeAPI.SetGraphStore(graphStore)
+		}
+		for _, ls := range knowledgeAPI.FileStores() {
+			if n, err := graphStore.SyncFromFileStore(ls); err != nil {
+				logger.Warn("graph sync failed", "store", ls.Name(), "error", err)
+			} else if n > 0 {
+				logger.Info("graph synced from vault", "store", ls.Name(), "triples", n)
+			}
 		}
 	}
 

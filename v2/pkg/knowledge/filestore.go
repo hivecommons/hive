@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -40,13 +42,15 @@ type FileStore struct {
 }
 
 type filePage struct {
-	Slug      string
-	Title     string
-	Body      string
-	Tags      []string
-	Path      string
-	ModTime   time.Time
-	Embedding []float64
+	Slug       string
+	Title      string
+	Body       string
+	Tags       []string
+	Related    []string
+	Confidence float64
+	Path       string
+	ModTime    time.Time
+	Embedding  []float64
 }
 
 // NewFileStore creates a store that indexes markdown files under rootDir.
@@ -116,19 +120,21 @@ func (s *FileStore) reindex() {
 		slug := strings.TrimSuffix(rel, ext)
 		slug = strings.ReplaceAll(slug, string(filepath.Separator), "/")
 
-		title, body, tags := parseObsidianFile(string(data), filepath.Base(slug))
+		title, body, tags, confidence, related := parseObsidianFile(string(data), filepath.Base(slug))
 
 		embeddingText := title + " " + strings.Join(tags, " ") + " " + body
 		embedding := s.embedCache.Embed(embeddingText)
 
 		pages[slug] = filePage{
-			Slug:      slug,
-			Title:     title,
-			Body:      body,
-			Tags:      tags,
-			Path:      path,
-			ModTime:   info.ModTime(),
-			Embedding: embedding,
+			Slug:       slug,
+			Title:      title,
+			Body:       body,
+			Tags:       tags,
+			Related:    related,
+			Confidence: confidence,
+			Path:       path,
+			ModTime:    info.ModTime(),
+			Embedding:  embedding,
 		}
 
 		return nil
@@ -238,6 +244,7 @@ func (s *FileStore) Search(query string, limit int) []Fact {
 			Body:       snippet,
 			Confidence: m.score,
 			Tags:       m.page.Tags,
+			Related:    m.page.Related,
 			Layer:      LayerPersonal,
 		}
 	}
@@ -304,8 +311,9 @@ func (s *FileStore) ReadPage(slug string) (*Fact, error) {
 		Title:      p.Title,
 		Type:       FactPattern,
 		Body:       p.Body,
-		Confidence: 0.8,
+		Confidence: effectiveConfidence(p.Confidence),
 		Tags:       p.Tags,
+		Related:    p.Related,
 		Layer:      LayerPersonal,
 	}, nil
 }
@@ -340,8 +348,9 @@ func (s *FileStore) ListPages(tagFilter string) []Fact {
 			Title:      p.Title,
 			Type:       FactPattern,
 			Body:       snippet,
-			Confidence: 0.8,
+			Confidence: effectiveConfidence(p.Confidence),
 			Tags:       p.Tags,
+			Related:    p.Related,
 			Layer:      LayerPersonal,
 		})
 	}
@@ -387,11 +396,25 @@ func (s *FileStore) Reindex() {
 	s.reindex()
 }
 
-// parseObsidianFile extracts title, body, and tags from an Obsidian-style markdown file.
-// Supports YAML frontmatter (tags field) and inline #tags.
-func parseObsidianFile(content string, fallbackTitle string) (title string, body string, tags []string) {
+const defaultFactConfidence = 0.8
+
+var wikilinkRe = regexp.MustCompile(`\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
+
+func effectiveConfidence(parsed float64) float64 {
+	if parsed < 0 {
+		return defaultFactConfidence
+	}
+	return parsed
+}
+
+// parseObsidianFile extracts title, body, tags, confidence, and related slugs
+// from an Obsidian-style markdown file. Supports YAML frontmatter and inline
+// #tags and [[wikilinks]].
+func parseObsidianFile(content string, fallbackTitle string) (title string, body string, tags []string, confidence float64, related []string) {
 	title = fallbackTitle
 	body = content
+	const noConfidenceSentinel = -1.0
+	confidence = noConfidenceSentinel
 
 	if strings.HasPrefix(content, "---\n") {
 		endIdx := strings.Index(content[4:], "\n---")
@@ -404,6 +427,25 @@ func parseObsidianFile(content string, fallbackTitle string) (title string, body
 				if strings.HasPrefix(line, "title:") {
 					title = strings.TrimSpace(strings.TrimPrefix(line, "title:"))
 					title = strings.Trim(title, "\"'")
+				}
+				if strings.HasPrefix(line, "confidence:") {
+					confStr := strings.TrimSpace(strings.TrimPrefix(line, "confidence:"))
+					if v, err := strconv.ParseFloat(confStr, 64); err == nil {
+						confidence = v
+					}
+				}
+				if strings.HasPrefix(line, "related:") {
+					relVal := strings.TrimSpace(strings.TrimPrefix(line, "related:"))
+					if strings.HasPrefix(relVal, "[") {
+						relVal = strings.Trim(relVal, "[]")
+						for _, r := range strings.Split(relVal, ",") {
+							r = strings.TrimSpace(r)
+							r = strings.Trim(r, "\"'")
+							if r != "" {
+								related = append(related, r)
+							}
+						}
+					}
 				}
 				if strings.HasPrefix(line, "tags:") {
 					tagVal := strings.TrimSpace(strings.TrimPrefix(line, "tags:"))
@@ -447,7 +489,15 @@ func parseObsidianFile(content string, fallbackTitle string) (title string, body
 		}
 	}
 
-	return title, body, tags
+	// Extract [[wikilinks]] from body as related slugs
+	for _, match := range wikilinkRe.FindAllStringSubmatch(body, -1) {
+		slug := strings.TrimSpace(match[1])
+		if slug != "" && !containsTag(related, slug) {
+			related = append(related, slug)
+		}
+	}
+
+	return title, body, tags, confidence, related
 }
 
 func containsTag(tags []string, tag string) bool {

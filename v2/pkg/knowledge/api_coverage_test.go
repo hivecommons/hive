@@ -826,7 +826,7 @@ func TestFileStore_LongBodyTruncated(t *testing.T) {
 // --- parseObsidianFile tests ---
 
 func TestParseObsidianFile_PlainText(t *testing.T) {
-	title, body, tags := parseObsidianFile("Just plain text content", "fallback")
+	title, body, tags, _, _ := parseObsidianFile("Just plain text content", "fallback")
 	if title != "fallback" {
 		t.Errorf("title = %q, want fallback", title)
 	}
@@ -840,7 +840,7 @@ func TestParseObsidianFile_PlainText(t *testing.T) {
 
 func TestParseObsidianFile_HeadingOnly(t *testing.T) {
 	content := "# My Title\nSome body text here"
-	title, body, tags := parseObsidianFile(content, "fallback")
+	title, body, tags, _, _ := parseObsidianFile(content, "fallback")
 	if title != "My Title" {
 		t.Errorf("title = %q, want My Title", title)
 	}
@@ -854,7 +854,7 @@ func TestParseObsidianFile_HeadingOnly(t *testing.T) {
 
 func TestParseObsidianFile_FrontmatterWithTitle(t *testing.T) {
 	content := "---\ntitle: \"Front Title\"\n---\nBody after frontmatter"
-	title, body, tags := parseObsidianFile(content, "fallback")
+	title, body, tags, _, _ := parseObsidianFile(content, "fallback")
 	if title != "Front Title" {
 		t.Errorf("title = %q, want Front Title", title)
 	}
@@ -868,7 +868,7 @@ func TestParseObsidianFile_FrontmatterWithTitle(t *testing.T) {
 
 func TestParseObsidianFile_FrontmatterWithTags(t *testing.T) {
 	content := "---\ntitle: Tagged\ntags: [\"go\", \"testing\"]\n---\nContent here"
-	title, body, tags := parseObsidianFile(content, "fallback")
+	title, body, tags, _, _ := parseObsidianFile(content, "fallback")
 	if title != "Tagged" {
 		t.Errorf("title = %q", title)
 	}
@@ -885,7 +885,7 @@ func TestParseObsidianFile_FrontmatterWithTags(t *testing.T) {
 
 func TestParseObsidianFile_FrontmatterListTags(t *testing.T) {
 	content := "---\ntags: [initial]\n- extra-tag\n---\nBody"
-	title, body, tags := parseObsidianFile(content, "fallback")
+	title, body, tags, _, _ := parseObsidianFile(content, "fallback")
 	if title != "fallback" {
 		t.Errorf("title = %q", title)
 	}
@@ -902,7 +902,7 @@ func TestParseObsidianFile_FrontmatterListTags(t *testing.T) {
 
 func TestParseObsidianFile_InlineTags(t *testing.T) {
 	content := "Some text #mytag and #another here"
-	_, _, tags := parseObsidianFile(content, "fallback")
+	_, _, tags, _, _ := parseObsidianFile(content, "fallback")
 	if len(tags) != 2 {
 		t.Fatalf("tags len = %d, want 2: %v", len(tags), tags)
 	}
@@ -913,7 +913,7 @@ func TestParseObsidianFile_InlineTags(t *testing.T) {
 
 func TestParseObsidianFile_InlineTagDedup(t *testing.T) {
 	content := "---\ntags: [\"go\"]\n---\nBody with #go inline"
-	_, _, tags := parseObsidianFile(content, "fallback")
+	_, _, tags, _, _ := parseObsidianFile(content, "fallback")
 	// "go" should not be duplicated
 	count := 0
 	for _, t2 := range tags {
@@ -928,7 +928,7 @@ func TestParseObsidianFile_InlineTagDedup(t *testing.T) {
 
 func TestParseObsidianFile_HeadingAfterFrontmatter(t *testing.T) {
 	content := "---\ntitle: FM Title\n---\n# Heading Title\nActual body"
-	title, body, tags := parseObsidianFile(content, "fallback")
+	title, body, tags, _, _ := parseObsidianFile(content, "fallback")
 	// Heading should override frontmatter title
 	if title != "Heading Title" {
 		t.Errorf("title = %q, want Heading Title", title)
@@ -944,7 +944,7 @@ func TestParseObsidianFile_HeadingAfterFrontmatter(t *testing.T) {
 func TestParseObsidianFile_UnclosedFrontmatter(t *testing.T) {
 	// No closing --- means no frontmatter parsing
 	content := "---\ntitle: Orphaned\nstill going on"
-	title, body, _ := parseObsidianFile(content, "fallback")
+	title, body, _, _, _ := parseObsidianFile(content, "fallback")
 	if title != "fallback" {
 		t.Errorf("title = %q, want fallback (unclosed frontmatter)", title)
 	}
@@ -955,7 +955,7 @@ func TestParseObsidianFile_UnclosedFrontmatter(t *testing.T) {
 
 func TestParseObsidianFile_SingleQuotedTitle(t *testing.T) {
 	content := "---\ntitle: 'Quoted Title'\n---\nBody"
-	title, _, _ := parseObsidianFile(content, "fallback")
+	title, _, _, _, _ := parseObsidianFile(content, "fallback")
 	if title != "Quoted Title" {
 		t.Errorf("title = %q, want Quoted Title", title)
 	}
@@ -964,7 +964,7 @@ func TestParseObsidianFile_SingleQuotedTitle(t *testing.T) {
 func TestParseObsidianFile_MarkdownHeadingIgnored(t *testing.T) {
 	// ## should not be treated as inline tags
 	content := "Some text ##heading not a tag"
-	_, _, tags := parseObsidianFile(content, "fallback")
+	_, _, tags, _, _ := parseObsidianFile(content, "fallback")
 	for _, tag := range tags {
 		if tag == "heading" || tag == "#heading" {
 			t.Errorf("## should not produce tags, got %v", tags)
@@ -974,7 +974,7 @@ func TestParseObsidianFile_MarkdownHeadingIgnored(t *testing.T) {
 
 func TestParseObsidianFile_EmptyTagArray(t *testing.T) {
 	content := "---\ntags: []\n---\nBody"
-	_, _, tags := parseObsidianFile(content, "fallback")
+	_, _, tags, _, _ := parseObsidianFile(content, "fallback")
 	if len(tags) != 0 {
 		t.Errorf("tags = %v, want empty", tags)
 	}
