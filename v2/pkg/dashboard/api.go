@@ -3164,6 +3164,16 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 		s.deps.Knowledge = nil
 	}
 
+	if s.deps.BeadSynthesizer != nil {
+		if body.Enabled && s.deps.Config.Knowledge.BeadSynthesizer.IsEnabled() {
+			s.deps.BeadSynthesizer.StartBackground(s.deps.Ctx)
+			s.logger.Info("bead synthesizer started via knowledge toggle")
+		} else if !body.Enabled {
+			s.deps.BeadSynthesizer.Stop()
+			s.logger.Info("bead synthesizer stopped via knowledge toggle")
+		}
+	}
+
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after knowledge toggle", "error", err)
 	}
@@ -3173,13 +3183,18 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBeadSynthStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := s.deps.Config.Knowledge.BeadSynthesizer
+	running := false
+	if s.deps.BeadSynthesizer != nil {
+		running = s.deps.BeadSynthesizer.IsRunning()
+	}
 	jsonResponse(w, map[string]interface{}{
-		"enabled":            cfg.IsEnabled(),
-		"schedule":           cfg.Schedule,
-		"min_confidence":     cfg.MinConfidence,
-		"target_layer":       cfg.TargetLayer,
+		"enabled":             cfg.IsEnabled(),
+		"running":             running,
+		"schedule":            cfg.Schedule,
+		"min_confidence":      cfg.MinConfidence,
+		"target_layer":        cfg.TargetLayer,
 		"max_facts_per_cycle": cfg.MaxFactsPerCycle,
-		"vault_path":         cfg.VaultPath,
+		"vault_path":          cfg.VaultPath,
 	})
 }
 
@@ -3194,6 +3209,16 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 
 	enabled := body.Enabled
 	s.deps.Config.Knowledge.BeadSynthesizer.Enabled = &enabled
+
+	if s.deps.BeadSynthesizer != nil {
+		if enabled {
+			s.deps.BeadSynthesizer.StartBackground(s.deps.Ctx)
+			s.logger.Info("bead synthesizer enabled via dashboard")
+		} else {
+			s.deps.BeadSynthesizer.Stop()
+			s.logger.Info("bead synthesizer disabled via dashboard")
+		}
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after bead-synth toggle", "error", err)

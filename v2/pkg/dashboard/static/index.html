@@ -5240,11 +5240,26 @@ function burnAreaChart() {
       } catch (e) { console.error('toggle knowledge failed', e); }
     }
 
+    let _beadSynthStatus = null;
+    async function toggleBeadSynth(enabled) {
+      try {
+        await fetch('/api/knowledge/bead-synthesizer/enabled', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({enabled}) });
+        await fetchBeadSynthStatus();
+        await fetchKnowledgeStats();
+      } catch (e) { console.error('toggle bead synth failed', e); }
+    }
+    async function fetchBeadSynthStatus() {
+      try {
+        const r = await fetch('/api/knowledge/bead-synthesizer');
+        if (r.ok) _beadSynthStatus = await r.json();
+      } catch (e) { _beadSynthStatus = null; }
+    }
+
     let _kbInitialLoad = true;
     let _kbRendered = false;
     async function fetchKnowledgeStats() {
       try {
-        const r = await fetch('/api/knowledge/stats');
+        const [r] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus()]);
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
@@ -5559,7 +5574,17 @@ function burnAreaChart() {
         badge.style.color = 'white';
       }
 
-      let html = '<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="toggleKnowledge(false)" style="padding:4px 12px;background:none;border:1px solid #dc2626;color:#dc2626;border-radius:4px;cursor:pointer;font-size:0.72rem" title="Disable the knowledge base. Agents will no longer inject facts into prompts. Stored facts are preserved for when re-enabled.">Disable</button></div>';
+      const synthEnabled = _beadSynthStatus && _beadSynthStatus.enabled;
+      const synthRunning = _beadSynthStatus && _beadSynthStatus.running;
+      let html = '<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">';
+      if (synthEnabled) {
+        html += `<span style="font-size:0.72rem;color:#16a34a;display:flex;align-items:center;gap:4px" title="Bead synthesizer is ${synthRunning ? 'running' : 'enabled but not running'}. Schedule: ${escapeHtml((_beadSynthStatus||{}).schedule||'hourly')}"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${synthRunning ? '#16a34a' : '#d97706'}"></span> Synth ${synthRunning ? 'active' : 'idle'}</span>`;
+        html += '<button onclick="toggleBeadSynth(false)" style="padding:4px 12px;background:none;border:1px solid #d97706;color:#d97706;border-radius:4px;cursor:pointer;font-size:0.72rem" title="Disable the bead synthesizer. Completed beads will no longer be automatically converted to wiki facts.">Pause Synth</button>';
+      } else {
+        html += '<button onclick="toggleBeadSynth(true)" style="padding:4px 12px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.72rem" title="Enable the bead synthesizer. Completed beads will be automatically scanned and converted to wiki facts on an hourly schedule.">Enable Synth</button>';
+      }
+      html += '<button onclick="toggleKnowledge(false)" style="padding:4px 12px;background:none;border:1px solid #dc2626;color:#dc2626;border-radius:4px;cursor:pointer;font-size:0.72rem" title="Disable the knowledge base. Agents will no longer inject facts into prompts. Stored facts are preserved for when re-enabled.">Disable</button>';
+      html += '</div>';
 
       // Stats row
       const totalPages = layers.reduce((sum, l) => sum + (l.total_pages || 0), 0);

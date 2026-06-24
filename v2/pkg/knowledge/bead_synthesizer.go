@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
@@ -30,6 +31,10 @@ type BeadSynthesizer struct {
 	config       BeadSynthesizerConfig
 	logger       *slog.Logger
 	vaultBaseDir string
+
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	running  bool
 }
 
 // NewBeadSynthesizer creates a synthesizer that bridges bead stores to the wiki.
@@ -64,6 +69,42 @@ func (s *BeadSynthesizer) Start(ctx context.Context) {
 			s.runOnce(ctx)
 		}
 	}
+}
+
+// StartBackground launches the synthesis loop in a goroutine and tracks its
+// lifecycle so it can be stopped and restarted via the dashboard toggle.
+func (s *BeadSynthesizer) StartBackground(parent context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running {
+		return
+	}
+	ctx, cancel := context.WithCancel(parent)
+	s.cancel = cancel
+	s.running = true
+	go func() {
+		s.Start(ctx)
+		s.mu.Lock()
+		s.running = false
+		s.mu.Unlock()
+	}()
+}
+
+// Stop cancels the background synthesis loop.
+func (s *BeadSynthesizer) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
+}
+
+// IsRunning returns whether the background synthesis loop is active.
+func (s *BeadSynthesizer) IsRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running
 }
 
 func (s *BeadSynthesizer) runOnce(ctx context.Context) {
