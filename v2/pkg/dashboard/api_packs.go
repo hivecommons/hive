@@ -298,15 +298,24 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 
 	s.deps.AgentMgr.SetACMMLevel(level)
 	s.deps.AgentMgr.ClearAllModeOverrides()
+
+	// ApplyPack cascades pack-defined agent fields (mode, kick_template,
+	// description, etc.) into the live config. Without this, the mode-clear
+	// above leaves every agent with mode="" and the gh proxy blocks merges.
+	packResult, packErr := s.ApplyPack(level)
+	if packErr != nil {
+		s.logger.Warn("failed to apply pack after level change", "level", level, "error", packErr)
+	}
+
 	paused, resumed := s.syncAgentVisibility(level)
 	s.deps.AgentMgr.SyncModeFiles(level)
 
 	s.persistOnly()
 	s.refreshAsync()
 
-	pack, packErr := config.ACMMPackByLevel(level)
+	pack, packLookupErr := config.ACMMPackByLevel(level)
 	var packAgentNames []string
-	if packErr == nil {
+	if packLookupErr == nil {
 		for _, a := range pack.Agents {
 			if !a.Hidden {
 				packAgentNames = append(packAgentNames, a.Name)
@@ -335,20 +344,25 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if packErr == nil && (len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 || pack.Governor.EvalIntervalS > 0) {
+	if packLookupErr == nil && (len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 || pack.Governor.EvalIntervalS > 0) {
 		if err := s.saveConfig(); err != nil {
 			s.logger.Error("failed to persist config after pack cadence update", "error", err)
 		}
 	}
 
+	var packUpdated []string
+	if packResult != nil {
+		packUpdated = packResult.Updated
+	}
 	s.auditFromRequest(r, "set_acmm_level", auditDetail("level", strconv.Itoa(body.Level)), "")
-	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed))
+	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed), "packUpdated", packUpdated)
 	jsonResponse(w, map[string]interface{}{
-		"ok":         true,
-		"level":      body.Level,
-		"packAgents": packAgentNames,
-		"paused":     paused,
-		"resumed":    resumed,
+		"ok":          true,
+		"level":       body.Level,
+		"packAgents":  packAgentNames,
+		"packUpdated": packUpdated,
+		"paused":      paused,
+		"resumed":     resumed,
 	})
 }
 
