@@ -823,6 +823,31 @@ subjects:
   name: hive-sa
   namespace: {{.Namespace}}
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-self-upgrade
+  namespace: {{.Namespace}}
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["hive"]
+  verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-self-upgrade
+  namespace: {{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-self-upgrade
+subjects:
+- kind: ServiceAccount
+  name: hive-sa
+  namespace: {{.Namespace}}
+---
 {{- end}}
 apiVersion: v1
 kind: ConfigMap

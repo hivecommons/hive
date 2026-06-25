@@ -1341,7 +1341,17 @@ func main() {
 				}
 			}, targetSHA, logger)
 
-			os.Exit(0)
+			if err := hub.RolloutRestartSelf(logger); err != nil {
+				logger.Warn("rolling restart failed, falling back to os.Exit",
+					"error", err,
+				)
+				os.Exit(0)
+			}
+			// Rolling restart initiated — K8s will start a new pod and
+			// send SIGTERM to this one once the replacement is Ready.
+			// Block here so the process stays alive until terminated.
+			logger.Info("waiting for SIGTERM after rolling restart")
+			<-ctx.Done()
 		}, hub.GitHubAppConfigCallback(func(ghCfg *hub.HeartbeatGitHubAppConfig) {
 			logger.Info("received github app config via heartbeat",
 				"app_id", ghCfg.AppID,
