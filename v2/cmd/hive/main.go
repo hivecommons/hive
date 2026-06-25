@@ -1330,7 +1330,7 @@ func main() {
 					return hub.CollectClusterHealth(logger)
 				}(),
 			}
-		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, func(targetSHA string) {
+		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
 
 			// If a previous process already attempted an upgrade and we booted
@@ -1412,7 +1412,7 @@ func main() {
 			// Block here so the process stays alive until terminated.
 			logger.Info("waiting for SIGTERM after rolling restart")
 			<-ctx.Done()
-		}, hub.GitHubAppConfigCallback(func(ghCfg *hub.HeartbeatGitHubAppConfig) {
+		}), hub.GitHubAppConfigCallback(func(ghCfg *hub.HeartbeatGitHubAppConfig) {
 			logger.Info("received github app config via heartbeat",
 				"app_id", ghCfg.AppID,
 				"installation_id", ghCfg.InstallationID,
