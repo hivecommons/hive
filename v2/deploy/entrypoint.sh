@@ -268,10 +268,17 @@ print('\n'.join(sorted(names)))
         useradd --system -u "$AGENT_UID" -g node -d /data/home -M -s /bin/bash "hive-${agent_name}" 2>/dev/null || true
       fi
       mkdir -p "/data/agents/${agent_name}"
-      chown -R "hive-${agent_name}:node" "/data/agents/${agent_name}" 2>/dev/null || true
-      # Also fix beads dir ownership so agent can write beads.json
+      # Skip recursive chown if already owned by this agent — avoids NFS
+      # contention during rolling updates when the old pod is still writing.
+      AGENT_DIR_OWNER=$(stat -c '%u' "/data/agents/${agent_name}" 2>/dev/null || echo "0")
+      if [ "$AGENT_DIR_OWNER" != "$AGENT_UID" ]; then
+        chown -R "hive-${agent_name}:node" "/data/agents/${agent_name}" 2>/dev/null || true
+      fi
       if [ -d "/data/beads/${agent_name}" ]; then
-        chown -R "hive-${agent_name}:node" "/data/beads/${agent_name}" 2>/dev/null || true
+        BEAD_DIR_OWNER=$(stat -c '%u' "/data/beads/${agent_name}" 2>/dev/null || echo "0")
+        if [ "$BEAD_DIR_OWNER" != "$AGENT_UID" ]; then
+          chown -R "hive-${agent_name}:node" "/data/beads/${agent_name}" 2>/dev/null || true
+        fi
       fi
       echo "[entrypoint] Agent user: hive-${agent_name} (UID ${AGENT_UID})"
       UID_OFFSET=$((UID_OFFSET + 1))
