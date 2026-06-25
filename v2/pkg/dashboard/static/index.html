@@ -5939,6 +5939,7 @@ function burnAreaChart() {
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenHowItWorks()">📖 How it works</button>';
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenObsidianSetup()" title="View step-by-step instructions for connecting Obsidian via Git sync or webhook.">🔮 Obsidian Setup</button>';
       html += `<button class="nous-btn" style="background:${_kbGraphView ? 'var(--cyan)' : 'var(--surface)'};color:${_kbGraphView ? 'var(--bg)' : 'var(--fg)'};border:1px solid ${_kbGraphView ? 'var(--cyan)' : 'var(--border)'}" onclick="kbToggleGraph()" title="Toggle knowledge graph visualization showing relationships between facts.">🕸️ Graph</button>`;
+      html += `<button class="nous-btn" style="background:${_kbDocViewOpen ? 'var(--cyan)' : 'var(--surface)'};color:${_kbDocViewOpen ? 'var(--bg)' : 'var(--fg)'};border:1px solid ${_kbDocViewOpen ? 'var(--cyan)' : 'var(--border)'}" onclick="_kbDocViewOpen=!_kbDocViewOpen;fetchDocuments().then(()=>{renderKnowledge();var el=document.getElementById('kb-documents-list');if(el)el.scrollIntoView({behavior:'smooth'})})" title="Import and manage external documents (PDFs, web pages, Word docs). Documents are parsed into facts for the knowledge base.">📑 Documents</button>`;
       html += '</div>';
 
       // Main layout: sidebar + content
