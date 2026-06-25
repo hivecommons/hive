@@ -315,7 +315,8 @@ func (g *GraphStore) BuildGraphData(stores []*FileStore, rootSlug string, depth 
 }
 
 // SyncFromFileStore scans all pages in the given FileStore and adds
-// "related_to" triples for each page's Related slugs.
+// "related_to" triples for each page's Related slugs, plus "shared_tag"
+// triples between facts that share a tag.
 func (g *GraphStore) SyncFromFileStore(store *FileStore) (int, error) {
 	store.refreshIfStale()
 	store.mu.RLock()
@@ -336,6 +337,8 @@ func (g *GraphStore) SyncFromFileStore(store *FileStore) (int, error) {
 		}
 	}
 
+	triples = append(triples, buildTagEdges(pages)...)
+
 	if err := g.AddTriples(triples); err != nil {
 		return 0, fmt.Errorf("sync graph from file store: %w", err)
 	}
@@ -346,6 +349,39 @@ func (g *GraphStore) SyncFromFileStore(store *FileStore) (int, error) {
 		"triples_added", len(triples),
 	)
 	return len(triples), nil
+}
+
+const (
+	// PredicateSharedTag links two facts that share a tag.
+	PredicateSharedTag = "shared_tag"
+	// maxEdgesPerTag caps edges for popular tags to avoid graph clutter.
+	maxEdgesPerTag = 20
+)
+
+func buildTagEdges(pages []filePage) []Triple {
+	tagToSlugs := make(map[string][]string)
+	for _, p := range pages {
+		for _, tag := range p.Tags {
+			tagToSlugs[tag] = append(tagToSlugs[tag], p.Slug)
+		}
+	}
+
+	var triples []Triple
+	for _, slugs := range tagToSlugs {
+		if len(slugs) < 2 || len(slugs) > maxEdgesPerTag {
+			continue
+		}
+		for i := 0; i < len(slugs); i++ {
+			for j := i + 1; j < len(slugs); j++ {
+				triples = append(triples, Triple{
+					Subject:   slugs[i],
+					Predicate: PredicateSharedTag,
+					Object:    slugs[j],
+				})
+			}
+		}
+	}
+	return triples
 }
 
 // ExportJSON serializes all triples as JSON for backup/debugging.
