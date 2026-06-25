@@ -3,7 +3,9 @@ package knowledge
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,8 +41,12 @@ type DocChunk struct {
 	Section string
 }
 
-// parsePDF extracts text from binary PDF data using ledongthuc/pdf, then
-// chunks by page. Each page becomes one or more DocChunks.
+// pdfLineGapRatio is the fraction of font size that triggers a newline between
+// text segments on different lines.
+const pdfLineGapRatio = 0.8
+
+// parsePDF extracts text from binary PDF data using ledongthuc/pdf's positioned
+// text objects, reconstructing word spacing from glyph coordinates.
 func parsePDF(data []byte) ([]DocChunk, string) {
 	reader, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -61,8 +67,8 @@ func parsePDF(data []byte) ([]DocChunk, string) {
 			continue
 		}
 
-		text, err := page.GetPlainText(nil)
-		if err != nil || strings.TrimSpace(text) == "" {
+		text := extractPageText(page)
+		if strings.TrimSpace(text) == "" {
 			continue
 		}
 		text = strings.TrimSpace(text)
@@ -98,6 +104,64 @@ func parsePDF(data []byte) ([]DocChunk, string) {
 		}
 	}
 	return chunks, docTitle
+}
+
+// extractPageText reconstructs readable text from a PDF page by using positioned
+// text objects, preserving spaces and inserting newlines based on Y-coordinate gaps.
+func extractPageText(page pdf.Page) string {
+	content := page.Content()
+	if len(content.Text) == 0 {
+		text, err := page.GetPlainText(nil)
+		if err != nil {
+			return ""
+		}
+		return text
+	}
+
+	texts := make([]pdf.Text, len(content.Text))
+	copy(texts, content.Text)
+	sort.Slice(texts, func(i, j int) bool {
+		if math.Abs(texts[i].Y-texts[j].Y) > texts[i].FontSize*pdfLineGapRatio {
+			return texts[i].Y > texts[j].Y
+		}
+		return texts[i].X < texts[j].X
+	})
+
+	var buf strings.Builder
+	var prevY, prevFontSize float64
+	first := true
+
+	for _, t := range texts {
+		fontSize := t.FontSize
+		if fontSize <= 0 {
+			fontSize = 12
+		}
+
+		if first {
+			buf.WriteString(t.S)
+			first = false
+		} else {
+			yDiff := math.Abs(t.Y - prevY)
+			lineThreshold := prevFontSize * pdfLineGapRatio
+			if yDiff > lineThreshold {
+				paragraphThreshold := prevFontSize * 1.8
+				if yDiff > paragraphThreshold {
+					buf.WriteString("\n\n")
+				} else {
+					buf.WriteString("\n")
+				}
+			}
+			buf.WriteString(t.S)
+		}
+
+		prevY = t.Y
+		prevFontSize = fontSize
+	}
+
+	result := buf.String()
+	result = strings.ReplaceAll(result, "\r\n", "\n")
+	result = strings.ReplaceAll(result, "\r", "\n")
+	return result
 }
 
 // extractPageTitle returns the first line if it looks like a heading (short, no
