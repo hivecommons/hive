@@ -933,36 +933,39 @@ func main() {
 		}
 	}
 
-	// Retry GitHub App check every 10 minutes when the flag is set.
-	// Stops retrying once the app is detected (advisory issue created successfully).
+	// Retry advisory issue creation until it succeeds. This handles two cases:
+	// 1. GitHub App credentials arrived after startup (via heartbeat/webhook)
+	// 2. ReinitGitHubFunc succeeded but cleared githubAppRequired before
+	//    EnsureAdvisoryIssue could run against the new client
 	{
 		primaryRepo := cfg.Project.PrimaryRepo
 		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 			primaryRepo = cfg.Project.Repos[0]
 		}
 		if primaryRepo != "" {
-			const appRetryInterval = 10 * time.Minute
+			const advisoryRetryInterval = 2 * time.Minute
 			go func() {
-				ticker := time.NewTicker(appRetryInterval)
+				ticker := time.NewTicker(advisoryRetryInterval)
 				defer ticker.Stop()
 				for {
 					select {
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						if !dashSrv.IsGitHubAppRequired() {
-							continue
+						if _, exists := advisoryIssues[primaryRepo]; exists {
+							return
 						}
 						num, err := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
 						if err != nil {
-							logger.Debug("github app retry: still not accessible", "repo", primaryRepo, "error", err)
+							logger.Debug("advisory issue retry: not yet accessible", "repo", primaryRepo, "error", err)
 							continue
 						}
 						advisoryIssues[primaryRepo] = num
 						os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
 						dashSrv.SetGitHubAppRequired(false)
 						dashSrv.ClearPendingGitHubAppInstall()
-						logger.Info("github app retry: app detected, advisory issue ready", "repo", primaryRepo, "number", num)
+						logger.Info("advisory issue retry: created successfully", "repo", primaryRepo, "number", num)
+						return
 					}
 				}
 			}()
