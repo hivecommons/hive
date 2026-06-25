@@ -1,0 +1,246 @@
+package knowledge
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestParseRawText(t *testing.T) {
+	// Build text with several paragraphs that exceed rawTextSplitTarget.
+	var paragraphs []string
+	for i := 0; i < 10; i++ {
+		paragraphs = append(paragraphs, fmt.Sprintf("Paragraph %d. %s", i, strings.Repeat("word ", 60)))
+	}
+	text := strings.Join(paragraphs, "\n\n")
+
+	chunks := parseRawText(text)
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks, got %d", len(chunks))
+	}
+
+	for i, c := range chunks {
+		if c.Body == "" {
+			t.Errorf("chunk %d has empty body", i)
+		}
+		if c.Title == "" {
+			t.Errorf("chunk %d has empty title", i)
+		}
+	}
+}
+
+func TestParseRawText_Short(t *testing.T) {
+	text := "This is a short paragraph.\n\nAnother short one."
+	chunks := parseRawText(text)
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk for short text, got %d", len(chunks))
+	}
+	if !strings.Contains(chunks[0].Body, "short paragraph") {
+		t.Error("chunk body missing expected content")
+	}
+}
+
+func TestParseRawText_Empty(t *testing.T) {
+	chunks := parseRawText("")
+	if len(chunks) != 0 {
+		t.Fatalf("expected 0 chunks for empty text, got %d", len(chunks))
+	}
+}
+
+func TestParseHTMLText(t *testing.T) {
+	html := `<html>
+<head><title>Test Document</title></head>
+<body>
+<nav><a href="/">Home</a></nav>
+<script>var x = 1;</script>
+<style>.hidden { display: none; }</style>
+<header><h1>Header</h1></header>
+<main>
+<p>First paragraph with &amp; entity.</p>
+<p>Second paragraph with &lt;code&gt; blocks.</p>
+</main>
+<footer>Copyright 2024</footer>
+</body></html>`
+
+	chunks, title := parseHTMLText([]byte(html))
+
+	if title != "Test Document" {
+		t.Errorf("expected title 'Test Document', got %q", title)
+	}
+
+	if len(chunks) == 0 {
+		t.Fatal("expected at least 1 chunk from HTML")
+	}
+
+	combined := ""
+	for _, c := range chunks {
+		combined += c.Body
+	}
+
+	if strings.Contains(combined, "var x = 1") {
+		t.Error("script content should have been stripped")
+	}
+	if strings.Contains(combined, "display: none") {
+		t.Error("style content should have been stripped")
+	}
+	if strings.Contains(combined, "Copyright 2024") {
+		t.Error("footer content should have been stripped")
+	}
+	if !strings.Contains(combined, "First paragraph with & entity") {
+		t.Error("HTML entities should have been decoded")
+	}
+}
+
+func TestParseHTMLText_NoTitle(t *testing.T) {
+	html := `<html><body><p>Just text.</p></body></html>`
+	chunks, title := parseHTMLText([]byte(html))
+
+	if title != "" {
+		t.Errorf("expected empty title, got %q", title)
+	}
+	if len(chunks) == 0 {
+		t.Fatal("expected at least 1 chunk")
+	}
+}
+
+func TestParsePDFText(t *testing.T) {
+	// Simulate 3 pages separated by form-feeds.
+	page1 := "Introduction to Transformers\n\nTransformer models use self-attention."
+	page2 := "Related Work\n\nPrior approaches used RNNs and CNNs for sequence tasks."
+	page3 := "Methodology\n\nWe propose a novel attention mechanism."
+	text := page1 + "\f" + page2 + "\f" + page3
+
+	chunks := parsePDFText(text)
+	if len(chunks) != 3 {
+		t.Fatalf("expected 3 chunks (one per page), got %d", len(chunks))
+	}
+
+	if chunks[0].PageNum != 1 || chunks[1].PageNum != 2 || chunks[2].PageNum != 3 {
+		t.Error("page numbers should be 1-indexed sequential")
+	}
+
+	// First page title should be "Introduction to Transformers" (heading-like).
+	if chunks[0].Title != "Introduction to Transformers" {
+		t.Errorf("expected heading title, got %q", chunks[0].Title)
+	}
+}
+
+func TestParsePDFText_LargePage(t *testing.T) {
+	// A page exceeding maxChunkChars should be split.
+	largePara1 := strings.Repeat("Alpha word. ", 120)
+	largePara2 := strings.Repeat("Beta word. ", 120)
+	text := largePara1 + "\n\n" + largePara2
+
+	chunks := parsePDFText(text)
+	if len(chunks) < 2 {
+		t.Fatalf("expected large page to be split into at least 2 chunks, got %d", len(chunks))
+	}
+	if chunks[0].PageNum != 1 {
+		t.Errorf("expected page 1, got %d", chunks[0].PageNum)
+	}
+}
+
+func TestParsePDFText_EmptyPages(t *testing.T) {
+	text := "\f\f\fActual content\f\f"
+	chunks := parsePDFText(text)
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk (empty pages skipped), got %d", len(chunks))
+	}
+}
+
+func TestChunksToFacts(t *testing.T) {
+	chunks := []DocChunk{
+		{Title: "Introduction", Body: "This is the intro."},
+		{Title: "Methods", Body: "We used method X."},
+		{Title: "Results", Body: "Results were positive."},
+	}
+
+	sourceDate := time.Date(2025, 1, 15, 0, 0, 0, 0, time.UTC)
+	facts := chunksToFacts(chunks, "test-paper", "https://example.com/paper.pdf", sourceDate)
+
+	// 1 summary + 3 section facts = 4
+	if len(facts) != 4 {
+		t.Fatalf("expected 4 facts (1 summary + 3 sections), got %d", len(facts))
+	}
+
+	// Verify summary fact.
+	summary := facts[0]
+	if !strings.HasPrefix(summary.Title, "Summary: ") {
+		t.Errorf("summary title should start with 'Summary: ', got %q", summary.Title)
+	}
+	if summary.Type != FactType("reference") {
+		t.Errorf("expected type 'reference', got %q", summary.Type)
+	}
+
+	hasSummaryTag := false
+	for _, tag := range summary.Tags {
+		if tag == "doc-summary" {
+			hasSummaryTag = true
+		}
+	}
+	if !hasSummaryTag {
+		t.Error("summary fact should have 'doc-summary' tag")
+	}
+
+	// Verify section facts.
+	for i := 1; i < len(facts); i++ {
+		f := facts[i]
+		if f.SourcePR != "doc:test-paper" {
+			t.Errorf("fact %d: expected SourcePR 'doc:test-paper', got %q", i, f.SourcePR)
+		}
+		if f.Confidence != defaultDocConfidence {
+			t.Errorf("fact %d: expected confidence %f, got %f", i, defaultDocConfidence, f.Confidence)
+		}
+
+		hasImportTag := false
+		for _, tag := range f.Tags {
+			if tag == "doc-import" {
+				hasImportTag = true
+			}
+		}
+		if !hasImportTag {
+			t.Errorf("fact %d: missing 'doc-import' tag", i)
+		}
+	}
+}
+
+func TestChunksToFacts_Cap(t *testing.T) {
+	// 60 chunks should produce at most maxFactsPerDocument facts.
+	const chunkCount = 60
+	chunks := make([]DocChunk, chunkCount)
+	for i := range chunks {
+		chunks[i] = DocChunk{
+			Title: fmt.Sprintf("Section %d", i+1),
+			Body:  fmt.Sprintf("Content for section %d.", i+1),
+		}
+	}
+
+	facts := chunksToFacts(chunks, "big-doc", "", time.Now())
+	if len(facts) > maxFactsPerDocument {
+		t.Errorf("expected at most %d facts, got %d", maxFactsPerDocument, len(facts))
+	}
+	if len(facts) != maxFactsPerDocument {
+		t.Errorf("expected exactly %d facts (cap hit), got %d", maxFactsPerDocument, len(facts))
+	}
+}
+
+func TestChunksToFacts_Empty(t *testing.T) {
+	facts := chunksToFacts(nil, "empty", "", time.Now())
+	if len(facts) != 0 {
+		t.Fatalf("expected 0 facts for nil chunks, got %d", len(facts))
+	}
+}
+
+func TestChunksToFacts_SummaryTruncation(t *testing.T) {
+	longBody := strings.Repeat("x", docSummaryMaxChars*2)
+	chunks := []DocChunk{{Title: "Long", Body: longBody}}
+
+	facts := chunksToFacts(chunks, "long-doc", "", time.Now())
+	if len(facts) == 0 {
+		t.Fatal("expected at least 1 fact")
+	}
+	if len(facts[0].Body) > docSummaryMaxChars {
+		t.Errorf("summary body should be truncated to %d chars, got %d", docSummaryMaxChars, len(facts[0].Body))
+	}
+}
