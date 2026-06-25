@@ -62,6 +62,17 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
+	// Clear stale upgrade marker if the current SHA differs from the marker's
+	// current_sha — this means the upgrade succeeded and the marker is from a
+	// previous version.
+	const upgradeMarkerStartupPath = "/data/upgrade-requested"
+	if markerData, err := os.ReadFile(upgradeMarkerStartupPath); err == nil {
+		if !strings.Contains(string(markerData), fmt.Sprintf(`"current_sha":"%s"`, gitShort)) {
+			os.Remove(upgradeMarkerStartupPath)
+			logger.Info("cleared stale upgrade marker (SHA changed)", "current", gitShort)
+		}
+	}
+
 	if os.Getenv("HIVE_MODE") == "hub" {
 		runHub(logger)
 		return
@@ -1290,6 +1301,21 @@ func main() {
 				}(),
 			}
 		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, func(targetSHA string) {
+			const upgradeMarkerPath = "/data/upgrade-requested"
+
+			// If a previous process already attempted an upgrade and we booted
+			// with the same git hash, the image tag didn't actually change.
+			// Skip to avoid an infinite restart loop.
+			if markerData, err := os.ReadFile(upgradeMarkerPath); err == nil {
+				if strings.Contains(string(markerData), fmt.Sprintf(`"current_sha":"%s"`, gitShort)) {
+					logger.Info("self-upgrade skipped: already attempted from this SHA (image unchanged)",
+						"target", targetSHA,
+						"current", gitShort,
+					)
+					return
+				}
+			}
+
 			// Minimum uptime before allowing self-upgrade to avoid restart loops.
 			const minUptimeBeforeUpgrade = 5 * time.Minute
 			uptime := time.Since(startTime)
@@ -1303,8 +1329,6 @@ func main() {
 				return
 			}
 
-			// Write upgrade marker so the entrypoint can detect intentional restart.
-			const upgradeMarkerPath = "/data/upgrade-requested"
 			marker := fmt.Sprintf(`{"target_sha":"%s","current_sha":"%s","requested_at":"%s"}`,
 				targetSHA, gitShort, time.Now().UTC().Format(time.RFC3339))
 			if err := os.WriteFile(upgradeMarkerPath, []byte(marker), 0o644); err != nil {
