@@ -256,12 +256,14 @@ type GraphData struct {
 
 // GraphNode represents a fact in the graph visualization.
 type GraphNode struct {
-	Slug       string  `json:"slug"`
-	Title      string  `json:"title"`
-	Type       string  `json:"type"`
-	Layer      string  `json:"layer"`
-	Confidence float64 `json:"confidence"`
-	UsageCount int     `json:"usage_count"`
+	Slug       string   `json:"slug"`
+	Title      string   `json:"title"`
+	Type       string   `json:"type"`
+	Layer      string   `json:"layer"`
+	Confidence float64  `json:"confidence"`
+	UsageCount int      `json:"usage_count"`
+	Tags       []string `json:"tags,omitempty"`
+	Body       string   `json:"body,omitempty"`
 }
 
 // GraphEdge represents a relationship between two facts.
@@ -299,6 +301,13 @@ func (g *GraphStore) BuildGraphData(stores []*FileStore, rootSlug string, depth 
 				node.Layer = string(f.Layer)
 				node.Confidence = f.Confidence
 				node.UsageCount = f.UsageCount
+				node.Tags = f.Tags
+				const graphBodyMaxLen = 500
+				if len(f.Body) > graphBodyMaxLen {
+					node.Body = f.Body[:graphBodyMaxLen]
+				} else {
+					node.Body = f.Body
+				}
 				break
 			}
 		}

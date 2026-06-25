@@ -5476,8 +5476,27 @@ function burnAreaChart() {
       canvas.height = h * dpr;
       canvas.style.width = w + 'px';
       canvas.style.height = h + 'px';
+      canvas.style.position = 'absolute';
+      canvas.style.inset = '0';
+      canvas.style.zIndex = '1';
       container.innerHTML = '';
       container.appendChild(canvas);
+
+      // Loading overlay while graph simulation runs
+      const loadingOverlay = document.createElement('div');
+      loadingOverlay.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:15;background:rgba(0,0,0,0.3);transition:opacity 0.3s';
+      loadingOverlay.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:8px"><div style="width:32px;height:32px;border:3px solid rgba(255,255,255,0.2);border-top-color:var(--blue,#58a6ff);border-radius:50%;animation:kbGraphSpin 0.8s linear infinite"></div><span style="color:var(--text);font-size:0.75rem;opacity:0.8">Laying out graph…</span></div>';
+      container.appendChild(loadingOverlay);
+      if (!document.getElementById('kb-graph-spin-style')) {
+        const spinStyle = document.createElement('style');
+        spinStyle.id = 'kb-graph-spin-style';
+        spinStyle.textContent = '@keyframes kbGraphSpin { to { transform: rotate(360deg) } }';
+        document.head.appendChild(spinStyle);
+      }
+      function hideLoadingOverlay() {
+        loadingOverlay.style.opacity = '0';
+        setTimeout(() => loadingOverlay.remove(), 300);
+      }
       const ctx = canvas.getContext('2d');
 
       const GRAPH_NODE_RADIUS_MIN = 6;
@@ -5625,6 +5644,7 @@ function burnAreaChart() {
         ctx.restore();
       }
 
+      let loadingHidden = false;
       function tick() {
         simSteps++;
         const ke = simulationStep();
@@ -5635,6 +5655,7 @@ function burnAreaChart() {
           simRunning = false;
           _kbGraphAnimFrame = null;
           draw();
+          if (!loadingHidden) { loadingHidden = true; hideLoadingOverlay(); }
         }
       }
 
@@ -5648,7 +5669,7 @@ function burnAreaChart() {
 
       // Tooltip
       const tooltip = document.createElement('div');
-      tooltip.style.cssText = 'position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:0.72rem;color:var(--text);pointer-events:none;display:none;z-index:10;max-width:280px;box-shadow:0 4px 12px rgba(0,0,0,0.3)';
+      tooltip.style.cssText = 'position:absolute;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:0.72rem;color:var(--text);pointer-events:none;display:none;z-index:25;max-width:420px;box-shadow:0 4px 12px rgba(0,0,0,0.3);overflow-y:auto;max-height:350px';
       container.appendChild(tooltip);
 
       function findNodeAt(sx, sy) {
@@ -5689,12 +5710,14 @@ function burnAreaChart() {
           const d = hoveredNode.data;
           const confPct = Math.round((d.confidence || 0) * 100);
           const tags = (d.tags || []).slice(0, 5).map(t => escapeHtml(t)).join(', ');
+          const bodyText = d.body ? escapeHtml(d.body).replace(/\n/g, '<br>') : '';
           tooltip.innerHTML = `<strong>${escapeHtml(d.title || d.slug)}</strong><br>` +
-            `<span style="color:var(--muted)">Type:</span> ${escapeHtml(d.type || 'pattern')}<br>` +
-            `<span style="color:var(--muted)">Layer:</span> ${escapeHtml(d.layer || 'personal')}<br>` +
+            `<span style="color:var(--muted)">Type:</span> ${escapeHtml(d.type || 'pattern')} &middot; ` +
+            `<span style="color:var(--muted)">Layer:</span> ${escapeHtml(d.layer || 'personal')} &middot; ` +
             `<span style="color:var(--muted)">Confidence:</span> ${confPct}%` +
             (tags ? `<br><span style="color:var(--muted)">Tags:</span> ${tags}` : '') +
-            (d.usage_count ? `<br><span style="color:var(--muted)">Used:</span> ${d.usage_count}x` : '');
+            (d.usage_count ? ` &middot; <span style="color:var(--muted)">Used:</span> ${d.usage_count}x` : '') +
+            (bodyText ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);line-height:1.4;white-space:pre-wrap;word-break:break-word">${bodyText}</div>` : '');
           tooltip.style.display = 'block';
           tooltip.style.left = (sx + 12) + 'px';
           tooltip.style.top = (sy - 10) + 'px';
@@ -5779,7 +5802,7 @@ function burnAreaChart() {
       // Zoom controls overlay
       const controlBtnStyle = 'width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--fg);cursor:pointer;display:flex;align-items:center;justify-content:center';
       const zoomControls = document.createElement('div');
-      zoomControls.style.cssText = 'position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:5';
+      zoomControls.style.cssText = 'position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:20';
       zoomControls.innerHTML = `
         <button onclick="this.parentElement._zoomIn()" style="${controlBtnStyle};font-size:16px" title="Zoom in">+</button>
         <button onclick="this.parentElement._zoomReset()" style="${controlBtnStyle};font-size:10px" title="Reset zoom">&#x27F2;</button>
@@ -5810,8 +5833,11 @@ function burnAreaChart() {
         w = newW; h = newH;
         draw();
       }
+      const FULLSCREEN_RESIZE_DELAY_MS = 100;
+      const FULLSCREEN_RESIZE_RETRY_MS = 300;
       const onFullscreenChange = () => {
-        setTimeout(resizeCanvas, 50);
+        setTimeout(resizeCanvas, FULLSCREEN_RESIZE_DELAY_MS);
+        setTimeout(resizeCanvas, FULLSCREEN_RESIZE_RETRY_MS);
       };
       document.addEventListener('fullscreenchange', onFullscreenChange);
       container._cleanupFullscreen = () => document.removeEventListener('fullscreenchange', onFullscreenChange);
@@ -5826,6 +5852,7 @@ function burnAreaChart() {
         for (let s = 0; s < GRAPH_PRECOMPUTE_STEPS; s++) simulationStep();
         simRunning = false;
         draw();
+        hideLoadingOverlay();
       } else {
         tick();
       }
