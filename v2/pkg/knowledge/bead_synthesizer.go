@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -525,14 +526,14 @@ func (s *BeadSynthesizer) writeFactToVault(fact ExtractedFact) error {
 }
 
 // resolveBeadRelations maps a bead's DependsOn IDs to fact slugs by looking up
-// each dependent bead across all stores and slugifying its title.
+// each dependent bead across all stores and slugifying its title, then enriches
+// with tag-based matches from vault FileStores so facts sharing tags are linked.
 func (s *BeadSynthesizer) resolveBeadRelations(b *beads.Bead, agent string) []string {
-	if len(b.DependsOn) == 0 {
-		return nil
-	}
-
 	seen := make(map[string]bool)
 	var related []string
+
+	selfSlug := slugify(b.Title)
+	seen[selfSlug] = true
 
 	for _, depID := range b.DependsOn {
 		for _, store := range s.beadStores {
@@ -549,7 +550,60 @@ func (s *BeadSynthesizer) resolveBeadRelations(b *beads.Bead, agent string) []st
 		}
 	}
 
+	tags := extractBeadTags(b)
+	tagRelated := s.findRelatedByTags(tags, seen)
+	related = append(related, tagRelated...)
+
 	return related
+}
+
+const maxTagRelatedFacts = 10
+
+// findRelatedByTags searches all vault FileStores for facts that share at least
+// one tag with the given set, returning their slugs (excluding already-seen ones).
+func (s *BeadSynthesizer) findRelatedByTags(tags []string, seen map[string]bool) []string {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	matches := make(map[string]int)
+	for _, store := range s.knowledgeAPI.FileStores() {
+		for _, tag := range tags {
+			for _, fact := range store.ListPages(tag) {
+				if seen[fact.Slug] {
+					continue
+				}
+				matches[fact.Slug]++
+			}
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	type scored struct {
+		slug  string
+		count int
+	}
+	ranked := make([]scored, 0, len(matches))
+	for slug, count := range matches {
+		ranked = append(ranked, scored{slug: slug, count: count})
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		return ranked[i].count > ranked[j].count
+	})
+
+	cap := maxTagRelatedFacts
+	if len(ranked) < cap {
+		cap = len(ranked)
+	}
+	result := make([]string, cap)
+	for i := 0; i < cap; i++ {
+		result[i] = ranked[i].slug
+		seen[ranked[i].slug] = true
+	}
+	return result
 }
 
 // buildEnrichedBody produces the fact body, enriching with GitHub PR data when possible.
