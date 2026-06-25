@@ -255,32 +255,37 @@ print('\n'.join(sorted(names)))
 " 2>/dev/null) || true
   fi
 
-  # Pre-cleanup: remove stale git clones from agent workspaces BEFORE the
-  # chown loop. The Go binary's workspace_cleanup.go does this at runtime,
+  # Pre-cleanup: remove ALL stale workspace artifacts from agent dirs BEFORE
+  # the chown loop. The Go binary's workspace_cleanup.go does this at runtime,
   # but it can't start until the entrypoint finishes — and chown -R on
-  # 300K+ files from accumulated clones takes forever on NFS, creating a
-  # circular dependency. This breaks the cycle.
+  # 300K+ accumulated files takes forever on NFS, creating a circular
+  # dependency. This breaks the cycle by cleaning dirs, Go caches, and
+  # loose files (not just git clones).
   WORKSPACE_MAX_AGE_SECS=7200
   if [ -d "$agentWorkspaceRoot" ] 2>/dev/null || [ -d /data/agents ]; then
     _CLEANUP_ROOT="${agentWorkspaceRoot:-/data/agents}"
-    _CLEANUP_COUNT=0
+    _CLEANUP_DIRS=0
+    _CLEANUP_FILES=0
     _NOW=$(date +%s)
     for _agent_dir in "$_CLEANUP_ROOT"/*/; do
       [ -d "$_agent_dir" ] || continue
-      for _sub_dir in "$_agent_dir"*/; do
-        [ -d "$_sub_dir" ] || continue
-        [ -d "$_sub_dir/.git" ] || continue
-        _sub_name=$(basename "$_sub_dir")
-        case "$_sub_name" in .cache|.config|.npm-cache|bin) continue ;; esac
-        _MTIME=$(stat -c '%Y' "$_sub_dir" 2>/dev/null || echo "$_NOW")
+      for _entry in "$_agent_dir"*; do
+        [ -e "$_entry" ] || continue
+        _entry_name=$(basename "$_entry")
+        case "$_entry_name" in .cache|.config|.npm-cache|bin|beads.json) continue ;; esac
+        _MTIME=$(stat -c '%Y' "$_entry" 2>/dev/null || echo "$_NOW")
         _AGE=$((_NOW - _MTIME))
         if [ "$_AGE" -gt "$WORKSPACE_MAX_AGE_SECS" ]; then
-          rm -rf "$_sub_dir" 2>/dev/null && _CLEANUP_COUNT=$((_CLEANUP_COUNT + 1))
+          if [ -d "$_entry" ]; then
+            rm -rf "$_entry" 2>/dev/null && _CLEANUP_DIRS=$((_CLEANUP_DIRS + 1))
+          else
+            rm -f "$_entry" 2>/dev/null && _CLEANUP_FILES=$((_CLEANUP_FILES + 1))
+          fi
         fi
       done
     done
-    if [ "$_CLEANUP_COUNT" -gt 0 ]; then
-      echo "[entrypoint] Pre-cleanup: removed $_CLEANUP_COUNT stale repo clones"
+    if [ "$_CLEANUP_DIRS" -gt 0 ] || [ "$_CLEANUP_FILES" -gt 0 ]; then
+      echo "[entrypoint] Pre-cleanup: removed $_CLEANUP_DIRS stale dirs, $_CLEANUP_FILES stale files"
     fi
   fi
 

@@ -15,9 +15,9 @@ const (
 )
 
 // StartWorkspaceCleanup runs a background loop that periodically sweeps
-// /data/agents/*/ for stale git repository clones and removes them.
-// This prevents unbounded disk growth from scanner and other agents that
-// clone repos for each task but never clean up.
+// /data/agents/*/ for stale workspace artifacts and removes them.
+// This prevents unbounded disk growth from agents that create repo clones,
+// Go caches, working directories, and temporary files during tasks.
 func StartWorkspaceCleanup(ctx context.Context, logger *slog.Logger) {
 	logger.Info("workspace cleanup enabled", "interval", workspaceCleanupInterval, "max_age", workspaceMaxAge)
 
@@ -43,7 +43,8 @@ func sweepWorkspaces(logger *slog.Logger) {
 		return
 	}
 
-	removed := 0
+	removedDirs := 0
+	removedFiles := 0
 	now := time.Now()
 
 	for _, agentEntry := range agentDirs {
@@ -53,28 +54,19 @@ func sweepWorkspaces(logger *slog.Logger) {
 		agentName := agentEntry.Name()
 		agentPath := filepath.Join(agentWorkspaceRoot, agentName)
 
-		subdirs, err := os.ReadDir(agentPath)
+		entries, err := os.ReadDir(agentPath)
 		if err != nil {
 			continue
 		}
 
-		for _, sub := range subdirs {
-			if !sub.IsDir() {
-				continue
-			}
-			dirName := sub.Name()
-			if isSkippedDir(dirName) {
+		for _, entry := range entries {
+			name := entry.Name()
+			if isSkippedEntry(name) {
 				continue
 			}
 
-			dirPath := filepath.Join(agentPath, dirName)
-			gitPath := filepath.Join(dirPath, ".git")
-
-			if _, err := os.Stat(gitPath); err != nil {
-				continue
-			}
-
-			info, err := sub.Info()
+			entryPath := filepath.Join(agentPath, name)
+			info, err := entry.Info()
 			if err != nil {
 				continue
 			}
@@ -83,24 +75,32 @@ func sweepWorkspaces(logger *slog.Logger) {
 				continue
 			}
 
-			if err := os.RemoveAll(dirPath); err != nil {
-				logger.Warn("workspace cleanup: failed to remove stale clone",
-					"agent", agentName, "dir", dirName, "error", err)
-				continue
+			if entry.IsDir() {
+				if err := os.RemoveAll(entryPath); err != nil {
+					logger.Warn("workspace cleanup: failed to remove stale dir",
+						"agent", agentName, "dir", name, "age", age.Round(time.Minute), "error", err)
+					continue
+				}
+				logger.Info("workspace cleanup: removed stale dir",
+					"agent", agentName, "dir", name, "age", age.Round(time.Minute))
+				removedDirs++
+			} else {
+				if err := os.Remove(entryPath); err != nil {
+					logger.Warn("workspace cleanup: failed to remove stale file",
+						"agent", agentName, "file", name, "error", err)
+					continue
+				}
+				removedFiles++
 			}
-
-			logger.Info("workspace cleanup: removed stale clone",
-				"agent", agentName, "dir", dirName, "age", age.Round(time.Minute))
-			removed++
 		}
 	}
 
-	logger.Info("workspace cleanup complete", "removed", removed)
+	logger.Info("workspace cleanup complete", "removed_dirs", removedDirs, "removed_files", removedFiles)
 }
 
-func isSkippedDir(name string) bool {
+func isSkippedEntry(name string) bool {
 	switch name {
-	case ".cache", ".config", ".npm-cache", "bin":
+	case ".cache", ".config", ".npm-cache", "bin", "beads.json":
 		return true
 	}
 	return false
