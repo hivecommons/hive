@@ -1672,11 +1672,15 @@
 (function(){
   var m=localStorage.getItem('hive-layout-mode');
   if(m==='openclaw')m='light';
+  if(m==='classic')m='dark';
+  if(!m)m='light';
   document.body.classList.add('has-info-sidebar');
   if(m==='light'){document.body.classList.add('light-mode')}
   document.body.style.opacity='0';
   document.body.style.transition='opacity 0.15s ease-in';
   setTimeout(function(){ document.body.style.opacity='1'; }, 3000);
+  var lbl=m==='dark'?'☰ Light Mode':'☰ Dark Mode';
+  document.querySelectorAll('.layout-toggle').forEach(function(b){b.textContent=lbl});
 })();
 
 </script>
