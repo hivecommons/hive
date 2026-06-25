@@ -2221,11 +2221,11 @@
     function applyLayout(mode) {
       document.body.classList.toggle('light-mode', mode === 'light');
       document.body.classList.add('has-info-sidebar');
-      const btn = document.getElementById('layout-toggle');
-      if (btn) {
-        btn.textContent = LAYOUT_LABELS[mode] || LAYOUT_LABELS.dark;
+      const lbl = LAYOUT_LABELS[mode] || LAYOUT_LABELS.dark;
+      document.querySelectorAll('.layout-toggle').forEach(btn => {
+        btn.textContent = lbl;
         btn.classList.toggle('active', mode !== 'dark');
-      }
+      });
       const sidebar = document.getElementById('oc-sidebar');
       if (sidebar) sidebar.style.display = 'flex';
       const h1 = document.querySelector('body > h1');
