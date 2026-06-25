@@ -734,7 +734,7 @@ func main() {
 			logger.Info("cleaned up low-quality bead-synth facts", "removed", cleaned)
 		}
 
-		if cfg.Knowledge.Enabled && cfg.Knowledge.BeadSynthesizer.IsEnabled() && knowledgeAPI != nil {
+		if cfg.Knowledge.BeadSynthesizer.IsEnabled() && knowledgeAPI != nil {
 			beadSynth.StartBackground(ctx)
 			logger.Info("bead-to-wiki synthesizer started",
 				"schedule", cfg.Knowledge.BeadSynthesizer.Schedule,
