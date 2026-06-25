@@ -619,6 +619,7 @@ func TestRunSynthesis_BasicFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	store.Update(b.ID, func(b *beads.Bead) { b.Notes = "Auth handler allows unauthenticated access to admin endpoints." })
 	if err := store.Close(b.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -959,9 +960,11 @@ func TestRunSynthesis_MultipleAgents(t *testing.T) {
 	store2 := newTestStore(t)
 
 	b1, _ := store1.Create("scanner found auth bug", beads.TypeBug, beads.PriorityMedium, "scanner", "")
+	store1.Update(b1.ID, func(b *beads.Bead) { b.Notes = "Auth handler allows unauthenticated access." })
 	store1.Close(b1.ID)
 
 	b2, _ := store2.Create("quality found test gap", beads.TypeAdvisory, beads.PriorityMedium, "quality", "")
+	store2.Update(b2.ID, func(b *beads.Bead) { b.Notes = "Missing integration tests for auth flow." })
 	store2.SetMetadata(b2.ID, "finding_type", "test")
 	store2.Close(b2.ID)
 
@@ -1022,8 +1025,10 @@ func TestDedup_SameTitleWithinBatch(t *testing.T) {
 	store := newTestStore(t)
 
 	b1, _ := store.Create("duplicate finding title", beads.TypeBug, beads.PriorityMedium, "scanner", "")
+	store.Update(b1.ID, func(b *beads.Bead) { b.Notes = "Found a duplicate issue in the scanner." })
 	store.Close(b1.ID)
 	b2, _ := store.Create("duplicate finding title", beads.TypeBug, beads.PriorityMedium, "scanner", "")
+	store.Update(b2.ID, func(b *beads.Bead) { b.Notes = "Found a duplicate issue in the scanner." })
 	store.Close(b2.ID)
 
 	stores := map[string]*beads.Store{"scanner": store}
@@ -1047,8 +1052,10 @@ func TestDedup_CrossAgent(t *testing.T) {
 	store2 := newTestStore(t)
 
 	b1, _ := store1.Create("same finding from both agents", beads.TypeBug, beads.PriorityMedium, "scanner", "")
+	store1.Update(b1.ID, func(b *beads.Bead) { b.Notes = "Cross-agent finding details." })
 	store1.Close(b1.ID)
 	b2, _ := store2.Create("same finding from both agents", beads.TypeBug, beads.PriorityMedium, "quality", "")
+	store2.Update(b2.ID, func(b *beads.Bead) { b.Notes = "Cross-agent finding details." })
 	store2.Close(b2.ID)
 
 	stores := map[string]*beads.Store{"scanner": store1, "quality": store2}
@@ -1247,6 +1254,7 @@ func TestRunOnce_LogsSuccess(t *testing.T) {
 	store := newTestStore(t)
 
 	b, _ := store.Create("finding for runOnce test", beads.TypeBug, beads.PriorityMedium, "scanner", "")
+	store.Update(b.ID, func(b *beads.Bead) { b.Notes = "runOnce test bead with notes." })
 	store.Close(b.ID)
 
 	stores := map[string]*beads.Store{"scanner": store}

@@ -176,8 +176,8 @@ Always verify scopes.
 		t.Fatal(err)
 	}
 
-	if n != 3 {
-		t.Fatalf("expected 3 triples (2 from related + 1 from wikilink), got %d", n)
+	if n != 4 {
+		t.Fatalf("expected 4 triples (2 from related + 1 from wikilink + 1 shared_tag for auth), got %d", n)
 	}
 
 	out := gs.Outgoing("auth-pattern", PredicateRelatedTo)
