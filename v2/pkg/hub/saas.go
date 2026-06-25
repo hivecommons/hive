@@ -1825,6 +1825,16 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.logger.Info("audit: visibility toggled", "hive_id", id, "is_public", body.IsPublic, "by", username)
+
+	s.mu.Lock()
+	for i, h := range s.registry.Hives {
+		if h.ID == id {
+			s.registry.Hives[i].IsPublic = body.IsPublic
+			break
+		}
+	}
+	s.mu.Unlock()
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"is_public":%t}`, body.IsPublic)
 }
