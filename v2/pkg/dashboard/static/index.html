@@ -5358,7 +5358,8 @@ function burnAreaChart() {
         _kbInitialLoad = false;
         const enabledChanged = !prev || prev.enabled !== _kbCache.enabled;
         const layersChanged = !prev || JSON.stringify((prev.layers||[]).map(l=>l.type)) !== JSON.stringify((_kbCache.layers||[]).map(l=>l.type));
-        if (!_kbRendered || enabledChanged || layersChanged) {
+        const docsChanged = !prev || JSON.stringify((prev._documents||[]).map(d=>d.slug)) !== JSON.stringify((_kbCache._documents||[]).map(d=>d.slug));
+        if (!_kbRendered || enabledChanged || layersChanged || docsChanged) {
           _kbRendered = true;
           renderKnowledge();
         }
