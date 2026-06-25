@@ -1938,6 +1938,96 @@ a{color:#58a6ff}
 <pre>curl -H "Authorization: Bearer $TOKEN" %s/api/v1/knowledge</pre>
 </div>
 
+<h2>Knowledge Sources</h2>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/api/knowledge/stats</span>
+<div class="desc">Knowledge base stats — layers, fact counts, engine, health</div>
+<pre>curl -H "Authorization: Bearer $TOKEN" %s/api/knowledge/stats</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/api/knowledge/search?q=&lt;query&gt;&amp;limit=10</span>
+<div class="desc">Search all knowledge facts by keyword</div>
+<pre>curl -H "Authorization: Bearer $TOKEN" %s/api/knowledge/search?q=autoscaling&amp;limit=10</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/api/knowledge/git-sources</span>
+<div class="desc">List connected git sources</div>
+<pre>curl -H "Authorization: Bearer $TOKEN" %s/api/knowledge/git-sources</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">POST</span><span class="path">/api/knowledge/git-sources</span>
+<div class="desc">Add a git source — clone a repo and index its markdown as knowledge facts</div>
+<pre>curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"url":"https://github.com/org/repo","name":"my-docs","subpath":"docs","branch":"main","layer":"project"}' \
+  %s/api/knowledge/git-sources</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">DELETE</span><span class="path">/api/knowledge/git-sources</span>
+<div class="desc">Remove a git source</div>
+<pre>curl -X DELETE -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"url":"https://github.com/org/repo","subpath":"docs"}' \
+  %s/api/knowledge/git-sources</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/api/knowledge/documents</span>
+<div class="desc">List imported documents</div>
+<pre>curl -H "Authorization: Bearer $TOKEN" %s/api/knowledge/documents</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">POST</span><span class="path">/api/knowledge/documents</span>
+<div class="desc">Import a document from URL — supports PDF, HTML, DOCX, plain text. Content is parsed into chunks and stored as knowledge facts.</div>
+<pre>curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"url":"https://arxiv.org/pdf/2309.06180","name":"vllm-paper","layer":"community"}' \
+  %s/api/knowledge/documents</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/api/knowledge/documents/{slug}</span>
+<div class="desc">Get document metadata — title, source URL, fact count, fact slugs</div>
+<pre>curl -H "Authorization: Bearer $TOKEN" %s/api/knowledge/documents/vllm-paper</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">DELETE</span><span class="path">/api/knowledge/documents/{slug}</span>
+<div class="desc">Delete a document and all its extracted facts</div>
+<pre>curl -X DELETE -H "Authorization: Bearer $TOKEN" %s/api/knowledge/documents/vllm-paper</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">POST</span><span class="path">/api/knowledge/documents/{slug}/reimport</span>
+<div class="desc">Re-fetch a document and re-extract facts (replaces old facts)</div>
+<pre>curl -X POST -H "Authorization: Bearer $TOKEN" %s/api/knowledge/documents/vllm-paper/reimport</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">GET</span><span class="path">/api/knowledge/subscriptions</span>
+<div class="desc">List wiki subscriptions (remote llm-wiki endpoints)</div>
+<pre>curl -H "Authorization: Bearer $TOKEN" %s/api/knowledge/subscriptions</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">POST</span><span class="path">/api/knowledge/subscriptions</span>
+<div class="desc">Add a wiki subscription</div>
+<pre>curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"url":"https://wiki.example.com/mcp","name":"team-wiki","layer":"org"}' \
+  %s/api/knowledge/subscriptions</pre>
+</div>
+
+<div class="endpoint">
+<span class="method">POST</span><span class="path">/api/knowledge/import</span>
+<div class="desc">Import facts from raw markdown or JSON content</div>
+<pre>curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"content":"# Guard .join()\n\nAlways use (arr || []).join()","layer":"project","format":"markdown"}' \
+  %s/api/knowledge/import</pre>
+</div>
+
 <h2>Token Management</h2>
 
 <div class="endpoint">
@@ -1952,6 +2042,6 @@ a{color:#58a6ff}
 <pre>curl -X POST -d '{"github_username":"you","force":true}' %s/api/contribute/register</pre>
 </div>
 
-</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
+</body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
 }
 
