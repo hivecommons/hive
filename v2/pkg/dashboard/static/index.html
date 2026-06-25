@@ -5453,7 +5453,17 @@ function burnAreaChart() {
       } catch (e) { console.error('graph fetch failed', e); }
     }
 
+    let _kbGraphAnimFrame = null;
+    let _kbGraphCleanup = null;
     function renderKnowledgeGraphCanvas() {
+      if (_kbGraphAnimFrame) {
+        cancelAnimationFrame(_kbGraphAnimFrame);
+        _kbGraphAnimFrame = null;
+      }
+      if (_kbGraphCleanup) {
+        _kbGraphCleanup();
+        _kbGraphCleanup = null;
+      }
       const container = document.getElementById('kb-graph-container');
       if (!container || !_kbGraphData) return;
       const nodes = _kbGraphData.nodes || [];
@@ -5531,7 +5541,8 @@ function burnAreaChart() {
         .map(e => ({ from: slugIdx[e.from], to: slugIdx[e.to], pred: e.predicate }));
 
       let simRunning = true;
-      let animFrame = null;
+      let simSteps = 0;
+      const GRAPH_MAX_SIM_STEPS = 300;
       let dragNode = null;
       let hoveredNode = null;
       let isPanning = false;
@@ -5620,12 +5631,14 @@ function burnAreaChart() {
       }
 
       function tick() {
+        simSteps++;
         const ke = simulationStep();
         draw();
-        if (simRunning && (ke > GRAPH_MIN_VELOCITY || dragNode)) {
-          animFrame = requestAnimationFrame(tick);
+        if (simRunning && (ke > GRAPH_MIN_VELOCITY || dragNode) && simSteps < GRAPH_MAX_SIM_STEPS) {
+          _kbGraphAnimFrame = requestAnimationFrame(tick);
         } else {
           simRunning = false;
+          _kbGraphAnimFrame = null;
           draw();
         }
       }
@@ -5633,6 +5646,7 @@ function burnAreaChart() {
       function restartSim() {
         if (!simRunning) {
           simRunning = true;
+          simSteps = 0;
           tick();
         }
       }
@@ -5801,12 +5815,25 @@ function burnAreaChart() {
         w = newW; h = newH;
         draw();
       }
-      document.addEventListener('fullscreenchange', () => {
+      const onFullscreenChange = () => {
         setTimeout(resizeCanvas, 50);
-      });
+      };
+      document.addEventListener('fullscreenchange', onFullscreenChange);
+      container._cleanupFullscreen = () => document.removeEventListener('fullscreenchange', onFullscreenChange);
 
-      // Start live simulation
-      tick();
+      _kbGraphCleanup = () => {
+        if (container._cleanupFullscreen) container._cleanupFullscreen();
+      };
+
+      const GRAPH_STATIC_THRESHOLD = 150;
+      if (simNodes.length > GRAPH_STATIC_THRESHOLD) {
+        const GRAPH_PRECOMPUTE_STEPS = 80;
+        for (let s = 0; s < GRAPH_PRECOMPUTE_STEPS; s++) simulationStep();
+        simRunning = false;
+        draw();
+      } else {
+        tick();
+      }
     }
 
     // Setup view state: 'choose' (default), 'git', 'webhook', or 'none' (skip setup, show full KB)
