@@ -53,12 +53,14 @@ func NewKnowledgeAPI(layers []LayerConfig, config KnowledgeConfig, logger *slog.
 
 	promoter := NewPromoter(layers, config.Curator, logger)
 
-	return &KnowledgeAPI{
+	api := &KnowledgeAPI{
 		layers:   clients,
 		config:   config,
 		promoter: promoter,
 		logger:   logger,
 	}
+	api.reloadDocuments()
+	return api
 }
 
 // LayerStatus describes the health of a single wiki layer.
@@ -750,6 +752,31 @@ func (k *KnowledgeAPI) ReimportDocument(ctx context.Context, slug string) (*DocM
 
 	k.triggerVaultReindex(k.docVaultDir())
 	return meta, nil
+}
+
+// reloadDocuments scans the documents directory for previously imported
+// documents and restores them into memory from their metadata.json files.
+func (k *KnowledgeAPI) reloadDocuments() {
+	docsDir := filepath.Join(localKnowledgeDir, docStorageDir)
+	entries, err := os.ReadDir(docsDir)
+	if err != nil {
+		return
+	}
+
+	vaultDir := k.docVaultDir()
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(docsDir, entry.Name())
+		ds, err := LoadDocumentSource(dir, vaultDir, k.graphStore, k.logger)
+		if err != nil {
+			k.logger.Warn("failed to reload document", "dir", entry.Name(), "error", err)
+			continue
+		}
+		k.docSources = append(k.docSources, ds)
+		k.logger.Info("reloaded document from disk", "slug", ds.slug, "facts", ds.metadata.FactCount)
+	}
 }
 
 func (k *KnowledgeAPI) docVaultDir() string {

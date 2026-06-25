@@ -62,6 +62,32 @@ func NewDocumentSource(config DocSourceConfig, baseDir, vaultDir string, graphSt
 	}
 }
 
+// LoadDocumentSource restores a DocumentSource from its on-disk metadata.json.
+// Used at startup to reload previously imported documents.
+func LoadDocumentSource(dir, vaultDir string, graphStore *GraphStore, logger *slog.Logger) (*DocumentSource, error) {
+	metaPath := filepath.Join(dir, docMetadataFile)
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading metadata: %w", err)
+	}
+
+	var meta DocMetadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("parsing metadata: %w", err)
+	}
+
+	ds := &DocumentSource{
+		slug:       meta.Slug,
+		config:     DocSourceConfig{Name: meta.Title, URL: meta.SourceURL, FilePath: meta.SourceFile},
+		metadata:   meta,
+		storageDir: dir,
+		vaultDir:   vaultDir,
+		graphStore: graphStore,
+		logger:     logger,
+	}
+	return ds, nil
+}
+
 // Import fetches (or reads) the document, parses it into chunks, writes
 // extracted facts to the vault, and stores the original artifact + metadata.
 func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
