@@ -1342,7 +1342,50 @@ func main() {
 			}, targetSHA, logger)
 
 			os.Exit(0)
-		})
+		}, hub.GitHubAppConfigCallback(func(ghCfg *hub.HeartbeatGitHubAppConfig) {
+			logger.Info("received github app config via heartbeat",
+				"app_id", ghCfg.AppID,
+				"installation_id", ghCfg.InstallationID,
+				"has_key", ghCfg.PrivateKey != "",
+			)
+
+			keyPath := "/data/gh-app-key.pem"
+			if ghCfg.PrivateKey != "" {
+				const keyFileMode = 0o600
+				if err := os.WriteFile(keyPath, []byte(ghCfg.PrivateKey), keyFileMode); err != nil {
+					logger.Error("failed to write github app key from heartbeat", "error", err)
+					return
+				}
+				logger.Info("github app private key written via heartbeat", "path", keyPath)
+			}
+
+			cfg.GitHub.AppID = ghCfg.AppID
+			cfg.GitHub.InstallationID = ghCfg.InstallationID
+			if ghCfg.PrivateKey != "" {
+				cfg.GitHub.KeyFile = keyPath
+			}
+
+			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+				newAppAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
+				if err != nil {
+					logger.Error("github app auth init via heartbeat failed", "error", err)
+					return
+				}
+				newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+				if len(cfg.Governor.Labels.Exempt) > 0 {
+					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+				}
+				ghClient = newClient
+				appAuth = newAppAuth
+				dashSrv.UpdateGitHubClient(newClient, newAppAuth)
+				dashSrv.SetGitHubAppRequired(false)
+				dashSrv.ClearPendingGitHubAppInstall()
+				logger.Info("github app configured via heartbeat delivery",
+					"app_id", cfg.GitHub.AppID,
+					"installation_id", cfg.GitHub.InstallationID,
+				)
+			}
+		}))
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {
 			reg, active := dashSrv.ContributorSummary()

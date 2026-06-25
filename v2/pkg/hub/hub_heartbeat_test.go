@@ -251,12 +251,16 @@ func TestSendHeartbeatUpgradeResponse(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	target := sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+	resp := sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
 		return &HeartbeatPayload{HiveID: "test", GitHash: "old123"}
 	}, slog.Default())
 
-	if target != "abc1234" {
-		t.Errorf("expected upgrade target 'abc1234', got %q", target)
+	if resp == nil || resp.UpgradeTo != "abc1234" {
+		got := ""
+		if resp != nil {
+			got = resp.UpgradeTo
+		}
+		t.Errorf("expected upgrade target 'abc1234', got %q", got)
 	}
 }
 
@@ -273,12 +277,12 @@ func TestSendHeartbeatNoUpgrade(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	target := sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
+	resp := sendHeartbeat(ctx, server.URL, func() *HeartbeatPayload {
 		return &HeartbeatPayload{HiveID: "test", GitHash: "current123"}
 	}, slog.Default())
 
-	if target != "" {
-		t.Errorf("expected empty upgrade target, got %q", target)
+	if resp != nil && resp.UpgradeTo != "" {
+		t.Errorf("expected empty upgrade target, got %q", resp.UpgradeTo)
 	}
 }
 

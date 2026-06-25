@@ -125,14 +125,10 @@ func (s *HubServer) handleInstallationEvent(body []byte) {
 		return
 	}
 
-	if hive.DashboardURL == "" {
-		s.logger.Warn("matching hive has no dashboard URL", "hive_id", hive.ID)
-		return
-	}
+	privateKey := s.loadAppPrivateKey(hive)
 
-	s.logger.Info("pushing github app config to spoke",
+	s.logger.Info("storing github app config for heartbeat delivery",
 		"hive_id", hive.ID,
-		"dashboard_url", hive.DashboardURL,
 		"installation_id", installationID,
 		"match_method", func() string {
 			if hive.PendingGitHubAppInstall {
@@ -142,7 +138,11 @@ func (s *HubServer) handleInstallationEvent(body []byte) {
 		}(),
 	)
 
-	go s.pushGitHubConfigToSpoke(hive, appID, installationID)
+	s.storePendingGitHubAppConfig(hive.ID, &HeartbeatGitHubAppConfig{
+		AppID:          appID,
+		InstallationID: installationID,
+		PrivateKey:     privateKey,
+	})
 }
 
 func (s *HubServer) findHiveByOrgRepos(org string, repos []string) *RegistryEntry {
@@ -405,17 +405,23 @@ func (s *HubServer) checkPendingWebhookMatch(org, hiveID string) {
 	}
 	s.mu.RUnlock()
 
-	if hive == nil || hive.DashboardURL == "" {
-		s.logger.Warn("pending webhook matched but hive not found or has no dashboard URL",
+	if hive == nil {
+		s.logger.Warn("pending webhook matched but hive not found",
 			"hive_id", hiveID, "org", org)
 		return
 	}
 
-	s.logger.Info("pending webhook matched via heartbeat",
+	privateKey := s.loadAppPrivateKey(hive)
+
+	s.logger.Info("pending webhook matched via heartbeat, storing for heartbeat delivery",
 		"hive_id", hiveID,
 		"org", org,
 		"installation_id", pw.InstallationID,
 	)
 
-	go s.pushGitHubConfigToSpoke(hive, pw.AppID, pw.InstallationID)
+	s.storePendingGitHubAppConfig(hiveID, &HeartbeatGitHubAppConfig{
+		AppID:          pw.AppID,
+		InstallationID: pw.InstallationID,
+		PrivateKey:     privateKey,
+	})
 }

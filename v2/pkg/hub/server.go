@@ -137,6 +137,11 @@ type HubServer struct {
 	// before the matching spoke heartbeat.  Key: lowercase org name.
 	pendingWebhooks   map[string]*pendingWebhookEntry
 	pendingWebhooksMu sync.Mutex
+
+	// pendingGitHubAppConfigs stores GitHub App config to deliver to spokes
+	// via heartbeat response (bypasses OAuth proxies). Key: hive ID.
+	pendingGitHubAppConfigs   map[string]*HeartbeatGitHubAppConfig
+	pendingGitHubAppConfigsMu sync.Mutex
 }
 
 func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
@@ -166,7 +171,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
 		clusters:         loadClusters(logger),
 		heartbeatHealth:  make(map[string]*HeartbeatHealthEntry),
 		heartbeatUpgrade: make(map[string]string),
-		pendingWebhooks:  make(map[string]*pendingWebhookEntry),
+		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
+		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
 	}
 
 	s.loadRegistry()
@@ -561,9 +567,35 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	if ghCfg := s.consumePendingGitHubAppConfig(payload.HiveID); ghCfg != nil {
+		resp.GitHubAppConfig = ghCfg
+		s.logger.Info("heartbeat: delivering github app config to spoke",
+			"hive_id", payload.HiveID,
+			"app_id", ghCfg.AppID,
+			"installation_id", ghCfg.InstallationID,
+		)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	data, _ := json.Marshal(resp)
 	w.Write(data)
+}
+
+func (s *HubServer) storePendingGitHubAppConfig(hiveID string, cfg *HeartbeatGitHubAppConfig) {
+	s.pendingGitHubAppConfigsMu.Lock()
+	defer s.pendingGitHubAppConfigsMu.Unlock()
+	s.pendingGitHubAppConfigs[hiveID] = cfg
+}
+
+func (s *HubServer) consumePendingGitHubAppConfig(hiveID string) *HeartbeatGitHubAppConfig {
+	s.pendingGitHubAppConfigsMu.Lock()
+	defer s.pendingGitHubAppConfigsMu.Unlock()
+	cfg, ok := s.pendingGitHubAppConfigs[hiveID]
+	if !ok {
+		return nil
+	}
+	delete(s.pendingGitHubAppConfigs, hiveID)
+	return cfg
 }
 
 func (s *HubServer) handleRegistry(w http.ResponseWriter, r *http.Request) {

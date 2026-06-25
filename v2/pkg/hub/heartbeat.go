@@ -129,23 +129,39 @@ type StatusCollector func() *HeartbeatPayload
 // to a specific SHA via the heartbeat response.
 type UpgradeCallback func(targetSHA string)
 
-func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, interval time.Duration, logger *slog.Logger, opts ...UpgradeCallback) {
+func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, interval time.Duration, logger *slog.Logger, callbacks ...any) {
 	if hubURL == "" {
 		logger.Info("hub heartbeat disabled (no HIVE_HUB_URL)")
 		return
 	}
 	var onUpgrade UpgradeCallback
-	if len(opts) > 0 {
-		onUpgrade = opts[0]
+	var onGitHubAppConfig GitHubAppConfigCallback
+	for _, cb := range callbacks {
+		switch fn := cb.(type) {
+		case UpgradeCallback:
+			onUpgrade = fn
+		case GitHubAppConfigCallback:
+			onGitHubAppConfig = fn
+		}
 	}
 
 	logger.Info("hub heartbeat enabled", "url", hubURL, "interval", interval)
 
 	waitForReady(ctx, logger)
 
-	if target := sendHeartbeat(ctx, hubURL, collect, logger); target != "" && onUpgrade != nil {
-		onUpgrade(target)
+	processHeartbeatResponse := func(resp *HeartbeatResponse) {
+		if resp == nil {
+			return
+		}
+		if resp.UpgradeTo != "" && onUpgrade != nil {
+			onUpgrade(resp.UpgradeTo)
+		}
+		if resp.GitHubAppConfig != nil && onGitHubAppConfig != nil {
+			onGitHubAppConfig(resp.GitHubAppConfig)
+		}
 	}
+
+	processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger))
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -156,9 +172,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			logger.Info("hub heartbeat stopped")
 			return
 		case <-ticker.C:
-			if target := sendHeartbeat(ctx, hubURL, collect, logger); target != "" && onUpgrade != nil {
-				onUpgrade(target)
-			}
+			processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger))
 		}
 	}
 }
@@ -198,12 +212,10 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
-// sendHeartbeat posts the heartbeat payload and returns the upgrade target SHA
-// if the hub instructs this hive to upgrade (empty string otherwise).
-func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) string {
+func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) *HeartbeatResponse {
 	payload := collect()
 	if payload == nil {
-		return ""
+		return nil
 	}
 	payload.Timestamp = time.Now().UTC().Format(time.RFC3339)
 
@@ -226,7 +238,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	body, err := json.Marshal(payload)
 	if err != nil {
 		logger.Warn("hub heartbeat marshal failed", "error", err)
-		return ""
+		return nil
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, heartbeatTimeout)
@@ -235,7 +247,7 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, hubURL+"/api/heartbeat", bytes.NewReader(body))
 	if err != nil {
 		logger.Warn("hub heartbeat request failed", "error", err)
-		return ""
+		return nil
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
@@ -245,14 +257,14 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		logger.Debug("hub heartbeat unreachable", "error", err)
-		return ""
+		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		logger.Warn("hub heartbeat rejected", "status", resp.StatusCode, "body", string(respBody))
-		return ""
+		return nil
 	}
 
 	var hbResp HeartbeatResponse
@@ -262,10 +274,16 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		}
 		if hbResp.UpgradeTo != "" {
 			logger.Info("hub instructed upgrade via heartbeat", "target", hbResp.UpgradeTo)
-			return hbResp.UpgradeTo
 		}
+		if hbResp.GitHubAppConfig != nil {
+			logger.Info("hub delivered github app config via heartbeat",
+				"app_id", hbResp.GitHubAppConfig.AppID,
+				"installation_id", hbResp.GitHubAppConfig.InstallationID,
+			)
+		}
+		return &hbResp
 	}
-	return ""
+	return nil
 }
 
 // SendUpgradingHeartbeat sends a final heartbeat to the hub indicating this
@@ -306,16 +324,30 @@ func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA st
 	logger.Info("upgrading heartbeat sent to hub", "target", targetSHA)
 }
 
+// HeartbeatGitHubAppConfig carries GitHub App credentials from the hub to
+// a spoke via the heartbeat response, bypassing OAuth proxies that block
+// direct HTTP pushes.
+type HeartbeatGitHubAppConfig struct {
+	AppID          int64  `json:"app_id"`
+	InstallationID int64  `json:"installation_id"`
+	PrivateKey     string `json:"private_key,omitempty"`
+}
+
 // HeartbeatResponse is the JSON body returned by the hub's heartbeat endpoint.
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
 type HeartbeatResponse struct {
-	OK         bool   `json:"ok"`
-	UpgradeTo  string `json:"upgrade_to,omitempty"`
-	HubGitHash string `json:"hub_git_hash,omitempty"`
-	LatestSHA  string `json:"latest_sha,omitempty"`
-	LatestTag  string `json:"latest_tag,omitempty"`
+	OK              bool                      `json:"ok"`
+	UpgradeTo       string                    `json:"upgrade_to,omitempty"`
+	HubGitHash      string                    `json:"hub_git_hash,omitempty"`
+	LatestSHA       string                    `json:"latest_sha,omitempty"`
+	LatestTag       string                    `json:"latest_tag,omitempty"`
+	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 }
+
+// GitHubAppConfigCallback is called when the hub delivers GitHub App config
+// via the heartbeat response (app ID, installation ID, private key).
+type GitHubAppConfigCallback func(cfg *HeartbeatGitHubAppConfig)
 
 const taskPushInterval = 30 * time.Second
 
