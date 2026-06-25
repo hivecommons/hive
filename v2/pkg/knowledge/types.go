@@ -46,12 +46,22 @@ func (l LayerConfig) Endpoint() string {
 	return ""
 }
 
+// DocSourceConfig describes an external document (PDF, URL, or text file)
+// to import as knowledge facts.
+type DocSourceConfig struct {
+	Name     string    `yaml:"name"      json:"name"`
+	URL      string    `yaml:"url"       json:"url,omitempty"`
+	FilePath string    `yaml:"file_path" json:"file_path,omitempty"`
+	Layer    LayerType `yaml:"layer"     json:"layer"`
+}
+
 // KnowledgeConfig is the top-level knowledge section of hive.yaml.
 type KnowledgeConfig struct {
 	Enabled         bool                  `yaml:"enabled"          json:"enabled"`
 	Engine          string                `yaml:"engine"           json:"engine"`
 	Layers          []LayerConfig         `yaml:"layers"           json:"layers"`
 	GitSources      []GitSourceConfig     `yaml:"git_sources"      json:"git_sources,omitempty"`
+	Documents       []DocSourceConfig     `yaml:"documents"        json:"documents,omitempty"`
 	Curator         CuratorConfig         `yaml:"curator"          json:"curator"`
 	Primer          PrimerConfig          `yaml:"primer"           json:"primer"`
 	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer" json:"bead_synthesizer"`
@@ -113,6 +123,7 @@ const (
 	FactTestScaff   FactType = "test_scaffold"
 	FactIntegration FactType = "integration"
 	FactCoverage    FactType = "coverage_rule"
+	FactReference   FactType = "reference"
 
 	// Ideation fact types (L1 — project inception)
 	FactIdea         FactType = "idea"
@@ -176,6 +187,8 @@ type Source struct {
 	Comment string    `json:"comment,omitempty"`
 	Author  string    `json:"author,omitempty"`
 	Date    time.Time `json:"date"`
+	DocURL  string    `json:"doc_url,omitempty"`
+	DocSlug string    `json:"doc_slug,omitempty"`
 }
 
 // PrimedKnowledge is the result of priming — ready to inject into an agent kick.
@@ -215,6 +228,11 @@ func (pk *PrimedKnowledge) FormatForPrompt() string {
 				b = append(b, formatConfidence(f.Confidence)...)
 				b = append(b, ")"...)
 			}
+			if docURL := factDocURL(f); docURL != "" {
+				b = append(b, " (source: "...)
+				b = append(b, docURL...)
+				b = append(b, ")"...)
+			}
 			b = append(b, "\n  "...)
 			b = append(b, f.Body...)
 			b = append(b, "\n\n"...)
@@ -222,6 +240,15 @@ func (pk *PrimedKnowledge) FormatForPrompt() string {
 	}
 
 	return string(b)
+}
+
+func factDocURL(f Fact) string {
+	for _, s := range f.Sources {
+		if s.DocURL != "" {
+			return s.DocURL
+		}
+	}
+	return ""
 }
 
 // InceptionMode distinguishes greenfield (new project) from brownfield (existing repo).

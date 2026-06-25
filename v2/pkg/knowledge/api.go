@@ -24,6 +24,7 @@ type KnowledgeAPI struct {
 	subscriptions []Subscription
 	vaults        []*FileStore
 	gitSources    []*GitSource
+	docSources    []*DocumentSource
 	graphStore    *GraphStore
 	logger        *slog.Logger
 }
@@ -653,6 +654,110 @@ func (k *KnowledgeAPI) GitSources() []GitSourceInfo {
 		infos[i] = gs.Info()
 	}
 	return infos
+}
+
+// ImportDocument fetches/reads an external document, extracts facts into the
+// vault, and registers graph relationships.
+func (k *KnowledgeAPI) ImportDocument(ctx context.Context, config DocSourceConfig) (*DocMetadata, error) {
+	k.mu.Lock()
+	for _, ds := range k.docSources {
+		if ds.slug == slugify(config.Name) {
+			k.mu.Unlock()
+			return nil, fmt.Errorf("document %q already imported", config.Name)
+		}
+	}
+	k.mu.Unlock()
+
+	vaultDir := k.docVaultDir()
+	ds := NewDocumentSource(config, localKnowledgeDir, vaultDir, k.graphStore, k.logger)
+	meta, err := ds.Import(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	k.mu.Lock()
+	k.docSources = append(k.docSources, ds)
+	k.mu.Unlock()
+
+	k.triggerVaultReindex(vaultDir)
+	return meta, nil
+}
+
+// ListDocuments returns metadata for all imported documents.
+func (k *KnowledgeAPI) ListDocuments() []DocMetadata {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
+	metas := make([]DocMetadata, len(k.docSources))
+	for i, ds := range k.docSources {
+		metas[i] = ds.Metadata()
+	}
+	return metas
+}
+
+// GetDocument returns metadata for a specific imported document.
+func (k *KnowledgeAPI) GetDocument(slug string) (*DocMetadata, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+
+	for _, ds := range k.docSources {
+		if ds.slug == slug {
+			meta := ds.Metadata()
+			return &meta, nil
+		}
+	}
+	return nil, fmt.Errorf("document %q not found", slug)
+}
+
+// DeleteDocument removes an imported document and its extracted facts.
+func (k *KnowledgeAPI) DeleteDocument(slug string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	for i, ds := range k.docSources {
+		if ds.slug == slug {
+			if err := ds.Delete(); err != nil {
+				return err
+			}
+			k.docSources = append(k.docSources[:i], k.docSources[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("document %q not found", slug)
+}
+
+// ReimportDocument re-fetches a document and replaces its extracted facts.
+func (k *KnowledgeAPI) ReimportDocument(ctx context.Context, slug string) (*DocMetadata, error) {
+	k.mu.RLock()
+	var target *DocumentSource
+	for _, ds := range k.docSources {
+		if ds.slug == slug {
+			target = ds
+			break
+		}
+	}
+	k.mu.RUnlock()
+
+	if target == nil {
+		return nil, fmt.Errorf("document %q not found", slug)
+	}
+
+	meta, err := target.Reimport(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	k.triggerVaultReindex(k.docVaultDir())
+	return meta, nil
+}
+
+func (k *KnowledgeAPI) docVaultDir() string {
+	for _, v := range k.vaults {
+		if v.rootDir != "" {
+			return v.rootDir
+		}
+	}
+	return filepath.Join(localKnowledgeDir, "documents-vault")
 }
 
 // ObsidianSyncRequest is the payload from the Obsidian Post Webhook plugin.

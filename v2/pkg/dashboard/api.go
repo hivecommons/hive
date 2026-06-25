@@ -139,6 +139,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/knowledge/git-sources", s.handleGitSourcesConnect)
 	s.mux.HandleFunc("DELETE /api/knowledge/git-sources", s.handleGitSourcesDisconnect)
 	s.mux.HandleFunc("POST /api/knowledge/obsidian/sync", s.handleObsidianSync)
+	s.mux.HandleFunc("GET /api/knowledge/documents", s.handleDocumentsList)
+	s.mux.HandleFunc("POST /api/knowledge/documents", s.handleDocumentsImport)
+	s.mux.HandleFunc("GET /api/knowledge/documents/{slug}", s.handleDocumentGet)
+	s.mux.HandleFunc("DELETE /api/knowledge/documents/{slug}", s.handleDocumentDelete)
+	s.mux.HandleFunc("POST /api/knowledge/documents/{slug}/reimport", s.handleDocumentReimport)
 
 	s.mux.HandleFunc("GET /api/hive-id", s.handleHiveIDGet)
 	s.mux.HandleFunc("PUT /api/hive-id", s.handleHiveIDSet)
@@ -4090,6 +4095,91 @@ func (s *Server) handleObsidianSync(w http.ResponseWriter, r *http.Request) {
 		"action": result.Action,
 		"fact":   result.Fact,
 	})
+}
+
+// --- Document source endpoints ---
+
+func (s *Server) handleDocumentsList(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not configured", http.StatusServiceUnavailable)
+		return
+	}
+	jsonResponse(w, s.deps.Knowledge.ListDocuments())
+}
+
+func (s *Server) handleDocumentsImport(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req knowledge.DocSourceConfig
+	if err := decodeBody(r, &req); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		jsonError(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	if req.URL == "" && req.FilePath == "" {
+		jsonError(w, "url or file_path is required", http.StatusBadRequest)
+		return
+	}
+	if req.Layer == "" {
+		req.Layer = knowledge.LayerProject
+	}
+
+	meta, err := s.deps.Knowledge.ImportDocument(s.deps.Ctx, req)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, meta)
+}
+
+func (s *Server) handleDocumentGet(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	slug := r.PathValue("slug")
+	meta, err := s.deps.Knowledge.GetDocument(slug)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	jsonResponse(w, meta)
+}
+
+func (s *Server) handleDocumentDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	slug := r.PathValue("slug")
+	if err := s.deps.Knowledge.DeleteDocument(slug); err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	okResponse(w, map[string]string{"status": "deleted", "slug": slug})
+}
+
+func (s *Server) handleDocumentReimport(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	slug := r.PathValue("slug")
+	meta, err := s.deps.Knowledge.ReimportDocument(s.deps.Ctx, slug)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, meta)
 }
 
 // --- Hive ID endpoints ---

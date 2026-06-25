@@ -1,0 +1,350 @@
+package knowledge
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const (
+	docStorageDir    = "documents"
+	docFetchTimeout  = 30 * time.Second
+	docUserAgent     = "HiveKnowledge/1.0"
+	docMetadataFile  = "metadata.json"
+	docSourceFile    = "source"
+	docFactPrefix    = "doc-"
+	docMaxFetchBytes = 50 * 1024 * 1024 // 50MB
+)
+
+// DocMetadata describes an imported document and the facts extracted from it.
+type DocMetadata struct {
+	Slug        string    `json:"slug"`
+	Title       string    `json:"title"`
+	Author      string    `json:"author,omitempty"`
+	SourceURL   string    `json:"source_url,omitempty"`
+	SourceFile  string    `json:"source_file,omitempty"`
+	ContentType string    `json:"content_type"`
+	FetchedAt   time.Time `json:"fetched_at"`
+	PageCount   int       `json:"page_count,omitempty"`
+	FactCount   int       `json:"fact_count"`
+	FactSlugs   []string  `json:"fact_slugs"`
+}
+
+// DocumentSource manages a single imported document: fetch/read, parse, extract
+// facts to the vault, and maintain graph relationships.
+type DocumentSource struct {
+	slug       string
+	config     DocSourceConfig
+	metadata   DocMetadata
+	storageDir string
+	vaultDir   string
+	graphStore *GraphStore
+	logger     *slog.Logger
+}
+
+// NewDocumentSource creates a document source. Call Import to fetch and extract.
+func NewDocumentSource(config DocSourceConfig, baseDir, vaultDir string, graphStore *GraphStore, logger *slog.Logger) *DocumentSource {
+	slug := slugify(config.Name)
+	return &DocumentSource{
+		slug:       slug,
+		config:     config,
+		storageDir: filepath.Join(baseDir, docStorageDir, slug),
+		vaultDir:   vaultDir,
+		graphStore: graphStore,
+		logger:     logger,
+	}
+}
+
+// Import fetches (or reads) the document, parses it into chunks, writes
+// extracted facts to the vault, and stores the original artifact + metadata.
+func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
+	if err := os.MkdirAll(ds.storageDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating document storage dir: %w", err)
+	}
+	if err := os.MkdirAll(ds.vaultDir, 0o755); err != nil {
+		return nil, fmt.Errorf("creating vault dir: %w", err)
+	}
+
+	var (
+		content     []byte
+		contentType string
+		err         error
+	)
+
+	if ds.config.URL != "" {
+		content, contentType, err = ds.fetchURL(ctx, ds.config.URL)
+		if err != nil {
+			return nil, fmt.Errorf("fetching URL: %w", err)
+		}
+	} else if ds.config.FilePath != "" {
+		content, err = os.ReadFile(ds.config.FilePath)
+		if err != nil {
+			return nil, fmt.Errorf("reading file: %w", err)
+		}
+		contentType = detectContentType(ds.config.FilePath)
+	} else {
+		return nil, fmt.Errorf("document source %q has neither url nor file_path", ds.config.Name)
+	}
+
+	ext := extensionForType(contentType)
+	artifactPath := filepath.Join(ds.storageDir, docSourceFile+ext)
+	if err := os.WriteFile(artifactPath, content, 0o644); err != nil {
+		return nil, fmt.Errorf("storing artifact: %w", err)
+	}
+
+	chunks, title := ds.parseContent(content, contentType)
+	if title == "" {
+		title = ds.config.Name
+	}
+
+	now := time.Now().UTC()
+	facts := chunksToFacts(chunks, ds.slug, ds.config.URL, now)
+
+	factSlugs, err := ds.writeFactsToVault(facts, now)
+	if err != nil {
+		return nil, fmt.Errorf("writing facts to vault: %w", err)
+	}
+
+	ds.emitGraphTriples(factSlugs)
+
+	ds.metadata = DocMetadata{
+		Slug:        ds.slug,
+		Title:       title,
+		SourceURL:   ds.config.URL,
+		SourceFile:  ds.config.FilePath,
+		ContentType: contentType,
+		FetchedAt:   now,
+		PageCount:   countPages(chunks),
+		FactCount:   len(factSlugs),
+		FactSlugs:   factSlugs,
+	}
+
+	if err := ds.writeMetadata(); err != nil {
+		ds.logger.Warn("failed to write document metadata", "slug", ds.slug, "error", err)
+	}
+
+	ds.logger.Info("document imported",
+		"slug", ds.slug,
+		"title", title,
+		"content_type", contentType,
+		"facts", len(factSlugs),
+	)
+	return &ds.metadata, nil
+}
+
+// Delete removes the document's artifact, metadata, and extracted vault facts.
+func (ds *DocumentSource) Delete() error {
+	for _, slug := range ds.metadata.FactSlugs {
+		path := filepath.Join(ds.vaultDir, slug+".md")
+		_ = os.Remove(path)
+	}
+
+	if ds.graphStore != nil {
+		for _, slug := range ds.metadata.FactSlugs {
+			ds.graphStore.RemoveTriple(Triple{Subject: slug, Predicate: PredicateDerivedFrom, Object: "doc:" + ds.slug})
+		}
+		for i := 1; i < len(ds.metadata.FactSlugs); i++ {
+			ds.graphStore.RemoveTriple(Triple{
+				Subject:   ds.metadata.FactSlugs[i-1],
+				Predicate: PredicateRelatedTo,
+				Object:    ds.metadata.FactSlugs[i],
+			})
+		}
+	}
+
+	if err := os.RemoveAll(ds.storageDir); err != nil {
+		return fmt.Errorf("removing document storage: %w", err)
+	}
+
+	ds.logger.Info("document deleted", "slug", ds.slug, "facts_removed", len(ds.metadata.FactSlugs))
+	return nil
+}
+
+// Reimport deletes existing facts and re-imports the document.
+func (ds *DocumentSource) Reimport(ctx context.Context) (*DocMetadata, error) {
+	if err := ds.Delete(); err != nil {
+		ds.logger.Warn("cleanup before reimport failed", "slug", ds.slug, "error", err)
+	}
+	return ds.Import(ctx)
+}
+
+// Metadata returns the current document metadata.
+func (ds *DocumentSource) Metadata() DocMetadata {
+	return ds.metadata
+}
+
+func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, docFetchTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("User-Agent", docUserAgent)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("HTTP GET: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, docMaxFetchBytes))
+	if err != nil {
+		return nil, "", fmt.Errorf("reading response: %w", err)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = detectContentType(url)
+	}
+	return body, normalizeContentType(ct), nil
+}
+
+func (ds *DocumentSource) parseContent(content []byte, contentType string) ([]DocChunk, string) {
+	switch contentType {
+	case "application/pdf":
+		chunks := parsePDFText(string(content))
+		title := ""
+		if len(chunks) > 0 {
+			title = chunks[0].Title
+		}
+		return chunks, title
+	case "text/html":
+		return parseHTMLText(content)
+	default:
+		chunks := parseRawText(string(content))
+		title := ""
+		if len(chunks) > 0 {
+			title = chunks[0].Title
+		}
+		return chunks, title
+	}
+}
+
+func (ds *DocumentSource) writeFactsToVault(facts []ExtractedFact, synthesized time.Time) ([]string, error) {
+	var slugs []string
+	for i, fact := range facts {
+		factSlug := fmt.Sprintf("%s%s-%03d", docFactPrefix, ds.slug, i)
+		filename := factSlug + ".md"
+		path := filepath.Join(ds.vaultDir, filename)
+
+		var buf strings.Builder
+		buf.WriteString("---\n")
+		fmt.Fprintf(&buf, "title: %s\n", fact.Title)
+		fmt.Fprintf(&buf, "type: %s\n", string(fact.Type))
+		fmt.Fprintf(&buf, "layer: %s\n", string(ds.config.Layer))
+		fmt.Fprintf(&buf, "confidence: %.2f\n", fact.Confidence)
+		if len(fact.Tags) > 0 {
+			fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(fact.Tags, ", "))
+		}
+		fmt.Fprintf(&buf, "source: %s\n", fact.SourcePR)
+		if ds.config.URL != "" {
+			fmt.Fprintf(&buf, "source_url: %s\n", ds.config.URL)
+		}
+		fmt.Fprintf(&buf, "synthesized: %s\n", synthesized.Format(time.RFC3339))
+		buf.WriteString("---\n\n")
+		buf.WriteString(fact.Body)
+
+		tmpPath := path + ".tmp"
+		if err := os.WriteFile(tmpPath, []byte(buf.String()), 0o644); err != nil {
+			return slugs, fmt.Errorf("writing fact %d: %w", i, err)
+		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			return slugs, fmt.Errorf("renaming fact %d: %w", i, err)
+		}
+		slugs = append(slugs, factSlug)
+	}
+	return slugs, nil
+}
+
+func (ds *DocumentSource) emitGraphTriples(factSlugs []string) {
+	if ds.graphStore == nil || len(factSlugs) == 0 {
+		return
+	}
+
+	docNode := "doc:" + ds.slug
+	for _, slug := range factSlugs {
+		if err := ds.graphStore.AddTriple(Triple{
+			Subject: slug, Predicate: PredicateDerivedFrom, Object: docNode,
+		}); err != nil {
+			ds.logger.Warn("graph triple failed", "triple", slug+"→"+docNode, "error", err)
+		}
+	}
+
+	for i := 1; i < len(factSlugs); i++ {
+		if err := ds.graphStore.AddTriple(Triple{
+			Subject: factSlugs[i-1], Predicate: PredicateRelatedTo, Object: factSlugs[i],
+		}); err != nil {
+			ds.logger.Warn("graph triple failed", "from", factSlugs[i-1], "to", factSlugs[i], "error", err)
+		}
+	}
+}
+
+func (ds *DocumentSource) writeMetadata() error {
+	data, err := json.MarshalIndent(ds.metadata, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(ds.storageDir, docMetadataFile), data, 0o644)
+}
+
+func detectContentType(pathOrURL string) string {
+	lower := strings.ToLower(pathOrURL)
+	switch {
+	case strings.HasSuffix(lower, ".pdf"):
+		return "application/pdf"
+	case strings.HasSuffix(lower, ".html"), strings.HasSuffix(lower, ".htm"):
+		return "text/html"
+	case strings.HasSuffix(lower, ".md"), strings.HasSuffix(lower, ".markdown"):
+		return "text/plain"
+	case strings.HasSuffix(lower, ".txt"):
+		return "text/plain"
+	default:
+		return "text/plain"
+	}
+}
+
+func normalizeContentType(ct string) string {
+	ct = strings.ToLower(ct)
+	switch {
+	case strings.Contains(ct, "pdf"):
+		return "application/pdf"
+	case strings.Contains(ct, "html"):
+		return "text/html"
+	default:
+		return "text/plain"
+	}
+}
+
+func extensionForType(contentType string) string {
+	switch contentType {
+	case "application/pdf":
+		return ".pdf"
+	case "text/html":
+		return ".html"
+	default:
+		return ".txt"
+	}
+}
+
+func countPages(chunks []DocChunk) int {
+	seen := make(map[int]bool)
+	for _, c := range chunks {
+		if c.PageNum > 0 {
+			seen[c.PageNum] = true
+		}
+	}
+	return len(seen)
+}

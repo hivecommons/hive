@@ -275,9 +275,9 @@ func chunksToFacts(chunks []DocChunk, sourceSlug, sourceURL string, sourceDate t
 	facts = append(facts, ExtractedFact{
 		Title:      "Summary: " + chunks[0].Title,
 		Body:       summaryBody,
-		Type:       FactType("reference"),
+		Type:       FactReference,
 		Confidence: defaultDocConfidence,
-		Tags:       append([]string{"doc-import", sourceSlug, "doc-summary"}),
+		Tags:       []string{"doc-import", sourceSlug, "doc-summary"},
 		SourcePR:   sourcePR,
 		SourceDate: sourceDate,
 	})
@@ -291,7 +291,7 @@ func chunksToFacts(chunks []DocChunk, sourceSlug, sourceURL string, sourceDate t
 		facts = append(facts, ExtractedFact{
 			Title:      chunk.Title,
 			Body:       chunk.Body,
-			Type:       FactType("reference"),
+			Type:       FactReference,
 			Confidence: defaultDocConfidence,
 			Tags:       append([]string{}, tags...),
 			SourcePR:   sourcePR,

@@ -29,12 +29,21 @@ type Config struct {
 	SourcePath string `yaml:"-" json:"-"`
 }
 
+// DocSourceConfigYAML describes an external document to import as knowledge.
+type DocSourceConfigYAML struct {
+	Name     string `yaml:"name"`
+	URL      string `yaml:"url,omitempty"`
+	FilePath string `yaml:"file_path,omitempty"`
+	Layer    string `yaml:"layer"`
+}
+
 type KnowledgeConfig struct {
-	Enabled    bool                `yaml:"enabled"`
-	Engine     string              `yaml:"engine"`
-	Layers     []KnowledgeLayer    `yaml:"layers"`
-	Vaults     []VaultConfig       `yaml:"vaults"`
+	Enabled    bool                  `yaml:"enabled"`
+	Engine     string                `yaml:"engine"`
+	Layers     []KnowledgeLayer      `yaml:"layers"`
+	Vaults     []VaultConfig         `yaml:"vaults"`
 	GitSources []GitSourceConfigYAML `yaml:"git_sources"`
+	Documents  []DocSourceConfigYAML `yaml:"documents"`
 	Curator         KnowledgeCurator         `yaml:"curator"`
 	Primer          KnowledgePrimer          `yaml:"primer"`
 	BeadSynthesizer BeadSynthesizerConfig    `yaml:"bead_synthesizer"`

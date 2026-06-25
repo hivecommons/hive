@@ -73,6 +73,8 @@ func main() {
 		cmdReset(os.Args[2:])
 	case "remember":
 		cmdRemember(os.Args[2:])
+	case "kb":
+		cmdKB(os.Args[2:])
 	case "dolt":
 		cmdDolt(os.Args[2:])
 	case "init":
@@ -97,6 +99,11 @@ Commands:
   update <id> --status <status>            Change status
   update <id> --set-metadata key=value     Set metadata key
   update <id> --unset-metadata key         Remove metadata key
+  kb       search "query"                  Search knowledge base
+  kb       read <slug>                    Read full fact body
+  kb       import-url <url> [--name <n>]  Import document from URL
+  kb       import-file <path> [--name <n>] Import document from file
+  kb       list-docs                      List imported documents
   remember "<fact>"                        Quick-add an advisory bead
   close  <id>                              Close a bead
   reset  [--reason "..."]                  Close all open/in_progress/blocked beads

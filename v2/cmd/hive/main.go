@@ -680,6 +680,36 @@ func main() {
 		}
 	}
 
+	// Auto-import configured document sources (PDFs, URLs as knowledge)
+	for _, doc := range cfg.Knowledge.Documents {
+		if knowledgeAPI == nil {
+			knowledgeAPI = knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{
+				Enabled: true,
+				Engine:  "file",
+			}, logger)
+			logger.Info("auto-enabled knowledge API for document sources")
+		}
+		docConfig := knowledge.DocSourceConfig{
+			Name:     doc.Name,
+			URL:      doc.URL,
+			FilePath: doc.FilePath,
+			Layer:    knowledge.LayerType(doc.Layer),
+		}
+		meta, err := knowledgeAPI.ImportDocument(ctx, docConfig)
+		if err != nil {
+			logger.Warn("failed to import document source",
+				"name", doc.Name,
+				"error", err,
+			)
+		} else {
+			logger.Info("document source imported",
+				"name", doc.Name,
+				"facts", meta.FactCount,
+				"content_type", meta.ContentType,
+			)
+		}
+	}
+
 	go gitSyncer.Start(ctx)
 
 	// Auto-enable knowledge API when not explicitly configured.
