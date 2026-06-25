@@ -1666,6 +1666,7 @@
       color: var(--muted); padding: 2px 6px; margin-left: 6px; border-radius: 4px;
     }
     .agent-card .compact-toggle:hover { background: rgba(255,255,255,0.06); }
+    #kb-graph-container:fullscreen { width: 100vw; height: 100vh; border: none; border-radius: 0; }
   </style>
 </head>
 <body>
@@ -5464,8 +5465,8 @@ function burnAreaChart() {
 
       const canvas = document.createElement('canvas');
       const dpr = window.devicePixelRatio || 1;
-      const w = container.clientWidth;
-      const h = container.clientHeight;
+      let w = container.clientWidth;
+      let h = container.clientHeight;
       canvas.width = w * dpr;
       canvas.height = h * dpr;
       canvas.style.width = w + 'px';
@@ -5767,17 +5768,42 @@ function burnAreaChart() {
       }, { passive: false });
 
       // Zoom controls overlay
+      const controlBtnStyle = 'width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--fg);cursor:pointer;display:flex;align-items:center;justify-content:center';
       const zoomControls = document.createElement('div');
       zoomControls.style.cssText = 'position:absolute;top:10px;right:10px;display:flex;flex-direction:column;gap:4px;z-index:5';
       zoomControls.innerHTML = `
-        <button onclick="this.parentElement._zoomIn()" style="width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--fg);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center" title="Zoom in">+</button>
-        <button onclick="this.parentElement._zoomReset()" style="width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--fg);cursor:pointer;font-size:10px;display:flex;align-items:center;justify-content:center" title="Reset zoom">⟲</button>
-        <button onclick="this.parentElement._zoomOut()" style="width:28px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--surface);color:var(--fg);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center" title="Zoom out">−</button>
+        <button onclick="this.parentElement._zoomIn()" style="${controlBtnStyle};font-size:16px" title="Zoom in">+</button>
+        <button onclick="this.parentElement._zoomReset()" style="${controlBtnStyle};font-size:10px" title="Reset zoom">&#x27F2;</button>
+        <button onclick="this.parentElement._zoomOut()" style="${controlBtnStyle};font-size:16px" title="Zoom out">&minus;</button>
+        <button onclick="this.parentElement._toggleFullscreen()" style="${controlBtnStyle};font-size:13px" title="Toggle fullscreen">&#x26F6;</button>
       `;
       zoomControls._zoomIn = () => { zoomLevel = Math.min(ZOOM_MAX, zoomLevel * 1.25); draw(); };
       zoomControls._zoomOut = () => { zoomLevel = Math.max(ZOOM_MIN, zoomLevel / 1.25); draw(); };
       zoomControls._zoomReset = () => { zoomLevel = 1; panX = 0; panY = 0; draw(); };
+      zoomControls._toggleFullscreen = () => {
+        if (document.fullscreenElement === container) {
+          document.exitFullscreen();
+        } else {
+          container.requestFullscreen().catch(() => {});
+        }
+      };
       container.appendChild(zoomControls);
+
+      // Resize canvas on fullscreen change
+      function resizeCanvas() {
+        const newW = container.clientWidth;
+        const newH = container.clientHeight;
+        if (newW === 0 || newH === 0) return;
+        canvas.width = newW * dpr;
+        canvas.height = newH * dpr;
+        canvas.style.width = newW + 'px';
+        canvas.style.height = newH + 'px';
+        w = newW; h = newH;
+        draw();
+      }
+      document.addEventListener('fullscreenchange', () => {
+        setTimeout(resizeCanvas, 50);
+      });
 
       // Start live simulation
       tick();
