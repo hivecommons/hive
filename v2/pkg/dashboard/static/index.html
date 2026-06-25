@@ -16,6 +16,7 @@
       --cyan: #39d2c0; --purple: #bc8cff;
       --oc-accent: #f85149; --oc-accent-light: rgba(248,81,73,0.1);
       --green-bg: rgba(63,185,80,0.15); --green-border: rgba(63,185,80,0.3);
+      --red-bg: rgba(248,81,73,0.15); --red-border: rgba(248,81,73,0.3);
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -51,6 +52,7 @@
       --cyan: #0891b2; --purple: #7c3aed;
       --oc-accent: #dc2626; --oc-accent-light: rgba(220,38,38,0.08);
       --green-bg: #f0fdf4; --green-border: #bbf7d0;
+      --red-bg: #fef2f2; --red-border: #fecaca;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
       background: var(--bg); color: var(--text);
     }
@@ -7209,14 +7211,14 @@ function burnAreaChart() {
         ocHealth.title = hoverLines.join('\n\n') || 'No health data';
         if (failing.length > 0) {
           ocHealth.textContent = `● ${failing.length} Issue${failing.length > 1 ? 's' : ''}`;
-          ocHealth.style.color = '#dc2626';
-          ocHealth.style.background = '#fef2f2';
-          ocHealth.style.borderColor = '#fecaca';
+          ocHealth.style.color = 'var(--red)';
+          ocHealth.style.background = 'var(--red-bg)';
+          ocHealth.style.borderColor = 'var(--red-border)';
         } else {
           ocHealth.textContent = '● Health OK';
-          ocHealth.style.color = '#16a34a';
-          ocHealth.style.background = '#f0fdf4';
-          ocHealth.style.borderColor = '#bbf7d0';
+          ocHealth.style.color = 'var(--green)';
+          ocHealth.style.background = 'var(--green-bg)';
+          ocHealth.style.borderColor = 'var(--green-border)';
         }
       }
       renderGhRateLimits(data.ghRateLimits || {});
