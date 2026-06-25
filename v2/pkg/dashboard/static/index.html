@@ -5280,113 +5280,7 @@ function burnAreaChart() {
     const KB_FACT_TYPES = ['pattern', 'gotcha', 'regression', 'decision', 'test_scaffold', 'integration', 'coverage_rule'];
 
     // ── Document Sources ──
-    let _kbDocuments = [];
-    let _kbDocViewOpen = false;
-    let _kbDocImportOpen = false;
     const DOC_CONTENT_ICONS = { 'text/html': '🌐', 'application/pdf': '📄', 'text/plain': '📝', 'text/markdown': '📝', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '📋' };
-
-    async function fetchDocuments() {
-      try {
-        const r = await fetch('/api/knowledge/documents');
-        if (r.ok) _kbDocuments = await r.json();
-        else _kbDocuments = [];
-      } catch (e) { _kbDocuments = []; }
-    }
-
-    async function importDocumentURL() {
-      const urlInput = document.getElementById('doc-import-url');
-      const nameInput = document.getElementById('doc-import-name');
-      const layerSelect = document.getElementById('doc-import-layer');
-      if (!urlInput || !urlInput.value) return;
-      const btn = document.getElementById('doc-import-btn');
-      if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
-      try {
-        const payload = { url: urlInput.value, name: nameInput.value || '', layer: layerSelect.value || 'project' };
-        const r = await fetch('/api/knowledge/documents', {
-          method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload)
-        });
-        if (!r.ok) { const t = await r.text(); alert('Import failed: ' + t); return; }
-        _kbDocImportOpen = false;
-        await fetchDocuments();
-        renderKnowledgeDocuments();
-      } catch (e) { alert('Import error: ' + e.message); }
-      finally { if (btn) { btn.disabled = false; btn.textContent = 'Import'; } }
-    }
-
-    async function deleteDocument(slug) {
-      if (!confirm('Delete document "' + slug + '" and all extracted facts?')) return;
-      try {
-        const r = await fetch('/api/knowledge/documents/' + encodeURIComponent(slug), { method: 'DELETE' });
-        if (!r.ok) { alert('Delete failed'); return; }
-        await fetchDocuments();
-        renderKnowledgeDocuments();
-      } catch (e) { alert('Delete error: ' + e.message); }
-    }
-
-    async function reimportDocument(slug) {
-      try {
-        const btn = document.querySelector('[data-reimport="' + slug + '"]');
-        if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
-        const r = await fetch('/api/knowledge/documents/' + encodeURIComponent(slug) + '/reimport', { method: 'POST' });
-        if (!r.ok) { alert('Reimport failed'); return; }
-        await fetchDocuments();
-        renderKnowledgeDocuments();
-      } catch (e) { alert('Reimport error: ' + e.message); }
-    }
-
-    function renderKnowledgeDocuments() {
-      const container = document.getElementById('kb-documents-list');
-      if (!container) return;
-      const docs = _kbDocuments || [];
-
-      if (!_kbDocViewOpen) {
-        container.innerHTML = '';
-        return;
-      }
-
-      let html = '<div style="margin-top:4px">';
-
-      // Import button
-      if (!_kbDocImportOpen) {
-        html += '<div style="margin-bottom:6px"><button onclick="_kbDocImportOpen=true;renderKnowledgeDocuments()" style="padding:4px 10px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.72rem;font-weight:600">+ Import URL</button></div>';
-      }
-
-      // Import modal
-      if (_kbDocImportOpen) {
-        html += '<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">';
-        html += '<div style="font-size:0.78rem;font-weight:600;margin-bottom:8px">Import Document from URL</div>';
-        html += '<input id="doc-import-url" type="text" placeholder="https://arxiv.org/pdf/2309.06180" style="width:100%;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:0.78rem;background:var(--bg);color:var(--text);margin-bottom:6px;box-sizing:border-box">';
-        html += '<div style="display:flex;gap:6px;margin-bottom:8px">';
-        html += '<input id="doc-import-name" type="text" placeholder="Name (optional)" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:0.78rem;background:var(--bg);color:var(--text)">';
-        html += '<select id="doc-import-layer" style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;font-size:0.78rem;background:var(--bg);color:var(--text)">';
-        html += '<option value="project">Project</option><option value="community">Community</option><option value="org">Org</option><option value="personal">Personal</option>';
-        html += '</select></div>';
-        html += '<div style="display:flex;gap:6px;justify-content:flex-end">';
-        html += '<button onclick="_kbDocImportOpen=false;renderKnowledgeDocuments()" style="padding:4px 12px;background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.72rem;color:var(--muted)">Cancel</button>';
-        html += '<button id="doc-import-btn" onclick="importDocumentURL()" style="padding:4px 12px;background:#2563eb;color:white;border:none;border-radius:4px;cursor:pointer;font-size:0.72rem;font-weight:600">Import</button>';
-        html += '</div></div>';
-      }
-
-      if (docs.length === 0) {
-        html += '<div style="font-size:0.72rem;color:var(--muted);padding:8px 0">No documents imported yet.</div>';
-      } else {
-        for (const d of docs) {
-          const icon = DOC_CONTENT_ICONS[d.content_type] || '📄';
-          const source = d.source_url || d.source_file || '';
-          const truncSource = source.length > 40 ? source.substring(0, 37) + '...' : source;
-          const factCount = d.fact_count || 0;
-          html += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);font-size:0.75rem">';
-          html += `<span>${icon}</span>`;
-          html += `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(source)}">${escapeHtml(d.slug || d.title || 'unnamed')}</span>`;
-          html += `<span style="color:var(--muted);font-size:0.68rem">${factCount} facts</span>`;
-          html += `<button data-reimport="${escapeHtml(d.slug)}" onclick="reimportDocument('${escapeHtml(d.slug)}')" style="padding:2px 6px;background:none;border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:0.68rem;color:var(--muted)" title="Re-fetch and re-extract facts from source">🔄</button>`;
-          html += `<button onclick="deleteDocument('${escapeHtml(d.slug)}')" style="padding:2px 6px;background:none;border:1px solid #dc2626;border-radius:3px;cursor:pointer;font-size:0.68rem;color:#dc2626" title="Delete document and all extracted facts">✕</button>`;
-          html += '</div>';
-        }
-      }
-      html += '</div>';
-      container.innerHTML = html;
-    }
 
     function confColor(c) {
       if (c >= 0.9) return '#16a34a';
@@ -5424,7 +5318,7 @@ function burnAreaChart() {
     let _kbGraphData = null;
     async function fetchKnowledgeStats() {
       try {
-        const [r] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetchDocuments()]);
+        const [r] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory()]);
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
@@ -5938,13 +5832,11 @@ function burnAreaChart() {
       // Action buttons
       html += '<div style="display:flex;gap:8px;margin-bottom:14px">';
       html += '<button class="nous-btn" style="background:#2563eb;color:white" onclick="kbOpenCreate()" title="Create a new knowledge fact manually. Choose a layer (personal, project, org, community), type, and enter the fact content.">+ New Fact</button>';
-      html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenImport()" title="Import facts from a file or external knowledge base. Supports JSON and YAML formats.">📥 Import</button>';
-      html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenSubscriptions()" title="Manage git sources and wiki subscriptions that feed knowledge to agents.">🔗 Knowledge Sources</button>';
+      html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenSubscriptions()" title="Manage knowledge sources: git repos, wiki subscriptions, document imports, and fact imports.">🔗 Knowledge Sources</button>';
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenVaults()" title="Manage knowledge vaults — collections of facts organized by topic or project. Vaults can be shared across hive instances.">📂 Vaults</button>';
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenHowItWorks()">📖 How it works</button>';
       html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbOpenObsidianSetup()" title="View step-by-step instructions for connecting Obsidian via Git sync or webhook.">🔮 Obsidian Setup</button>';
       html += `<button class="nous-btn" style="background:${_kbGraphView ? 'var(--cyan)' : 'var(--surface)'};color:${_kbGraphView ? 'var(--bg)' : 'var(--fg)'};border:1px solid ${_kbGraphView ? 'var(--cyan)' : 'var(--border)'}" onclick="kbToggleGraph()" title="Toggle knowledge graph visualization showing relationships between facts.">🕸️ Graph</button>`;
-      html += `<button class="nous-btn" style="background:${_kbDocViewOpen ? 'var(--cyan)' : 'var(--surface)'};color:${_kbDocViewOpen ? 'var(--bg)' : 'var(--fg)'};border:1px solid ${_kbDocViewOpen ? 'var(--cyan)' : 'var(--border)'}" onclick="_kbDocViewOpen=!_kbDocViewOpen;fetchDocuments().then(()=>{renderKnowledge();var el=document.getElementById('kb-documents-list');if(el)el.scrollIntoView({behavior:'smooth'})})" title="Import and manage external documents (PDFs, web pages, Word docs). Documents are parsed into facts for the knowledge base.">📑 Documents</button>`;
       html += '</div>';
 
       // Main layout: sidebar + content
@@ -6004,14 +5896,6 @@ function burnAreaChart() {
         html += '</div>';
       }
 
-      // Documents section in sidebar
-      const docCount = (_kbDocuments || []).length;
-      html += '<div style="margin-top:12px;font-size:0.72rem;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer" onclick="_kbDocViewOpen=!_kbDocViewOpen;fetchDocuments().then(()=>renderKnowledgeDocuments())">';
-      html += `<strong>📑 Documents</strong><span style="font-size:0.68rem;color:var(--muted)">(${docCount})</span>`;
-      html += `<span style="font-size:0.6rem">${_kbDocViewOpen ? '▼' : '▶'}</span>`;
-      html += '</div>';
-      html += '<div id="kb-documents-list"></div>';
-
       html += '</div>'; // kb-sidebar
 
       // Right: fact list + detail OR graph view
@@ -6026,7 +5910,6 @@ function burnAreaChart() {
 
       html += '</div>'; // kb-layout
       panel.innerHTML = html;
-      if (_kbDocViewOpen) renderKnowledgeDocuments();
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
@@ -6380,7 +6263,7 @@ function burnAreaChart() {
     }
 
     function kbOpenSubscriptions() {
-      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>');
+      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>', { width: 'min(720px, 85vw)', maxHeight: '85vh' });
       kbLoadSubscriptions();
     }
 
@@ -6389,12 +6272,15 @@ function burnAreaChart() {
       if (!el) return;
 
       try {
-        const [subsR, gsR] = await Promise.all([
+        const [subsR, gsR, docsR] = await Promise.all([
           fetch('/api/knowledge/subscriptions'),
           fetch('/api/knowledge/git-sources'),
+          fetch('/api/knowledge/documents'),
         ]);
         const subs = await subsR.json();
         const gitSources = await gsR.json();
+        const documents = docsR.ok ? await docsR.json() : [];
+        const layers = (_kbCache || {}).layers || [];
 
         let html = '';
 
@@ -6491,6 +6377,79 @@ function burnAreaChart() {
         html += '</div></div></details>';
         html += '</div>';
 
+        // ── Import Documents section ──
+        html += '<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+        html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Documents</span>';
+        html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">PDF, HTML, DOCX, text</span>';
+        html += '</div>';
+        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Import external documents (research papers, specs, design docs) from a URL or local file. Content is parsed into chunks and stored as knowledge facts that agents can search and cite.</div>';
+
+        if (documents && documents.length > 0) {
+          for (const d of documents) {
+            const dIcon = DOC_CONTENT_ICONS[d.content_type] || '📄';
+            const dSource = d.source_url || d.source_file || '';
+            const dFacts = d.fact_count || 0;
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">';
+            html += '<div style="min-width:0;flex:1">';
+            html += `<div style="font-size:0.82rem;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:6px">${dIcon} <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.slug || d.title || 'unnamed')}</span></div>`;
+            html += `<div style="font-size:0.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(dSource)} &middot; ${dFacts} facts</div>`;
+            html += '</div>';
+            html += '<div style="display:flex;gap:4px;flex-shrink:0;margin-left:8px">';
+            html += `<button class="nous-btn" style="font-size:0.7rem;padding:4px 8px;background:var(--surface);color:var(--fg);border:1px solid var(--border)" onclick="kbReimportDoc('${escapeHtml(d.slug)}')" title="Re-fetch and re-extract facts">🔄</button>`;
+            html += `<button class="nous-btn" style="background:#dc2626;color:white;font-size:0.7rem;padding:4px 8px" onclick="kbDeleteDoc('${escapeHtml(d.slug)}')">Remove</button>`;
+            html += '</div></div>';
+          }
+        } else {
+          html += '<div style="text-align:center;padding:12px;color:var(--muted);font-size:0.75rem;border:1px dashed var(--border);border-radius:6px">No documents imported yet.</div>';
+        }
+
+        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Import Document</summary>';
+        html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
+        html += '<input id="kb-doc-url" type="text" class="kb-search-box" placeholder="https://arxiv.org/pdf/2309.06180">';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+        html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
+        html += `<select id="kb-doc-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
+          <option value="project">Project</option>
+          <option value="community">Community</option>
+          <option value="org">Org</option>
+          <option value="personal">Personal</option>
+        </select>`;
+        html += '</div>';
+        html += '<div style="display:flex;justify-content:flex-end">';
+        html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbImportDocFromModal()">Import</button>';
+        html += '</div></div></details>';
+        html += '</div>';
+
+        // ── Import Facts section ──
+        const layerOpts2 = layers.map(l => {
+          const sel = l.type === 'project' ? ' selected' : '';
+          return `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
+        }).join('') || '<option value="project">Project</option>';
+
+        html += '<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">';
+        html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+        html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Import Facts</span>';
+        html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">markdown or JSON</span>';
+        html += '</div>';
+        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Paste markdown or JSON content directly. Markdown headings (# or ##) become separate facts. JSON should be an array of {title, body, type, tags} objects.</div>';
+
+        html += '<details style="margin-top:2px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Paste Content</summary>';
+        html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
+        html += `<select id="kb-import-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">${layerOpts2}</select>`;
+        html += `<select id="kb-import-format" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
+          <option value="markdown" selected>Markdown</option>
+          <option value="json">JSON</option>
+        </select>`;
+        html += '</div>';
+        html += '<textarea id="kb-import-content" rows="8" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:\'SF Mono\',\'Fira Code\',monospace;resize:vertical;min-height:120px;box-sizing:border-box" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
+        html += '<div style="display:flex;align-items:center;justify-content:space-between">';
+        html += '<label style="font-size:0.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:4px"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" style="font-size:0.72rem" onchange="kbLoadFile(this)"></label>';
+        html += '<button class="nous-btn" style="background:#2563eb;color:white" onclick="kbSubmitImport()">Import</button>';
+        html += '</div></div></details>';
+        html += '</div>';
+
         el.innerHTML = html;
       } catch (e) {
         el.innerHTML = '<div style="color:#dc2626;padding:12px">Failed to load knowledge sources: ' + escapeHtml(e.message) + '</div>';
@@ -6569,6 +6528,54 @@ function burnAreaChart() {
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
+
+    async function kbImportDocFromModal() {
+      const url = document.getElementById('kb-doc-url')?.value?.trim();
+      const name = document.getElementById('kb-doc-name')?.value?.trim();
+      const layer = document.getElementById('kb-doc-layer')?.value;
+
+      if (!url) { await hiveAlert('Document URL is required'); return; }
+
+      const btn = document.querySelector('#kb-subs-content button[onclick="kbImportDocFromModal()"]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
+
+      try {
+        const r = await fetch('/api/knowledge/documents', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ url, name: name || '', layer: layer || 'project' }),
+        });
+        if (!r.ok) { const t = await r.text(); await hiveAlert('Import failed: ' + t); return; }
+        const meta = await r.json();
+        await hiveAlert('Imported "' + (meta.slug || url) + '" → ' + (meta.fact_count || 0) + ' facts');
+        kbLoadSubscriptions();
+        fetchKnowledgeStats();
+      } catch (e) {
+        await hiveAlert('Error: ' + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Import'; }
+      }
+    }
+
+    async function kbReimportDoc(slug) {
+      const btn = document.querySelector('[onclick="kbReimportDoc(\'' + slug + '\')"]');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+      try {
+        const r = await fetch('/api/knowledge/documents/' + encodeURIComponent(slug) + '/reimport', { method: 'POST' });
+        if (!r.ok) { await hiveAlert('Reimport failed'); return; }
+        kbLoadSubscriptions();
+        fetchKnowledgeStats();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
+    }
+
+    async function kbDeleteDoc(slug) {
+      if (!(await hiveConfirm('Delete document "' + slug + '" and all extracted facts?'))) return;
+      try {
+        const r = await fetch('/api/knowledge/documents/' + encodeURIComponent(slug), { method: 'DELETE' });
+        if (!r.ok) { await hiveAlert('Delete failed'); return; }
+        kbLoadSubscriptions();
+        fetchKnowledgeStats();
+      } catch (e) { await hiveAlert('Error: ' + e.message); }
+    }
 
     // ── Knowledge: How it works modal ──
 
