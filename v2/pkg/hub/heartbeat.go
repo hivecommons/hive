@@ -136,12 +136,15 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	}
 	var onUpgrade UpgradeCallback
 	var onGitHubAppConfig GitHubAppConfigCallback
+	var onHubBanner HubBannerCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
 			onUpgrade = fn
 		case GitHubAppConfigCallback:
 			onGitHubAppConfig = fn
+		case HubBannerCallback:
+			onHubBanner = fn
 		}
 	}
 
@@ -158,6 +161,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		}
 		if resp.GitHubAppConfig != nil && onGitHubAppConfig != nil {
 			onGitHubAppConfig(resp.GitHubAppConfig)
+		}
+		if onHubBanner != nil {
+			onHubBanner(resp.HubBanner)
 		}
 	}
 
@@ -343,7 +349,19 @@ type HeartbeatResponse struct {
 	LatestSHA       string                    `json:"latest_sha,omitempty"`
 	LatestTag       string                    `json:"latest_tag,omitempty"`
 	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
+	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
 }
+
+// HubBanner is a message from the hub admin displayed on spoke dashboards.
+type HubBanner struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+	Color   string `json:"color"`
+}
+
+// HubBannerCallback is called when the hub delivers a banner message
+// via the heartbeat response.
+type HubBannerCallback func(banner *HubBanner)
 
 // GitHubAppConfigCallback is called when the hub delivers GitHub App config
 // via the heartbeat response (app ID, installation ID, private key).

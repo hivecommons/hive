@@ -1455,6 +1455,12 @@ func main() {
 					"installation_id", cfg.GitHub.InstallationID,
 				)
 			}
+		}), hub.HubBannerCallback(func(banner *hub.HubBanner) {
+			if banner == nil {
+				dashSrv.ClearHubBanner()
+				return
+			}
+			dashSrv.SetHubBanner(banner.ID, banner.Message, banner.Color)
 		}))
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {

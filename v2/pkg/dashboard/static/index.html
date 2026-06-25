@@ -1940,6 +1940,7 @@
     <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:#374151;margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
+  <div id="hub-banner" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
   <div class="governor" id="governor"></div>
 
@@ -3540,6 +3541,34 @@
         banner.setAttribute('hidden', '');
         banner.style.cssText = 'display:none';
       }
+    }
+
+    var _hubBannerColorMap = {
+      green: {bg: 'rgba(22,163,74,0.12)', border: 'rgba(22,163,74,0.3)', color: '#4ade80'},
+      blue:  {bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.3)', color: '#93c5fd'},
+      amber: {bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', color: '#fcd34d'},
+      gray:  {bg: 'rgba(107,114,128,0.12)', border: 'rgba(107,114,128,0.3)', color: '#d1d5db'}
+    };
+
+    function renderHubBanner(banner) {
+      var el = document.getElementById('hub-banner');
+      if (!el) return;
+      if (!banner || !banner.message) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      var dismissKey = 'hub-banner-dismissed-' + banner.id;
+      if (localStorage.getItem(dismissKey)) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      var s = _hubBannerColorMap[banner.color] || _hubBannerColorMap.green;
+      el.style.display = 'block';
+      el.innerHTML = '<div style="background:' + s.bg + ';border:1px solid ' + s.border + ';border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;font-size:0.85rem">'
+        + '<span style="font-size:1.1rem">📢</span>'
+        + '<span style="flex:1;color:' + s.color + '">' + (banner.message || '').replace(/</g, '&lt;') + '</span>'
+        + '<button onclick="dismissHubBanner(\'' + (banner.id || '').replace(/'/g, "\\'") + '\')" style="background:none;border:none;color:' + s.color + ';opacity:0.6;cursor:pointer;font-size:1.1rem;padding:0 4px" title="Dismiss">✕</button>'
+        + '</div>';
+    }
+
+    function dismissHubBanner(id) {
+      localStorage.setItem('hub-banner-dismissed-' + id, '1');
+      var el = document.getElementById('hub-banner');
+      if (el) { el.style.display = 'none'; el.innerHTML = ''; }
     }
 
     function renderSystemAlerts(alerts) {
@@ -7223,6 +7252,7 @@ function burnAreaChart() {
       }
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
+      renderHubBanner(data.hubBanner);
       renderSystemAlerts(data.systemAlerts || []);
       if (!_dropdownOpen && !_configModalOpen) {
         applyPinOverrides(data.agents || []);

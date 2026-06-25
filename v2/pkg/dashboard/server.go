@@ -86,6 +86,9 @@ type Server struct {
 	systemAlertsMu sync.RWMutex
 	systemAlerts   []SystemAlert
 
+	hubBannerMu sync.RWMutex
+	hubBanner   *HubBannerState
+
 	githubAppRecheckFn func() bool
 }
 
@@ -116,6 +119,14 @@ type StatusPayload struct {
 	GitHubBaseURL       string             `json:"githubBaseURL,omitempty"`
 	InferenceBackends   []InferenceBackend `json:"inferenceBackends,omitempty"`
 	SystemAlerts        []SystemAlert      `json:"systemAlerts,omitempty"`
+	HubBanner           *HubBannerState    `json:"hubBanner,omitempty"`
+}
+
+// HubBannerState is a banner message from the hub admin displayed on spoke dashboards.
+type HubBannerState struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+	Color   string `json:"color"`
 }
 
 // SystemAlert represents a critical runtime problem surfaced to the dashboard.
@@ -617,6 +628,13 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	}
 	s.systemAlertsMu.RUnlock()
 
+	s.hubBannerMu.RLock()
+	if s.hubBanner != nil {
+		b := *s.hubBanner
+		status.HubBanner = &b
+	}
+	s.hubBannerMu.RUnlock()
+
 	s.statusMu.Lock()
 	status.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	s.status = status
@@ -658,6 +676,20 @@ func (s *Server) ClearSystemAlert(id string) {
 			return
 		}
 	}
+}
+
+// SetHubBanner sets the hub admin banner displayed on the spoke dashboard.
+func (s *Server) SetHubBanner(id, message, color string) {
+	s.hubBannerMu.Lock()
+	defer s.hubBannerMu.Unlock()
+	s.hubBanner = &HubBannerState{ID: id, Message: message, Color: color}
+}
+
+// ClearHubBanner removes the hub admin banner.
+func (s *Server) ClearHubBanner() {
+	s.hubBannerMu.Lock()
+	defer s.hubBannerMu.Unlock()
+	s.hubBanner = nil
 }
 
 func (s *Server) SetGitHubAppRequired(required bool) {

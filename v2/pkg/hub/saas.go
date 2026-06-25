@@ -136,6 +136,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAuth(s.handleListClusters))
+	s.mux.HandleFunc("POST /api/saas/admin/hub-banner", s.requireAdmin(s.handleSendHubBanner))
+	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
+	s.mux.HandleFunc("GET /api/saas/admin/hub-banner", s.requireAdmin(s.handleGetHubBanner))
 
 	go s.startProvisionWatcher()
 	go s.StartLatestSHAPoller()
@@ -3267,6 +3270,21 @@ const dashboardHTML = `<!DOCTYPE html>
       <div id="users-container"><div class="loading">Loading users...</div></div>
     </div>
 
+    <div id="hub-banner-section" style="display:none;margin-top:48px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:1.3rem;color:var(--accent)">Hub Banner</h2>
+        <div style="display:flex;gap:8px">
+          <button class="btn-primary" onclick="document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+          <button class="btn-primary" id="btn-clear-banner" style="background:rgba(239,68,68,0.15);color:#f87171;display:none" onclick="clearHubBanner()">Clear All Banners</button>
+        </div>
+      </div>
+      <div id="active-banner-display" style="display:none;padding:16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
+        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:8px">Active Banner</div>
+        <div id="active-banner-preview" style="padding:12px 16px;border-radius:6px;font-size:0.85rem;margin-bottom:8px"></div>
+        <div id="active-banner-targets" style="font-size:0.75rem;color:var(--muted)"></div>
+      </div>
+    </div>
+
     <div id="cluster-health-section" style="display:none;margin-top:48px">
       <div onclick="toggleClusterHealth()" style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;margin-bottom:16px">
         <span id="cluster-health-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
@@ -4299,11 +4317,13 @@ const dashboardHTML = `<!DOCTYPE html>
       try {
         var resp = await fetch('/api/saas/admin/users');
         if (resp.status === 403) {
-          if (!_adminLoaded) document.getElementById('admin-section').style.display = 'none';
+          if (!_adminLoaded) { document.getElementById('admin-section').style.display = 'none'; document.getElementById('hub-banner-section').style.display = 'none'; }
           return;
         }
         _adminLoaded = true;
         document.getElementById('admin-section').style.display = '';
+        document.getElementById('hub-banner-section').style.display = '';
+        loadActiveBanner();
         var data = await resp.json();
         _allUsers = data.users || [];
         try { applySortUsers(); } catch(re) { console.error('renderUsers error:', re); }
@@ -4608,6 +4628,56 @@ const dashboardHTML = `<!DOCTYPE html>
     }
   </script>
 
+  <div id="banner-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:540px;width:90%;max-height:90vh;display:flex;flex-direction:column">
+      <h2 style="font-size:1.3rem;padding:32px 32px 16px;margin:0;color:var(--accent);flex-shrink:0">Send Hub Banner</h2>
+      <div style="flex:1;overflow-y:auto;padding:0 32px">
+        <div style="margin-bottom:12px">
+          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Message *</label>
+          <textarea id="banner-message" rows="3" maxlength="500" placeholder="Announce a new capability..." style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;resize:vertical;font-family:inherit"></textarea>
+          <div style="font-size:0.7rem;color:var(--muted);text-align:right;margin-top:2px"><span id="banner-char-count">0</span>/500</div>
+        </div>
+        <div style="margin-bottom:16px">
+          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:8px">Color</label>
+          <div id="banner-color-picker" style="display:flex;gap:8px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:rgba(22,163,74,0.12)">
+              <input type="radio" name="banner-color" value="green" checked style="accent-color:#4ade80"> <span style="color:#4ade80;font-size:0.82rem">Green</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:rgba(59,130,246,0.12)">
+              <input type="radio" name="banner-color" value="blue" style="accent-color:#93c5fd"> <span style="color:#93c5fd;font-size:0.82rem">Blue</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:rgba(245,158,11,0.12)">
+              <input type="radio" name="banner-color" value="amber" style="accent-color:#fcd34d"> <span style="color:#fcd34d;font-size:0.82rem">Amber</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:rgba(107,114,128,0.12)">
+              <input type="radio" name="banner-color" value="gray" style="accent-color:#d1d5db"> <span style="color:#d1d5db;font-size:0.82rem">Gray</span>
+            </label>
+          </div>
+        </div>
+        <div style="margin-bottom:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <label style="font-size:0.8rem;color:var(--muted)">Target Hives *</label>
+            <div style="display:flex;gap:8px">
+              <button onclick="toggleAllBannerHives(true)" style="font-size:0.72rem;color:var(--accent);background:none;border:none;cursor:pointer;text-decoration:underline">Select All</button>
+              <button onclick="toggleAllBannerHives(false)" style="font-size:0.72rem;color:var(--muted);background:none;border:none;cursor:pointer;text-decoration:underline">Deselect All</button>
+            </div>
+          </div>
+          <div id="banner-hive-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg);padding:4px"></div>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:0.8rem;color:var(--muted);margin-bottom:4px;display:block">Preview</label>
+          <div id="banner-preview" style="padding:12px 16px;border-radius:6px;font-size:0.85rem;background:rgba(22,163,74,0.12);border:1px solid rgba(22,163,74,0.3);color:#4ade80">
+            <em style="opacity:0.6">Type a message above to preview...</em>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding:16px 32px 32px;flex-shrink:0">
+        <button onclick="document.getElementById('banner-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>
+        <button onclick="sendHubBanner()" class="btn-primary" id="btn-send-banner">Send Banner</button>
+      </div>
+    </div>
+  </div>
+
   <div id="create-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:640px;width:90%;max-height:90vh;display:flex;flex-direction:column">
       <h2 style="font-size:1.3rem;padding:32px 32px 16px;margin:0;color:var(--accent);flex-shrink:0">Create Hosted Hive</h2>
@@ -4897,6 +4967,244 @@ const dashboardHTML = `<!DOCTYPE html>
         loadAccessList();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
+
+    var _bannerColorStyles = {
+      green: {bg: 'rgba(22,163,74,0.12)', border: '1px solid rgba(22,163,74,0.3)', color: '#4ade80'},
+      blue:  {bg: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', color: '#93c5fd'},
+      amber: {bg: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fcd34d'},
+      gray:  {bg: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.3)', color: '#d1d5db'}
+    };
+
+    (function() {
+      var msgEl = document.getElementById('banner-message');
+      if (msgEl) {
+        msgEl.addEventListener('input', function() {
+          document.getElementById('banner-char-count').textContent = this.value.length;
+          updateBannerPreview();
+        });
+      }
+      var radios = document.querySelectorAll('input[name="banner-color"]');
+      radios.forEach(function(r) { r.addEventListener('change', updateBannerPreview); });
+    })();
+
+    function updateBannerPreview() {
+      var msg = (document.getElementById('banner-message').value || '').trim();
+      var color = (document.querySelector('input[name="banner-color"]:checked') || {}).value || 'green';
+      var s = _bannerColorStyles[color];
+      var preview = document.getElementById('banner-preview');
+      preview.style.background = s.bg;
+      preview.style.border = s.border;
+      preview.style.color = s.color;
+      preview.innerHTML = msg ? esc(msg) : '<em style="opacity:0.6">Type a message above to preview...</em>';
+    }
+
+    function loadBannerHiveList() {
+      var container = document.getElementById('banner-hive-list');
+      container.innerHTML = '';
+      var hives = _hiveRegistry || [];
+      if (!hives.length) {
+        container.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:0.8rem;text-align:center">No hives found</div>';
+        return;
+      }
+      hives.forEach(function(h) {
+        var label = h.name || h.id;
+        var div = document.createElement('div');
+        div.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border)';
+        div.innerHTML = '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;flex:1;font-size:0.82rem;color:var(--text)">' +
+          '<input type="checkbox" class="banner-hive-cb" value="' + esc(h.id) + '" checked style="accent-color:var(--accent)"> ' + esc(label) +
+          '</label>';
+        container.appendChild(div);
+      });
+    }
+
+    function toggleAllBannerHives(checked) {
+      document.querySelectorAll('.banner-hive-cb').forEach(function(cb) { cb.checked = checked; });
+    }
+
+    async function sendHubBanner() {
+      var msg = (document.getElementById('banner-message').value || '').trim();
+      if (!msg) { hiveToast('Message is required', 'error'); return; }
+      var color = (document.querySelector('input[name="banner-color"]:checked') || {}).value || 'green';
+      var hiveIDs = [];
+      document.querySelectorAll('.banner-hive-cb:checked').forEach(function(cb) { hiveIDs.push(cb.value); });
+      if (!hiveIDs.length) { hiveToast('Select at least one hive', 'error'); return; }
+      var btn = document.getElementById('btn-send-banner');
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+      try {
+        var resp = await fetch('/api/saas/admin/hub-banner', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({message: msg, color: color, hive_ids: hiveIDs})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Failed to send', 'error'); return; }
+        hiveToast('Banner sent to ' + data.hive_count + ' hive(s)', 'success');
+        document.getElementById('banner-modal').style.display = 'none';
+        document.getElementById('banner-message').value = '';
+        document.getElementById('banner-char-count').textContent = '0';
+        document.querySelector('input[name="banner-color"][value="green"]').checked = true;
+        updateBannerPreview();
+        loadActiveBanner();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+      finally { btn.disabled = false; btn.textContent = 'Send Banner'; }
+    }
+
+    async function loadActiveBanner() {
+      try {
+        var resp = await fetch('/api/saas/admin/hub-banner');
+        if (!resp.ok) return;
+        var data = await resp.json();
+        var banners = data.banners || [];
+        var display = document.getElementById('active-banner-display');
+        var clearBtn = document.getElementById('btn-clear-banner');
+        if (!banners.length) {
+          display.style.display = 'none';
+          clearBtn.style.display = 'none';
+          return;
+        }
+        var first = banners[0];
+        var s = _bannerColorStyles[first.color] || _bannerColorStyles.green;
+        var preview = document.getElementById('active-banner-preview');
+        preview.style.background = s.bg;
+        preview.style.border = s.border;
+        preview.style.color = s.color;
+        preview.textContent = first.message;
+        var targets = document.getElementById('active-banner-targets');
+        var hiveNames = banners.map(function(b) { return b.hive_id; });
+        targets.textContent = 'Sent to ' + banners.length + ' hive(s): ' + hiveNames.join(', ');
+        display.style.display = '';
+        clearBtn.style.display = '';
+      } catch(e) { /* ignore */ }
+    }
+
+    async function clearHubBanner() {
+      if (!await hiveConfirm('Clear all active hub banners?')) return;
+      try {
+        var resp = await fetch('/api/saas/admin/hub-banner', {method: 'DELETE'});
+        if (!resp.ok) { hiveToast('Failed to clear', 'error'); return; }
+        hiveToast('All banners cleared', 'success');
+        loadActiveBanner();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
   </script>
 </body>
 </html>`
+
+const (
+	bannerIDPrefix       = "hub-banner-"
+	maxBannerMessageLen  = 500
+	maxBannerTargetHives = 100
+)
+
+var validBannerColors = map[string]bool{
+	"green": true,
+	"blue":  true,
+	"amber": true,
+	"gray":  true,
+}
+
+func (s *HubServer) handleSendHubBanner(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Message string   `json:"message"`
+		Color   string   `json:"color"`
+		HiveIDs []string `json:"hive_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	body.Message = strings.TrimSpace(body.Message)
+	if body.Message == "" {
+		http.Error(w, `{"error":"message is required"}`, http.StatusBadRequest)
+		return
+	}
+	if len([]rune(body.Message)) > maxBannerMessageLen {
+		http.Error(w, fmt.Sprintf(`{"error":"message exceeds %d characters"}`, maxBannerMessageLen), http.StatusBadRequest)
+		return
+	}
+	if body.Color == "" {
+		body.Color = "green"
+	}
+	if !validBannerColors[body.Color] {
+		http.Error(w, `{"error":"invalid color; must be green, blue, amber, or gray"}`, http.StatusBadRequest)
+		return
+	}
+	if len(body.HiveIDs) == 0 {
+		http.Error(w, `{"error":"at least one hive must be selected"}`, http.StatusBadRequest)
+		return
+	}
+	if len(body.HiveIDs) > maxBannerTargetHives {
+		http.Error(w, fmt.Sprintf(`{"error":"too many hives (max %d)"}`, maxBannerTargetHives), http.StatusBadRequest)
+		return
+	}
+
+	bannerID := fmt.Sprintf("%s%d", bannerIDPrefix, time.Now().UnixMilli())
+	now := time.Now().UTC().Format(time.RFC3339)
+	entry := &HubBannerEntry{
+		ID:      bannerID,
+		Message: body.Message,
+		Color:   body.Color,
+		SentAt:  now,
+	}
+
+	s.hubBannersMu.Lock()
+	for _, hiveID := range body.HiveIDs {
+		s.hubBanners[hiveID] = entry
+	}
+	s.hubBannersMu.Unlock()
+
+	username := s.getAuthUser(r)
+	s.logger.Info("hub banner sent",
+		"banner_id", bannerID,
+		"message", body.Message,
+		"color", body.Color,
+		"hive_count", len(body.HiveIDs),
+		"by", username,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"banner_id":%q,"hive_count":%d}`, bannerID, len(body.HiveIDs))
+}
+
+func (s *HubServer) handleClearHubBanner(w http.ResponseWriter, r *http.Request) {
+	s.hubBannersMu.Lock()
+	count := len(s.hubBanners)
+	s.hubBanners = make(map[string]*HubBannerEntry)
+	s.hubBannersMu.Unlock()
+
+	username := s.getAuthUser(r)
+	s.logger.Info("hub banners cleared", "cleared_count", count, "by", username)
+
+	w.Header().Set("Content-Type", "application/json")
+	fmt.Fprintf(w, `{"ok":true,"cleared":%d}`, count)
+}
+
+func (s *HubServer) handleGetHubBanner(w http.ResponseWriter, r *http.Request) {
+	s.hubBannersMu.RLock()
+	defer s.hubBannersMu.RUnlock()
+
+	type bannerStatus struct {
+		HiveID  string `json:"hive_id"`
+		ID      string `json:"id"`
+		Message string `json:"message"`
+		Color   string `json:"color"`
+		SentAt  string `json:"sent_at"`
+	}
+	var banners []bannerStatus
+	for hiveID, entry := range s.hubBanners {
+		banners = append(banners, bannerStatus{
+			HiveID:  hiveID,
+			ID:      entry.ID,
+			Message: entry.Message,
+			Color:   entry.Color,
+			SentAt:  entry.SentAt,
+		})
+	}
+	if banners == nil {
+		banners = []bannerStatus{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"banners": banners})
+}

@@ -142,6 +142,19 @@ type HubServer struct {
 	// via heartbeat response (bypasses OAuth proxies). Key: hive ID.
 	pendingGitHubAppConfigs   map[string]*HeartbeatGitHubAppConfig
 	pendingGitHubAppConfigsMu sync.Mutex
+
+	// hubBanners stores admin-sent banners to deliver to spokes via
+	// heartbeat response. Key: hive ID → banner entry.
+	hubBanners   map[string]*HubBannerEntry
+	hubBannersMu sync.RWMutex
+}
+
+// HubBannerEntry stores an admin banner targeted at a specific hive.
+type HubBannerEntry struct {
+	ID      string `json:"id"`
+	Message string `json:"message"`
+	Color   string `json:"color"`
+	SentAt  string `json:"sent_at"`
 }
 
 func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
@@ -173,6 +186,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
 		heartbeatUpgrade: make(map[string]string),
 		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
+		hubBanners:              make(map[string]*HubBannerEntry),
 	}
 
 	s.loadRegistry()
@@ -575,6 +589,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"installation_id", ghCfg.InstallationID,
 		)
 	}
+
+	s.hubBannersMu.RLock()
+	if banner, ok := s.hubBanners[payload.HiveID]; ok {
+		resp.HubBanner = &HubBanner{
+			ID:      banner.ID,
+			Message: banner.Message,
+			Color:   banner.Color,
+		}
+	}
+	s.hubBannersMu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	data, _ := json.Marshal(resp)
