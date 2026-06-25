@@ -3244,6 +3244,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
         <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
         <button class="btn-primary" id="btn-request-hive" style="display:none;background:var(--blue)" onclick="document.getElementById('request-modal').style.display='flex'">Request a Hive</button>
       </div>
@@ -3273,10 +3274,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div id="hub-banner-section" style="display:none;margin-top:48px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
         <h2 style="font-size:1.3rem;color:var(--accent)">Hub Banner</h2>
-        <div style="display:flex;gap:8px">
-          <button class="btn-primary" onclick="document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
-          <button class="btn-primary" id="btn-clear-banner" style="background:rgba(239,68,68,0.15);color:#f87171;display:none" onclick="clearHubBanner()">Clear All Banners</button>
-        </div>
+        <button class="btn-primary" id="btn-clear-banner" style="background:rgba(239,68,68,0.15);color:#f87171;display:none" onclick="clearHubBanner()">Clear All Banners</button>
       </div>
       <div id="active-banner-display" style="display:none;padding:16px;border-radius:8px;border:1px solid var(--border);background:var(--surface);margin-bottom:16px">
         <div style="font-size:0.8rem;color:var(--muted);margin-bottom:8px">Active Banner</div>
@@ -4317,12 +4315,13 @@ const dashboardHTML = `<!DOCTYPE html>
       try {
         var resp = await fetch('/api/saas/admin/users');
         if (resp.status === 403) {
-          if (!_adminLoaded) { document.getElementById('admin-section').style.display = 'none'; document.getElementById('hub-banner-section').style.display = 'none'; }
+          if (!_adminLoaded) { document.getElementById('admin-section').style.display = 'none'; document.getElementById('hub-banner-section').style.display = 'none'; document.getElementById('btn-send-banner-top').style.display = 'none'; }
           return;
         }
         _adminLoaded = true;
         document.getElementById('admin-section').style.display = '';
         document.getElementById('hub-banner-section').style.display = '';
+        document.getElementById('btn-send-banner-top').style.display = '';
         loadActiveBanner();
         var data = await resp.json();
         _allUsers = data.users || [];
