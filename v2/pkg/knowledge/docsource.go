@@ -215,12 +215,7 @@ func (ds *DocumentSource) fetchURL(ctx context.Context, url string) ([]byte, str
 func (ds *DocumentSource) parseContent(content []byte, contentType string) ([]DocChunk, string) {
 	switch contentType {
 	case "application/pdf":
-		chunks := parsePDFText(string(content))
-		title := ""
-		if len(chunks) > 0 {
-			title = chunks[0].Title
-		}
-		return chunks, title
+		return parsePDF(content)
 	case "text/html":
 		return parseHTMLText(content)
 	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":

@@ -720,6 +720,7 @@ func (k *KnowledgeAPI) DeleteDocument(slug string) error {
 				return err
 			}
 			k.docSources = append(k.docSources[:i], k.docSources[i+1:]...)
+			k.triggerVaultReindex(k.docVaultDir())
 			return nil
 		}
 	}

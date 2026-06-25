@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fumiama/go-docx"
+	"github.com/ledongthuc/pdf"
 )
 
 const (
@@ -38,43 +39,65 @@ type DocChunk struct {
 	Section string
 }
 
-// parsePDFText splits already-extracted PDF text into chunks by page boundary.
-// Pages are delimited by form-feed characters (\f). Pages exceeding
-// maxChunkChars are split further at paragraph boundaries.
-func parsePDFText(text string) []DocChunk {
-	pages := strings.Split(text, "\f")
-	var chunks []DocChunk
+// parsePDF extracts text from binary PDF data using ledongthuc/pdf, then
+// chunks by page. Each page becomes one or more DocChunks.
+func parsePDF(data []byte) ([]DocChunk, string) {
+	reader, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, ""
+	}
 
-	for i, page := range pages {
-		page = strings.TrimSpace(page)
-		if page == "" {
+	numPages := reader.NumPage()
+	if numPages == 0 {
+		return nil, ""
+	}
+
+	var chunks []DocChunk
+	var docTitle string
+
+	for i := 1; i <= numPages; i++ {
+		page := reader.Page(i)
+		if page.V.IsNull() {
 			continue
 		}
-		pageNum := i + 1
 
-		if len(page) <= maxChunkChars {
+		text, err := page.GetPlainText(nil)
+		if err != nil || strings.TrimSpace(text) == "" {
+			continue
+		}
+		text = strings.TrimSpace(text)
+
+		if docTitle == "" {
+			firstLine := strings.SplitN(text, "\n", 2)[0]
+			firstLine = strings.TrimSpace(firstLine)
+			if len(firstLine) > 0 && len(firstLine) <= chunkTitleMaxChars && !strings.HasSuffix(firstLine, ".") {
+				docTitle = firstLine
+			}
+		}
+
+		if len(text) <= maxChunkChars {
 			chunks = append(chunks, DocChunk{
-				Title:   extractPageTitle(page, pageNum),
-				Body:    page,
-				PageNum: pageNum,
+				Title:   extractPageTitle(text, i),
+				Body:    text,
+				PageNum: i,
 			})
 			continue
 		}
 
-		subChunks := splitAtParagraphs(page, maxChunkChars)
+		subChunks := splitAtParagraphs(text, maxChunkChars)
 		for j, sub := range subChunks {
-			title := extractPageTitle(sub, pageNum)
+			title := extractPageTitle(sub, i)
 			if len(subChunks) > 1 {
-				title = fmt.Sprintf("Page %d, Part %d", pageNum, j+1)
+				title = fmt.Sprintf("Page %d, Part %d", i, j+1)
 			}
 			chunks = append(chunks, DocChunk{
 				Title:   title,
 				Body:    sub,
-				PageNum: pageNum,
+				PageNum: i,
 			})
 		}
 	}
-	return chunks
+	return chunks, docTitle
 }
 
 // extractPageTitle returns the first line if it looks like a heading (short, no

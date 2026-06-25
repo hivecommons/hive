@@ -5318,10 +5318,11 @@ function burnAreaChart() {
     let _kbGraphData = null;
     async function fetchKnowledgeStats() {
       try {
-        const [r] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory()]);
+        const [r, docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
+        _kbCache._documents = (docsR && docsR.ok) ? await docsR.json() : [];
         if (_kbInitialLoad && _kbCache && _kbCache.enabled) {
           _kbSetupView = 'none';
         }
@@ -5892,6 +5893,22 @@ function burnAreaChart() {
         html += '<div class="kb-layer-list" style="margin-top:4px">';
         for (const v of vaults) {
           html += `<button class="kb-layer-btn${_kbSelectedLayer === 'vault:'+v.name ? ' active' : ''}" onclick="_kbSelectedLayer='vault:${escapeHtml(v.name)}';kbSearchVault('${escapeHtml(v.name)}')" title="${escapeHtml(v.root_dir)}">📂 ${escapeHtml(v.name)}<span class="kb-layer-count">${v.pages}</span></button>`;
+        }
+        html += '</div>';
+      }
+
+      // Documents section in sidebar
+      const docs = (_kbCache._documents || []);
+      if (docs.length > 0) {
+        html += '<div style="margin-top:12px;font-size:0.72rem;color:var(--muted)"><strong>📄 Imported Documents</strong></div>';
+        html += '<div class="kb-layer-list" style="margin-top:4px">';
+        for (const d of docs) {
+          const dIcon = DOC_CONTENT_ICONS[d.content_type] || '📄';
+          const dFacts = d.fact_count || 0;
+          html += `<button class="kb-layer-btn" onclick="kbSelectLayer('doc:${escapeHtml(d.slug)}')" title="${escapeHtml(d.source_url || d.source_file || d.slug)}">`;
+          html += `<span class="kb-layer-label">${dIcon} ${escapeHtml(d.title || d.slug)}</span>`;
+          html += `<span class="kb-layer-count">${dFacts}</span>`;
+          html += `</button>`;
         }
         html += '</div>';
       }

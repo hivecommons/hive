@@ -107,48 +107,23 @@ func TestParseHTMLText_NoTitle(t *testing.T) {
 	}
 }
 
-func TestParsePDFText(t *testing.T) {
-	// Simulate 3 pages separated by form-feeds.
-	page1 := "Introduction to Transformers\n\nTransformer models use self-attention."
-	page2 := "Related Work\n\nPrior approaches used RNNs and CNNs for sequence tasks."
-	page3 := "Methodology\n\nWe propose a novel attention mechanism."
-	text := page1 + "\f" + page2 + "\f" + page3
-
-	chunks := parsePDFText(text)
-	if len(chunks) != 3 {
-		t.Fatalf("expected 3 chunks (one per page), got %d", len(chunks))
+func TestParsePDF_InvalidData(t *testing.T) {
+	chunks, title := parsePDF([]byte("not a pdf"))
+	if len(chunks) != 0 {
+		t.Fatalf("expected 0 chunks for invalid PDF, got %d", len(chunks))
 	}
-
-	if chunks[0].PageNum != 1 || chunks[1].PageNum != 2 || chunks[2].PageNum != 3 {
-		t.Error("page numbers should be 1-indexed sequential")
-	}
-
-	// First page title should be "Introduction to Transformers" (heading-like).
-	if chunks[0].Title != "Introduction to Transformers" {
-		t.Errorf("expected heading title, got %q", chunks[0].Title)
+	if title != "" {
+		t.Errorf("expected empty title for invalid PDF, got %q", title)
 	}
 }
 
-func TestParsePDFText_LargePage(t *testing.T) {
-	// A page exceeding maxChunkChars should be split.
-	largePara1 := strings.Repeat("Alpha word. ", 120)
-	largePara2 := strings.Repeat("Beta word. ", 120)
-	text := largePara1 + "\n\n" + largePara2
-
-	chunks := parsePDFText(text)
-	if len(chunks) < 2 {
-		t.Fatalf("expected large page to be split into at least 2 chunks, got %d", len(chunks))
+func TestParsePDF_EmptyData(t *testing.T) {
+	chunks, title := parsePDF(nil)
+	if len(chunks) != 0 {
+		t.Fatalf("expected 0 chunks for nil data, got %d", len(chunks))
 	}
-	if chunks[0].PageNum != 1 {
-		t.Errorf("expected page 1, got %d", chunks[0].PageNum)
-	}
-}
-
-func TestParsePDFText_EmptyPages(t *testing.T) {
-	text := "\f\f\fActual content\f\f"
-	chunks := parsePDFText(text)
-	if len(chunks) != 1 {
-		t.Fatalf("expected 1 chunk (empty pages skipped), got %d", len(chunks))
+	if title != "" {
+		t.Errorf("expected empty title for nil data, got %q", title)
 	}
 }
 
