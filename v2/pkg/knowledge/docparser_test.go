@@ -1,10 +1,13 @@
 package knowledge
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fumiama/go-docx"
 )
 
 func TestParseRawText(t *testing.T) {
@@ -242,5 +245,74 @@ func TestChunksToFacts_SummaryTruncation(t *testing.T) {
 	}
 	if len(facts[0].Body) > docSummaryMaxChars {
 		t.Errorf("summary body should be truncated to %d chars, got %d", docSummaryMaxChars, len(facts[0].Body))
+	}
+}
+
+func buildTestDocx(t *testing.T, paragraphs []string) []byte {
+	t.Helper()
+	d := docx.New()
+	for _, text := range paragraphs {
+		p := d.AddParagraph()
+		p.AddText(text)
+	}
+	var buf bytes.Buffer
+	_, err := d.WriteTo(&buf)
+	if err != nil {
+		t.Fatalf("failed to create test docx: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestParseDocx(t *testing.T) {
+	paras := []string{
+		"Introduction to Autoscaling",
+		"Kubernetes HPA uses CPU and memory metrics to scale pods horizontally.",
+		"Custom metrics adapters allow scaling based on application-specific signals.",
+		"VPA adjusts resource requests based on historical usage patterns.",
+	}
+	data := buildTestDocx(t, paras)
+
+	chunks, title := parseDocx(data)
+	if len(chunks) == 0 {
+		t.Fatal("expected at least 1 chunk from docx")
+	}
+	if title == "" {
+		t.Error("expected a title extracted from first paragraph")
+	}
+
+	allText := ""
+	for _, c := range chunks {
+		allText += c.Body + " "
+	}
+	if !strings.Contains(allText, "Kubernetes HPA") {
+		t.Error("expected parsed text to contain 'Kubernetes HPA'")
+	}
+}
+
+func TestParseDocx_Empty(t *testing.T) {
+	d := docx.New()
+	var buf bytes.Buffer
+	d.WriteTo(&buf)
+
+	chunks, title := parseDocx(buf.Bytes())
+	if len(chunks) != 0 {
+		t.Errorf("expected 0 chunks from empty docx, got %d", len(chunks))
+	}
+	if title != "" {
+		t.Errorf("expected empty title from empty docx, got %q", title)
+	}
+}
+
+func TestParseDocx_LargeDocument(t *testing.T) {
+	var paras []string
+	for i := 0; i < 100; i++ {
+		paras = append(paras, fmt.Sprintf("Section %d content with enough text to be meaningful. %s",
+			i, strings.Repeat("Lorem ipsum dolor sit amet. ", 10)))
+	}
+	data := buildTestDocx(t, paras)
+
+	chunks, _ := parseDocx(data)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple chunks from large docx, got %d", len(chunks))
 	}
 }

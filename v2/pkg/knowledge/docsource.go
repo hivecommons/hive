@@ -223,6 +223,8 @@ func (ds *DocumentSource) parseContent(content []byte, contentType string) ([]Do
 		return chunks, title
 	case "text/html":
 		return parseHTMLText(content)
+	case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+		return parseDocx(content)
 	default:
 		chunks := parseRawText(string(content))
 		title := ""
@@ -311,10 +313,14 @@ func detectContentType(pathOrURL string) string {
 		return "text/plain"
 	case strings.HasSuffix(lower, ".txt"):
 		return "text/plain"
+	case strings.HasSuffix(lower, ".docx"):
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 	default:
 		return "text/plain"
 	}
 }
+
+const docxMIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 func normalizeContentType(ct string) string {
 	ct = strings.ToLower(ct)
@@ -323,6 +329,8 @@ func normalizeContentType(ct string) string {
 		return "application/pdf"
 	case strings.Contains(ct, "html"):
 		return "text/html"
+	case strings.Contains(ct, "wordprocessingml"), strings.Contains(ct, "docx"):
+		return docxMIME
 	default:
 		return "text/plain"
 	}
@@ -334,6 +342,8 @@ func extensionForType(contentType string) string {
 		return ".pdf"
 	case "text/html":
 		return ".html"
+	case docxMIME:
+		return ".docx"
 	default:
 		return ".txt"
 	}

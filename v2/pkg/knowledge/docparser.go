@@ -1,10 +1,13 @@
 package knowledge
 
 import (
+	"bytes"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/fumiama/go-docx"
 )
 
 const (
@@ -82,6 +85,51 @@ func extractPageTitle(text string, pageNum int) string {
 		return firstLine
 	}
 	return fmt.Sprintf("Page %d", pageNum)
+}
+
+// parseDocx extracts text from a .docx file and splits into chunks.
+// It returns the chunks and the extracted document title (empty if none).
+func parseDocx(data []byte) ([]DocChunk, string) {
+	r, err := docx.Parse(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, ""
+	}
+
+	var paragraphs []string
+	for _, item := range r.Document.Body.Items {
+		p, ok := item.(*docx.Paragraph)
+		if !ok {
+			continue
+		}
+		var line strings.Builder
+		for _, child := range p.Children {
+			run, ok := child.(*docx.Run)
+			if !ok {
+				continue
+			}
+			for _, rc := range run.Children {
+				if t, ok := rc.(*docx.Text); ok {
+					line.WriteString(t.Text)
+				}
+			}
+		}
+		if text := strings.TrimSpace(line.String()); text != "" {
+			paragraphs = append(paragraphs, text)
+		}
+	}
+
+	if len(paragraphs) == 0 {
+		return nil, ""
+	}
+
+	title := ""
+	if len(paragraphs[0]) <= chunkTitleMaxChars && !strings.HasSuffix(paragraphs[0], ".") {
+		title = paragraphs[0]
+	}
+
+	fullText := strings.Join(paragraphs, "\n\n")
+	chunks := parseRawText(fullText)
+	return chunks, title
 }
 
 var (
