@@ -5397,9 +5397,12 @@ function burnAreaChart() {
         url = '/api/knowledge/search?q=' + encodeURIComponent(query) + '&limit=50';
         if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
       } else if (layer && layer !== 'all') {
-        // Check if this is a vault (not a standard layer type)
+        // Check if this is a vault, document, or standard layer type
         const standardLayers = ['personal','project','org','community'];
-        if (!standardLayers.includes(layer) && !layer.startsWith('git_source:')) {
+        if (layer.startsWith('doc:')) {
+          const docSlug = layer.slice(4);
+          url = '/api/knowledge/search?q=' + encodeURIComponent(docSlug) + '&limit=50&type=reference';
+        } else if (!standardLayers.includes(layer) && !layer.startsWith('git_source:')) {
           url = '/api/knowledge/vaults/' + encodeURIComponent(layer) + '/facts';
         } else {
           url = '/api/knowledge/' + encodeURIComponent(layer);
@@ -5934,7 +5937,7 @@ function burnAreaChart() {
         for (const d of docs) {
           const dIcon = DOC_CONTENT_ICONS[d.content_type] || '📄';
           const dFacts = d.fact_count || 0;
-          html += `<button class="kb-layer-btn" onclick="kbSelectLayer('doc:${escapeHtml(d.slug)}')" title="${escapeHtml(d.source_url || d.source_file || d.slug)}">`;
+          html += `<button class="kb-layer-btn${_kbSelectedLayer === 'doc:'+d.slug ? ' active' : ''}" onclick="kbSelectLayer('doc:${escapeHtml(d.slug)}')" title="${escapeHtml(d.source_url || d.source_file || d.slug)}">`;
           html += `<span class="kb-layer-label">${dIcon} ${escapeHtml(d.title || d.slug)}</span>`;
           html += `<span class="kb-layer-count">${dFacts}</span>`;
           html += `</button>`;
