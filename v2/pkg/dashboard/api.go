@@ -3413,8 +3413,9 @@ func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := r.URL.Query().Get("q")
-	if query == "" {
-		jsonError(w, "q parameter is required", http.StatusBadRequest)
+	tagFilter := r.URL.Query().Get("tag")
+	if query == "" && tagFilter == "" {
+		jsonError(w, "q or tag parameter is required", http.StatusBadRequest)
 		return
 	}
 
@@ -3425,9 +3426,27 @@ func (s *Server) handleKnowledgeSearch(w http.ResponseWriter, r *http.Request) {
 		limit, _ = strconv.Atoi(limitStr)
 	}
 
-	results := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, query, typeFilter, limit)
+	var results []knowledge.Fact
+	if tagFilter != "" {
+		all := s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, "", typeFilter, 0)
+		for _, f := range all {
+			for _, t := range f.Tags {
+				if strings.EqualFold(t, tagFilter) {
+					results = append(results, f)
+					break
+				}
+			}
+		}
+		if limit > 0 && len(results) > limit {
+			results = results[:limit]
+		}
+	} else {
+		results = s.deps.Knowledge.SearchAllWithVaults(s.deps.Ctx, query, typeFilter, limit)
+	}
+
 	jsonResponse(w, map[string]interface{}{
 		"query":   query,
+		"tag":     tagFilter,
 		"count":   len(results),
 		"results": results,
 	})

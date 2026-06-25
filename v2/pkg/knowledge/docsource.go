@@ -125,9 +125,10 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 		return nil, fmt.Errorf("storing artifact: %w", err)
 	}
 
-	chunks, title := ds.parseContent(content, contentType)
+	chunks, extractedTitle := ds.parseContent(content, contentType)
+	title := ds.config.Name
 	if title == "" {
-		title = ds.config.Name
+		title = extractedTitle
 	}
 
 	now := time.Now().UTC()
