@@ -3076,7 +3076,7 @@
         `<circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="2" fill="#2563eb"/>` +
         `</svg></span>`;
     }
-    fetchFactHistory();
+    // fetchFactHistory() — deferred to _deferredInit
 
     async function fetchHistory() {
       try {
@@ -3141,10 +3141,8 @@
         historyData = evalEntries || [];
       } catch (e) { /* ignore */ }
     }
-    // Fetch history on load, then every 30s
-    fetchHistory();
+    // fetchHistory() — deferred to _deferredInit
     const HISTORY_REFRESH_MS = 30000;
-    setInterval(fetchHistory, HISTORY_REFRESH_MS);
 
     function formatAge(sec) {
       if (sec < 0) return '—';
@@ -3169,10 +3167,8 @@
         }
       } catch (_) { /* non-fatal — cost display is optional */ }
     }
-    // Fetch on load, then every 60s (matches token-collector cadence)
-    fetchIssueCosts();
+    // fetchIssueCosts() — deferred to _deferredInit
     const ISSUE_COSTS_REFRESH_MS = 60000;
-    setInterval(fetchIssueCosts, ISSUE_COSTS_REFRESH_MS);
 
     function resolveStatValue(stat, name) {
       const src = stat.source;
@@ -3933,7 +3929,7 @@
     }
 
     let budgetIgnored = false;
-    fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {});
+    // fetch('/api/budget-ignore') — deferred to _deferredInit
 
     function toggleBudgetIgnore() {
       budgetIgnored = !budgetIgnored;
@@ -5294,8 +5290,7 @@ function burnAreaChart() {
       if (e.target === e.currentTarget) closeNousConfig();
     });
 
-    fetchNousStatus();
-    setInterval(fetchNousStatus, NOUS_POLL_MS);
+    // fetchNousStatus() — deferred to _deferredInit
 
     // ── Knowledge Base ──
     let _kbCache = null;
@@ -7034,8 +7029,7 @@ function burnAreaChart() {
       } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
     }
 
-    fetchKnowledgeStats();
-    setInterval(fetchKnowledgeStats, KB_POLL_MS);
+    // fetchKnowledgeStats() — deferred to _deferredInit
 
     // --- Audit Log ---
     const AUDIT_POLL_MS = 30000;
@@ -7131,8 +7125,7 @@ function burnAreaChart() {
         filterAuditLog();
       } catch(e) {}
     }
-    fetchAuditLog();
-    setInterval(fetchAuditLog, AUDIT_POLL_MS);
+    // fetchAuditLog() — deferred to _deferredInit
 
     // --- Contributors & Leaderboard ---
     const CONTRIBUTOR_POLL_MS = 10000;
@@ -7418,10 +7411,7 @@ function burnAreaChart() {
       }
     }
 
-    fetchContributors();
-    fetchLeaderboard();
-    setInterval(fetchContributors, CONTRIBUTOR_POLL_MS);
-    setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS);
+    // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit
 
     // ── System resource gauge history for sparklines ──
     const SYS_GAUGE_HISTORY_MAX = 60;
@@ -8542,7 +8532,7 @@ function burnAreaChart() {
     }
 
     document.getElementById('logs-agent-select')?.addEventListener('change', () => { _logsData = {}; fetchAgentLogs(); });
-    setInterval(fetchAgentLogs, LOGS_REFRESH_MS);
+    // setInterval(fetchAgentLogs) — deferred to _deferredInit
 
     const MODE_EMOJIS = {'ADVISORY':'📝','ISSUES_ONLY':'🎫','ISSUES_AND_PRS':'🔧','ISSUES_PRS_MERGE':'🚀'};
     function modeEmoji(mode) { return MODE_EMOJIS[mode] || ''; }
@@ -8923,8 +8913,7 @@ function burnAreaChart() {
         if (ocEl) ocEl.innerHTML = html;
       } catch (_) {}
     }
-    fetchGitVersion();
-    setInterval(fetchGitVersion, GIT_VERSION_POLL_MS);
+    // fetchGitVersion() — deferred to _deferredInit
 
     // SSE connection
     var _upgradeInProgress = false;
@@ -8971,7 +8960,7 @@ function burnAreaChart() {
         }).catch(function() {});
       }, VERSION_CHECK_INTERVAL_MS);
     }
-    startVersionCheck();
+    // startVersionCheck() — deferred to _deferredInit
 
     function connect() {
       const source = new EventSource('/api/events');
@@ -9077,7 +9066,7 @@ function burnAreaChart() {
       if (repoDisplay) window._primaryRepo = repoDisplay;
     }).catch(() => {});
 
-    // Initial fetch then SSE
+    // Initial fetch then SSE — these two are critical for first paint
     fetch('/api/status').then(r => r.json()).then(render).catch(console.error);
     // Fetch persistent trends for sparklines (day/week)
     window._trendData = [];
@@ -9088,20 +9077,13 @@ function burnAreaChart() {
       // Cache token history from server for merging into historyData
       window._serverTokenHistory = d && d.tokenHistory ? d.tokenHistory : [];
     }
-    fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {});
-    // Refresh trends every 15 min
+    // fetch('/api/trends') + fetchTimeline() — deferred to _deferredInit
     const TREND_REFRESH_MS = 900000;
-    setInterval(() => {
-      fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {});
-    }, TREND_REFRESH_MS);
-    // Fetch 24h timeline for governor mode strip
     window._timelineData = [];
     function fetchTimeline() {
       fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
     }
-    fetchTimeline();
     const TIMELINE_REFRESH_MS = 60000;
-    setInterval(fetchTimeline, TIMELINE_REFRESH_MS);
     // ── Configuration Dialog ──────────────────────────────────────────
     let _configState = { type: null, agent: null, tab: null, data: {}, dirty: {} };
     const _configTabMemory = {};
@@ -11523,7 +11505,29 @@ function burnAreaChart() {
     });
 
     connect();
-    setTimeout(fetchAgentLogs, 2000);
+
+    // Deferred initialization — non-critical fetches staggered after first paint
+    const DEFERRED_INIT_DELAY_MS = 1500;
+    const DEFERRED_STAGGER_MS = 200;
+    setTimeout(() => {
+      const deferred = [
+        () => { fetchFactHistory(); },
+        () => { fetchHistory(); setInterval(fetchHistory, HISTORY_REFRESH_MS); },
+        () => { fetchIssueCosts(); setInterval(fetchIssueCosts, ISSUE_COSTS_REFRESH_MS); },
+        () => { fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}); },
+        () => { fetchNousStatus(); setInterval(fetchNousStatus, NOUS_POLL_MS); },
+        () => { fetchKnowledgeStats(); setInterval(fetchKnowledgeStats, KB_POLL_MS); },
+        () => { fetchAuditLog(); setInterval(fetchAuditLog, AUDIT_POLL_MS); },
+        () => { fetchContributors(); setInterval(fetchContributors, CONTRIBUTOR_POLL_MS); },
+        () => { fetchLeaderboard(); setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS); },
+        () => { fetchGitVersion(); setInterval(fetchGitVersion, GIT_VERSION_POLL_MS); },
+        () => { startVersionCheck(); },
+        () => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); setInterval(() => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); },
+        () => { fetchTimeline(); setInterval(fetchTimeline, TIMELINE_REFRESH_MS); },
+        () => { fetchAgentLogs(); setInterval(fetchAgentLogs, LOGS_REFRESH_MS); },
+      ];
+      deferred.forEach((fn, i) => setTimeout(fn, i * DEFERRED_STAGGER_MS));
+    }, DEFERRED_INIT_DELAY_MS);
   </script>
 </body>
 </html>
