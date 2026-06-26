@@ -161,7 +161,52 @@ func extractPageText(page pdf.Page) string {
 	result := buf.String()
 	result = strings.ReplaceAll(result, "\r\n", "\n")
 	result = strings.ReplaceAll(result, "\r", "\n")
-	return result
+	return sanitizePDFText(result)
+}
+
+// rePDFGlyphs matches common PDF artifact characters: C0 controls (except
+// tab/newline/CR), bullets, geometric shapes, dingbats, private-use area
+// glyphs, BOM, and replacement characters.
+var rePDFGlyphs = regexp.MustCompile(
+	"[\x01-\x08\x0b\x0c\x0e-\x1f" +
+		"­" + // soft hyphen
+		"•‣⁃⁌⁍" + // bullets
+		"■-◿" + // geometric shapes
+		"☀-⛿" + // misc symbols
+		"✀-➿" + // dingbats
+		"⭐-⭟" + // stars
+		"\uE000-\uF8FF" + // private use area
+		"\uFEFF" + // BOM
+		"\uFFFC\uFFFD" + // object replacement, replacement char
+		"]",
+)
+
+// sanitizePDFText strips decorative glyphs, normalizes whitespace artifacts,
+// and expands common ligatures that PDF text extractors emit.
+func sanitizePDFText(s string) string {
+	s = strings.ReplaceAll(s, "ﬀ", "ff")
+	s = strings.ReplaceAll(s, "ﬁ", "fi")
+	s = strings.ReplaceAll(s, "ﬂ", "fl")
+	s = strings.ReplaceAll(s, "ﬃ", "ffi")
+	s = strings.ReplaceAll(s, "ﬄ", "ffl")
+	s = strings.ReplaceAll(s, " ", " ")
+
+	s = rePDFGlyphs.ReplaceAllString(s, "")
+
+	s = strings.ReplaceAll(s, "–", "-")
+	s = strings.ReplaceAll(s, "—", "-")
+	s = strings.ReplaceAll(s, "‘", "'")
+	s = strings.ReplaceAll(s, "’", "'")
+	s = strings.ReplaceAll(s, "“", "\"")
+	s = strings.ReplaceAll(s, "”", "\"")
+	s = strings.ReplaceAll(s, "…", "...")
+
+	var lines []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.Join(strings.Fields(line), " ")
+		lines = append(lines, line)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // extractPageTitle returns the first line if it looks like a heading (short, no
