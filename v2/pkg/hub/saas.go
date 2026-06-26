@@ -3523,12 +3523,13 @@ const dashboardHTML = `<!DOCTYPE html>
           } else if (_latestSHA) {
             lines = '<span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHA) + '</span>';
           }
-          shaEl.innerHTML = lines ? '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Latest images:</div>' + lines : '';
+          shaEl.innerHTML = lines ? '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Latest images:</div>' + lines : '<div style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest images…</div>';
         }
         var hubHash = data.hub_git_hash || '';
         if (hubHash) {
           var el = document.getElementById('hub-version');
           if (el) {
+            var hubLatestUnknown = !_latestSHA;
             var isCurrent = _latestSHA && hubHash === _latestSHA;
             var hubUpgradeBtn = '';
             var hubIsUpgrading = _hubUpgrading || (!isCurrent && _latestSHA && _hubAutoUpgrade);
@@ -3536,15 +3537,20 @@ const dashboardHTML = `<!DOCTYPE html>
               hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
             } else if (hubIsUpgrading) {
               hubUpgradeBtn = ' <span title="Upgrading to ' + esc(_latestSHA || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
+            } else if (hubLatestUnknown && _isAdmin) {
+              hubUpgradeBtn = ' <button disabled title="Waiting for latest version…" style="padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
             }
             if (isCurrent) { _hubUpgrading = false; }
             var hubAutoCheck = '';
             if (_isAdmin) {
               hubAutoCheck = ' <label style="margin-left:6px;font-size:0.6rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
             }
+            var hubStatusIcon = hubLatestUnknown
+              ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
+              : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(_latestSHA) + '">↑</span>';
             var hubMsg = _latestSHAMessages['v2'] || '';
             el.innerHTML = '<span style="font-family:monospace;font-size:0.7rem;color:var(--muted)" title="' + esc(hubMsg) + '">' + esc(hubHash) + '</span>' +
-              (isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(_latestSHA) + '">↑</span>') + hubUpgradeBtn + hubAutoCheck;
+              hubStatusIcon + hubUpgradeBtn + hubAutoCheck;
           }
         }
         var canCreate = _userQuota < 0 || _userQuota > _userUsed;
@@ -3696,16 +3702,21 @@ const dashboardHTML = `<!DOCTYPE html>
           var branchName = h.gitBranch || 'v2';
           var branchLatest = _latestSHAs[branchName] || _latestSHA;
           var branch = '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(branchName) + '</span>';
+          var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sha === branchLatest;
-          var isUpgrading = (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent);
+          var isUpgrading = (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent && !latestUnknown);
           if (_upgradingHives[h.id] && sha !== _upgradingHives[h.id]) delete _upgradingHives[h.id];
           if (isCurrent && h.upgrading) { h.upgrading = false; }
-          var status = isCurrent ? '<span style="color:var(--green);margin-left:3px" title="latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="behind latest ' + esc(branchLatest) + '">↑</span>';
+          var status = latestUnknown
+            ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
+            : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="behind latest ' + esc(branchLatest) + '">↑</span>';
           var upgradeIcon = '';
           if (isUpgrading) {
             upgradeIcon = ' <span title="Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?') + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Upgrading</span>';
-          } else if (!isCurrent && isHosted && h.role === 'owner') {
+          } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
             upgradeIcon = ' <button id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Current: ' + esc(sha) + ' → Latest: ' + esc(branchLatest) + '" style="padding:3px 10px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
+          } else if (latestUnknown && isHosted && h.role === 'owner') {
+            upgradeIcon = ' <button disabled title="Waiting for latest version…" style="padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
           }
           var autoUpgradeCheck = '';
           if (isHosted && h.role === 'owner') {
