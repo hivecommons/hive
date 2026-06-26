@@ -1231,6 +1231,8 @@ func main() {
 		logger.Info("audit: starting agent", "name", name, "trigger", "startup")
 		if err := agentMgr.Start(ctx, name); err != nil {
 			logger.Warn("failed to start agent", "name", name, "error", err)
+		} else {
+			dashSrv.AuditLog("system", "agent_start", "trigger=startup", name)
 		}
 		agentIndex++
 	}
@@ -1531,6 +1533,9 @@ func main() {
 			return
 		case <-ticker.C:
 			restarted := agentMgr.CheckAndRestartCrashedAgents(ctx)
+			for _, name := range restarted {
+				dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
+			}
 			// If brainstorm crashed during inception, re-kick via SendKick.
 			// SendKick waits for the CLI to be ready and sends the message
 			// If brainstorm crashed during inception, re-kick with bootstrap.
@@ -1544,6 +1549,7 @@ func main() {
 							logger.Warn("inception re-kick after crash failed", "error", err)
 						} else {
 							logger.Info("brainstorm re-kicked after crash", "phase", state.Phase)
+							dashSrv.AuditLog("system", "kick", "trigger=inception-crash-recovery", "brainstorm")
 						}
 						gov.RecordKick("brainstorm")
 					}
@@ -1688,6 +1694,7 @@ func runEvalCycle(
 				continue
 			}
 			gov.RecordKick(msg.Agent)
+			dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
 
 			// Log token state at time of kick for cost attribution
 			if tokenCollector != nil {
@@ -1725,7 +1732,7 @@ func runEvalCycle(
 	}
 
 	// Scan agent panes for login-required patterns and pause + notify if detected
-	scanForLoginRequired(cfg, agentMgr, notifier, logger)
+	scanForLoginRequired(cfg, agentMgr, notifier, dashSrv, logger)
 
 	agentStatuses := agentMgr.AllStatuses()
 
@@ -1879,6 +1886,7 @@ func scanForLoginRequired(
 	cfg *config.Config,
 	agentMgr *agent.Manager,
 	notifier *notify.Notifier,
+	dashSrv *dashboard.Server,
 	logger *slog.Logger,
 ) {
 	patterns := cfg.Governor.Sensing.LoginPatterns
@@ -1927,6 +1935,8 @@ func scanForLoginRequired(
 				if pauseErr := agentMgr.Pause(name, "login-detector", "login required detected"); pauseErr != nil {
 					logger.Warn("failed to pause agent after login detection",
 						"agent", name, "error", pauseErr)
+				} else {
+					dashSrv.AuditLog("system", "pause", "trigger=login-detector", name)
 				}
 
 				// Determine the login instruction based on the agent's backend

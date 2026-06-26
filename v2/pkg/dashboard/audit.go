@@ -141,6 +141,12 @@ func (s *Server) auditFromRequest(r *http.Request, action, detail, agent string)
 	s.audit.Log(user, action, detail, agent)
 }
 
+// AuditLog records an audit event from non-HTTP contexts (governor eval,
+// config watcher, startup, login detector).
+func (s *Server) AuditLog(user, action, detail, agent string) {
+	s.audit.Log(user, action, detail, agent)
+}
+
 func auditDetail(kv ...string) string {
 	if len(kv) == 0 {
 		return ""
