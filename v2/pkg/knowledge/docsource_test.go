@@ -28,7 +28,7 @@ func TestDocumentSource_ImportFile(t *testing.T) {
 		Name:     "test-doc",
 		FilePath: srcFile,
 		Layer:    LayerProject,
-	}, baseDir, vaultDir, nil, logger)
+	}, baseDir, vaultDir, nil, logger, "")
 
 	meta, err := ds.Import(context.Background())
 	if err != nil {
@@ -86,7 +86,7 @@ func TestDocumentSource_ImportURL(t *testing.T) {
 		Name:  "test-paper",
 		URL:   server.URL,
 		Layer: LayerCommunity,
-	}, baseDir, vaultDir, nil, logger)
+	}, baseDir, vaultDir, nil, logger, "")
 
 	meta, err := ds.Import(context.Background())
 	if err != nil {
@@ -124,7 +124,7 @@ func TestDocumentSource_Delete(t *testing.T) {
 		Name:     "deleteme",
 		FilePath: srcFile,
 		Layer:    LayerProject,
-	}, baseDir, vaultDir, nil, logger)
+	}, baseDir, vaultDir, nil, logger, "")
 
 	meta, err := ds.Import(context.Background())
 	if err != nil {
@@ -167,7 +167,7 @@ func TestDocumentSource_Reimport(t *testing.T) {
 		Name:     "reimportme",
 		FilePath: srcFile,
 		Layer:    LayerProject,
-	}, baseDir, vaultDir, nil, logger)
+	}, baseDir, vaultDir, nil, logger, "")
 
 	meta1, err := ds.Import(context.Background())
 	if err != nil {
@@ -201,7 +201,7 @@ func TestDocumentSource_NoSourceError(t *testing.T) {
 	ds := NewDocumentSource(DocSourceConfig{
 		Name:  "no-source",
 		Layer: LayerProject,
-	}, tmpDir, filepath.Join(tmpDir, "vault"), nil, logger)
+	}, tmpDir, filepath.Join(tmpDir, "vault"), nil, logger, "")
 
 	_, err := ds.Import(context.Background())
 	if err == nil {
