@@ -6717,6 +6717,16 @@ function burnAreaChart() {
         html += '<div style="display:flex;justify-content:flex-end">';
         html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbImportDocFromModal()">Import</button>';
         html += '</div></div></details>';
+
+        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">📚 Import from Context7</summary>';
+        html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
+        html += '<div style="font-size:0.72rem;color:var(--muted)">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
+        html += '<div style="display:flex;gap:8px">';
+        html += '<input id="kb-ctx7-query" type="text" class="kb-search-box" placeholder="Search libraries..." style="flex:1">';
+        html += '<button class="nous-btn" style="background:var(--surface);color:var(--fg);border:1px solid var(--border);padding:6px 14px;font-size:0.78rem" onclick="kbCtx7Search()">Search</button>';
+        html += '</div>';
+        html += '<div id="kb-ctx7-results" style="max-height:200px;overflow-y:auto"></div>';
+        html += '</div></details>';
         html += '</div>';
 
         // ── Import Facts section ──
@@ -6863,6 +6873,63 @@ function burnAreaChart() {
         kbLoadSubscriptions();
         fetchKnowledgeStats();
       } catch (e) { await hiveAlert('Error: ' + e.message); }
+    }
+
+    async function kbCtx7Search() {
+      const query = document.getElementById('kb-ctx7-query')?.value?.trim();
+      if (!query) return;
+      const el = document.getElementById('kb-ctx7-results');
+      if (!el) return;
+      el.innerHTML = '<div style="padding:8px;color:var(--muted);font-size:0.72rem">Searching...</div>';
+      try {
+        const r = await fetch('/api/knowledge/context7/search?q=' + encodeURIComponent(query));
+        if (!r.ok) { el.innerHTML = '<div style="color:#dc2626;font-size:0.72rem;padding:8px">Search failed</div>'; return; }
+        const results = await r.json();
+        if (!results || results.length === 0) { el.innerHTML = '<div style="padding:8px;color:var(--muted);font-size:0.72rem">No libraries found.</div>'; return; }
+        let html = '';
+        for (const lib of results.slice(0, 8)) {
+          const id = lib.id || '';
+          const name = lib.name || id;
+          const desc = lib.description || '';
+          const trust = lib.sourceReputation || '';
+          const snippets = lib.codeSnippets || 0;
+          html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;font-size:0.72rem">';
+          html += '<div style="flex:1;min-width:0">';
+          html += '<div style="font-weight:600;color:var(--fg)">' + escapeHtml(name) + '</div>';
+          html += '<div style="color:var(--muted);font-size:0.68rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(id);
+          if (trust) html += ' · ' + escapeHtml(trust);
+          if (snippets > 0) html += ' · ' + snippets + ' snippets';
+          html += '</div>';
+          if (desc) html += '<div style="color:var(--muted);font-size:0.68rem;margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + escapeHtml(desc) + '</div>';
+          html += '</div>';
+          html += '<button class="nous-btn" style="background:#2563eb;color:white;font-size:0.68rem;padding:4px 10px;margin-left:8px;white-space:nowrap" onclick="kbImportCtx7(\'' + escapeHtml(id) + '\',\'' + escapeHtml(name) + '\')">Import</button>';
+          html += '</div>';
+        }
+        el.innerHTML = html;
+      } catch (e) {
+        el.innerHTML = '<div style="color:#dc2626;font-size:0.72rem;padding:8px">Error: ' + escapeHtml(e.message) + '</div>';
+      }
+    }
+
+    async function kbImportCtx7(libraryId, name) {
+      const btn = event?.target;
+      if (btn) { btn.disabled = true; btn.textContent = 'Importing...'; }
+      try {
+        const docName = name || libraryId.replace(/^\//, '').replace(/\//g, '-');
+        const r = await fetch('/api/knowledge/documents', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ name: docName, context7_id: libraryId, layer: 'community' }),
+        });
+        if (!r.ok) { const t = await r.text(); await hiveAlert('Import failed: ' + t); return; }
+        const meta = await r.json();
+        await hiveAlert('Imported Context7 docs for "' + (meta.slug || libraryId) + '" → ' + (meta.fact_count || 0) + ' facts');
+        kbLoadSubscriptions();
+        fetchKnowledgeStats();
+      } catch (e) {
+        await hiveAlert('Error: ' + e.message);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Import'; }
+      }
     }
 
     async function kbDeleteDoc(slug) {

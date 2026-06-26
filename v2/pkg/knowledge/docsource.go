@@ -40,31 +40,33 @@ type DocMetadata struct {
 // DocumentSource manages a single imported document: fetch/read, parse, extract
 // facts to the vault, and maintain graph relationships.
 type DocumentSource struct {
-	slug       string
-	config     DocSourceConfig
-	metadata   DocMetadata
-	storageDir string
-	vaultDir   string
-	graphStore *GraphStore
-	logger     *slog.Logger
+	slug           string
+	config         DocSourceConfig
+	metadata       DocMetadata
+	storageDir     string
+	vaultDir       string
+	graphStore     *GraphStore
+	logger         *slog.Logger
+	context7APIKey string
 }
 
 // NewDocumentSource creates a document source. Call Import to fetch and extract.
-func NewDocumentSource(config DocSourceConfig, baseDir, vaultDir string, graphStore *GraphStore, logger *slog.Logger) *DocumentSource {
+func NewDocumentSource(config DocSourceConfig, baseDir, vaultDir string, graphStore *GraphStore, logger *slog.Logger, context7Key string) *DocumentSource {
 	slug := slugify(config.Name)
 	return &DocumentSource{
-		slug:       slug,
-		config:     config,
-		storageDir: filepath.Join(baseDir, docStorageDir, slug),
-		vaultDir:   vaultDir,
-		graphStore: graphStore,
-		logger:     logger,
+		slug:           slug,
+		config:         config,
+		storageDir:     filepath.Join(baseDir, docStorageDir, slug),
+		vaultDir:       vaultDir,
+		graphStore:     graphStore,
+		logger:         logger,
+		context7APIKey: context7Key,
 	}
 }
 
 // LoadDocumentSource restores a DocumentSource from its on-disk metadata.json.
 // Used at startup to reload previously imported documents.
-func LoadDocumentSource(dir, vaultDir string, graphStore *GraphStore, logger *slog.Logger) (*DocumentSource, error) {
+func LoadDocumentSource(dir, vaultDir string, graphStore *GraphStore, logger *slog.Logger, context7Key string) (*DocumentSource, error) {
 	metaPath := filepath.Join(dir, docMetadataFile)
 	data, err := os.ReadFile(metaPath)
 	if err != nil {
@@ -76,14 +78,21 @@ func LoadDocumentSource(dir, vaultDir string, graphStore *GraphStore, logger *sl
 		return nil, fmt.Errorf("parsing metadata: %w", err)
 	}
 
+	config := DocSourceConfig{Name: meta.Title, URL: meta.SourceURL, FilePath: meta.SourceFile}
+	if strings.HasPrefix(meta.SourceURL, "context7://") {
+		config.Context7ID = strings.TrimPrefix(meta.SourceURL, "context7://")
+		config.URL = ""
+	}
+
 	ds := &DocumentSource{
-		slug:       meta.Slug,
-		config:     DocSourceConfig{Name: meta.Title, URL: meta.SourceURL, FilePath: meta.SourceFile},
-		metadata:   meta,
-		storageDir: dir,
-		vaultDir:   vaultDir,
-		graphStore: graphStore,
-		logger:     logger,
+		slug:           meta.Slug,
+		config:         config,
+		metadata:       meta,
+		storageDir:     dir,
+		vaultDir:       vaultDir,
+		graphStore:     graphStore,
+		logger:         logger,
+		context7APIKey: context7Key,
 	}
 	return ds, nil
 }
@@ -104,7 +113,14 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 		err         error
 	)
 
-	if ds.config.URL != "" {
+	if ds.config.Context7ID != "" {
+		result, fetchErr := FetchContext7Docs(ctx, ds.config.Context7ID, ds.config.Name, ds.context7APIKey)
+		if fetchErr != nil {
+			return nil, fmt.Errorf("fetching Context7 docs: %w", fetchErr)
+		}
+		content = []byte(result.Content)
+		contentType = "text/plain"
+	} else if ds.config.URL != "" {
 		content, contentType, err = ds.fetchURL(ctx, ds.config.URL)
 		if err != nil {
 			return nil, fmt.Errorf("fetching URL: %w", err)
@@ -116,7 +132,7 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 		}
 		contentType = detectContentType(ds.config.FilePath)
 	} else {
-		return nil, fmt.Errorf("document source %q has neither url nor file_path", ds.config.Name)
+		return nil, fmt.Errorf("document source %q has no url, file_path, or context7_id", ds.config.Name)
 	}
 
 	ext := extensionForType(contentType)
@@ -131,8 +147,13 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 		title = extractedTitle
 	}
 
+	sourceURL := ds.config.URL
+	if sourceURL == "" && ds.config.Context7ID != "" {
+		sourceURL = "context7://" + ds.config.Context7ID
+	}
+
 	now := time.Now().UTC()
-	facts := chunksToFacts(chunks, ds.slug, ds.config.URL, now)
+	facts := chunksToFacts(chunks, ds.slug, sourceURL, now)
 
 	factSlugs, err := ds.writeFactsToVault(facts, now)
 	if err != nil {
@@ -144,7 +165,7 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 	ds.metadata = DocMetadata{
 		Slug:        ds.slug,
 		Title:       title,
-		SourceURL:   ds.config.URL,
+		SourceURL:   sourceURL,
 		SourceFile:  ds.config.FilePath,
 		ContentType: contentType,
 		FetchedAt:   now,

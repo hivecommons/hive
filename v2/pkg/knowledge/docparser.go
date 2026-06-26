@@ -107,16 +107,20 @@ func parsePDF(data []byte) ([]DocChunk, string) {
 	return chunks, docTitle
 }
 
-// extractPageText reconstructs readable text from a PDF page by using positioned
-// text objects, preserving spaces and inserting newlines based on Y-coordinate gaps.
+// extractPageText extracts readable text from a PDF page. Prefers the PDF's
+// own text stream (GetPlainText) which preserves correct character ordering.
+// Falls back to positioned-glyph reconstruction only when GetPlainText fails.
 func extractPageText(page pdf.Page) string {
+	text, err := page.GetPlainText(nil)
+	if err == nil && strings.TrimSpace(text) != "" {
+		result := strings.ReplaceAll(text, "\r\n", "\n")
+		result = strings.ReplaceAll(result, "\r", "\n")
+		return sanitizePDFText(result)
+	}
+
 	content := page.Content()
 	if len(content.Text) == 0 {
-		text, err := page.GetPlainText(nil)
-		if err != nil {
-			return ""
-		}
-		return text
+		return ""
 	}
 
 	texts := make([]pdf.Text, len(content.Text))

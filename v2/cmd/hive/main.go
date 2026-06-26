@@ -813,6 +813,9 @@ func main() {
 		}
 		if knowledgeAPI != nil {
 			knowledgeAPI.SetGraphStore(graphStore)
+			if primer := sched.GetPrimer(); primer != nil {
+				knowledgeAPI.WireContext7Suggester(primer)
+			}
 		}
 		if beadSynth != nil {
 			beadSynth.SetGraphStore(graphStore)

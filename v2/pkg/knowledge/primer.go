@@ -15,13 +15,18 @@ import (
 // After collecting BM25 results from wiki layers, the primer reranks them using
 // Fisher-Rao geodesic distance on term-frequency embeddings. This catches
 // semantic matches that keyword search misses.
+// Context7Suggester checks if Context7 has docs for a keyword. Returns a hint
+// string if docs are available and not yet imported, or "" if not.
+type Context7Suggester func(ctx context.Context, keyword string) string
+
 type Primer struct {
-	layers     []layerClient
-	fileStores []localStore
-	graphStore *GraphStore
-	config     PrimerConfig
-	logger     *slog.Logger
-	embedder   *EmbeddingCache
+	layers           []layerClient
+	fileStores       []localStore
+	graphStore       *GraphStore
+	config           PrimerConfig
+	logger           *slog.Logger
+	embedder         *EmbeddingCache
+	context7Suggest  Context7Suggester
 }
 
 type layerClient struct {
@@ -142,8 +147,23 @@ func (p *Primer) Prime(ctx context.Context, filePaths []string, keywords []strin
 		"query_ms", elapsed,
 	)
 
+	var hints []string
+	if p.context7Suggest != nil {
+		seen := make(map[string]bool)
+		for _, kw := range keywords {
+			if seen[kw] {
+				continue
+			}
+			seen[kw] = true
+			if hint := p.context7Suggest(ctx, kw); hint != "" {
+				hints = append(hints, hint)
+			}
+		}
+	}
+
 	return &PrimedKnowledge{
 		Facts:     prioritized,
+		Hints:     hints,
 		QueryTime: elapsed,
 	}
 }
@@ -221,6 +241,11 @@ func (p *Primer) applyPriority(facts []Fact) []Fact {
 	})
 
 	return facts
+}
+
+// SetContext7Suggester sets the callback that checks Context7 for library docs.
+func (p *Primer) SetContext7Suggester(fn Context7Suggester) {
+	p.context7Suggest = fn
 }
 
 // SetGraphStore attaches a graph store for one-hop related-fact expansion.

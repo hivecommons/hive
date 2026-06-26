@@ -1,0 +1,108 @@
+package knowledge
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"time"
+)
+
+const (
+	context7BaseURL    = "https://context7.com"
+	context7SearchPath = "/api/v2/libs/search"
+	context7DocsPath   = "/api/v2/context"
+	context7Timeout    = 30 * time.Second
+	context7MaxBody    = 10 * 1024 * 1024 // 10 MB
+)
+
+// Context7SearchResult is a single library match from Context7's search API.
+type Context7SearchResult struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Snippets    int    `json:"codeSnippets,omitempty"`
+	Trust       string `json:"sourceReputation,omitempty"`
+	Score       int    `json:"benchmarkScore,omitempty"`
+}
+
+// Context7DocsResult holds the documentation content returned by Context7.
+type Context7DocsResult struct {
+	LibraryID string
+	Title     string
+	Content   string
+}
+
+// SearchContext7 resolves a library name to Context7 IDs.
+func SearchContext7(ctx context.Context, name, apiKey string) ([]Context7SearchResult, error) {
+	params := url.Values{
+		"libraryName": {name},
+		"query":       {name},
+	}
+	reqURL := context7BaseURL + context7SearchPath + "?" + params.Encode()
+
+	body, err := context7Get(ctx, reqURL, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("context7 search: %w", err)
+	}
+
+	var results []Context7SearchResult
+	if err := json.Unmarshal(body, &results); err != nil {
+		return nil, fmt.Errorf("context7 search decode: %w", err)
+	}
+	return results, nil
+}
+
+// FetchContext7Docs retrieves documentation for a library+query from Context7.
+func FetchContext7Docs(ctx context.Context, libraryID, query, apiKey string) (*Context7DocsResult, error) {
+	if query == "" {
+		query = "overview getting started API reference"
+	}
+	params := url.Values{
+		"libraryId": {libraryID},
+		"query":     {query},
+	}
+	reqURL := context7BaseURL + context7DocsPath + "?" + params.Encode()
+
+	body, err := context7Get(ctx, reqURL, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("context7 docs: %w", err)
+	}
+
+	return &Context7DocsResult{
+		LibraryID: libraryID,
+		Title:     libraryID,
+		Content:   string(body),
+	}, nil
+}
+
+func context7Get(ctx context.Context, reqURL, apiKey string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, context7Timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	req.Header.Set("User-Agent", "hive-knowledge/1.0")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("rate limited (429), retry after %s", resp.Header.Get("Retry-After"))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d from Context7", resp.StatusCode)
+	}
+
+	return io.ReadAll(io.LimitReader(resp.Body, context7MaxBody))
+}

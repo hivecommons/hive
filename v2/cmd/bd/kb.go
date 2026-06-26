@@ -40,6 +40,10 @@ func cmdKB(args []string) {
 		cmdKBImportURL(args[1:])
 	case "import-file":
 		cmdKBImportFile(args[1:])
+	case "import-ctx7":
+		cmdKBImportCtx7(args[1:])
+	case "ctx7-search":
+		cmdKBCtx7Search(args[1:])
 	case "list-docs":
 		cmdKBListDocs()
 	case "help", "--help", "-h":
@@ -59,6 +63,8 @@ Subcommands:
   read <slug>                     Print full fact body
   import-url <url> [--name <n>]   Import document from URL
   import-file <path> [--name <n>] Import document from local file
+  import-ctx7 <library-id>        Import library docs from Context7
+  ctx7-search <name>              Search Context7 for available libraries
   list-docs                       List imported documents
 
 Environment:
@@ -247,6 +253,103 @@ func cmdKBListDocs() {
 		}
 		fmt.Printf("  %-30s  %s  (%d facts)  %s\n", slug, ct, int(factCount), source)
 	}
+}
+
+func cmdKBCtx7Search(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "bd kb ctx7-search: library name required")
+		os.Exit(1)
+	}
+	query := strings.Join(args, " ")
+
+	base := dashboardURL()
+	u := fmt.Sprintf("%s/api/knowledge/context7/search?q=%s", base, url.QueryEscape(query))
+
+	body, err := kbGet(u)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bd kb ctx7-search: %v\n", err)
+		os.Exit(1)
+	}
+
+	var results []map[string]interface{}
+	if err := json.Unmarshal(body, &results); err != nil {
+		fmt.Fprintf(os.Stderr, "bd kb ctx7-search: invalid response: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(results) == 0 {
+		fmt.Println("No libraries found.")
+		return
+	}
+
+	for _, r := range results {
+		id, _ := r["id"].(string)
+		name, _ := r["name"].(string)
+		desc, _ := r["description"].(string)
+		trust, _ := r["sourceReputation"].(string)
+		snippets, _ := r["codeSnippets"].(float64)
+
+		fmt.Printf("  %-35s  %s\n", id, name)
+		if trust != "" || snippets > 0 {
+			fmt.Printf("    trust: %s  snippets: %d\n", trust, int(snippets))
+		}
+		if desc != "" {
+			const maxDescChars = 120
+			if len(desc) > maxDescChars {
+				desc = desc[:maxDescChars] + "..."
+			}
+			fmt.Printf("    %s\n", desc)
+		}
+		fmt.Println()
+	}
+	fmt.Println("Import with: bd kb import-ctx7 <library-id> [--name <name>] [--query <topic>]")
+}
+
+func cmdKBImportCtx7(args []string) {
+	fs := flag.NewFlagSet("import-ctx7", flag.ExitOnError)
+	name := fs.String("name", "", "document name (defaults to library ID)")
+	query := fs.String("query", "", "topic to focus documentation on")
+	layer := fs.String("layer", "community", "knowledge layer")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "bd kb import-ctx7: library ID required (e.g. /vllm-project/vllm)")
+		fmt.Fprintln(os.Stderr, "  Use 'bd kb ctx7-search <name>' to find library IDs")
+		os.Exit(1)
+	}
+	libraryID := fs.Arg(0)
+
+	docName := *name
+	if docName == "" {
+		docName = strings.TrimLeft(libraryID, "/")
+		docName = strings.ReplaceAll(docName, "/", "-")
+	}
+
+	payload := map[string]string{
+		"name":       docName,
+		"context7_id": libraryID,
+		"layer":      *layer,
+	}
+	if *query != "" {
+		payload["name"] = docName + " (" + *query + ")"
+	}
+
+	payloadJSON, _ := json.Marshal(payload)
+	body, err := kbPost(dashboardURL()+"/api/knowledge/documents", string(payloadJSON))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "bd kb import-ctx7: %v\n", err)
+		os.Exit(1)
+	}
+
+	var meta map[string]interface{}
+	if err := json.Unmarshal(body, &meta); err != nil {
+		fmt.Fprintf(os.Stderr, "bd kb import-ctx7: invalid response: %v\n", err)
+		os.Exit(1)
+	}
+
+	factCount, _ := meta["fact_count"].(float64)
+	slug, _ := meta["slug"].(string)
+	fmt.Printf("Imported Context7 docs for %q → %d facts (slug: %s)\n", libraryID, int(factCount), slug)
 }
 
 func kbGet(url string) ([]byte, error) {

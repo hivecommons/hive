@@ -144,6 +144,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/documents/{slug}", s.handleDocumentGet)
 	s.mux.HandleFunc("DELETE /api/knowledge/documents/{slug}", s.handleDocumentDelete)
 	s.mux.HandleFunc("POST /api/knowledge/documents/{slug}/reimport", s.handleDocumentReimport)
+	s.mux.HandleFunc("GET /api/knowledge/context7/search", s.handleContext7Search)
 	s.mux.HandleFunc("POST /api/knowledge/cleanup-orphans", s.handleCleanupOrphans)
 
 	s.mux.HandleFunc("GET /api/hive-id", s.handleHiveIDGet)
@@ -4214,6 +4215,26 @@ func (s *Server) handleCleanupOrphans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonResponse(w, map[string]interface{}{"ok": true, "removed": removed})
+}
+
+func (s *Server) handleContext7Search(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		jsonError(w, "missing q parameter", http.StatusBadRequest)
+		return
+	}
+
+	results, err := s.deps.Knowledge.SearchContext7Libraries(r.Context(), query)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	jsonResponse(w, results)
 }
 
 // --- Hive ID endpoints ---

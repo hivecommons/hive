@@ -17,16 +17,17 @@ const localKnowledgeDir = "/data/knowledge"
 // KnowledgeAPI provides a unified interface for dashboard endpoints to query
 // across all configured wiki layers.
 type KnowledgeAPI struct {
-	mu            sync.RWMutex
-	layers        []layerClient
-	config        KnowledgeConfig
-	promoter      *Promoter
-	subscriptions []Subscription
-	vaults        []*FileStore
-	gitSources    []*GitSource
-	docSources    []*DocumentSource
-	graphStore    *GraphStore
-	logger        *slog.Logger
+	mu             sync.RWMutex
+	layers         []layerClient
+	config         KnowledgeConfig
+	promoter       *Promoter
+	subscriptions  []Subscription
+	vaults         []*FileStore
+	gitSources     []*GitSource
+	docSources     []*DocumentSource
+	graphStore     *GraphStore
+	logger         *slog.Logger
+	context7APIKey string
 }
 
 // Subscription represents a user-added wiki endpoint.
@@ -54,13 +55,48 @@ func NewKnowledgeAPI(layers []LayerConfig, config KnowledgeConfig, logger *slog.
 	promoter := NewPromoter(layers, config.Curator, logger)
 
 	api := &KnowledgeAPI{
-		layers:   clients,
-		config:   config,
-		promoter: promoter,
-		logger:   logger,
+		layers:         clients,
+		config:         config,
+		promoter:       promoter,
+		logger:         logger,
+		context7APIKey: os.Getenv("CONTEXT7_API_KEY"),
 	}
 	api.reloadDocuments()
+	api.autoImportContext7()
 	return api
+}
+
+// SetContext7APIKey configures the API key for Context7 library imports.
+func (k *KnowledgeAPI) SetContext7APIKey(key string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.context7APIKey = key
+}
+
+// WireContext7Suggester attaches a Context7 suggestion callback to the primer.
+// When the primer builds knowledge for an agent kick, it checks if Context7
+// has docs for any of the task's keywords that aren't already imported.
+func (k *KnowledgeAPI) WireContext7Suggester(primer *Primer) {
+	if k.context7APIKey == "" {
+		return
+	}
+	primer.SetContext7Suggester(func(ctx context.Context, keyword string) string {
+		k.mu.RLock()
+		for _, ds := range k.docSources {
+			if strings.Contains(strings.ToLower(ds.metadata.Title), strings.ToLower(keyword)) {
+				k.mu.RUnlock()
+				return ""
+			}
+		}
+		k.mu.RUnlock()
+
+		results, err := SearchContext7(ctx, keyword, k.context7APIKey)
+		if err != nil || len(results) == 0 {
+			return ""
+		}
+		best := results[0]
+		return fmt.Sprintf("Context7 docs available for **%s** (%s) — run `bd kb import-ctx7 %s` to import", best.Name, best.ID, best.ID)
+	})
 }
 
 // LayerStatus describes the health of a single wiki layer.
@@ -671,7 +707,7 @@ func (k *KnowledgeAPI) ImportDocument(ctx context.Context, config DocSourceConfi
 	k.mu.Unlock()
 
 	vaultDir := k.docVaultDir()
-	ds := NewDocumentSource(config, localKnowledgeDir, vaultDir, k.graphStore, k.logger)
+	ds := NewDocumentSource(config, localKnowledgeDir, vaultDir, k.graphStore, k.logger, k.context7APIKey)
 	meta, err := ds.Import(ctx)
 	if err != nil {
 		return nil, err
@@ -754,6 +790,11 @@ func (k *KnowledgeAPI) ReimportDocument(ctx context.Context, slug string) (*DocM
 	return meta, nil
 }
 
+// SearchContext7Libraries searches Context7 for libraries matching the query.
+func (k *KnowledgeAPI) SearchContext7Libraries(ctx context.Context, query string) ([]Context7SearchResult, error) {
+	return SearchContext7(ctx, query, k.context7APIKey)
+}
+
 // reloadDocuments scans the documents directory for previously imported
 // documents and restores them into memory from their metadata.json files.
 func (k *KnowledgeAPI) reloadDocuments() {
@@ -769,13 +810,58 @@ func (k *KnowledgeAPI) reloadDocuments() {
 			continue
 		}
 		dir := filepath.Join(docsDir, entry.Name())
-		ds, err := LoadDocumentSource(dir, vaultDir, k.graphStore, k.logger)
+		ds, err := LoadDocumentSource(dir, vaultDir, k.graphStore, k.logger, k.context7APIKey)
 		if err != nil {
 			k.logger.Warn("failed to reload document", "dir", entry.Name(), "error", err)
 			continue
 		}
 		k.docSources = append(k.docSources, ds)
 		k.logger.Info("reloaded document from disk", "slug", ds.slug, "facts", ds.metadata.FactCount)
+	}
+}
+
+// autoImportContext7 imports any Context7 libraries from config that aren't
+// already present as document sources. Runs at startup after reloadDocuments.
+func (k *KnowledgeAPI) autoImportContext7() {
+	if k.context7APIKey == "" {
+		return
+	}
+	for _, item := range k.config.Context7.AutoImport {
+		if item.ID == "" {
+			continue
+		}
+		name := strings.TrimLeft(item.ID, "/")
+		name = strings.ReplaceAll(name, "/", "-")
+		slug := slugify(name)
+
+		alreadyImported := false
+		k.mu.RLock()
+		for _, ds := range k.docSources {
+			if ds.slug == slug {
+				alreadyImported = true
+				break
+			}
+		}
+		k.mu.RUnlock()
+
+		if alreadyImported {
+			k.logger.Info("context7 auto-import: already present", "id", item.ID, "slug", slug)
+			continue
+		}
+
+		config := DocSourceConfig{
+			Name:       name,
+			Context7ID: item.ID,
+			Layer:      LayerCommunity,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), context7Timeout)
+		meta, err := k.ImportDocument(ctx, config)
+		cancel()
+		if err != nil {
+			k.logger.Warn("context7 auto-import failed", "id", item.ID, "error", err)
+			continue
+		}
+		k.logger.Info("context7 auto-imported", "id", item.ID, "facts", meta.FactCount)
 	}
 }
 

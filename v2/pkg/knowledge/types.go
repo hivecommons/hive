@@ -46,13 +46,25 @@ func (l LayerConfig) Endpoint() string {
 	return ""
 }
 
-// DocSourceConfig describes an external document (PDF, URL, or text file)
-// to import as knowledge facts.
+// DocSourceConfig describes an external document (PDF, URL, text file, or
+// Context7 library) to import as knowledge facts.
 type DocSourceConfig struct {
-	Name     string    `yaml:"name"      json:"name"`
-	URL      string    `yaml:"url"       json:"url,omitempty"`
-	FilePath string    `yaml:"file_path" json:"file_path,omitempty"`
-	Layer    LayerType `yaml:"layer"     json:"layer"`
+	Name       string    `yaml:"name"        json:"name"`
+	URL        string    `yaml:"url"         json:"url,omitempty"`
+	FilePath   string    `yaml:"file_path"   json:"file_path,omitempty"`
+	Context7ID string    `yaml:"context7_id" json:"context7_id,omitempty"`
+	Layer      LayerType `yaml:"layer"       json:"layer"`
+}
+
+// Context7AutoImport describes a library to auto-import from Context7 at startup.
+type Context7AutoImport struct {
+	ID    string `yaml:"id"    json:"id"`
+	Query string `yaml:"query" json:"query,omitempty"`
+}
+
+// Context7Config configures automatic Context7 library documentation imports.
+type Context7Config struct {
+	AutoImport []Context7AutoImport `yaml:"auto_import" json:"auto_import,omitempty"`
 }
 
 // KnowledgeConfig is the top-level knowledge section of hive.yaml.
@@ -62,6 +74,7 @@ type KnowledgeConfig struct {
 	Layers          []LayerConfig         `yaml:"layers"           json:"layers"`
 	GitSources      []GitSourceConfig     `yaml:"git_sources"      json:"git_sources,omitempty"`
 	Documents       []DocSourceConfig     `yaml:"documents"        json:"documents,omitempty"`
+	Context7        Context7Config        `yaml:"context7"         json:"context7,omitempty"`
 	Curator         CuratorConfig         `yaml:"curator"          json:"curator"`
 	Primer          PrimerConfig          `yaml:"primer"           json:"primer"`
 	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer" json:"bead_synthesizer"`
@@ -193,8 +206,9 @@ type Source struct {
 
 // PrimedKnowledge is the result of priming — ready to inject into an agent kick.
 type PrimedKnowledge struct {
-	Facts     []Fact `json:"facts"`
-	QueryTime int64  `json:"query_time_ms"`
+	Facts     []Fact   `json:"facts"`
+	Hints     []string `json:"hints,omitempty"`
+	QueryTime int64    `json:"query_time_ms"`
 }
 
 // FormatForPrompt renders primed facts as markdown for injection into an agent's
@@ -237,6 +251,16 @@ func (pk *PrimedKnowledge) FormatForPrompt() string {
 			b = append(b, f.Body...)
 			b = append(b, "\n\n"...)
 		}
+	}
+
+	if len(pk.Hints) > 0 {
+		b = append(b, "## Available Documentation\n\n"...)
+		for _, hint := range pk.Hints {
+			b = append(b, "- "...)
+			b = append(b, hint...)
+			b = append(b, "\n"...)
+		}
+		b = append(b, "\n"...)
 	}
 
 	return string(b)
