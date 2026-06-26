@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/fumiama/go-docx"
 	"github.com/ledongthuc/pdf"
@@ -164,42 +165,58 @@ func extractPageText(page pdf.Page) string {
 	return sanitizePDFText(result)
 }
 
-// rePDFGlyphs matches common PDF artifact characters: C0 controls (except
-// tab/newline/CR), bullets, geometric shapes, dingbats, private-use area
-// glyphs, BOM, and replacement characters.
-var rePDFGlyphs = regexp.MustCompile(
-	"[\x01-\x08\x0b\x0c\x0e-\x1f" +
-		"­" + // soft hyphen
-		"•‣⁃⁌⁍" + // bullets
-		"■-◿" + // geometric shapes
-		"☀-⛿" + // misc symbols
-		"✀-➿" + // dingbats
-		"⭐-⭟" + // stars
-		"\uE000-\uF8FF" + // private use area
-		"\uFEFF" + // BOM
-		"\uFFFC\uFFFD" + // object replacement, replacement char
-		"]",
+// pdfLigatures expands common typographic ligatures back to ASCII.
+var pdfLigatures = strings.NewReplacer(
+	"û00", "ff",
+	"û01", "fi",
+	"û02", "fl",
+	"û03", "ffi",
+	"û04", "ffl",
+	"–", "-",
+	"—", "-",
+	"‘", "'",
+	"’", "'",
+	"“", "\"",
+	"”", "\"",
+	"…", "...",
+	" ", " ",
 )
+
+// isDecorative returns true for Unicode runes that are PDF text artifacts:
+// control chars, bullets, geometric shapes, dingbats, private-use area,
+// BOM, and replacement characters.
+func isDecorative(r rune) bool {
+	if r < 0x20 && r != '\t' && r != '\n' && r != '\r' {
+		return true
+	}
+	return r == 0x00AD || // soft hyphen
+		unicode.In(r,
+			unicode.Dingbats,
+			unicode.Geometric_Shapes,
+			unicode.Miscellaneous_Symbols,
+			unicode.Co, // private use area
+		) ||
+		r == 0xFEFF || // BOM
+		r == 0xFFFC || // object replacement
+		r == 0xFFFD || // replacement character
+		r == 0x2022 || // bullet
+		r == 0x2023 || // triangular bullet
+		r == 0x2043 || // hyphen bullet
+		r == 0x204C || // black leftwards bullet
+		r == 0x204D // black rightwards bullet
+}
 
 // sanitizePDFText strips decorative glyphs, normalizes whitespace artifacts,
 // and expands common ligatures that PDF text extractors emit.
 func sanitizePDFText(s string) string {
-	s = strings.ReplaceAll(s, "ﬀ", "ff")
-	s = strings.ReplaceAll(s, "ﬁ", "fi")
-	s = strings.ReplaceAll(s, "ﬂ", "fl")
-	s = strings.ReplaceAll(s, "ﬃ", "ffi")
-	s = strings.ReplaceAll(s, "ﬄ", "ffl")
-	s = strings.ReplaceAll(s, " ", " ")
+	s = pdfLigatures.Replace(s)
 
-	s = rePDFGlyphs.ReplaceAllString(s, "")
-
-	s = strings.ReplaceAll(s, "–", "-")
-	s = strings.ReplaceAll(s, "—", "-")
-	s = strings.ReplaceAll(s, "‘", "'")
-	s = strings.ReplaceAll(s, "’", "'")
-	s = strings.ReplaceAll(s, "“", "\"")
-	s = strings.ReplaceAll(s, "”", "\"")
-	s = strings.ReplaceAll(s, "…", "...")
+	s = strings.Map(func(r rune) rune {
+		if isDecorative(r) {
+			return -1
+		}
+		return r
+	}, s)
 
 	var lines []string
 	for _, line := range strings.Split(s, "\n") {
