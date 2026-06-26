@@ -4185,8 +4185,8 @@ func (s *Server) handleDocumentsImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	if req.URL == "" && req.FilePath == "" {
-		jsonError(w, "url or file_path is required", http.StatusBadRequest)
+	if req.URL == "" && req.FilePath == "" && req.Context7ID == "" {
+		jsonError(w, "url, file_path, or context7_id is required", http.StatusBadRequest)
 		return
 	}
 	if req.Layer == "" {
