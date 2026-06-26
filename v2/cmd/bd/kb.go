@@ -284,14 +284,15 @@ func cmdKBCtx7Search(args []string) {
 
 	for _, r := range results {
 		id, _ := r["id"].(string)
-		name, _ := r["name"].(string)
+		name, _ := r["title"].(string)
 		desc, _ := r["description"].(string)
-		trust, _ := r["sourceReputation"].(string)
-		snippets, _ := r["codeSnippets"].(float64)
+		trust, _ := r["trustScore"].(float64)
+		snippets, _ := r["totalSnippets"].(float64)
+		stars, _ := r["stars"].(float64)
 
 		fmt.Printf("  %-35s  %s\n", id, name)
-		if trust != "" || snippets > 0 {
-			fmt.Printf("    trust: %s  snippets: %d\n", trust, int(snippets))
+		if trust > 0 || snippets > 0 {
+			fmt.Printf("    trust: %.1f  snippets: %d  stars: %d\n", trust, int(snippets), int(stars))
 		}
 		if desc != "" {
 			const maxDescChars = 120

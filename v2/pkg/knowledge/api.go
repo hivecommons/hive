@@ -95,7 +95,7 @@ func (k *KnowledgeAPI) WireContext7Suggester(primer *Primer) {
 			return ""
 		}
 		best := results[0]
-		return fmt.Sprintf("Context7 docs available for **%s** (%s) — run `bd kb import-ctx7 %s` to import", best.Name, best.ID, best.ID)
+		return fmt.Sprintf("Context7 docs available for **%s** (%s) — run `bd kb import-ctx7 %s` to import", best.Title, best.ID, best.ID)
 	})
 }
 

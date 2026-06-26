@@ -20,12 +20,17 @@ const (
 
 // Context7SearchResult is a single library match from Context7's search API.
 type Context7SearchResult struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Snippets    int    `json:"codeSnippets,omitempty"`
-	Trust       string `json:"sourceReputation,omitempty"`
-	Score       int    `json:"benchmarkScore,omitempty"`
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Description string  `json:"description,omitempty"`
+	Snippets    int     `json:"totalSnippets,omitempty"`
+	Trust       float64 `json:"trustScore,omitempty"`
+	Score       float64 `json:"benchmarkScore,omitempty"`
+	Stars       int     `json:"stars,omitempty"`
+}
+
+type context7SearchResponse struct {
+	Results []Context7SearchResult `json:"results"`
 }
 
 // Context7DocsResult holds the documentation content returned by Context7.
@@ -48,11 +53,11 @@ func SearchContext7(ctx context.Context, name, apiKey string) ([]Context7SearchR
 		return nil, fmt.Errorf("context7 search: %w", err)
 	}
 
-	var results []Context7SearchResult
-	if err := json.Unmarshal(body, &results); err != nil {
+	var wrapper context7SearchResponse
+	if err := json.Unmarshal(body, &wrapper); err != nil {
 		return nil, fmt.Errorf("context7 search decode: %w", err)
 	}
-	return results, nil
+	return wrapper.Results, nil
 }
 
 // FetchContext7Docs retrieves documentation for a library+query from Context7.

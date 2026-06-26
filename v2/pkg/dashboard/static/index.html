@@ -822,6 +822,11 @@
     .agent-card.working .agent-name { animation: pulse 2s ease-in-out infinite; }
 
     /* Breathing green indicator for working agent cards — top right */
+    @keyframes anchor-flash {
+      0% { box-shadow: inset 0 0 0 2px rgba(88,166,255,0.6); }
+      100% { box-shadow: inset 0 0 0 2px transparent; }
+    }
+    .anchor-highlight { animation: anchor-flash 1.2s ease-out; }
     @keyframes breathe-green {
       0%,100% { opacity: 1; box-shadow: 0 0 6px 2px rgba(63,185,80,0.5); }
       50% { opacity: 0.25; box-shadow: 0 0 2px 0px rgba(63,185,80,0.1); }
@@ -2300,6 +2305,9 @@
         if (el) {
           const y = el.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT;
           window.scrollTo({ top: y, behavior: 'smooth' });
+          el.classList.remove('anchor-highlight');
+          void el.offsetWidth;
+          el.classList.add('anchor-highlight');
         }
       }
       document.querySelectorAll('.oc-nav-item').forEach(i => i.classList.remove('active'));
@@ -6889,15 +6897,16 @@ function burnAreaChart() {
         let html = '';
         for (const lib of results.slice(0, 8)) {
           const id = lib.id || '';
-          const name = lib.name || id;
+          const name = lib.title || id;
           const desc = lib.description || '';
-          const trust = lib.sourceReputation || '';
-          const snippets = lib.codeSnippets || 0;
+          const trust = lib.trustScore ? lib.trustScore.toFixed(1) : '';
+          const snippets = lib.totalSnippets || 0;
           html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:4px;font-size:0.72rem">';
           html += '<div style="flex:1;min-width:0">';
           html += '<div style="font-weight:600;color:var(--fg)">' + escapeHtml(name) + '</div>';
           html += '<div style="color:var(--muted);font-size:0.68rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escapeHtml(id);
-          if (trust) html += ' · ' + escapeHtml(trust);
+          if (trust) html += ' · trust ' + trust;
+          if (lib.stars) html += ' · ' + lib.stars.toLocaleString() + ' ★';
           if (snippets > 0) html += ' · ' + snippets + ' snippets';
           html += '</div>';
           if (desc) html += '<div style="color:var(--muted);font-size:0.68rem;margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + escapeHtml(desc) + '</div>';
@@ -7628,14 +7637,26 @@ function burnAreaChart() {
 
     let _hashScrollPending = false;
     var SCROLL_SETTLE_DELAY_MS = 500;
+    var _deferredLoadPromise = null;
     function _afterPaint(callback) {
       _hashScrollPending = true;
-      requestAnimationFrame(function() {
-        requestAnimationFrame(function() {
-          setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
-          setTimeout(function() { _hashScrollPending = false; }, 500);
+      if (_deferredLoadPromise) {
+        _deferredLoadPromise.then(function() {
+          requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+              callback();
+              setTimeout(function() { _hashScrollPending = false; }, 200);
+            });
+          });
         });
-      });
+      } else {
+        requestAnimationFrame(function() {
+          requestAnimationFrame(function() {
+            setTimeout(callback, SCROLL_SETTLE_DELAY_MS);
+            setTimeout(function() { _hashScrollPending = false; }, 500);
+          });
+        });
+      }
     }
 
     function render(data) {
@@ -11600,28 +11621,34 @@ function burnAreaChart() {
 
     connect();
 
-    // Deferred initialization — non-critical fetches staggered after first paint
+    // Deferred initialization — non-critical fetches staggered after first paint.
+    // Each entry returns a promise so anchor scrolling can wait for layout to settle.
     const DEFERRED_INIT_DELAY_MS = 1500;
     const DEFERRED_STAGGER_MS = 200;
-    setTimeout(() => {
-      const deferred = [
-        () => { fetchFactHistory(); },
-        () => { fetchHistory(); setInterval(fetchHistory, HISTORY_REFRESH_MS); },
-        () => { fetchIssueCosts(); setInterval(fetchIssueCosts, ISSUE_COSTS_REFRESH_MS); },
-        () => { fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}); },
-        () => { fetchNousStatus(); setInterval(fetchNousStatus, NOUS_POLL_MS); },
-        () => { fetchKnowledgeStats(); setInterval(fetchKnowledgeStats, KB_POLL_MS); },
-        () => { fetchAuditLog(); setInterval(fetchAuditLog, AUDIT_POLL_MS); },
-        () => { fetchContributors(); setInterval(fetchContributors, CONTRIBUTOR_POLL_MS); },
-        () => { fetchLeaderboard(); setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS); },
-        () => { fetchGitVersion(); setInterval(fetchGitVersion, GIT_VERSION_POLL_MS); },
-        () => { startVersionCheck(); },
-        () => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); setInterval(() => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); },
-        () => { fetchTimeline(); setInterval(fetchTimeline, TIMELINE_REFRESH_MS); },
-        () => { fetchAgentLogs(); setInterval(fetchAgentLogs, LOGS_REFRESH_MS); },
-      ];
-      deferred.forEach((fn, i) => setTimeout(fn, i * DEFERRED_STAGGER_MS));
-    }, DEFERRED_INIT_DELAY_MS);
+    _deferredLoadPromise = new Promise(function(resolveAll) {
+      setTimeout(() => {
+        const deferred = [
+          () => fetchFactHistory(),
+          () => fetchHistory().then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
+          () => fetchIssueCosts().then(() => { setInterval(fetchIssueCosts, ISSUE_COSTS_REFRESH_MS); }),
+          () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
+          () => fetchNousStatus().then(() => { setInterval(fetchNousStatus, NOUS_POLL_MS); }),
+          () => fetchKnowledgeStats().then(() => { setInterval(fetchKnowledgeStats, KB_POLL_MS); }),
+          () => fetchAuditLog().then(() => { setInterval(fetchAuditLog, AUDIT_POLL_MS); }),
+          () => fetchContributors().then(() => { setInterval(fetchContributors, CONTRIBUTOR_POLL_MS); }),
+          () => fetchLeaderboard().then(() => { setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS); }),
+          () => fetchGitVersion().then(() => { setInterval(fetchGitVersion, GIT_VERSION_POLL_MS); }),
+          () => Promise.resolve(startVersionCheck()),
+          () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}).then(() => { setInterval(() => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); }),
+          () => fetchTimeline().then(() => { setInterval(fetchTimeline, TIMELINE_REFRESH_MS); }),
+          () => fetchAgentLogs().then(() => { setInterval(fetchAgentLogs, LOGS_REFRESH_MS); }),
+        ];
+        const allDone = deferred.map((fn, i) =>
+          new Promise(resolve => setTimeout(() => fn().then(resolve, resolve), i * DEFERRED_STAGGER_MS))
+        );
+        Promise.all(allDone).then(resolveAll);
+      }, DEFERRED_INIT_DELAY_MS);
+    });
   </script>
 </body>
 </html>
