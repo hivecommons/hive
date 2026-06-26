@@ -11,11 +11,12 @@ import (
 )
 
 const (
-	context7BaseURL    = "https://context7.com"
-	context7SearchPath = "/api/v2/libs/search"
-	context7DocsPath   = "/api/v2/context"
-	context7Timeout    = 30 * time.Second
-	context7MaxBody    = 10 * 1024 * 1024 // 10 MB
+	context7BaseURL        = "https://context7.com"
+	context7SearchPath     = "/api/v2/libs/search"
+	context7LLMsTxtSuffix  = "/llms.txt"
+	context7Timeout        = 30 * time.Second
+	context7MaxBody        = 10 * 1024 * 1024 // 10 MB
+	context7DefaultTokens  = 10000
 )
 
 // Context7SearchResult is a single library match from Context7's search API.
@@ -60,16 +61,16 @@ func SearchContext7(ctx context.Context, name, apiKey string) ([]Context7SearchR
 	return wrapper.Results, nil
 }
 
-// FetchContext7Docs retrieves documentation for a library+query from Context7.
+// FetchContext7Docs retrieves documentation for a library via its llms.txt
+// endpoint, which returns curated content optimized for LLM consumption.
 func FetchContext7Docs(ctx context.Context, libraryID, query, apiKey string) (*Context7DocsResult, error) {
-	if query == "" {
-		query = "overview getting started API reference"
-	}
 	params := url.Values{
-		"libraryId": {libraryID},
-		"query":     {query},
+		"tokens": {fmt.Sprintf("%d", context7DefaultTokens)},
 	}
-	reqURL := context7BaseURL + context7DocsPath + "?" + params.Encode()
+	if query != "" {
+		params.Set("topic", query)
+	}
+	reqURL := context7BaseURL + libraryID + context7LLMsTxtSuffix + "?" + params.Encode()
 
 	body, err := context7Get(ctx, reqURL, apiKey)
 	if err != nil {
