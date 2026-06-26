@@ -120,7 +120,7 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 
 		p.logger.Info("inference request body", "agent", agentName, "len", len(body), "preview", truncateBytes(body, 200))
 
-		openaiBody, err := translateAnthropicToOpenAI(body, route.Model)
+		openaiBody, err := translateAnthropicToOpenAI(body, route.Model, 0, "")
 		if err != nil {
 			p.logger.Error("inference translate request failed", "agent", agentName, "error", err)
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
@@ -515,7 +515,7 @@ func TestForwardToInferenceStreamingWithFlusher(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", nil)
 	w := httptest.NewRecorder()
 
-	err := forwardToInference(req, []byte(body), w, route)
+	err := forwardToInference(req, []byte(body), w, route, "test-agent")
 	if err != nil {
 		t.Fatal(err)
 	}

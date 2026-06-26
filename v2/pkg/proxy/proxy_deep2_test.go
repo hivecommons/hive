@@ -674,7 +674,7 @@ func TestForwardToInferenceNon2xx(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", nil)
 	w := httptest.NewRecorder()
 
-	err := forwardToInference(req, []byte(body), w, route)
+	err := forwardToInference(req, []byte(body), w, route, "test-agent")
 	_ = err
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status = %d, want 503", w.Code)

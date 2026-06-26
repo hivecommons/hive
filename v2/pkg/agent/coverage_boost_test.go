@@ -699,7 +699,7 @@ func TestEnsureClaudeSettings_CreatesFiles(t *testing.T) {
 	os.Remove(claudeInferenceSettingsPath)
 
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
-	m.ensureClaudeSettings()
+	m.ensureClaudeSettings(testAgent, 0)
 
 	// Check settings file was created
 	settingsFile := filepath.Join(testHomePath, ".claude", "settings.json")
@@ -735,8 +735,8 @@ func TestEnsureClaudeSettings_Idempotent(t *testing.T) {
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
 
 	// Call twice — should not error or overwrite
-	m.ensureClaudeSettings()
-	m.ensureClaudeSettings()
+	m.ensureClaudeSettings("test-idempotent", 0)
+	m.ensureClaudeSettings("test-idempotent", 0)
 
 	idempotentHomePath := inferenceHomePath("test-idempotent")
 	settingsFile := filepath.Join(idempotentHomePath, ".claude", "settings.json")

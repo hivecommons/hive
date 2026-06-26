@@ -587,7 +587,7 @@ func TestForwardToInferenceUpstreamError(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
-	err := forwardToInference(req, []byte(body), w, route)
+	err := forwardToInference(req, []byte(body), w, route, "test-agent")
 	// The function writes the error response to w and returns writeErr
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", w.Code)
@@ -604,7 +604,7 @@ func TestForwardToInferenceTranslateError(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", nil)
 	w := httptest.NewRecorder()
 
-	err := forwardToInference(req, []byte("not json"), w, route)
+	err := forwardToInference(req, []byte("not json"), w, route, "test-agent")
 	if err == nil {
 		t.Error("expected error for invalid body")
 	}
@@ -616,7 +616,7 @@ func TestForwardToInferenceUnreachable(t *testing.T) {
 	req, _ := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", strings.NewReader(body))
 	w := httptest.NewRecorder()
 
-	err := forwardToInference(req, []byte(body), w, route)
+	err := forwardToInference(req, []byte(body), w, route, "test-agent")
 	if err == nil {
 		t.Error("expected error for unreachable backend")
 	}
@@ -891,7 +891,7 @@ func TestFlushResponseWriter(t *testing.T) {
 
 func TestTranslateAnthropicToOpenAINoSystem(t *testing.T) {
 	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	result, err := translateAnthropicToOpenAI([]byte(body), "target-model")
+	result, err := translateAnthropicToOpenAI([]byte(body), "target-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -908,7 +908,7 @@ func TestTranslateAnthropicToOpenAINoSystem(t *testing.T) {
 }
 
 func TestTranslateAnthropicToOpenAIInvalidJSON(t *testing.T) {
-	_, err := translateAnthropicToOpenAI([]byte("not json"), "model")
+	_, err := translateAnthropicToOpenAI([]byte("not json"), "model", 0, "")
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -916,7 +916,7 @@ func TestTranslateAnthropicToOpenAIInvalidJSON(t *testing.T) {
 
 func TestTranslateAnthropicToOpenAIEmptySystem(t *testing.T) {
 	body := `{"model":"claude","max_tokens":100,"system":"","messages":[{"role":"user","content":"hi"}]}`
-	result, err := translateAnthropicToOpenAI([]byte(body), "model")
+	result, err := translateAnthropicToOpenAI([]byte(body), "model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1150,7 +1150,7 @@ func TestStartInferenceTranslator(t *testing.T) {
 			return
 		}
 
-		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model)
+		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model, 0, "")
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
 			return

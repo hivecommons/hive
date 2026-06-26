@@ -951,8 +951,9 @@ func TestAgentEnvPairs_InferenceBackendHome(t *testing.T) {
 
 	for _, p := range pairs {
 		if p.Key == "HOME" {
-			if p.Value != claudeInferenceHomePath {
-				t.Errorf("inference agent HOME = %q, want %q", p.Value, claudeInferenceHomePath)
+			expectedHome := inferenceHomePath("inference-agent")
+			if p.Value != expectedHome {
+				t.Errorf("inference agent HOME = %q, want %q", p.Value, expectedHome)
 			}
 			return
 		}
