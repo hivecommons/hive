@@ -779,6 +779,56 @@ func (k *KnowledgeAPI) reloadDocuments() {
 	}
 }
 
+// CleanupOrphanedDocFacts scans vault directories for doc-import fact files
+// that are not claimed by any active document source and removes them.
+func (k *KnowledgeAPI) CleanupOrphanedDocFacts() (int, error) {
+	k.mu.RLock()
+	owned := make(map[string]bool)
+	for _, ds := range k.docSources {
+		for _, slug := range ds.metadata.FactSlugs {
+			owned[slug] = true
+		}
+	}
+	k.mu.RUnlock()
+
+	vaultDir := k.docVaultDir()
+	entries, err := os.ReadDir(vaultDir)
+	if err != nil {
+		return 0, fmt.Errorf("reading vault dir: %w", err)
+	}
+
+	const docFactPrefix = "doc-"
+	removed := 0
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		slug := strings.TrimSuffix(name, ".md")
+		if slug == name {
+			continue
+		}
+		if !strings.HasPrefix(slug, docFactPrefix) {
+			continue
+		}
+		if owned[slug] {
+			continue
+		}
+		path := filepath.Join(vaultDir, name)
+		if err := os.Remove(path); err != nil {
+			k.logger.Warn("failed to remove orphaned doc fact", "path", path, "error", err)
+			continue
+		}
+		removed++
+	}
+
+	if removed > 0 {
+		k.triggerVaultReindex(vaultDir)
+		k.logger.Info("cleaned up orphaned doc facts", "removed", removed)
+	}
+	return removed, nil
+}
+
 func (k *KnowledgeAPI) docVaultDir() string {
 	for _, v := range k.vaults {
 		if v.rootDir != "" {

@@ -144,6 +144,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/knowledge/documents/{slug}", s.handleDocumentGet)
 	s.mux.HandleFunc("DELETE /api/knowledge/documents/{slug}", s.handleDocumentDelete)
 	s.mux.HandleFunc("POST /api/knowledge/documents/{slug}/reimport", s.handleDocumentReimport)
+	s.mux.HandleFunc("POST /api/knowledge/cleanup-orphans", s.handleCleanupOrphans)
 
 	s.mux.HandleFunc("GET /api/hive-id", s.handleHiveIDGet)
 	s.mux.HandleFunc("PUT /api/hive-id", s.handleHiveIDSet)
@@ -4199,6 +4200,20 @@ func (s *Server) handleDocumentReimport(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	jsonResponse(w, meta)
+}
+
+func (s *Server) handleCleanupOrphans(w http.ResponseWriter, r *http.Request) {
+	if !s.ensureKnowledge() {
+		jsonError(w, "knowledge not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	removed, err := s.deps.Knowledge.CleanupOrphanedDocFacts()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{"ok": true, "removed": removed})
 }
 
 // --- Hive ID endpoints ---
