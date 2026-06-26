@@ -250,6 +250,7 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.auditFromRequest(r, "apply_pack", auditDetail("level", levelStr, "name", result.Name), "")
 	jsonResponse(w, map[string]interface{}{
 		"ok":         true,
 		"status":     "applied",
@@ -340,6 +341,7 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.auditFromRequest(r, "set_acmm_level", auditDetail("level", strconv.Itoa(body.Level)), "")
 	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed))
 	jsonResponse(w, map[string]interface{}{
 		"ok":         true,

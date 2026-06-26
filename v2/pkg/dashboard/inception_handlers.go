@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,7 @@ func (s *Server) handleInceptionStart(w http.ResponseWriter, r *http.Request) {
 
 	s.kickBrainstorm()
 
+	s.auditFromRequest(r, "inception_start", "", "")
 	jsonResponse(w, map[string]interface{}{
 		"ok":    true,
 		"state": state,
@@ -95,6 +97,7 @@ func (s *Server) handleInceptionScan(w http.ResponseWriter, r *http.Request) {
 
 	s.kickBrainstorm()
 
+	s.auditFromRequest(r, "inception_scan", auditDetail("repo_url", req.RepoURL), "")
 	jsonResponse(w, map[string]interface{}{
 		"ok":    true,
 		"state": state,
@@ -134,6 +137,7 @@ func (s *Server) handleInceptionSetQuestions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	s.auditFromRequest(r, "inception_set_questions", auditDetail("count", strconv.Itoa(len(req.Questions))), "")
 	jsonResponse(w, map[string]interface{}{"ok": true})
 }
 
@@ -162,6 +166,7 @@ func (s *Server) handleInceptionAnswer(w http.ResponseWriter, r *http.Request) {
 	// kills its context and can revert the phase back to capture (bug #117).
 	s.sendKickBrainstorm()
 
+	s.auditFromRequest(r, "inception_answer", auditDetail("count", strconv.Itoa(len(req.Answers))), "")
 	jsonResponse(w, map[string]interface{}{
 		"ok":    true,
 		"state": state,
@@ -187,6 +192,7 @@ func (s *Server) handleInceptionRecordFacts(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	s.auditFromRequest(r, "inception_record_facts", auditDetail("count", strconv.Itoa(len(req.Facts))), "")
 	jsonResponse(w, map[string]interface{}{"ok": true})
 }
 
@@ -225,6 +231,7 @@ func (s *Server) handleInceptionApprove(w http.ResponseWriter, r *http.Request) 
 		_ = s.deps.AgentMgr.Pause("brainstorm", "inception-complete", "inception complete — on-demand only")
 	}
 
+	s.auditFromRequest(r, "inception_approve", "", "")
 	jsonResponse(w, map[string]interface{}{"ok": true})
 }
 
@@ -264,6 +271,7 @@ func (s *Server) handleInceptionReset(w http.ResponseWriter, r *http.Request) {
 		_ = s.deps.AgentMgr.Pause("brainstorm", "inception-reset", "inception reset — on-demand only")
 	}
 
+	s.auditFromRequest(r, "inception_reset", "", "")
 	jsonResponse(w, map[string]interface{}{"ok": true})
 }
 
@@ -381,6 +389,7 @@ func (s *Server) handleInceptionRenameWiki(w http.ResponseWriter, r *http.Reques
 		s.deps.Inception.SetWikiName(req.Name)
 	}
 
+	s.auditFromRequest(r, "inception_rename_wiki", auditDetail("name", req.Name), "")
 	s.logger.Info("inception wiki renamed", "name", req.Name)
 	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name})
 }

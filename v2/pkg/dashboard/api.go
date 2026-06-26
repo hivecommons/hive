@@ -585,6 +585,9 @@ func (s *Server) handleSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 	const maxUpgradeResponseBytes = 1 << 16
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxUpgradeResponseBytes))
+	if resp.StatusCode < 300 {
+		s.auditFromRequest(r, "self_upgrade", "", "")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
@@ -1208,6 +1211,7 @@ func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.deviceFlowState = state
+	s.auditFromRequest(r, "gh_auth_start", "", "")
 	jsonResponse(w, map[string]interface{}{
 		"user_code":        state.UserCode,
 		"verification_uri": state.VerificationURI,
@@ -1277,6 +1281,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	s.auditFromRequest(r, "gh_auth_complete", auditDetail("username", username), "")
 	jsonResponse(w, map[string]interface{}{"status": "complete", "username": username, "avatar_url": avatarURL})
 }
 
@@ -1290,6 +1295,7 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
+	s.auditFromRequest(r, "gh_auth_logout", "", "")
 	s.deps.Logger.Info("GitHub user logged out")
 	jsonResponse(w, map[string]interface{}{"status": "logged_out"})
 }
@@ -1852,6 +1858,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			s.logger.Error("failed to persist agent overlay after update", "agent", name, "error", err)
 		}
 	}
+	s.auditFromRequest(r, "config_agent_general", auditDetail("section", "general"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -1888,6 +1895,7 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after cadence update", "agent", name, "error", err)
 	}
+	s.auditFromRequest(r, "config_agent_cadences", auditDetail("section", "cadences"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -1931,6 +1939,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			s.logger.Error("failed to persist agent overlay after model update", "agent", name, "error", err)
 		}
 	}
+	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -1952,6 +1961,7 @@ func (s *Server) handleAgentConfigPipeline(w http.ResponseWriter, r *http.Reques
 	s.agentPipelines[name] = body
 	s.pipelineMu.Unlock()
 
+	s.auditFromRequest(r, "config_agent_pipeline", auditDetail("section", "pipeline"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -1973,6 +1983,7 @@ func (s *Server) handleAgentConfigHooks(w http.ResponseWriter, r *http.Request) 
 	s.agentHooks[name] = body
 	s.hooksMu.Unlock()
 
+	s.auditFromRequest(r, "config_agent_hooks", auditDetail("section", "hooks"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -2014,6 +2025,7 @@ func (s *Server) handleAgentConfigRestrictions(w http.ResponseWriter, r *http.Re
 		s.logger.Warn("rest file rename failed", "error", err)
 	}
 
+	s.auditFromRequest(r, "config_agent_restrictions", auditDetail("section", "restrictions"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -2046,6 +2058,7 @@ func (s *Server) handleAgentConfigStats(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	s.auditFromRequest(r, "config_agent_stats", auditDetail("section", "stats"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -2172,6 +2185,7 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	}
 	s.refreshAndPersist()
 
+	s.auditFromRequest(r, "config_agent_prompt", auditDetail("section", "prompt"), name)
 	s.logger.Info("prompt template saved", "agent", name, "path", savePath)
 	okResponse(w, map[string]string{"status": "saved", "path": savePath})
 }
@@ -2515,6 +2529,7 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config", "error", err) }
+	s.auditFromRequest(r, "config_governor_sensing", auditDetail("section", "sensing"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2548,6 +2563,7 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 		go s.deps.EnumerateFunc()
 	}
 
+	s.auditFromRequest(r, "config_governor_thresholds", auditDetail("section", "thresholds"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2591,6 +2607,7 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
 	}
+	s.auditFromRequest(r, "config_governor_labels", auditDetail("section", "labels"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2623,6 +2640,7 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after budget update", "error", err) }
+	s.auditFromRequest(r, "config_governor_budget", auditDetail("section", "budget"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2665,6 +2683,7 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		s.deps.Config.Notifications.Discord.Webhook = body.DiscordWebhook
 	}
 	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after notification update", "error", err) }
+	s.auditFromRequest(r, "config_governor_notifications", auditDetail("section", "notifications"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2694,6 +2713,7 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 		s.deps.Config.Governor.Health.ModelLock = *body.ModelLock
 	}
 	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after health update", "error", err) }
+	s.auditFromRequest(r, "config_governor_health", auditDetail("section", "health"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2737,6 +2757,7 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after logging update", "error", err) }
+	s.auditFromRequest(r, "config_governor_logging", auditDetail("section", "logging"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2815,6 +2836,7 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	if body.TierLimits != nil {
 		cfg.Hub.TierLimits = body.TierLimits
 	}
+	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -2866,6 +2888,7 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 	s.deps.AgentMgr.AddAgent(body.Name, agentCfg)
 	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config", "error", err) }
 
+	s.auditFromRequest(r, "add_agent", auditDetail("backend", body.Backend, "model", body.Model), body.Name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "added", "agent": body.Name})
 }
@@ -2882,6 +2905,7 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after agent removal", "error", err)
 	}
+	s.auditFromRequest(r, "remove_agent", "", name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "removed", "agent": name})
 }
@@ -2961,6 +2985,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	if s.deps.EnumerateFunc != nil {
 		go s.deps.EnumerateFunc()
 	}
+	s.auditFromRequest(r, "config_governor_repos", auditDetail("section", "repos"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -3047,6 +3072,7 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.auditFromRequest(r, "config_github", "", "")
 	s.refreshAndPersist()
 	jsonResponse(w, result)
 }
@@ -3075,6 +3101,7 @@ func (s *Server) handleSidebarSet(w http.ResponseWriter, r *http.Request) {
 	s.sidebar = body
 	s.sidebarMu.Unlock()
 
+	s.auditFromRequest(r, "config_sidebar", "", "")
 	s.saveSidebarToDisk(body)
 	okResponse(w, map[string]string{"status": "updated"})
 }
@@ -3273,6 +3300,7 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after knowledge toggle", "error", err)
 	}
+	s.auditFromRequest(r, "knowledge_toggle", auditDetail("enabled", fmt.Sprintf("%v", body.Enabled)), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "enabled": fmt.Sprintf("%v", body.Enabled)})
 }
@@ -3319,6 +3347,7 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after bead-synth toggle", "error", err)
 	}
+	s.auditFromRequest(r, "bead_synth_toggle", auditDetail("enabled", fmt.Sprintf("%v", enabled)), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "bead_synthesizer_enabled": fmt.Sprintf("%v", enabled)})
 }
@@ -3598,6 +3627,7 @@ func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.auditFromRequest(r, "knowledge_create_fact", auditDetail("title", req.Title, "layer", req.Layer), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "title": req.Title, "layer": req.Layer})
 }
 
@@ -3620,6 +3650,7 @@ func (s *Server) handleKnowledgeUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.auditFromRequest(r, "knowledge_update_fact", auditDetail("slug", slug, "layer", layer), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "slug": slug, "layer": layer})
 }
 
@@ -3636,6 +3667,7 @@ func (s *Server) handleKnowledgeDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.auditFromRequest(r, "knowledge_delete_fact", auditDetail("slug", slug, "layer", layer), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "deleted": slug})
 }
 
@@ -3682,6 +3714,7 @@ func (s *Server) handleKnowledgePromote(w http.ResponseWriter, r *http.Request) 
 			jsonError(w, syncErr.Error(), http.StatusInternalServerError)
 			return
 		}
+		s.auditFromRequest(r, "knowledge_promote_fact", auditDetail("slug", req.Slug, "from", string(req.FromLayer), "to", string(req.ToLayer)), "")
 		jsonResponse(w, knowledge.PromoteResult{
 			Slug:      syncResult.Slug,
 			FromLayer: req.FromLayer,
@@ -3690,6 +3723,7 @@ func (s *Server) handleKnowledgePromote(w http.ResponseWriter, r *http.Request) 
 		})
 		return
 	}
+	s.auditFromRequest(r, "knowledge_promote_fact", auditDetail("slug", req.Slug, "from", string(req.FromLayer), "to", string(req.ToLayer)), "")
 	jsonResponse(w, result)
 }
 
@@ -3725,6 +3759,7 @@ func (s *Server) handleKnowledgeImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.auditFromRequest(r, "knowledge_import", auditDetail("layer", req.Layer, "format", req.Format), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "imported": count, "layer": req.Layer, "format": req.Format})
 }
 
@@ -3768,6 +3803,7 @@ func (s *Server) handleKnowledgeSubsAdd(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	}
+	s.auditFromRequest(r, "knowledge_add_subscription", auditDetail("url", sub.URL), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "subscription": sub})
 }
 
@@ -3794,6 +3830,7 @@ func (s *Server) handleKnowledgeSubsRemove(w http.ResponseWriter, r *http.Reques
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	s.auditFromRequest(r, "knowledge_remove_subscription", auditDetail("url", req.URL), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.URL})
 }
 
@@ -3842,6 +3879,7 @@ func (s *Server) handleVaultsConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.auditFromRequest(r, "vault_connect", auditDetail("name", req.Name, "path", req.Path), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name, "path": req.Path})
 }
 
@@ -3875,6 +3913,7 @@ func (s *Server) handleVaultsDisconnect(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	s.auditFromRequest(r, "vault_disconnect", auditDetail("path", req.Path), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.Path})
 }
 
@@ -3908,6 +3947,7 @@ func (s *Server) handleVaultsReindex(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	s.auditFromRequest(r, "vault_reindex", auditDetail("path", req.Path), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "reindexed": req.Path})
 }
 
@@ -4008,6 +4048,7 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 		s.logger.Error("failed to persist config after git source connect", "error", err)
 	}
 
+	s.auditFromRequest(r, "git_source_connect", auditDetail("name", req.Name, "url", req.URL), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "name": req.Name, "url": req.URL})
 }
 
@@ -4047,6 +4088,7 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 		s.logger.Error("failed to persist config after git source disconnect", "error", err)
 	}
 
+	s.auditFromRequest(r, "git_source_disconnect", auditDetail("url", req.URL), "")
 	jsonResponse(w, map[string]interface{}{"ok": true, "removed": req.URL})
 }
 
@@ -4156,6 +4198,7 @@ func (s *Server) handleDocumentsImport(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.auditFromRequest(r, "document_import", auditDetail("name", req.Name), "")
 	jsonResponse(w, meta)
 }
 
@@ -4185,6 +4228,7 @@ func (s *Server) handleDocumentDelete(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	s.auditFromRequest(r, "document_delete", auditDetail("slug", slug), "")
 	okResponse(w, map[string]string{"status": "deleted", "slug": slug})
 }
 
@@ -4200,6 +4244,7 @@ func (s *Server) handleDocumentReimport(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.auditFromRequest(r, "document_reimport", auditDetail("slug", slug), "")
 	jsonResponse(w, meta)
 }
 
@@ -4282,6 +4327,7 @@ func (s *Server) handleHiveIDSet(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("failed to rename hive ID file", "error", err)
 	}
 
+	s.auditFromRequest(r, "set_hive_id", auditDetail("id", body.ID), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "id": body.ID})
 }
@@ -4351,10 +4397,12 @@ func (s *Server) handleNousPrinciples(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleNousApprove(w http.ResponseWriter, r *http.Request) {
+	s.auditFromRequest(r, "nous_approve", "", "")
 	okResponse(w, map[string]string{"status": "approved"})
 }
 
 func (s *Server) handleNousAbort(w http.ResponseWriter, r *http.Request) {
+	s.auditFromRequest(r, "nous_abort", "", "")
 	okResponse(w, map[string]string{"status": "aborted"})
 }
 
@@ -4377,6 +4425,7 @@ func (s *Server) handleNousMode(w http.ResponseWriter, r *http.Request) {
 		s.deps.Nous.Mode = body.Mode
 	}
 
+	s.auditFromRequest(r, "nous_set_mode", auditDetail("mode", body.Mode), "")
 	okResponse(w, map[string]string{"status": "updated", "mode": body.Mode})
 }
 
@@ -4399,6 +4448,7 @@ func (s *Server) handleNousScope(w http.ResponseWriter, r *http.Request) {
 		s.deps.Nous.Scope = body.Scope
 	}
 
+	s.auditFromRequest(r, "nous_set_scope", auditDetail("scope", body.Scope), "")
 	okResponse(w, map[string]string{"status": "updated", "scope": body.Scope})
 }
 
@@ -4440,6 +4490,7 @@ func (s *Server) handleNousGateDecision(w http.ResponseWriter, r *http.Request) 
 		"reason":   body.Reason,
 	}
 
+	s.auditFromRequest(r, "nous_gate_decision", auditDetail("decision", body.Decision), "")
 	okResponse(w, map[string]string{"status": "decided", "decision": body.Decision})
 }
 
@@ -4462,6 +4513,7 @@ func (s *Server) handleNousGateRespond(w http.ResponseWriter, r *http.Request) {
 		s.deps.Nous.GateResponse = body
 	}
 
+	s.auditFromRequest(r, "nous_gate_respond", "", "")
 	okResponse(w, map[string]string{"status": "responded"})
 }
 
@@ -4529,6 +4581,7 @@ func (s *Server) handleNousDeletePrinciple(w http.ResponseWriter, r *http.Reques
 	s.deps.Nous.Principles = filtered
 	s.deps.Nous.Mu.Unlock()
 
+	s.auditFromRequest(r, "nous_delete_principle", auditDetail("id", id), "")
 	okResponse(w, map[string]string{"status": "deleted", "id": id})
 }
 
@@ -4551,6 +4604,7 @@ func (s *Server) handleNousConfigSection(w http.ResponseWriter, r *http.Request,
 	s.deps.Nous.Config[section] = body
 	s.deps.Nous.Mu.Unlock()
 
+	s.auditFromRequest(r, "nous_config_update", auditDetail("section", section), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "section": section})
 }
@@ -4656,6 +4710,7 @@ func (s *Server) handleBeadsReset(w http.ResponseWriter, r *http.Request) {
 		results[name] = closed
 	}
 
+	s.auditFromRequest(r, "beads_reset", "", "")
 	s.refreshAndPersist()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "reset", "closed": results, "reason": body.Reason})
@@ -4691,6 +4746,7 @@ func (s *Server) handleBeadsResetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.auditFromRequest(r, "beads_reset_agent", "", agentName)
 	s.refreshAndPersist()
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"status": "reset", "agent": agentName, "closed": closed, "reason": body.Reason})
@@ -4784,6 +4840,7 @@ func (s *Server) handleBeadsCreate(w http.ResponseWriter, r *http.Request) {
 		metaCount++
 	}
 
+	s.auditFromRequest(r, "bead_create", auditDetail("title", body.Title), agentName)
 	w.WriteHeader(http.StatusCreated)
 	jsonResponse(w, b)
 }
