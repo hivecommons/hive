@@ -190,12 +190,10 @@ func isDecorative(r rune) bool {
 		return true
 	}
 	return r == 0x00AD || // soft hyphen
-		unicode.In(r,
-			unicode.Dingbats,
-			unicode.Geometric_Shapes,
-			unicode.Miscellaneous_Symbols,
-			unicode.Co, // private use area
-		) ||
+		unicode.Is(unicode.Co, r) || // private use area
+		(r >= 0x2700 && r <= 0x27BF) || // dingbats
+		(r >= 0x25A0 && r <= 0x25FF) || // geometric shapes
+		(r >= 0x2600 && r <= 0x26FF) || // miscellaneous symbols
 		r == 0xFEFF || // BOM
 		r == 0xFFFC || // object replacement
 		r == 0xFFFD || // replacement character
