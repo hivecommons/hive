@@ -692,15 +692,17 @@ func TestShellEnvVar_Parentheses(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEnsureClaudeSettings_CreatesFiles(t *testing.T) {
+	const testAgent = "test-settings"
+	testHomePath := inferenceHomePath(testAgent)
 	// Clean up the inference settings files before test
-	os.RemoveAll(claudeInferenceHomePath)
+	os.RemoveAll(testHomePath)
 	os.Remove(claudeInferenceSettingsPath)
 
 	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
 	m.ensureClaudeSettings()
 
 	// Check settings file was created
-	settingsFile := filepath.Join(claudeInferenceHomePath, ".claude", "settings.json")
+	settingsFile := filepath.Join(testHomePath, ".claude", "settings.json")
 	data, err := os.ReadFile(settingsFile)
 	if err != nil {
 		t.Fatalf("settings file not created: %v", err)
@@ -723,7 +725,7 @@ func TestEnsureClaudeSettings_CreatesFiles(t *testing.T) {
 	}
 
 	// Check .claude.json user config
-	userConfig := filepath.Join(claudeInferenceHomePath, ".claude.json")
+	userConfig := filepath.Join(testHomePath, ".claude.json")
 	if _, err := os.Stat(userConfig); err != nil {
 		t.Errorf("user config not created: %v", err)
 	}
@@ -736,7 +738,8 @@ func TestEnsureClaudeSettings_Idempotent(t *testing.T) {
 	m.ensureClaudeSettings()
 	m.ensureClaudeSettings()
 
-	settingsFile := filepath.Join(claudeInferenceHomePath, ".claude", "settings.json")
+	idempotentHomePath := inferenceHomePath("test-idempotent")
+	settingsFile := filepath.Join(idempotentHomePath, ".claude", "settings.json")
 	if _, err := os.Stat(settingsFile); err != nil {
 		t.Errorf("settings should still exist: %v", err)
 	}

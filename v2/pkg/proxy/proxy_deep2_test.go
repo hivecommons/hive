@@ -137,7 +137,7 @@ func TestStartInferenceTranslatorIntegration(t *testing.T) {
 			return
 		}
 
-		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model)
+		openaiBody, err := translateAnthropicToOpenAI(body, rt.Model, 0, "")
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"translation error: %s"}}`, err.Error()), http.StatusBadGateway)
 			return
