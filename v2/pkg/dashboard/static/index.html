@@ -1982,10 +1982,10 @@
     <div class="section-body">
       <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
         <div class="kb-stat-grid" id="acmm-eval-stats">
-          <div class="kb-stat"><div class="val" id="acmm-codebase-level">--</div><div class="lbl">Codebase Readiness</div></div>
-          <div class="kb-stat"><div class="val" id="acmm-ops-level">--</div><div class="lbl">Operational Autonomy</div></div>
-          <div class="kb-stat"><div class="val" id="acmm-overall-level">--</div><div class="lbl">Overall ACMM</div></div>
-          <div class="kb-stat"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl">Criteria Passed</div></div>
+          <div class="kb-stat" onclick="acmmShowCodebaseDialog()" style="cursor:pointer"><div class="val" id="acmm-codebase-level">--</div><div class="lbl">Codebase Readiness</div></div>
+          <div class="kb-stat" onclick="acmmShowOpsDialog()" style="cursor:pointer"><div class="val" id="acmm-ops-level">--</div><div class="lbl">Operational Autonomy</div></div>
+          <div class="kb-stat" onclick="acmmShowOverallDialog()" style="cursor:pointer"><div class="val" id="acmm-overall-level">--</div><div class="lbl">Overall ACMM</div></div>
+          <div class="kb-stat" onclick="acmmShowAllCriteriaDialog()" style="cursor:pointer"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl">Criteria Passed</div></div>
         </div>
         <div id="acmm-level-bars" style="margin-top:12px"></div>
         <div id="acmm-eval-meta" style="margin-top:10px;font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between">
@@ -9030,11 +9030,180 @@ function burnAreaChart() {
     // ACMM Evaluation
     const ACMM_EVAL_INTERVAL_MS = 3600000; // 1 hour
     const ACMM_LEVEL_NAMES = {0:'Prerequisites',2:'Instructed',3:'Measured',4:'Adaptive',5:'Automated',6:'Autonomous'};
+    const ACMM_LEVEL_DESCRIPTIONS = {
+      0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
+      2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
+      3: 'PR acceptance metrics, review rubrics, quality dashboards, and safety model enforcement are in place.',
+      4: 'Self-tuning QA, nightly compliance, automated review application, AI-fix workflows, and session continuity.',
+      5: 'GitHub Actions AI integration, auto-QA self-tuning, public metrics, policy-as-code, and reflection logs.',
+      6: 'Auto issue generation, multi-agent orchestration, strategic dashboards, merge queues, and full governance.'
+    };
+    let _acmmEvalData = null;
+
+    function acmmShowLevelDialog(level) {
+      if (!_acmmEvalData) return;
+      const lvlData = (_acmmEvalData.levels || []).find(l => l.level === level);
+      const criteria = (_acmmEvalData.criteria_results || []).filter(c => c.level === level);
+      const name = ACMM_LEVEL_NAMES[level] || ('L' + level);
+      const desc = ACMM_LEVEL_DESCRIPTIONS[level] || '';
+      const pct = lvlData ? Math.round(lvlData.score * 100) : 0;
+      const passed = lvlData ? lvlData.passed : false;
+      const statusColor = passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+      const statusText = passed ? '✓ Passed' : '✗ Not passed';
+      const threshold = lvlData ? Math.round(lvlData.threshold * 100) : 70;
+
+      const byCategory = {};
+      for (const c of criteria) {
+        const cat = c.category || 'general';
+        if (!byCategory[cat]) byCategory[cat] = [];
+        byCategory[cat].push(c);
+      }
+
+      let criteriaHtml = '';
+      for (const [cat, items] of Object.entries(byCategory)) {
+        criteriaHtml += '<div style="margin-top:10px"><div style="font-size:0.7rem;text-transform:uppercase;color:var(--muted);margin-bottom:4px;font-weight:600">' + escapeHtml(cat) + '</div>';
+        for (const c of items) {
+          const icon = c.passed ? '✅' : '❌';
+          const patternList = (c.patterns || []).map(p => '<code style="font-size:0.7rem;background:var(--bg);padding:1px 4px;border-radius:3px">' + escapeHtml(p) + '</code>').join(' ');
+          criteriaHtml += '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="display:flex;align-items:center;gap:6px">' +
+            '<span>' + icon + '</span>' +
+            '<span style="font-size:0.82rem;font-weight:500">' + escapeHtml(c.name) + '</span>' +
+            '</div>' +
+            '<div style="margin-top:3px;margin-left:24px;font-size:0.72rem;color:var(--muted)">Checks: ' + patternList + '</div>' +
+            '</div>';
+        }
+        criteriaHtml += '</div>';
+      }
+
+      acmmShowDialog(
+        'L' + level + ' ' + name,
+        '<div style="margin-bottom:12px">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
+        '<span style="font-size:1.5rem;font-weight:700;color:' + statusColor + '">' + pct + '%</span>' +
+        '<span style="font-size:0.82rem;color:' + statusColor + ';font-weight:600">' + statusText + '</span>' +
+        '<span style="font-size:0.72rem;color:var(--muted)">(threshold: ' + threshold + '%)</span>' +
+        '</div>' +
+        '<p style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">' + escapeHtml(desc) + '</p>' +
+        '</div>' +
+        '<div style="font-size:0.82rem;font-weight:600;margin-bottom:4px">Criteria (' + (lvlData ? lvlData.matched : 0) + '/' + (lvlData ? lvlData.total : 0) + ')</div>' +
+        criteriaHtml
+      );
+    }
+
+    function acmmShowCodebaseDialog() {
+      if (!_acmmEvalData) return;
+      const d = _acmmEvalData;
+      const name = ACMM_LEVEL_NAMES[d.codebase_level] || 'None';
+      let html = '<div style="margin-bottom:12px">' +
+        '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 8px">Codebase readiness measures whether the repo has the files, configs, and tooling that enable AI-native development. Each level requires ≥70% of its criteria to pass, and all preceding levels must also pass.</p>' +
+        '<div style="font-size:0.82rem"><strong>Current level:</strong> L' + d.codebase_level + ' ' + escapeHtml(name) + '</div></div>';
+
+      for (const lvl of (d.levels || [])) {
+        const pct = Math.round(lvl.score * 100);
+        const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+        html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ')" style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between">' +
+          '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+          '<span style="font-size:0.75rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + ' (' + pct + '%)</span></div>' +
+          '<div style="margin-top:4px;height:4px;background:var(--card-bg);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
+      }
+      acmmShowDialog('Codebase Readiness — L' + d.codebase_level + ' ' + escapeHtml(name), html);
+    }
+
+    function acmmShowOpsDialog() {
+      if (!_acmmEvalData) return;
+      const d = _acmmEvalData;
+      const name = ACMM_LEVEL_NAMES[d.operational_level] || 'Unknown';
+      const opsDescriptions = {
+        1: 'Manual operation — agents run one-off tasks with no persistent configuration.',
+        2: 'Agents follow explicit instructions (CLAUDE.md, copilot-instructions) but require human initiation.',
+        3: 'Observability in place — metrics, dashboards, and review rubrics track agent quality.',
+        4: 'Self-tuning — agents adapt their behavior based on feedback loops and compliance checks.',
+        5: 'Fully automated — CI/CD triggers agents, auto-QA self-tunes, policies enforced as code.',
+        6: 'Autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
+      };
+      const desc = opsDescriptions[d.operational_level] || 'Level not recognized.';
+      acmmShowDialog('Operational Autonomy — L' + d.operational_level + ' ' + escapeHtml(name),
+        '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">Operational autonomy reflects the hive\'s current pack configuration — how much the system automates without human intervention.</p>' +
+        '<div style="padding:12px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">' +
+        '<div style="font-size:1.1rem;font-weight:700;margin-bottom:4px">L' + d.operational_level + ' — ' + escapeHtml(name) + '</div>' +
+        '<div style="font-size:0.82rem;color:var(--muted)">' + escapeHtml(desc) + '</div></div>' +
+        '<p style="font-size:0.75rem;color:var(--muted);margin-top:12px">This is set by the <code>acmm_level</code> field in your hive config, or determined by your active pack.</p>'
+      );
+    }
+
+    function acmmShowOverallDialog() {
+      if (!_acmmEvalData) return;
+      const d = _acmmEvalData;
+      const codeName = ACMM_LEVEL_NAMES[d.codebase_level] || 'None';
+      const opsName = ACMM_LEVEL_NAMES[d.operational_level] || 'Unknown';
+      const overallName = ACMM_LEVEL_NAMES[d.overall_level] || 'None';
+      const lower = d.codebase_level <= d.operational_level ? 'codebase readiness' : 'operational autonomy';
+      acmmShowDialog('Overall ACMM Level — L' + d.overall_level + ' ' + escapeHtml(overallName),
+        '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">The overall ACMM level is the <strong>minimum</strong> of codebase readiness and operational autonomy. Both dimensions must align — a high operational level means nothing if the repo lacks foundational tooling, and vice versa.</p>' +
+        '<div style="display:flex;gap:12px;margin-bottom:12px">' +
+        '<div style="flex:1;padding:12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);text-align:center;cursor:pointer" onclick="acmmCloseDialog();acmmShowCodebaseDialog()">' +
+        '<div style="font-size:1.2rem;font-weight:700">L' + d.codebase_level + '</div><div style="font-size:0.72rem;color:var(--muted)">Codebase</div></div>' +
+        '<div style="flex:1;padding:12px;background:var(--bg);border-radius:6px;border:1px solid var(--border);text-align:center;cursor:pointer" onclick="acmmCloseDialog();acmmShowOpsDialog()">' +
+        '<div style="font-size:1.2rem;font-weight:700">L' + d.operational_level + '</div><div style="font-size:0.72rem;color:var(--muted)">Operational</div></div>' +
+        '</div>' +
+        '<div style="padding:10px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-size:0.8rem">' +
+        '→ Overall is <strong>L' + d.overall_level + '</strong> because ' + lower + ' is the limiting factor.</div>'
+      );
+    }
+
+    function acmmShowAllCriteriaDialog() {
+      if (!_acmmEvalData) return;
+      const d = _acmmEvalData;
+      let html = '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">' + d.criteria_passed + ' of ' + d.criteria_total + ' criteria detected in the repository. Click a level row to see details.</p>';
+
+      for (const lvl of (d.levels || [])) {
+        const criteria = (d.criteria_results || []).filter(c => c.level === lvl.level);
+        const pct = Math.round(lvl.score * 100);
+        const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+        html += '<div style="margin-bottom:8px">' +
+          '<div onclick="acmmCloseDialog();acmmShowLevelDialog(' + lvl.level + ')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
+          '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+          '<span style="font-size:0.75rem;color:' + color + '">' + lvl.matched + '/' + lvl.total + '</span></div>';
+        for (const c of criteria) {
+          html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 8px 3px 20px;font-size:0.78rem">' +
+            '<span>' + (c.passed ? '✅' : '❌') + '</span>' +
+            '<span>' + escapeHtml(c.name) + '</span></div>';
+        }
+        html += '</div>';
+      }
+      acmmShowDialog('All Criteria — ' + d.criteria_passed + '/' + d.criteria_total, html);
+    }
+
+    function acmmShowDialog(title, bodyHtml) {
+      let overlay = document.getElementById('acmm-dialog-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'acmm-dialog-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center';
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) acmmCloseDialog(); });
+        document.body.appendChild(overlay);
+      }
+      overlay.style.display = 'flex';
+      overlay.innerHTML = '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:560px;width:92%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
+        '<h3 style="margin:0;font-size:1rem;font-weight:700;color:var(--text)">' + title + '</h3>' +
+        '<button onclick="acmmCloseDialog()" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--muted);padding:4px">✕</button></div>' +
+        '<div>' + bodyHtml + '</div></div>';
+    }
+
+    function acmmCloseDialog() {
+      const overlay = document.getElementById('acmm-dialog-overlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
     async function fetchACMMEvaluation() {
       try {
         const r = await fetch('/api/acmm/evaluation');
         if (!r.ok) return;
         const d = await r.json();
+        _acmmEvalData = d;
 
         const fmtLevel = (lvl) => {
           const name = ACMM_LEVEL_NAMES[lvl] || ('L'+lvl);
@@ -9047,14 +9216,14 @@ function burnAreaChart() {
         setIfChanged(document.getElementById('acmm-criteria-ratio'),
           '<span style="font-size:1.2rem;font-weight:700">' + d.criteria_passed + '/' + d.criteria_total + '</span>');
 
-        // Per-level bars
+        // Per-level bars (clickable)
         const barsEl = document.getElementById('acmm-level-bars');
         if (barsEl && d.levels) {
           let html = '';
           for (const lvl of d.levels) {
             const pct = Math.round(lvl.score * 100);
             const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
-            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:0.75rem">' +
+            html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ')" style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:0.75rem;cursor:pointer;padding:2px 4px;border-radius:4px;transition:background .15s" onmouseover="this.style.background=\'var(--bg)\'" onmouseout="this.style.background=\'transparent\'">' +
               '<span style="width:100px;color:var(--muted)">' + escapeHtml(lvl.name) + '</span>' +
               '<div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden">' +
               '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:4px;transition:width .3s"></div></div>' +

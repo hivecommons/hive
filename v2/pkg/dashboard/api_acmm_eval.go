@@ -40,10 +40,12 @@ type ACMMLevelScore struct {
 
 // CriterionResult records whether an individual criterion was detected.
 type CriterionResult struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Level  int    `json:"level"`
-	Passed bool   `json:"passed"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Level    int      `json:"level"`
+	Category string   `json:"category"`
+	Patterns []string `json:"patterns"`
+	Passed   bool     `json:"passed"`
 }
 
 func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
@@ -137,10 +139,12 @@ func (s *Server) evaluateCodebase() ACMMEvaluation {
 	for _, c := range universalCriteria {
 		passed := s.checkCriterion(ctx, owner, repo, c, dirCache)
 		results = append(results, CriterionResult{
-			ID:     c.ID,
-			Name:   c.Name,
-			Level:  c.Level,
-			Passed: passed,
+			ID:       c.ID,
+			Name:     c.Name,
+			Level:    c.Level,
+			Category: c.Category,
+			Patterns: c.Patterns,
+			Passed:   passed,
 		})
 	}
 
