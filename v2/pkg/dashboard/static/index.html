@@ -9408,6 +9408,7 @@ function burnAreaChart() {
         document.body.appendChild(overlay);
       }
       overlay.style.display = 'flex';
+      document.body.style.overflow = 'hidden';
       overlay.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:600px;width:92%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
         '<h3 style="margin:0;font-size:1rem;font-weight:700;color:var(--text)">' + title + '</h3>' +
@@ -9418,6 +9419,7 @@ function burnAreaChart() {
     function acmmCloseDialog() {
       const overlay = document.getElementById('acmm-dialog-overlay');
       if (overlay) overlay.style.display = 'none';
+      document.body.style.overflow = '';
     }
 
     function acmmSelectRepo(repoName) {
@@ -9797,8 +9799,17 @@ function burnAreaChart() {
     setTimeout(() => { if (location.hash.startsWith('#config/')) handleConfigHash(); }, 1000);
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && _configModalOpen) closeConfigDialog();
-      if (e.key === 'Escape' && _acmmOpen) closeACMMDialog();
+      if (e.key !== 'Escape') return;
+      const acmmOverlay = document.getElementById('acmm-dialog-overlay');
+      if (acmmOverlay && acmmOverlay.style.display === 'flex') { acmmCloseDialog(); return; }
+      if (_configModalOpen) { closeConfigDialog(); return; }
+      if (_acmmOpen) { closeACMMDialog(); return; }
+      const nousOverlay = document.getElementById('nous-config-overlay');
+      if (nousOverlay && nousOverlay.style.display !== 'none') { nousOverlay.style.display = 'none'; return; }
+      const ghAuth = document.getElementById('gh-auth-modal-overlay');
+      if (ghAuth && ghAuth.style.display === 'flex') { if (typeof cancelGHLogin === 'function') cancelGHLogin(); else ghAuth.style.display = 'none'; return; }
+      const ghSetup = document.getElementById('gh-setup-overlay');
+      if (ghSetup && ghSetup.style.display === 'flex') { ghSetup.style.display = 'none'; return; }
     });
 
     function openAddAgentDialog() {
@@ -12115,14 +12126,7 @@ function burnAreaChart() {
       document.getElementById('gh-auth-modal-overlay').style.display = 'none';
     }
 
-    document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape' && document.getElementById('gh-auth-modal-overlay').style.display === 'flex') {
-        cancelGHLogin();
-      }
-      if (e.key === 'Escape' && document.getElementById('gh-setup-overlay').style.display === 'flex') {
-        document.getElementById('gh-setup-overlay').style.display = 'none';
-      }
-    });
+    // ESC for GH auth/setup handled by consolidated keydown listener above
 
     checkGHAuth();
     setInterval(checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
