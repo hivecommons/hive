@@ -147,6 +147,11 @@ func (s *Server) AuditLog(user, action, detail, agent string) {
 	s.audit.Log(user, action, detail, agent)
 }
 
+// GetAudit returns the underlying AuditLog for use by background goroutines.
+func (s *Server) GetAudit() *AuditLog {
+	return s.audit
+}
+
 func auditDetail(kv ...string) string {
 	if len(kv) == 0 {
 		return ""

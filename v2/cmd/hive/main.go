@@ -831,7 +831,7 @@ func main() {
 		}
 	}()
 
-	go dashboard.StartWorkspaceCleanup(ctx, logger)
+	go dashboard.StartWorkspaceCleanup(ctx, logger, dashSrv.GetAudit())
 
 	os.MkdirAll(nousSnapshotDir, 0o755)
 	os.MkdirAll(nousGovernorDir, 0o755)

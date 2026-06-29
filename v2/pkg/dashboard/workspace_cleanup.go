@@ -2,9 +2,14 @@ package dashboard
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -16,12 +21,10 @@ const (
 
 // StartWorkspaceCleanup runs a background loop that periodically sweeps
 // /data/agents/*/ for stale workspace artifacts and removes them.
-// This prevents unbounded disk growth from agents that create repo clones,
-// Go caches, working directories, and temporary files during tasks.
-func StartWorkspaceCleanup(ctx context.Context, logger *slog.Logger) {
+func StartWorkspaceCleanup(ctx context.Context, logger *slog.Logger, audit *AuditLog) {
 	logger.Info("workspace cleanup enabled", "interval", workspaceCleanupInterval, "max_age", workspaceMaxAge)
 
-	sweepWorkspaces(logger)
+	sweepWorkspaces(logger, audit)
 
 	ticker := time.NewTicker(workspaceCleanupInterval)
 	defer ticker.Stop()
@@ -31,12 +34,12 @@ func StartWorkspaceCleanup(ctx context.Context, logger *slog.Logger) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sweepWorkspaces(logger)
+			sweepWorkspaces(logger, audit)
 		}
 	}
 }
 
-func sweepWorkspaces(logger *slog.Logger) {
+func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 	agentDirs, err := os.ReadDir(agentWorkspaceRoot)
 	if err != nil {
 		logger.Debug("workspace cleanup: cannot read agent root", "path", agentWorkspaceRoot, "error", err)
@@ -45,6 +48,7 @@ func sweepWorkspaces(logger *slog.Logger) {
 
 	removedDirs := 0
 	removedFiles := 0
+	failedDirs := 0
 	now := time.Now()
 
 	for _, agentEntry := range agentDirs {
@@ -76,16 +80,17 @@ func sweepWorkspaces(logger *slog.Logger) {
 			}
 
 			if entry.IsDir() {
-				if err := os.RemoveAll(entryPath); err != nil {
+				if err := removeAsOwner(entryPath); err != nil {
 					logger.Warn("workspace cleanup: failed to remove stale dir",
 						"agent", agentName, "dir", name, "age", age.Round(time.Minute), "error", err)
+					failedDirs++
 					continue
 				}
 				logger.Info("workspace cleanup: removed stale dir",
 					"agent", agentName, "dir", name, "age", age.Round(time.Minute))
 				removedDirs++
 			} else {
-				if err := os.Remove(entryPath); err != nil {
+				if err := removeAsOwner(entryPath); err != nil {
 					logger.Warn("workspace cleanup: failed to remove stale file",
 						"agent", agentName, "file", name, "error", err)
 					continue
@@ -95,7 +100,41 @@ func sweepWorkspaces(logger *slog.Logger) {
 		}
 	}
 
-	logger.Info("workspace cleanup complete", "removed_dirs", removedDirs, "removed_files", removedFiles)
+	logger.Info("workspace cleanup complete",
+		"removed_dirs", removedDirs, "removed_files", removedFiles, "failed_dirs", failedDirs)
+
+	if audit != nil && (removedDirs > 0 || removedFiles > 0 || failedDirs > 0) {
+		audit.Log("system", "workspace_cleanup",
+			fmt.Sprintf("removed_dirs=%d removed_files=%d failed=%d", removedDirs, removedFiles, failedDirs), "")
+	}
+}
+
+// removeAsOwner tries os.RemoveAll first; on permission error (CephFS
+// root_squash), it detects the owning UID and retries rm -rf as that user.
+func removeAsOwner(path string) error {
+	err := os.RemoveAll(path)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, syscall.EPERM) && !errors.Is(err, os.ErrPermission) {
+		return err
+	}
+
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return err
+	}
+	ownerUID := strconv.FormatUint(uint64(stat.Uid), 10)
+
+	cmd := exec.Command("su", "-s", "/bin/sh", "-c", "rm -rf "+path, ownerUID)
+	if suErr := cmd.Run(); suErr != nil {
+		return fmt.Errorf("os.RemoveAll: %w; su %s rm -rf: %v", err, ownerUID, suErr)
+	}
+	return nil
 }
 
 func isSkippedEntry(name string) bool {
