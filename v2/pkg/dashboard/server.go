@@ -49,6 +49,10 @@ type Server struct {
 	levelMu        sync.Mutex
 	restartMu      sync.Mutex // serializes concurrent agent restart operations
 
+	acmmEvalMu       sync.RWMutex
+	acmmEvalCache    *ACMMEvaluation
+	acmmEvalCachedAt time.Time
+
 	tokenHistoryMu    sync.RWMutex
 	tokenHistory      []TokenSparklineEntry
 	lastFullBroadcast time.Time

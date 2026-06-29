@@ -105,6 +105,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/packs/{level}/apply", s.handlePackApply)
 	s.mux.HandleFunc("PUT /api/packs/level", s.handlePackSetLevel)
 
+	s.mux.HandleFunc("GET /api/acmm/evaluation", s.handleACMMEvaluation)
+
 	s.mux.HandleFunc("GET /api/config/sidebar", s.handleSidebarGet)
 	s.mux.HandleFunc("PUT /api/config/sidebar", s.handleSidebarSet)
 	s.mux.HandleFunc("GET /api/config/backends", s.handleBackends)

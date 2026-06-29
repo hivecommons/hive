@@ -443,6 +443,7 @@
     body.oc-agent-focused #knowledge-section,
     body.oc-agent-focused #contributors-section,
     body.oc-agent-focused #audit-section,
+    body.oc-agent-focused #acmm-eval-section,
     body.oc-agent-focused #leaderboard-section { display: none; }
     body.oc-strategy-focused #nous-section { display: block; }
     body.oc-agent-focused .agent-card.oc-hidden { display: none; }
@@ -1841,6 +1842,7 @@
       <div class="oc-nav-label">Control</div>
       <a class="oc-nav-item active" data-section="governor" onclick="ocNavigate('governor')"><span class="oc-nav-emoji">📊</span><span class="oc-nav-text">Governor</span></a>
       <a class="oc-nav-item" data-section="advisory-section" onclick="ocNavigate('advisory-section')"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
+      <a class="oc-nav-item" data-section="acmm-eval-section" onclick="ocNavigate('acmm-eval-section')"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="token-panel" onclick="ocNavigate('token-panel')"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
     </div>
     <div class="oc-nav-group">
@@ -1972,6 +1974,26 @@
     <h2 style="font-size: 0.95rem; color: var(--muted); margin-bottom: 8px;" class="section-header-toggle" onclick="toggleSection('beads-section')"><span class="section-chevron">▼</span> Beads</h2>
     <div class="section-body">
       <div class="beads" id="beads"></div>
+    </div>
+  </div>
+
+  <div id="acmm-eval-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="font-size: 0.95rem; color: var(--muted); margin-bottom: 8px;" class="section-header-toggle" onclick="toggleSection('acmm-eval-section')"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation</h2>
+    <div class="section-body">
+      <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
+        <div class="kb-stat-grid" id="acmm-eval-stats">
+          <div class="kb-stat"><div class="val" id="acmm-codebase-level">--</div><div class="lbl">Codebase Readiness</div></div>
+          <div class="kb-stat"><div class="val" id="acmm-ops-level">--</div><div class="lbl">Operational Autonomy</div></div>
+          <div class="kb-stat"><div class="val" id="acmm-overall-level">--</div><div class="lbl">Overall ACMM</div></div>
+          <div class="kb-stat"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl">Criteria Passed</div></div>
+        </div>
+        <div id="acmm-level-bars" style="margin-top:12px"></div>
+        <div id="acmm-eval-meta" style="margin-top:10px;font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between">
+          <span id="acmm-eval-source"></span>
+          <span id="acmm-eval-timestamp"></span>
+        </div>
+        <div id="acmm-eval-warning" style="display:none;margin-top:8px;padding:6px 10px;border-radius:6px;background:#fef3c7;color:#92400e;font-size:0.75rem"></div>
+      </div>
     </div>
   </div>
 
@@ -7755,8 +7777,8 @@ function burnAreaChart() {
       renderDebugSection();
       // Restore persisted collapsed state for all collapsible sections
       const COLLAPSIBLE_SECTION_IDS = [
-        'advisory-section', 'repos-section', 'beads-section', 'audit-section',
-        'nous-section', 'inception-section', 'knowledge-section',
+        'advisory-section', 'repos-section', 'beads-section', 'acmm-eval-section',
+        'audit-section', 'nous-section', 'inception-section', 'knowledge-section',
         'contributors-section', 'debug-section', 'logs-section', 'agents-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
@@ -9002,6 +9024,59 @@ function burnAreaChart() {
         if (dimension === 'cli') { a.pinnedCli = v; if (!v && a.pinnedBoth) { a.pinnedBoth = false; a.pinnedModel = true; } }
         else if (dimension === 'model') { a.pinnedModel = v; if (!v && a.pinnedBoth) { a.pinnedBoth = false; a.pinnedCli = true; } }
         else { a.pinnedBoth = v; a.pinnedCli = v; a.pinnedModel = v; }
+      }
+    }
+
+    // ACMM Evaluation
+    const ACMM_EVAL_INTERVAL_MS = 3600000; // 1 hour
+    const ACMM_LEVEL_NAMES = {0:'Prerequisites',2:'Instructed',3:'Measured',4:'Adaptive',5:'Automated',6:'Autonomous'};
+    async function fetchACMMEvaluation() {
+      try {
+        const r = await fetch('/api/acmm/evaluation');
+        if (!r.ok) return;
+        const d = await r.json();
+
+        const fmtLevel = (lvl) => {
+          const name = ACMM_LEVEL_NAMES[lvl] || ('L'+lvl);
+          return '<span style="font-size:1.2rem;font-weight:700">L' + lvl + '</span><br><span style="font-size:0.7rem;color:var(--muted)">' + escapeHtml(name) + '</span>';
+        };
+
+        setIfChanged(document.getElementById('acmm-codebase-level'), fmtLevel(d.codebase_level));
+        setIfChanged(document.getElementById('acmm-ops-level'), fmtLevel(d.operational_level));
+        setIfChanged(document.getElementById('acmm-overall-level'), fmtLevel(d.overall_level));
+        setIfChanged(document.getElementById('acmm-criteria-ratio'),
+          '<span style="font-size:1.2rem;font-weight:700">' + d.criteria_passed + '/' + d.criteria_total + '</span>');
+
+        // Per-level bars
+        const barsEl = document.getElementById('acmm-level-bars');
+        if (barsEl && d.levels) {
+          let html = '';
+          for (const lvl of d.levels) {
+            const pct = Math.round(lvl.score * 100);
+            const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:0.75rem">' +
+              '<span style="width:100px;color:var(--muted)">' + escapeHtml(lvl.name) + '</span>' +
+              '<div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden">' +
+              '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:4px;transition:width .3s"></div></div>' +
+              '<span style="width:60px;text-align:right;color:var(--muted)">' + lvl.matched + '/' + lvl.total + '</span></div>';
+          }
+          barsEl.innerHTML = html;
+        }
+
+        const tsEl = document.getElementById('acmm-eval-timestamp');
+        if (tsEl) tsEl.textContent = d.last_evaluated_at ? 'Evaluated: ' + new Date(d.last_evaluated_at).toLocaleString() : '';
+
+        const warnEl = document.getElementById('acmm-eval-warning');
+        if (warnEl) {
+          if (d.error) {
+            warnEl.style.display = 'block';
+            warnEl.textContent = '⚠ ' + d.error;
+          } else {
+            warnEl.style.display = 'none';
+          }
+        }
+      } catch (e) {
+        console.error('acmm eval fetch failed', e);
       }
     }
 
@@ -11644,6 +11719,7 @@ function burnAreaChart() {
           () => fetchContributors().then(() => { setInterval(fetchContributors, CONTRIBUTOR_POLL_MS); }),
           () => fetchLeaderboard().then(() => { setInterval(fetchLeaderboard, LEADERBOARD_POLL_MS); }),
           () => fetchGitVersion().then(() => { setInterval(fetchGitVersion, GIT_VERSION_POLL_MS); }),
+          () => fetchACMMEvaluation().then(() => { setInterval(fetchACMMEvaluation, ACMM_EVAL_INTERVAL_MS); }),
           () => Promise.resolve(startVersionCheck()),
           () => fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}).then(() => { setInterval(() => { fetch('/api/trends?range=week').then(r => r.json()).then(applyTrends).catch(() => {}); }, TREND_REFRESH_MS); }),
           () => fetchTimeline().then(() => { setInterval(fetchTimeline, TIMELINE_REFRESH_MS); }),
