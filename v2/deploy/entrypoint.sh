@@ -255,59 +255,40 @@ print('\n'.join(sorted(names)))
 " 2>/dev/null) || true
   fi
 
-  # Pre-cleanup: remove ALL stale workspace artifacts from agent dirs BEFORE
-  # the chown loop. The Go binary's workspace_cleanup.go does this at runtime,
-  # but it can't start until the entrypoint finishes — and chown -R on
-  # 300K+ accumulated files takes forever on NFS, creating a circular
-  # dependency. This breaks the cycle by cleaning dirs, Go caches, and
-  # loose files (not just git clones).
+  # Pre-cleanup: remove stale workspace artifacts from agent dirs.
+  # Runs in BACKGROUND to avoid blocking startup — on slow CephFS with many
+  # dirs, sequential rm -rf can exceed the startup probe timeout (10 min),
+  # causing a livelock where the container restarts before cleanup finishes.
+  # The Go binary's workspace_cleanup.go handles ongoing cleanup at runtime.
   WORKSPACE_MAX_AGE_SECS=7200
   if [ -d "$agentWorkspaceRoot" ] 2>/dev/null || [ -d /data/agents ]; then
     _CLEANUP_ROOT="${agentWorkspaceRoot:-/data/agents}"
-    _CLEANUP_DIRS=0
-    _CLEANUP_FILES=0
-    _CLEANUP_TOTAL=0
-    _NOW=$(date +%s)
-    # Count candidates first for progress reporting
-    for _agent_dir in "$_CLEANUP_ROOT"/*/; do
-      [ -d "$_agent_dir" ] || continue
-      for _entry in "$_agent_dir"*; do
-        [ -e "$_entry" ] || continue
-        _entry_name=$(basename "$_entry")
-        case "$_entry_name" in .cache|.config|.npm-cache|bin|beads.json) continue ;; esac
-        _MTIME=$(stat -c '%Y' "$_entry" 2>/dev/null || echo "$_NOW")
-        _AGE=$((_NOW - _MTIME))
-        if [ "$_AGE" -gt "$WORKSPACE_MAX_AGE_SECS" ]; then
-          _CLEANUP_TOTAL=$((_CLEANUP_TOTAL + 1))
-        fi
-      done
-    done
-    if [ "$_CLEANUP_TOTAL" -gt 0 ]; then
-      echo "[entrypoint] Pre-cleanup: found $_CLEANUP_TOTAL stale entries to remove (max age ${WORKSPACE_MAX_AGE_SECS}s)"
-    fi
-    for _agent_dir in "$_CLEANUP_ROOT"/*/; do
-      [ -d "$_agent_dir" ] || continue
-      _agent_base=$(basename "$_agent_dir")
-      for _entry in "$_agent_dir"*; do
-        [ -e "$_entry" ] || continue
-        _entry_name=$(basename "$_entry")
-        case "$_entry_name" in .cache|.config|.npm-cache|bin|beads.json) continue ;; esac
-        _MTIME=$(stat -c '%Y' "$_entry" 2>/dev/null || echo "$_NOW")
-        _AGE=$((_NOW - _MTIME))
-        if [ "$_AGE" -gt "$WORKSPACE_MAX_AGE_SECS" ]; then
-          _DONE=$((_CLEANUP_DIRS + _CLEANUP_FILES + 1))
-          if [ -d "$_entry" ]; then
-            echo "[entrypoint] Pre-cleanup: [$_DONE/$_CLEANUP_TOTAL] removing dir ${_agent_base}/${_entry_name}"
-            rm -rf "$_entry" 2>/dev/null && _CLEANUP_DIRS=$((_CLEANUP_DIRS + 1))
-          else
-            rm -f "$_entry" 2>/dev/null && _CLEANUP_FILES=$((_CLEANUP_FILES + 1))
+    (
+      _CLEANUP_DIRS=0
+      _CLEANUP_FILES=0
+      _NOW=$(date +%s)
+      for _agent_dir in "$_CLEANUP_ROOT"/*/; do
+        [ -d "$_agent_dir" ] || continue
+        _agent_base=$(basename "$_agent_dir")
+        for _entry in "$_agent_dir"*; do
+          [ -e "$_entry" ] || continue
+          _entry_name=$(basename "$_entry")
+          case "$_entry_name" in .cache|.config|.npm-cache|bin|beads.json) continue ;; esac
+          _MTIME=$(stat -c '%Y' "$_entry" 2>/dev/null || echo "$_NOW")
+          _AGE=$((_NOW - _MTIME))
+          if [ "$_AGE" -gt "$WORKSPACE_MAX_AGE_SECS" ]; then
+            if [ -d "$_entry" ]; then
+              echo "[entrypoint] bg-cleanup: removing dir ${_agent_base}/${_entry_name}"
+              rm -rf "$_entry" 2>/dev/null && _CLEANUP_DIRS=$((_CLEANUP_DIRS + 1))
+            else
+              rm -f "$_entry" 2>/dev/null && _CLEANUP_FILES=$((_CLEANUP_FILES + 1))
+            fi
           fi
-        fi
+        done
       done
-    done
-    if [ "$_CLEANUP_DIRS" -gt 0 ] || [ "$_CLEANUP_FILES" -gt 0 ]; then
-      echo "[entrypoint] Pre-cleanup: done — removed $_CLEANUP_DIRS dirs, $_CLEANUP_FILES files"
-    fi
+      echo "[entrypoint] bg-cleanup: done — removed $_CLEANUP_DIRS dirs, $_CLEANUP_FILES files"
+    ) &
+    echo "[entrypoint] Pre-cleanup: started in background (PID $!)"
   fi
 
   if [ -n "$AGENT_NAMES" ]; then
