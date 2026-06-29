@@ -266,7 +266,9 @@ print('\n'.join(sorted(names)))
     _CLEANUP_ROOT="${agentWorkspaceRoot:-/data/agents}"
     _CLEANUP_DIRS=0
     _CLEANUP_FILES=0
+    _CLEANUP_TOTAL=0
     _NOW=$(date +%s)
+    # Count candidates first for progress reporting
     for _agent_dir in "$_CLEANUP_ROOT"/*/; do
       [ -d "$_agent_dir" ] || continue
       for _entry in "$_agent_dir"*; do
@@ -276,7 +278,26 @@ print('\n'.join(sorted(names)))
         _MTIME=$(stat -c '%Y' "$_entry" 2>/dev/null || echo "$_NOW")
         _AGE=$((_NOW - _MTIME))
         if [ "$_AGE" -gt "$WORKSPACE_MAX_AGE_SECS" ]; then
+          _CLEANUP_TOTAL=$((_CLEANUP_TOTAL + 1))
+        fi
+      done
+    done
+    if [ "$_CLEANUP_TOTAL" -gt 0 ]; then
+      echo "[entrypoint] Pre-cleanup: found $_CLEANUP_TOTAL stale entries to remove (max age ${WORKSPACE_MAX_AGE_SECS}s)"
+    fi
+    for _agent_dir in "$_CLEANUP_ROOT"/*/; do
+      [ -d "$_agent_dir" ] || continue
+      _agent_base=$(basename "$_agent_dir")
+      for _entry in "$_agent_dir"*; do
+        [ -e "$_entry" ] || continue
+        _entry_name=$(basename "$_entry")
+        case "$_entry_name" in .cache|.config|.npm-cache|bin|beads.json) continue ;; esac
+        _MTIME=$(stat -c '%Y' "$_entry" 2>/dev/null || echo "$_NOW")
+        _AGE=$((_NOW - _MTIME))
+        if [ "$_AGE" -gt "$WORKSPACE_MAX_AGE_SECS" ]; then
+          _DONE=$((_CLEANUP_DIRS + _CLEANUP_FILES + 1))
           if [ -d "$_entry" ]; then
+            echo "[entrypoint] Pre-cleanup: [$_DONE/$_CLEANUP_TOTAL] removing dir ${_agent_base}/${_entry_name}"
             rm -rf "$_entry" 2>/dev/null && _CLEANUP_DIRS=$((_CLEANUP_DIRS + 1))
           else
             rm -f "$_entry" 2>/dev/null && _CLEANUP_FILES=$((_CLEANUP_FILES + 1))
@@ -285,7 +306,7 @@ print('\n'.join(sorted(names)))
       done
     done
     if [ "$_CLEANUP_DIRS" -gt 0 ] || [ "$_CLEANUP_FILES" -gt 0 ]; then
-      echo "[entrypoint] Pre-cleanup: removed $_CLEANUP_DIRS stale dirs, $_CLEANUP_FILES stale files"
+      echo "[entrypoint] Pre-cleanup: done — removed $_CLEANUP_DIRS dirs, $_CLEANUP_FILES files"
     fi
   fi
 
