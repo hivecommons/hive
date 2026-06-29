@@ -1026,7 +1026,7 @@ spec:
       - name: init-permissions
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
-        command: ["sh", "-c", "chown -R {{.InitContainerUID}}:{{.InitContainerGID}} /data && echo permissions-set"]
+        command: ["sh", "-c", "chown -R {{.InitContainerUID}}:{{.InitContainerGID}} /data 2>/dev/null; echo permissions-set"]
         securityContext:
           runAsUser: 0
         volumeMounts:
