@@ -6569,7 +6569,7 @@ function burnAreaChart() {
     }
 
     function kbOpenSubscriptions() {
-      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>', { width: 'min(960px, 92vw)', maxHeight: '85vh' });
+      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content" style="height:70vh;overflow-y:auto"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>', { width: 'min(960px, 92vw)', maxHeight: '85vh' });
       kbLoadSubscriptions();
     }
 
@@ -6633,7 +6633,7 @@ function burnAreaChart() {
           html += '<div style="text-align:center;padding:12px;color:var(--muted);font-size:0.75rem;border:1px dashed var(--border);border-radius:6px">No git sources yet.</div>';
         }
 
-        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Add Git Source</summary>';
+        html += '<details open style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Add Git Source</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<input id="kb-gs-url" type="text" class="kb-search-box" placeholder="https://github.com/org/repo">';
         html += '<input id="kb-gs-name" type="text" class="kb-search-box" placeholder="Display name">';
@@ -6670,7 +6670,7 @@ function burnAreaChart() {
           html += '<div style="text-align:center;padding:12px;color:var(--muted);font-size:0.75rem;border:1px dashed var(--border);border-radius:6px">No subscriptions yet.</div>';
         }
 
-        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Add Subscription</summary>';
+        html += '<details open style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Add Subscription</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<input id="kb-sub-url" type="text" class="kb-search-box" placeholder="https://wiki.example.com/mcp">';
         html += `<input id="kb-sub-name" type="text" class="kb-search-box" placeholder="Display name">`;
@@ -6717,7 +6717,7 @@ function burnAreaChart() {
           html += '<div style="text-align:center;padding:12px;color:var(--muted);font-size:0.75rem;border:1px dashed var(--border);border-radius:6px">No documents imported yet.</div>';
         }
 
-        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Import Document</summary>';
+        html += '<details open style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Import Document</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<input id="kb-doc-url" type="text" class="kb-search-box" placeholder="https://arxiv.org/pdf/2309.06180">';
         html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
@@ -6731,7 +6731,7 @@ function burnAreaChart() {
         html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbImportDocFromModal()">Import</button>';
         html += '</div></div></details>';
 
-        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">📚 Import from Context7</summary>';
+        html += '<details open style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">📚 Import from Context7</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<div style="font-size:0.72rem;color:var(--muted)">Search Context7 for library documentation (e.g. "vllm", "next.js", "kubernetes").</div>';
         html += '<div style="display:flex;gap:8px">';
@@ -6755,7 +6755,7 @@ function burnAreaChart() {
         html += '</div>';
         html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Paste markdown or JSON directly. Headings (# or ##) become separate facts. JSON should be an array of {title, body, type, tags} objects.</div>';
 
-        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Paste Content</summary>';
+        html += '<details open style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Paste Content</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += `<select id="kb-import-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">${layerOpts2}</select>`;
         html += `<select id="kb-import-format" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
