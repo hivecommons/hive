@@ -6597,7 +6597,7 @@ function burnAreaChart() {
         html += '</div>';
 
         // ── Git Sources section ──
-        html += '<div style="margin-bottom:18px">';
+        html += '<div>';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Git Sources</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">cloned &amp; indexed locally</span>';
@@ -6638,9 +6638,9 @@ function burnAreaChart() {
         html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (default: main)">';
         html += `<select id="kb-gs-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
           <option value="project">Project</option>
-          <option value="personal">Personal</option>
           <option value="org">Org</option>
           <option value="community">Community</option>
+          <option value="personal">Personal</option>
         </select>`;
         html += '</div>';
         html += '<div style="display:flex;justify-content:flex-end">';
@@ -6649,7 +6649,7 @@ function burnAreaChart() {
         html += '</div>';
 
         // ── Wiki Subscriptions section ──
-        html += '<div style="border-top:1px solid var(--border);padding-top:14px">';
+        html += '<div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Wiki Subscriptions</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">remote llm-wiki endpoint</span>';
@@ -6661,7 +6661,7 @@ function burnAreaChart() {
             html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px">';
             html += `<div><div style="font-size:0.82rem;font-weight:600;color:var(--fg)">${escapeHtml(s.name || s.url)}</div>`;
             html += `<div style="font-size:0.7rem;color:var(--muted)">${escapeHtml(s.url)} &middot; ${escapeHtml(s.layer || 'org')}</div></div>`;
-            html += `<button class="nous-btn" style="background:#dc2626;color:white;font-size:0.7rem;padding:4px 8px" onclick="kbRemoveSub('${escapeHtml(s.url)}')">Remove</button>`;
+            html += `<button class="nous-btn" style="background:#dc2626;color:white;font-size:0.7rem;padding:4px 8px;flex-shrink:0;margin-left:8px" onclick="kbRemoveSub('${escapeHtml(s.url)}')">Remove</button>`;
             html += '</div>';
           }
         } else {
@@ -6674,17 +6674,19 @@ function burnAreaChart() {
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         html += `<input id="kb-sub-name" type="text" class="kb-search-box" placeholder="Display name">`;
         html += `<select id="kb-sub-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
+          <option value="project">Project</option>
           <option value="org">Org</option>
           <option value="community">Community</option>
+          <option value="personal">Personal</option>
         </select>`;
         html += '</div>';
         html += '<div style="display:flex;justify-content:flex-end">';
-        html += '<button class="nous-btn" style="background:#2563eb;color:white" onclick="kbAddSub()">Add</button>';
+        html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbAddSub()">Add</button>';
         html += '</div></div></details>';
         html += '</div>';
 
         // ── Import Documents section ──
-        html += '<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">';
+        html += '<div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Documents</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">PDF, HTML, DOCX, text</span>';
@@ -6717,8 +6719,8 @@ function burnAreaChart() {
         html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
         html += `<select id="kb-doc-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
           <option value="project">Project</option>
-          <option value="community">Community</option>
           <option value="org">Org</option>
+          <option value="community">Community</option>
           <option value="personal">Personal</option>
         </select>`;
         html += '</div>';
@@ -6743,14 +6745,14 @@ function burnAreaChart() {
           return `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
         }).join('') || '<option value="project">Project</option>';
 
-        html += '<div style="border-top:1px solid var(--border);padding-top:14px;margin-top:4px">';
+        html += '<div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Import Facts</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">markdown or JSON</span>';
         html += '</div>';
         html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Paste markdown or JSON content directly. Markdown headings (# or ##) become separate facts. JSON should be an array of {title, body, type, tags} objects.</div>';
 
-        html += '<details style="margin-top:2px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Paste Content</summary>';
+        html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Paste Content</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         html += `<select id="kb-import-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">${layerOpts2}</select>`;
@@ -6762,7 +6764,7 @@ function burnAreaChart() {
         html += '<textarea id="kb-import-content" rows="8" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:\'SF Mono\',\'Fira Code\',monospace;resize:vertical;min-height:120px;box-sizing:border-box" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
         html += '<div style="display:flex;align-items:center;justify-content:space-between">';
         html += '<label style="font-size:0.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:4px"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" style="font-size:0.72rem" onchange="kbLoadFile(this)"></label>';
-        html += '<button class="nous-btn" style="background:#2563eb;color:white" onclick="kbSubmitImport()">Import</button>';
+        html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbSubmitImport()">Import</button>';
         html += '</div></div></details>';
         html += '</div>';
 
