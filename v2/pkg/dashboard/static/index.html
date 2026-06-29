@@ -6569,7 +6569,7 @@ function burnAreaChart() {
     }
 
     function kbOpenSubscriptions() {
-      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>', { width: 'min(720px, 85vw)', maxHeight: '85vh' });
+      kbShowModal('🔗 Knowledge Sources', '<div id="kb-subs-content"><div style="text-align:center;padding:20px;color:var(--muted)">Loading...</div></div>', { width: 'min(960px, 92vw)', maxHeight: '85vh' });
       kbLoadSubscriptions();
     }
 
@@ -6591,18 +6591,24 @@ function burnAreaChart() {
         let html = '';
 
         // Explainer
-        html += '<div style="font-size:0.75rem;color:var(--muted);line-height:1.5;margin-bottom:14px;padding:10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">';
+        html += '<div style="font-size:0.75rem;color:var(--muted);line-height:1.5;margin-bottom:16px;padding:10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">';
         html += '<strong style="color:var(--fg)">How agents use knowledge sources</strong><br>';
         html += 'Before each kick, the primer queries all connected sources and injects the most relevant facts into the agent\'s prompt. Agents never talk to sources directly &mdash; knowledge is primed deterministically by file paths and keywords.';
         html += '</div>';
 
-        // ── Git Sources section ──
+        // ── Two-column grid ──
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">';
+
+        // ════ LEFT COLUMN: Connections ════
         html += '<div>';
+
+        // ── Git Sources section ──
+        html += '<div style="margin-bottom:20px">';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Git Sources</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">cloned &amp; indexed locally</span>';
         html += '</div>';
-        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">A GitHub repo (or subdirectory) containing markdown files. Hive clones it locally, indexes the content with Fisher-Rao scored search, and syncs every 5 minutes. No running service needed on the other end.</div>';
+        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Clone a GitHub repo locally. Hive indexes the markdown with Fisher-Rao scored search and syncs every 5 minutes.</div>';
 
         if (gitSources && gitSources.length > 0) {
           for (const gs of gitSources) {
@@ -6630,11 +6636,8 @@ function burnAreaChart() {
         html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Add Git Source</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<input id="kb-gs-url" type="text" class="kb-search-box" placeholder="https://github.com/org/repo">';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         html += '<input id="kb-gs-name" type="text" class="kb-search-box" placeholder="Display name">';
         html += '<input id="kb-gs-subpath" type="text" class="kb-search-box" placeholder="Subpath (e.g. docs/skills)">';
-        html += '</div>';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         html += '<input id="kb-gs-branch" type="text" class="kb-search-box" placeholder="Branch (default: main)">';
         html += `<select id="kb-gs-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
           <option value="project">Project</option>
@@ -6642,19 +6645,18 @@ function burnAreaChart() {
           <option value="community">Community</option>
           <option value="personal">Personal</option>
         </select>`;
-        html += '</div>';
         html += '<div style="display:flex;justify-content:flex-end">';
         html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbAddGitSource()">Clone &amp; Index</button>';
         html += '</div></div></details>';
         html += '</div>';
 
         // ── Wiki Subscriptions section ──
-        html += '<div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">';
+        html += '<div>';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Wiki Subscriptions</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">remote llm-wiki endpoint</span>';
         html += '</div>';
-        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">A running llm-wiki HTTP service hosted by your team or the community. Hive queries it via the MCP protocol at prime time &mdash; facts stay on the remote server, only search results are fetched.</div>';
+        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">A running llm-wiki HTTP service. Hive queries it via MCP at prime time &mdash; facts stay remote, only search results are fetched.</div>';
 
         if (subs && subs.length > 0) {
           for (const s of subs) {
@@ -6671,7 +6673,6 @@ function burnAreaChart() {
         html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Add Subscription</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<input id="kb-sub-url" type="text" class="kb-search-box" placeholder="https://wiki.example.com/mcp">';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         html += `<input id="kb-sub-name" type="text" class="kb-search-box" placeholder="Display name">`;
         html += `<select id="kb-sub-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
           <option value="project">Project</option>
@@ -6679,19 +6680,23 @@ function burnAreaChart() {
           <option value="community">Community</option>
           <option value="personal">Personal</option>
         </select>`;
-        html += '</div>';
         html += '<div style="display:flex;justify-content:flex-end">';
         html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbAddSub()">Add</button>';
         html += '</div></div></details>';
         html += '</div>';
 
+        html += '</div>'; // end left column
+
+        // ════ RIGHT COLUMN: Imports ════
+        html += '<div>';
+
         // ── Import Documents section ──
-        html += '<div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">';
+        html += '<div style="margin-bottom:20px">';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Documents</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">PDF, HTML, DOCX, text</span>';
         html += '</div>';
-        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Import external documents (research papers, specs, design docs) from a URL or local file. Content is parsed into chunks and stored as knowledge facts that agents can search and cite.</div>';
+        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Import external documents from a URL. Content is parsed into chunks and stored as knowledge facts that agents can search and cite.</div>';
 
         if (documents && documents.length > 0) {
           for (const d of documents) {
@@ -6715,7 +6720,6 @@ function burnAreaChart() {
         html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Import Document</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
         html += '<input id="kb-doc-url" type="text" class="kb-search-box" placeholder="https://arxiv.org/pdf/2309.06180">';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         html += '<input id="kb-doc-name" type="text" class="kb-search-box" placeholder="Name (optional, derived from URL)">';
         html += `<select id="kb-doc-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
           <option value="project">Project</option>
@@ -6723,7 +6727,6 @@ function burnAreaChart() {
           <option value="community">Community</option>
           <option value="personal">Personal</option>
         </select>`;
-        html += '</div>';
         html += '<div style="display:flex;justify-content:flex-end">';
         html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbImportDocFromModal()">Import</button>';
         html += '</div></div></details>';
@@ -6745,28 +6748,29 @@ function burnAreaChart() {
           return `<option value="${escapeHtml(l.type)}"${sel}>${escapeHtml(KB_LAYER_LABELS[l.type] || l.type)}</option>`;
         }).join('') || '<option value="project">Project</option>';
 
-        html += '<div style="border-top:1px solid var(--border);padding-top:16px;margin-top:16px">';
+        html += '<div>';
         html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
         html += '<span style="font-size:0.92rem;font-weight:600;color:var(--fg)">Import Facts</span>';
         html += '<span style="font-size:0.68rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 6px">markdown or JSON</span>';
         html += '</div>';
-        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Paste markdown or JSON content directly. Markdown headings (# or ##) become separate facts. JSON should be an array of {title, body, type, tags} objects.</div>';
+        html += '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:10px">Paste markdown or JSON directly. Headings (# or ##) become separate facts. JSON should be an array of {title, body, type, tags} objects.</div>';
 
         html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:0.78rem;font-weight:600;color:var(--fg)">Paste Content</summary>';
         html += '<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">';
-        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">';
         html += `<select id="kb-import-layer" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">${layerOpts2}</select>`;
         html += `<select id="kb-import-format" style="padding:7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem">
           <option value="markdown" selected>Markdown</option>
           <option value="json">JSON</option>
         </select>`;
-        html += '</div>';
         html += '<textarea id="kb-import-content" rows="8" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem;font-family:\'SF Mono\',\'Fira Code\',monospace;resize:vertical;min-height:120px;box-sizing:border-box" placeholder="# Guard .join() against undefined\n\nAlways use (arr || []).join(\',\')..."></textarea>';
         html += '<div style="display:flex;align-items:center;justify-content:space-between">';
         html += '<label style="font-size:0.72rem;color:var(--muted);cursor:pointer;display:flex;align-items:center;gap:4px"><span>or load from file:</span><input type="file" accept=".md,.json,.txt" style="font-size:0.72rem" onchange="kbLoadFile(this)"></label>';
         html += '<button class="nous-btn" style="background:#2563eb;color:white;padding:8px 20px" onclick="kbSubmitImport()">Import</button>';
         html += '</div></div></details>';
         html += '</div>';
+
+        html += '</div>'; // end right column
+        html += '</div>'; // end two-column grid
 
         el.innerHTML = html;
       } catch (e) {
