@@ -1987,6 +1987,10 @@
           <div class="kb-stat" onclick="acmmShowOverallDialog()" style="cursor:pointer"><div class="val" id="acmm-overall-level">--</div><div class="lbl">Overall ACMM</div></div>
           <div class="kb-stat" onclick="acmmShowAllCriteriaDialog()" style="cursor:pointer"><div class="val" id="acmm-criteria-ratio">--</div><div class="lbl">Criteria Passed</div></div>
         </div>
+        <div id="acmm-repo-selector" style="display:none;margin-top:8px;font-size:0.75rem;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <span style="color:var(--muted)">Repo:</span>
+          <button onclick="acmmSelectRepo(null)" id="acmm-repo-btn-all" style="padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);cursor:pointer;font-size:0.72rem;color:var(--text);font-weight:600">All (aggregate)</button>
+        </div>
         <div id="acmm-level-bars" style="margin-top:12px"></div>
         <div id="acmm-eval-meta" style="margin-top:10px;font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between">
           <span id="acmm-eval-source"></span>
@@ -9039,11 +9043,177 @@ function burnAreaChart() {
       6: 'Auto issue generation, multi-agent orchestration, strategic dashboards, merge queues, and full governance.'
     };
     let _acmmEvalData = null;
+    let _acmmSelectedRepo = null; // null = aggregate view
 
-    function acmmShowLevelDialog(level) {
+    function acmmGetActiveData() {
+      if (!_acmmEvalData) return null;
+      if (!_acmmSelectedRepo || !_acmmEvalData.repo_results) return _acmmEvalData;
+      return (_acmmEvalData.repo_results || []).find(r => r.repo === _acmmSelectedRepo) || _acmmEvalData;
+    }
+
+    function acmmCriterionRow(c, repoName) {
+      const icon = c.passed ? '✅' : '❌';
+      const patternList = (c.patterns || []).map(p => '<code style="font-size:0.7rem;background:var(--bg);padding:1px 4px;border-radius:3px">' + escapeHtml(p) + '</code>').join(' ');
+      let issueBtn = '';
+      if (!c.passed) {
+        const repo = repoName || _acmmSelectedRepo || '';
+        const escapedId = escapeHtml(c.id).replace(/'/g, "\\'");
+        const escapedRepo = escapeHtml(repo).replace(/'/g, "\\'");
+        issueBtn = '<button onclick="event.stopPropagation();acmmCreateIssue(\'' + escapedRepo + '\',\'' + escapedId + '\',' + c.level + ',this)" ' +
+          'style="margin-left:auto;padding:2px 8px;font-size:0.68rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--muted);white-space:nowrap" ' +
+          'title="Open GitHub issue for agents to fix this">📋 Open Issue</button>';
+      }
+      return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+        '<div style="display:flex;align-items:center;gap:6px">' +
+        '<span>' + icon + '</span>' +
+        '<span style="font-size:0.82rem;font-weight:500">' + escapeHtml(c.name) + '</span>' +
+        issueBtn +
+        '</div>' +
+        '<div style="margin-top:3px;margin-left:24px;font-size:0.72rem;color:var(--muted)">Checks: ' + patternList + '</div>' +
+        '</div>';
+    }
+
+    async function acmmCreateIssue(repo, criterionId, level, btn) {
+      if (!repo) {
+        const repos = (_acmmEvalData.repo_results || []).map(r => r.repo);
+        if (repos.length === 1) {
+          repo = repos[0];
+        } else {
+          acmmShowRepoPickerForIssue(criterionId, level);
+          return;
+        }
+      }
+      const origText = btn.textContent;
+      btn.textContent = '⏳ Creating...';
+      btn.disabled = true;
+      try {
+        const r = await fetch('/api/acmm/issue', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({repo, criterion_id: criterionId, criterion_level: level})
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          btn.textContent = '⚠ Failed';
+          btn.title = errText;
+          setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+          return;
+        }
+        const data = await r.json();
+        btn.innerHTML = '✅ <a href="' + escapeHtml(data.issue_url) + '" target="_blank" style="color:var(--muted);font-size:0.68rem">#' + data.issue_number + '</a>';
+        btn.style.borderColor = '#238636';
+      } catch (e) {
+        btn.textContent = '⚠ Error';
+        setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+      }
+    }
+
+    function acmmShowRepoPickerForIssue(criterionId, level) {
+      const repos = (_acmmEvalData.repo_results || []).map(r => r.repo);
+      let html = '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">Which repository should this issue be opened on?</p>';
+      for (const repo of repos) {
+        const repoData = (_acmmEvalData.repo_results || []).find(r => r.repo === repo);
+        const criterion = repoData ? (repoData.criteria_results || []).find(c => c.id === criterionId) : null;
+        const already = criterion && criterion.passed;
+        const escapedId = escapeHtml(criterionId).replace(/'/g, "\\'");
+        const escapedRepo = escapeHtml(repo).replace(/'/g, "\\'");
+        if (already) {
+          html += '<div style="padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);opacity:0.5">' +
+            '<span style="font-size:0.82rem">✅ ' + escapeHtml(repo) + '</span>' +
+            '<span style="font-size:0.72rem;color:var(--muted);margin-left:8px">(already passing)</span></div>';
+        } else {
+          html += '<div onclick="acmmCloseDialog();acmmCreateIssueDirectFromPicker(\'' + escapedRepo + '\',\'' + escapedId + '\',' + level + ')" ' +
+            'style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" ' +
+            'onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
+            '<span style="font-size:0.82rem">❌ ' + escapeHtml(repo) + '</span></div>';
+        }
+      }
+      acmmShowDialog('Open Issue — Select Repository', html);
+    }
+
+    async function acmmCreateIssueDirectFromPicker(repo, criterionId, level) {
+      try {
+        const r = await fetch('/api/acmm/issue', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({repo, criterion_id: criterionId, criterion_level: level})
+        });
+        if (!r.ok) {
+          const errText = await r.text();
+          acmmShowDialog('Issue Creation Failed', '<p style="color:#da3633;font-size:0.82rem">' + escapeHtml(errText) + '</p>');
+          return;
+        }
+        const data = await r.json();
+        acmmShowDialog('Issue Created', '<p style="font-size:0.82rem">Issue <a href="' + escapeHtml(data.issue_url) + '" target="_blank" style="color:#58a6ff">#' + data.issue_number + '</a> created on <strong>' + escapeHtml(repo) + '</strong> with <code>acmm</code> and <code>ai-fix-requested</code> labels.</p>');
+      } catch (e) {
+        acmmShowDialog('Issue Creation Failed', '<p style="color:#da3633;font-size:0.82rem">Network error: ' + escapeHtml(e.message) + '</p>');
+      }
+    }
+
+    function acmmOpenAllIssuesForLevel(level) {
       if (!_acmmEvalData) return;
-      const lvlData = (_acmmEvalData.levels || []).find(l => l.level === level);
-      const criteria = (_acmmEvalData.criteria_results || []).filter(c => c.level === level);
+      const active = acmmGetActiveData();
+      const criteria = (active.criteria_results || active.CriteriaResults || []).filter(c => c.level === level && !c.passed);
+      if (criteria.length === 0) return;
+      const repos = (_acmmEvalData.repo_results || []);
+      const hasMultiRepo = repos.length > 1;
+      let html = '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">This will create ' + criteria.length + ' issue(s) for all failing criteria at L' + level + '.</p>';
+      if (hasMultiRepo && !_acmmSelectedRepo) {
+        html += '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">Select a target repo first, or issues will be created for each repo where the criterion fails.</p>';
+      }
+      html += '<div style="max-height:200px;overflow-y:auto;margin-bottom:12px">';
+      for (const c of criteria) { html += '<div style="font-size:0.78rem;padding:2px 0">❌ ' + escapeHtml(c.name) + '</div>'; }
+      html += '</div>';
+      html += '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button onclick="acmmCloseDialog()" style="padding:6px 14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted);font-size:0.78rem">Cancel</button>' +
+        '<button onclick="acmmBatchCreateIssues(' + level + ')" style="padding:6px 14px;background:#238636;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:0.78rem;font-weight:600">Create ' + criteria.length + ' Issue(s)</button></div>';
+      acmmShowDialog('Open Issues for L' + level + ' ' + (ACMM_LEVEL_NAMES[level] || ''), html);
+    }
+
+    async function acmmBatchCreateIssues(level) {
+      const active = acmmGetActiveData();
+      const criteria = (active.criteria_results || []).filter(c => c.level === level && !c.passed);
+      const repos = (_acmmEvalData.repo_results || []);
+      const targetRepo = _acmmSelectedRepo || (repos.length === 1 ? repos[0].repo : null);
+
+      let created = 0, failed = 0;
+      acmmShowDialog('Creating Issues...', '<p id="acmm-batch-progress" style="font-size:0.82rem">0/' + criteria.length + ' created...</p>');
+
+      for (const c of criteria) {
+        if (targetRepo) {
+          try {
+            const r = await fetch('/api/acmm/issue', {
+              method: 'POST', headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({repo: targetRepo, criterion_id: c.id, criterion_level: level})
+            });
+            if (r.ok) created++; else failed++;
+          } catch { failed++; }
+        } else {
+          for (const rr of repos) {
+            const rc = (rr.criteria_results || []).find(x => x.id === c.id);
+            if (rc && !rc.passed) {
+              try {
+                const r = await fetch('/api/acmm/issue', {
+                  method: 'POST', headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({repo: rr.repo, criterion_id: c.id, criterion_level: level})
+                });
+                if (r.ok) created++; else failed++;
+              } catch { failed++; }
+            }
+          }
+        }
+        const prog = document.getElementById('acmm-batch-progress');
+        if (prog) prog.textContent = created + '/' + criteria.length + ' created' + (failed > 0 ? ' (' + failed + ' failed)' : '') + '...';
+      }
+      acmmShowDialog('Issues Created', '<p style="font-size:0.82rem">' + created + ' issue(s) created' + (failed > 0 ? ', ' + failed + ' failed' : '') + ' with <code>acmm</code> + <code>ai-fix-requested</code> labels.</p>');
+    }
+
+    function acmmShowLevelDialog(level, repoName) {
+      if (!_acmmEvalData) return;
+      const source = repoName ? (_acmmEvalData.repo_results || []).find(r => r.repo === repoName) : acmmGetActiveData();
+      if (!source) return;
+      const lvlData = (source.levels || source.Levels || []).find(l => l.level === level);
+      const criteria = (source.criteria_results || source.CriteriaResults || []).filter(c => c.level === level);
       const name = ACMM_LEVEL_NAMES[level] || ('L' + level);
       const desc = ACMM_LEVEL_DESCRIPTIONS[level] || '';
       const pct = lvlData ? Math.round(lvlData.score * 100) : 0;
@@ -9051,6 +9221,7 @@ function burnAreaChart() {
       const statusColor = passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
       const statusText = passed ? '✓ Passed' : '✗ Not passed';
       const threshold = lvlData ? Math.round(lvlData.threshold * 100) : 70;
+      const failCount = criteria.filter(c => !c.passed).length;
 
       const byCategory = {};
       for (const c of criteria) {
@@ -9063,26 +9234,24 @@ function burnAreaChart() {
       for (const [cat, items] of Object.entries(byCategory)) {
         criteriaHtml += '<div style="margin-top:10px"><div style="font-size:0.7rem;text-transform:uppercase;color:var(--muted);margin-bottom:4px;font-weight:600">' + escapeHtml(cat) + '</div>';
         for (const c of items) {
-          const icon = c.passed ? '✅' : '❌';
-          const patternList = (c.patterns || []).map(p => '<code style="font-size:0.7rem;background:var(--bg);padding:1px 4px;border-radius:3px">' + escapeHtml(p) + '</code>').join(' ');
-          criteriaHtml += '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
-            '<div style="display:flex;align-items:center;gap:6px">' +
-            '<span>' + icon + '</span>' +
-            '<span style="font-size:0.82rem;font-weight:500">' + escapeHtml(c.name) + '</span>' +
-            '</div>' +
-            '<div style="margin-top:3px;margin-left:24px;font-size:0.72rem;color:var(--muted)">Checks: ' + patternList + '</div>' +
-            '</div>';
+          criteriaHtml += acmmCriterionRow(c, repoName);
         }
         criteriaHtml += '</div>';
       }
 
+      let batchBtn = '';
+      if (failCount > 0) {
+        batchBtn = '<button onclick="acmmOpenAllIssuesForLevel(' + level + ')" style="padding:4px 10px;font-size:0.72rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--muted);margin-left:8px" title="Open issues for all failing criteria at this level">📋 Open All (' + failCount + ')</button>';
+      }
+
       acmmShowDialog(
-        'L' + level + ' ' + name,
+        'L' + level + ' ' + name + (repoName ? ' — ' + repoName : ''),
         '<div style="margin-bottom:12px">' +
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">' +
         '<span style="font-size:1.5rem;font-weight:700;color:' + statusColor + '">' + pct + '%</span>' +
         '<span style="font-size:0.82rem;color:' + statusColor + ';font-weight:600">' + statusText + '</span>' +
         '<span style="font-size:0.72rem;color:var(--muted)">(threshold: ' + threshold + '%)</span>' +
+        batchBtn +
         '</div>' +
         '<p style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">' + escapeHtml(desc) + '</p>' +
         '</div>' +
@@ -9094,12 +9263,35 @@ function burnAreaChart() {
     function acmmShowCodebaseDialog() {
       if (!_acmmEvalData) return;
       const d = _acmmEvalData;
-      const name = ACMM_LEVEL_NAMES[d.codebase_level] || 'None';
-      let html = '<div style="margin-bottom:12px">' +
-        '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 8px">Codebase readiness measures whether the repo has the files, configs, and tooling that enable AI-native development. Each level requires ≥70% of its criteria to pass, and all preceding levels must also pass.</p>' +
-        '<div style="font-size:0.82rem"><strong>Current level:</strong> L' + d.codebase_level + ' ' + escapeHtml(name) + '</div></div>';
+      const hasMultiRepo = (d.repo_results || []).length > 1;
+      const active = acmmGetActiveData();
+      const codeLevel = active.codebase_level !== undefined ? active.codebase_level : active.CodebaseLevel;
+      const name = ACMM_LEVEL_NAMES[codeLevel] || 'None';
 
-      for (const lvl of (d.levels || [])) {
+      let html = '<div style="margin-bottom:12px">' +
+        '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 8px">Codebase readiness measures whether repos have the files, configs, and tooling that enable AI-native development. Each level requires ≥70% of its criteria to pass, and all preceding levels must also pass.</p>';
+
+      if (hasMultiRepo) {
+        html += '<p style="font-size:0.78rem;color:var(--muted);margin:0 0 8px"><strong>Aggregate view:</strong> a criterion passes if it exists in <em>any</em> repo. Select a repo below for per-repo detail.</p>';
+      }
+      html += '<div style="font-size:0.82rem"><strong>Current level:</strong> L' + codeLevel + ' ' + escapeHtml(name) + '</div></div>';
+
+      if (hasMultiRepo) {
+        html += '<div style="margin-bottom:12px"><div style="font-size:0.72rem;text-transform:uppercase;color:var(--muted);margin-bottom:6px;font-weight:600">Per-Repository Breakdown</div>';
+        for (const rr of d.repo_results) {
+          const rName = ACMM_LEVEL_NAMES[rr.codebase_level] || 'None';
+          const rColor = rr.codebase_level >= 2 ? '#238636' : (rr.codebase_level > 0 ? '#d29922' : '#da3633');
+          html += '<div onclick="acmmShowRepoDetail(\'' + escapeHtml(rr.repo).replace(/'/g, "\\'") + '\')" ' +
+            'style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:border-color .15s" ' +
+            'onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
+            '<span style="font-size:0.82rem;font-weight:500">' + escapeHtml(rr.repo) + '</span>' +
+            '<span style="font-size:0.75rem;color:' + rColor + ';font-weight:600">L' + rr.codebase_level + ' ' + escapeHtml(rName) + ' (' + rr.criteria_passed + '/' + rr.criteria_total + ')</span></div>';
+        }
+        html += '</div>';
+      }
+
+      const levels = active.levels || active.Levels || [];
+      for (const lvl of levels) {
         const pct = Math.round(lvl.score * 100);
         const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
         html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ')" style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
@@ -9108,7 +9300,28 @@ function burnAreaChart() {
           '<span style="font-size:0.75rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + ' (' + pct + '%)</span></div>' +
           '<div style="margin-top:4px;height:4px;background:var(--card-bg);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
       }
-      acmmShowDialog('Codebase Readiness — L' + d.codebase_level + ' ' + escapeHtml(name), html);
+      acmmShowDialog('Codebase Readiness — L' + codeLevel + ' ' + escapeHtml(name), html);
+    }
+
+    function acmmShowRepoDetail(repoName) {
+      if (!_acmmEvalData) return;
+      const rr = (_acmmEvalData.repo_results || []).find(r => r.repo === repoName);
+      if (!rr) return;
+      const name = ACMM_LEVEL_NAMES[rr.codebase_level] || 'None';
+      let html = '<div style="margin-bottom:8px;font-size:0.82rem"><strong>Level:</strong> L' + rr.codebase_level + ' ' + escapeHtml(name) + '  |  <strong>Criteria:</strong> ' + rr.criteria_passed + '/' + rr.criteria_total + '</div>';
+      for (const lvl of (rr.levels || [])) {
+        const pct = Math.round(lvl.score * 100);
+        const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+        const failCount = (rr.criteria_results || []).filter(c => c.level === lvl.level && !c.passed).length;
+        html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ',\'' + escapeHtml(repoName).replace(/'/g, "\\'") + '\')" ' +
+          'style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" ' +
+          'onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between">' +
+          '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+          '<span style="font-size:0.75rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + '</span></div>' +
+          '<div style="margin-top:4px;height:4px;background:var(--card-bg);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
+      }
+      acmmShowDialog(escapeHtml(repoName) + ' — L' + rr.codebase_level, html);
     }
 
     function acmmShowOpsDialog() {
@@ -9136,8 +9349,6 @@ function burnAreaChart() {
     function acmmShowOverallDialog() {
       if (!_acmmEvalData) return;
       const d = _acmmEvalData;
-      const codeName = ACMM_LEVEL_NAMES[d.codebase_level] || 'None';
-      const opsName = ACMM_LEVEL_NAMES[d.operational_level] || 'Unknown';
       const overallName = ACMM_LEVEL_NAMES[d.overall_level] || 'None';
       const lower = d.codebase_level <= d.operational_level ? 'codebase readiness' : 'operational autonomy';
       acmmShowDialog('Overall ACMM Level — L' + d.overall_level + ' ' + escapeHtml(overallName),
@@ -9156,16 +9367,27 @@ function burnAreaChart() {
     function acmmShowAllCriteriaDialog() {
       if (!_acmmEvalData) return;
       const d = _acmmEvalData;
-      let html = '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">' + d.criteria_passed + ' of ' + d.criteria_total + ' criteria detected in the repository. Click a level row to see details.</p>';
+      const active = acmmGetActiveData();
+      const results = active.criteria_results || active.CriteriaResults || [];
+      const levels = active.levels || active.Levels || [];
+      const totalPassed = results.filter(c => c.passed).length;
+      const hasMultiRepo = (d.repo_results || []).length > 1;
 
-      for (const lvl of (d.levels || [])) {
-        const criteria = (d.criteria_results || []).filter(c => c.level === lvl.level);
+      let html = '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">' + totalPassed + ' of ' + results.length + ' criteria detected' + (hasMultiRepo ? ' (aggregate across ' + d.repo_results.length + ' repos)' : '') + '. Click a level row to see details.</p>';
+
+      for (const lvl of levels) {
+        const criteria = results.filter(c => c.level === lvl.level);
         const pct = Math.round(lvl.score * 100);
         const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+        const failCount = criteria.filter(c => !c.passed).length;
         html += '<div style="margin-bottom:8px">' +
           '<div onclick="acmmCloseDialog();acmmShowLevelDialog(' + lvl.level + ')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
           '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
-          '<span style="font-size:0.75rem;color:' + color + '">' + lvl.matched + '/' + lvl.total + '</span></div>';
+          '<div style="display:flex;align-items:center;gap:6px">';
+        if (failCount > 0) {
+          html += '<button onclick="event.stopPropagation();acmmOpenAllIssuesForLevel(' + lvl.level + ')" style="padding:2px 6px;font-size:0.65rem;background:var(--card-bg);border:1px solid var(--border);border-radius:3px;cursor:pointer;color:var(--muted)">📋 ' + failCount + '</button>';
+        }
+        html += '<span style="font-size:0.75rem;color:' + color + '">' + lvl.matched + '/' + lvl.total + '</span></div></div>';
         for (const c of criteria) {
           html += '<div style="display:flex;align-items:center;gap:6px;padding:3px 8px 3px 20px;font-size:0.78rem">' +
             '<span>' + (c.passed ? '✅' : '❌') + '</span>' +
@@ -9173,7 +9395,7 @@ function burnAreaChart() {
         }
         html += '</div>';
       }
-      acmmShowDialog('All Criteria — ' + d.criteria_passed + '/' + d.criteria_total, html);
+      acmmShowDialog('All Criteria — ' + totalPassed + '/' + results.length, html);
     }
 
     function acmmShowDialog(title, bodyHtml) {
@@ -9186,7 +9408,7 @@ function burnAreaChart() {
         document.body.appendChild(overlay);
       }
       overlay.style.display = 'flex';
-      overlay.innerHTML = '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:560px;width:92%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">' +
+      overlay.innerHTML = '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:20px;max-width:600px;width:92%;max-height:80vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3)">' +
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">' +
         '<h3 style="margin:0;font-size:1rem;font-weight:700;color:var(--text)">' + title + '</h3>' +
         '<button onclick="acmmCloseDialog()" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--muted);padding:4px">✕</button></div>' +
@@ -9198,52 +9420,93 @@ function burnAreaChart() {
       if (overlay) overlay.style.display = 'none';
     }
 
+    function acmmSelectRepo(repoName) {
+      _acmmSelectedRepo = repoName;
+      acmmRenderCard();
+    }
+
+    function acmmRenderCard() {
+      const d = _acmmEvalData;
+      if (!d) return;
+
+      const fmtLevel = (lvl) => {
+        const name = ACMM_LEVEL_NAMES[lvl] || ('L'+lvl);
+        return '<span style="font-size:1.2rem;font-weight:700">L' + lvl + '</span><br><span style="font-size:0.7rem;color:var(--muted)">' + escapeHtml(name) + '</span>';
+      };
+
+      setIfChanged(document.getElementById('acmm-codebase-level'), fmtLevel(d.codebase_level));
+      setIfChanged(document.getElementById('acmm-ops-level'), fmtLevel(d.operational_level));
+      setIfChanged(document.getElementById('acmm-overall-level'), fmtLevel(d.overall_level));
+      setIfChanged(document.getElementById('acmm-criteria-ratio'),
+        '<span style="font-size:1.2rem;font-weight:700">' + d.criteria_passed + '/' + d.criteria_total + '</span>');
+
+      // Repo selector
+      const selectorEl = document.getElementById('acmm-repo-selector');
+      if (selectorEl && d.repo_results && d.repo_results.length > 1) {
+        selectorEl.style.display = 'flex';
+        const allBtn = document.getElementById('acmm-repo-btn-all');
+        if (allBtn) allBtn.style.fontWeight = _acmmSelectedRepo ? '400' : '600';
+        const existing = selectorEl.querySelectorAll('.acmm-repo-btn-repo');
+        existing.forEach(b => b.remove());
+        for (const rr of d.repo_results) {
+          let btn = selectorEl.querySelector('[data-acmm-repo="' + rr.repo + '"]');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.className = 'acmm-repo-btn-repo';
+            btn.setAttribute('data-acmm-repo', rr.repo);
+            btn.style.cssText = 'padding:2px 8px;border-radius:4px;border:1px solid var(--border);background:var(--bg);cursor:pointer;font-size:0.72rem;color:var(--text)';
+            btn.onclick = () => acmmSelectRepo(rr.repo);
+            selectorEl.appendChild(btn);
+          }
+          btn.textContent = rr.repo + ' (L' + rr.codebase_level + ')';
+          btn.style.fontWeight = _acmmSelectedRepo === rr.repo ? '600' : '400';
+        }
+      } else if (selectorEl) {
+        selectorEl.style.display = 'none';
+      }
+
+      // Per-level bars from active data
+      const active = acmmGetActiveData();
+      const levels = active.levels || active.Levels || d.levels || [];
+      const barsEl = document.getElementById('acmm-level-bars');
+      if (barsEl) {
+        let html = '';
+        for (const lvl of levels) {
+          const pct = Math.round(lvl.score * 100);
+          const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+          html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ')" style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:0.75rem;cursor:pointer;padding:2px 4px;border-radius:4px;transition:background .15s" onmouseover="this.style.background=\'var(--bg)\'" onmouseout="this.style.background=\'transparent\'">' +
+            '<span style="width:100px;color:var(--muted)">' + escapeHtml(lvl.name) + '</span>' +
+            '<div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden">' +
+            '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:4px;transition:width .3s"></div></div>' +
+            '<span style="width:60px;text-align:right;color:var(--muted)">' + lvl.matched + '/' + lvl.total + '</span></div>';
+        }
+        barsEl.innerHTML = html;
+      }
+
+      const tsEl = document.getElementById('acmm-eval-timestamp');
+      if (tsEl) {
+        let tsText = d.last_evaluated_at ? 'Evaluated: ' + new Date(d.last_evaluated_at).toLocaleString() : '';
+        if (d.repo_results && d.repo_results.length > 1) tsText += ' | ' + d.repo_results.length + ' repos';
+        tsEl.textContent = tsText;
+      }
+
+      const warnEl = document.getElementById('acmm-eval-warning');
+      if (warnEl) {
+        if (d.error) {
+          warnEl.style.display = 'block';
+          warnEl.textContent = d.error;
+        } else {
+          warnEl.style.display = 'none';
+        }
+      }
+    }
+
     async function fetchACMMEvaluation() {
       try {
         const r = await fetch('/api/acmm/evaluation');
         if (!r.ok) return;
-        const d = await r.json();
-        _acmmEvalData = d;
-
-        const fmtLevel = (lvl) => {
-          const name = ACMM_LEVEL_NAMES[lvl] || ('L'+lvl);
-          return '<span style="font-size:1.2rem;font-weight:700">L' + lvl + '</span><br><span style="font-size:0.7rem;color:var(--muted)">' + escapeHtml(name) + '</span>';
-        };
-
-        setIfChanged(document.getElementById('acmm-codebase-level'), fmtLevel(d.codebase_level));
-        setIfChanged(document.getElementById('acmm-ops-level'), fmtLevel(d.operational_level));
-        setIfChanged(document.getElementById('acmm-overall-level'), fmtLevel(d.overall_level));
-        setIfChanged(document.getElementById('acmm-criteria-ratio'),
-          '<span style="font-size:1.2rem;font-weight:700">' + d.criteria_passed + '/' + d.criteria_total + '</span>');
-
-        // Per-level bars (clickable)
-        const barsEl = document.getElementById('acmm-level-bars');
-        if (barsEl && d.levels) {
-          let html = '';
-          for (const lvl of d.levels) {
-            const pct = Math.round(lvl.score * 100);
-            const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
-            html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ')" style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:0.75rem;cursor:pointer;padding:2px 4px;border-radius:4px;transition:background .15s" onmouseover="this.style.background=\'var(--bg)\'" onmouseout="this.style.background=\'transparent\'">' +
-              '<span style="width:100px;color:var(--muted)">' + escapeHtml(lvl.name) + '</span>' +
-              '<div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden">' +
-              '<div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:4px;transition:width .3s"></div></div>' +
-              '<span style="width:60px;text-align:right;color:var(--muted)">' + lvl.matched + '/' + lvl.total + '</span></div>';
-          }
-          barsEl.innerHTML = html;
-        }
-
-        const tsEl = document.getElementById('acmm-eval-timestamp');
-        if (tsEl) tsEl.textContent = d.last_evaluated_at ? 'Evaluated: ' + new Date(d.last_evaluated_at).toLocaleString() : '';
-
-        const warnEl = document.getElementById('acmm-eval-warning');
-        if (warnEl) {
-          if (d.error) {
-            warnEl.style.display = 'block';
-            warnEl.textContent = '⚠ ' + d.error;
-          } else {
-            warnEl.style.display = 'none';
-          }
-        }
+        _acmmEvalData = await r.json();
+        acmmRenderCard();
       } catch (e) {
         console.error('acmm eval fetch failed', e);
       }

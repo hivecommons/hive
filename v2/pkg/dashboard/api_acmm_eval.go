@@ -2,15 +2,23 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 const acmmEvalTTL = time.Hour
 const acmmLevelThreshold = 0.70
 const acmmEvalTimeout = 30 * time.Second
+const acmmPerRepoTimeout = 20 * time.Second
+const acmmIssueLabelName = "acmm"
+const acmmIssueLabelColor = "0075ca"
+const acmmIssueLabelDesc = "ACMM criterion gap identified by hive evaluation"
 
 // ACMMEvaluation is the combined codebase + operational ACMM evaluation result.
 type ACMMEvaluation struct {
@@ -24,7 +32,19 @@ type ACMMEvaluation struct {
 	LastEvaluatedAt   string            `json:"last_evaluated_at"`
 	Levels            []ACMMLevelScore  `json:"levels"`
 	CriteriaResults   []CriterionResult `json:"criteria_results,omitempty"`
+	RepoResults       []RepoEvaluation  `json:"repo_results,omitempty"`
 	Error             string            `json:"error,omitempty"`
+}
+
+// RepoEvaluation holds ACMM results for a single repository.
+type RepoEvaluation struct {
+	Repo            string            `json:"repo"`
+	CodebaseLevel   int               `json:"codebase_level"`
+	LevelName       string            `json:"level_name"`
+	CriteriaTotal   int               `json:"criteria_total"`
+	CriteriaPassed  int               `json:"criteria_passed"`
+	Levels          []ACMMLevelScore  `json:"levels"`
+	CriteriaResults []CriterionResult `json:"criteria_results"`
 }
 
 // ACMMLevelScore summarizes pass/fail for a single ACMM level.
@@ -46,6 +66,14 @@ type CriterionResult struct {
 	Category string   `json:"category"`
 	Patterns []string `json:"patterns"`
 	Passed   bool     `json:"passed"`
+	Repo     string   `json:"repo,omitempty"`
+}
+
+// ACMMIssueRequest is the payload for creating an ACMM gap issue.
+type ACMMIssueRequest struct {
+	Repo         string `json:"repo"`
+	CriterionID  string `json:"criterion_id"`
+	CriterionLvl int    `json:"criterion_level"`
 }
 
 func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +83,6 @@ func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
 		opsName = "Unknown"
 	}
 
-	// Try returning cached codebase results with fresh operational level.
 	s.acmmEvalMu.RLock()
 	cached := s.acmmEvalCache
 	cacheAge := time.Since(s.acmmEvalCachedAt)
@@ -70,11 +97,9 @@ func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stale or missing — run fresh evaluation.
 	s.acmmEvalMu.Lock()
 	defer s.acmmEvalMu.Unlock()
 
-	// Double-check after acquiring write lock.
 	if s.acmmEvalCache != nil && time.Since(s.acmmEvalCachedAt) < acmmEvalTTL {
 		result := *s.acmmEvalCache
 		result.OperationalLevel = opsLevel
@@ -84,7 +109,7 @@ func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	eval := s.evaluateCodebase()
+	eval := s.evaluateAllRepos()
 	eval.OperationalLevel = opsLevel
 	eval.OperationalName = opsName
 	eval.OverallLevel = minInt(eval.CodebaseLevel, opsLevel)
@@ -95,8 +120,143 @@ func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, eval)
 }
 
-// evaluateCodebase scans the configured primary repo for ACMM criteria.
-func (s *Server) evaluateCodebase() ACMMEvaluation {
+// handleACMMCreateIssue creates a GitHub issue for a failed ACMM criterion.
+func (s *Server) handleACMMCreateIssue(w http.ResponseWriter, r *http.Request) {
+	var req ACMMIssueRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Repo == "" || req.CriterionID == "" {
+		http.Error(w, "repo and criterion_id are required", http.StatusBadRequest)
+		return
+	}
+
+	var criterion *ACMMCriterion
+	for i := range universalCriteria {
+		if universalCriteria[i].ID == req.CriterionID {
+			criterion = &universalCriteria[i]
+			break
+		}
+	}
+	if criterion == nil {
+		http.Error(w, "unknown criterion", http.StatusBadRequest)
+		return
+	}
+
+	if s.deps == nil || s.deps.Config == nil {
+		http.Error(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	owner := s.deps.Config.Project.Org
+	if owner == "" {
+		http.Error(w, "org not configured", http.StatusInternalServerError)
+		return
+	}
+
+	if s.deps.GHClient == nil {
+		http.Error(w, "GitHub client not available", http.StatusInternalServerError)
+		return
+	}
+	ghClient := s.deps.GHClient.GoGitHub()
+	if ghClient == nil {
+		http.Error(w, "GitHub client not initialized", http.StatusInternalServerError)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), acmmEvalTimeout)
+	defer cancel()
+
+	_, _, labelErr := ghClient.Issues.CreateLabel(ctx, owner, req.Repo, &gh.Label{
+		Name:        gh.Ptr(acmmIssueLabelName),
+		Description: gh.Ptr(acmmIssueLabelDesc),
+		Color:       gh.Ptr(acmmIssueLabelColor),
+	})
+	labelExists := labelErr == nil || strings.Contains(labelErr.Error(), "already_exists")
+
+	levelName := acmmLevelNames[criterion.Level]
+	if levelName == "" {
+		levelName = "Unknown"
+	}
+
+	title := fmt.Sprintf("[ACMM L%d] Add %s", criterion.Level, criterion.Name)
+
+	var patternsStr strings.Builder
+	for _, p := range criterion.Patterns {
+		patternsStr.WriteString(fmt.Sprintf("- `%s`\n", p))
+	}
+
+	body := fmt.Sprintf("## ACMM Gap: %s\n\n"+
+		"**Level:** L%d %s\n"+
+		"**Category:** %s\n"+
+		"**Criterion ID:** `%s`\n\n"+
+		"### What's needed\n\n"+
+		"This repository is missing one of the following files or directories:\n\n"+
+		"%s\n"+
+		"Adding any one of these will satisfy this criterion and help the repository "+
+		"advance to ACMM Level %d (%s).\n\n"+
+		"### Why it matters\n\n"+
+		"%s\n\n"+
+		"### How to fix\n\n"+
+		"Create one of the files listed above. The ACMM evaluation checks for file existence — "+
+		"the content can follow your project's conventions.\n\n"+
+		"---\n"+
+		"*Opened by Hive ACMM Evaluation*",
+		criterion.Name,
+		criterion.Level, levelName,
+		criterion.Category,
+		criterion.ID,
+		patternsStr.String(),
+		criterion.Level, levelName,
+		acmmCriterionWhyItMatters(criterion.Level, criterion.Category),
+	)
+
+	issueReq := &gh.IssueRequest{
+		Title: gh.Ptr(title),
+		Body:  gh.Ptr(body),
+	}
+	if labelExists {
+		issueReq.Labels = &[]string{acmmIssueLabelName, "ai-fix-requested"}
+	}
+
+	issue, _, err := ghClient.Issues.Create(ctx, owner, req.Repo, issueReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to create issue: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"issue_number": issue.GetNumber(),
+		"issue_url":    issue.GetHTMLURL(),
+	})
+}
+
+func acmmCriterionWhyItMatters(level int, category string) string {
+	switch category {
+	case "prerequisite":
+		return "Prerequisites are foundational — without test suites, CI/CD, and templates, AI agents lack the guardrails needed for safe autonomous work."
+	case "feedback-loop":
+		return "Feedback loops let agents learn from outcomes. Metrics, review rubrics, and automated review application create the signal that drives improvement."
+	case "learning":
+		return "Learning artifacts (memory, corrections, session summaries) let agents carry context across sessions instead of starting cold each time."
+	case "governance":
+		return "Governance ensures agents operate within boundaries — safety models, structural gates, and risk assessment prevent autonomous drift."
+	case "observability":
+		return "Observability makes agent behavior visible — dashboards, metrics, and quality reports let humans audit what agents are doing."
+	case "self-tuning":
+		return "Self-tuning means the system adjusts its own quality thresholds based on observed outcomes, reducing the need for manual calibration."
+	case "autonomy":
+		return "Autonomy criteria enable agents to operate independently — generating issues, orchestrating multi-agent workflows, and managing merge queues."
+	case "traceability":
+		return "Traceability links agent actions to outcomes, making it possible to audit decisions and understand why changes were made."
+	default:
+		return fmt.Sprintf("This criterion is part of ACMM Level %d, which requires a minimum set of capabilities before advancing to the next level.", level)
+	}
+}
+
+// evaluateAllRepos scans all configured repos and produces aggregate + per-repo results.
+func (s *Server) evaluateAllRepos() ACMMEvaluation {
 	if s.deps == nil || s.deps.Config == nil {
 		return ACMMEvaluation{
 			Error:           "config not loaded",
@@ -105,10 +265,20 @@ func (s *Server) evaluateCodebase() ACMMEvaluation {
 	}
 
 	owner := s.deps.Config.Project.Org
-	repo := s.deps.Config.Project.PrimaryRepo
-	if owner == "" || repo == "" {
+	if owner == "" {
 		return ACMMEvaluation{
-			Error:           "primary repo not configured",
+			Error:           "org not configured",
+			LastEvaluatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+
+	repos := s.deps.Config.Project.Repos
+	if len(repos) == 0 && s.deps.Config.Project.PrimaryRepo != "" {
+		repos = []string{s.deps.Config.Project.PrimaryRepo}
+	}
+	if len(repos) == 0 {
+		return ACMMEvaluation{
+			Error:           "no repos configured",
 			LastEvaluatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 	}
@@ -119,7 +289,6 @@ func (s *Server) evaluateCodebase() ACMMEvaluation {
 			LastEvaluatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
 	}
-
 	ghClient := s.deps.GHClient.GoGitHub()
 	if ghClient == nil {
 		return ACMMEvaluation{
@@ -128,27 +297,60 @@ func (s *Server) evaluateCodebase() ACMMEvaluation {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), acmmEvalTimeout)
-	defer cancel()
+	var repoEvals []RepoEvaluation
+	// Aggregate: a criterion passes if it passes in ANY repo.
+	aggPassed := make(map[string]bool)
 
-	// Pre-fetch directory listings for commonly checked parent directories
-	// to batch API calls instead of checking each file individually.
-	dirCache := s.prefetchDirectories(ctx, owner, repo)
+	for _, repo := range repos {
+		ctx, cancel := context.WithTimeout(context.Background(), acmmPerRepoTimeout)
+		dirCache := s.prefetchDirectories(ctx, owner, repo)
 
-	var results []CriterionResult
+		var results []CriterionResult
+		for _, c := range universalCriteria {
+			passed := s.checkCriterion(ctx, owner, repo, c, dirCache)
+			results = append(results, CriterionResult{
+				ID:       c.ID,
+				Name:     c.Name,
+				Level:    c.Level,
+				Category: c.Category,
+				Patterns: c.Patterns,
+				Passed:   passed,
+				Repo:     repo,
+			})
+			if passed {
+				aggPassed[c.ID] = true
+			}
+		}
+		cancel()
+
+		scored := s.scoreResults(results)
+		repoEvals = append(repoEvals, RepoEvaluation{
+			Repo:            repo,
+			CodebaseLevel:   scored.CodebaseLevel,
+			LevelName:       scored.CodebaseLevelName,
+			CriteriaTotal:   scored.CriteriaTotal,
+			CriteriaPassed:  scored.CriteriaPassed,
+			Levels:          scored.Levels,
+			CriteriaResults: scored.CriteriaResults,
+		})
+	}
+
+	// Build aggregate criterion results (pass if ANY repo has it).
+	var aggResults []CriterionResult
 	for _, c := range universalCriteria {
-		passed := s.checkCriterion(ctx, owner, repo, c, dirCache)
-		results = append(results, CriterionResult{
+		aggResults = append(aggResults, CriterionResult{
 			ID:       c.ID,
 			Name:     c.Name,
 			Level:    c.Level,
 			Category: c.Category,
 			Patterns: c.Patterns,
-			Passed:   passed,
+			Passed:   aggPassed[c.ID],
 		})
 	}
 
-	return s.scoreResults(results)
+	eval := s.scoreResults(aggResults)
+	eval.RepoResults = repoEvals
+	return eval
 }
 
 // prefetchDirectories fetches directory listings for parent dirs that
@@ -205,7 +407,6 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 	isDir := strings.HasSuffix(path, "/")
 	cleanPath := strings.TrimSuffix(path, "/")
 
-	// Split into parent dir + base name for cache lookup.
 	parent := ""
 	base := cleanPath
 	if idx := strings.LastIndex(cleanPath, "/"); idx >= 0 {
@@ -220,7 +421,6 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 		return entries[base]
 	}
 
-	// Cache miss — fall back to direct API check.
 	ghClient := s.deps.GHClient.GoGitHub()
 	_, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, nil)
 	return err == nil
@@ -228,7 +428,6 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 
 // scoreResults calculates per-level scores and the overall codebase level.
 func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
-	// Group by level.
 	type levelBucket struct {
 		total   int
 		matched int
@@ -249,7 +448,6 @@ func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
 		}
 	}
 
-	// Collect and sort level numbers.
 	levels := make([]int, 0, len(buckets))
 	for lvl := range buckets {
 		levels = append(levels, lvl)
@@ -278,7 +476,6 @@ func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
 		})
 	}
 
-	// Determine highest passing codebase level: all preceding levels must also pass.
 	codebaseLevel := 0
 	for _, ls := range levelScores {
 		if ls.Passed {
