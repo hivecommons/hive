@@ -9053,24 +9053,27 @@ function burnAreaChart() {
 
     function acmmCriterionRow(c, repoName) {
       const icon = c.passed ? '✅' : '❌';
-      const patternList = (c.patterns || []).map(p => '<code style="font-size:0.7rem;background:var(--bg);padding:1px 4px;border-radius:3px">' + escapeHtml(p) + '</code>').join(' ');
+      const patternItems = (c.patterns || []).map(p => '<span style="display:inline-block;font-size:0.68rem;background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border);margin:1px 2px;font-family:monospace">' + escapeHtml(p) + '</span>').join('');
       let issueBtn = '';
       if (!c.passed) {
         const repo = repoName || _acmmSelectedRepo || '';
         const escapedId = escapeHtml(c.id).replace(/'/g, "\\'");
         const escapedRepo = escapeHtml(repo).replace(/'/g, "\\'");
         issueBtn = '<button onclick="event.stopPropagation();acmmCreateIssue(\'' + escapedRepo + '\',\'' + escapedId + '\',' + c.level + ',this)" ' +
-          'style="margin-left:auto;padding:2px 8px;font-size:0.68rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--muted);white-space:nowrap" ' +
+          'style="margin-left:auto;padding:3px 10px;font-size:0.7rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--muted);white-space:nowrap" ' +
           'title="Open GitHub issue for agents to fix this">📋 Open Issue</button>';
       }
-      return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
-        '<div style="display:flex;align-items:center;gap:6px">' +
-        '<span>' + icon + '</span>' +
-        '<span style="font-size:0.82rem;font-weight:500">' + escapeHtml(c.name) + '</span>' +
+      const rowId = 'acmm-row-' + c.id.replace(/[^a-zA-Z0-9]/g, '-');
+      return '<div style="padding:8px 10px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">' +
+        '<div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="var el=document.getElementById(\'' + rowId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
+        '<span style="font-size:0.9rem">' + icon + '</span>' +
+        '<span style="font-size:0.82rem;font-weight:500;flex:1">' + escapeHtml(c.name) + '</span>' +
         issueBtn +
         '</div>' +
-        '<div style="margin-top:3px;margin-left:24px;font-size:0.72rem;color:var(--muted)">Checks: ' + patternList + '</div>' +
-        '</div>';
+        '<div id="' + rowId + '" style="display:none;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">' +
+        '<div style="font-size:0.68rem;color:var(--muted);margin-bottom:3px">Looks for any of:</div>' +
+        '<div style="line-height:1.6">' + patternItems + '</div>' +
+        '</div></div>';
     }
 
     async function acmmCreateIssue(repo, criterionId, level, btn) {
@@ -9232,7 +9235,7 @@ function burnAreaChart() {
 
       let criteriaHtml = '';
       for (const [cat, items] of Object.entries(byCategory)) {
-        criteriaHtml += '<div style="margin-top:10px"><div style="font-size:0.7rem;text-transform:uppercase;color:var(--muted);margin-bottom:4px;font-weight:600">' + escapeHtml(cat) + '</div>';
+        criteriaHtml += '<div style="margin-top:14px"><div style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);margin-bottom:6px;padding-bottom:4px;border-bottom:1px solid var(--border);font-weight:600">' + escapeHtml(cat) + '</div>';
         for (const c of items) {
           criteriaHtml += acmmCriterionRow(c, repoName);
         }
@@ -9255,7 +9258,7 @@ function burnAreaChart() {
         '</div>' +
         '<p style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">' + escapeHtml(desc) + '</p>' +
         '</div>' +
-        '<div style="font-size:0.82rem;font-weight:600;margin-bottom:4px">Criteria (' + (lvlData ? lvlData.matched : 0) + '/' + (lvlData ? lvlData.total : 0) + ')</div>' +
+        '<div style="font-size:0.82rem;font-weight:600;margin-bottom:2px;padding-top:4px">Criteria (' + (lvlData ? lvlData.matched : 0) + '/' + (lvlData ? lvlData.total : 0) + ')</div>' +
         criteriaHtml
       );
     }
