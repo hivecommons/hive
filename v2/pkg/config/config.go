@@ -180,6 +180,7 @@ type AgentConfig struct {
 	ACMMLevels       []int             `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
 	Mode             string            `yaml:"mode" json:"mode,omitempty"`
 	OnDemand         bool              `yaml:"on_demand" json:"on_demand,omitempty"`
+	CavemanMode      string            `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
 
 	// Managed is true for agents loaded from the overlay directory (not base config).
 	Managed bool `yaml:"-" json:"managed"`
@@ -1002,6 +1003,10 @@ func (c *Config) validate() error {
 		validBackends := map[string]bool{"claude": true, "copilot": true, "goose": true, "codex": true, "pi": true, "bob": true, "aider": true}
 		if agent.Backend != "" && !validBackends[agent.Backend] {
 			return fmt.Errorf("agent %s: invalid backend %q (must be claude, copilot, goose, codex, pi, bob, or aider)", name, agent.Backend)
+		}
+		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
+		if !validCavemanModes[agent.CavemanMode] {
+			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", name, agent.CavemanMode)
 		}
 	}
 	return nil

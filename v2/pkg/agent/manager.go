@@ -442,6 +442,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.clearInferenceRouteCallback(agent.Name)
 	}
 
+	if agent.Config.CavemanMode != "" {
+		m.installCavemanForAgent(agent, backend)
+	}
+
 	switch backend {
 	case "claude":
 		bareFlag := ""
@@ -599,7 +603,67 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		go m.watchForTrustPromptForAgent(agent, agentCtx)
 	}
 
+	if agent.Config.CavemanMode != "" {
+		switch backend {
+		case "goose", "codex", "aider":
+			go func(a *AgentProcess, cavemanMode string) {
+				time.Sleep(cavemanActivationDelay)
+				m.tmuxSendLiteralForAgent(a, "/caveman "+cavemanMode)
+				time.Sleep(textToEnterDelay)
+				m.tmuxSendEntersForAgent(a)
+				m.logger.Info("sent caveman activation", "agent", a.Name, "mode", cavemanMode)
+			}(agent, agent.Config.CavemanMode)
+		}
+	}
+
 	return nil
+}
+
+// installCavemanForAgent runs the backend-specific caveman installer before
+// the agent CLI starts. Auto-activating backends (claude, copilot, gemini)
+// get caveman wired in so it's active from message one. Per-session backends
+// (goose, codex, aider) get the skill pre-installed; activation happens via
+// /caveman command sent after launch.
+func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
+	mode := agent.Config.CavemanMode
+	if mode == "" {
+		return
+	}
+
+	home := "/data/home"
+	if agent.UID == 0 {
+		home = os.Getenv("HOME")
+		if home == "" {
+			home = "/root"
+		}
+	}
+
+	m.logger.Info("installing caveman", "agent", agent.Name, "backend", backend, "mode", mode)
+
+	var cmd *exec.Cmd
+	switch backend {
+	case "claude":
+		cmd = exec.Command("npx", "-y", "github:JuliusBrussee/caveman", "--", "--only", "claude", "--mode", mode)
+	case "copilot":
+		cmd = exec.Command("npx", "-y", "github:JuliusBrussee/caveman", "--", "--only", "copilot", "--with-init", "--mode", mode)
+	case "gemini":
+		cmd = exec.Command("npx", "-y", "github:JuliusBrussee/caveman", "--", "--only", "gemini", "--mode", mode)
+	case "goose":
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman", "-a", "goose")
+	case "codex":
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman", "-a", "codex")
+	case "aider":
+		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman", "-a", "aider-desk")
+	default:
+		m.logger.Info("caveman not supported for backend", "backend", backend)
+		return
+	}
+
+	cmd.Dir = filepath.Join("/data/agents", agent.Name)
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		m.logger.Warn("caveman install failed", "agent", agent.Name, "error", err, "output", string(out))
+	}
 }
 
 // pollTmuxOutputForAgent is pollTmuxOutput using the agent's tmux socket.
@@ -1661,10 +1725,11 @@ const (
 	chunkSize             = 400
 	chunkDelay            = 1 * time.Second
 	staleCheckDelay       = 1 * time.Second
-	cliReadyPollInterval  = 2 * time.Second
-	cliReadyTimeout       = 60 * time.Second
+	cliReadyPollInterval    = 2 * time.Second
+	cliReadyTimeout         = 60 * time.Second
 	inputPromptPollInterval = 2 * time.Second
 	inputPromptTimeout      = 120 * time.Second
+	cavemanActivationDelay  = 5 * time.Second
 )
 
 func (m *Manager) SeedLastKick(name string, t time.Time) {
@@ -2499,6 +2564,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// dashboard and advisory digest.
 	if agent.Config.BeadsDir != "" {
 		vars = append(vars, agentEnvPair{"BD_DIR", agent.Config.BeadsDir, false})
+	}
+	if agent.Config.CavemanMode != "" {
+		vars = append(vars, agentEnvPair{"HIVE_CAVEMAN_MODE", agent.Config.CavemanMode, false})
 	}
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
