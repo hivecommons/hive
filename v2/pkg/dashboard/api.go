@@ -1507,6 +1507,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"laneKeywords":    agentCfg.LaneKeywords,
 			"detectKeywords":  agentCfg.DetectKeywords,
 			"aliases":         agentCfg.Aliases,
+			"cavemanMode":     agentCfg.CavemanMode,
 		},
 		"cadences": cadences,
 		"models":   models,
@@ -1840,6 +1841,17 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 				}
 			}
 			agentCfg.Aliases = a
+		}
+	}
+	if v, ok := body["cavemanMode"]; ok {
+		if s, ok := v.(string); ok {
+			s = sanitizeString(s)
+			validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
+			if !validCavemanModes[s] {
+				jsonError(w, "caveman_mode must be one of: lite, full, ultra, wenyan (or empty to disable)", http.StatusBadRequest)
+				return
+			}
+			agentCfg.CavemanMode = s
 		}
 	}
 	s.deps.Config.Agents[name] = agentCfg

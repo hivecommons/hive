@@ -9737,6 +9737,7 @@ function burnAreaChart() {
       'final-compose': 'Final prompt assembly — resolve all variables, inject pipeline data, and produce the complete prompt sent to the agent.',
     };
     const RESTART_STRATEGIES = ['immediate', 'backoff', 'none'];
+    const CAVEMAN_MODES = ['', 'lite', 'full', 'ultra', 'wenyan'];
 
     function openConfigDialog(type, agentName, initialTabOverride) {
       const isCreate = type === 'agent' && !agentName;
@@ -10584,6 +10585,12 @@ function burnAreaChart() {
           <select id="cfg-model" onchange="markDirty('general','model',this.value)">
             <option value="">(from launch command)</option>
             ${KNOWN_MODELS.map(m => `<option value="${m.value}" ${_modelsEqual(g.model, m.value) ? 'selected' : ''}>${m.label}</option>`).join('')}
+          </select>
+        </div>
+        <div class="config-field">
+          <label>Caveman Mode <span class="config-info">i<span class="config-tooltip">Enable Caveman output compression to reduce token usage by ~65%. Modes: lite (removes filler), full (caveman-speak), ultra (telegraphic), wenyan (classical Chinese). Leave empty to disable.</span></span></label>
+          <select id="cfg-caveman-mode" onchange="markDirty('general','cavemanMode',this.value)">
+            ${CAVEMAN_MODES.map(m => `<option value="${m}" ${(g.cavemanMode || '') === m ? 'selected' : ''}>${m || '(disabled)'}</option>`).join('')}
           </select>
         </div>
         <div class="config-field">
@@ -11666,6 +11673,7 @@ function burnAreaChart() {
           lane_keywords: generalData.laneKeywords || [],
           detect_keywords: generalData.detectKeywords || [],
           aliases: generalData.aliases || [],
+          caveman_mode: generalData.cavemanMode || '',
         };
         try {
           const res = await fetch('/api/agents', {
