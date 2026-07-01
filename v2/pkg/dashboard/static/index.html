@@ -9271,61 +9271,70 @@ function burnAreaChart() {
       const codeLevel = active.codebase_level !== undefined ? active.codebase_level : active.CodebaseLevel;
       const name = ACMM_LEVEL_NAMES[codeLevel] || 'None';
 
-      let html = '<div style="margin-bottom:12px">' +
-        '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 8px">Codebase readiness measures whether repos have the files, configs, and tooling that enable AI-native development. Each level requires ≥70% of its criteria to pass, and all preceding levels must also pass.</p>';
+      let html = '<div style="margin-bottom:14px">' +
+        '<p style="font-size:0.78rem;color:var(--muted);margin:0 0 10px">Each level requires ≥70% of its criteria to pass. Levels must pass in order.' +
+        (hasMultiRepo ? ' A criterion passes if it exists in <em>any</em> repo.' : '') + '</p></div>';
 
-      if (hasMultiRepo) {
-        html += '<p style="font-size:0.78rem;color:var(--muted);margin:0 0 8px"><strong>Aggregate view:</strong> a criterion passes if it exists in <em>any</em> repo. Select a repo below for per-repo detail.</p>';
+      // Find first failing level for the "blocked at" callout
+      const levels = active.levels || active.Levels || [];
+      let firstFail = null;
+      for (const lvl of levels) { if (!lvl.passed && !firstFail) firstFail = lvl; }
+
+      if (firstFail) {
+        const needed = Math.ceil(firstFail.total * acmmLevelThresholdPct / 100) - firstFail.matched;
+        const fpct = Math.round(firstFail.score * 100);
+        html += '<div style="margin-bottom:12px;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:0.78rem;color:var(--muted);border-left:3px solid #d29922">' +
+          '<strong>Blocked at L' + firstFail.level + ' ' + escapeHtml(firstFail.name) + '</strong> — ' + fpct + '%, need ' + needed + ' more criteria to reach 70%. ' +
+          '<span onclick="acmmShowLevelDialog(' + firstFail.level + ')" style="color:#58a6ff;cursor:pointer;text-decoration:underline">View missing criteria →</span></div>';
       }
-      html += '<div style="font-size:0.82rem"><strong>Current level:</strong> L' + codeLevel + ' ' + escapeHtml(name) + '</div></div>';
 
       if (hasMultiRepo) {
-        html += '<div style="margin-bottom:12px"><div style="font-size:0.72rem;text-transform:uppercase;color:var(--muted);margin-bottom:6px;font-weight:600">Per-Repository Breakdown</div>';
-        for (const rr of d.repo_results) {
-          const rName = ACMM_LEVEL_NAMES[rr.codebase_level] || 'None';
-          const rColor = rr.codebase_level >= 2 ? '#238636' : (rr.codebase_level > 0 ? '#d29922' : '#da3633');
-          html += '<div onclick="acmmShowRepoDetail(\'' + escapeHtml(rr.repo).replace(/'/g, "\\'") + '\')" ' +
-            'style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:border-color .15s" ' +
+        // Multi-repo: level bars only inside each repo's expandable
+        html += '<div>';
+        for (let ri = 0; ri < d.repo_results.length; ri++) {
+          const rr = d.repo_results[ri];
+          const rPct = rr.criteria_total > 0 ? Math.round(rr.criteria_passed / rr.criteria_total * 100) : 0;
+          const rColor = rr.codebase_level >= 2 ? '#238636' : (rr.criteria_passed > rr.criteria_total * 0.5 ? '#d29922' : '#da3633');
+          const expandId = 'acmm-repo-expand-' + ri;
+          html += '<div style="margin-bottom:3px">' +
+            '<div onclick="var el=document.getElementById(\'' + expandId + '\');el.style.display=el.style.display===\'none\'?\'block\':\'none\'" ' +
+            'style="cursor:pointer;padding:6px 8px;background:var(--bg);border-radius:6px;border:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:border-color .15s" ' +
             'onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
-            '<span style="font-size:0.82rem;font-weight:500">' + escapeHtml(rr.repo) + '</span>' +
-            '<span style="font-size:0.75rem;color:' + rColor + ';font-weight:600">L' + rr.codebase_level + ' ' + escapeHtml(rName) + ' (' + rr.criteria_passed + '/' + rr.criteria_total + ')</span></div>';
+            '<span style="font-size:0.8rem"><span class="acmm-chevron" style="display:inline-block;transition:transform .15s;font-size:0.65rem;margin-right:4px">▶</span>' + escapeHtml(rr.repo) + '</span>' +
+            '<span style="font-size:0.72rem;color:' + rColor + ';font-weight:600">' + rr.criteria_passed + '/' + rr.criteria_total + ' (' + rPct + '%)</span></div>' +
+            '<div id="' + expandId + '" style="display:none;padding:6px 8px 8px;border:1px solid var(--border);border-top:none;border-radius:0 0 6px 6px;background:var(--surface)">';
+          for (const lvl of (rr.levels || [])) {
+            const pct = Math.round(lvl.score * 100);
+            const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+            const safeRepo = escapeHtml(rr.repo).replace(/'/g, "\\'");
+            html += '<div onclick="event.stopPropagation();acmmShowLevelDialog(' + lvl.level + ',\'' + safeRepo + '\')" ' +
+              'style="cursor:pointer;padding:5px 6px;margin-bottom:3px;background:var(--bg);border-radius:4px;border:1px solid var(--border);transition:border-color .15s" ' +
+              'onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
+              '<div style="display:flex;align-items:center;justify-content:space-between">' +
+              '<span style="font-size:0.75rem;font-weight:500">' + (lvl.passed ? '✓' : '✗') + ' L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+              '<span style="font-size:0.7rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + '</span></div>' +
+              '<div style="margin-top:3px;height:3px;background:var(--border);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
+          }
+          html += '</div></div>';
         }
         html += '</div>';
+      } else {
+        // Single repo: show level bars directly
+        for (const lvl of levels) {
+          const pct = Math.round(lvl.score * 100);
+          const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
+          html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ')" style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between">' +
+            '<span style="font-size:0.82rem;font-weight:600">' + (lvl.passed ? '✓' : '✗') + ' L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
+            '<span style="font-size:0.75rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + ' (' + pct + '%)</span></div>' +
+            '<div style="margin-top:4px;height:4px;background:var(--bg);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
+        }
       }
 
-      const levels = active.levels || active.Levels || [];
-      for (const lvl of levels) {
-        const pct = Math.round(lvl.score * 100);
-        const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
-        html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ')" style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between">' +
-          '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
-          '<span style="font-size:0.75rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + ' (' + pct + '%)</span></div>' +
-          '<div style="margin-top:4px;height:4px;background:var(--card-bg);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
-      }
-      acmmShowDialog('Codebase Readiness — L' + codeLevel + ' ' + escapeHtml(name), html);
+      acmmShowDialog('Codebase Readiness', html);
     }
 
-    function acmmShowRepoDetail(repoName) {
-      if (!_acmmEvalData) return;
-      const rr = (_acmmEvalData.repo_results || []).find(r => r.repo === repoName);
-      if (!rr) return;
-      const name = ACMM_LEVEL_NAMES[rr.codebase_level] || 'None';
-      let html = '<div style="margin-bottom:8px;font-size:0.82rem"><strong>Level:</strong> L' + rr.codebase_level + ' ' + escapeHtml(name) + '  |  <strong>Criteria:</strong> ' + rr.criteria_passed + '/' + rr.criteria_total + '</div>';
-      for (const lvl of (rr.levels || [])) {
-        const pct = Math.round(lvl.score * 100);
-        const color = lvl.passed ? '#238636' : (pct > 40 ? '#d29922' : '#da3633');
-        const failCount = (rr.criteria_results || []).filter(c => c.level === lvl.level && !c.passed).length;
-        html += '<div onclick="acmmShowLevelDialog(' + lvl.level + ',\'' + escapeHtml(repoName).replace(/'/g, "\\'") + '\')" ' +
-          'style="cursor:pointer;padding:8px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border);transition:border-color .15s" ' +
-          'onmouseover="this.style.borderColor=\'var(--muted)\'" onmouseout="this.style.borderColor=\'var(--border)\'">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between">' +
-          '<span style="font-size:0.82rem;font-weight:600">L' + lvl.level + ' ' + escapeHtml(lvl.name) + '</span>' +
-          '<span style="font-size:0.75rem;color:' + color + ';font-weight:600">' + lvl.matched + '/' + lvl.total + '</span></div>' +
-          '<div style="margin-top:4px;height:4px;background:var(--card-bg);border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + color + ';border-radius:2px"></div></div></div>';
-      }
-      acmmShowDialog(escapeHtml(repoName) + ' — L' + rr.codebase_level, html);
-    }
+    const acmmLevelThresholdPct = 70;
 
     function acmmShowOpsDialog() {
       if (!_acmmEvalData) return;
