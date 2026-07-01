@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"syscall"
@@ -130,9 +131,15 @@ func removeAsOwner(path string) error {
 	}
 	ownerUID := strconv.FormatUint(uint64(stat.Uid), 10)
 
-	cmd := exec.Command("su", "-s", "/bin/sh", "-c", "rm -rf "+path, ownerUID)
+	// Some distros' su doesn't accept numeric UIDs — resolve to username
+	suTarget := ownerUID
+	if u, lookupErr := user.LookupId(ownerUID); lookupErr == nil {
+		suTarget = u.Username
+	}
+
+	cmd := exec.Command("su", "-s", "/bin/sh", "-c", "rm -rf "+path, suTarget)
 	if suErr := cmd.Run(); suErr != nil {
-		return fmt.Errorf("os.RemoveAll: %w; su %s rm -rf: %v", err, ownerUID, suErr)
+		return fmt.Errorf("os.RemoveAll: %w; su %s rm -rf: %v", err, suTarget, suErr)
 	}
 	return nil
 }
