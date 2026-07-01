@@ -9210,6 +9210,7 @@ function burnAreaChart() {
           return;
         }
         const data = await r.json();
+        _acmmOpenedIssues[repo + ':' + criterionId] = {number: data.issue_number, url: data.issue_url};
         acmmShowDialog('Issue Created', '<p style="font-size:0.82rem">Issue <a href="' + escapeHtml(data.issue_url) + '" target="_blank" style="color:#58a6ff">#' + data.issue_number + '</a> created on <strong>' + escapeHtml(repo) + '</strong> with <code>acmm</code> and <code>ai-fix-requested</code> labels.</p>');
       } catch (e) {
         acmmShowDialog('Issue Creation Failed', '<p style="color:#da3633;font-size:0.82rem">Network error: ' + escapeHtml(e.message) + '</p>');
