@@ -9096,6 +9096,7 @@ function burnAreaChart() {
     };
     let _acmmEvalData = null;
     let _acmmSelectedRepo = null; // null = aggregate view
+    const _acmmOpenedIssues = {}; // key: "repo:criterionId" → {number, url}
 
     function acmmGetActiveData() {
       if (!_acmmEvalData) return null;
@@ -9110,11 +9111,17 @@ function burnAreaChart() {
       let issueBtn = '';
       if (!c.passed) {
         const repo = repoName || _acmmSelectedRepo || '';
-        const escapedId = escapeHtml(c.id).replace(/'/g, "\\'");
-        const escapedRepo = escapeHtml(repo).replace(/'/g, "\\'");
-        issueBtn = '<button onclick="event.stopPropagation();acmmCreateIssue(\'' + escapedRepo + '\',\'' + escapedId + '\',' + c.level + ',this)" ' +
-          'style="margin-left:auto;padding:3px 10px;font-size:0.7rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--muted);white-space:nowrap" ' +
-          'title="Open GitHub issue for agents to fix this">📋 Open Issue</button>';
+        const issueKey = repo + ':' + c.id;
+        const existing = _acmmOpenedIssues[issueKey];
+        if (existing) {
+          issueBtn = '<span style="margin-left:auto;padding:3px 10px;font-size:0.7rem;border:1px solid #238636;border-radius:4px;color:var(--muted);white-space:nowrap">✅ <a href="' + escapeHtml(existing.url) + '" target="_blank" style="color:var(--muted);font-size:0.68rem">#' + existing.number + '</a></span>';
+        } else {
+          const escapedId = escapeHtml(c.id).replace(/'/g, "\\'");
+          const escapedRepo = escapeHtml(repo).replace(/'/g, "\\'");
+          issueBtn = '<button onclick="event.stopPropagation();acmmCreateIssue(\'' + escapedRepo + '\',\'' + escapedId + '\',' + c.level + ',this)" ' +
+            'style="margin-left:auto;padding:3px 10px;font-size:0.7rem;background:var(--bg);border:1px solid var(--border);border-radius:4px;cursor:pointer;color:var(--muted);white-space:nowrap" ' +
+            'title="Open GitHub issue for agents to fix this">📋 Open Issue</button>';
+        }
       }
       const rowId = 'acmm-row-' + c.id.replace(/[^a-zA-Z0-9]/g, '-');
       return '<div style="padding:8px 10px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border)"' +
@@ -9158,6 +9165,7 @@ function burnAreaChart() {
           return;
         }
         const data = await r.json();
+        _acmmOpenedIssues[repo + ':' + criterionId] = {number: data.issue_number, url: data.issue_url};
         btn.innerHTML = '✅ <a href="' + escapeHtml(data.issue_url) + '" target="_blank" style="color:var(--muted);font-size:0.68rem">#' + data.issue_number + '</a>';
         btn.style.borderColor = '#238636';
       } catch (e) {
@@ -9215,16 +9223,34 @@ function burnAreaChart() {
       if (criteria.length === 0) return;
       const repos = (_acmmEvalData.repo_results || []);
       const hasMultiRepo = repos.length > 1;
-      let html = '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">This will create ' + criteria.length + ' issue(s) for all failing criteria at L' + level + '.</p>';
-      if (hasMultiRepo && !_acmmSelectedRepo) {
-        html += '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">Select a target repo first, or issues will be created for each repo where the criterion fails.</p>';
+      const targetRepo = _acmmSelectedRepo || (repos.length === 1 ? repos[0].repo : null);
+      const newCriteria = criteria.filter(c => !_acmmOpenedIssues[(targetRepo || '') + ':' + c.id]);
+      const alreadyOpened = criteria.length - newCriteria.length;
+      let html = '';
+      if (newCriteria.length === 0) {
+        html += '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">All ' + criteria.length + ' failing criteria already have issues opened.</p>';
+        html += '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+          '<button onclick="acmmCloseDialog()" style="padding:6px 14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted);font-size:0.78rem">Close</button></div>';
+      } else {
+        html += '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">This will create ' + newCriteria.length + ' issue(s) for failing criteria at L' + level + '.' +
+          (alreadyOpened > 0 ? ' (' + alreadyOpened + ' already opened, will be skipped)' : '') + '</p>';
+        if (hasMultiRepo && !_acmmSelectedRepo) {
+          html += '<p style="font-size:0.82rem;color:var(--muted);margin:0 0 12px">Select a target repo first, or issues will be created for each repo where the criterion fails.</p>';
+        }
+        html += '<div style="max-height:200px;overflow-y:auto;margin-bottom:12px">';
+        for (const c of criteria) {
+          const opened = _acmmOpenedIssues[(targetRepo || '') + ':' + c.id];
+          if (opened) {
+            html += '<div style="font-size:0.78rem;padding:2px 0;color:var(--muted)">✅ ' + escapeHtml(c.name) + ' <a href="' + escapeHtml(opened.url) + '" target="_blank" style="color:var(--muted);font-size:0.68rem">#' + opened.number + '</a></div>';
+          } else {
+            html += '<div style="font-size:0.78rem;padding:2px 0">❌ ' + escapeHtml(c.name) + '</div>';
+          }
+        }
+        html += '</div>';
+        html += '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+          '<button onclick="acmmCloseDialog()" style="padding:6px 14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted);font-size:0.78rem">Cancel</button>' +
+          '<button onclick="acmmBatchCreateIssues(' + level + ')" style="padding:6px 14px;background:#238636;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:0.78rem;font-weight:600">Create ' + newCriteria.length + ' Issue(s)</button></div>';
       }
-      html += '<div style="max-height:200px;overflow-y:auto;margin-bottom:12px">';
-      for (const c of criteria) { html += '<div style="font-size:0.78rem;padding:2px 0">❌ ' + escapeHtml(c.name) + '</div>'; }
-      html += '</div>';
-      html += '<div style="display:flex;gap:8px;justify-content:flex-end">' +
-        '<button onclick="acmmCloseDialog()" style="padding:6px 14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--muted);font-size:0.78rem">Cancel</button>' +
-        '<button onclick="acmmBatchCreateIssues(' + level + ')" style="padding:6px 14px;background:#238636;border:none;border-radius:6px;cursor:pointer;color:#fff;font-size:0.78rem;font-weight:600">Create ' + criteria.length + ' Issue(s)</button></div>';
       acmmShowDialog('Open Issues for L' + level + ' ' + (ACMM_LEVEL_NAMES[level] || ''), html);
     }
 
@@ -9234,20 +9260,28 @@ function burnAreaChart() {
       const repos = (_acmmEvalData.repo_results || []);
       const targetRepo = _acmmSelectedRepo || (repos.length === 1 ? repos[0].repo : null);
 
-      let created = 0, failed = 0;
+      let created = 0, failed = 0, skipped = 0;
       acmmShowDialog('Creating Issues...', '<p id="acmm-batch-progress" style="font-size:0.82rem">0/' + criteria.length + ' created...</p>');
 
       for (const c of criteria) {
         if (targetRepo) {
+          const issueKey = targetRepo + ':' + c.id;
+          if (_acmmOpenedIssues[issueKey]) { skipped++; continue; }
           try {
             const r = await fetch('/api/acmm/issue', {
               method: 'POST', headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({repo: targetRepo, criterion_id: c.id, criterion_level: level})
             });
-            if (r.ok) created++; else failed++;
+            if (r.ok) {
+              const data = await r.json();
+              _acmmOpenedIssues[issueKey] = {number: data.issue_number, url: data.issue_url};
+              created++;
+            } else { failed++; }
           } catch { failed++; }
         } else {
           for (const rr of repos) {
+            const issueKey = rr.repo + ':' + c.id;
+            if (_acmmOpenedIssues[issueKey]) { skipped++; continue; }
             const rc = (rr.criteria_results || []).find(x => x.id === c.id);
             if (rc && !rc.passed) {
               try {
@@ -9255,15 +9289,19 @@ function burnAreaChart() {
                   method: 'POST', headers: {'Content-Type': 'application/json'},
                   body: JSON.stringify({repo: rr.repo, criterion_id: c.id, criterion_level: level})
                 });
-                if (r.ok) created++; else failed++;
+                if (r.ok) {
+                  const data = await r.json();
+                  _acmmOpenedIssues[issueKey] = {number: data.issue_number, url: data.issue_url};
+                  created++;
+                } else { failed++; }
               } catch { failed++; }
             }
           }
         }
         const prog = document.getElementById('acmm-batch-progress');
-        if (prog) prog.textContent = created + '/' + criteria.length + ' created' + (failed > 0 ? ' (' + failed + ' failed)' : '') + '...';
+        if (prog) prog.textContent = created + '/' + criteria.length + ' created' + (failed > 0 ? ' (' + failed + ' failed)' : '') + (skipped > 0 ? ' (' + skipped + ' skipped)' : '') + '...';
       }
-      acmmShowDialog('Issues Created', '<p style="font-size:0.82rem">' + created + ' issue(s) created' + (failed > 0 ? ', ' + failed + ' failed' : '') + ' with <code>acmm</code> + <code>ai-fix-requested</code> labels.</p>');
+      acmmShowDialog('Issues Created', '<p style="font-size:0.82rem">' + created + ' issue(s) created' + (failed > 0 ? ', ' + failed + ' failed' : '') + (skipped > 0 ? ', ' + skipped + ' already existed' : '') + ' with <code>acmm</code> + <code>ai-fix-requested</code> labels.</p>');
     }
 
     function acmmShowLevelDialog(level, repoName) {
