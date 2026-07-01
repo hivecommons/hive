@@ -9033,7 +9033,7 @@ function burnAreaChart() {
 
     // ACMM Evaluation
     const ACMM_EVAL_INTERVAL_MS = 3600000; // 1 hour
-    const ACMM_LEVEL_NAMES = {0:'Prerequisites',2:'Instructed',3:'Measured',4:'Adaptive',5:'Automated',6:'Autonomous'};
+    const ACMM_LEVEL_NAMES = {0:'Prerequisites',1:'Foundational',2:'Instructed',3:'Measured',4:'Adaptive',5:'Automated',6:'Autonomous'};
     const ACMM_LEVEL_DESCRIPTIONS = {
       0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
       2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
@@ -9041,6 +9041,58 @@ function burnAreaChart() {
       4: 'Self-tuning QA, nightly compliance, automated review application, AI-fix workflows, and session continuity.',
       5: 'GitHub Actions AI integration, auto-QA self-tuning, public metrics, policy-as-code, and reflection logs.',
       6: 'Auto issue generation, multi-agent orchestration, strategic dashboards, merge queues, and full governance.'
+    };
+    const ACMM_CRITERION_TIPS = {
+      'acmm:prereq-test-suite': 'A test framework (Jest, Vitest, pytest, Go test) so agents can validate their changes before submitting.',
+      'acmm:prereq-e2e': 'End-to-end tests (Playwright, Cypress) that verify full user flows — agents use these to catch integration regressions.',
+      'acmm:prereq-cicd': 'A CI/CD pipeline (GitHub Actions, GitLab CI, etc.) that runs automatically on PRs so agent changes are validated.',
+      'acmm:prereq-pr-template': 'A pull request template that guides agents to include context, test plans, and change descriptions.',
+      'acmm:prereq-issue-template': 'Issue templates that give agents structured context when picking up work from the backlog.',
+      'acmm:prereq-contrib-guide': 'A contributing guide that tells agents (and humans) the project\'s conventions, branching model, and review process.',
+      'acmm:prereq-code-style': 'A linter/formatter config (ESLint, Prettier, golangci-lint, Ruff) so agents produce code matching project style.',
+      'acmm:prereq-coverage-gate': 'A coverage threshold that prevents agents from merging changes that reduce test coverage.',
+      'acmm:claude-md': 'CLAUDE.md gives Claude Code project-specific instructions — conventions, forbidden patterns, preferred libraries.',
+      'acmm:copilot-instructions': 'Copilot instructions file that customizes GitHub Copilot\'s suggestions for this repo.',
+      'acmm:agents-md': 'AGENTS.md documents which AI agents work on the repo, their roles, and coordination rules.',
+      'acmm:cursor-rules': 'Cursor rules file that configures Cursor IDE\'s AI behavior for this project.',
+      'acmm:prompts-catalog': 'A catalog of reusable prompts/commands that agents can invoke for common tasks.',
+      'acmm:editor-config': 'EditorConfig ensures consistent formatting (indentation, line endings) across all editors and agents.',
+      'acmm:simple-skills': 'Custom skills/commands that extend agent capabilities with project-specific automation.',
+      'acmm:correction-capture': 'A memory/corrections system where agent mistakes are recorded to prevent repeating them.',
+      'acmm:pr-acceptance-metric': 'Tracking PR acceptance rates over time — how often agent PRs are merged vs. rejected.',
+      'acmm:pr-review-rubric': 'A review rubric or checklist that standardizes how agent PRs are evaluated.',
+      'acmm:quality-dashboard': 'A quality dashboard or analytics page that visualizes agent contribution quality.',
+      'acmm:ci-matrix': 'A CI test matrix that runs tests across multiple environments/configurations.',
+      'acmm:layered-safety': 'Claude settings that restrict which tools/commands agents can use (permission boundaries).',
+      'acmm:mechanical-enforcement': 'Mechanical enforcement of safety rules via settings, not just instructions.',
+      'acmm:session-summary': 'Session summaries that capture what an agent learned, enabling continuity across sessions.',
+      'acmm:structural-gates': 'Structural gates in settings that require human approval for risky operations.',
+      'acmm:auto-qa-tuning': 'Auto-QA that self-tunes thresholds based on historical pass/fail patterns.',
+      'acmm:nightly-compliance': 'Nightly compliance checks that catch drift, stale dependencies, or broken links.',
+      'acmm:copilot-review-apply': 'Automated application of review feedback — agents fix issues flagged in reviews.',
+      'acmm:auto-label': 'Automated issue/PR labeling that routes work to the right agents or reviewers.',
+      'acmm:ai-fix-workflow': 'An AI-fix-requested workflow that assigns labeled issues to agents for automated resolution.',
+      'acmm:tier-classifier': 'Change classification that categorizes PRs by risk level (trivial, standard, critical).',
+      'acmm:security-ai-md': 'An AI security policy documenting how agents handle secrets, auth, and sensitive data.',
+      'acmm:session-continuity': 'Session continuity files that let agents resume work across multiple sessions.',
+      'acmm:cross-session-knowledge': 'A knowledge base that persists learnings across agent sessions and contributors.',
+      'acmm:github-actions-ai': 'GitHub Actions integration that triggers AI agents for reviews, fixes, or issue triage.',
+      'acmm:auto-qa-self-tuning': 'Auto-QA with self-tuning — thresholds and rules adapt based on project history.',
+      'acmm:public-metrics': 'Publicly visible metrics that show agent contribution quality and project health.',
+      'acmm:policy-as-code': 'Policies defined as code (OPA, Kyverno, Conftest) that agents must satisfy.',
+      'acmm:reflection-log': 'Reflection logs where agents record what worked, what didn\'t, and what to try differently.',
+      'acmm:auto-issue-gen': 'Automated issue generation — agents create issues from detected problems or improvements.',
+      'acmm:multi-agent-orchestration': 'Multi-agent orchestration — a dispatcher coordinates multiple specialized agents.',
+      'acmm:strategic-dashboard': 'A strategic dashboard showing ACMM progress, agent health, and maturity trends.',
+      'acmm:merge-queue': 'A merge queue that serializes and validates agent PRs before merging to main.',
+      'acmm:risk-assessment-config': 'Risk assessment config that gates high-risk changes for human review.',
+      'acmm:observability-runbook': 'An observability runbook documenting how to monitor and debug agent operations.',
+      'aef:task-traceability': 'Task traceability — every agent action is linked back to a tracked issue or task.',
+      'aef:structural-gates': 'CODEOWNERS or boundary files that restrict which paths agents can modify.',
+      'aef:session-continuity': 'Agent context files (CLAUDE.md, AGENTS.md, etc.) that provide continuity across tools.',
+      'aef:audit-trail': 'An audit trail workflow that logs agent actions for compliance and review.',
+      'aef:cross-tool-config': 'Cross-tool agent config so multiple AI tools share the same project conventions.',
+      'aef:change-classification': 'Change classification docs that define risk tiers for different types of modifications.'
     };
     let _acmmEvalData = null;
     let _acmmSelectedRepo = null; // null = aggregate view
@@ -9053,6 +9105,7 @@ function burnAreaChart() {
 
     function acmmCriterionRow(c, repoName) {
       const icon = c.passed ? '✅' : '❌';
+      const tip = ACMM_CRITERION_TIPS[c.id] || '';
       const patternItems = (c.patterns || []).map(p => '<span style="display:inline-block;font-size:0.68rem;background:var(--bg);padding:1px 6px;border-radius:3px;border:1px solid var(--border);margin:1px 2px;font-family:monospace">' + escapeHtml(p) + '</span>').join('');
       let issueBtn = '';
       if (!c.passed) {
@@ -9064,13 +9117,15 @@ function burnAreaChart() {
           'title="Open GitHub issue for agents to fix this">📋 Open Issue</button>';
       }
       const rowId = 'acmm-row-' + c.id.replace(/[^a-zA-Z0-9]/g, '-');
-      return '<div style="padding:8px 10px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border)">' +
+      return '<div style="padding:8px 10px;margin-bottom:4px;background:var(--bg);border-radius:6px;border:1px solid var(--border)"' +
+        (tip ? ' title="' + escapeHtml(tip) + '"' : '') + '>' +
         '<div style="display:flex;align-items:center;gap:8px;cursor:pointer" onclick="var el=document.getElementById(\'' + rowId + '\');if(el)el.style.display=el.style.display===\'none\'?\'block\':\'none\'">' +
         '<span style="font-size:0.9rem">' + icon + '</span>' +
         '<span style="font-size:0.82rem;font-weight:500;flex:1">' + escapeHtml(c.name) + '</span>' +
         issueBtn +
         '</div>' +
         '<div id="' + rowId + '" style="display:none;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">' +
+        (tip ? '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px;font-style:italic">' + escapeHtml(tip) + '</div>' : '') +
         '<div style="font-size:0.68rem;color:var(--muted);margin-bottom:3px">Looks for any of:</div>' +
         '<div style="line-height:1.6">' + patternItems + '</div>' +
         '</div></div>';

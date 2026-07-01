@@ -485,6 +485,18 @@ func (s *Server) scoreResults(results []CriterionResult) ACMMEvaluation {
 		}
 	}
 
+	// When L0 passes, the achieved level is L1 (prerequisites met).
+	// The criteria levels jump 0→2 with no L1 criteria defined,
+	// so passing L0 means you've reached L1.
+	if codebaseLevel == 0 {
+		for _, ls := range levelScores {
+			if ls.Level == 0 && ls.Passed {
+				codebaseLevel = 1
+				break
+			}
+		}
+	}
+
 	codeLevelName := acmmLevelNames[codebaseLevel]
 	if codeLevelName == "" {
 		codeLevelName = "None"

@@ -14,6 +14,7 @@ type ACMMCriterion struct {
 // acmmLevelNames maps numeric ACMM levels to human-readable names.
 var acmmLevelNames = map[int]string{
 	0: "Prerequisites",
+	1: "Foundational",
 	2: "Instructed",
 	3: "Measured",
 	4: "Adaptive",
