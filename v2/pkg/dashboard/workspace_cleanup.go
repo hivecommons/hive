@@ -2,14 +2,12 @@ package dashboard
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -49,7 +47,7 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 
 	removedDirs := 0
 	removedFiles := 0
-	failedDirs := 0
+	failed := 0
 	now := time.Now()
 
 	for _, agentEntry := range agentDirs {
@@ -81,19 +79,20 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 			}
 
 			if entry.IsDir() {
-				if err := removeAsOwner(entryPath); err != nil {
+				if err := removeTree(entryPath); err != nil {
 					logger.Warn("workspace cleanup: failed to remove stale dir",
 						"agent", agentName, "dir", name, "age", age.Round(time.Minute), "error", err)
-					failedDirs++
+					failed++
 					continue
 				}
 				logger.Info("workspace cleanup: removed stale dir",
 					"agent", agentName, "dir", name, "age", age.Round(time.Minute))
 				removedDirs++
 			} else {
-				if err := removeAsOwner(entryPath); err != nil {
+				if err := removeTree(entryPath); err != nil {
 					logger.Warn("workspace cleanup: failed to remove stale file",
 						"agent", agentName, "file", name, "error", err)
+					failed++
 					continue
 				}
 				removedFiles++
@@ -102,51 +101,91 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 	}
 
 	logger.Info("workspace cleanup complete",
-		"removed_dirs", removedDirs, "removed_files", removedFiles, "failed_dirs", failedDirs)
+		"removed_dirs", removedDirs, "removed_files", removedFiles, "failed", failed)
 
-	if audit != nil && (removedDirs > 0 || removedFiles > 0 || failedDirs > 0) {
+	if audit != nil && (removedDirs > 0 || removedFiles > 0 || failed > 0) {
 		audit.Log("system", "workspace_cleanup",
-			fmt.Sprintf("removed_dirs=%d removed_files=%d failed=%d", removedDirs, removedFiles, failedDirs), "")
+			fmt.Sprintf("removed_dirs=%d removed_files=%d failed=%d", removedDirs, removedFiles, failed), "")
 	}
 }
 
-// removeAsOwner tries os.RemoveAll first; on permission error (CephFS
-// root_squash), it detects the owning UID and retries rm -rf as that user.
-func removeAsOwner(path string) error {
+// removeTree removes a file or directory tree. The hive binary runs as an
+// unprivileged user (dev/UID 1001) while agent workspaces are owned by
+// per-agent UIDs (hive-scanner, hive-architect, etc.). All share the "node"
+// group (GID 1000). Strategy:
+//  1. Try os.RemoveAll directly (works when group-writable or same owner).
+//  2. On EPERM, chmod the tree to be group-writable, then retry RemoveAll.
+//  3. As last resort, shell out to rm -rf (handles edge cases like stale
+//     NFS handles that Go's RemoveAll retries can't recover from).
+func removeTree(path string) error {
 	err := os.RemoveAll(path)
 	if err == nil {
 		return nil
 	}
-	if !errors.Is(err, syscall.EPERM) && !errors.Is(err, os.ErrPermission) {
+	if !isPermError(err) {
 		return err
 	}
 
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		return err
+	// Make the tree group-writable so the dev user (same group) can delete.
+	chmodErr := filepath.WalkDir(path, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d.IsDir() {
+			os.Chmod(p, 0o770)
+		} else {
+			os.Chmod(p, 0o660)
+		}
+		return nil
+	})
+	if chmodErr == nil {
+		if retryErr := os.RemoveAll(path); retryErr == nil {
+			return nil
+		}
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return err
-	}
-	ownerUID := strconv.FormatUint(uint64(stat.Uid), 10)
 
-	// Some distros' su doesn't accept numeric UIDs — resolve to username
-	suTarget := ownerUID
-	if u, lookupErr := user.LookupId(ownerUID); lookupErr == nil {
-		suTarget = u.Username
-	}
-
-	cmd := exec.Command("su", "-s", "/bin/sh", "-c", "rm -rf "+path, suTarget)
-	if suErr := cmd.Run(); suErr != nil {
-		return fmt.Errorf("os.RemoveAll: %w; su %s rm -rf: %v", err, suTarget, suErr)
+	// Last resort: shell out to rm -rf which may handle cases Go can't.
+	cmd := exec.Command("rm", "-rf", path)
+	if shellErr := cmd.Run(); shellErr != nil {
+		return fmt.Errorf("os.RemoveAll: %w; chmod+retry failed; rm -rf: %v", err, shellErr)
 	}
 	return nil
 }
 
+func isPermError(err error) bool {
+	if os.IsPermission(err) {
+		return true
+	}
+	for unwrapped := err; unwrapped != nil; {
+		if pe, ok := unwrapped.(*os.PathError); ok {
+			if pe.Err == syscall.EPERM || pe.Err == syscall.EACCES {
+				return true
+			}
+			unwrapped = pe.Err
+		} else {
+			break
+		}
+	}
+	return false
+}
+
 func isSkippedEntry(name string) bool {
 	switch name {
-	case ".cache", ".config", ".npm-cache", "bin", "beads.json":
+	// Agent infrastructure dirs — never remove
+	case ".cache", ".config", ".npm-cache", "bin":
+		return true
+	// Agent state files — managed by the hive binary
+	case "beads.json", "stats.json":
+		return true
+	// IDE/editor config dirs — seeded by entrypoint, shared across sessions
+	case ".agents", ".cursor", ".windsurf", ".clinerules", ".github", ".opencode":
+		return true
+	// Copilot session state — managed by the agent runtime
+	case ".copilot-session":
+		return true
+	}
+	// Skip hidden dotfiles/dotdirs that aren't workspace artifacts
+	if strings.HasPrefix(name, ".") {
 		return true
 	}
 	return false

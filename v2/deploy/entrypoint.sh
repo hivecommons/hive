@@ -273,7 +273,7 @@ print('\n'.join(sorted(names)))
         for _entry in "$_agent_dir"*; do
           [ -e "$_entry" ] || continue
           _entry_name=$(basename "$_entry")
-          case "$_entry_name" in .cache|.config|.npm-cache|bin|beads.json) continue ;; esac
+          case "$_entry_name" in .cache|.config|.npm-cache|bin|beads.json|stats.json|.*) continue ;; esac
           _MTIME=$(stat -c '%Y' "$_entry" 2>/dev/null || echo "$_NOW")
           _AGE=$((_NOW - _MTIME))
           if [ "$_AGE" -gt "$WORKSPACE_MAX_AGE_SECS" ]; then
@@ -310,6 +310,9 @@ print('\n'.join(sorted(names)))
       if [ "$AGENT_DIR_OWNER" != "$AGENT_UID" ]; then
         chown -R "hive-${agent_name}:node" "/data/agents/${agent_name}" 2>/dev/null || true
       fi
+      # Ensure agent dirs are group-writable so the dev user (same node group)
+      # can clean up stale workspaces at runtime without root privileges.
+      chmod g+rwX "/data/agents/${agent_name}" 2>/dev/null || true
       if [ -d "/data/beads/${agent_name}" ]; then
         BEAD_DIR_OWNER=$(stat -c '%u' "/data/beads/${agent_name}" 2>/dev/null || echo "0")
         if [ "$BEAD_DIR_OWNER" != "$AGENT_UID" ]; then
