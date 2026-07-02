@@ -77,6 +77,27 @@ func TestRemoveTreeReadOnlyDir(t *testing.T) {
 	}
 }
 
+func TestFileOwnerName(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "owned.txt")
+	if err := os.WriteFile(f, []byte("test"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name, err := fileOwnerName(f)
+	if err != nil {
+		t.Fatalf("fileOwnerName failed: %v", err)
+	}
+	if name == "" {
+		t.Fatal("expected non-empty owner name")
+	}
+}
+
+func TestFileOwnerNameNotExist(t *testing.T) {
+	_, err := fileOwnerName("/nonexistent/path/xyz")
+	if err == nil {
+		t.Fatal("expected error for non-existent path")
+	}
+}
+
 func TestSweepWorkspacesSkipsRecent(t *testing.T) {
 	origRoot := agentWorkspaceRoot
 	root := t.TempDir()

@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -111,12 +113,11 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 
 // removeTree removes a file or directory tree. The hive binary runs as an
 // unprivileged user (dev/UID 1001) while agent workspaces are owned by
-// per-agent UIDs (hive-scanner, hive-architect, etc.). All share the "node"
-// group (GID 1000). Strategy:
+// per-agent UIDs (hive-scanner, hive-architect, etc.). Strategy:
 //  1. Try os.RemoveAll directly (works when group-writable or same owner).
-//  2. On EPERM, chmod the tree to be group-writable, then retry RemoveAll.
-//  3. As last resort, shell out to rm -rf (handles edge cases like stale
-//     NFS handles that Go's RemoveAll retries can't recover from).
+//  2. On EPERM, use su-exec (SUID binary) to run rm -rf as the file owner.
+//  3. chmod the tree writable and retry (works when current user owns the files).
+//  4. As last resort, shell out to rm -rf as the current user.
 func removeTree(path string) error {
 	err := os.RemoveAll(path)
 	if err == nil {
@@ -126,8 +127,19 @@ func removeTree(path string) error {
 		return err
 	}
 
-	// Make the tree group-writable so the dev user (same group) can delete.
-	chmodErr := filepath.WalkDir(path, func(p string, d os.DirEntry, walkErr error) error {
+	// Use su-exec to remove as the file owner — su-exec has the SUID bit,
+	// so the unprivileged dev user can switch to agent UIDs.
+	ownerName, lookupErr := fileOwnerName(path)
+	if lookupErr == nil && ownerName != "" {
+		cmd := exec.Command("su-exec", ownerName, "rm", "-rf", path)
+		if suErr := cmd.Run(); suErr == nil {
+			return nil
+		}
+	}
+
+	// chmod writable and retry — works when the current user owns the files
+	// (e.g. same-user read-only dirs) but not cross-user.
+	filepath.WalkDir(path, func(p string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return nil
 		}
@@ -138,18 +150,34 @@ func removeTree(path string) error {
 		}
 		return nil
 	})
-	if chmodErr == nil {
-		if retryErr := os.RemoveAll(path); retryErr == nil {
-			return nil
-		}
+	if retryErr := os.RemoveAll(path); retryErr == nil {
+		return nil
 	}
 
-	// Last resort: shell out to rm -rf which may handle cases Go can't.
+	// Last resort: shell out to rm -rf as current user.
 	cmd := exec.Command("rm", "-rf", path)
 	if shellErr := cmd.Run(); shellErr != nil {
-		return fmt.Errorf("os.RemoveAll: %w; chmod+retry failed; rm -rf: %v", err, shellErr)
+		return fmt.Errorf("os.RemoveAll: %w; su-exec rm (owner=%s, lookup=%v); rm -rf: %v",
+			err, ownerName, lookupErr, shellErr)
 	}
 	return nil
+}
+
+// fileOwnerName returns the username that owns the given path.
+func fileOwnerName(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", fmt.Errorf("not a unix stat")
+	}
+	u, err := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10))
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
 }
 
 func isPermError(err error) bool {
