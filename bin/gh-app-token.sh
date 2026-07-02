@@ -115,8 +115,7 @@ if [ "${1:-}" = "--scoped" ]; then
   exit 0
 fi
 
-if [ "${1:-}" = "--export" ]; then
-  echo "export GH_TOKEN=$TOKEN"
-else
-  echo "$TOKEN"
-fi
+# Token is already cached to $CACHE_FILE (line 59-60). Do not echo it to
+# stdout — callers should read the cache file directly to avoid leaking
+# the token into logs or captured output.
+echo "token cached at ${CACHE_FILE}"

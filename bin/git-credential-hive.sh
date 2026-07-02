@@ -91,8 +91,13 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
+TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
+
 case "${1:-}" in
   get)
+    printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${AGENT:-unknown}" "$(id -u)" \
+      >> "$TOKEN_ACCESS_LOG" 2>/dev/null || true
     echo "protocol=https"
     echo "host=github.com"
     echo "username=x-access-token"

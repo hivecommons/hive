@@ -54,6 +54,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/restart/{agent}", s.handleRestart)
 	s.mux.HandleFunc("POST /api/reset-restarts/{agent}", s.handleResetRestarts)
 
+	s.mux.HandleFunc("GET /api/token-access", s.handleTokenAccess)
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
 	s.mux.HandleFunc("GET /api/model-advisor", s.handleModelAdvisor)
@@ -1112,6 +1113,34 @@ func (s *Server) handleResetRestarts(w http.ResponseWriter, r *http.Request) {
 	s.deps.Logger.Info("audit: restart count reset", "agent", name, "trigger", "dashboard-api")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "reset", "agent": name})
+}
+
+// --- Token access audit log ---
+
+const (
+	tokenAccessLogPath    = "/var/run/hive-metrics/token-access.jsonl"
+	tokenAccessMaxEntries = 100
+)
+
+func (s *Server) handleTokenAccess(w http.ResponseWriter, r *http.Request) {
+	data, err := os.ReadFile(tokenAccessLogPath)
+	if err != nil {
+		jsonResponse(w, map[string]interface{}{"entries": []interface{}{}, "error": "no audit log"})
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	start := 0
+	if len(lines) > tokenAccessMaxEntries {
+		start = len(lines) - tokenAccessMaxEntries
+	}
+	entries := make([]json.RawMessage, 0, len(lines)-start)
+	for _, line := range lines[start:] {
+		if line == "" {
+			continue
+		}
+		entries = append(entries, json.RawMessage(line))
+	}
+	jsonResponse(w, map[string]interface{}{"entries": entries})
 }
 
 // --- Token endpoints ---

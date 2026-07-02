@@ -102,9 +102,16 @@ if [[ "$BACKEND" == "copilot" ]]; then
   fi
 fi
 
+# Scrub GitHub token patterns and JWTs from stderr before writing to disk.
+scrub_tokens() {
+  sed -u -E \
+    's/(ghs_|ghp_|gho_|github_pat_)[A-Za-z0-9_]{10,}/[REDACTED]/g;
+     s/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/[REDACTED-JWT]/g'
+}
+
 # Capture stderr so silent failures (e.g. invalid model name) leave a diagnostic.
 STDERR_LOG="/tmp/.hive-launch-stderr-${HIVE_AGENT:-unknown}.log"
-"${FULL_CMD[@]}" 2> >(tee "$STDERR_LOG" >&2)
+"${FULL_CMD[@]}" 2> >(scrub_tokens | tee "$STDERR_LOG" >&2)
 EXIT_CODE=$?
 if [[ $EXIT_CODE -ne 0 ]]; then
   echo "HIVE: ${CMD} exited with code ${EXIT_CODE}" >&2

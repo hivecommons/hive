@@ -156,14 +156,15 @@ if [[ -f "$_HIVE_CONFIG" ]]; then
   GH_APP_INSTALLATION_ID=$(_hive_read "github_app.installation_id" "")
   GH_APP_KEY_FILE=$(_hive_read "github_app.private_key_file" "/etc/hive/gh-app-key.pem")
   export GH_APP_ID GH_APP_INSTALLATION_ID GH_APP_KEY_FILE
+  GH_APP_TOKEN_CACHE="/var/run/hive-metrics/gh-app-token.cache"
   if [[ -n "$GH_APP_ID" && -n "$GH_APP_INSTALLATION_ID" && -f "$GH_APP_KEY_FILE" ]]; then
     _app_token_script="${HIVE_BIN:-/usr/local/bin}/gh-app-token.sh"
     if [[ -x "$_app_token_script" ]]; then
-      HIVE_GITHUB_TOKEN=$("$_app_token_script" 2>/dev/null || true)
-      if [[ -n "$HIVE_GITHUB_TOKEN" ]]; then
-        export HIVE_GITHUB_TOKEN
-        export GH_TOKEN="$HIVE_GITHUB_TOKEN"
-      fi
+      "$_app_token_script" >/dev/null 2>&1 || true
+    fi
+    if [[ -f "$GH_APP_TOKEN_CACHE" ]]; then
+      HIVE_GITHUB_TOKEN=$(cat "$GH_APP_TOKEN_CACHE" 2>/dev/null || true)
+      [[ -n "$HIVE_GITHUB_TOKEN" ]] && export HIVE_GITHUB_TOKEN
     fi
   fi
 

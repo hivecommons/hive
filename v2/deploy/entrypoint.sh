@@ -74,6 +74,10 @@ else
   fi
 fi
 
+# ── Cleanup stale stderr logs from previous agent launches ────────────
+STDERR_LOG_MAX_AGE_MINUTES=60
+find /tmp -maxdepth 1 -name '.hive-launch-stderr-*.log' -mmin +"$STDERR_LOG_MAX_AGE_MINUTES" -delete 2>/dev/null || true
+
 # ── Root-only setup (runs once, then re-execs as dev) ──────────────────
 if [ "$(id -u)" = "0" ]; then
   # Fix ownership of mounted volumes (may be root-owned from host bind mounts).
@@ -202,11 +206,10 @@ if [ "$(id -u)" = "0" ]; then
   echo "[entrypoint] polling perm guard active (config.json 5s, cache 5m)"
   echo "[entrypoint] CLI config: /data/home (shared, group-writable for agent UIDs)"
 
-  # Write .bashrc so agent shells auto-source GH_TOKEN and SSL_CERT_FILE
-  # without needing credential instructions in the kick prompt.
+  # Write .bashrc for agent shells. GH_TOKEN is NOT exported here — gh-wrapper.sh
+  # injects the token at call time, avoiding exposure in shell env / transcripts.
   cat > /data/home/.bashrc <<'BASHRC' 2>/dev/null || true
 # Hive agent shell environment
-export GH_TOKEN=$(cat /var/run/hive-metrics/gh-app-token.cache 2>/dev/null)
 export SSL_CERT_FILE=/data/proxy-ca.pem
 BASHRC
   chmod 644 /data/home/.bashrc 2>/dev/null || true
