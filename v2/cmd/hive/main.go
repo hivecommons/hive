@@ -27,6 +27,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/advisory"
 	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/agent"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/classify"
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -59,7 +60,7 @@ func main() {
 	flag.Parse()
 	dashboard.SetGitVersion(gitHash, gitShort)
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(logscrub.NewHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
 
 	// Clear stale upgrade marker if the current SHA differs from the marker's
