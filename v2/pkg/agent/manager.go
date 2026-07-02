@@ -320,7 +320,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 
 	// Attach pluk publisher if available — streams structured events
 	// from the agent's tmux output to a JSONL log for subscribers.
-	if plukPath, err := exec.LookPath("pluk-publish"); err == nil {
+	if plukPath, err := exec.LookPath("pluk"); err == nil {
 		_ = os.MkdirAll("/var/run/pluk/logs", 0o1777)
 		_ = os.MkdirAll("/var/run/pluk/commands", 0o1777)
 		backend := agent.Config.Backend
@@ -330,7 +330,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		if backend == "" || IsInferenceBackend(backend) {
 			backend = "claude"
 		}
-		pipePaneCmd := fmt.Sprintf("%s --session %s --cli %s", plukPath, agent.tmuxSession, backend)
+		pipePaneCmd := fmt.Sprintf("%s watch %s --cli=%s", plukPath, agent.tmuxSession, backend)
 		_ = m.tmuxCmd(agent, "pipe-pane", "-t", agent.tmuxSession, "-o", pipePaneCmd).Run()
 		m.logger.Info("pluk publisher attached", "agent", agent.Name, "cli", backend)
 	}

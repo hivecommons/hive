@@ -550,9 +550,9 @@ func (s *Server) sendKickBrainstorm() {
 
 		msg := s.buildStructureKickMessage(state)
 		if err := s.deps.AgentMgr.SendKick("brainstorm", msg); err != nil {
-			s.logger.Warn("sendKick for structure phase failed, trying pluk-send", "error", err)
+			s.logger.Warn("sendKick for structure phase failed, trying pluk send", "error", err)
 			if err2 := plukSendKick("brainstorm", msg); err2 != nil {
-				s.logger.Warn("pluk-send also failed", "error", err2)
+				s.logger.Warn("pluk send also failed", "error", err2)
 			}
 		}
 
@@ -580,23 +580,23 @@ func (s *Server) buildStructureKickMessage(state *knowledge.InceptionState) stri
 	return sb.String()
 }
 
-// plukSendKick sends the inception prompt via pluk's pluk-send command.
-// This is more reliable than tmux send-keys + $(cat file) because pluk-send
+// plukSendKick sends the inception prompt via pluk's send subcommand.
+// This is more reliable than tmux send-keys + $(cat file) because pluk send
 // writes to a named FIFO and confirms delivery via a command_received event.
-// Returns error if pluk-send is not installed or the send fails.
+// Returns error if pluk is not installed or the send fails.
 func plukSendKick(session, message string) error {
-	plukPath, err := exec.LookPath("pluk-send")
+	plukPath, err := exec.LookPath("pluk")
 	if err != nil {
-		return fmt.Errorf("pluk-send not found: %w", err)
+		return fmt.Errorf("pluk not found: %w", err)
 	}
 
 	cmd := exec.Command(plukPath,
-		"--session", "hive-"+session,
-		"--text", message,
+		"send", "hive-"+session,
+		"--text="+message,
 		"--enter",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("pluk-send failed: %w (output: %s)", err, string(out))
+		return fmt.Errorf("pluk send failed: %w (output: %s)", err, string(out))
 	}
 
 	return nil

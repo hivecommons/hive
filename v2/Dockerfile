@@ -17,11 +17,6 @@ RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH}" -o /hive ./cmd/hive && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd
 
-# Build pluk (Go binary) in the builder stage — keep config for pattern files
-RUN git clone --depth 1 https://github.com/kubestellar/pluk.git /tmp/pluk && \
-    cd /tmp/pluk && GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /pluk ./cmd/pluk/ && \
-    mkdir -p /pluk-patterns && cp -r /tmp/pluk/config/patterns.d /pluk-patterns/ && \
-    rm -rf /tmp/pluk
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
 FROM node:24-slim AS tmux-builder
@@ -154,16 +149,11 @@ RUN pip3 install --no-cache-dir --break-system-packages pyyaml 2>/dev/null || \
 RUN pip3 install --no-cache-dir --break-system-packages specify-cli 2>/dev/null || \
     pip3 install --no-cache-dir specify-cli 2>/dev/null || \
     echo "WARN: spec-kit (specify-cli) install failed — inception will generate facts without it"
-# pluk (v3 — Go binary): structured event streaming for AI agent tmux sessions
-COPY --from=builder /pluk /usr/local/bin/pluk
-RUN ln -sf pluk /usr/local/bin/pluk-publish && \
-    ln -sf pluk /usr/local/bin/pluk-subscribe && \
-    ln -sf pluk /usr/local/bin/pluk-send && \
-    mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
+# pluk (TypeScript): structured event streaming for AI agent tmux sessions
+ARG PLUK_VERSION=0.8.0
+RUN npm install -g @kubestellar/pluk@${PLUK_VERSION} && npm cache clean --force
+RUN mkdir -p /var/run/pluk/logs /var/run/pluk/commands && \
     chmod 1777 /var/run/pluk/logs /var/run/pluk/commands
-# Pattern files from builder stage — no second clone needed
-RUN mkdir -p /usr/local/etc/pluk/patterns.d
-COPY --from=builder /pluk-patterns/patterns.d/ /usr/local/etc/pluk/patterns.d/
 RUN (which git && git clone -b feat/cli-agent-mode https://github.com/clubanderson/agentic-strategy-evolution /opt/nous && \
     python3 -m venv /opt/nous/venv && \
     /opt/nous/venv/bin/pip install --no-cache-dir -e /opt/nous 2>&1) || \
