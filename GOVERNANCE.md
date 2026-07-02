@@ -46,7 +46,6 @@ Hive is one of KubeStellar's subprojects, alongside:
   configuration management for edge, multi-cloud, and hybrid environments
 * [KubeStellar Console](https://github.com/kubestellar/console) — multi-cluster
   dashboard and observability
-* [KubeStellar Docs](https://github.com/kubestellar/docs) — project documentation
 
 As a subproject, Hive defers to the KubeStellar Steering Committee on
 cross-project matters, CNCF compliance, and trademark usage. All other
