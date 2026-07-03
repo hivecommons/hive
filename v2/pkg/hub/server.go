@@ -121,6 +121,7 @@ type HubServer struct {
 	logger         *slog.Logger
 	saveCh         chan struct{}
 	hubGitHash     string
+	hubGitBranch   string
 	hubSecret      string
 	httpServer     *http.Server
 	clusters       map[string]ClusterConfig
@@ -157,7 +158,7 @@ type HubBannerEntry struct {
 	SentAt  string `json:"sent_at"`
 }
 
-func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
+func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *HubServer {
 	secret := os.Getenv("HIVE_HUB_SECRET")
 	if secret == "" {
 		if data, err := os.ReadFile("/data/saas/hub-secret.key"); err == nil {
@@ -180,6 +181,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash string) *HubServer {
 		logger:           logger,
 		saveCh:           make(chan struct{}, 1),
 		hubGitHash:       gitHash,
+		hubGitBranch:     gitBranch,
 		hubSecret:        secret,
 		clusters:         loadClusters(logger),
 		heartbeatHealth:  make(map[string]*HeartbeatHealthEntry),
@@ -794,9 +796,10 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
-		"git_hash":    s.hubGitHash,
-		"latest_sha":  getLatestSHA(),
-		"latest_shas": getLatestSHAs(),
+		"git_hash":       s.hubGitHash,
+		"git_branch":     s.hubGitBranch,
+		"latest_sha":     getLatestSHA(),
+		"latest_shas":    getLatestSHAs(),
 	}
 	cookie, _ := r.Cookie("hive_hub_user")
 	if cookie != nil && cookie.Value == hubAdminUsername {

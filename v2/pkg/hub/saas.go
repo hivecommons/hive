@@ -110,6 +110,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}", s.requireAuth(s.handleDeleteHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuth(s.handleUpgradeHive))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/visibility", s.requireAuth(s.handleToggleVisibility))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", s.requireAuth(s.handleToggleAutoUpgrade))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
@@ -1271,6 +1272,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"latest_sha_messages": getLatestSHAMessages(),
 		"commit_messages":     getCommitMessages(),
 		"hub_git_hash":        s.hubGitHash,
+		"hub_git_branch":      s.hubGitBranch,
+		"tracked_branches":    trackedBranches,
 		"hub_auto_upgrade":    isHubAutoUpgrade(),
 		"show_my_hives":       true,
 	}
@@ -1767,6 +1770,87 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"upgrading"}`))
+}
+
+func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	if isTrustedOrigin(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	}
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	id := r.PathValue("id")
+	username := s.getAuthUser(r)
+	h := loadSaaSHive(id)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	if h.Owner != username && username != hubAdminUsername {
+		http.Error(w, `{"error":"only the owner can switch branches"}`, http.StatusForbidden)
+		return
+	}
+	var body struct {
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Branch == "" {
+		http.Error(w, `{"error":"branch is required"}`, http.StatusBadRequest)
+		return
+	}
+	validBranch := false
+	for _, b := range trackedBranches {
+		if b == body.Branch {
+			validBranch = true
+			break
+		}
+	}
+	if !validBranch {
+		http.Error(w, `{"error":"unknown branch"}`, http.StatusBadRequest)
+		return
+	}
+	cluster := s.clusterForHive(h)
+	if cluster == nil {
+		http.Error(w, `{"error":"no cluster config for this hive"}`, http.StatusInternalServerError)
+		return
+	}
+	ns := "hive-hosted-" + id
+	imageTag := body.Branch + "-latest"
+	image := "ghcr.io/kubestellar/hive:" + imageTag
+	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "hive="+image, "-n", ns)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		s.logger.Warn("branch switch failed", "hive", id, "branch", body.Branch, "output", string(out))
+		http.Error(w, `{"error":"branch switch failed — check hub logs"}`, http.StatusInternalServerError)
+		return
+	}
+	// Restart the deployment to pull the new image
+	restartCmd := kubectlForCluster(cluster, "rollout", "restart", "deployment/hive", "-n", ns)
+	restartOut, restartErr := restartCmd.CombinedOutput()
+	if restartErr != nil {
+		s.logger.Warn("rollout restart after branch switch failed", "hive", id, "output", string(restartOut))
+	}
+	s.logger.Info("audit: hive branch switched", "hive_id", id, "branch", body.Branch, "image", image, "by", username)
+	s.mu.Lock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == id {
+			s.registry.Hives[i].Upgrading = true
+			s.registry.Hives[i].UpgradeTarget = body.Branch + "-latest"
+			s.registry.Hives[i].UpgradeStartedAt = time.Now()
+			break
+		}
+	}
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"status": "switching",
+		"branch": body.Branch,
+		"image":  image,
+	})
 }
 
 func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Request) {
@@ -3473,6 +3557,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var _latestSHA = '';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
+    var _trackedBranchesList = [];
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
@@ -3507,6 +3592,7 @@ const dashboardHTML = `<!DOCTYPE html>
         _hiveRegistry = data.hives || [];
         _latestSHA = data.latest_sha || _latestSHA;
         if (data.latest_shas) _latestSHAs = data.latest_shas;
+        if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
         if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
@@ -3526,17 +3612,19 @@ const dashboardHTML = `<!DOCTYPE html>
           shaEl.innerHTML = lines ? '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:2px">Latest images:</div>' + lines : '<div style="display:flex;align-items:center;gap:6px;font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest images…</div>';
         }
         var hubHash = data.hub_git_hash || '';
+        var hubBranch = data.hub_git_branch || 'v2';
         if (hubHash) {
           var el = document.getElementById('hub-version');
           if (el) {
-            var hubLatestUnknown = !_latestSHA;
-            var isCurrent = _latestSHA && hubHash === _latestSHA;
+            var hubBranchLatest = _latestSHAs[hubBranch] || _latestSHA;
+            var hubLatestUnknown = !hubBranchLatest;
+            var isCurrent = hubBranchLatest && hubHash === hubBranchLatest;
             var hubUpgradeBtn = '';
-            var hubIsUpgrading = _hubUpgrading || (!isCurrent && _latestSHA && _hubAutoUpgrade);
-            if (!isCurrent && _latestSHA && _isAdmin && !hubIsUpgrading) {
+            var hubIsUpgrading = _hubUpgrading || (!isCurrent && hubBranchLatest && _hubAutoUpgrade);
+            if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading) {
               hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
             } else if (hubIsUpgrading) {
-              hubUpgradeBtn = ' <span title="Upgrading to ' + esc(_latestSHA || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
+              hubUpgradeBtn = ' <span title="Upgrading to ' + esc(hubBranchLatest || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
             } else if (hubLatestUnknown && _isAdmin) {
               hubUpgradeBtn = ' <button disabled title="Waiting for latest version…" style="padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
             }
@@ -3547,9 +3635,10 @@ const dashboardHTML = `<!DOCTYPE html>
             }
             var hubStatusIcon = hubLatestUnknown
               ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
-              : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(_latestSHA) + '">↑</span>';
-            var hubMsg = _latestSHAMessages['v2'] || '';
-            el.innerHTML = '<span style="font-family:monospace;font-size:0.7rem;color:var(--muted)" title="' + esc(hubMsg) + '">' + esc(hubHash) + '</span>' +
+              : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(hubBranchLatest) + '">↑</span>';
+            var hubBranchPill = '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(hubBranch) + '</span>';
+            var hubMsg = _latestSHAMessages[hubBranch] || '';
+            el.innerHTML = hubBranchPill + '<span style="font-family:monospace;font-size:0.7rem;color:var(--muted)" title="' + esc(hubMsg) + '">' + esc(hubHash) + '</span>' +
               hubStatusIcon + hubUpgradeBtn + hubAutoCheck;
           }
         }
@@ -3701,7 +3790,21 @@ const dashboardHTML = `<!DOCTYPE html>
         if (sha) {
           var branchName = h.gitBranch || 'v2';
           var branchLatest = _latestSHAs[branchName] || _latestSHA;
-          var branch = '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(branchName) + '</span>';
+          var _trackedBranches = _trackedBranchesList.length > 0 ? _trackedBranchesList : Object.keys(_latestSHAs);
+          if (_trackedBranches.length === 0) _trackedBranches = ['v2'];
+          var canSwitchBranch = isHosted && h.role === 'owner' && _trackedBranches.length > 1 && !h.upgrading;
+          var branchOptions = '';
+          if (canSwitchBranch) {
+            for (var bi = 0; bi < _trackedBranches.length; bi++) {
+              var tb = _trackedBranches[bi];
+              if (tb !== branchName) {
+                branchOptions += '<div onclick="switchBranch(\'' + esc(h.id) + '\',\'' + esc(tb) + '\',this)" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#c9d1d9;border-radius:4px" onmouseover="this.style.background=\'rgba(59,130,246,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(tb) + '</div>';
+              }
+            }
+          }
+          var branch = canSwitchBranch
+            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px;cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
+            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(branchName) + '</span>';
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sha === branchLatest;
           var isUpgrading = (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent && !latestUnknown);
@@ -3851,6 +3954,95 @@ const dashboardHTML = `<!DOCTYPE html>
         setTimeout(loadHives, 60000);
         setTimeout(loadHives, 90000);
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); delete _upgradingHives[id]; loadHives(); }
+    }
+
+    function toggleBranchMenu(hiveId) {
+      var menu = document.getElementById('branch-menu-' + hiveId);
+      if (!menu) return;
+      var isOpen = menu.style.display !== 'none';
+      document.querySelectorAll('[id^="branch-menu-"]').forEach(function(m) { m.style.display = 'none'; });
+      if (!isOpen) {
+        menu.style.display = 'block';
+        var closeHandler = function(e) {
+          if (!e.target.closest('#branch-pill-' + hiveId)) {
+            menu.style.display = 'none';
+            document.removeEventListener('click', closeHandler);
+          }
+        };
+        setTimeout(function() { document.addEventListener('click', closeHandler); }, 0);
+      }
+    }
+
+    var _switchTimers = {};
+    function switchBranch(hiveId, newBranch, el) {
+      if (el) el.closest('[id^="branch-menu-"]').style.display = 'none';
+      if (_switchTimers[hiveId]) {
+        clearInterval(_switchTimers[hiveId].interval);
+        delete _switchTimers[hiveId];
+      }
+      var SWITCH_DELAY_SEC = 5;
+      var remaining = SWITCH_DELAY_SEC;
+      var pill = document.getElementById('branch-pill-' + hiveId);
+      if (!pill) return;
+      var origHTML = pill.innerHTML;
+      pill.style.background = 'rgba(234,179,8,0.2)';
+      pill.style.borderColor = 'rgba(234,179,8,0.5)';
+      pill.style.color = '#eab308';
+      pill.onclick = function() { cancelBranchSwitch(hiveId, origHTML); };
+      pill.innerHTML = esc(newBranch) + ' in ' + remaining + 's ✕';
+      pill.title = 'Click to cancel';
+      var interval = setInterval(function() {
+        remaining--;
+        if (remaining <= 0) {
+          clearInterval(interval);
+          delete _switchTimers[hiveId];
+          pill.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>' + esc(newBranch);
+          pill.style.cursor = 'default';
+          pill.onclick = null;
+          doSwitchBranch(hiveId, newBranch);
+          return;
+        }
+        pill.innerHTML = esc(newBranch) + ' in ' + remaining + 's ✕';
+      }, 1000);
+      _switchTimers[hiveId] = { interval: interval, origHTML: origHTML };
+    }
+
+    function cancelBranchSwitch(hiveId, origHTML) {
+      if (_switchTimers[hiveId]) {
+        clearInterval(_switchTimers[hiveId].interval);
+        delete _switchTimers[hiveId];
+      }
+      var pill = document.getElementById('branch-pill-' + hiveId);
+      if (!pill) return;
+      pill.style.background = 'rgba(59,130,246,0.15)';
+      pill.style.borderColor = 'rgba(59,130,246,0.3)';
+      pill.style.color = '#60a5fa';
+      pill.innerHTML = origHTML;
+      pill.onclick = function() { toggleBranchMenu(hiveId); };
+      pill.title = 'Click to switch branch';
+      hiveToast('Branch switch cancelled', 'info');
+    }
+
+    async function doSwitchBranch(hiveId, newBranch) {
+      try {
+        hiveToast('Switching ' + hiveId + ' to ' + newBranch + '...', 'info');
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/switch-branch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ branch: newBranch })
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Branch switch failed', 'error'); loadHives(); return; }
+        _upgradingHives[hiveId] = 'switching';
+        hiveToast('Switched ' + hiveId + ' to ' + newBranch + ' — waiting for rollout', 'success');
+        loadHives();
+        setTimeout(loadHives, 10000);
+        setTimeout(loadHives, 30000);
+        setTimeout(loadHives, 60000);
+      } catch(e) {
+        hiveToast('Error: ' + e.message, 'error');
+        loadHives();
+      }
     }
 
     async function autoRequestAccessFromUrl() {
