@@ -81,6 +81,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/agent/{name}/prompt", s.handleAgentPrompt)
 	s.mux.HandleFunc("PUT /api/config/agent/{name}/prompt", s.handleAgentPromptSave)
 	s.mux.HandleFunc("GET /api/config/agent/{name}/export", s.handleAgentExport)
+	s.mux.HandleFunc("PUT /api/config/agent/{name}/channels", s.handleAgentConfigChannels)
+	s.mux.HandleFunc("PUT /api/config/agent/{name}/tools", s.handleAgentConfigTools)
+	s.mux.HandleFunc("PUT /api/config/agent/{name}/connections", s.handleAgentConfigConnections)
 	s.mux.HandleFunc("GET /api/config/stat-sources", s.handleStatSources)
 
 	s.mux.HandleFunc("GET /api/config/governor", s.handleGovernorConfigGet)
@@ -1546,6 +1549,9 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 		"stats":          stats,
 		"prompt":         lastPrompt,
 		"promptTemplate": promptTemplate,
+		"channels":       agentCfg.Channels,
+		"tools":          agentCfg.Tools,
+		"connections":    maskConnectionAuth(agentCfg.Connections),
 	})
 }
 
@@ -2107,6 +2113,93 @@ func (s *Server) handleAgentConfigStats(w http.ResponseWriter, r *http.Request) 
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
 
+func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	agentCfg, ok := s.deps.Config.Agents[name]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	var body struct {
+		Channels []config.ChannelConfig `json:"channels"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg.Channels = body.Channels
+	s.deps.Config.Agents[name] = agentCfg
+	s.auditFromRequest(r, "config_agent_channels", auditDetail("section", "channels"), name)
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated", "agent": name})
+}
+
+func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	agentCfg, ok := s.deps.Config.Agents[name]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	var body config.ToolsConfig
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg.Tools = &body
+	s.deps.Config.Agents[name] = agentCfg
+	s.auditFromRequest(r, "config_agent_tools", auditDetail("section", "tools"), name)
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated", "agent": name})
+}
+
+func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	agentCfg, ok := s.deps.Config.Agents[name]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	var body struct {
+		Connections []config.ConnectionConfig `json:"connections"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	agentCfg.Connections = body.Connections
+	s.deps.Config.Agents[name] = agentCfg
+	s.auditFromRequest(r, "config_agent_connections", auditDetail("section", "connections"), name)
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated", "agent": name})
+}
+
+const maskedSecret = "***"
+
+func maskConnectionAuth(conns []config.ConnectionConfig) []config.ConnectionConfig {
+	if len(conns) == 0 {
+		return conns
+	}
+	result := make([]config.ConnectionConfig, len(conns))
+	copy(result, conns)
+	for i, c := range result {
+		if c.Auth != nil {
+			masked := *c.Auth
+			if masked.EnvVar != "" {
+				masked.EnvVar = masked.EnvVar + " (" + maskedSecret + ")"
+			}
+			result[i].Auth = &masked
+		}
+	}
+	return result
+}
+
 func (s *Server) handleAgentPrompt(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
@@ -2295,6 +2388,10 @@ func (s *Server) buildExportYAML(name string, cfg config.AgentConfig, cadences m
 	if cfg.Color != "" {
 		b.WriteString(fmt.Sprintf("  color: %q\n", cfg.Color))
 	}
+	hasNewFeatures := len(cfg.Channels) > 0 || cfg.Tools != nil || len(cfg.Connections) > 0
+	if hasNewFeatures {
+		b.WriteString("  specVersion: 1\n")
+	}
 	b.WriteString("spec:\n")
 	b.WriteString(fmt.Sprintf("  backend: %s\n", valueOrDefault(cfg.Backend, "copilot")))
 	if cfg.Model != "" {
@@ -2329,6 +2426,90 @@ func (s *Server) buildExportYAML(name string, cfg config.AgentConfig, cadences m
 		b.WriteString("  aliases:\n")
 		for _, a := range cfg.Aliases {
 			b.WriteString(fmt.Sprintf("    - %s\n", a))
+		}
+	}
+
+	if len(cfg.Channels) > 0 {
+		b.WriteString("  channels:\n")
+		for _, ch := range cfg.Channels {
+			b.WriteString(fmt.Sprintf("    - type: %s\n", ch.Type))
+			if ch.Enabled != nil {
+				b.WriteString(fmt.Sprintf("      enabled: %t\n", *ch.Enabled))
+			}
+			if len(ch.Events) > 0 {
+				b.WriteString("      events:\n")
+				for _, e := range ch.Events {
+					b.WriteString(fmt.Sprintf("        - %s\n", e))
+				}
+			}
+			if len(ch.Patterns) > 0 {
+				b.WriteString("      patterns:\n")
+				for _, p := range ch.Patterns {
+					b.WriteString(fmt.Sprintf("        - %q\n", p))
+				}
+			}
+			if ch.Schedule != "" {
+				b.WriteString(fmt.Sprintf("      schedule: %q\n", ch.Schedule))
+			}
+			if len(ch.Match) > 0 {
+				b.WriteString("      match:\n")
+				for k, v := range ch.Match {
+					b.WriteString(fmt.Sprintf("        %s: %q\n", k, v))
+				}
+			}
+			if len(ch.Repos) > 0 {
+				b.WriteString("      repos:\n")
+				for _, r := range ch.Repos {
+					b.WriteString(fmt.Sprintf("        - %s\n", r))
+				}
+			}
+		}
+	}
+
+	if cfg.Tools != nil {
+		b.WriteString("  tools:\n")
+		if cfg.Tools.Preset != "" {
+			b.WriteString(fmt.Sprintf("    preset: %s\n", cfg.Tools.Preset))
+		}
+		if len(cfg.Tools.Rules) > 0 {
+			b.WriteString("    rules:\n")
+			for _, r := range cfg.Tools.Rules {
+				b.WriteString(fmt.Sprintf("      - pattern: %q\n", r.Pattern))
+				b.WriteString(fmt.Sprintf("        action: %s\n", r.Action))
+				if r.Reason != "" {
+					b.WriteString(fmt.Sprintf("        reason: %q\n", r.Reason))
+				}
+			}
+		}
+	}
+
+	if len(cfg.Connections) > 0 {
+		b.WriteString("  connections:\n")
+		for _, c := range cfg.Connections {
+			b.WriteString(fmt.Sprintf("    - name: %s\n", c.Name))
+			b.WriteString(fmt.Sprintf("      type: %s\n", c.Type))
+			if c.URI != "" {
+				b.WriteString(fmt.Sprintf("      uri: %q\n", c.URI))
+			}
+			if c.EnvName != "" {
+				b.WriteString(fmt.Sprintf("      env_name: %s\n", c.EnvName))
+			}
+			if c.Auth != nil {
+				b.WriteString("      auth:\n")
+				b.WriteString(fmt.Sprintf("        type: %s\n", c.Auth.Type))
+				if c.Auth.EnvVar != "" {
+					b.WriteString(fmt.Sprintf("        env_var: %s\n", c.Auth.EnvVar))
+				}
+				if c.Auth.File != "" {
+					b.WriteString(fmt.Sprintf("        file: %s\n", c.Auth.File))
+				}
+			}
+			if len(c.Options) > 0 {
+				b.WriteString("      options:\n")
+				for k, v := range c.Options {
+					b.WriteString(fmt.Sprintf("        %s: %q\n", k, v))
+				}
+			}
 		}
 	}
 
