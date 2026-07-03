@@ -142,24 +142,28 @@ type agentDefinitionMeta struct {
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
 	Emoji       string `yaml:"emoji,omitempty" json:"emoji,omitempty"`
 	Color       string `yaml:"color,omitempty" json:"color,omitempty"`
+	SpecVersion int    `yaml:"specVersion,omitempty" json:"specVersion,omitempty"`
 }
 
 type agentDefinitionSpec struct {
-	Backend         string            `yaml:"backend,omitempty" json:"backend,omitempty"`
-	Model           string            `yaml:"model,omitempty" json:"model,omitempty"`
-	Role            string            `yaml:"role,omitempty" json:"role,omitempty"`
-	Mode            string            `yaml:"mode,omitempty" json:"mode,omitempty"`
-	SortOrder       int               `yaml:"sortOrder,omitempty" json:"sortOrder,omitempty"`
-	BeadRole        string            `yaml:"beadRole,omitempty" json:"beadRole,omitempty"`
-	StaleTimeout    int               `yaml:"staleTimeout,omitempty" json:"staleTimeout,omitempty"`
-	RestartStrategy string            `yaml:"restartStrategy,omitempty" json:"restartStrategy,omitempty"`
-	ClearOnKick     bool              `yaml:"clearOnKick,omitempty" json:"clearOnKick,omitempty"`
-	IncludeRepos    bool              `yaml:"includeRepos,omitempty" json:"includeRepos,omitempty"`
-	LaneKeywords    []string          `yaml:"laneKeywords,omitempty" json:"laneKeywords,omitempty"`
-	DetectKeywords  []string          `yaml:"detectKeywords,omitempty" json:"detectKeywords,omitempty"`
-	Aliases         []string          `yaml:"aliases,omitempty" json:"aliases,omitempty"`
-	Cadences        map[string]string `yaml:"cadences,omitempty" json:"cadences,omitempty"`
-	PromptTemplate  string            `yaml:"promptTemplate,omitempty" json:"promptTemplate,omitempty"`
+	Backend         string                    `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Model           string                    `yaml:"model,omitempty" json:"model,omitempty"`
+	Role            string                    `yaml:"role,omitempty" json:"role,omitempty"`
+	Mode            string                    `yaml:"mode,omitempty" json:"mode,omitempty"`
+	SortOrder       int                       `yaml:"sortOrder,omitempty" json:"sortOrder,omitempty"`
+	BeadRole        string                    `yaml:"beadRole,omitempty" json:"beadRole,omitempty"`
+	StaleTimeout    int                       `yaml:"staleTimeout,omitempty" json:"staleTimeout,omitempty"`
+	RestartStrategy string                    `yaml:"restartStrategy,omitempty" json:"restartStrategy,omitempty"`
+	ClearOnKick     bool                      `yaml:"clearOnKick,omitempty" json:"clearOnKick,omitempty"`
+	IncludeRepos    bool                      `yaml:"includeRepos,omitempty" json:"includeRepos,omitempty"`
+	LaneKeywords    []string                  `yaml:"laneKeywords,omitempty" json:"laneKeywords,omitempty"`
+	DetectKeywords  []string                  `yaml:"detectKeywords,omitempty" json:"detectKeywords,omitempty"`
+	Aliases         []string                  `yaml:"aliases,omitempty" json:"aliases,omitempty"`
+	Cadences        map[string]string         `yaml:"cadences,omitempty" json:"cadences,omitempty"`
+	PromptTemplate  string                    `yaml:"promptTemplate,omitempty" json:"promptTemplate,omitempty"`
+	Channels        []config.ChannelConfig    `yaml:"channels,omitempty" json:"channels,omitempty"`
+	Tools           *config.ToolsConfig       `yaml:"tools,omitempty" json:"tools,omitempty"`
+	Connections     []config.ConnectionConfig `yaml:"connections,omitempty" json:"connections,omitempty"`
 }
 
 const (
@@ -292,6 +296,9 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		BeadRole:        valueOrDefault(def.Spec.BeadRole, "worker"),
 		IncludeRepos:    &includeRepos,
 		Managed:         true,
+		Channels:        def.Spec.Channels,
+		Tools:           def.Spec.Tools,
+		Connections:     def.Spec.Connections,
 	}
 
 	if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
