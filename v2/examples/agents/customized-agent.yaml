@@ -27,6 +27,30 @@ spec:
     - customized
   aliases:
     - cu
+  # Channels — declare how this agent gets triggered (v3 feature)
+  # Uncomment to use explicit channels instead of governor-only kicks:
+  # channels:
+  #   - type: kick
+  #   - type: webhook
+  #     events: ["issues.opened"]
+  #   - type: schedule
+  #     schedule: "0 */4 * * *"
+
+  # Tools — declarative tool permissions (v3 feature)
+  # Uncomment to use instead of the mode field above:
+  # tools:
+  #   preset: advisory
+  #   rules:
+  #     - pattern: "mcp__github__create_issue"
+  #       action: allow
+  #       reason: "allow creating advisory issues"
+
+  # Connections — external service integrations (v3 feature)
+  # connections:
+  #   - name: github-mcp
+  #     type: mcp
+  #     uri: "stdio:///usr/local/bin/mcp-github"
+
   cadences:
     idle: 4h
     quiet: 4h

@@ -53,6 +53,29 @@ agents:
     #     field: actionableCount
     #     style: spark
     #     trend_field: actionable
+    # channels:                             # Trigger channels (omit = governor kicks only)
+    #   - type: kick                        # Keep governor timer kicks
+    #   - type: webhook                     # Also trigger on GitHub events
+    #     events: ["issues.opened", "issues.labeled"]
+    #   - type: bead                        # Trigger on matching bead metadata
+    #     match: { nudge_target: scanner }
+    # tools:                                # Declarative tool permissions (overrides mode)
+    #   preset: full                        # advisory | issues-only | issues-prs | full
+    #   rules:
+    #     - pattern: "mcp__github__delete_*"
+    #       action: deny
+    #       reason: "scanners should not delete repos"
+    # connections:                           # External service integrations
+    #   - name: github-mcp
+    #     type: mcp
+    #     uri: "stdio:///usr/local/bin/mcp-github"
+    #   - name: jira
+    #     type: api
+    #     uri: "https://jira.example.com/rest/api/2"
+    #     auth:
+    #       type: env
+    #       env_var: JIRA_TOKEN
+    #     env_name: JIRA_BASE_URL
   ci-maintainer:
     enabled: true
     backend: claude
