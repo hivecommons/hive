@@ -150,6 +150,55 @@ type StatsDisplayEntry struct {
 	Target     int    `yaml:"target,omitempty" json:"target,omitempty"`
 }
 
+// ChannelConfig declares a trigger channel for an agent.
+type ChannelConfig struct {
+	Type     string            `yaml:"type" json:"type"`
+	Enabled  *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Events   []string          `yaml:"events,omitempty" json:"events,omitempty"`
+	Patterns []string          `yaml:"patterns,omitempty" json:"patterns,omitempty"`
+	Schedule string            `yaml:"schedule,omitempty" json:"schedule,omitempty"`
+	Match    map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+	Repos    []string          `yaml:"repos,omitempty" json:"repos,omitempty"`
+}
+
+// IsEnabled returns whether this channel is active (defaults to true).
+func (c *ChannelConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// ToolRule is a single allow/deny rule for a tool pattern.
+type ToolRule struct {
+	Pattern string `yaml:"pattern" json:"pattern"`
+	Action  string `yaml:"action" json:"action"`
+	Reason  string `yaml:"reason,omitempty" json:"reason,omitempty"`
+}
+
+// ToolsConfig declares what tools an agent can use.
+type ToolsConfig struct {
+	Preset string     `yaml:"preset,omitempty" json:"preset,omitempty"`
+	Rules  []ToolRule `yaml:"rules,omitempty" json:"rules,omitempty"`
+}
+
+// ConnectionAuth describes how to authenticate to a connection.
+type ConnectionAuth struct {
+	Type   string `yaml:"type" json:"type"`
+	EnvVar string `yaml:"env_var,omitempty" json:"env_var,omitempty"`
+	File   string `yaml:"file,omitempty" json:"file,omitempty"`
+}
+
+// ConnectionConfig declares an external service integration for an agent.
+type ConnectionConfig struct {
+	Name    string            `yaml:"name" json:"name"`
+	Type    string            `yaml:"type" json:"type"`
+	URI     string            `yaml:"uri,omitempty" json:"uri,omitempty"`
+	Auth    *ConnectionAuth   `yaml:"auth,omitempty" json:"auth,omitempty"`
+	EnvName string            `yaml:"env_name,omitempty" json:"env_name,omitempty"`
+	Options map[string]string `yaml:"options,omitempty" json:"options,omitempty"`
+}
+
 type AgentConfig struct {
 	ID              string `yaml:"id" json:"id,omitempty"`
 	Backend         string `yaml:"backend" json:"backend,omitempty"`
@@ -182,6 +231,16 @@ type AgentConfig struct {
 	OnDemand         bool              `yaml:"on_demand" json:"on_demand,omitempty"`
 	CavemanMode      string            `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
 
+	// Channels declares how this agent gets triggered (kick, webhook, discord, schedule, bead).
+	// When nil/empty, the agent uses governor timer kicks by default (implicit kick channel).
+	Channels []ChannelConfig `yaml:"channels,omitempty" json:"channels,omitempty"`
+
+	// Tools declares what tools this agent can use. When nil, the existing Mode field governs.
+	Tools *ToolsConfig `yaml:"tools,omitempty" json:"tools,omitempty"`
+
+	// Connections declares external service integrations (MCP servers, APIs, knowledge sources).
+	Connections []ConnectionConfig `yaml:"connections,omitempty" json:"connections,omitempty"`
+
 	// Managed is true for agents loaded from the overlay directory (not base config).
 	Managed bool `yaml:"-" json:"managed"`
 
@@ -197,6 +256,37 @@ type AgentConfig struct {
 // Name returns the human-readable YAML key for this agent.
 func (a *AgentConfig) Name() string {
 	return a.name
+}
+
+// HasChannel returns true if the agent has a channel of the given type.
+func (a *AgentConfig) HasChannel(t string) bool {
+	for _, ch := range a.Channels {
+		if ch.Type == t {
+			return true
+		}
+	}
+	return false
+}
+
+// ChannelsOfType returns all channels matching the given type.
+func (a *AgentConfig) ChannelsOfType(t string) []ChannelConfig {
+	var result []ChannelConfig
+	for _, ch := range a.Channels {
+		if ch.Type == t {
+			result = append(result, ch)
+		}
+	}
+	return result
+}
+
+// UsesGovernorKick returns true when the agent should receive governor timer kicks.
+// This is true when no channels are declared (implicit kick) or when an explicit
+// kick channel is present.
+func (a *AgentConfig) UsesGovernorKick() bool {
+	if len(a.Channels) == 0 {
+		return true
+	}
+	return a.HasChannel("kick")
 }
 
 // ShouldIncludeRepos returns whether the repos section should be appended to kicks.
@@ -1007,6 +1097,96 @@ func (c *Config) validate() error {
 		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
 		if !validCavemanModes[agent.CavemanMode] {
 			return fmt.Errorf("agent %s: invalid caveman_mode %q (must be lite, full, ultra, or wenyan)", name, agent.CavemanMode)
+		}
+		if err := validateChannels(name, agent.Channels); err != nil {
+			return err
+		}
+		if err := validateTools(name, agent.Tools); err != nil {
+			return err
+		}
+		if err := validateConnections(name, agent.Connections); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateChannels(agentName string, channels []ChannelConfig) error {
+	validTypes := map[string]bool{"kick": true, "webhook": true, "discord": true, "schedule": true, "bead": true}
+	for i, ch := range channels {
+		if !validTypes[ch.Type] {
+			return fmt.Errorf("agent %s: channel[%d]: invalid type %q", agentName, i, ch.Type)
+		}
+		switch ch.Type {
+		case "webhook":
+			if len(ch.Events) == 0 {
+				return fmt.Errorf("agent %s: channel[%d]: webhook requires at least one event", agentName, i)
+			}
+		case "discord":
+			if len(ch.Patterns) == 0 {
+				return fmt.Errorf("agent %s: channel[%d]: discord requires at least one pattern", agentName, i)
+			}
+		case "schedule":
+			if ch.Schedule == "" {
+				return fmt.Errorf("agent %s: channel[%d]: schedule requires a cron expression", agentName, i)
+			}
+		case "bead":
+			if len(ch.Match) == 0 {
+				return fmt.Errorf("agent %s: channel[%d]: bead requires at least one match criterion", agentName, i)
+			}
+		}
+	}
+	return nil
+}
+
+func validateTools(agentName string, tools *ToolsConfig) error {
+	if tools == nil {
+		return nil
+	}
+	validPresets := map[string]bool{"": true, "advisory": true, "issues-only": true, "issues-prs": true, "full": true}
+	if !validPresets[tools.Preset] {
+		return fmt.Errorf("agent %s: tools.preset %q is invalid (must be advisory, issues-only, issues-prs, or full)", agentName, tools.Preset)
+	}
+	validActions := map[string]bool{"allow": true, "deny": true}
+	for i, rule := range tools.Rules {
+		if rule.Pattern == "" {
+			return fmt.Errorf("agent %s: tools.rules[%d]: pattern is required", agentName, i)
+		}
+		if !validActions[rule.Action] {
+			return fmt.Errorf("agent %s: tools.rules[%d]: action must be allow or deny, got %q", agentName, i, rule.Action)
+		}
+	}
+	return nil
+}
+
+func validateConnections(agentName string, conns []ConnectionConfig) error {
+	validTypes := map[string]bool{"mcp": true, "api": true, "knowledge": true}
+	seen := map[string]bool{}
+	for i, conn := range conns {
+		if conn.Name == "" {
+			return fmt.Errorf("agent %s: connections[%d]: name is required", agentName, i)
+		}
+		if seen[conn.Name] {
+			return fmt.Errorf("agent %s: connections[%d]: duplicate name %q", agentName, i, conn.Name)
+		}
+		seen[conn.Name] = true
+		if !validTypes[conn.Type] {
+			return fmt.Errorf("agent %s: connections[%d]: invalid type %q (must be mcp, api, or knowledge)", agentName, i, conn.Type)
+		}
+		if (conn.Type == "mcp" || conn.Type == "api") && conn.URI == "" {
+			return fmt.Errorf("agent %s: connections[%d]: %s requires a uri", agentName, i, conn.Type)
+		}
+		if conn.Auth != nil {
+			validAuthTypes := map[string]bool{"env": true, "file": true}
+			if !validAuthTypes[conn.Auth.Type] {
+				return fmt.Errorf("agent %s: connections[%d]: auth.type must be env or file, got %q", agentName, i, conn.Auth.Type)
+			}
+			if conn.Auth.Type == "env" && conn.Auth.EnvVar == "" {
+				return fmt.Errorf("agent %s: connections[%d]: auth.env_var is required when auth.type is env", agentName, i)
+			}
+			if conn.Auth.Type == "file" && conn.Auth.File == "" {
+				return fmt.Errorf("agent %s: connections[%d]: auth.file is required when auth.type is file", agentName, i)
+			}
 		}
 	}
 	return nil

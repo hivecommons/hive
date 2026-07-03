@@ -446,56 +446,67 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.installCavemanForAgent(agent, backend)
 	}
 
-	switch backend {
-	case "claude":
-		bareFlag := ""
-		if isInference {
-			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
+	if agent.Config.Tools != nil {
+		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference)
+		if agent.Config.Tools != nil && agent.Config.Mode != "" {
+			m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
 		}
-		base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
-		switch {
-		case mode >= ModeIssuesAndPRs:
-			launchCmd = base
-		case mode == ModeIssuesOnly:
-			launchCmd = base +
-				" --disallowed-tools 'mcp__github__create_pull_request'" +
-				" --disallowed-tools 'mcp__github__merge_pull_request'"
+	} else {
+		switch backend {
+		case "claude":
+			bareFlag := ""
+			if isInference {
+				bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
+			}
+			base := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
+			switch {
+			case mode >= ModeIssuesAndPRs:
+				launchCmd = base
+			case mode == ModeIssuesOnly:
+				launchCmd = base +
+					" --disallowed-tools 'mcp__github__create_pull_request'" +
+					" --disallowed-tools 'mcp__github__merge_pull_request'"
+			default:
+				launchCmd = base +
+					" --disallowed-tools 'mcp__github__create_pull_request'" +
+					" --disallowed-tools 'mcp__github__create_issue'" +
+					" --disallowed-tools 'mcp__github__update_issue'" +
+					" --disallowed-tools 'mcp__github__merge_pull_request'"
+			}
+		case "copilot":
+			switch {
+			case mode >= ModeIssuesAndPRs:
+				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools",
+					binary, model)
+			case mode == ModeIssuesOnly:
+				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools"+
+					" --deny-tool='github(create_pull_request)'"+
+					" --deny-tool='github(merge_pull_request)'",
+					binary, model)
+			default:
+				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all"+
+					" --deny-tool='github(create_pull_request)'"+
+					" --deny-tool='github(create_issue)'"+
+					" --deny-tool='github(update_issue)'"+
+					" --deny-tool='github(merge_pull_request)'",
+					binary, model)
+			}
+		case "gemini":
+			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
+		case "goose":
+			launchCmd = fmt.Sprintf("%s run -s", binary)
+			if model != "" {
+				launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
+			}
+		case "bob":
+			launchCmd = binary
 		default:
-			launchCmd = base +
-				" --disallowed-tools 'mcp__github__create_pull_request'" +
-				" --disallowed-tools 'mcp__github__create_issue'" +
-				" --disallowed-tools 'mcp__github__update_issue'" +
-				" --disallowed-tools 'mcp__github__merge_pull_request'"
+			launchCmd = binary
 		}
-	case "copilot":
-		switch {
-		case mode >= ModeIssuesAndPRs:
-			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools",
-				binary, model)
-		case mode == ModeIssuesOnly:
-			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools"+
-				" --deny-tool='github(create_pull_request)'"+
-				" --deny-tool='github(merge_pull_request)'",
-				binary, model)
-		default:
-			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all"+
-				" --deny-tool='github(create_pull_request)'"+
-				" --deny-tool='github(create_issue)'"+
-				" --deny-tool='github(update_issue)'"+
-				" --deny-tool='github(merge_pull_request)'",
-				binary, model)
-		}
-	case "gemini":
-		launchCmd = fmt.Sprintf("%s --model %s", binary, model)
-	case "goose":
-		launchCmd = fmt.Sprintf("%s run -s", binary)
-		if model != "" {
-			launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
-		}
-	case "bob":
-		launchCmd = binary
-	default:
-		launchCmd = binary
+	}
+
+	if mcpFlags := connectionMCPFlags(agent.Config.Connections, backend); mcpFlags != "" {
+		launchCmd += mcpFlags
 	}
 
 	if bootstrapPrompt == "" && isInference {
@@ -2528,7 +2539,15 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	vars = append(vars, agentEnvPair{"HIVE_ACMM_LEVEL", fmt.Sprintf("%d", m.project.ACMMLevel), false})
 
 	mode := m.agentMode(agent)
-	vars = append(vars, agentEnvPair{"HIVE_AGENT_MODE", mode.String(), false})
+	if agent.Config.Tools != nil {
+		if effectiveMode := agent.Config.Tools.EffectiveMode(); effectiveMode != "" {
+			vars = append(vars, agentEnvPair{"HIVE_AGENT_MODE", effectiveMode, false})
+		} else {
+			vars = append(vars, agentEnvPair{"HIVE_AGENT_MODE", mode.String(), false})
+		}
+	} else {
+		vars = append(vars, agentEnvPair{"HIVE_AGENT_MODE", mode.String(), false})
+	}
 	modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", agent.Name)
 	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o644); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
@@ -2577,6 +2596,23 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		}
 		vars = append(vars, agentEnvPair{"HOME", home, false})
 	}
+
+	for _, conn := range agent.Config.Connections {
+		if conn.Type != "api" {
+			continue
+		}
+		envName := conn.EnvName
+		if envName == "" {
+			envName = "HIVE_CONN_" + strings.ToUpper(strings.ReplaceAll(conn.Name, "-", "_")) + "_URL"
+		}
+		vars = append(vars, agentEnvPair{envName, conn.URI, false})
+		if conn.Auth != nil && conn.Auth.Type == "env" && conn.Auth.EnvVar != "" {
+			if tokenVal := os.Getenv(conn.Auth.EnvVar); tokenVal != "" {
+				vars = append(vars, agentEnvPair{conn.Auth.EnvVar, tokenVal, true})
+			}
+		}
+	}
+
 	return vars
 }
 
@@ -3050,4 +3086,63 @@ func (m *Manager) TmuxSession(name string) string {
 		return ""
 	}
 	return agent.tmuxSession
+}
+
+// toolRulesToLaunchCmd builds a backend-specific CLI command from ToolsConfig.
+func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConfig, isInference bool) string {
+	denies := tools.DenyPatterns()
+
+	switch backend {
+	case "claude":
+		bareFlag := ""
+		if isInference {
+			bareFlag = fmt.Sprintf(" --bare --settings %s", claudeInferenceSettingsPath)
+		}
+		cmd := fmt.Sprintf("%s --model %s --dangerously-skip-permissions%s", binary, model, bareFlag)
+		for _, p := range denies {
+			cmd += fmt.Sprintf(" --disallowed-tools '%s'", p)
+		}
+		return cmd
+	case "copilot":
+		hasGHDeny := false
+		for _, p := range denies {
+			if strings.Contains(p, "github") {
+				hasGHDeny = true
+				break
+			}
+		}
+		cmd := fmt.Sprintf("%s --model %s --no-auto-update --allow-all", binary, model)
+		if !hasGHDeny {
+			cmd += " --enable-all-github-mcp-tools"
+		}
+		for _, p := range denies {
+			copilotPattern := strings.ReplaceAll(p, "mcp__github__", "github(")
+			if strings.HasPrefix(copilotPattern, "github(") {
+				copilotPattern += ")"
+			}
+			cmd += fmt.Sprintf(" --deny-tool='%s'", copilotPattern)
+		}
+		return cmd
+	default:
+		cmd := binary
+		if model != "" {
+			cmd = fmt.Sprintf("%s --model %s", binary, model)
+		}
+		return cmd
+	}
+}
+
+// connectionMCPFlags builds MCP-related launch flags from connection configs.
+func connectionMCPFlags(conns []config.ConnectionConfig, backend string) string {
+	var flags string
+	for _, conn := range conns {
+		if conn.Type != "mcp" || conn.URI == "" {
+			continue
+		}
+		switch backend {
+		case "claude":
+			flags += fmt.Sprintf(" --mcp-server '%s'", conn.URI)
+		}
+	}
+	return flags
 }
