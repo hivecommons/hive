@@ -75,14 +75,20 @@ refresh_token() {
   fi
 }
 
-if [ ! -f "$TOKEN_FILE" ]; then
-  refresh_token
-fi
-
-if [ -f "$TOKEN_FILE" ]; then
-  cache_age=$(( $(date +%s) - $(stat -c %Y "$TOKEN_FILE" 2>/dev/null || echo 0) ))
-  if [ "$cache_age" -gt "$CACHE_MAX_AGE_SECONDS" ]; then
+# Per-agent scoped token takes priority (Phase 4 — least-privilege).
+AGENT_TOKEN_FILE="${HIVE_AGENT_TOKEN_CACHE:-}"
+if [ -n "$AGENT_TOKEN_FILE" ] && [ -f "$AGENT_TOKEN_FILE" ]; then
+  TOKEN_FILE="$AGENT_TOKEN_FILE"
+else
+  if [ ! -f "$TOKEN_FILE" ]; then
     refresh_token
+  fi
+
+  if [ -f "$TOKEN_FILE" ]; then
+    cache_age=$(( $(date +%s) - $(stat -c %Y "$TOKEN_FILE" 2>/dev/null || echo 0) ))
+    if [ "$cache_age" -gt "$CACHE_MAX_AGE_SECONDS" ]; then
+      refresh_token
+    fi
   fi
 fi
 

@@ -22,6 +22,10 @@ const (
 	TokenCachePath     = "/var/run/hive-metrics/gh-app-token.cache"
 	DocsTokenCachePath = "/var/run/hive-metrics/gh-app-token-docs.cache"
 	tokenCachePerms    = 0o640
+
+	// Per-agent scoped token caches — only the owning agent UID can read.
+	agentTokenCacheDir   = "/var/run/hive-metrics/agent-tokens"
+	agentTokenCachePerms = 0o600
 )
 
 type AppAuth struct {
@@ -186,6 +190,48 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 
 	a.logger.Info("scoped token minted", "tier", tier, "expires_at", installToken.GetExpiresAt().Format(time.RFC3339))
 	return installToken.GetToken(), nil
+}
+
+// AgentTokenCachePath returns the per-agent token cache file path.
+func AgentTokenCachePath(agentName string) string {
+	return agentTokenCacheDir + "/gh-token-" + agentName + ".cache"
+}
+
+// WriteAgentToken mints a scoped token for the given tier and writes it
+// to a per-agent cache file owned by agentUID with 0600 perms. The hive
+// binary (UID 1001) creates the file then chowns it to the agent UID so
+// only that agent can read it.
+func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+	token, err := a.ScopedToken(ctx, tier)
+	if err != nil {
+		return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
+	}
+
+	if err := os.MkdirAll(agentTokenCacheDir, 0o755); err != nil {
+		return fmt.Errorf("creating agent token dir: %w", err)
+	}
+
+	cachePath := AgentTokenCachePath(agentName)
+	tmpPath := cachePath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(token), agentTokenCachePerms); err != nil {
+		return fmt.Errorf("writing agent token cache: %w", err)
+	}
+
+	if agentUID > 0 {
+		if err := os.Chown(tmpPath, agentUID, -1); err != nil {
+			a.logger.Warn("chown agent token cache failed — agent will use shared cache",
+				"agent", agentName, "uid", agentUID, "error", err)
+			os.Remove(tmpPath)
+			return fmt.Errorf("chown agent token: %w", err)
+		}
+	}
+
+	if err := os.Rename(tmpPath, cachePath); err != nil {
+		return fmt.Errorf("rename agent token cache: %w", err)
+	}
+
+	a.logger.Info("per-agent token cached", "agent", agentName, "tier", tier, "uid", agentUID)
+	return nil
 }
 
 type appTransport struct {

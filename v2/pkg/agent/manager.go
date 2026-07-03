@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
+	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
 )
 
 type ProcessState string
@@ -98,9 +99,15 @@ type Manager struct {
 	project          ProjectContext
 	copilotAuthToken string
 	uidMap           *UIDMap
+	appAuth          AppTokenMinter
 
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
+}
+
+// AppTokenMinter is implemented by github.AppAuth to mint per-agent scoped tokens.
+type AppTokenMinter interface {
+	WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error
 }
 
 // IsInferenceBackend returns true if the backend is a self-hosted inference
@@ -119,6 +126,54 @@ func (m *Manager) SetInferenceCallbacks(
 	defer m.mu.Unlock()
 	m.inferenceRouteCallback = setRoute
 	m.clearInferenceRouteCallback = clearRoute
+}
+
+// SetAppAuth injects the GitHub App auth provider for per-agent scoped tokens.
+func (m *Manager) SetAppAuth(auth AppTokenMinter) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.appAuth = auth
+}
+
+const agentTokenRefreshInterval = 40 * time.Minute
+
+// StartAgentTokenRefresh refreshes per-agent scoped tokens for all running
+// agents on a timer. Tokens expire after 1 hour; this refreshes at 40-minute
+// intervals so there's always a valid token on disk.
+func (m *Manager) StartAgentTokenRefresh(ctx context.Context) {
+	ticker := time.NewTicker(agentTokenRefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.refreshAgentTokens(ctx)
+		}
+	}
+}
+
+func (m *Manager) refreshAgentTokens(ctx context.Context) {
+	m.mu.RLock()
+	auth := m.appAuth
+	agents := make([]*AgentProcess, 0, len(m.agents))
+	for _, a := range m.agents {
+		if a.State == StateRunning && a.UID > 0 {
+			agents = append(agents, a)
+		}
+	}
+	m.mu.RUnlock()
+
+	if auth == nil {
+		return
+	}
+
+	for _, a := range agents {
+		tier := m.agentMode(a).TokenTier()
+		if err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID); err != nil {
+			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
+		}
+	}
 }
 
 func truncateStr(s string, maxRunes int) string {
@@ -246,6 +301,14 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		} else {
 			agent.State = StatePaused
 			return nil
+		}
+	}
+
+	if m.appAuth != nil && agent.UID > 0 {
+		tier := m.agentMode(agent).TokenTier()
+		if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
+			m.logger.Warn("failed to mint per-agent token, agent will use shared cache",
+				"agent", agent.Name, "tier", tier, "error", err)
 		}
 	}
 
@@ -2570,6 +2633,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	}
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
+	if agent.UID > 0 {
+		vars = append(vars, agentEnvPair{"HIVE_AGENT_TOKEN_CACHE", ghpkg.AgentTokenCachePath(agent.Name), false})
+	}
 	if agent.UID > 0 {
 		home := "/data/home"
 		if IsInferenceBackend(backend) {
