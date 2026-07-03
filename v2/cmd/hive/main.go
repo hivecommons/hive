@@ -314,6 +314,10 @@ func main() {
 		PolicyDir:  policyDir,
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
+	if appAuth != nil {
+		agentMgr.SetAppAuth(appAuth)
+		go agentMgr.StartAgentTokenRefresh(ctx)
+	}
 
 	go agent.StartPermissionsWatcher(logger)
 
@@ -937,6 +941,7 @@ func main() {
 
 			ghClient = newClient
 			appAuth = newAppAuth
+			agentMgr.SetAppAuth(newAppAuth)
 			dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 			logger.Info("github client reinitialized via config API", "app_id", newAppID, "installation_id", newInstallationID)
 
@@ -1453,6 +1458,7 @@ func main() {
 				}
 				ghClient = newClient
 				appAuth = newAppAuth
+				agentMgr.SetAppAuth(newAppAuth)
 				dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 				dashSrv.SetGitHubAppRequired(false)
 				dashSrv.ClearPendingGitHubAppInstall()

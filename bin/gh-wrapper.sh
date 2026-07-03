@@ -36,7 +36,10 @@ fi
 GH_APP_TOKEN_CACHE="/var/run/hive-metrics/gh-app-token.cache"
 TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
 if [[ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]]; then
-  if [[ -f "$GH_APP_TOKEN_CACHE" ]]; then
+  # Per-agent scoped token (Phase 4) — 0600, owned by agent UID, least-privilege.
+  if [[ -n "${HIVE_AGENT_TOKEN_CACHE:-}" && -f "${HIVE_AGENT_TOKEN_CACHE}" ]]; then
+    export GH_TOKEN="$(cat "$HIVE_AGENT_TOKEN_CACHE")"
+  elif [[ -f "$GH_APP_TOKEN_CACHE" ]]; then
     export GH_TOKEN="$(cat "$GH_APP_TOKEN_CACHE")"
   elif [[ -n "${HIVE_GITHUB_TOKEN:-}" ]]; then
     export GH_TOKEN="$HIVE_GITHUB_TOKEN"

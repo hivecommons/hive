@@ -72,6 +72,22 @@ func (m AgentMode) CanMerge() bool        { return m >= ModeIssuesPRsMerge }
 func (m AgentMode) CanPush() bool         { return m >= ModeIssuesAndPRs }
 func (m AgentMode) NeedsMCPWrite() bool   { return m >= ModeIssuesOnly }
 
+// TokenTier returns the GitHub App scoped-token tier for this mode.
+func (m AgentMode) TokenTier() string {
+	switch m {
+	case ModeAdvisory:
+		return "advisor"
+	case ModeIssuesOnly:
+		return "newcomer"
+	case ModeIssuesAndPRs:
+		return "contributor"
+	case ModeIssuesPRsMerge:
+		return "trusted"
+	default:
+		return "advisor"
+	}
+}
+
 // ParseAgentMode converts a string like "ADVISORY" to an AgentMode.
 // Accepts "NO_GITHUB" as a legacy alias for ADVISORY.
 func ParseAgentMode(s string) (AgentMode, bool) {
