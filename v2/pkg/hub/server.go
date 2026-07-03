@@ -159,6 +159,9 @@ type HubBannerEntry struct {
 }
 
 func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *HubServer {
+	if gitBranch == "" || gitBranch == "unknown" {
+		gitBranch = "v2"
+	}
 	secret := os.Getenv("HIVE_HUB_SECRET")
 	if secret == "" {
 		if data, err := os.ReadFile("/data/saas/hub-secret.key"); err == nil {
