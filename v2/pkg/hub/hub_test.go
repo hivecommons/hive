@@ -147,7 +147,7 @@ func TestIsUnfurlBot(t *testing.T) {
 
 func TestNewHubServer(t *testing.T) {
 	logger := slog.Default()
-	srv := NewHubServer(8080, logger, "abc123")
+	srv := NewHubServer(8080, logger, "abc123", "v2")
 	if srv == nil {
 		t.Fatal("NewHubServer returned nil")
 	}
@@ -157,7 +157,7 @@ func TestNewHubServer(t *testing.T) {
 }
 
 func TestHandleRegistryEmpty(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	req := httptest.NewRequest("GET", "/api/registry", nil)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -167,7 +167,7 @@ func TestHandleRegistryEmpty(t *testing.T) {
 }
 
 func TestHandleHealthCheck(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	// The hub doesn't have a /api/health endpoint registered in the mux,
 	// but the registry endpoint should work
 	req := httptest.NewRequest("GET", "/api/registry", nil)
@@ -179,7 +179,7 @@ func TestHandleHealthCheck(t *testing.T) {
 }
 
 func TestHandleHeartbeatNoAuth(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = "secret123"
 	req := httptest.NewRequest("POST", "/api/heartbeat", nil)
 	w := httptest.NewRecorder()
@@ -197,7 +197,7 @@ func TestDecryptTokenInvalid(t *testing.T) {
 }
 
 func TestHandleRegistryJSON(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	req := httptest.NewRequest("GET", "/api/registry", nil)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -211,7 +211,7 @@ func TestHandleRegistryJSON(t *testing.T) {
 }
 
 func TestHandleHeartbeatBadJSON(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader("not json"))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -222,7 +222,7 @@ func TestHandleHeartbeatBadJSON(t *testing.T) {
 }
 
 func TestHandleHubVersion(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "abc123")
+	srv := NewHubServer(0, slog.Default(), "abc123", "v2")
 	req := httptest.NewRequest("GET", "/api/hub/version", nil)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -235,7 +235,7 @@ func TestHandleHubVersion(t *testing.T) {
 }
 
 func TestHandleLeaderboard(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	req := httptest.NewRequest("GET", "/api/hub/leaderboard", nil)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
@@ -245,7 +245,7 @@ func TestHandleLeaderboard(t *testing.T) {
 }
 
 func TestHandleStats(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	req := httptest.NewRequest("GET", "/api/hub/stats", nil)
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)

@@ -27,7 +27,7 @@ func TestHandleAccessStatusFullWithFilesystem(t *testing.T) {
 		{Username: "accstatus-user", RequestedAt: "2024-01-01T00:00:00Z", Status: "pending"},
 	})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	now := time.Now().Format(time.RFC3339)
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -81,7 +81,7 @@ func TestHandleToggleAutoUpgradeWithFilesystem(t *testing.T) {
 
 	saveSaaSHive(&SaaSHive{ID: "toggle-fs-hive", Owner: "toggle-fs-owner", AutoUpgrade: false})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", srv.handleToggleAutoUpgrade)
 
@@ -123,7 +123,7 @@ func TestHandleMyHivesWithSaaSHivesOnly(t *testing.T) {
 		ACMMLevel:   2,
 	})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/my-hives", nil)
 	req.Header.Set("Authorization", "Bearer ghp_myhives_saas")
@@ -173,7 +173,7 @@ func TestHandleMyHivesWithErrorHive(t *testing.T) {
 		Error:  "provisioning failed",
 	})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/my-hives", nil)
 	req.Header.Set("Authorization", "Bearer ghp_myhives_err")
@@ -212,7 +212,7 @@ func TestHandleMyHivesAdminSeesAll(t *testing.T) {
 
 	saveSaaSHive(&SaaSHive{ID: "hosted-admin-hive", Owner: "other-owner", Status: "running"})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	now := time.Now().Format(time.RFC3339)
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -259,7 +259,7 @@ func TestTriggerAutoUpgradesWithFilesystem(t *testing.T) {
 		latestSHAMu.Unlock()
 	}()
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
 		{ID: "auto-up-fs", Online: true, GitHash: "old111", GitBranch: "v2"},
@@ -291,7 +291,7 @@ func TestTriggerAutoUpgradesSkipsProvisioning(t *testing.T) {
 		Status:      "provisioning",
 	})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.triggerAutoUpgrades()
 	// Should skip provisioning hives — no crash
 }
@@ -316,7 +316,7 @@ func TestTriggerAutoUpgradesSkipsAlreadyUpgrading(t *testing.T) {
 		latestSHAMu.Unlock()
 	}()
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
 		{ID: "already-up", Online: true, GitHash: "old1", GitBranch: "v2", Upgrading: true, UpgradeTarget: "target2"},
@@ -347,7 +347,7 @@ func TestTriggerAutoUpgradesSkipsCurrentSHA(t *testing.T) {
 		latestSHAMu.Unlock()
 	}()
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
 		{ID: "current-sha", Online: true, GitHash: "current", GitBranch: "v2"},
@@ -369,7 +369,7 @@ func TestHandleCreateHiveAppAuth(t *testing.T) {
 	u.SaaSQuota = 5
 	saveSaaSUser(u)
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	body := `{"org":"apporg","repos":"repo1","auth_method":"app","app_id":"123","installation_id":"456","app_private_key":"-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"}`
 	req := httptest.NewRequest("POST", "/create", strings.NewReader(body))
@@ -394,7 +394,7 @@ func TestHandleCreateHiveUnknownCluster(t *testing.T) {
 	u.SaaSQuota = 5
 	saveSaaSUser(u)
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	body := `{"org":"myorg","repos":"repo1","github_token":"ghp_fake12345678","cluster_id":"unknown-cluster-xyz"}`
 	req := httptest.NewRequest("POST", "/create", strings.NewReader(body))
@@ -419,7 +419,7 @@ func TestHandleCreateHiveNoQuota(t *testing.T) {
 	u.SaaSQuota = 0
 	saveSaaSUser(u)
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	body := `{"org":"myorg","repos":"repo1","github_token":"ghp_fake12345678"}`
 	req := httptest.NewRequest("POST", "/create", strings.NewReader(body))
@@ -444,7 +444,7 @@ func TestHandleCreateHiveBlockedUser(t *testing.T) {
 	u.Blocked = true
 	saveSaaSUser(u)
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	body := `{"org":"myorg","repos":"repo1","github_token":"ghp_fake12345678"}`
 	req := httptest.NewRequest("POST", "/create", strings.NewReader(body))
@@ -471,7 +471,7 @@ func TestHandleDeleteHiveWithFilesystemFull(t *testing.T) {
 
 	saveSaaSHive(&SaaSHive{ID: "del-full-hive", Owner: "del-full-owner", Status: "running"})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	// Add to registry
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -502,7 +502,7 @@ func TestHandleHiveStatusAccessDenied(t *testing.T) {
 	ensureSaaSUser("noowner")
 	saveSaaSHive(&SaaSHive{ID: "secret-hive", Owner: "real-owner"})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/saas/hives/{id}/status", srv.handleHiveStatus)
 
@@ -529,7 +529,7 @@ func TestHandleHiveStatusWithAccess(t *testing.T) {
 
 	saveSaaSHive(&SaaSHive{ID: "acc-hive", Owner: "other-owner", Status: "running"})
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/saas/hives/{id}/status", srv.handleHiveStatus)
 
@@ -549,7 +549,7 @@ func TestHandleAuthUserWithFileUser(t *testing.T) {
 
 	ensureSaaSUser("file-auth-user")
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/auth-user", nil)
 	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "file-auth-user"})
@@ -572,7 +572,7 @@ func TestHandleAuthUserAdmin(t *testing.T) {
 
 	ensureSaaSUser(hubAdminUsername)
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/auth-user", nil)
 	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: hubAdminUsername})
@@ -592,7 +592,7 @@ func TestGetAuthUserWithCookieAndFile(t *testing.T) {
 
 	ensureSaaSUser("cookie-user")
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "cookie-user"})

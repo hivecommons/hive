@@ -11,7 +11,7 @@ import (
 )
 
 func TestHandleLoginRedirect(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Register OAuth routes manually (won't register without env var)
@@ -31,7 +31,7 @@ func TestHandleLoginRedirect(t *testing.T) {
 }
 
 func TestHandleLoginWithRedirectParam(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("GET /login-test", srv.handleLogin)
 
@@ -49,7 +49,7 @@ func TestHandleLoginWithRedirectParam(t *testing.T) {
 }
 
 func TestHandleLoginRejectsOpenRedirect(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("GET /login-redir", srv.handleLogin)
 
@@ -64,7 +64,7 @@ func TestHandleLoginRejectsOpenRedirect(t *testing.T) {
 }
 
 func TestHandleLoginRdParam(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("GET /login-rd", srv.handleLogin)
 
@@ -78,7 +78,7 @@ func TestHandleLoginRdParam(t *testing.T) {
 }
 
 func TestHandleLogout(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("POST /logout-test", srv.handleLogout)
 
@@ -102,7 +102,7 @@ func TestHandleLogout(t *testing.T) {
 }
 
 func TestHandleAuthUserNoCookie(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("GET /auth-user-test", srv.handleAuthUser)
 
@@ -118,7 +118,7 @@ func TestHandleAuthUserNoCookie(t *testing.T) {
 }
 
 func TestHandleAuthUserEmptyCookie(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("GET /auth-user-empty", srv.handleAuthUser)
 
@@ -135,7 +135,7 @@ func TestHandleAuthUserEmptyCookie(t *testing.T) {
 }
 
 func TestHandleAuthUserUnknownUser(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("GET /auth-user-unknown", srv.handleAuthUser)
 
@@ -152,7 +152,7 @@ func TestHandleAuthUserUnknownUser(t *testing.T) {
 }
 
 func TestHandleAdminUsersAsAdmin(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Call handler directly to skip requireAdmin middleware (no /data on macOS)
@@ -172,7 +172,7 @@ func TestHandleAdminUsersAsAdmin(t *testing.T) {
 }
 
 func TestHandleAdminUpdateUserNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Call directly to skip requireAdmin
@@ -189,7 +189,7 @@ func TestHandleAdminUpdateUserNotFound(t *testing.T) {
 }
 
 func TestHandleAdminUpdateUserBadJSON(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -205,7 +205,7 @@ func TestHandleAdminUpdateUserBadJSON(t *testing.T) {
 }
 
 func TestHandleHiveStatusNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -220,7 +220,7 @@ func TestHandleHiveStatusNotFound(t *testing.T) {
 }
 
 func TestHandleDeleteHiveNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -236,7 +236,7 @@ func TestHandleDeleteHiveNotFound(t *testing.T) {
 }
 
 func TestHandleDeleteHivePathTraversal(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -251,7 +251,7 @@ func TestHandleDeleteHivePathTraversal(t *testing.T) {
 }
 
 func TestHandleUpgradeHiveCORSPreflight(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Register directly to avoid requireAuth for OPTIONS
@@ -271,7 +271,7 @@ func TestHandleUpgradeHiveCORSPreflight(t *testing.T) {
 }
 
 func TestHandleUpgradeHiveNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -287,7 +287,7 @@ func TestHandleUpgradeHiveNotFound(t *testing.T) {
 }
 
 func TestHandleAccessListNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -302,7 +302,7 @@ func TestHandleAccessListNotFound(t *testing.T) {
 }
 
 func TestHandleAccessAddNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -319,7 +319,7 @@ func TestHandleAccessAddNotFound(t *testing.T) {
 }
 
 func TestHandleAccessRemoveNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -334,7 +334,7 @@ func TestHandleAccessRemoveNotFound(t *testing.T) {
 }
 
 func TestHandleRequestAccessNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -349,7 +349,7 @@ func TestHandleRequestAccessNotFound(t *testing.T) {
 }
 
 func TestHandleGetRequestsNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -364,7 +364,7 @@ func TestHandleGetRequestsNotFound(t *testing.T) {
 }
 
 func TestHandleApproveRequestNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -380,7 +380,7 @@ func TestHandleApproveRequestNotFound(t *testing.T) {
 }
 
 func TestHandleDenyRequestNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	mux := http.NewServeMux()
@@ -395,7 +395,7 @@ func TestHandleDenyRequestNotFound(t *testing.T) {
 }
 
 func TestHandleCreateHiveNoAuth(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("POST", "/api/saas/hives", strings.NewReader(`{}`))
@@ -410,7 +410,7 @@ func TestHandleCreateHiveNoAuth(t *testing.T) {
 }
 
 func TestHandleCreateHiveBadJSON(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Call handler directly to skip requireAuth
@@ -426,7 +426,7 @@ func TestHandleCreateHiveBadJSON(t *testing.T) {
 }
 
 func TestHandleCreateHiveValidation(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	tests := []struct {
@@ -458,7 +458,7 @@ func TestHandleCreateHiveValidation(t *testing.T) {
 }
 
 func TestHandleUserTokenBadBody(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("POST", "/user-token-test", strings.NewReader(`{}`))
@@ -472,7 +472,7 @@ func TestHandleUserTokenBadBody(t *testing.T) {
 }
 
 func TestHandleUserTokenMissingFields(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("POST", "/user-token-test", strings.NewReader(`{"hive_id":"h1"}`))
@@ -486,7 +486,7 @@ func TestHandleUserTokenMissingFields(t *testing.T) {
 }
 
 func TestHandleUserTokenOtherUserForbidden(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	body := `{"hive_id":"h1","username":"otheruser"}`
@@ -502,7 +502,7 @@ func TestHandleUserTokenOtherUserForbidden(t *testing.T) {
 }
 
 func TestHandleUserTokenUserNotFound(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// getAuthUser returns "" on macOS, so requester="" != username → 403
@@ -521,7 +521,7 @@ func TestHandleUserTokenUserNotFound(t *testing.T) {
 }
 
 func TestHandleProxyHiveConfigNotInRegistry(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/proxy-config-test", nil)
@@ -535,7 +535,7 @@ func TestHandleProxyHiveConfigNotInRegistry(t *testing.T) {
 }
 
 func TestHandleProxyHiveConfigWithDashboardURL(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -562,7 +562,7 @@ func TestHandleProxyHiveConfigWithDashboardURL(t *testing.T) {
 }
 
 func TestHandleMyHivesNoAuthDirect(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/my-hives-test", nil)
@@ -575,7 +575,7 @@ func TestHandleMyHivesNoAuthDirect(t *testing.T) {
 }
 
 func TestHandleMyHivesWithRegistryHives(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	srv.mu.Lock()
@@ -596,7 +596,7 @@ func TestHandleMyHivesWithRegistryHives(t *testing.T) {
 }
 
 func TestHandleSaaSAuthCheckNoHive(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/api/saas/auth-check", nil)
@@ -609,7 +609,7 @@ func TestHandleSaaSAuthCheckNoHive(t *testing.T) {
 }
 
 func TestHandleSaaSAuthCheckNoAuthWithHive(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/api/saas/auth-check?hive=test-hive", nil)
@@ -622,7 +622,7 @@ func TestHandleSaaSAuthCheckNoAuthWithHive(t *testing.T) {
 }
 
 func TestHandleSaaSAuthCheckWithUserNoAccess(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/api/saas/auth-check?hive=test-hive", nil)
@@ -666,7 +666,7 @@ func TestDecryptTokenTooShort(t *testing.T) {
 }
 
 func TestHandleDashboardUnfurlBotReturnsOG(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/dashboard", nil)
@@ -683,7 +683,7 @@ func TestHandleDashboardUnfurlBotReturnsOG(t *testing.T) {
 }
 
 func TestHandleDashboardNoCookieRedirects(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/dashboard", nil)
@@ -699,7 +699,7 @@ func TestHandleDashboardNoCookieRedirects(t *testing.T) {
 }
 
 func TestHandleDashboardWithCookieReturnsDashboard(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	req := httptest.NewRequest("GET", "/dashboard", nil)
@@ -716,7 +716,7 @@ func TestHandleDashboardWithCookieReturnsDashboard(t *testing.T) {
 }
 
 func TestRequireAuthBlockedUser(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// On macOS, loadSaaSUser returns nil (no /data/saas/users)
@@ -737,7 +737,7 @@ func TestRequireAuthBlockedUser(t *testing.T) {
 }
 
 func TestHandleOAuthCallbackMissingCode(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 	srv.mux.HandleFunc("GET /callback-test", srv.handleOAuthCallback)
 
@@ -751,7 +751,7 @@ func TestHandleOAuthCallbackMissingCode(t *testing.T) {
 }
 
 func TestHandleOAuthCallbackWithCode(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// With a code present, it tries to exchange with GitHub (ghTokenURL const)
@@ -813,7 +813,7 @@ func TestIsUnfurlBotVariants(t *testing.T) {
 }
 
 func TestValidateGitHubTokenInvalid(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Will try to call GitHub API and fail (no real token)
@@ -832,7 +832,7 @@ func TestSaveAccessRequestsNonexistentDir(t *testing.T) {
 }
 
 func TestValidateGitHubTokenCacheHit(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Pre-populate the cache
@@ -855,7 +855,7 @@ func TestValidateGitHubTokenCacheHit(t *testing.T) {
 }
 
 func TestValidateGitHubTokenCacheExpired(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Pre-populate with expired entry
@@ -879,7 +879,7 @@ func TestValidateGitHubTokenCacheExpired(t *testing.T) {
 }
 
 func TestValidateGitHubTokenEmpty(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	result := srv.validateGitHubToken("")
@@ -889,7 +889,7 @@ func TestValidateGitHubTokenEmpty(t *testing.T) {
 }
 
 func TestGetAuthUserBearer(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Pre-populate cache so Bearer auth works
@@ -936,7 +936,7 @@ func TestIsTrustedOriginBadParse(t *testing.T) {
 func TestRegisterOAuthEnabled(t *testing.T) {
 	t.Setenv("HIVE_HUB_OAUTH_CLIENT_ID", "test-client-id")
 
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// OAuth routes should be registered, test /login exists
@@ -955,7 +955,7 @@ func TestRegisterOAuthEnabled(t *testing.T) {
 }
 
 func TestHandleOAuthCallbackNoAccessToken(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Code is present but GitHub returns error (invalid code)
@@ -970,7 +970,7 @@ func TestHandleOAuthCallbackNoAccessToken(t *testing.T) {
 }
 
 func TestHandleContributeProxyWithLocalHive(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	// Hive with localhost URL → private URL → rejected by findContributeHive
@@ -992,7 +992,7 @@ func TestHandleContributeProxyWithLocalHive(t *testing.T) {
 }
 
 func TestHandleContributeWSProxyWithLocalHive(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	srv.mu.Lock()
@@ -1027,7 +1027,7 @@ func TestLoadSaaSUserValid(t *testing.T) {
 }
 
 func TestMarkStaleHivesWithOldHeartbeat(t *testing.T) {
-	srv := NewHubServer(0, slog.Default(), "test")
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
 	old := "2020-01-01T00:00:00Z"
