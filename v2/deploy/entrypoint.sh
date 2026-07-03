@@ -91,6 +91,7 @@ if [ "$(id -u)" = "0" ]; then
   chown dev:node /home/dev 2>/dev/null || true
   chown dev:node /etc/hive/hive.yaml 2>/dev/null || true
   mkdir -p /var/run/hive-metrics && chown dev:node /var/run/hive-metrics 2>/dev/null || true
+  mkdir -p /var/run/hive-metrics/agent-tokens && chown dev:node /var/run/hive-metrics/agent-tokens 2>/dev/null || true
 
   # Fix permissions on bind-mounted secret files (host may own them as
   # a different UID with mode 600, making them unreadable by dev/UID 1001)
