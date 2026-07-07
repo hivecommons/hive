@@ -429,6 +429,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if entry.SnapshotURL == "" {
 				entry.SnapshotURL = h.SnapshotURL
 			}
+			// Preserve hub-side visibility: if the hub set this hive
+			// to public, don't let the spoke's heartbeat revert it.
+			if h.IsPublic && !payload.IsPublic {
+				entry.IsPublic = h.IsPublic
+			}
 			branchForLatest := payload.GitBranch
 			if branchForLatest == "" {
 				branchForLatest = "v2"
