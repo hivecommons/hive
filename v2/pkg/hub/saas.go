@@ -1886,44 +1886,65 @@ func (s *HubServer) handleToggleVisibility(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	const goAPIPort = 3002
-	ns := "hive-hosted-" + id
-	svcURL := fmt.Sprintf("http://hive.%s.svc.cluster.local:%d/api/config/governor/hub", ns, goAPIPort)
-	payload := fmt.Sprintf(`{"is_public":%t}`, body.IsPublic)
-	req, err := http.NewRequest("PUT", svcURL, strings.NewReader(payload))
-	if err != nil {
-		http.Error(w, `{"error":"failed to create request"}`, http.StatusInternalServerError)
+	// The hub's registry and SaaS store are the source of truth for the
+	// dashboard, so persist the change here first — the same pattern used
+	// by handleToggleAutoUpgrade. Pushing the new value to the spoke hive
+	// is a best-effort, asynchronous notification: the spoke re-reports
+	// its is_public value on every heartbeat, so a transient failure to
+	// reach it (pod restarting, rollout in progress, etc.) must not block
+	// or fail the user-facing toggle.
+	h.IsPublic = body.IsPublic
+	if err := saveSaaSHive(h); err != nil {
+		http.Error(w, `{"error":"failed to save"}`, http.StatusInternalServerError)
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	const visibilityTimeout = 10 * time.Second
-	client := &http.Client{Timeout: visibilityTimeout}
-	spokeResp, err := client.Do(req)
-	if err != nil {
-		s.logger.Warn("visibility toggle failed", "hive", id, "error", err)
-		http.Error(w, `{"error":"failed to reach hive"}`, http.StatusBadGateway)
-		return
-	}
-	defer spokeResp.Body.Close()
-	if spokeResp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(spokeResp.Body)
-		s.logger.Warn("visibility toggle rejected", "hive", id, "status", spokeResp.StatusCode, "body", string(respBody))
-		http.Error(w, `{"error":"hive rejected the change"}`, http.StatusBadGateway)
-		return
-	}
-	s.logger.Info("audit: visibility toggled", "hive_id", id, "is_public", body.IsPublic, "by", username)
 
 	s.mu.Lock()
-	for i, h := range s.registry.Hives {
-		if h.ID == id {
+	for i, reg := range s.registry.Hives {
+		if reg.ID == id {
 			s.registry.Hives[i].IsPublic = body.IsPublic
 			break
 		}
 	}
 	s.mu.Unlock()
 
+	s.logger.Info("audit: visibility toggled", "hive_id", id, "is_public", body.IsPublic, "by", username)
+
+	go s.pushVisibilityToSpoke(id, body.IsPublic)
+
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"ok":true,"is_public":%t}`, body.IsPublic)
+}
+
+// pushVisibilityToSpoke best-effort notifies a hosted hive's own governor
+// config of a visibility change made from the hub dashboard. It never
+// affects the outcome of the toggle request — the hub's registry/SaaS
+// store already reflect the change; this just keeps the spoke's local
+// config in sync so it doesn't overwrite the hub's value on its next
+// heartbeat. Failures are logged, not surfaced to the user.
+func (s *HubServer) pushVisibilityToSpoke(id string, isPublic bool) {
+	const goAPIPort = 3002
+	const visibilityPushTimeout = 10 * time.Second
+	ns := "hive-hosted-" + id
+	svcURL := fmt.Sprintf("http://hive.%s.svc.cluster.local:%d/api/config/governor/hub", ns, goAPIPort)
+	payload := fmt.Sprintf(`{"is_public":%t}`, isPublic)
+	req, err := http.NewRequest("PUT", svcURL, strings.NewReader(payload))
+	if err != nil {
+		s.logger.Warn("visibility spoke push: failed to create request", "hive", id, "error", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: visibilityPushTimeout}
+	spokeResp, err := client.Do(req)
+	if err != nil {
+		s.logger.Warn("visibility spoke push failed, will resync on next heartbeat", "hive", id, "error", err)
+		return
+	}
+	defer spokeResp.Body.Close()
+	if spokeResp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(spokeResp.Body)
+		s.logger.Warn("visibility spoke push rejected", "hive", id, "status", spokeResp.StatusCode, "body", string(respBody))
+	}
 }
 
 func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Request) {

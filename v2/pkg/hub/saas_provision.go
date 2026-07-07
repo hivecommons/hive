@@ -221,6 +221,7 @@ type SaaSHive struct {
 	Subdomain       string                 `json:"subdomain"`
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
+	IsPublic        bool                   `json:"is_public"`
 	PendingRequests []PendingAccessRequest `json:"pending_requests,omitempty"`
 	OCIFileSystemID string                 `json:"oci_file_system_id,omitempty"`
 	OCIExportID     string                 `json:"oci_export_id,omitempty"`
