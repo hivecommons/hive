@@ -1348,6 +1348,7 @@ func main() {
 						"target", targetSHA,
 						"current", gitShort,
 					)
+					os.Remove(upgradeMarkerPath)
 					return
 				}
 			}

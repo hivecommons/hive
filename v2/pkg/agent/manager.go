@@ -2533,11 +2533,16 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o644); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
-	// Empty password (colon after username) prevents git from prompting for proxy credentials
-	proxyURL := fmt.Sprintf("http://%s:@127.0.0.1:%d", agent.Name, proxyListenPort)
+	// Plain proxy URL without userinfo — Claude Code's native binary fails
+	// to open a socket when the URL contains username:password@ (FailedToOpenSocket).
+	// Agent identification uses UID-based /proc/net/tcp lookup instead of
+	// Proxy-Authorization headers. GIT_TERMINAL_PROMPT=0 prevents git from
+	// prompting for proxy credentials.
+	proxyURL := fmt.Sprintf("http://127.0.0.1:%d", proxyListenPort)
 	vars = append(vars, agentEnvPair{"HTTPS_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HTTP_PROXY", proxyURL, false})
 	vars = append(vars, agentEnvPair{"HIVE_PROXY_AGENT", agent.Name, false})
+	vars = append(vars, agentEnvPair{"GIT_TERMINAL_PROMPT", "0", false})
 	vars = append(vars, agentEnvPair{"NODE_EXTRA_CA_CERTS", proxyCACertPath, false})
 	if sha := os.Getenv("HIVE_SHA"); sha != "" {
 		vars = append(vars, agentEnvPair{"HIVE_SHA", sha, false})
