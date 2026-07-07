@@ -212,7 +212,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 
 	// Identify agent by UID from /proc/net/tcp
 	agentName := ""
-	if p.uidMap != nil && p.uidMap.IptablesActive {
+	if p.uidMap != nil {
 		_, portStr, splitErr := net.SplitHostPort(conn.RemoteAddr().String())
 		if splitErr == nil {
 			port := 0
@@ -386,11 +386,12 @@ func (c *prefixConn) Read(b []byte) (int, error) {
 }
 
 
-// identifyAgentFromReq determines the agent name for a request. It prefers UID-based
-// identification (unforgeable) when iptables is active, falling back to
-// Proxy-Authorization headers for non-iptables deployments.
+// identifyAgentFromReq determines the agent name for a request. It always
+// tries UID-based identification first (unforgeable, works for any client
+// including native binaries that don't send Proxy-Authorization), falling
+// back to Proxy-Authorization headers when UID lookup fails.
 func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
-	if p.uidMap != nil && p.uidMap.IptablesActive {
+	if p.uidMap != nil {
 		if name := p.identifyAgentByUID(r.RemoteAddr); name != "" {
 			return name
 		}
