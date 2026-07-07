@@ -1468,6 +1468,12 @@ func main() {
 				return
 			}
 			dashSrv.SetHubBanner(banner.ID, banner.Message, banner.Color)
+		}), hub.VisibilityCallback(func(isPublic bool) {
+			if cfg.Hub.IsPublic != isPublic {
+				logger.Info("hub overrode visibility via heartbeat",
+					"was", cfg.Hub.IsPublic, "now", isPublic)
+				cfg.Hub.IsPublic = isPublic
+			}
 		}))
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {

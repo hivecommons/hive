@@ -137,6 +137,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onUpgrade UpgradeCallback
 	var onGitHubAppConfig GitHubAppConfigCallback
 	var onHubBanner HubBannerCallback
+	var onVisibility VisibilityCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -145,6 +146,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onGitHubAppConfig = fn
 		case HubBannerCallback:
 			onHubBanner = fn
+		case VisibilityCallback:
+			onVisibility = fn
 		}
 	}
 
@@ -164,6 +167,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		}
 		if onHubBanner != nil {
 			onHubBanner(resp.HubBanner)
+		}
+		if resp.IsPublic != nil && onVisibility != nil {
+			onVisibility(*resp.IsPublic)
 		}
 	}
 
@@ -350,6 +356,7 @@ type HeartbeatResponse struct {
 	LatestTag       string                    `json:"latest_tag,omitempty"`
 	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
+	IsPublic        *bool                     `json:"is_public,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
@@ -362,6 +369,9 @@ type HubBanner struct {
 // HubBannerCallback is called when the hub delivers a banner message
 // via the heartbeat response.
 type HubBannerCallback func(banner *HubBanner)
+
+// VisibilityCallback is called when the hub overrides the spoke's IsPublic setting.
+type VisibilityCallback func(isPublic bool)
 
 // GitHubAppConfigCallback is called when the hub delivers GitHub App config
 // via the heartbeat response (app ID, installation ID, private key).

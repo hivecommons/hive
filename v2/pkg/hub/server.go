@@ -553,6 +553,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		LatestSHA:  latestSHA,
 	}
 
+	if entry.IsPublic != payload.IsPublic {
+		resp.IsPublic = &entry.IsPublic
+	}
+
 	// Check if the hive should self-upgrade via heartbeat response.
 	//
 	// Three upgrade paths, all controlled by a single toggle:
