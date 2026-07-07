@@ -32,6 +32,7 @@ const (
 // create with root ownership, locking out agent UIDs.
 var WatchedHomeDirs = []string{
 	"/data/home/.copilot",
+	"/data/home/.claude",
 	"/data/home/.cache",
 	"/data/home/.config",
 	"/data/home/.local",

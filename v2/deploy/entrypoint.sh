@@ -141,18 +141,25 @@ if [ "$(id -u)" = "0" ]; then
   # Shared CLI auth/cache lives in /data/home (persistent volume).
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
-  mkdir -p /data/home/.config /data/home/.copilot /data/config/github-copilot /home/dev/.config
+  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/config/github-copilot /home/dev/.config
   chmod 2770 /data/home/.copilot 2>/dev/null || true
   chown dev:node /data/home/.copilot 2>/dev/null || true
+  chmod 2775 /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true
+  chown -R dev:node /data/home/.claude 2>/dev/null || true
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot
   # Set group-write + setgid on shared dirs — skip if already done (saves 100s+ on NFS).
   # The polling perm guard handles ongoing config.json fixes regardless.
   NEED_PERM_FIX=false
-  if [ -d "/data/home/.copilot" ]; then
+  if [ -d "/data/home/.copilot" ] && [ -d "/data/home/.claude" ]; then
     COPILOT_PERMS=$(stat -c '%a' "/data/home/.copilot" 2>/dev/null || echo "755")
+    CLAUDE_PERMS=$(stat -c '%a' "/data/home/.claude" 2>/dev/null || echo "755")
     case "$COPILOT_PERMS" in
+      27[0-9][0-9]|37[0-9][0-9]) ;; # already has group-write + setgid
+      *) NEED_PERM_FIX=true ;;
+    esac
+    case "$CLAUDE_PERMS" in
       27[0-9][0-9]|37[0-9][0-9]) ;; # already has group-write + setgid
       *) NEED_PERM_FIX=true ;;
     esac
@@ -185,7 +192,14 @@ if [ "$(id -u)" = "0" ]; then
         chown dev:node /data/home/.copilot/config.json 2>/dev/null
       done
     ) &
-    echo "[entrypoint] inotify perm guard active"
+    (
+      while inotifywait -qq -e close_write,moved_to,create /data/home/.claude/ 2>/dev/null; do
+        chmod -R g+rwX /data/home/.claude 2>/dev/null
+        find /data/home/.claude -type d -exec chmod g+s {} + 2>/dev/null
+        chown -R dev:node /data/home/.claude 2>/dev/null
+      done
+    ) &
+    echo "[entrypoint] inotify perm guard active (copilot + claude)"
   fi
   (
     CYCLE=0
@@ -196,8 +210,8 @@ if [ "$(id -u)" = "0" ]; then
       # Slow cycle: fix entire /data/home tree every 5 min (new dirs from agents)
       CYCLE=$((CYCLE + 1))
       if [ "$CYCLE" -ge 60 ]; then
-        chmod -R g+rwX /data/home/.cache /data/home/.copilot 2>/dev/null
-        find /data/home/.cache -type d -exec chmod g+s {} + 2>/dev/null
+        chmod -R g+rwX /data/home/.cache /data/home/.copilot /data/home/.claude 2>/dev/null
+        find /data/home/.cache /data/home/.claude -type d -exec chmod g+s {} + 2>/dev/null
         CYCLE=0
       fi
       sleep 5
