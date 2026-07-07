@@ -429,9 +429,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if entry.SnapshotURL == "" {
 				entry.SnapshotURL = h.SnapshotURL
 			}
-			if h.Upgrading && !payload.Upgrading && payload.GitHash == h.UpgradeTarget {
-				// Non-upgrading heartbeat reporting the target SHA — upgrade
-				// completed, pod restarted successfully on the new image.
+			branchForLatest := payload.GitBranch
+			if branchForLatest == "" {
+				branchForLatest = "v2"
+			}
+			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
+			if h.Upgrading && !payload.Upgrading && (payload.GitHash == h.UpgradeTarget || (registryLatestSHA != "" && payload.GitHash == registryLatestSHA)) {
+				// Non-upgrading heartbeat at the target SHA or at latest —
+				// upgrade completed (image may have advanced past the
+				// original target before the spoke pulled it).
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
 			} else if h.Upgrading && !payload.Upgrading && h.UpgradeTarget == "" {
@@ -562,8 +568,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	hbTarget := s.heartbeatUpgrade[payload.HiveID]
 	s.mu.RUnlock()
-	if hbTarget != "" && payload.GitHash == hbTarget {
-		// Spoke already upgraded — clear the fallback entry.
+	if hbTarget != "" && (payload.GitHash == hbTarget || (latestSHA != "" && payload.GitHash == latestSHA)) {
+		// Spoke already at the target or at latest — clear the fallback entry.
 		s.mu.Lock()
 		delete(s.heartbeatUpgrade, payload.HiveID)
 		s.mu.Unlock()
