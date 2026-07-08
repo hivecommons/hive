@@ -1821,7 +1821,9 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	ns := "hive-hosted-" + id
 	imageTag := body.Branch + "-latest"
 	image := "ghcr.io/kubestellar/hive:" + imageTag
-	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "hive="+image, "-n", ns)
+	// "*=" updates every container including init containers (copy-config,
+	// init-permissions) — pinning only "hive" left inits on the old branch tag.
+	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		s.logger.Warn("branch switch failed", "hive", id, "branch", body.Branch, "output", string(out))
