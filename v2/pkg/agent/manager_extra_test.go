@@ -229,10 +229,18 @@ func TestSetModelOverride_Pinned(t *testing.T) {
 		"scanner": {Backend: "claude", Model: "sonnet"},
 	}, discardLogger(), ProjectContext{})
 
+	// A pin blocks governor auto-selection, not a user's explicit switch:
+	// the switch succeeds and the pin retargets to the new model.
 	m.PinModel("scanner", "opus")
-	err := m.SetModelOverride("scanner", "haiku")
-	if err == nil {
-		t.Error("expected error when model is pinned")
+	if err := m.SetModelOverride("scanner", "haiku"); err != nil {
+		t.Errorf("user switch on pinned model should succeed, got %v", err)
+	}
+	st := m.AllStatuses()["scanner"]
+	if st.ModelOverride != "haiku" {
+		t.Errorf("ModelOverride = %q, want haiku", st.ModelOverride)
+	}
+	if st.PinnedModel != "haiku" {
+		t.Errorf("PinnedModel = %q, want haiku (pin retargeted, still pinned)", st.PinnedModel)
 	}
 }
 

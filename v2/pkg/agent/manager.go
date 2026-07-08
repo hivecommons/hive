@@ -3145,8 +3145,12 @@ func (m *Manager) SetModelOverride(name, model string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 
+	// A pin blocks the governor's auto-selection, never a user's explicit
+	// switch: retarget the pin to the new model so the pin state is
+	// unchanged (still pinned) while the change takes effect.
 	if agent.PinnedModel != "" {
-		return fmt.Errorf("agent %s model is pinned to %s", name, agent.PinnedModel)
+		agent.PinnedModel = model
+		m.logger.Info("agent model pin retargeted by user switch", "name", name, "model", model)
 	}
 
 	agent.ModelOverride = model
