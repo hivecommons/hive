@@ -46,6 +46,22 @@ elif [[ -f /usr/local/etc/hive/backends.conf ]]; then
   source /usr/local/etc/hive/backends.conf
 fi
 
+# LiteLLM backend: Claude Code pointed at the contributor's own LiteLLM proxy.
+# The endpoint comes from HIVE_LITELLM_ENDPOINT (persisted in contributor.env);
+# the API key is env-only (HIVE_LITELLM_API_KEY) and is never written to disk
+# by setup. Exported here so the tmux session and CLI inherit them.
+if [[ "$AGENT_BACKEND" == "litellm" ]]; then
+  if [[ -z "${HIVE_LITELLM_ENDPOINT:-}" ]]; then
+    echo "ERROR: AGENT_BACKEND=litellm but HIVE_LITELLM_ENDPOINT is not set."
+    echo "Run: HIVE_LITELLM_ENDPOINT=https://your-litellm-host:4000 just contribute-setup litellm"
+    exit 1
+  fi
+  export ANTHROPIC_BASE_URL="$HIVE_LITELLM_ENDPOINT"
+  if [[ -n "${HIVE_LITELLM_API_KEY:-}" ]]; then
+    export ANTHROPIC_API_KEY="$HIVE_LITELLM_API_KEY"
+  fi
+fi
+
 # Detect CLI authentication
 detect_cli() {
   local backend="$1"
@@ -59,6 +75,10 @@ detect_cli() {
 
   case "$backend" in
     claude)
+      if claude --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
+      ;;
+    litellm)
+      # Auth is the LiteLLM endpoint/key, not a claude login — binary presence is enough
       if claude --version &>/dev/null; then echo "OK"; else echo "NOT_AUTHED"; fi
       ;;
     copilot)
@@ -169,7 +189,7 @@ KNOWLEDGE_REFRESH_SECS=600
 
 # Make agent.md visible to each CLI backend
 case "$AGENT_BACKEND" in
-  claude)
+  claude|litellm)
     ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
     ;;
   copilot)
@@ -231,6 +251,38 @@ if [[ "$AGENT_BACKEND" == "claude" ]] && [[ -f "${CONFIG_DIR}/claude-config.json
   chmod 600 "${HOME}/.claude.json"
 fi
 
+# LiteLLM: pre-seed Claude Code config so first-run onboarding and the
+# custom-API-key approval prompt don't block the tmux session. Mirrors the
+# hub's ensureClaudeSettings pattern (v2/pkg/agent/manager.go). The key is
+# stored both in full and as its last 20 chars — customApiKeyResponses
+# matching differs across Claude Code versions.
+if [[ "$AGENT_BACKEND" == "litellm" ]]; then
+  python3 - <<'PYEOF' 2>/dev/null || true
+import json, os
+p = os.path.join(os.path.expanduser('~'), '.claude.json')
+d = {}
+if os.path.exists(p):
+    try:
+        with open(p) as f:
+            d = json.load(f)
+    except Exception:
+        d = {}
+d['hasCompletedOnboarding'] = True
+d['autoUpdates'] = False
+d['installMethod'] = 'npm'
+key = os.environ.get('ANTHROPIC_API_KEY', '')
+if key:
+    resp = d.setdefault('customApiKeyResponses', {'approved': [], 'rejected': []})
+    approved = resp.setdefault('approved', [])
+    for k in (key, key[-20:]):
+        if k and k not in approved:
+            approved.append(k)
+with open(p, 'w') as f:
+    json.dump(d, f, indent=2)
+PYEOF
+  chmod 600 "${HOME}/.claude.json" 2>/dev/null || true
+fi
+
 tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG $MODEL_FLAG" Enter
 
 # Auto-dismiss startup prompts (workspace trust, theme picker, etc.)
@@ -248,6 +300,9 @@ AUTO_DISMISS_INTERVAL=3
       tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
     elif echo "$PANE" | grep -q "Choose a provider\|Select.*provider\|Which provider"; then
       tmux send-keys -t "$TMUX_SESSION" Enter 2>/dev/null || true
+    elif echo "$PANE" | grep -qi "custom API key"; then
+      # Claude Code asks whether to use ANTHROPIC_API_KEY (litellm backend)
+      tmux send-keys -t "$TMUX_SESSION" "1" Enter 2>/dev/null || true
     elif echo "$PANE" | grep -q "bypass permissions\|autopilot\|goose>\|G >\|❯\|/ commands\|> *$"; then
       break
     fi

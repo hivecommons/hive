@@ -232,11 +232,40 @@ contribute-setup backend="claude": check-version
           exit 1
         fi
         ;;
+      litellm)
+        # LiteLLM: Claude Code pointed at YOUR OWN LiteLLM proxy via
+        # ANTHROPIC_BASE_URL. No Anthropic login needed — auth is your
+        # proxy's key, exported locally (never stored by this setup).
+        if ! command -v claude &>/dev/null; then
+          echo "ERROR: LiteLLM mode runs Claude Code against your LiteLLM proxy."
+          echo "Install Claude Code first: npm i -g @anthropic-ai/claude-code"
+          exit 1
+        fi
+        if [[ -z "${HIVE_LITELLM_ENDPOINT:-}" ]]; then
+          echo "ERROR: HIVE_LITELLM_ENDPOINT not set."
+          echo "  export HIVE_LITELLM_ENDPOINT=https://your-litellm-host:4000"
+          echo "  export HIVE_LITELLM_API_KEY=sk-...   # only if your proxy requires a key"
+          exit 1
+        fi
+        if [[ -z "${HIVE_LITELLM_API_KEY:-}" ]]; then
+          echo "NOTE: HIVE_LITELLM_API_KEY not set — assuming your proxy accepts unauthenticated requests."
+        fi
+        echo "LiteLLM endpoint: ${HIVE_LITELLM_ENDPOINT}"
+        echo "  Claude Code will run with ANTHROPIC_BASE_URL=${HIVE_LITELLM_ENDPOINT}"
+        echo "  Set the model your proxy serves: export AGENT_MODEL=<model>"
+        ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, litellm"
         exit 1
         ;;
     esac
+
+    # Persist the LiteLLM endpoint (never the API key) for later runs
+    if [[ "{{backend}}" == "litellm" && -f "{{config_dir}}/contributor.env" ]]; then
+      grep -v '^HIVE_LITELLM_ENDPOINT=' "{{config_dir}}/contributor.env" > "{{config_dir}}/contributor.env.tmp" || true
+      echo "HIVE_LITELLM_ENDPOINT=${HIVE_LITELLM_ENDPOINT}" >> "{{config_dir}}/contributor.env.tmp"
+      mv "{{config_dir}}/contributor.env.tmp" "{{config_dir}}/contributor.env"
+    fi
 
     # Copy CLI config for Docker container (Colima can't bind-mount files)
     if [[ "{{backend}}" == "claude" ]] && [[ -f "${HOME}/.claude.json" ]]; then
@@ -335,10 +364,27 @@ contribute-hive backend="" mode="docker": check-version
         exit 1
       fi
 
+      # LiteLLM: point Claude Code at the contributor's own proxy.
+      # Endpoint comes from contributor.env; the key stays env-only.
+      LITELLM_ENV=""
+      if [[ "$BACKEND" == "litellm" ]]; then
+        if [[ -z "${HIVE_LITELLM_ENDPOINT:-}" ]]; then
+          echo "ERROR: HIVE_LITELLM_ENDPOINT not set. Run: just contribute-setup litellm"
+          exit 1
+        fi
+        LITELLM_ENV="ANTHROPIC_BASE_URL=${HIVE_LITELLM_ENDPOINT}"
+        if [[ -n "${HIVE_LITELLM_API_KEY:-}" ]]; then
+          LITELLM_ENV="${LITELLM_ENV} ANTHROPIC_API_KEY=${HIVE_LITELLM_API_KEY}"
+        fi
+        if [[ -n "${AGENT_MODEL:-}" ]]; then
+          PERM_FLAG="${PERM_FLAG} --model ${AGENT_MODEL}"
+        fi
+      fi
+
       # Create tmux session with the CLI
       tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
       tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50
-      tmux send-keys -t "$TMUX_SESSION" "$CMD $PERM_FLAG" Enter
+      tmux send-keys -t "$TMUX_SESSION" "${LITELLM_ENV:+$LITELLM_ENV }$CMD $PERM_FLAG" Enter
 
       # Start the relay
       export HIVE_AGENT_SESSION="$TMUX_SESSION"
@@ -406,6 +452,9 @@ contribute-hive backend="" mode="docker": check-version
         ${GOOSE_PROVIDER:+-e GOOSE_PROVIDER="${GOOSE_PROVIDER}"} \
         ${GOOSE_MODEL:+-e GOOSE_MODEL="${GOOSE_MODEL}"} \
         ${OPENAI_API_KEY:+-e OPENAI_API_KEY="${OPENAI_API_KEY}"} \
+        ${HIVE_LITELLM_ENDPOINT:+-e HIVE_LITELLM_ENDPOINT="${HIVE_LITELLM_ENDPOINT}"} \
+        ${HIVE_LITELLM_API_KEY:+-e HIVE_LITELLM_API_KEY="${HIVE_LITELLM_API_KEY}"} \
+        ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
         {{hive_image}} > /dev/null
 
       echo "Container: ${CONTAINER_NAME}"
