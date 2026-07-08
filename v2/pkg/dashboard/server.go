@@ -79,6 +79,7 @@ type Server struct {
 
 	contributeHub *ContributeWSHub
 
+	inferenceMu        sync.RWMutex
 	inferenceEndpoints map[string][]string // backend id → list of base URLs
 
 	ready   bool
@@ -361,7 +362,33 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 // SetInferenceEndpoints registers base URLs for inference backends
 // so the dashboard can query them for available models at runtime.
 func (s *Server) SetInferenceEndpoints(endpoints map[string][]string) {
+	s.inferenceMu.Lock()
+	defer s.inferenceMu.Unlock()
 	s.inferenceEndpoints = endpoints
+}
+
+// UpdateInferenceEndpoint registers or replaces the endpoint list for a
+// single inference backend at runtime (e.g. after a governor LiteLLM
+// config save). An empty list unregisters the backend.
+func (s *Server) UpdateInferenceEndpoint(backend string, endpoints []string) {
+	s.inferenceMu.Lock()
+	defer s.inferenceMu.Unlock()
+	if s.inferenceEndpoints == nil {
+		s.inferenceEndpoints = make(map[string][]string)
+	}
+	if len(endpoints) == 0 {
+		delete(s.inferenceEndpoints, backend)
+		return
+	}
+	s.inferenceEndpoints[backend] = endpoints
+}
+
+// getInferenceEndpoints returns the registered base URLs for a backend.
+func (s *Server) getInferenceEndpoints(backend string) ([]string, bool) {
+	s.inferenceMu.RLock()
+	defer s.inferenceMu.RUnlock()
+	endpoints, ok := s.inferenceEndpoints[backend]
+	return endpoints, ok
 }
 
 func (s *Server) buildInferenceBackends() []InferenceBackend {

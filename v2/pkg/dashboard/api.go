@@ -3380,7 +3380,7 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "backend required", http.StatusBadRequest)
 		return
 	}
-	endpoints, ok := s.inferenceEndpoints[backend]
+	endpoints, ok := s.getInferenceEndpoints(backend)
 	if !ok {
 		jsonError(w, "unknown inference backend: "+backend, http.StatusNotFound)
 		return
@@ -3397,7 +3397,7 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) queryInferenceModels(backend string) []string {
-	if endpoints, ok := s.inferenceEndpoints[backend]; ok {
+	if endpoints, ok := s.getInferenceEndpoints(backend); ok {
 		models := fetchModelsFromEndpoints(endpoints)
 		if len(models) > 0 {
 			return models

@@ -3154,6 +3154,32 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 	return nil
 }
 
+// RefreshInferenceRoutes re-fires the inference route callback for every
+// agent whose effective backend matches, so endpoint or credential changes
+// (e.g. a governor LiteLLM config save) take effect on live agents without
+// a restart.
+func (m *Manager) RefreshInferenceRoutes(backend string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.inferenceRouteCallback == nil || !IsInferenceBackend(backend) {
+		return
+	}
+	for name, agent := range m.agents {
+		effective := agent.Config.Backend
+		if agent.BackendOverride != "" {
+			effective = agent.BackendOverride
+		}
+		if effective != backend {
+			continue
+		}
+		model := agent.ModelOverride
+		if model == "" {
+			model = agent.Config.Model
+		}
+		m.inferenceRouteCallback(name, backend, model)
+	}
+}
+
 // GetBufferOutput returns output from the ring buffer directly, bypassing
 // the tmux pane capture. The ring buffer accumulates all output over time
 // (up to 500 lines) while the pane capture only has visible lines.

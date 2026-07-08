@@ -1153,12 +1153,46 @@ func main() {
 
 		vllmEndpoints := parseEndpointList(envOrDefault("HIVE_VLLM_ENDPOINT", "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000"))
 		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"))
-		dashSrv.SetInferenceEndpoints(map[string][]string{
+		inferenceEndpoints := map[string][]string{
 			"vllm":  vllmEndpoints,
 			"llm-d": llmdEndpoints,
-		})
+		}
+		// litellm has no in-cluster default: register it only when an
+		// endpoint is configured (yaml or HIVE_LITELLM_ENDPOINT), so an
+		// unconfigured backend doesn't show up in model discovery. A URL
+		// saved later from the governor LiteLLM tab is registered at
+		// runtime via dashSrv.UpdateInferenceEndpoint.
+		if litellmEndpoint := cfg.Governor.LiteLLM.ResolveEndpoint(); litellmEndpoint != "" {
+			inferenceEndpoints["litellm"] = parseEndpointList(litellmEndpoint)
+		}
+		dashSrv.SetInferenceEndpoints(inferenceEndpoints)
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
+				if backend == "litellm" {
+					// Resolve endpoint/key at call time so a URL saved from
+					// the governor LiteLLM tab (or a rotated key) takes
+					// effect without a hive restart. cfg is the live config
+					// pointer — the config watcher swaps its contents in
+					// place on reload.
+					lc := cfg.Governor.LiteLLM
+					endpoint := lc.ResolveEndpoint()
+					if endpoint == "" {
+						logger.Warn("litellm backend selected but no endpoint configured",
+							"agent", agentName, "model", model)
+						return
+					}
+					if model == "" {
+						model = lc.DefaultModel
+					}
+					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
+						Backend:  backend,
+						Endpoint: endpoint,
+						Model:    model,
+						APIKey:   lc.ResolveAPIKey(),
+						CABundle: lc.CABundle,
+					})
+					return
+				}
 				endpoints := vllmEndpoints
 				if backend == "llm-d" {
 					endpoints = llmdEndpoints
