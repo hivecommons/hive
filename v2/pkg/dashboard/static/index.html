@@ -1404,6 +1404,16 @@
     .chat-raw-details pre { white-space: pre-wrap; word-break: break-all; font-size: 0.65rem; color: var(--muted); margin-top: 4px; max-height: 200px; overflow-y: auto; }
     @media (max-width: 500px) {
       .hive-chat-panel { width: calc(100vw - 32px); right: 16px; bottom: 72px; }
+      /* Phone: the fixed FAB used to sit on top of in-flow controls at the
+         bottom of the page (audit-log Save button, right edge of the last
+         section). Shrink it into the corner and give the body matching
+         bottom clearance so content can always scroll clear of it.
+         Clearance = FAB size (40) + FAB offset (12) + breathing room (12). */
+      .hive-chat-fab { width: 40px; height: 40px; bottom: 12px; right: 12px; font-size: 1.1rem; }
+      body { padding-bottom: 64px; }
+      /* Audit search controls: keep the Save/clear buttons out of the FAB
+         column entirely. Clearance = FAB size (40) + FAB offset (12). */
+      .audit-controls-row { padding-right: 52px; }
     }
 
     /* Strategy Lab (Nous) */
@@ -2257,7 +2267,7 @@
   <div id="audit-section" style="margin-top: 16px; margin-bottom: 24px;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('audit-section')"><span class="section-chevron">▼</span> 📋 Audit Log</h2>
     <div class="section-body">
-      <div style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+      <div class="audit-controls-row" style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
         <div style="flex:1;position:relative">
           <input id="audit-search" list="audit-saved-searches" type="text" placeholder="Search audit log... (supports /regex/)" oninput="filterAuditLog()" onkeydown="if(event.key==='Enter')saveAuditSearch()" style="width:100%;padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem">
           <datalist id="audit-saved-searches"></datalist>
