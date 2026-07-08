@@ -2771,7 +2771,7 @@
       // The fingerprint guards the fields only the full template renders
       // (method/model/pins): without it a CLI or model switch stayed stale
       // in the focused panel until a hard refresh.
-      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0].join('|');
+      const cfgSig = [a.cli || '', a.model || '', a.pinnedCli ? 1 : 0, a.pinnedModel ? 1 : 0, a.pinnedBoth ? 1 : 0, a.displayName || '', a.emoji || '', a.color || ''].join('|');
       if (existingSummary && detail.dataset.agent === a.name && detail.dataset.cfgSig === cfgSig) {
         if (a.detailSummary) {
           const newText = escBlock(a.detailSummary);
@@ -12654,8 +12654,34 @@ function burnAreaChart() {
       }
       if (success) {
         showToast('Configuration saved', 'success');
+        // Optimistically reflect agent-level identity fields that render
+        // outside this dialog (sidebar rows, agent cards, token panel,
+        // focused detail header) before the confirming refetch lands —
+        // the same optimistic-update + refetch pattern switchCli/switchModel
+        // use. _lastAgents and _lastStatus.agents share object references,
+        // so one mutation covers every render site.
+        const savedGeneral = dirty.general;
+        const savedAgentUpdate = _configState.type === 'agent' && savedGeneral && Array.isArray(window._lastAgents);
+        if (savedAgentUpdate) {
+          const liveAgent = window._lastAgents.find(x => x.name === _configState.agent);
+          if (liveAgent) {
+            if (savedGeneral.displayName !== undefined) liveAgent.displayName = savedGeneral.displayName;
+            if (savedGeneral.emoji !== undefined) liveAgent.emoji = savedGeneral.emoji;
+            if (savedGeneral.color !== undefined) liveAgent.color = savedGeneral.color;
+            if (savedGeneral.sortOrder !== undefined) liveAgent.sortOrder = savedGeneral.sortOrder;
+          }
+        }
         _configState.dirty = {};
-        closeConfigDialog();
+        closeConfigDialog(); // resets _configState — do not read it below
+        if (savedAgentUpdate) {
+          renderAgents(window._lastAgents);
+          ocUpdateSidebarAgents();
+          injectAgentStyles(window._lastAgents);
+          if (typeof ocRenderAgentDetail === 'function') ocRenderAgentDetail();
+          const lastData = window._lastStatus || {};
+          renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+          renderTokens(lastData.tokens || {});
+        }
         fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
       }
     }
