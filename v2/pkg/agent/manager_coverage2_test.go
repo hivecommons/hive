@@ -1039,6 +1039,7 @@ func TestIsInferenceBackend(t *testing.T) {
 	}{
 		{"vllm", true},
 		{"llm-d", true},
+		{"litellm", true},
 		{"claude", false},
 		{"copilot", false},
 		{"gemini", false},
@@ -1692,8 +1693,8 @@ func TestReadCoveragePreamble_MissingTarget(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBackendBinary_InferenceBackends(t *testing.T) {
-	// vllm and llm-d should map to claude binary
-	for _, backend := range []string{"vllm", "llm-d"} {
+	// vllm, llm-d, and litellm should map to claude binary
+	for _, backend := range []string{"vllm", "llm-d", "litellm"} {
 		path, err := backendBinary(backend)
 		if err != nil {
 			t.Errorf("backendBinary(%q) error: %v", backend, err)

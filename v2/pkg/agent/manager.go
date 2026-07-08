@@ -114,9 +114,11 @@ type AppTokenMinter interface {
 }
 
 // IsInferenceBackend returns true if the backend is a self-hosted inference
-// backend (vllm, llm-d) rather than a CLI tool.
+// backend (vllm, llm-d, litellm) rather than a CLI tool. Delegates to the
+// canonical list in the config package (shared with the proxy package,
+// which cannot be imported from here without a cycle).
 func IsInferenceBackend(backend string) bool {
-	return backend == "vllm" || backend == "llm-d"
+	return config.IsInferenceBackend(backend)
 }
 
 // ReloadClaudeToken re-reads the Claude credentials file and updates the
@@ -2103,6 +2105,7 @@ func backendBinary(backend string) (string, error) {
 		"bob":     "bob",
 		"vllm":    "claude",
 		"llm-d":   "claude",
+		"litellm": "claude",
 	}
 
 	binary, ok := binaries[backend]

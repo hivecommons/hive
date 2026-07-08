@@ -368,6 +368,11 @@ func resolveInferencePreamble(route *InferenceRoute, agentName string) string {
 	if route.Preamble != "" {
 		return route.Preamble
 	}
+	// litellm may front frontier models that don't need the vLLM agentic
+	// preamble — opt out unless a preamble is explicitly configured.
+	if route.Backend == "litellm" {
+		return ""
+	}
 	if agentName == "supervisor" {
 		return SupervisorInferencePreamble
 	}
