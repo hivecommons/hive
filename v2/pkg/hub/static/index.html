@@ -79,7 +79,7 @@
       padding: .72rem 1rem;
       font-weight: 700;
     }
-    #hub-version { margin-left: 8px; }
+    .header-right { display: flex; align-items: center; gap: .8rem; justify-self: end; }
 
     /* ── Utility ── */
     .section-pad { padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 4vw, 4.5rem); }
@@ -405,9 +405,11 @@
       <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
       <span id="nav-user" style="display:none"></span>
     </nav>
-    <a href="/login" class="header-link" id="nav-login">Login with GitHub</a>
-    <a href="#" class="header-link" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.reload()});return false;">Logout</a>
-    <span id="hub-version"></span>
+    <div class="header-right">
+      <span id="hub-version"></span>
+      <a href="/login" class="header-link" id="nav-login">Login with GitHub</a>
+      <a href="#" class="header-link" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.reload()});return false;">Logout</a>
+    </div>
   </header>
 
   <main>
