@@ -10407,7 +10407,7 @@ function burnAreaChart() {
     const TREND_REFRESH_MS = 900000;
     window._timelineData = [];
     function fetchTimeline() {
-      fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
+      return fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
     }
     const TIMELINE_REFRESH_MS = 60000;
     // ── Configuration Dialog ──────────────────────────────────────────
