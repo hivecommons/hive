@@ -224,7 +224,10 @@ func (g *Governor) computeMode(queueDepth int) Mode {
 }
 
 func (g *Governor) thresholdFor(modeName string) int {
-	if mode, ok := g.cfg.Modes[modeName]; ok {
+	// A mode entry may exist only for cadences with threshold unset
+	// (zero). Zero thresholds would make every non-empty queue surge,
+	// so fall through to the defaults in that case.
+	if mode, ok := g.cfg.Modes[modeName]; ok && mode.Threshold > 0 {
 		return mode.Threshold
 	}
 	switch modeName {

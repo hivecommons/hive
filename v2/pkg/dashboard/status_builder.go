@@ -538,13 +538,15 @@ func buildGovernor(state governor.State, cfg *config.Config) FrontendGovernor {
 		Surge: defaultSurge,
 	}
 
-	if m, ok := cfg.Governor.Modes["quiet"]; ok {
+	// Threshold zero means unset (mode entry present only for cadences);
+	// keep the defaults so the gauge matches the governor's evaluation.
+	if m, ok := cfg.Governor.Modes["quiet"]; ok && m.Threshold > 0 {
 		thresholds.Quiet = m.Threshold
 	}
-	if m, ok := cfg.Governor.Modes["busy"]; ok {
+	if m, ok := cfg.Governor.Modes["busy"]; ok && m.Threshold > 0 {
 		thresholds.Busy = m.Threshold
 	}
-	if m, ok := cfg.Governor.Modes["surge"]; ok {
+	if m, ok := cfg.Governor.Modes["surge"]; ok && m.Threshold > 0 {
 		thresholds.Surge = m.Threshold
 	}
 
