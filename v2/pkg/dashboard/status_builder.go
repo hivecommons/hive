@@ -757,7 +757,10 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 	}
 
 	used := totalTokens
-	if budget.CurrentSpend > 0 {
+	if !budget.ResetAt.IsZero() {
+		// Governor window is open: CurrentSpend is the live window-relative
+		// spend. The collector lifetime total remains the fallback for
+		// limit-less tracking before any window exists.
 		used = budget.CurrentSpend
 	}
 
@@ -788,6 +791,11 @@ func buildBudget(gov *governor.Governor, tokenCollector *tokens.Collector) Front
 			}
 		}
 		fb.HoursElapsed = hoursElapsed
+
+		fb.Exhausted = used >= budget.WeeklyLimit
+		if !budget.ResetAt.IsZero() {
+			fb.WindowEndsAt = budget.ResetAt.Add(governor.BudgetWindowDuration).UTC().Format(time.RFC3339)
+		}
 	}
 
 	return fb

@@ -4025,11 +4025,19 @@
       const hoursLeft = budget.HOURS_REMAINING || 0;
       const HOURS_PER_DAY = 24;
       const dailyRate = burnRate * HOURS_PER_DAY;
-      const usedFillCls = budgetIgnored ? 'safe' : pctUsed < PCT_SAFE ? 'safe' : pctUsed < PCT_WARN ? 'warning' : 'danger';
+      const PCT_BUDGET_WARN = 90; // mirrors governor.BudgetWarnPct: soft-warning threshold
+      const exhausted = !!budget.BUDGET_EXHAUSTED;
+      // Red is reserved for exhausted (kicks suspended); >=90% shows amber.
+      const usedFillCls = budgetIgnored ? 'safe' : exhausted ? 'danger' : pctUsed >= PCT_SAFE ? 'warning' : 'safe';
 
       let govAction = '';
       if (budgetIgnored) {
         govAction = '<span style="color:var(--muted)">Budget enforcement disabled by operator</span>';
+      } else if (exhausted) {
+        const windowEnds = budget.WINDOW_ENDS_AT ? new Date(budget.WINDOW_ENDS_AT).toLocaleString() : 'the next window';
+        govAction = `<span style="color:var(--red)" title="Agents on the budget exempt list keep running">budget exhausted — agent kicks suspended until ${windowEnds}</span>`;
+      } else if (pctUsed >= PCT_BUDGET_WARN) {
+        govAction = `<span style="color:var(--yellow)">Budget warning — ${pctUsed}% of weekly limit used; kicks suspend at 100%</span>`;
       } else if (projPct > PCT_WARN) {
         govAction = '<span style="color:var(--red)">Governor downgrading models to stay within budget</span>';
       } else if (projPct > PCT_SAFE) {

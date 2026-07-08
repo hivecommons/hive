@@ -283,6 +283,12 @@ type FrontendBudget struct {
 	ProjectedWeekly int64   `json:"PROJECTED_WEEKLY"`
 	ProjectedPct    float64 `json:"PROJECTED_PCT"`
 	LastUpdated     string  `json:"LAST_UPDATED"`
+	// Exhausted is true when the weekly limit is set and window spend has
+	// reached it — the governor is suppressing kicks for non-exempt agents.
+	Exhausted bool `json:"BUDGET_EXHAUSTED"`
+	// WindowEndsAt is when the current budget window rolls (RFC3339);
+	// empty unless a weekly limit is set and a window is open.
+	WindowEndsAt string `json:"WINDOW_ENDS_AT"`
 }
 
 type FrontendCadence struct {
