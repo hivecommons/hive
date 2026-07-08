@@ -4247,13 +4247,31 @@
       }).join(''));
     }
 
+    // Contributors-style empty-state card, reused by sections that would
+    // otherwise show bare/blank content on a new hive.
+    function emptyStateCard(icon, title, bodyHtml) {
+      return '<div style="color:var(--text);padding:24px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:760px">' +
+        `<div style="font-weight:600;font-size:var(--fs-md);margin-bottom:8px">${icon} ${title}</div>` +
+        `<div style="color:var(--muted);font-size:var(--fs-base);line-height:1.6">${bodyHtml}</div>` +
+      '</div>';
+    }
+
     function renderBeads(beads) {
       const el = document.getElementById('beads');
+      const workers = beads.workers >= 0 ? beads.workers : 0;
+      const supervisor = beads.supervisor >= 0 ? beads.supervisor : 0;
+      if (workers === 0 && supervisor === 0) {
+        setIfChanged(el, emptyStateCard('🔮', 'Beads — your hive’s shared work ledger',
+          'Beads are the findings and work items agents file for each other — bugs, tasks, decisions, and advisories, each with a status and priority. ' +
+          'Worker agents open beads as they discover issues; the supervisor triages the ledger and dispatches follow-up work. ' +
+          'Counts appear here as soon as agents start filing beads — kick an agent, or let the governor cadence run, and check back.'));
+        return;
+      }
       const wSpark = sparkSvg(getHistorySeries('beadsWorkers'), 'var(--cyan)');
       const sSpark = sparkSvg(getHistorySeries('beadsSupervisor'), 'var(--yellow)');
       setIfChanged(el, `
-        <div class="bead-stat"><div class="spark-row"><span class="num">${beads.workers >= 0 ? beads.workers : 0}</span>${wSpark}</div><div class="label">workers</div></div>
-        <div class="bead-stat"><div class="spark-row"><span class="num">${beads.supervisor >= 0 ? beads.supervisor : 0}</span>${sSpark}</div><div class="label">supervisor</div></div>`);
+        <div class="bead-stat"><div class="spark-row"><span class="num">${workers}</span>${wSpark}</div><div class="label">workers</div></div>
+        <div class="bead-stat"><div class="spark-row"><span class="num">${supervisor}</span>${sSpark}</div><div class="label">supervisor</div></div>`);
     }
 
     function fmtTokens(n) {
@@ -5046,7 +5064,19 @@ function burnAreaChart() {
           principles: await principlesRes.json(),
         };
         renderNous();
-      } catch (_) { /* nous endpoints may not exist yet */ }
+      } catch (_) {
+        // Nous endpoints may not exist yet — show the explainer rather
+        // than a blank section on new hives.
+        const panel = document.getElementById('nous-panel');
+        if (panel && !panel.innerHTML.trim()) panel.innerHTML = _nousExplainerCard();
+      }
+    }
+
+    function _nousExplainerCard() {
+      return emptyStateCard('🧪', 'Strategy Lab — controlled experiments on your hive’s strategy',
+        'The Strategy Lab is the hive’s strategist: it designs controlled experiments on governor strategy — cadences, model assignments, thresholds — and measures each one against a recorded baseline of hive behavior. ' +
+        '<strong>Observe</strong> only collects baseline data, <strong>Suggest</strong> proposes experiments for your approval, and <strong>Evolve</strong> runs them autonomously, distilling proven changes into principles. ' +
+        'To get started, leave it in Observe while it builds a baseline (it needs a few days of snapshots), then switch to Suggest to review its first proposals.');
     }
 
     function renderNous() {
@@ -5062,6 +5092,15 @@ function burnAreaChart() {
 
       const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
       const modeLabels = { observe: 'Observing', suggest: 'Suggesting', evolve: 'Evolving' };
+
+      // Not configured server-side: explain what the lab is instead of a
+      // control surface whose actions would all fail.
+      if (s.status === 'not_configured') {
+        if (badge) { badge.textContent = 'not configured'; badge.style.background = 'var(--muted)'; badge.style.color = 'var(--bg)'; }
+        panel.innerHTML = _nousExplainerCard();
+        return;
+      }
+
       if (badge) {
         badge.textContent = `${modeLabels[mode] || mode} · ${scope}`;
         badge.style.background = modeColors[mode] || 'var(--muted)';
@@ -5094,6 +5133,13 @@ function burnAreaChart() {
       }
 
       let html = '';
+
+      // Fresh lab (no baseline, no experiments, no principles yet):
+      // lead with the explainer so a new hive isn't greeted by bare zeros.
+      const isFreshLab = (s.snapshotCount || 0) === 0 && ledger.length === 0 && principles.length === 0;
+      if (isFreshLab) {
+        html += `<div style="margin-bottom:14px">${_nousExplainerCard()}</div>`;
+      }
 
       // Mode toggle
       html += '<div class="nous-mode-toggle">';
@@ -8516,6 +8562,10 @@ function burnAreaChart() {
 
     function renderInceptionModeSelect() {
       return `
+        <div style="max-width:700px;margin:0 auto 16px">${emptyStateCard('💡', 'Project Inception — bootstrap a project with your hive',
+          'Inception takes a project from raw idea to structured knowledge and a scaffolded repo. ' +
+          'In greenfield mode a brainstorm agent captures your one-line idea, asks clarifying questions, structures the answers into vision, requirements, and constraints (stored as Knowledge Base facts), then scaffolds the project. ' +
+          'In brownfield mode it scans an existing repo and captures its conventions and principles as KB facts instead. Pick a mode below to begin.')}</div>
         <div style="display:flex;gap:16px;max-width:700px;margin:0 auto">
           <div onclick="startInceptionGreenfield()" style="flex:1;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:24px;cursor:pointer;text-align:center;transition:border-color 0.2s" onmouseover="this.style.borderColor='var(--blue)'" onmouseout="this.style.borderColor='var(--border)'">
             <div style="font-size:2rem;margin-bottom:8px">🌱</div>
