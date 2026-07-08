@@ -332,6 +332,9 @@ func LoadStatsConfigWithCfg(name string, cfg *config.Config) []any {
 			if s.Target > 0 {
 				entry["target"] = s.Target
 			}
+			if s.Desc != "" {
+				entry["desc"] = s.Desc
+			}
 			result = append(result, entry)
 		}
 		return result
@@ -347,20 +350,23 @@ func defaultStatsConfig(name string) []any {
 			map[string]any{"key": "mergeable", "label": "Mergeable", "source": "status", "field": "mergeableCount", "style": "spark", "trendField": "mergeable"},
 		},
 		"ci-maintainer": {
+			// desc strings explain what each health check verifies (see
+			// pkg/github/health.go); the dashboard renders them as hover
+			// tooltips on the HEALTH CHECKS rows and agent stat chips.
 			map[string]any{"key": "coverage", "label": "Coverage", "source": "agentMetrics", "field": "coverage", "style": "pct-bar", "target": 91},
-			map[string]any{"key": "brew", "label": "Brew", "source": "health", "field": "brew", "style": "dot"},
-			map[string]any{"key": "helm", "label": "Helm", "source": "health", "field": "helm", "style": "dot"},
-			map[string]any{"key": "ci", "label": "CI", "source": "health", "field": "ci", "style": "pct"},
-			map[string]any{"key": "weekly", "label": "Weekly", "source": "health", "field": "weekly", "style": "dot"},
-			map[string]any{"key": "nightly", "label": "Nightly Tests", "source": "health", "field": "nightly", "style": "dot"},
-			map[string]any{"key": "nightlyCompliance", "label": "Compliance", "source": "health", "field": "nightlyCompliance", "style": "dot"},
-			map[string]any{"key": "nightlyDashboard", "label": "Dashboard", "source": "health", "field": "nightlyDashboard", "style": "dot"},
-			map[string]any{"key": "nightlyGhaw", "label": "gh-aw", "source": "health", "field": "nightlyGhaw", "style": "dot"},
-			map[string]any{"key": "nightlyPlaywright", "label": "Playwright", "source": "health", "field": "nightlyPlaywright", "style": "dot"},
-			map[string]any{"key": "nightlyRel", "label": "Nightly Rel", "source": "health", "field": "nightlyRel", "style": "dot"},
-			map[string]any{"key": "weeklyRel", "label": "Weekly Rel", "source": "health", "field": "weeklyRel", "style": "dot"},
-			map[string]any{"key": "deploy_vllm_d", "label": "vLLM-d", "source": "health", "field": "deploy_vllm_d", "style": "dot"},
-			map[string]any{"key": "deploy_pok_prod", "label": "PokProd", "source": "health", "field": "deploy_pok_prod", "style": "dot"},
+			map[string]any{"key": "brew", "label": "Brew", "source": "health", "field": "brew", "style": "dot", "desc": "Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)"},
+			map[string]any{"key": "helm", "label": "Helm", "source": "health", "field": "helm", "style": "dot", "desc": "Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo"},
+			map[string]any{"key": "ci", "label": "CI", "source": "health", "field": "ci", "style": "pct", "desc": "Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing)"},
+			map[string]any{"key": "weekly", "label": "Weekly", "source": "health", "field": "weekly", "style": "dot", "desc": "Most recent 'Weekly Coverage Review' workflow run did not fail"},
+			map[string]any{"key": "nightly", "label": "Nightly Tests", "source": "health", "field": "nightly", "style": "dot", "desc": "Most recent 'Nightly Test Suite' workflow run did not fail"},
+			map[string]any{"key": "nightlyCompliance", "label": "Compliance", "source": "health", "field": "nightlyCompliance", "style": "dot", "desc": "Most recent 'Nightly Compliance & Perf' workflow run did not fail"},
+			map[string]any{"key": "nightlyDashboard", "label": "Dashboard", "source": "health", "field": "nightlyDashboard", "style": "dot", "desc": "Most recent 'Nightly Dashboard Health' workflow run did not fail"},
+			map[string]any{"key": "nightlyGhaw", "label": "gh-aw", "source": "health", "field": "nightlyGhaw", "style": "dot", "desc": "Most recent 'Nightly gh-aw Version Check' workflow run did not fail"},
+			map[string]any{"key": "nightlyPlaywright", "label": "Playwright", "source": "health", "field": "nightlyPlaywright", "style": "dot", "desc": "Most recent 'Playwright Cross-Browser (Nightly)' workflow run did not fail"},
+			map[string]any{"key": "nightlyRel", "label": "Nightly Rel", "source": "health", "field": "nightlyRel", "style": "dot", "desc": "Most recent scheduled weekday 'Release' workflow run succeeded (nightly release; Sundays belong to the weekly release)"},
+			map[string]any{"key": "weeklyRel", "label": "Weekly Rel", "source": "health", "field": "weeklyRel", "style": "dot", "desc": "Most recent scheduled Sunday 'Release' workflow run succeeded (weekly release)"},
+			map[string]any{"key": "deploy_vllm_d", "label": "vLLM-d", "source": "health", "field": "deploy_vllm_d", "style": "dot", "desc": "deploy-vllm-d job of the latest completed 'Build and Deploy KC' run on main did not fail"},
+			map[string]any{"key": "deploy_pok_prod", "label": "PokProd", "source": "health", "field": "deploy_pok_prod", "style": "dot", "desc": "deploy-pok-prod job of the latest completed 'Build and Deploy KC' run on main did not fail"},
 		},
 		"outreach": {
 			map[string]any{"key": "stars", "label": "Stars", "source": "agentMetrics", "field": "stars", "style": "spark", "trendField": "stars"},

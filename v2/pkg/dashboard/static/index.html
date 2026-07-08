@@ -3525,16 +3525,21 @@
       const label = escapeHtml(stat.label || stat.key);
       const icon = stat.icon ? escapeHtml(stat.icon) + ' ' : '';
 
+      // Health-check stats carry a desc (what the check verifies) —
+      // surface it as a hover tooltip on the chip.
+      const desc = stat.desc || (stat.source === 'health' && HEALTH_DESC_DEFAULTS[stat.field]) || '';
+      const tipAttr = desc ? ` title="${escapeHtml(desc)}" style="cursor:help"` : '';
+
       if (style === 'dot') {
         const dotCls = v === 1 ? 'ok' : v === 0 ? 'fail' : 'unknown';
-        return `<span class="ind-dot-item"><span class="health-dot ${dotCls}"></span><span class="ind-dlabel">${label}</span></span>`;
+        return `<span class="ind-dot-item"${tipAttr}><span class="health-dot ${dotCls}"></span><span class="ind-dlabel">${label}</span></span>`;
       }
 
       if (style === 'pct') {
         const PCT_GOOD = 90;
         const PCT_WARN = 70;
         const cls = v >= PCT_GOOD ? 'good' : v >= PCT_WARN ? 'warn' : 'bad';
-        return `<span class="ind-dot-item"><span class="health-ci ${cls}">${v || 0}%</span><span class="ind-dlabel">${label}</span></span>`;
+        return `<span class="ind-dot-item"${tipAttr}><span class="health-ci ${cls}">${v || 0}%</span><span class="ind-dlabel">${label}</span></span>`;
       }
 
       if (style === 'pct-bar') {
@@ -8241,6 +8246,38 @@ function burnAreaChart() {
       return labels;
     }
 
+    // One-line explanations of what each health check verifies (mirrors
+    // pkg/github/health.go). Used as tooltip fallback when the stats config
+    // entry carries no desc of its own. The health payload holds only ints,
+    // so no last-run timestamp is available to show.
+    const HEALTH_DESC_DEFAULTS = {
+      ci: 'Pass rate over the last 10 completed workflow runs on the primary repo (success or skipped count as passing)',
+      brew: 'Homebrew tap formula version matches a recent console release tag (stable or nightly, last 20 releases)',
+      helm: 'Helm chart exists at deploy/helm/kubestellar-console/Chart.yaml in the primary repo',
+      nightly: "Most recent 'Nightly Test Suite' workflow run did not fail",
+      nightlyCompliance: "Most recent 'Nightly Compliance & Perf' workflow run did not fail",
+      nightlyDashboard: "Most recent 'Nightly Dashboard Health' workflow run did not fail",
+      nightlyGhaw: "Most recent 'Nightly gh-aw Version Check' workflow run did not fail",
+      nightlyPlaywright: "Most recent 'Playwright Cross-Browser (Nightly)' workflow run did not fail",
+      nightlyRel: "Most recent scheduled weekday 'Release' workflow run succeeded (nightly release; Sundays belong to the weekly release)",
+      weeklyRel: "Most recent scheduled Sunday 'Release' workflow run succeeded (weekly release)",
+      weekly: "Most recent 'Weekly Coverage Review' workflow run did not fail",
+      hourly: 'Latest runs of the perf workflows (React commits per navigation, TTFI gate) did not fail',
+      deploy_vllm_d: "deploy-vllm-d job of the latest completed 'Build and Deploy KC' run on main did not fail",
+      deploy_pok_prod: "deploy-pok-prod job of the latest completed 'Build and Deploy KC' run on main did not fail",
+    };
+    function _buildHealthDescs(agents) {
+      const descs = { ...HEALTH_DESC_DEFAULTS };
+      for (const a of agents || []) {
+        for (const s of a.statsConfig || []) {
+          if (s.source === 'health' && s.field && s.desc) {
+            descs[s.field] = s.desc;
+          }
+        }
+      }
+      return descs;
+    }
+
     // ── Inception section ──
     let _inceptionState = null;
 
@@ -8954,16 +8991,21 @@ function burnAreaChart() {
           .map(s => s.field)
       );
 
+      const HEALTH_DESCS = _buildHealthDescs(agents);
       let healthRows = '';
       for (const [k, v] of Object.entries(health)) {
         if (ciHealthFields.size > 0 && !ciHealthFields.has(k)) continue;
         const label = HEALTH_LABELS[k] || k;
+        const desc = HEALTH_DESCS[k] || '';
+        const labelHtml = desc
+          ? `<span style="cursor:help;text-decoration:underline dotted;text-underline-offset:3px" title="${escapeHtml(desc)}">${label}</span>`
+          : `<span>${label}</span>`;
         const ok = k === 'ci' ? v >= CI_PASS_THRESHOLD : (v === true || v === 1);
         const skip = v === -1;
         const dot = skip ? '⊘' : ok ? '✓' : '✗';
         const color = skip ? 'var(--muted)' : ok ? 'var(--green)' : 'var(--red)';
         const val = k === 'ci' ? `${v}%` : skip ? 'skipped' : ok ? 'ok' : 'fail';
-        healthRows += `<div style="${rowStyle}"><span>${label}</span><span style="color:${color};font-weight:600">${dot} ${val}</span></div>`;
+        healthRows += `<div style="${rowStyle}">${labelHtml}<span style="color:${color};font-weight:600">${dot} ${val}</span></div>`;
       }
 
       const { sorted: sortedForStates, groups: stateGroups } = _sortAgentsBySidebar(agents);

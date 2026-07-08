@@ -149,6 +149,9 @@ type StatsDisplayEntry struct {
 	Style      string `yaml:"style" json:"style"`
 	TrendField string `yaml:"trend_field,omitempty" json:"trendField,omitempty"`
 	Target     int    `yaml:"target,omitempty" json:"target,omitempty"`
+	// Desc is a one-line explanation of what the stat verifies, rendered
+	// as a hover tooltip in the dashboard (health checks especially).
+	Desc string `yaml:"desc,omitempty" json:"desc,omitempty"`
 }
 
 // ChannelConfig declares a trigger channel for an agent.
