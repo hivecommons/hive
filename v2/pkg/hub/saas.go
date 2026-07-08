@@ -3237,76 +3237,169 @@ const dashboardHTML = `<!DOCTYPE html>
   <!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");</script>
   <title>My Hives — Hive Hub</title>
   <style>
-    :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --text: #e6edf3; --muted: #8b949e; --accent: #f59e0b; --green: #16a34a; --blue: #3b82f6; --red: #ef4444; --purple: #8b5cf6; }
+    :root {
+      color-scheme: dark;
+      --bg: #080b0f;
+      --bg-soft: #0d1218;
+      --panel: #121922;
+      --panel-strong: #17212d;
+      --text: #f6f8fb;
+      --fg: #f6f8fb;
+      --muted: #a8b3c2;
+      --line: #263545;
+      --amber: #f4c75f;
+      --green: #74df9a;
+      --blue: #80bfff;
+      --red: #ff7e7e;
+      --purple: #b482ff;
+      --shadow: 0 24px 80px #0006;
+      /* Legacy token aliases used by dashboard markup and scripts */
+      --surface: var(--panel);
+      --border: var(--line);
+      --accent: var(--amber);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    body {
+      background:
+        radial-gradient(circle at 18% 8%, #80bfff2e, transparent 24rem),
+        radial-gradient(circle at 86% 4%, #f4c75f29, transparent 20rem),
+        linear-gradient(180deg, #090d12 0%, var(--bg) 48%, #0a0e13 100%);
+      min-width: 320px;
+      min-height: 100vh;
+      color: var(--text);
+    }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
-    .nav { position: fixed; top: 0; width: 100%; z-index: 50; background: rgba(10,10,15,0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
-    .nav-inner { max-width: 1200px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
-    .nav-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none; }
-    .nav-links { display: flex; align-items: center; gap: 20px; font-size: 0.85rem; flex-wrap: nowrap; }
-    .nav-links a { color: var(--muted); white-space: nowrap; }
-    .nav-links a:hover { color: var(--text); text-decoration: none; }
-    .nav-login { padding: 6px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 0.8rem; }
-    .nav-login:hover { border-color: var(--accent); color: var(--text); }
-    .nav-user { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    input, textarea, select, button { font-family: inherit; }
+
+    /* ── Header ── */
+    .site-header {
+      z-index: 50;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      background: #080b0fc7;
+      border-bottom: 1px solid #ffffff14;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 1rem clamp(1rem, 4vw, 4.5rem);
+      position: sticky;
+      top: 0;
+    }
+    .brand, .header-link, .site-header nav { align-items: center; display: flex; }
+    .brand { letter-spacing: 0; gap: .75rem; font-weight: 800; color: var(--text); }
+    .brand:hover { text-decoration: none; }
+    .brand-mark {
+      width: 2.5rem; height: 2.5rem;
+      color: var(--amber);
+      background: linear-gradient(145deg, #f4c75f2e, #80bfff1a);
+      border: 1px solid #f4c75f6b;
+      border-radius: .65rem;
+      place-items: center;
+      font-size: 1.2rem;
+      display: grid;
+    }
+    .site-header nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; flex-wrap: nowrap; }
+    .site-header nav a { color: var(--muted); white-space: nowrap; }
+    .site-header nav a:hover, .header-link:hover { color: var(--text); text-decoration: none; }
+    .header-link {
+      border: 1px solid var(--line);
+      width: fit-content;
+      color: var(--text);
+      border-radius: .55rem;
+      justify-self: end;
+      padding: .72rem 1rem;
+      font-weight: 700;
+    }
+    #hub-version { margin-left: 8px; }
+    .nav-user { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; color: var(--text); }
     .nav-avatar { width: 28px; height: 28px; border-radius: 50%; }
-    .content { max-width: 1600px; margin: 0 auto; padding: 80px 24px 48px; }
-    h1 { font-size: 2rem; font-weight: 800; margin-bottom: 8px; background: linear-gradient(135deg, #f59e0b, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .subtitle { color: var(--muted); margin-bottom: 32px; }
+
+    /* ── Layout ── */
+    .content { max-width: 1600px; margin: 0 auto; padding: 2.5rem clamp(1rem, 4vw, 4.5rem) 3rem; }
+    .section-label {
+      color: var(--amber);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin: 0 0 .8rem;
+      font-size: .82rem;
+      font-weight: 900;
+    }
+    h1 { letter-spacing: 0; font-size: clamp(2rem, 4vw, 3rem); line-height: .98; margin-bottom: .8rem; }
+    .subtitle { color: var(--muted); font-size: 1.02rem; line-height: 1.7; margin-bottom: 32px; }
+
+    /* ── Table ── */
     .table-wrap { overflow: visible; margin: 0 auto; position: relative; }
     .hive-menu-cell:hover .hive-menu-dropdown { display: block !important; }
-    .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: var(--border); border-radius: 4px; }
+    .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: rgba(244,199,95,0.08); border-radius: 4px; }
     .table-wrap::-webkit-scrollbar { height: 10px; display: block; }
-    .table-wrap::-webkit-scrollbar-track { background: var(--surface); border-radius: 4px; }
-    .table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; min-width: 40px; }
+    .table-wrap::-webkit-scrollbar-track { background: var(--bg-soft); border-radius: 4px; }
+    .table-wrap::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; min-width: 40px; }
     .table-wrap::-webkit-scrollbar-thumb:hover { background: var(--muted); }
-    .table-wrap.has-scroll { padding-bottom: 4px; border-bottom: 2px solid var(--border); }
-    .hive-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-    .hive-table th { text-align: center; padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.05em; }
-    .hive-table td { padding: 14px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; text-align: center; }
+    .table-wrap.has-scroll { padding-bottom: 4px; border-bottom: 2px solid var(--line); }
+    .hive-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .hive-table th { text-align: center; padding: 10px 12px; border-bottom: 2px solid var(--line); color: var(--muted); font-weight: 600; font-size: 0.75rem; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; }
+    .hive-table td { padding: 12px; border-bottom: 1px solid #ffffff0a; vertical-align: middle; text-align: center; }
     .hive-table td:first-child { text-align: left; }
-    .hive-table td:first-child { text-align: left; }
-    .hive-table tr:hover { background: rgba(255,255,255,0.02); }
+    .hive-table tr:hover td { background: rgba(244,199,95,0.04); }
     .online-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-    .online-dot.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .online-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(116,223,154,0.5); }
     .online-dot.off { background: #6b7280; }
-    .hive-name { font-weight: 600; }
+    .hive-name { font-weight: 600; color: var(--text); }
     .hive-org { font-size: 0.75rem; color: var(--muted); }
+
+    /* ── Badges ── */
     .role-badge { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; }
-    .role-owner { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
-    .role-read { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
-    .role-read-write { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
+    .role-owner { background: rgba(244,199,95,0.15); color: var(--amber); border: 1px solid rgba(244,199,95,0.3); }
+    .role-read { background: rgba(128,191,255,0.15); color: var(--blue); border: 1px solid rgba(128,191,255,0.3); }
+    .role-read-write { background: rgba(116,223,154,0.15); color: var(--green); border: 1px solid rgba(116,223,154,0.3); }
     .acmm-badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; cursor: help; }
-    .acmm-1 { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
-    .acmm-2 { background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.3); }
-    .acmm-3 { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); }
-    .acmm-4 { background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
-    .acmm-5 { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
-    .acmm-6 { background: rgba(220,38,38,0.2); color: #fca5a5; border: 1px solid rgba(220,38,38,0.4); }
-    .btn-primary { display: inline-block; padding: 10px 20px; background: var(--accent); color: #000; font-weight: 700; border-radius: 8px; border: none; cursor: pointer; font-size: 0.85rem; }
-    .btn-primary:hover { background: #d97706; text-decoration: none; }
+    .acmm-1 { background: rgba(128,191,255,0.15); color: #80bfff; border: 1px solid rgba(128,191,255,0.3); }
+    .acmm-2 { background: rgba(116,223,154,0.15); color: #74df9a; border: 1px solid rgba(116,223,154,0.3); }
+    .acmm-3 { background: rgba(116,223,154,0.15); color: #74df9a; border: 1px solid rgba(116,223,154,0.3); }
+    .acmm-4 { background: rgba(244,199,95,0.15); color: #f4c75f; border: 1px solid rgba(244,199,95,0.3); }
+    .acmm-5 { background: rgba(255,126,126,0.15); color: #ff7e7e; border: 1px solid rgba(255,126,126,0.3); }
+    .acmm-6 { background: rgba(180,130,255,0.15); color: #b482ff; border: 1px solid rgba(180,130,255,0.3); }
+
+    /* ── Buttons ── */
+    .btn-primary { display: inline-flex; align-items: center; justify-content: center; padding: .72rem 1.2rem; background: var(--amber); color: #17110a; font-weight: 800; border-radius: .55rem; border: none; cursor: pointer; font-size: 0.85rem; transition: all .2s; }
+    .btn-primary:hover { background: #f8d87a; text-decoration: none; }
     .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
-    .hive-toast { position: fixed; top: 70px; right: 24px; z-index: 200; padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; max-width: 400px; animation: toast-in 0.3s ease; }
-    .hive-toast.success { background: rgba(22,163,74,0.9); color: #fff; }
-    .hive-toast.error { background: rgba(239,68,68,0.9); color: #fff; }
-    .hive-toast.info { background: rgba(59,130,246,0.9); color: #fff; }
+
+    /* ── Toasts & dialogs ── */
+    .hive-toast { position: fixed; top: 70px; right: 24px; z-index: 200; padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; max-width: 400px; animation: toast-in 0.3s ease; color: #fff; }
+    .hive-toast.success { background: rgba(116,223,154,0.9); }
+    .hive-toast.error { background: rgba(255,126,126,0.9); }
+    .hive-toast.info { background: rgba(128,191,255,0.9); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     .hive-confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 150; display: flex; align-items: center; justify-content: center; }
-    .hive-confirm { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; }
+    .hive-confirm { box-shadow: var(--shadow); background: linear-gradient(#17212df5, #0c1219f5); border: 1px solid #ffffff1a; border-radius: .85rem; padding: 24px; max-width: 400px; width: 90%; }
     .hive-confirm p { color: var(--text); margin-bottom: 16px; font-size: 0.9rem; }
     .hive-confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
     .empty-state { text-align: center; padding: 48px; color: var(--muted); }
     .dash-link { color: var(--blue); font-size: 0.8rem; }
     .repo-link { color: var(--blue); font-size: 0.8rem; }
     .loading { text-align: center; padding: 32px; color: var(--muted); }
+
+    /* ── Footer ── */
+    .footer { border-top: 1px solid var(--line); padding: 2rem clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: .82rem; color: var(--muted); }
+    .footer-links { display: flex; justify-content: center; gap: 1.5rem; margin-bottom: .8rem; }
+    .footer-links a { color: var(--muted); }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .site-header { grid-template-columns: 1fr; position: static; }
+      .site-header nav { flex-wrap: wrap; gap: .85rem; }
+      .header-link { justify-self: start; }
+    }
     @media (max-width: 600px) {
-      .content { padding: 60px 12px 32px; }
-      .nav-inner { padding: 10px 12px; }
-      .nav-links { flex-wrap: wrap; gap: 8px; font-size: 0.78rem; }
-      .nav-brand { font-size: 0.95rem; }
+      .content { padding: 1.5rem 12px 32px; }
+      .site-header { padding: 10px 12px; }
+      .brand { font-size: 0.95rem; }
       h1 { font-size: 1.4rem; }
       .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
       .hive-table { font-size: 0.72rem; min-width: 600px; }
@@ -3317,33 +3410,36 @@ const dashboardHTML = `<!DOCTYPE html>
       .hive-confirm-btns button { width: 100%; }
     }
     @media (max-width: 400px) {
-      .content { padding: 48px 8px 24px; }
-      .nav-links { gap: 4px; font-size: 0.7rem; }
+      .content { padding: 1rem 8px 24px; }
+      .site-header nav { gap: .5rem; font-size: 0.7rem; }
       .hive-modal { padding: 14px; }
       h1 { font-size: 1.2rem; }
     }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-inner">
-      <a href="/" class="nav-brand"><span>🐝</span> Hive Hub <span onclick="window.open(&#39;https://github.com/kubestellar/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:2px;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span></a>
-      <span id="hub-version" style="margin-left:8px"></span>
-      <div class="nav-links">
-        <a href="/">Hives</a>
-        <a href="/learn">Learn</a>
-        <a href="/get-started">Get Started</a>
-        <a href="/dashboard" style="color:var(--accent)">My Hives</a>
-        <a href="/api/docs" target="_blank" style="font-size:0.85rem">API</a>
-        <span id="nav-user" class="nav-user"></span>
-        <a href="#" class="nav-login" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
-      </div>
-    </div>
-  </nav>
+  <header class="site-header">
+    <a href="/" class="brand">
+      <span class="brand-mark">🐝</span>
+      <span>Hive</span>
+      <span onclick="window.open(&#39;https://github.com/kubestellar/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:2px;cursor:pointer;display:inline-flex"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>
+      <span id="hub-version"></span>
+    </a>
+    <nav>
+      <a href="/">Hives</a>
+      <a href="/learn">Learn</a>
+      <a href="/get-started">Get Started</a>
+      <a href="/dashboard" style="color:var(--amber)">My Hives</a>
+      <a href="/api/docs" target="_blank">API</a>
+      <span id="nav-user" class="nav-user"></span>
+    </nav>
+    <a href="#" class="header-link" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
+  </header>
 
   <div class="content">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
       <div>
+        <p class="section-label">Dashboard</p>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
@@ -3399,6 +3495,15 @@ const dashboardHTML = `<!DOCTYPE html>
       </div>
     </div>
   </div>
+
+  <footer class="footer">
+    <div class="footer-links">
+      <a href="https://github.com/kubestellar/hive">Source Code</a>
+      <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
+      <a href="https://kubestellar.io">KubeStellar</a>
+    </div>
+    <p style="color:#3a4555">Hive is an open source project by KubeStellar</p>
+  </footer>
 
   <script>
     function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
