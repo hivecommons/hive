@@ -1210,6 +1210,9 @@ func (s *Server) handleBudgetIgnoreGet(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]interface{}{
 		"ignored": budget.IgnoreAll,
 		"agents":  budget.IgnoredAgents,
+		// by_agent lets the Budget config tab show each agent's tracked
+		// token burn next to its exemption toggle.
+		"by_agent": budget.ByAgent,
 	})
 }
 

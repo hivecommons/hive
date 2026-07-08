@@ -12184,6 +12184,7 @@ function burnAreaChart() {
     }
 
     function renderGovBudget(b) {
+      loadBudgetExemptions();
       return `
         <div class="config-field-row">
           <div class="config-field"><label>Total Tokens <span class="config-info">i<span class="config-tooltip">Maximum token budget for the period. When usage approaches this limit, the governor will downgrade models or skip low-priority kicks. Set to 0 to disable budget tracking.</span></span></label><input type="number" value="${b.totalTokens || 0}" onchange="markDirty('budget','totalTokens',Number(this.value))"></div>
@@ -12192,7 +12193,73 @@ function burnAreaChart() {
         <div class="config-field">
           <label>Critical Percent <span class="config-info">i<span class="config-tooltip">When token usage exceeds this percentage of the total budget, the governor enters budget-critical mode: downgrading models to cheaper alternatives and potentially skipping non-essential kicks. Default is 90%.</span></span></label>
           <input type="number" value="${b.criticalPct || 90}" onchange="markDirty('budget','criticalPct',Number(this.value))">
+        </div>
+        <div class="config-field" style="margin-top:14px">
+          <label>Per-Agent Exemptions <span class="config-info">i<span class="config-tooltip">Exempt agents keep getting kicked even while an exhausted budget suppresses everyone else. Toggles apply immediately (no Save needed). The governor panel's global "ignore budget" checkbox bypasses enforcement for ALL agents; these exemptions are per-agent.</span></span></label>
+          <div id="budget-exempt-list"><div style="color:var(--muted);font-size:0.75rem;padding:4px 0">Loading exemptions...</div></div>
         </div>`;
+    }
+
+    // ── Budget per-agent exemptions (governor IgnoredAgents) ──
+    // Toggles POST the array form of /api/budget-ignore ({ignored: [names]}),
+    // which sets the per-agent list; the bool form remains the global toggle.
+    let _budgetExemptAgents = new Set();
+
+    async function loadBudgetExemptions() {
+      try {
+        const r = await fetch('/api/budget-ignore');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        _budgetExemptAgents = new Set(d.agents || []);
+        renderBudgetExemptList(d.by_agent || {});
+      } catch (e) {
+        const el = document.getElementById('budget-exempt-list');
+        if (el) el.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">Could not load exemptions.</div>';
+      }
+    }
+
+    function renderBudgetExemptList(byAgent) {
+      const el = document.getElementById('budget-exempt-list');
+      if (!el) return;
+      const agents = [...(window._lastAgents || [])].sort((a, b) => (a.sortOrder || 100) - (b.sortOrder || 100));
+      if (agents.length === 0) {
+        el.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">No agents configured.</div>';
+        return;
+      }
+      const rows = agents.map(a => {
+        const burn = byAgent[a.name] || 0;
+        const exempt = _budgetExemptAgents.has(a.name);
+        return `<div class="config-list-item" style="align-items:center;gap:8px">
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}</span>
+          <span style="color:var(--muted);font-size:0.7rem;white-space:nowrap" title="Tokens recorded for this agent by the governor's budget tracker">${burn > 0 ? burn.toLocaleString() + ' tok' : '—'}</span>
+          <label style="display:flex;align-items:center;gap:4px;font-size:0.72rem;color:var(--muted);cursor:pointer;white-space:nowrap">
+            <input type="checkbox" ${exempt ? 'checked' : ''} onchange="toggleBudgetExempt('${esc(a.name)}', this.checked)" style="cursor:pointer"> exempt
+          </label>
+        </div>`;
+      }).join('');
+      el.innerHTML = rows;
+    }
+
+    async function toggleBudgetExempt(name, checked) {
+      if (checked) _budgetExemptAgents.add(name);
+      else _budgetExemptAgents.delete(name);
+      try {
+        const r = await fetch('/api/budget-ignore', {
+          method: 'POST',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ ignored: [..._budgetExemptAgents] })
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        _budgetExemptAgents = new Set(d.agents || []);
+        showToast(checked ? `${name} exempted from budget suppression` : `${name} no longer exempt`, 'success');
+      } catch (e) {
+        // Revert the optimistic flip and re-render so the checkbox matches reality.
+        if (checked) _budgetExemptAgents.delete(name);
+        else _budgetExemptAgents.add(name);
+        showToast('Failed to update budget exemptions: ' + e.message, 'error');
+        loadBudgetExemptions();
+      }
     }
 
     function renderGovNotifications(n) {
