@@ -4692,6 +4692,13 @@ const dashboardHTML = `<!DOCTYPE html>
             if (c.gpu_summary) {
               gpuLine = ' · <span style="color:var(--green)">' + c.gpu_summary.allocatable_gpus + '/' + c.gpu_summary.total_gpus + ' GPUs</span>';
             }
+            // Remaining hive capacity: omitted entirely when the collector had
+            // no pod request data (field absent); 0 means the cluster is full.
+            var capacityLine = '';
+            if (cs.hive_capacity_remaining != null) {
+              var capRemaining = cs.hive_capacity_remaining;
+              capacityLine = ' · <span title="Estimated headroom: per-hive CPU/memory request footprint bin-packed into free (allocatable minus requested) capacity on Ready, schedulable nodes only">room for ~' + capRemaining + ' more hive' + (capRemaining === 1 ? '' : 's') + '</span>';
+            }
             var errorLine = c.error ? '<div style="margin:8px 0;padding:6px 10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:6px;font-size:0.75rem;color:var(--red)">' + esc(c.error) + '</div>' : '';
             var headerHtml = '<div style="display:flex;align-items:center;gap:8px;margin:16px 0 8px">' +
               clusterBadge(c.id, c.name) +
@@ -4700,7 +4707,7 @@ const dashboardHTML = `<!DOCTYPE html>
               (cs.total_nodes || 0) + ' nodes · ' + (cs.total_cpu_cores || 0) + ' vCPU · ' +
               '<span style="color:' + cCpuColor + '">' + (cs.total_cpu_percent || 0) + '% cpu</span> · ' +
               '<span style="color:' + cMemColor + '">' + (cs.total_mem_percent || 0) + '% mem</span> · ' +
-              (c.hive_count || 0) + ' hives' + gpuLine +
+              (c.hive_count || 0) + ' hives' + capacityLine + gpuLine +
               '</span></div>';
             var nodesHtml = (c.nodes || []).length > 0
               ? '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px">' + (c.nodes || []).map(renderNodeCard).join('') + '</div>'
