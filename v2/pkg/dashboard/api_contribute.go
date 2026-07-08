@@ -358,6 +358,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <option value="copilot" data-install="" data-host-install="" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
 <option value="pi" data-install="" data-host-install="curl -fsSL https://pi.dev/install.sh | sh" data-model-flag="--model" data-default-model="">Pi</option>
 <option value="goose" data-install="" data-host-install="# Install Goose: https://github.com/block/goose/releases\n# Install Ollama: https://ollama.com/download\nollama pull llama3.2:3b\nexport GOOSE_PROVIDER=ollama GOOSE_MODEL=llama3.2:3b" data-model-flag="" data-default-model="">Goose</option>
+<option value="litellm" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# Your own LiteLLM proxy — exported locally, never sent to the hive\nexport HIVE_LITELLM_ENDPOINT=https://your-litellm-host:4000\nexport HIVE_LITELLM_API_KEY=sk-your-litellm-key  # only if your proxy needs one">LiteLLM (Claude Code + your proxy)</option>
 <option value="bob" data-install="" data-host-install="npm i -g bobshell" data-model-flag="" data-default-model="">Bob</option>
 <option value="other" data-install="" data-host-install="# Install your CLI tool" data-model-flag="" data-default-model="">Other (host only)</option>
 </select>
@@ -402,17 +403,20 @@ if(mode==='containerized'&&cli==='other'){modeSel.value='host';mode='host';}
 modelRow.style.display=(modelFlag||cli==='goose')?'flex':'none';
 var modelLine='';
 if(model){
-if(cli==='goose'){modelLine='\nexport GOOSE_MODEL='+model;}
-else if(modelFlag){modelLine='\nexport AGENT_MODEL='+model;}
+if(cli==='goose'){modelLine='export GOOSE_MODEL='+model+'\n';}
+else if(modelFlag){modelLine='export AGENT_MODEL='+model+'\n';}
 }
+var envLines=(opt.getAttribute('data-env')||'').replace(/\\n/g,'\n');
+if(envLines)envLines+='\n';
+var preLines=envLines+modelLine;
 var tpl,install;
 if(mode==='host'){
 tpl=hostTpl;
 install=opt.getAttribute('data-host-install');
 if(!install)install='# '+cli+' uses your existing gh auth';
-cmds.textContent=tpl.replace('INSTALL',install.replace(/\\n/g,'\n')).replace(/CLI/g,cli)+modelLine;
+cmds.textContent=tpl.replace('INSTALL',install.replace(/\\n/g,'\n')).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
 }else{
-cmds.textContent=containerTpl.replace(/CLI/g,cli)+modelLine;
+cmds.textContent=containerTpl.replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
 }
 }
 sel.addEventListener('change',function(){modelInput.value='';update();});
@@ -441,7 +445,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </div>
 <div class="how">
 <h3>What you bring vs. what the hive provides</h3>
-<p><strong>You bring:</strong> Your GitHub account + CLI API tokens. Issues and PRs are created under YOUR name.</p>
+<p><strong>You bring:</strong> Your GitHub account + CLI API tokens. With LiteLLM you bring your own proxy instead — Claude Code on your machine talks directly to your endpoint, and the hive never sees your endpoint or key. Issues and PRs are created under YOUR name.</p>
 <p><strong>The hive provides:</strong> Work queue, task assignment, and coordination. Your credentials never leave your machine.</p>
 </div>
 <div class="how">
