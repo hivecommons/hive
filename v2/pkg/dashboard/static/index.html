@@ -2623,7 +2623,7 @@
           <div class="oc-detail-field"><div class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">Auth</div><div class="value">${(() => {
             const isClaude = a.cli === 'claude';
             const isCopilot = a.cli === 'copilot';
-            const _needsLogin = a.needsLogin === true;
+            const _needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
             const claudeIcon = '<span class="cli-icon claude-icon"></span>';
             const copilotIcon = '<span class="cli-icon copilot-icon"></span>';
             if (_needsLogin) {
@@ -3466,7 +3466,7 @@
       });
       const { sorted: sortedAgents } = _sortAgentsBySidebar(agents);
       const cards = sortedAgents.map(a => {
-        const needsLogin = a.needsLogin === true;
+        const needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
         const isOff = a.offByCadence === true;
         const isOnDemand = a.onDemand === true;
         const isPaused = a.paused === true && !isOff && !isOnDemand;

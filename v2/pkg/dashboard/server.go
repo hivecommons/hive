@@ -173,6 +173,8 @@ type FrontendAgent struct {
 	PausedTrigger    string `json:"pausedTrigger,omitempty"`
 	OffByCadence     bool   `json:"offByCadence"`
 	NeedsLogin       bool   `json:"needsLogin"`
+	AuthAvailable    bool   `json:"authAvailable"`
+	AuthKnown        bool   `json:"authKnown"`
 	CLI              string `json:"cli"`
 	Model            string `json:"model"`
 	Cadence          string `json:"cadence"`

@@ -1147,6 +1147,8 @@ func main() {
 		}
 	}
 
+	dashboard.SetBackendAuthProvider(agentMgr.BackendAuthAvailable)
+
 	githubProxy, err := proxy.NewGitHubProxy(logger, cfg.Project.Org, cfg.Project.Repos)
 	if err != nil {
 		logger.Error("failed to create github proxy", "error", err)
