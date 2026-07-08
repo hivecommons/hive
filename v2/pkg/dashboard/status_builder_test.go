@@ -432,7 +432,9 @@ func TestBuildBudget_WithSpend(t *testing.T) {
 	cfg := config.GovernorConfig{}
 	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)
 	gov.SetBudgetLimit(1000000)
-	gov.UpdateBudget(250000, nil, nil)
+	// Open the window first so the totals count as in-window spend.
+	gov.SetBudgetResetAt(time.Now())
+	gov.UpdateBudgetFromTotals(250000, nil, nil)
 
 	fb := buildBudget(gov, nil)
 	if fb.WeeklyBudget != 1000000 {
@@ -450,7 +452,9 @@ func TestBuildBudget_OverSpend(t *testing.T) {
 	cfg := config.GovernorConfig{}
 	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)
 	gov.SetBudgetLimit(1000)
-	gov.UpdateBudget(2000, nil, nil)
+	// Open the window first so the totals count as in-window spend.
+	gov.SetBudgetResetAt(time.Now())
+	gov.UpdateBudgetFromTotals(2000, nil, nil)
 
 	fb := buildBudget(gov, nil)
 	if fb.Remaining != 0 {
@@ -758,9 +762,9 @@ func TestBuildBudget_BurnRate(t *testing.T) {
 	cfg := config.GovernorConfig{}
 	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)
 	gov.SetBudgetLimit(1000000)
-	gov.UpdateBudget(100000, nil, nil)
 	// Set reset time to 10 hours ago to trigger burn rate calculation
 	gov.SetBudgetResetAt(time.Now().Add(-10 * time.Hour))
+	gov.UpdateBudgetFromTotals(100000, nil, nil)
 
 	fb := buildBudget(gov, nil)
 	if fb.WeeklyBudget != 1000000 {

@@ -66,8 +66,17 @@ type BudgetInfo struct {
 	ByAgent       map[string]int64 `json:"by_agent"`
 	ByModel       map[string]int64 `json:"by_model"`
 	IgnoredAgents []string         `json:"ignored_agents"`
-	ResetAt       time.Time        `json:"reset_at"`
+	// ResetAt is the START of the current budget window; the window ends
+	// at ResetAt + BudgetWindowDuration.
+	ResetAt time.Time `json:"reset_at"`
+	// WindowBaseline is the lifetime token total observed when the current
+	// window opened. Spend inside the window is lifetime total minus this.
+	WindowBaseline int64 `json:"window_baseline"`
 }
+
+// BudgetWindowDuration is the length of one budget accounting window; the
+// "weekly" limit applies to spend accumulated within it.
+const BudgetWindowDuration = 7 * 24 * time.Hour
 
 type State struct {
 	Mode          Mode                    `json:"mode"`
@@ -525,25 +534,63 @@ func (g *Governor) GetBudget() BudgetInfo {
 	ignored := make([]string, len(g.budget.IgnoredAgents))
 	copy(ignored, g.budget.IgnoredAgents)
 	return BudgetInfo{
-		WeeklyLimit:   g.budget.WeeklyLimit,
-		CurrentSpend:  g.budget.CurrentSpend,
-		ByAgent:       byAgent,
-		ByModel:       byModel,
-		IgnoredAgents: ignored,
-		ResetAt:       g.budget.ResetAt,
+		WeeklyLimit:    g.budget.WeeklyLimit,
+		CurrentSpend:   g.budget.CurrentSpend,
+		ByAgent:        byAgent,
+		ByModel:        byModel,
+		IgnoredAgents:  ignored,
+		ResetAt:        g.budget.ResetAt,
+		WindowBaseline: g.budget.WindowBaseline,
 	}
 }
 
-func (g *Governor) UpdateBudget(totalTokens int64, byAgent map[string]int64, byModel map[string]int64) {
+// UpdateBudgetFromTotals refreshes budget spend from the token collector's
+// lifetime totals. Session-file scans are cumulative, so window spend is
+// derived by subtracting the baseline captured when the window opened.
+// Rolls the window forward once BudgetWindowDuration has elapsed.
+func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]int64, byModel map[string]int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.budget.CurrentSpend = totalTokens
+
+	now := time.Now()
+	if g.budget.ResetAt.IsZero() {
+		// First run or legacy snapshot without a window: open one now.
+		g.budget.ResetAt = now
+		g.budget.WindowBaseline = totalTokens
+	} else if now.Sub(g.budget.ResetAt) >= BudgetWindowDuration {
+		g.budget.ResetAt = now
+		g.budget.WindowBaseline = totalTokens
+		if g.logger != nil {
+			g.logger.Info("budget window rolled",
+				"reset_at", now,
+				"baseline", totalTokens,
+			)
+		}
+	}
+
+	if totalTokens < g.budget.WindowBaseline {
+		// Lifetime totals shrank (session files pruned); re-baseline so
+		// spend never goes negative.
+		g.budget.WindowBaseline = totalTokens
+	}
+	g.budget.CurrentSpend = totalTokens - g.budget.WindowBaseline
+
+	// ByAgent/ByModel remain lifetime totals: window-relative breakdowns
+	// would need per-key baselines and these maps are informational only.
 	for k, v := range byAgent {
 		g.budget.ByAgent[k] = v
 	}
 	for k, v := range byModel {
 		g.budget.ByModel[k] = v
 	}
+}
+
+// SeedBudgetWindowBaseline restores the window baseline from a persisted
+// snapshot so the current window's spend survives restarts.
+func (g *Governor) SeedBudgetWindowBaseline(baseline int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.budget.WindowBaseline = baseline
 }
 
 func (g *Governor) SetBudgetLimit(limit int64) {

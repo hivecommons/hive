@@ -3160,7 +3160,9 @@ func TestBuildBudget_WithWeeklyLimit(t *testing.T) {
 	}
 	gov := governor.New(cfg, agents, logger)
 	gov.SetBudgetLimit(1000000)
-	gov.UpdateBudget(250000, map[string]int64{"scanner": 250000}, map[string]int64{"sonnet": 250000})
+	// Open the window first so the totals count as in-window spend.
+	gov.SetBudgetResetAt(time.Now())
+	gov.UpdateBudgetFromTotals(250000, map[string]int64{"scanner": 250000}, map[string]int64{"sonnet": 250000})
 
 	budget := buildBudget(gov, nil)
 	if budget.WeeklyBudget != 1000000 {

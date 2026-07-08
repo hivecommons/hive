@@ -430,7 +430,8 @@ func main() {
 		}
 		if saved.BudgetSpend > 0 || !saved.BudgetResetAt.IsZero() || len(saved.BudgetByAgent) > 0 {
 			gov.SeedBudget(saved.BudgetSpend, saved.BudgetByAgent, saved.BudgetByModel, saved.BudgetResetAt)
-			logger.Info("budget state restored", "spend", saved.BudgetSpend, "reset_at", saved.BudgetResetAt)
+			gov.SeedBudgetWindowBaseline(saved.BudgetWindowBaseline)
+			logger.Info("budget state restored", "spend", saved.BudgetSpend, "reset_at", saved.BudgetResetAt, "window_baseline", saved.BudgetWindowBaseline)
 		}
 		if len(saved.KickHistory) > 0 {
 			records := make([]governor.KickRecord, len(saved.KickHistory))
@@ -1699,6 +1700,14 @@ func runEvalCycle(
 		)
 	}
 
+	// Refresh budget spend from lifetime token totals before Evaluate so
+	// the kick gate sees current-window numbers.
+	if tokenCollector != nil {
+		if summary := tokenCollector.Summary(); summary != nil {
+			gov.UpdateBudgetFromTotals(summary.TotalTokens, summary.ByAgent, summary.ByModel)
+		}
+	}
+
 	agentsDue := gov.Evaluate(
 		actionable.Issues.Count,
 		actionable.PRs.Count,
@@ -2168,10 +2177,11 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		BudgetIgnored:    budget.IgnoredAgents,
 		CadenceOverrides: cadenceOverrides,
 		LastKicks:        govState.LastKick,
-		BudgetSpend:      budget.CurrentSpend,
-		BudgetResetAt:    budget.ResetAt,
-		BudgetByAgent:    budget.ByAgent,
-		BudgetByModel:    budget.ByModel,
+		BudgetSpend:          budget.CurrentSpend,
+		BudgetResetAt:        budget.ResetAt,
+		BudgetByAgent:        budget.ByAgent,
+		BudgetByModel:        budget.ByModel,
+		BudgetWindowBaseline: budget.WindowBaseline,
 		KickHistory:      kickEntries,
 		IssueCosts:       issueCosts,
 		LastEval:         govState.LastEval,

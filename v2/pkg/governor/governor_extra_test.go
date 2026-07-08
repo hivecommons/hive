@@ -109,18 +109,70 @@ func TestSetBudgetResetAt(t *testing.T) {
 	}
 }
 
-func TestUpdateBudget(t *testing.T) {
+func TestUpdateBudgetFromTotals_InitializesWindow(t *testing.T) {
 	g := testGovernor()
 	byAgent := map[string]int64{"scanner": 1000, "supervisor": 500}
 	byModel := map[string]int64{"sonnet": 1200, "opus": 300}
-	g.UpdateBudget(1500, byAgent, byModel)
+	g.UpdateBudgetFromTotals(1500, byAgent, byModel)
 
 	budget := g.GetBudget()
-	if budget.CurrentSpend != 1500 {
-		t.Errorf("current spend = %d", budget.CurrentSpend)
+	if budget.ResetAt.IsZero() {
+		t.Error("first update should open a budget window")
+	}
+	if budget.WindowBaseline != 1500 {
+		t.Errorf("baseline = %d, want 1500", budget.WindowBaseline)
+	}
+	if budget.CurrentSpend != 0 {
+		t.Errorf("current spend = %d, want 0 at window open", budget.CurrentSpend)
 	}
 	if budget.ByAgent["scanner"] != 1000 {
 		t.Errorf("scanner spend = %d", budget.ByAgent["scanner"])
+	}
+}
+
+func TestUpdateBudgetFromTotals_SpendIsWindowRelative(t *testing.T) {
+	g := testGovernor()
+	g.UpdateBudgetFromTotals(1000, nil, nil)
+	g.UpdateBudgetFromTotals(1500, nil, nil)
+
+	budget := g.GetBudget()
+	if budget.CurrentSpend != 500 {
+		t.Errorf("current spend = %d, want 500", budget.CurrentSpend)
+	}
+	if budget.WindowBaseline != 1000 {
+		t.Errorf("baseline = %d, want 1000", budget.WindowBaseline)
+	}
+}
+
+func TestUpdateBudgetFromTotals_RollsExpiredWindow(t *testing.T) {
+	g := testGovernor()
+	g.SeedBudget(900, nil, nil, time.Now().Add(-BudgetWindowDuration-time.Hour))
+	g.UpdateBudgetFromTotals(2000, nil, nil)
+
+	budget := g.GetBudget()
+	if budget.WindowBaseline != 2000 {
+		t.Errorf("baseline = %d, want 2000 after roll", budget.WindowBaseline)
+	}
+	if budget.CurrentSpend != 0 {
+		t.Errorf("current spend = %d, want 0 after roll", budget.CurrentSpend)
+	}
+	if time.Since(budget.ResetAt) > time.Minute {
+		t.Errorf("reset_at not advanced on roll: %v", budget.ResetAt)
+	}
+}
+
+func TestUpdateBudgetFromTotals_RebaselinesOnShrink(t *testing.T) {
+	g := testGovernor()
+	g.UpdateBudgetFromTotals(1000, nil, nil)
+	// Session files pruned: lifetime totals drop below the baseline.
+	g.UpdateBudgetFromTotals(400, nil, nil)
+
+	budget := g.GetBudget()
+	if budget.WindowBaseline != 400 {
+		t.Errorf("baseline = %d, want 400 after shrink", budget.WindowBaseline)
+	}
+	if budget.CurrentSpend != 0 {
+		t.Errorf("current spend = %d, want 0 after shrink", budget.CurrentSpend)
 	}
 }
 

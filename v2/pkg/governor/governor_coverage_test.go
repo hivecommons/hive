@@ -189,7 +189,7 @@ func TestSeedQueueState(t *testing.T) {
 
 func TestGetBudget_ReturnsCopy(t *testing.T) {
 	g := testGovernor()
-	g.UpdateBudget(1000, map[string]int64{"scanner": 500}, map[string]int64{"sonnet": 500})
+	g.UpdateBudgetFromTotals(1000, map[string]int64{"scanner": 500}, map[string]int64{"sonnet": 500})
 
 	budget := g.GetBudget()
 	budget.ByAgent["scanner"] = 9999 // mutate copy
