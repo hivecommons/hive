@@ -4057,9 +4057,9 @@
     }
 
     // ── Centralized backend/model config (mirrors backends.conf) ──────────
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d'];
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm'];
     const FREE_BACKENDS = ['copilot', 'goose'];
-    const INFERENCE_BACKENDS = ['vllm', 'llm-d'];
+    const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm'];
     const CLAUDE_CLI_MODELS = [
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
       { value: 'claude-opus-4-7', label: 'Opus 4.7' },
@@ -8998,8 +8998,69 @@ function burnAreaChart() {
       dismissToast(toast, `${agent} restart counter reset`, 'success');
     }
 
+    // Prompts for the LiteLLM endpoint the first time the backend is
+    // selected anywhere in the UI. Resolves true when litellm is (or has
+    // just been) configured; false when the user cancels.
+    async function ensureLiteLLMConfigured() {
+      try {
+        const resp = await fetch('/api/config/governor');
+        const data = await resp.json();
+        if (data.litellm && data.litellm.endpoint) return true;
+      } catch (e) { /* config unreachable — fall through to the prompt */ }
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'hive-dialog-overlay';
+        overlay.innerHTML = `<div class="hive-dialog">
+          <div class="hive-dialog-title">Configure LiteLLM</div>
+          <div class="hive-dialog-body">
+            <p style="margin:0 0 10px">No LiteLLM endpoint is configured yet. Enter the proxy base URL (editable later under Governor Config → LiteLLM).</p>
+            <div class="config-field">
+              <label>Endpoint URL</label>
+              <input type="text" id="litellm-setup-endpoint" placeholder="https://litellm.example.com" style="width:100%">
+            </div>
+            <div class="config-field">
+              <label>API Key Env Name (optional — the key VALUE is never stored)</label>
+              <input type="text" id="litellm-setup-keyenv" placeholder="HIVE_LITELLM_API_KEY" style="width:100%">
+            </div>
+          </div>
+          <div class="hive-dialog-buttons">
+            <button class="hive-dialog-btn cancel">Cancel</button>
+            <button class="hive-dialog-btn primary">Save</button>
+          </div></div>`;
+        document.body.appendChild(overlay);
+        const close = (val) => { overlay.remove(); resolve(val); };
+        overlay.querySelector('.cancel').onclick = () => close(false);
+        overlay.onclick = (e) => { if (e.target === overlay) close(false); };
+        overlay.querySelector('.primary').onclick = async () => {
+          const endpoint = overlay.querySelector('#litellm-setup-endpoint').value.trim();
+          if (!endpoint) { showToast('Endpoint URL is required', 'error'); return; }
+          const keyEnv = overlay.querySelector('#litellm-setup-keyenv').value.trim();
+          const body = { endpoint };
+          if (keyEnv) body.apiKeyEnv = keyEnv;
+          try {
+            const res = await fetch('/api/config/governor/litellm', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify(body)
+            });
+            if (!res.ok) {
+              const err = await res.json().catch(() => ({}));
+              showToast(err.error || 'Failed to save LiteLLM config', 'error');
+              return;
+            }
+            showToast('LiteLLM endpoint saved', 'success');
+            close(true);
+          } catch (e) {
+            showToast('Network error: ' + e.message, 'error');
+          }
+        };
+        overlay.querySelector('#litellm-setup-endpoint').focus();
+      });
+    }
+
     async function switchCli(agent, backend) {
       if (!backend) return;
+      if (backend === 'litellm' && !(await ensureLiteLLMConfigured())) return;
       const label = INFERENCE_BACKENDS.includes(backend) ? 'method' : 'CLI';
       const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
@@ -9880,7 +9941,7 @@ function burnAreaChart() {
 
     const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', 'Last Prompt', 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'LiteLLM'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -10394,7 +10455,58 @@ function burnAreaChart() {
         case 'Sensing': return renderGovSensing(d.sensing || {});
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Hub': return renderGovHub(d.hub || {});
+        case 'LiteLLM': return renderGovLiteLLM(d.litellm || {});
         default: return '';
+      }
+    }
+
+    function renderGovLiteLLM(litellm) {
+      const keyEnvName = litellm.apiKeyEnv || 'HIVE_LITELLM_API_KEY';
+      const keyFilePath = litellm.apiKeyFile || '/secrets/litellm_api_key';
+      return `
+        <div class="config-field">
+          <label>Endpoint URL <span class="config-info">i<span class="config-tooltip">Base URL of the LiteLLM proxy (e.g. https://litellm.example.com). Agents reach it through the hive's inference translator — the MITM proxy stays in the path. The HIVE_LITELLM_ENDPOINT env var overrides this at runtime.</span></span></label>
+          <input type="text" value="${esc(litellm.endpoint || '')}" placeholder="https://litellm.example.com" onchange="markDirty('litellm','endpoint',this.value)">
+        </div>
+        <div class="config-field">
+          <label>API Key Env Name <span class="config-info">i<span class="config-tooltip">Name of the environment variable holding the LiteLLM API key. The key VALUE is never stored in hive.yaml or shown here. A key file at ${esc(keyFilePath)} takes precedence when present.</span></span></label>
+          <input type="text" value="${esc(litellm.apiKeyEnv || '')}" placeholder="HIVE_LITELLM_API_KEY" onchange="markDirty('litellm','apiKeyEnv',this.value)">
+          <div style="font-size:0.72rem;margin-top:4px;color:${litellm.hasKey ? '#3fb950' : '#f85149'}">Key detected: ${litellm.hasKey ? 'yes' : `no — set ${esc(keyEnvName)} or mount ${esc(keyFilePath)}`}</div>
+        </div>
+        <div class="config-field">
+          <label>Default Model <span class="config-info">i<span class="config-tooltip">Model used when an agent on the litellm backend has no model selected. Use Test Connection to list available models.</span></span></label>
+          <input type="text" value="${esc(litellm.defaultModel || '')}" placeholder="e.g. gpt-4o" onchange="markDirty('litellm','defaultModel',this.value)">
+        </div>
+        <div class="config-field">
+          <label>CA Bundle Path <span class="config-info">i<span class="config-tooltip">Optional PEM file for a private CA (e.g. an internal VPC endpoint). Certificate verification is never disabled — the CA is added to the trust pool.</span></span></label>
+          <input type="text" value="${esc(litellm.caBundle || '')}" placeholder="/secrets/litellm-ca.pem" onchange="markDirty('litellm','caBundle',this.value)">
+        </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${litellm.localProxy ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="litellm" data-key="localProxy"></div>
+          <span class="config-toggle-label">Local Proxy Fallback <span class="config-info">i<span class="config-tooltip">Run the bundled litellm binary as a local translator (config at /data/litellm/config.yaml). Off by default — the hive's Go translator forwards directly to the remote endpoint.</span></span></span>
+        </div>
+        <div style="margin-top:12px">
+          <button onclick="testLiteLLMConnection()" style="padding:6px 14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;font-size:0.78rem">Test Connection</button>
+        </div>`;
+    }
+
+    async function testLiteLLMConnection() {
+      const toast = showToast('Testing LiteLLM connection…', 'info', true);
+      try {
+        const resp = await fetch('/api/inference/models/litellm');
+        const data = await resp.json();
+        if (!resp.ok) {
+          dismissToast(toast, data.error || 'LiteLLM endpoint not configured — save the endpoint first', 'error');
+          return;
+        }
+        const count = (data.models || []).length;
+        if (count > 0) {
+          dismissToast(toast, `LiteLLM OK — ${count} model${count === 1 ? '' : 's'} available`, 'success');
+        } else {
+          dismissToast(toast, 'Connected, but no models returned (check the API key)', 'error');
+        }
+      } catch (e) {
+        dismissToast(toast, 'LiteLLM test failed: ' + e.message, 'error');
       }
     }
 
@@ -10727,7 +10839,7 @@ function burnAreaChart() {
         </div>
         <div class="config-field">
           <label>CLI Pin Value <span class="config-info">i<span class="config-tooltip">Which CLI backend to pin this agent to when CLI Pinned is on. Options: claude, copilot, bob, gemini, codex, amazonq, goose, aider. copilot and goose are free backends (no token cost).</span></span></label>
-          <select id="cfg-pin-value" onchange="markDirty('general','cliPinValue',this.value);updateLaunchCmd(this.value)">
+          <select id="cfg-pin-value" data-prev="${esc(g.cliPinValue || '')}" onchange="onCliPinChange(this)">
             ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${g.cliPinValue === b ? 'selected' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>
         </div>
@@ -11916,6 +12028,19 @@ function burnAreaChart() {
       markDirty(section, key, isOn);
     }
 
+    // onchange handler for the CLI Pin Value select — prompts for the
+    // LiteLLM endpoint (and reverts the selection on cancel) before
+    // recording the change.
+    async function onCliPinChange(sel) {
+      if (sel.value === 'litellm' && !(await ensureLiteLLMConfigured())) {
+        sel.value = sel.dataset.prev || 'claude';
+        return;
+      }
+      sel.dataset.prev = sel.value;
+      markDirty('general', 'cliPinValue', sel.value);
+      updateLaunchCmd(sel.value);
+    }
+
     function updateLaunchCmd(cli) {
       const input = document.getElementById('cfg-launch-cmd');
       if (!input) return;
@@ -12089,6 +12214,7 @@ function burnAreaChart() {
           showToast('Name must be lowercase letters, numbers, and hyphens', 'error');
           return;
         }
+        if (generalData.cliPinValue === 'litellm' && !(await ensureLiteLLMConfigured())) return;
         const agent = {
           backend: generalData.cliPinValue || 'copilot',
           model: generalData.model || '',
@@ -12136,6 +12262,9 @@ function burnAreaChart() {
         showToast('No changes to save', 'info');
         return;
       }
+      // Pinning an agent to litellm requires a configured endpoint —
+      // prompt (and abort the save on cancel) before PUTting the section.
+      if (dirty.general && dirty.general.cliPinValue === 'litellm' && !(await ensureLiteLLMConfigured())) return;
       const base = _configState.type === 'governor' ? '/api/config/governor' : `/api/config/agent/${_configState.agent}`;
       let success = true;
       for (const [section, values] of Object.entries(dirty)) {
