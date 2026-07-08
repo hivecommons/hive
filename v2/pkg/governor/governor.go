@@ -66,6 +66,10 @@ type BudgetInfo struct {
 	ByAgent       map[string]int64 `json:"by_agent"`
 	ByModel       map[string]int64 `json:"by_model"`
 	IgnoredAgents []string         `json:"ignored_agents"`
+	// IgnoreAll disables budget kick-suppression for every agent while
+	// keeping the limit, window, and alerts intact (the dashboard's
+	// global "ignore budget" toggle).
+	IgnoreAll bool `json:"ignore_all"`
 	// ResetAt is the START of the current budget window; the window ends
 	// at ResetAt + BudgetWindowDuration.
 	ResetAt time.Time `json:"reset_at"`
@@ -322,9 +326,10 @@ func (g *Governor) updateCadences() {
 }
 
 // budgetExhausted reports whether the weekly budget gate is closed.
-// WeeklyLimit == 0 means budgeting is entirely off. Caller must hold g.mu.
+// WeeklyLimit == 0 means budgeting is entirely off; IgnoreAll keeps the
+// limit and alerts but opens the kick gate. Caller must hold g.mu.
 func (g *Governor) budgetExhausted() bool {
-	return g.budget.WeeklyLimit > 0 && g.budget.CurrentSpend >= g.budget.WeeklyLimit
+	return g.budget.WeeklyLimit > 0 && !g.budget.IgnoreAll && g.budget.CurrentSpend >= g.budget.WeeklyLimit
 }
 
 func (g *Governor) agentsDueForKick() []string {
@@ -598,6 +603,7 @@ func (g *Governor) GetBudget() BudgetInfo {
 		ByAgent:        byAgent,
 		ByModel:        byModel,
 		IgnoredAgents:  ignored,
+		IgnoreAll:      g.budget.IgnoreAll,
 		ResetAt:        g.budget.ResetAt,
 		WindowBaseline: g.budget.WindowBaseline,
 	}
@@ -678,6 +684,13 @@ func (g *Governor) SetBudgetLimit(limit int64) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.budget.WeeklyLimit = limit
+}
+
+// SetBudgetIgnoreAll toggles the global budget-suppression bypass.
+func (g *Governor) SetBudgetIgnoreAll(ignore bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.budget.IgnoreAll = ignore
 }
 
 func (g *Governor) SetBudgetIgnored(agents []string) {

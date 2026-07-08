@@ -401,6 +401,9 @@ func main() {
 		if saved.BudgetLimit > 0 {
 			gov.SetBudgetLimit(saved.BudgetLimit)
 		}
+		if saved.BudgetIgnoreAll {
+			gov.SetBudgetIgnoreAll(true)
+		}
 		if len(saved.BudgetIgnored) > 0 {
 			gov.SetBudgetIgnored(saved.BudgetIgnored)
 		}
@@ -2212,6 +2215,7 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		GovernorMode:     string(govState.Mode),
 		BudgetLimit:      budget.WeeklyLimit,
 		BudgetIgnored:    budget.IgnoredAgents,
+		BudgetIgnoreAll:  budget.IgnoreAll,
 		CadenceOverrides: cadenceOverrides,
 		LastKicks:        govState.LastKick,
 		BudgetSpend:          budget.CurrentSpend,

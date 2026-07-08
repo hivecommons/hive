@@ -16,6 +16,7 @@ type PersistedState struct {
 	GovernorMode     string                           `json:"governor_mode"`
 	BudgetLimit      int64                            `json:"budget_limit"`
 	BudgetIgnored    []string                         `json:"budget_ignored"`
+	BudgetIgnoreAll  bool                             `json:"budget_ignore_all,omitempty"`
 	CadenceOverrides map[string]map[string]string     `json:"cadence_overrides,omitempty"`
 	LastKicks        map[string]time.Time             `json:"last_kicks,omitempty"`
 	BudgetSpend      int64                            `json:"budget_spend,omitempty"`

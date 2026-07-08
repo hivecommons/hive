@@ -1184,21 +1184,40 @@ func (s *Server) handleModelAdvisor(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBudgetIgnoreGet(w http.ResponseWriter, r *http.Request) {
 	budget := s.deps.Governor.GetBudget()
 	jsonResponse(w, map[string]interface{}{
-		"ignored": budget.IgnoredAgents,
+		"ignored": budget.IgnoreAll,
+		"agents":  budget.IgnoredAgents,
 	})
 }
 
 func (s *Server) handleBudgetIgnoreSet(w http.ResponseWriter, r *http.Request) {
+	// The dashboard checkbox sends {"ignored": bool} (global bypass);
+	// {"ignored": [names]} sets the per-agent exemption list.
 	var body struct {
-		Agents []string `json:"ignored"`
+		Ignored json.RawMessage `json:"ignored"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	s.deps.Governor.SetBudgetIgnored(body.Agents)
-	okResponse(w, map[string]string{"status": "updated"})
+	var ignoreAll bool
+	if err := json.Unmarshal(body.Ignored, &ignoreAll); err == nil {
+		s.deps.Governor.SetBudgetIgnoreAll(ignoreAll)
+	} else {
+		var agents []string
+		if err := json.Unmarshal(body.Ignored, &agents); err != nil {
+			jsonError(w, "ignored must be a bool or a list of agent names", http.StatusBadRequest)
+			return
+		}
+		s.deps.Governor.SetBudgetIgnored(agents)
+	}
+
+	budget := s.deps.Governor.GetBudget()
+	okResponse(w, map[string]interface{}{
+		"status":  "updated",
+		"ignored": budget.IgnoreAll,
+		"agents":  budget.IgnoredAgents,
+	})
 }
 
 // --- GitHub endpoints ---
