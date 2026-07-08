@@ -1655,12 +1655,20 @@
       max-height: 0 !important;
       padding: 0;
     }
-    /* When the main digest is collapsed, hide the empty card shell too —
-       otherwise a blank bordered box lingers under the header. */
+    /* When the main digest is collapsed, the empty card shell must not
+       linger. !important is required: the element carries inline styles.
+       Children are hidden and a muted hint invites expanding. */
     #advisory-digest.card-collapsed {
-      border: none;
-      padding: 0;
-      background: transparent;
+      border: none !important;
+      padding: 2px 0 !important;
+      background: transparent !important;
+    }
+    #advisory-digest.card-collapsed > * { display: none; }
+    #advisory-digest.card-collapsed::before {
+      content: 'Expand to see advisory findings.';
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-style: italic;
     }
 
     /* ── Collapsible sections (#1533) ── */
@@ -1974,7 +1982,7 @@
     <h2 class="advisory-collapse-header section-header-toggle" style="font-size: 0.95rem; color: var(--muted); margin-bottom: 8px; cursor: pointer; user-select: none;" onclick="toggleAdvisorySection('advisory-digest-main')">
       <span id="advisory-digest-main-chevron" class="collapse-chevron">▼</span> 📋 Advisory Digest
     </h2>
-    <div class="section-body">
+    <div class="section-body" id="advisory-digest-main-body">
       <div id="advisory-digest" style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px;"></div>
     </div>
   </div>
