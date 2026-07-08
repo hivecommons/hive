@@ -1887,6 +1887,8 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	a.paneMu.RLock()
 	pane := make([]string, len(a.lastPaneCapture))
 	copy(pane, a.lastPaneCapture)
+	// NeedsLogin is written by the pane poller under paneMu.
+	needsLogin := a.NeedsLogin
 	a.paneMu.RUnlock()
 	return AgentProcess{
 		Name:            a.Name,
@@ -1908,6 +1910,9 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		RestartCount:    a.RestartCount,
 		KickHistory:     history,
 		LastKickMessage: a.LastKickMessage,
+		NeedsLogin:      needsLogin,
+		HasLaunched:     a.HasLaunched,
+		LaunchedMode:    a.LaunchedMode,
 		tmuxSession:     a.tmuxSession,
 		tmuxSocket:      a.tmuxSocket,
 		OutputBuffer:    a.OutputBuffer,
