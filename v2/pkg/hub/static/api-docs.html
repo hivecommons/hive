@@ -3,90 +3,252 @@
 <head>
 <!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");</script>
   <meta charset="UTF-8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>API Docs — Hive Hub</title>
+  <meta property="og:title" content="API Reference — Hive">
+  <meta property="og:description" content="Hub and spoke API surfaces for the Hive AI-agent orchestration system — auth, quick examples, and the full OpenAPI reference.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hive.kubestellar.io/api/docs">
+  <meta name="description" content="Hive API reference — hub registry, leaderboard, hosted hive provisioning, and spoke integration, with the full OpenAPI schema.">
+  <title>API Reference — Hive</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e6edf3; }
-    .nav { position: fixed; top: 0; width: 100%; z-index: 50; background: rgba(10,10,15,0.85); backdrop-filter: blur(12px); border-bottom: 1px solid #1e1e2e; }
-    .nav-inner { max-width: 1200px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
-    .nav-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: #e6edf3; text-decoration: none; }
-    .nav-links { display: flex; align-items: center; gap: 20px; font-size: 0.85rem; }
-    .nav-links a { color: #8b949e; text-decoration: none; }
-    .nav-links a:hover { color: #e6edf3; }
-    .nav-login { padding: 6px 14px; background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px; color: #8b949e; font-size: 0.8rem; }
-    .nav-login:hover { border-color: #f59e0b; color: #e6edf3; }
-    .content { max-width: 1200px; margin: 0 auto; padding: 80px 24px 24px; }
-    h1 { font-size: 2.2rem; font-weight: 800; margin-bottom: 8px; background: linear-gradient(135deg, #f59e0b, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .subtitle { color: #8b949e; margin-bottom: 24px; }
-    h2 { font-size: 1.2rem; font-weight: 700; margin: 24px 0 12px; color: #fbbf24; }
-    a { color: #f59e0b; }
-    code { background: #1e1e2e; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #fbbf24; }
-    pre { background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px; padding: 16px; margin: 12px 0; overflow-x: auto; font-size: 0.8rem; color: #e6edf3; line-height: 1.6; }
-    pre code { background: none; padding: 0; }
-    .card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
-    .tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 1px solid #1e1e2e; }
-    .tab { padding: 10px 20px; cursor: pointer; color: #8b949e; font-size: 0.85rem; border-bottom: 2px solid transparent; }
-    .tab:hover { color: #e6edf3; }
-    .tab.active { color: #f59e0b; border-bottom-color: #f59e0b; }
+    :root {
+      color-scheme: dark;
+      --bg: #080b0f;
+      --bg-soft: #0d1218;
+      --panel: #121922;
+      --panel-strong: #17212d;
+      --text: #f6f8fb;
+      --muted: #a8b3c2;
+      --line: #263545;
+      --amber: #f4c75f;
+      --green: #74df9a;
+      --blue: #80bfff;
+      --red: #ff7e7e;
+      --shadow: 0 24px 80px #0006;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background:
+        radial-gradient(circle at 18% 8%, #80bfff2e, transparent 24rem),
+        radial-gradient(circle at 86% 4%, #f4c75f29, transparent 20rem),
+        linear-gradient(180deg, #090d12 0%, var(--bg) 48%, #0a0e13 100%);
+      min-width: 320px;
+      color: var(--text);
+      margin: 0;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Header ── */
+    .site-header {
+      z-index: 10;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      background: #080b0fc7;
+      border-bottom: 1px solid #ffffff14;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 1rem clamp(1rem, 4vw, 4.5rem);
+      position: sticky;
+      top: 0;
+    }
+    .brand, .header-link, nav { align-items: center; display: flex; }
+    .brand { letter-spacing: 0; gap: .75rem; font-weight: 800; }
+    .brand-mark {
+      width: 2.5rem; height: 2.5rem;
+      color: var(--amber);
+      background: linear-gradient(145deg, #f4c75f2e, #80bfff1a);
+      border: 1px solid #f4c75f6b;
+      border-radius: .65rem;
+      place-items: center;
+      font-size: 1.2rem;
+      display: grid;
+    }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
+    nav a:hover, .header-link:hover { color: var(--text); }
+    nav a.active { color: var(--amber); }
+    .header-link {
+      border: 1px solid var(--line);
+      width: fit-content;
+      color: var(--text);
+      border-radius: .55rem;
+      justify-self: end;
+      padding: .72rem 1rem;
+      font-weight: 700;
+    }
+
+    /* ── Utility ── */
+    .section-pad { padding: clamp(3rem, 6vw, 5rem) clamp(1rem, 4vw, 4.5rem); max-width: 1200px; margin: 0 auto; }
+    .section-label {
+      color: var(--amber);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin: 0 0 1rem;
+      font-size: .82rem;
+      font-weight: 900;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      letter-spacing: 0;
+      max-width: 20ch;
+      margin-bottom: 1.3rem;
+      font-size: clamp(2.6rem, 6vw, 5rem);
+      line-height: .95;
+    }
+    h2 { font-size: 1.25rem; font-weight: 800; margin: 2rem 0 .8rem; color: var(--text); }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
+    .lede { color: #d7deea; max-width: 44rem; font-size: clamp(1.05rem, 1.3vw, 1.22rem); }
+    code { background: #17212d; border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: var(--amber); }
+    pre {
+      background: #080b0f85;
+      border: 1px solid var(--line);
+      border-radius: .7rem;
+      padding: 1rem 1.2rem;
+      margin: .8rem 0 0;
+      overflow-x: auto;
+      font-size: 0.82rem;
+      color: #d7deea;
+      line-height: 1.6;
+    }
+    pre code { background: none; border: none; padding: 0; color: inherit; }
+
+    /* ── Cards ── */
+    .card {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: 1.3rem;
+      margin-bottom: 1rem;
+    }
+    .card strong { color: var(--text); }
+    .card p { font-size: .9rem; margin: .35rem 0 0; }
+    .card a { color: var(--blue); }
+    .card a:hover { text-decoration: underline; }
+
+    /* ── Surface split ── */
+    .surface-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .surface-card {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: 1.3rem;
+    }
+    .surface-card .tag {
+      text-transform: uppercase;
+      font-weight: 900;
+      font-size: .78rem;
+      margin-bottom: .5rem;
+    }
+    .surface-card.hub .tag { color: var(--amber); }
+    .surface-card.spoke .tag { color: var(--blue); }
+    .surface-card p { font-size: .9rem; margin: .4rem 0 0; }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--line); margin-top: .5rem; }
+    .tab {
+      padding: .7rem 1.4rem;
+      cursor: pointer;
+      color: var(--muted);
+      font-size: .9rem;
+      font-weight: 700;
+      border-bottom: 2px solid transparent;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--amber); border-bottom-color: var(--amber); }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
-    .redoc-wrap { border: 1px solid #1e1e2e; border-radius: 8px; overflow: hidden; margin-top: 16px; }
+
+    /* ── Redoc wrap ── */
+    .redoc-wrap { border: 1px solid var(--line); border-radius: .85rem; overflow: hidden; margin-top: 1.2rem; background: var(--bg-soft); }
+
+    /* ── Footer ── */
+    .footer { border-top: 1px solid var(--line); padding: 2rem clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: .82rem; color: var(--muted); }
+    .footer-links { display: flex; justify-content: center; gap: 1.5rem; margin-bottom: .8rem; }
+    .footer-links a { color: var(--muted); }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .surface-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .site-header { grid-template-columns: 1fr; position: static; }
+      nav { flex-wrap: wrap; gap: .85rem; }
+      .header-link { justify-self: start; }
+    }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-inner">
-      <a href="/" class="nav-brand"><span>🐝</span> Hive Hub <span onclick="window.open(&#39;https://github.com/kubestellar/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:2px;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span></a>
-      <div class="nav-links">
-        <a href="/">Hives</a>
-        <a href="/learn">Learn</a>
-        <a href="/get-started">Get Started</a>
-        <a href="/api/docs" style="color:#f59e0b">API Docs</a>
-        <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
-        <span id="nav-user" style="display:none"></span>
-        <a href="/login" class="nav-login" id="nav-login">Login</a>
-        <a href="#" class="nav-login" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.reload()});return false;">Logout</a>
-      </div>
-    </div>
-  </nav>
 
-  <div class="content">
-    <h1>API Reference</h1>
-    <p class="subtitle">There are two API surfaces in the Hive ecosystem:</p>
-    <div class="card" style="margin-bottom:24px">
-      <div style="display:flex;gap:24px;flex-wrap:wrap">
-        <div style="flex:1;min-width:250px">
-          <strong style="color:#f59e0b">Hub API</strong> — <code>hive.kubestellar.io</code>
-          <p style="color:#8b949e;font-size:0.85rem;margin-top:4px">Manages hive registry, users, access control, hosted hive provisioning, leaderboard. Documented below.</p>
+  <!-- ── Header ── -->
+  <header class="site-header">
+    <a href="/" class="brand">
+      <span class="brand-mark">🐝</span>
+      <span>Hive</span>
+    </a>
+    <nav>
+      <a href="/">Hives</a>
+      <a href="/#how-it-works">How it works</a>
+      <a href="/learn">Learn</a>
+      <a href="/get-started">Get Started</a>
+      <a href="/api/docs" class="active">API</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
+      <span id="nav-user" style="display:none"></span>
+    </nav>
+    <a href="/login" class="header-link" id="nav-login">Login with GitHub</a>
+    <a href="#" class="header-link" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.reload()});return false;">Logout</a>
+  </header>
+
+  <main>
+    <section class="section-pad">
+      <p class="section-label">API</p>
+      <h1>API Reference</h1>
+      <p class="lede">There are two API surfaces in the Hive ecosystem — the hub, which manages the fleet, and each hive's own spoke API.</p>
+
+      <div class="surface-grid" style="margin-top:2rem">
+        <div class="surface-card hub">
+          <div class="tag">Hub API</div>
+          <strong style="color:var(--text)"><code>hive.kubestellar.io</code></strong>
+          <p>Manages hive registry, users, access control, hosted hive provisioning, leaderboard. Documented below.</p>
         </div>
-        <div style="flex:1;min-width:250px">
-          <strong style="color:#3b82f6">Spoke API</strong> — each hive instance
-          <p style="color:#8b949e;font-size:0.85rem;margin-top:4px">The actual hive dashboard — agents, governor, config, contributors, beads, tokens. Available at each hive's URL (e.g. <code>192.168.4.85:3001</code> or <code>hosted-*.hive.kubestellar.io</code>).</p>
+        <div class="surface-card spoke">
+          <div class="tag">Spoke API</div>
+          <strong style="color:var(--text)">each hive instance</strong>
+          <p>The actual hive dashboard &mdash; agents, governor, config, contributors, beads, tokens. Available at each hive's URL (e.g. <code>192.168.4.85:3001</code> or <code>hosted-*.hive.kubestellar.io</code>).</p>
         </div>
       </div>
-    </div>
 
-    <div class="tabs">
-      <div class="tab active" onclick="switchTab('connect')">Connect</div>
-      <div class="tab" onclick="switchTab('reference')">Full Reference</div>
-    </div>
-
-    <div id="tab-connect" class="tab-content active">
-      <h2>Base URL</h2>
-      <pre><code>https://hive.kubestellar.io</code></pre>
-
-      <h2>Authentication</h2>
-      <p style="color:#8b949e;margin-bottom:12px;line-height:1.6">The Hub uses GitHub OAuth with a session cookie. Public endpoints (registry, leaderboard, stats) require no auth. Dashboard and management endpoints require login.</p>
-
-      <div class="card">
-        <strong>Step 1: Login via browser</strong>
-        <p style="color:#8b949e;margin-top:4px">Visit <a href="/login">/login</a> — you'll be redirected to GitHub to authorize. After approval, a <code>hive_hub_user</code> cookie is set on <code>.hive.kubestellar.io</code>.</p>
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('connect')">Connect</div>
+        <div class="tab" onclick="switchTab('reference')">Full Reference</div>
       </div>
 
-      <div class="card">
-        <strong>Step 2: Use the cookie in API calls</strong>
-        <pre><code># Public — no auth needed
+      <div id="tab-connect" class="tab-content active">
+        <h2>Base URL</h2>
+        <pre><code>https://hive.kubestellar.io</code></pre>
+
+        <h2>Authentication</h2>
+        <p style="font-size:.95rem">The Hub uses GitHub OAuth with a session cookie. Public endpoints (registry, leaderboard, stats) require no auth. Dashboard and management endpoints require login.</p>
+
+        <div class="card">
+          <strong>Step 1: Login via browser</strong>
+          <p>Visit <a href="/login">/login</a> &mdash; you'll be redirected to GitHub to authorize. After approval, a <code>hive_hub_user</code> cookie is set on <code>.hive.kubestellar.io</code>.</p>
+        </div>
+
+        <div class="card">
+          <strong>Step 2: Use the cookie in API calls</strong>
+          <pre><code># Public — no auth needed
 curl https://hive.kubestellar.io/api/registry
 curl https://hive.kubestellar.io/api/hub/leaderboard
 curl https://hive.kubestellar.io/api/hub/stats
@@ -94,59 +256,69 @@ curl https://hive.kubestellar.io/api/hub/stats
 # Authenticated — pass the cookie
 curl -b "hive_hub_user=YOUR_USERNAME" \
   https://hive.kubestellar.io/api/saas/my-hives</code></pre>
-      </div>
+        </div>
 
-      <h2>Quick Examples</h2>
+        <h2>Quick Examples</h2>
 
-      <div class="card">
-        <strong>List all public hives</strong>
-        <pre><code>curl -s https://hive.kubestellar.io/api/registry | jq '.hives[] | {id, name, acmmLevel, governorMode, online}'</code></pre>
-      </div>
+        <div class="card">
+          <strong>List all public hives</strong>
+          <pre><code>curl -s https://hive.kubestellar.io/api/registry | jq '.hives[] | {id, name, acmmLevel, governorMode, online}'</code></pre>
+        </div>
 
-      <div class="card">
-        <strong>Get leaderboard</strong>
-        <pre><code>curl -s https://hive.kubestellar.io/api/hub/leaderboard | jq '.leaderboard[] | {github_username, tasks_completed, current_task}'</code></pre>
-      </div>
+        <div class="card">
+          <strong>Get leaderboard</strong>
+          <pre><code>curl -s https://hive.kubestellar.io/api/hub/leaderboard | jq '.leaderboard[] | {github_username, tasks_completed, current_task}'</code></pre>
+        </div>
 
-      <div class="card">
-        <strong>Create a hosted hive (requires login + quota)</strong>
-        <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
+        <div class="card">
+          <strong>Create a hosted hive (requires login + quota)</strong>
+          <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
   -H "Content-Type: application/json" \
   -d '{"org":"my-org","repos":"my-repo","acmm_level":3,"auth_method":"pat","github_token":"ghp_..."}' \
   https://hive.kubestellar.io/api/saas/hives</code></pre>
-      </div>
+        </div>
 
-      <div class="card">
-        <strong>Grant access to a hosted hive</strong>
-        <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
+        <div class="card">
+          <strong>Grant access to a hosted hive</strong>
+          <pre><code>curl -X POST -b "hive_hub_user=YOUR_USERNAME" \
   -H "Content-Type: application/json" \
   -d '{"username":"collaborator","role":"read-write"}' \
   https://hive.kubestellar.io/api/saas/hives/HIVE_ID/access</code></pre>
-      </div>
+        </div>
 
-      <h2>Spoke Integration</h2>
-      <p style="color:#8b949e;margin-bottom:12px;line-height:1.6">Hive spoke instances push status to the hub via heartbeats. Configure your hive to register:</p>
-      <div class="card">
-        <strong>hive.yaml</strong>
-        <pre><code>hub:
+        <h2>Spoke Integration</h2>
+        <p style="font-size:.95rem">Hive spoke instances push status to the hub via heartbeats. Configure your hive to register:</p>
+        <div class="card">
+          <strong>hive.yaml</strong>
+          <pre><code>hub:
   enabled: true
   url: https://hive.kubestellar.io
   is_public: true
   dashboard_url: http://YOUR_IP:3001
   snapshot_url: https://your-snapshot-url</code></pre>
-        <p style="color:#8b949e;margin-top:8px">Or set the environment variable: <code>HIVE_HUB_URL=https://hive.kubestellar.io</code></p>
+          <p>Or set the environment variable: <code>HIVE_HUB_URL=https://hive.kubestellar.io</code></p>
+        </div>
+
+        <h2>Rate Limits</h2>
+        <p style="font-size:.95rem">The hub does not enforce API rate limits. GitHub API rate limits apply to spoke heartbeats (GitHub App: 5000/hr per installation, PAT: 5000/hr per user). Spokes push heartbeats every 5 minutes and task updates every 30 seconds.</p>
       </div>
 
-      <h2>Rate Limits</h2>
-      <p style="color:#8b949e;line-height:1.6">The hub does not enforce API rate limits. GitHub API rate limits apply to spoke heartbeats (GitHub App: 5000/hr per installation, PAT: 5000/hr per user). Spokes push heartbeats every 5 minutes and task updates every 30 seconds.</p>
-    </div>
-
-    <div id="tab-reference" class="tab-content">
-      <div class="redoc-wrap">
-        <div id="redoc-container"></div>
+      <div id="tab-reference" class="tab-content">
+        <div class="redoc-wrap">
+          <div id="redoc-container"></div>
+        </div>
       </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="footer-links">
+      <a href="https://github.com/kubestellar/hive">Source Code</a>
+      <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
+      <a href="https://kubestellar.io">KubeStellar</a>
     </div>
-  </div>
+    <p style="color:#3a4555">Hive is an open source project by KubeStellar</p>
+  </footer>
 
   <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
   <script>
@@ -159,10 +331,10 @@ curl -b "hive_hub_user=YOUR_USERNAME" \
         window._redocLoaded = true;
         Redoc.init('/static/openapi.yaml', {
           theme: {
-            colors: { primary: { main: '#f59e0b' } },
-            typography: { fontFamily: '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif' },
-            sidebar: { backgroundColor: '#0a0a0f', textColor: '#e6edf3' },
-            rightPanel: { backgroundColor: '#12121a' }
+            colors: { primary: { main: '#f4c75f' } },
+            typography: { fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif' },
+            sidebar: { backgroundColor: '#0d1218', textColor: '#f6f8fb' },
+            rightPanel: { backgroundColor: '#121922' }
           },
           hideDownloadButton: true,
           expandResponses: '200'
