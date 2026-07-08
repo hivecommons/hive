@@ -521,8 +521,13 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 		return fmt.Errorf("create upstream request: %w", err)
 	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
+	applyInferenceAuth(upstreamReq, route)
 
-	resp, err := http.DefaultClient.Do(upstreamReq)
+	client, err := inferenceHTTPClient(route)
+	if err != nil {
+		return fmt.Errorf("inference client setup: %w", err)
+	}
+	resp, err := client.Do(upstreamReq)
 	if err != nil {
 		return fmt.Errorf("upstream request: %w", err)
 	}

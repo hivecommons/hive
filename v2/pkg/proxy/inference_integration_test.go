@@ -216,6 +216,9 @@ func TestIsInferenceBackend(t *testing.T) {
 	if !IsInferenceBackend("llm-d") {
 		t.Error("llm-d should be inference backend")
 	}
+	if !IsInferenceBackend("litellm") {
+		t.Error("litellm should be inference backend")
+	}
 	if IsInferenceBackend("claude") {
 		t.Error("claude should not be inference backend")
 	}

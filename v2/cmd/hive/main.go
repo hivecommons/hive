@@ -1163,7 +1163,9 @@ func main() {
 				if backend == "llm-d" {
 					endpoints = llmdEndpoints
 				}
-				endpoint := proxy.FindEndpointForModel(endpoints, model)
+				// vllm/llm-d endpoints are unauthenticated with a public
+				// or in-cluster CA — no bearer key or custom CA bundle.
+				endpoint := proxy.FindEndpointForModel(endpoints, model, "", "")
 				if endpoint == "" {
 					logger.Warn("no endpoint serves model, using first endpoint",
 						"agent", agentName, "model", model, "backend", backend)

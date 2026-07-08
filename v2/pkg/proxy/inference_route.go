@@ -1,22 +1,30 @@
 package proxy
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // InferenceRoute defines where to send an agent's API traffic when using
 // a self-hosted inference backend instead of the cloud API.
 type InferenceRoute struct {
-	Backend       string // "vllm" or "llm-d"
+	Backend       string // "vllm", "llm-d", or "litellm"
 	Endpoint      string // e.g. "http://vllm-svc.hive.svc.cluster.local:8000"
 	Model         string // e.g. "Qwen/Qwen2.5-1.5B-Instruct"
 	MaxContextLen int    // from vLLM /v1/models max_model_len; 0 = unknown
 	Preamble      string // prepended to the system prompt for inference backends; empty = use DefaultInferencePreamble
+	APIKey        string // optional bearer token for the upstream (litellm requires auth); never logged
+	CABundle      string // optional PEM path for a private CA; verification is never disabled
 }
 
 // DefaultInferencePreamble is injected at the top of the system prompt when
@@ -146,26 +154,106 @@ func IsAnthropicHost(host string) bool {
 }
 
 // InferenceBackends lists the valid self-hosted inference backend IDs.
-var InferenceBackends = []string{"vllm", "llm-d"}
+// The canonical list lives in the config package (see
+// config.InferenceBackends) so agent and proxy share it without an
+// import cycle.
+var InferenceBackends = config.InferenceBackends
 
 // IsInferenceBackend returns true if the backend name is a self-hosted
 // inference backend rather than a CLI tool.
 func IsInferenceBackend(backend string) bool {
-	for _, b := range InferenceBackends {
-		if b == backend {
-			return true
-		}
+	return config.IsInferenceBackend(backend)
+}
+
+// applyInferenceAuth sets the upstream Authorization header when the route
+// has an API key (litellm endpoints require bearer auth; vllm/llm-d
+// typically do not).
+func applyInferenceAuth(req *http.Request, route *InferenceRoute) {
+	if route.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+route.APIKey)
 	}
-	return false
+}
+
+// caTransportCache caches one transport per CA bundle path so TLS session
+// state and connection pools are reused across requests.
+var (
+	caTransportMu    sync.Mutex
+	caTransportCache = map[string]*http.Transport{}
+)
+
+// inferenceTransport returns the transport for the given CA bundle path.
+// An empty path returns the default transport (system trust store).
+// Certificate verification is NEVER disabled — a private CA is trusted by
+// adding its PEM to the root pool, not by skipping verification.
+func inferenceTransport(caBundle string) (http.RoundTripper, error) {
+	if caBundle == "" {
+		return http.DefaultTransport, nil
+	}
+	caTransportMu.Lock()
+	defer caTransportMu.Unlock()
+	if t, ok := caTransportCache[caBundle]; ok {
+		return t, nil
+	}
+	pem, err := os.ReadFile(caBundle)
+	if err != nil {
+		return nil, fmt.Errorf("read ca bundle %s: %w", caBundle, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("no certificates parsed from ca bundle %s", caBundle)
+	}
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("default transport is not *http.Transport")
+	}
+	t = t.Clone()
+	t.TLSClientConfig = &tls.Config{RootCAs: pool}
+	caTransportCache[caBundle] = t
+	return t, nil
+}
+
+// inferenceHTTPClient returns the client for forwarding translated requests
+// to the route's endpoint. Like http.DefaultClient it has no overall
+// timeout — streaming completions can legitimately run for minutes.
+func inferenceHTTPClient(route *InferenceRoute) (*http.Client, error) {
+	rt, err := inferenceTransport(route.CABundle)
+	if err != nil {
+		return nil, err
+	}
+	if rt == http.DefaultTransport {
+		return http.DefaultClient, nil
+	}
+	return &http.Client{Transport: rt}, nil
+}
+
+// newModelsRequest builds an authenticated GET {endpoint}/v1/models request.
+func newModelsRequest(endpoint, apiKey string) (*http.Request, error) {
+	req, err := http.NewRequest("GET", strings.TrimRight(endpoint, "/")+"/v1/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	return req, nil
 }
 
 // FindEndpointForModel queries /v1/models on each endpoint and returns the
 // first one that serves the requested model. Returns "" if none match.
-func FindEndpointForModel(endpoints []string, model string) string {
-	client := &http.Client{Timeout: endpointQueryTimeout}
+// apiKey and caBundle are optional (litellm endpoints require bearer auth
+// and may be signed by a private CA).
+func FindEndpointForModel(endpoints []string, model, apiKey, caBundle string) string {
+	rt, err := inferenceTransport(caBundle)
+	if err != nil {
+		return ""
+	}
+	client := &http.Client{Timeout: endpointQueryTimeout, Transport: rt}
 	for _, ep := range endpoints {
-		url := strings.TrimRight(ep, "/") + "/v1/models"
-		resp, err := client.Get(url)
+		req, err := newModelsRequest(ep, apiKey)
+		if err != nil {
+			continue
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			continue
 		}
@@ -197,10 +285,18 @@ const maxModelLenQueryTimeout = 3 * time.Second
 
 // queryMaxModelLen queries the /v1/models endpoint and returns the
 // max_model_len for the given model. Returns 0 if the query fails.
-func queryMaxModelLen(endpoint, model string) int {
-	url := strings.TrimRight(endpoint, "/") + "/v1/models"
-	client := &http.Client{Timeout: maxModelLenQueryTimeout}
-	resp, err := client.Get(url)
+// apiKey and caBundle are optional (see FindEndpointForModel).
+func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
+	rt, rtErr := inferenceTransport(caBundle)
+	if rtErr != nil {
+		return 0
+	}
+	client := &http.Client{Timeout: maxModelLenQueryTimeout, Transport: rt}
+	req, err := newModelsRequest(endpoint, apiKey)
+	if err != nil {
+		return 0
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0
 	}

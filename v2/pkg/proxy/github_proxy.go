@@ -871,7 +871,7 @@ func newBufferedReader(c net.Conn) *bufio.Reader {
 // It also queries the model's max context length from the endpoint.
 func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
 	if route.MaxContextLen == 0 {
-		if maxLen := queryMaxModelLen(route.Endpoint, route.Model); maxLen > 0 {
+		if maxLen := queryMaxModelLen(route.Endpoint, route.Model, route.APIKey, route.CABundle); maxLen > 0 {
 			route.MaxContextLen = maxLen
 		}
 	}
@@ -947,6 +947,7 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			return
 		}
 		upstreamReq.Header.Set("Content-Type", "application/json")
+		applyInferenceAuth(upstreamReq, route)
 
 		p.logger.Info("inference forward",
 			"agent", agentName,
@@ -956,7 +957,13 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			"openai_body", truncateBytes(openaiBody, 300),
 		)
 
-		resp, err := http.DefaultClient.Do(upstreamReq)
+		client, err := inferenceHTTPClient(route)
+		if err != nil {
+			p.logger.Error("inference client setup failed", "agent", agentName, "error", err)
+			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference client setup failed: %s"}}`, err.Error()), http.StatusBadGateway)
+			return
+		}
+		resp, err := client.Do(upstreamReq)
 		if err != nil {
 			p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend unreachable: %s"}}`, err.Error()), http.StatusBadGateway)
@@ -1100,10 +1107,17 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 	upstreamReq.Header.Set("Content-Type", "application/json")
+	applyInferenceAuth(upstreamReq, route)
 
 	p.logger.Info("inference forward", "agent", agentName, "backend", route.Backend, "model", route.Model, "url", upstreamURL)
 
-	resp, err := http.DefaultClient.Do(upstreamReq)
+	client, err := inferenceHTTPClient(route)
+	if err != nil {
+		p.logger.Error("inference client setup failed", "agent", agentName, "error", err)
+		p.writeHTTPError(conn, http.StatusBadGateway, "inference client setup failed: "+err.Error())
+		return
+	}
+	resp, err := client.Do(upstreamReq)
 	if err != nil {
 		p.logger.Error("inference upstream failed", "agent", agentName, "error", err)
 		p.writeHTTPError(conn, http.StatusBadGateway, "inference backend unreachable: "+err.Error())
