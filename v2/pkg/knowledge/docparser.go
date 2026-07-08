@@ -231,7 +231,7 @@ func sanitizePDFText(s string) string {
 // extractPageTitle returns the first line if it looks like a heading (short, no
 // trailing period), otherwise "Page N".
 func extractPageTitle(text string, pageNum int) string {
-	firstLine := strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
+	firstLine := stripHeadingMarkers(strings.SplitN(text, "\n", 2)[0])
 	if firstLine != "" && len(firstLine) <= chunkTitleMaxChars && !strings.HasSuffix(firstLine, ".") {
 		return firstLine
 	}
@@ -401,11 +401,31 @@ func parseRawText(text string) []DocChunk {
 	return chunks
 }
 
+// headingMarkerRe matches leading markdown heading syntax ("# ".."###### ")
+// so auto-extracted titles don't carry raw markdown into fact titles.
+var headingMarkerRe = regexp.MustCompile(`^\s*#{1,6}\s+`)
+
+// dividerOnlyRe matches content made only of divider characters
+// (horizontal rules, setext underlines) and whitespace.
+var dividerOnlyRe = regexp.MustCompile(`^[\s\-=_*]+$`)
+
+// stripHeadingMarkers removes leading markdown heading syntax from a title.
+func stripHeadingMarkers(s string) string {
+	return strings.TrimSpace(headingMarkerRe.ReplaceAllString(s, ""))
+}
+
+// isDividerOnly reports whether the string is empty or made only of divider
+// characters — such content carries no information and should not become a fact.
+func isDividerOnly(s string) bool {
+	s = strings.TrimSpace(s)
+	return s == "" || dividerOnlyRe.MatchString(s)
+}
+
 // extractChunkTitle returns the first sentence (up to chunkTitleMaxChars) or
 // falls back to "Section N".
 func extractChunkTitle(body string, sectionNum int) string {
 	firstLine := strings.SplitN(body, "\n", 2)[0]
-	firstLine = strings.TrimSpace(firstLine)
+	firstLine = stripHeadingMarkers(firstLine)
 
 	// Try first sentence (period-delimited).
 	if idx := strings.Index(firstLine, ". "); idx > 0 && idx < chunkTitleMaxChars {
@@ -472,7 +492,7 @@ func chunksToFacts(chunks []DocChunk, sourceSlug, sourceURL string, sourceDate t
 		summaryBody = summaryBody[:docSummaryMaxChars]
 	}
 	facts = append(facts, ExtractedFact{
-		Title:      "Summary: " + chunks[0].Title,
+		Title:      "Summary: " + stripHeadingMarkers(chunks[0].Title),
 		Body:       summaryBody,
 		Type:       FactReference,
 		Confidence: defaultDocConfidence,
@@ -482,13 +502,17 @@ func chunksToFacts(chunks []DocChunk, sourceSlug, sourceURL string, sourceDate t
 	})
 
 	// Section facts from all chunks (including the first, which may have
-	// content beyond the summary).
+	// content beyond the summary). Divider-only chunks (horizontal rules,
+	// setext underlines) carry no information and are dropped.
 	for _, chunk := range chunks {
 		if len(facts) >= maxFactsPerDocument {
 			break
 		}
+		if isDividerOnly(chunk.Title) && isDividerOnly(chunk.Body) {
+			continue
+		}
 		facts = append(facts, ExtractedFact{
-			Title:      chunk.Title,
+			Title:      stripHeadingMarkers(chunk.Title),
 			Body:       chunk.Body,
 			Type:       FactReference,
 			Confidence: defaultDocConfidence,
