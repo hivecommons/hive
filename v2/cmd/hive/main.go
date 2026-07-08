@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -1162,7 +1163,9 @@ func main() {
 		// unconfigured backend doesn't show up in model discovery. A URL
 		// saved later from the governor LiteLLM tab is registered at
 		// runtime via dashSrv.UpdateInferenceEndpoint.
-		if litellmEndpoint := cfg.Governor.LiteLLM.ResolveEndpoint(); litellmEndpoint != "" {
+		if cfg.Governor.LiteLLM.LocalProxy {
+			inferenceEndpoints["litellm"] = []string{litellmLocalProxyURL()}
+		} else if litellmEndpoint := cfg.Governor.LiteLLM.ResolveEndpoint(); litellmEndpoint != "" {
 			inferenceEndpoints["litellm"] = parseEndpointList(litellmEndpoint)
 		}
 		dashSrv.SetInferenceEndpoints(inferenceEndpoints)
@@ -1176,6 +1179,12 @@ func main() {
 					// place on reload.
 					lc := cfg.Governor.LiteLLM
 					endpoint := lc.ResolveEndpoint()
+					if lc.LocalProxy {
+						// Local fallback: the Go translator forwards to the
+						// bundled litellm proxy on loopback instead of the
+						// remote endpoint.
+						endpoint = litellmLocalProxyURL()
+					}
 					if endpoint == "" {
 						logger.Warn("litellm backend selected but no endpoint configured",
 							"agent", agentName, "model", model)
@@ -1226,6 +1235,9 @@ func main() {
 				logger.Error("inference translation server failed", "error", err)
 			}
 		}()
+		if cfg.Governor.LiteLLM.LocalProxy {
+			go superviseLocalLiteLLM(ctx, logger)
+		}
 		logger.Info("github proxy started", "addr", githubProxy.ListenAddr())
 	}
 
@@ -2626,6 +2638,58 @@ func envOrDefault(key, fallback string) string {
 
 // parseEndpointList splits a comma-separated list of URLs into a slice.
 // A single URL is returned as a one-element slice.
+const (
+	// litellmLocalProxyPort is the loopback port the bundled litellm proxy
+	// listens on when governor.litellm.local_proxy is enabled. Distinct from
+	// proxy.InferenceTranslatePort (18444): agents always talk to the Go
+	// translator, which forwards to this local litellm instance.
+	litellmLocalProxyPort = 18445
+	// litellmLocalConfigPath is the user-provided litellm proxy config
+	// (model list, upstream keys) on the /data volume.
+	litellmLocalConfigPath = "/data/litellm/config.yaml"
+	// litellmRestartDelay is the pause before restarting a crashed local
+	// litellm proxy, to avoid a tight crash loop.
+	litellmRestartDelay = 5 * time.Second
+)
+
+// litellmLocalProxyURL is the endpoint the Go inference translator forwards
+// to when the local litellm proxy fallback is enabled.
+func litellmLocalProxyURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d", litellmLocalProxyPort)
+}
+
+// superviseLocalLiteLLM runs the bundled litellm binary as a local
+// Anthropic-compat translator fallback (governor.litellm.local_proxy: true),
+// restarting it on exit like StartInferenceTranslator's supervision.
+// Agents never talk to it directly — the Go translator stays in front so
+// per-agent attribution, mode enforcement, and the MITM proxy path are
+// preserved.
+func superviseLocalLiteLLM(ctx context.Context, logger *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		cmd := exec.CommandContext(ctx, "litellm",
+			"--host", "127.0.0.1",
+			"--port", strconv.Itoa(litellmLocalProxyPort),
+			"--config", litellmLocalConfigPath)
+		logger.Info("starting local litellm proxy",
+			"port", litellmLocalProxyPort, "config", litellmLocalConfigPath)
+		if err := cmd.Run(); err != nil {
+			logger.Warn("local litellm proxy exited", "error", err)
+		} else {
+			logger.Warn("local litellm proxy exited cleanly; restarting")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(litellmRestartDelay):
+		}
+	}
+}
+
 func parseEndpointList(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))

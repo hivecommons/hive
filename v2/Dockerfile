@@ -163,6 +163,18 @@ RUN (which git && git clone -b feat/cli-agent-mode https://github.com/clubanders
     /opt/nous/venv/bin/pip install --no-cache-dir -e /opt/nous 2>&1) || \
     echo "WARN: Nous install failed — run_campaign.py may not work"
 
+# --- LiteLLM proxy (pinned; optional local Anthropic-compat translator) ---
+# Used only when governor.litellm.local_proxy is true; the default flow
+# forwards to the remote LiteLLM endpoint via the Go inference translator.
+# All heavy deps ship manylinux aarch64 wheels, so multi-arch builds work
+# without compilation. || echo matches the Nous/Goose optional-layer convention.
+ARG LITELLM_VERSION=1.74.3
+RUN (python3 -m venv /opt/litellm/venv && \
+    /opt/litellm/venv/bin/pip install --no-cache-dir "litellm[proxy]==${LITELLM_VERSION}" && \
+    ln -s /opt/litellm/venv/bin/litellm /usr/local/bin/litellm) || \
+    echo "WARN: litellm install failed — local litellm proxy unavailable"
+RUN mkdir -p /data/litellm
+
 EXPOSE 3001 3002 7681
 VOLUME ["/data", "/secrets"]
 
