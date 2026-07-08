@@ -456,6 +456,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				} else {
 					entry.Upgrading = true
 					entry.UpgradeTarget = h.UpgradeTarget
+					// Preserve the trigger timestamp — losing it here made
+					// the stale-upgrade recovery in triggerAutoUpgrades()
+					// unreachable (it saw a zero UpgradeStartedAt forever).
+					entry.UpgradeStartedAt = h.UpgradeStartedAt
 				}
 			}
 			// Sparkline history: sample every 15 min, keep 7 days (672 points)

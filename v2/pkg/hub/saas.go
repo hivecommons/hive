@@ -2182,7 +2182,10 @@ func (s *HubServer) triggerAutoUpgrades() {
 				branch = "v2"
 			}
 			upgradeAge := time.Since(upgradeStartedAt)
-			isStale := !upgradeStartedAt.IsZero() && upgradeAge > staleUpgradeTimeout
+			// Zero UpgradeStartedAt means the timestamp was lost (heartbeats
+			// used to wipe it on rebuild) — treat as stale so already-stuck
+			// hives self-heal instead of upgrading forever.
+			isStale := upgradeStartedAt.IsZero() || upgradeAge > staleUpgradeTimeout
 
 			if isStale {
 				// Upgrade has been stuck longer than staleUpgradeTimeout.
