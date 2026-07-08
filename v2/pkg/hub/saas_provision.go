@@ -246,7 +246,12 @@ type CreateHiveRequest struct {
 	AppID          string `json:"app_id"`
 	InstallationID string `json:"installation_id"`
 	AppPrivateKey  string `json:"app_private_key"`
-	IsPublic       bool   `json:"is_public"`
+	// IsPublic controls registry visibility. A pointer so that "field
+	// absent" (the admin create modal and older API callers never sent
+	// it) defaults to public — the behavior before PR #1604 hardcoded
+	// is_public: true in the provisioning template. Send false explicitly
+	// to provision a private hive.
+	IsPublic *bool `json:"is_public"`
 }
 
 func generateHiveID(org, repo string) string {
@@ -472,7 +477,7 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"InitContainerGID":  initContainerGID,
 		"InferenceEndpoint": cluster.InferenceEndpoint,
 		"HasInference":      cluster.InferenceEndpoint != "",
-		"IsPublic":          req.IsPublic,
+		"IsPublic":          h.IsPublic,
 		"HiveType":          "hosted",
 		"HasGHE":            cluster.GitHubBaseURL != "",
 		"GitHubBaseURL":     cluster.GitHubBaseURL,
@@ -673,11 +678,14 @@ func (s *HubServer) migrateHive(h *SaaSHive, fromCluster, toCluster *ClusterConf
 		}
 	}
 
-	// Determine visibility from the source (is_public).
+	// Determine visibility from the source (is_public). The registry may
+	// know the hive is public even when the SaaS record predates the
+	// IsPublic field (pre-#1604 provisions), so only ever upgrade to
+	// public here — never downgrade a record the owner toggled public.
 	s.mu.RLock()
 	for _, re := range s.registry.Hives {
 		if re.ID == h.ID {
-			req.IsPublic = re.IsPublic
+			h.IsPublic = h.IsPublic || re.IsPublic
 			break
 		}
 	}

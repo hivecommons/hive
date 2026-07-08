@@ -1564,6 +1564,10 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		Status:      "provisioning",
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 		Subdomain:   subdomain,
+		// Default to public when the request omits is_public — matches
+		// the pre-#1604 template that hardcoded is_public: true. Owners
+		// can toggle visibility later from My Hives.
+		IsPublic: req.IsPublic == nil || *req.IsPublic,
 	}
 
 	if err := saveSaaSHive(h); err != nil {
@@ -5063,7 +5067,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (method === 'later') { method = 'app'; appId = '3568013'; installId = ''; appKey = ''; }
 
       try {
-        var body = {org: org, repos: repos, primary_repo: primary || repos.split(',')[0].trim(), project_name: name, acmm_level: level, cluster_id: clusterId, auth_method: method};
+        var body = {org: org, repos: repos, primary_repo: primary || repos.split(',')[0].trim(), project_name: name, acmm_level: level, cluster_id: clusterId, auth_method: method, is_public: document.getElementById('f-public').checked};
         if (method === 'pat') body.github_token = token;
         else { body.app_id = appId.trim(); body.installation_id = installId.trim(); body.app_private_key = appKey.trim(); }
 
@@ -5251,6 +5255,9 @@ const dashboardHTML = `<!DOCTYPE html>
             <option value="">Loading clusters...</option>
           </select>
         </div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.8rem;color:var(--muted)"><input type="checkbox" id="f-public" checked> Publicly visible in the hive registry <span style="font-size:0.7rem">(owners can toggle later from My Hives)</span></label>
       </div>
       <div style="margin-bottom:12px">
         <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Authentication Method</label>
