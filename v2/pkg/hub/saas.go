@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -36,6 +37,7 @@ type SaaSUser struct {
 }
 
 var hmacKeyPath = "/data/saas/hmac.key"
+
 const hmacKeySize = 32
 
 func loadOrCreateHMACKey() ([]byte, error) {
@@ -2120,16 +2122,100 @@ func getCommitMessages() map[string]string {
 	return cp
 }
 
+// latestSHAsPath persists the last-known-good branch→SHA cache across hub
+// restarts (PVC-backed, like the rest of /data/saas). The hub restarts on
+// every auto-upgrade; without this file the cache starts empty, and if the
+// unauthenticated GitHub branches API is rate-limited for one branch at
+// startup, that branch silently disappears from "Latest images" until a
+// later poll succeeds (up to an hour under rate limiting).
+var latestSHAsPath = "/data/saas/latest-shas.json"
+
+// snapshotBranchSHAs returns a copy of the full branch→info cache.
+func snapshotBranchSHAs() map[string]branchSHAInfo {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]branchSHAInfo, len(latestSHAByBranch))
+	for k, v := range latestSHAByBranch {
+		cp[k] = v
+	}
+	return cp
+}
+
+// loadPersistedSHAs restores the last-known-good SHA cache from disk so a
+// freshly restarted hub serves the previous values while live fetches are
+// failing or rate-limited. Branches no longer in trackedBranches are dropped;
+// branches already populated by a live fetch are never overwritten.
+func loadPersistedSHAs(logger *slog.Logger) {
+	data, err := os.ReadFile(latestSHAsPath)
+	if err != nil {
+		return // first run or no PVC — nothing to restore
+	}
+	var persisted map[string]branchSHAInfo
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		logger.Warn("SHA poll: persisted SHA cache unreadable, ignoring", "path", latestSHAsPath, "error", err)
+		return
+	}
+	latestSHAMu.Lock()
+	defer latestSHAMu.Unlock()
+	for _, branch := range trackedBranches {
+		info, ok := persisted[branch]
+		if !ok || info.SHA == "" {
+			continue
+		}
+		if _, exists := latestSHAByBranch[branch]; exists {
+			continue // live fetch already populated this branch
+		}
+		latestSHAByBranch[branch] = info
+		if info.Message != "" {
+			commitMsgBySHA[info.SHA] = info.Message
+		}
+		logger.Info("SHA poll: restored last-known SHA from disk", "branch", branch, "sha", info.SHA)
+	}
+}
+
+// persistLatestSHAs writes the current SHA cache to disk (atomic tmp+rename,
+// same pattern as the other /data/saas state files).
+func persistLatestSHAs(logger *slog.Logger) {
+	snapshot := snapshotBranchSHAs()
+	if len(snapshot) == 0 {
+		return // never overwrite a good file with an empty cache
+	}
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		logger.Warn("SHA poll: persist marshal failed", "error", err)
+		return
+	}
+	os.MkdirAll(filepath.Dir(latestSHAsPath), 0o755)
+	tmpPath := latestSHAsPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		logger.Warn("SHA poll: persist write failed", "path", latestSHAsPath, "error", err)
+		return
+	}
+	if err := os.Rename(tmpPath, latestSHAsPath); err != nil {
+		logger.Warn("SHA poll: persist rename failed", "path", latestSHAsPath, "error", err)
+	}
+}
+
 func (s *HubServer) StartLatestSHAPoller() {
+	// Serve last-known-good SHAs immediately; live fetches below refresh them.
+	loadPersistedSHAs(s.logger)
+	prevInfos := snapshotBranchSHAs()
 	fetchAllBranchSHAs(s.logger)
+	if cur := snapshotBranchSHAs(); !maps.Equal(cur, prevInfos) {
+		persistLatestSHAs(s.logger)
+	}
 	// On first poll, check if any auto-upgrade hives are behind
 	s.triggerAutoUpgrades()
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for range ticker.C {
 		oldSHAs := getLatestSHAs()
+		oldInfos := snapshotBranchSHAs()
 		fetchAllBranchSHAs(s.logger)
 		newSHAs := getLatestSHAs()
+		if !maps.Equal(snapshotBranchSHAs(), oldInfos) {
+			persistLatestSHAs(s.logger)
+		}
 		// Always check for pending auto-upgrades (retries failed/missed hives).
 		s.triggerAutoUpgrades()
 		changed := false

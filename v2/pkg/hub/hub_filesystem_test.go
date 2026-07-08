@@ -52,10 +52,10 @@ func TestSaveSaaSUserAndLoad(t *testing.T) {
 
 	u := &SaaSUser{
 		GitHubUsername: "testuser",
-		CreatedAt:     "2024-01-01T00:00:00Z",
-		LastLogin:     "2024-06-01T00:00:00Z",
-		Hives:         map[string]string{"hive1": "owner"},
-		SaaSQuota:     3,
+		CreatedAt:      "2024-01-01T00:00:00Z",
+		LastLogin:      "2024-06-01T00:00:00Z",
+		Hives:          map[string]string{"hive1": "owner"},
+		SaaSQuota:      3,
 	}
 	if err := saveSaaSUser(u); err != nil {
 		t.Fatalf("saveSaaSUser failed: %v", err)
@@ -1236,5 +1236,86 @@ func TestHandleCreateHiveQuotaReached(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 (quota reached), got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+// TestPersistAndLoadLatestSHAs verifies last-known-good semantics for the
+// branch SHA cache across hub restarts: persisted SHAs are restored on load,
+// untracked branches are dropped, and live values are never overwritten.
+func TestPersistAndLoadLatestSHAs(t *testing.T) {
+	dir := t.TempDir()
+	oldPath := latestSHAsPath
+	latestSHAsPath = filepath.Join(dir, "latest-shas.json")
+	defer func() { latestSHAsPath = oldPath }()
+
+	// Snapshot and clear global cache state; restore after the test.
+	latestSHAMu.Lock()
+	savedBranches := latestSHAByBranch
+	savedMsgs := commitMsgBySHA
+	latestSHAByBranch = map[string]branchSHAInfo{
+		"v2":         {SHA: "aaa1111", Message: "v2 commit"},
+		"v3":         {SHA: "bbb2222", Message: "v3 commit"},
+		"old-branch": {SHA: "ccc3333", Message: "untracked commit"},
+	}
+	commitMsgBySHA = map[string]string{}
+	latestSHAMu.Unlock()
+	defer func() {
+		latestSHAMu.Lock()
+		latestSHAByBranch = savedBranches
+		commitMsgBySHA = savedMsgs
+		latestSHAMu.Unlock()
+	}()
+
+	persistLatestSHAs(slog.Default())
+	if _, err := os.Stat(latestSHAsPath); err != nil {
+		t.Fatalf("persistLatestSHAs did not write %s: %v", latestSHAsPath, err)
+	}
+
+	// Simulate a hub restart with a partially failed initial fetch: only v3
+	// was fetched live; v2's fetch was rate-limited so its entry is missing.
+	latestSHAMu.Lock()
+	latestSHAByBranch = map[string]branchSHAInfo{
+		"v3": {SHA: "ddd4444", Message: "newer v3 commit"},
+	}
+	latestSHAMu.Unlock()
+
+	loadPersistedSHAs(slog.Default())
+
+	if got := getLatestSHAForBranch("v2"); got != "aaa1111" {
+		t.Errorf("v2 SHA not restored from disk: got %q, want aaa1111", got)
+	}
+	if got := getLatestSHAForBranch("v3"); got != "ddd4444" {
+		t.Errorf("live v3 SHA was overwritten by persisted value: got %q, want ddd4444", got)
+	}
+	if got := getLatestSHAForBranch("old-branch"); got != "" {
+		t.Errorf("untracked branch restored from disk: got %q, want empty", got)
+	}
+	if msgs := getLatestSHAMessages(); msgs["v2"] != "v2 commit" {
+		t.Errorf("v2 commit message not restored: got %q, want 'v2 commit'", msgs["v2"])
+	}
+	if cm := getCommitMessages(); cm["aaa1111"] != "v2 commit" {
+		t.Errorf("commitMsgBySHA not backfilled on load: got %q, want 'v2 commit'", cm["aaa1111"])
+	}
+
+	// An empty cache must never clobber the good file on disk.
+	latestSHAMu.Lock()
+	latestSHAByBranch = map[string]branchSHAInfo{}
+	latestSHAMu.Unlock()
+	persistLatestSHAs(slog.Default())
+	loadPersistedSHAs(slog.Default())
+	if got := getLatestSHAForBranch("v2"); got != "aaa1111" {
+		t.Errorf("empty persist clobbered file: v2 = %q, want aaa1111", got)
+	}
+
+	// A corrupt file is ignored (no panic, no partial state).
+	if err := os.WriteFile(latestSHAsPath, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	latestSHAMu.Lock()
+	latestSHAByBranch = map[string]branchSHAInfo{}
+	latestSHAMu.Unlock()
+	loadPersistedSHAs(slog.Default())
+	if got := getLatestSHAForBranch("v2"); got != "" {
+		t.Errorf("corrupt file should restore nothing, got v2 = %q", got)
 	}
 }
