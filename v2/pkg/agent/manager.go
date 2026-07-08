@@ -479,10 +479,9 @@ var cliPaneMarkers = []string{
 	"goose",
 }
 
-// tmuxPaneHasCLI reports whether a CLI is running in the pane by inspecting
-// the visible pane content for known CLI UI markers.
-func (m *Manager) tmuxPaneHasCLI(session string) bool {
-	output := m.captureTmuxPane(session)
+// paneHasCLIMarker reports whether the given pane content contains any known
+// CLI UI marker.
+func paneHasCLIMarker(output string) bool {
 	if output == "" {
 		return false
 	}
@@ -494,16 +493,54 @@ func (m *Manager) tmuxPaneHasCLI(session string) bool {
 	return false
 }
 
+// tmuxPaneHasCLI reports whether a CLI is running in the pane by inspecting
+// the visible pane content for known CLI UI markers.
+func (m *Manager) tmuxPaneHasCLI(session string) bool {
+	return paneHasCLIMarker(m.captureTmuxPane(session))
+}
+
 // tmuxPaneHasCLIForAgent checks for CLI markers using the agent's tmux socket.
 // Uses visible pane only (no scrollback) to avoid false positives from stale
 // markers left in scroll history after a CLI exits.
 func (m *Manager) tmuxPaneHasCLIForAgent(agent *AgentProcess) bool {
-	output := m.captureVisiblePaneForAgent(agent)
-	if output == "" {
+	return paneHasCLIMarker(m.captureVisiblePaneForAgent(agent))
+}
+
+const (
+	// consentConfirmFooter appears at the bottom of Claude Code interactive
+	// selection screens (consent dialogs, settings-error menus).
+	consentConfirmFooter = "Enter to confirm"
+	// bypassConsentTitle is the heading of the --dangerously-skip-permissions
+	// consent screen. Its default selection is "No, exit" — confirming it
+	// terminates the CLI and leaves a bare bash pane.
+	bypassConsentTitle = "Bypass Permissions mode"
+	// bypassConsentDefaultOption is the default (negative) option on the
+	// bypass-permissions consent screen.
+	bypassConsentDefaultOption = "No, exit"
+	// cliWorkingMarker is shown while Claude Code is actively processing a
+	// request; a pane in this state is never a consent screen.
+	cliWorkingMarker = "esc to interrupt"
+)
+
+// paneShowsConsentScreen reports whether the pane is showing an interactive
+// consent/selection screen rather than a ready CLI input prompt. Such screens
+// contain a "❯"-selected menu option (e.g. "❯ 1. No, exit"), so they satisfy
+// marker-based CLI presence checks ("❯" is also a cliPaneMarkers entry) — a
+// kick typed into one is consumed by the menu, or by bash once the default
+// "No, exit" selection terminates the CLI. Callers should pass the visible
+// pane only (no scrollback): dismissed consent screens linger in history.
+func paneShowsConsentScreen(pane string) bool {
+	if pane == "" || strings.Contains(pane, cliWorkingMarker) {
 		return false
 	}
-	for _, marker := range cliPaneMarkers {
-		if strings.Contains(output, marker) {
+	if strings.Contains(pane, bypassConsentTitle) && strings.Contains(pane, bypassConsentDefaultOption) {
+		return true
+	}
+	if !strings.Contains(pane, consentConfirmFooter) {
+		return false
+	}
+	for _, line := range strings.Split(pane, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "❯") {
 			return true
 		}
 	}
@@ -1406,6 +1443,13 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
 			return false
 		case <-ticker.C:
+			// A consent/selection screen also contains "❯" but is NOT a
+			// ready input prompt — sending a kick there feeds the menu.
+			// Check the visible pane only: a dismissed consent screen
+			// lingers in the scrollback that captureTmuxPaneForAgent sees.
+			if paneShowsConsentScreen(m.captureVisiblePaneForAgent(agent)) {
+				continue
+			}
 			output := m.captureTmuxPaneForAgent(agent)
 			if strings.Contains(output, "❯") || strings.Contains(output, "goose is ready") || strings.Contains(output, "> Enter to send") || strings.Contains(output, "\n>\n") {
 				return true
@@ -1645,9 +1689,15 @@ func (m *Manager) SendKick(name string, message string) error {
 		return fmt.Errorf("tmux session %s not found", agent.tmuxSession)
 	}
 
-	// Detect crashed CLI and restart before sending kick
-	if !m.tmuxPaneHasCLIForAgent(agent) {
-		m.logger.Warn("agent CLI crashed, restarting before kick", "name", name)
+	// Detect a crashed CLI (bare shell) or a CLI stuck on a consent screen
+	// and restart before sending the kick. A consent pane contains "❯" so it
+	// passes the marker check, but a kick typed into it is consumed by the
+	// menu — or by bash once the default "No, exit" selection exits the CLI
+	// (observed live: "-bash: NEVER: command not found").
+	pane := m.captureVisiblePaneForAgent(agent)
+	if !paneHasCLIMarker(pane) || paneShowsConsentScreen(pane) {
+		m.logger.Warn("agent CLI crashed or stuck on consent screen, restarting before kick",
+			"name", name, "consent_screen", paneShowsConsentScreen(pane))
 		m.mu.Unlock()
 		if err := m.Restart(context.Background(), name); err != nil {
 			m.mu.Lock()

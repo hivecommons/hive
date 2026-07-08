@@ -1057,6 +1057,71 @@ func TestCliPaneMarkers_HasExpectedEntries(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// paneShowsConsentScreen
+// ---------------------------------------------------------------------------
+
+func TestPaneShowsConsentScreen(t *testing.T) {
+	bypassConsent := `WARNING: Claude Code running in Bypass Permissions mode
+
+In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.
+
+ ❯ 1. No, exit
+   2. Yes, I accept
+
+Enter to confirm · Esc to exit`
+
+	genericSelection := `Do you trust the files in this folder?
+
+ ❯ 1. Yes, proceed
+   2. No, exit
+
+Enter to confirm`
+
+	readyPane := `╭──────────────────────────╮
+│ ❯                        │
+╰──────────────────────────╯
+  ? for shortcuts`
+
+	workingPane := `Thinking...
+(esc to interrupt)
+❯ 1. No, exit
+Enter to confirm`
+
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"empty pane", "", false},
+		{"bypass permissions consent", bypassConsent, true},
+		{"generic selection with confirm footer", genericSelection, true},
+		{"ready input prompt", readyPane, false},
+		{"working state is never consent", workingPane, false},
+		{"bare bash", "dev@hive:~$ ", false},
+		{"confirm footer without selection", "Enter to confirm something in output", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := paneShowsConsentScreen(tc.pane); got != tc.want {
+				t.Errorf("paneShowsConsentScreen(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPaneHasCLIMarker(t *testing.T) {
+	if paneHasCLIMarker("") {
+		t.Error("empty pane should have no CLI marker")
+	}
+	if paneHasCLIMarker("dev@hive:~$ ls\n-bash: NEVER: command not found") {
+		t.Error("bare bash pane should have no CLI marker")
+	}
+	if !paneHasCLIMarker("❯ ") {
+		t.Error("input prompt marker should match")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // loginPromptPatterns — verify
 // ---------------------------------------------------------------------------
 
