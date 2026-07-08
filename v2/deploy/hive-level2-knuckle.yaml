@@ -39,7 +39,7 @@ agents:
     stale_timeout: 3600
     restart_strategy: immediate
     launch_cmd: "agent-launch.sh --backend copilot --model claude-sonnet-4-6"
-    display_name: guide (advisory)
+    display_name: guide
     kick_template: guide-advisory.md
   scanner:
     enabled: true
@@ -51,7 +51,7 @@ agents:
     stale_timeout: 7200
     restart_strategy: immediate
     launch_cmd: "agent-launch.sh --backend copilot --model claude-sonnet-4-6"
-    display_name: scanner (advisory)
+    display_name: scanner
     kick_template: scanner-advisory.md
   quality:
     enabled: true
@@ -63,7 +63,7 @@ agents:
     stale_timeout: 7200
     restart_strategy: immediate
     launch_cmd: "agent-launch.sh --backend copilot --model claude-sonnet-4-6"
-    display_name: quality (advisory)
+    display_name: quality
     kick_template: quality-advisory.md
 
 governor:

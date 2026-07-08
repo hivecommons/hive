@@ -55,7 +55,7 @@ agents:
       Reads agent health history and operational patterns. Produces sweep
       reports and health assessments.
   - name: guide
-    display_name: guide (advisory)
+    display_name: guide
     role: guide
     description: >
       Audits project documentation and onboarding experience. At L2, reports
@@ -75,7 +75,7 @@ agents:
       Reads community wiki and project patterns. Starts contributing review
       insights as knowledge entries.
   - name: scanner
-    display_name: scanner (advisory)
+    display_name: scanner
     role: scanner
     description: >
       Scans code for issues and suggests fixes, but does NOT create PRs or
@@ -96,7 +96,7 @@ agents:
       Reads project patterns and known issues. Produces findings as knowledge
       entries for the team to review.
   - name: quality
-    display_name: quality (advisory)
+    display_name: quality
     role: quality
     description: >
       Analyzes test coverage gaps and suggests test strategies. At L2, reports

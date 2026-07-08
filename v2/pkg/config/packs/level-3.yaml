@@ -67,7 +67,7 @@ agents:
 
     '
 - name: scanner
-  display_name: scanner (advisory)
+  display_name: scanner
   role: scanner
   description: 'Scans code for issues and suggests fixes, but does NOT create PRs
     or issues. Reports findings as beads for the advisory digest.
@@ -93,7 +93,7 @@ agents:
 
     '
 - name: ci-maintainer
-  display_name: ci-maintainer (advisory)
+  display_name: ci-maintainer
   role: ci-maintainer
   description: 'Monitors CI health, workflow status, and build trends. Reports findings
     as beads for the advisory digest. Does NOT create PRs or issues.
@@ -148,7 +148,7 @@ agents:
 
     '
 - name: guide
-  display_name: guide (advisory)
+  display_name: guide
   role: guide
   description: 'Audits project documentation and onboarding experience. Reports findings
     as beads for the advisory digest. Does NOT create PRs or issues.
