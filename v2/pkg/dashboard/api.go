@@ -1213,7 +1213,7 @@ func (s *Server) handleBudgetIgnoreSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	budget := s.deps.Governor.GetBudget()
-	okResponse(w, map[string]interface{}{
+	jsonResponse(w, map[string]interface{}{
 		"status":  "updated",
 		"ignored": budget.IgnoreAll,
 		"agents":  budget.IgnoredAgents,
