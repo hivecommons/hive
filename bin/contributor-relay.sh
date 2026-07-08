@@ -94,7 +94,7 @@ function getCLIState() {
     } else if (BACKEND === 'bob') {
       if (/bob>|>\s*$|Bob-Shell/.test(text)) return 'ready';
     } else if (BACKEND === 'codex') {
-      if (/codex>|>\s*$|Codex CLI/.test(text)) return 'ready';
+      if (/codex>|>\s*$|›\s+Explain this codebase|model:\s+.*\/model to change|Codex CLI/.test(text)) return 'ready';
     } else if (BACKEND === 'pi') {
       if (/pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text)) return 'ready';
     } else {
@@ -314,7 +314,7 @@ function checkTmuxIdle() {
       hasCompletionMarker = /completed|done|finished|✓/i.test(text);
       isWorking = /running|executing|thinking/i.test(text);
     } else if (BACKEND === 'codex') {
-      hasIdlePrompt = /codex>|>\s*$/.test(text);
+      hasIdlePrompt = /codex>|>\s*$|›\s+Explain this codebase|model:\s+.*\/model to change/.test(text);
       hasCompletionMarker = /completed|done|finished/i.test(text);
       isWorking = /running|executing|thinking/i.test(text);
     } else if (BACKEND === 'pi') {
