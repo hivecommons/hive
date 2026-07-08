@@ -2432,11 +2432,81 @@ func inferenceHomePath(agentName string) string {
 	return claudeInferenceHomePrefix + agentName
 }
 
+// inferenceConfigMigrationVersion matches the Claude CLI internal config
+// migration version so the CLI skips first-run migration prompts.
+const inferenceConfigMigrationVersion = 13
+
+// inferenceUserConfigSeed returns the required top-level keys for an inference
+// agent's ~/.claude.json. These skip the first-run setup (onboarding,
+// migrations), pre-approve the per-agent inference API key, and pre-accept
+// the "Bypass Permissions mode" consent screen.
+//
+// The key name "bypassPermissionsModeAccepted" is verified against Claude CLI
+// v2.1.204: the binary reads it from the .claude.json config accessor and its
+// own sandbox-setup path seeds the same key. Without it every launch with
+// --dangerously-skip-permissions shows a consent menu whose default selection
+// is "No, exit" — if dismissal loses the race, the CLI exits and the pane
+// degrades to bare bash.
+func inferenceUserConfigSeed(agentName string) map[string]any {
+	apiKey := "sk-hive-" + agentName
+	return map[string]any{
+		"hasCompletedOnboarding":        true,
+		"opusProMigrationComplete":      true,
+		"sonnet1m45MigrationComplete":   true,
+		"migrationVersion":              inferenceConfigMigrationVersion,
+		"bypassPermissionsModeAccepted": true,
+		"customApiKeyResponses": map[string]any{
+			"approved": []string{apiKey},
+			"rejected": []string{},
+		},
+	}
+}
+
+// seedClaudeUserConfig writes or repairs the inference agent's .claude.json.
+// Unlike a plain exists-check, this merges required keys into an existing
+// file that is missing some of them (e.g. seeded by an older hive version
+// without bypassPermissionsModeAccepted) and rewrites a file that fails to
+// parse. A complete, parseable file is left untouched.
+func (m *Manager) seedClaudeUserConfig(agentName, path string) {
+	existing := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if jsonErr := json.Unmarshal(data, &existing); jsonErr != nil {
+			m.logger.Warn("inference .claude.json unparseable, rewriting",
+				"agent", agentName, "path", path, "error", jsonErr)
+			existing = map[string]any{}
+		}
+	}
+
+	needsWrite := false
+	for key, value := range inferenceUserConfigSeed(agentName) {
+		if _, ok := existing[key]; !ok {
+			existing[key] = value
+			needsWrite = true
+		}
+	}
+	if !needsWrite {
+		return
+	}
+
+	data, err := json.Marshal(existing)
+	if err != nil {
+		m.logger.Warn("failed to marshal inference .claude.json", "agent", agentName, "error", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0o666); err != nil {
+		m.logger.Warn("failed to write inference .claude.json", "agent", agentName, "error", err)
+	}
+}
+
 // ensureClaudeSettings creates a per-agent writable HOME directory for inference
 // agents with pre-populated .claude/settings.json. Each agent gets its own dir
 // to avoid cross-agent permission conflicts when Claude Code creates session
 // files. Directories use 0o777 so the agent UID can create subdirs freely
 // (hive runs as dev, not root, so chown is not available).
+//
+// The .claude.json seed is repaired on every call (missing keys merged in,
+// corrupt files rewritten) so agents launched by older hive versions pick up
+// newly required keys instead of being skipped by an exists-check.
 func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 	homePath := inferenceHomePath(agentName)
 	settingsDir := filepath.Join(homePath, ".claude")
@@ -2444,27 +2514,22 @@ func (m *Manager) ensureClaudeSettings(agentName string, uid int) {
 
 	settings := `{"permissions":{"allow":[],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
 
-	if _, err := os.Stat(settingsFile); err == nil {
-		m.ensureWorldWritable(homePath)
-		return
-	}
 	if err := os.MkdirAll(settingsDir, 0o777); err != nil {
 		m.logger.Warn("failed to create claude inference home", "agent", agentName, "error", err)
 		return
 	}
-	if err := os.WriteFile(settingsFile, []byte(settings), 0o666); err != nil {
-		m.logger.Warn("failed to write claude settings", "agent", agentName, "error", err)
+	if _, err := os.Stat(settingsFile); err != nil {
+		if err := os.WriteFile(settingsFile, []byte(settings), 0o666); err != nil {
+			m.logger.Warn("failed to write claude settings", "agent", agentName, "error", err)
+		}
 	}
 	// Also write the standalone settings file for --settings flag
-	_ = os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o666)
-	// Pre-populate .claude.json to skip first-run setup (GrowthBook, migrations)
-	// and pre-approve the inference API key so the CLI sends tools immediately.
-	userConfig := filepath.Join(homePath, ".claude.json")
-	if _, err := os.Stat(userConfig); err != nil {
-		apiKey := "sk-hive-" + agentName
-		cfg := fmt.Sprintf(`{"hasCompletedOnboarding":true,"opusProMigrationComplete":true,"sonnet1m45MigrationComplete":true,"migrationVersion":13,"customApiKeyResponses":{"approved":[%q],"rejected":[]}}`, apiKey)
-		_ = os.WriteFile(userConfig, []byte(cfg), 0o666)
+	if _, err := os.Stat(claudeInferenceSettingsPath); err != nil {
+		_ = os.WriteFile(claudeInferenceSettingsPath, []byte(settings), 0o666)
 	}
+	// Pre-populate (or repair) .claude.json so the CLI skips first-run setup
+	// and interactive consent screens entirely.
+	m.seedClaudeUserConfig(agentName, filepath.Join(homePath, ".claude.json"))
 	m.ensureWorldWritable(homePath)
 }
 

@@ -726,8 +726,22 @@ func TestEnsureClaudeSettings_CreatesFiles(t *testing.T) {
 
 	// Check .claude.json user config
 	userConfig := filepath.Join(testHomePath, ".claude.json")
-	if _, err := os.Stat(userConfig); err != nil {
-		t.Errorf("user config not created: %v", err)
+	userData, err := os.ReadFile(userConfig)
+	if err != nil {
+		t.Fatalf("user config not created: %v", err)
+	}
+	var userParsed map[string]interface{}
+	if err := json.Unmarshal(userData, &userParsed); err != nil {
+		t.Fatalf("user config invalid JSON: %v", err)
+	}
+	if userParsed["hasCompletedOnboarding"] != true {
+		t.Error("user config hasCompletedOnboarding should be true")
+	}
+	if userParsed["bypassPermissionsModeAccepted"] != true {
+		t.Error("user config bypassPermissionsModeAccepted should be true")
+	}
+	if _, ok := userParsed["customApiKeyResponses"]; !ok {
+		t.Error("user config should include customApiKeyResponses")
 	}
 }
 
@@ -742,6 +756,80 @@ func TestEnsureClaudeSettings_Idempotent(t *testing.T) {
 	settingsFile := filepath.Join(idempotentHomePath, ".claude", "settings.json")
 	if _, err := os.Stat(settingsFile); err != nil {
 		t.Errorf("settings should still exist: %v", err)
+	}
+}
+
+func TestSeedClaudeUserConfig_RepairsMissingKeys(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+
+	// Simulate a seed from an older hive version: no bypassPermissionsModeAccepted,
+	// plus a CLI-written key that must be preserved.
+	old := `{"hasCompletedOnboarding":true,"someCliKey":"keep-me"}`
+	if err := os.WriteFile(path, []byte(old), 0o666); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m.seedClaudeUserConfig("repair-agent", path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("invalid JSON after repair: %v", err)
+	}
+	if parsed["bypassPermissionsModeAccepted"] != true {
+		t.Error("bypassPermissionsModeAccepted should be merged in")
+	}
+	if parsed["someCliKey"] != "keep-me" {
+		t.Error("existing keys should be preserved on repair")
+	}
+}
+
+func TestSeedClaudeUserConfig_RewritesCorruptFile(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o666); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m.seedClaudeUserConfig("corrupt-agent", path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("corrupt file should be rewritten as valid JSON: %v", err)
+	}
+	if parsed["bypassPermissionsModeAccepted"] != true {
+		t.Error("bypassPermissionsModeAccepted should be true after rewrite")
+	}
+}
+
+func TestSeedClaudeUserConfig_CompleteFileUntouched(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+
+	m.seedClaudeUserConfig("complete-agent", path)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after seed: %v", err)
+	}
+
+	m.seedClaudeUserConfig("complete-agent", path)
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after reseed: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("complete config should not be rewritten")
 	}
 }
 
