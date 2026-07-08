@@ -4116,15 +4116,24 @@ const dashboardHTML = `<!DOCTYPE html>
             : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(branchName) + '</span>';
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sha === branchLatest;
-          var isUpgrading = (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent && !latestUnknown);
-          if (_upgradingHives[h.id] && sha !== _upgradingHives[h.id]) delete _upgradingHives[h.id];
-          if (isCurrent && h.upgrading) { h.upgrading = false; }
+          /* Branch switch in flight: the hive still reports the OLD branch
+             (often current on it) until the new pod heartbeats — without
+             this, isCurrent suppresses every progress indicator. */
+          var targetBranch = (h.upgradeTarget || '').replace(/-latest$/, '');
+          var isSwitching = !!(h.upgrading && targetBranch && targetBranch !== branchName);
+          if (_upgradingHives[h.id] === 'switching' && (isSwitching || h.upgrading)) delete _upgradingHives[h.id];
+          var isUpgrading = isSwitching || _upgradingHives[h.id] === 'switching' ||
+            (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent && !latestUnknown);
+          if (_upgradingHives[h.id] && _upgradingHives[h.id] !== 'switching' && sha !== _upgradingHives[h.id]) delete _upgradingHives[h.id];
+          if (isCurrent && h.upgrading && !isSwitching) { h.upgrading = false; }
           var status = latestUnknown
             ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
             : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="behind latest ' + esc(branchLatest) + '">↑</span>';
           var upgradeIcon = '';
           if (isUpgrading) {
-            upgradeIcon = ' <span title="Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?') + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Upgrading</span>';
+            var progressLabel = isSwitching ? 'Switching to ' + esc(targetBranch) : 'Upgrading';
+            var progressTitle = isSwitching ? 'Rolling out ' + esc(h.upgradeTarget || '') + ' — the pill updates when the hive reports the new branch' : 'Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?');
+            upgradeIcon = ' <span title="' + progressTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
             upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">queued</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
