@@ -314,9 +314,10 @@ function checkTmuxIdle() {
       hasCompletionMarker = /completed|done|finished|✓/i.test(text);
       isWorking = /running|executing|thinking/i.test(text);
     } else if (BACKEND === 'codex') {
-      hasIdlePrompt = /codex>|>\s*$|›\s+Explain this codebase|model:\s+.*\/model to change/.test(text);
+      const lastLines = text.split('\n').slice(-20).join('\n');
+      hasIdlePrompt = /codex>|>\s*$|›\s+(Explain this codebase|Write tests for @filename)|model:\s+.*\/model to change/.test(lastLines);
       hasCompletionMarker = /completed|done|finished/i.test(text);
-      isWorking = /running|executing|thinking/i.test(text);
+      isWorking = /running|executing|thinking/i.test(lastLines);
     } else if (BACKEND === 'pi') {
       hasIdlePrompt = /pi v\d|0\.0%|auto\)|\d+\.\d+%/.test(text);
       hasCompletionMarker = /completed|done|finished|tokens\)|\d+\.\d+%/i.test(text);
