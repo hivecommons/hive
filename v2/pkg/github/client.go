@@ -183,10 +183,15 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	var holdItems []HoldItem
 	totalByRepo := make(map[string]RepoCounts)
 
-	for _, repo := range c.getRepos() {
+	repos := c.getRepos()
+	failedRepos := 0
+	var lastFetchErr error
+	for _, repo := range repos {
 		issues, held, issueTotal, err := c.fetchIssues(ctx, repo, now)
 		if err != nil {
 			c.logger.Warn("failed to fetch issues", "repo", repo, "error", err)
+			failedRepos++
+			lastFetchErr = err
 			continue
 		}
 		allIssues = append(allIssues, issues...)
@@ -195,12 +200,21 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		prs, heldPRs, prTotal, err := c.fetchPRs(ctx, repo)
 		if err != nil {
 			c.logger.Warn("failed to fetch PRs", "repo", repo, "error", err)
+			failedRepos++
+			lastFetchErr = err
 			continue
 		}
 		allPRs = append(allPRs, prs...)
 		holdItems = append(holdItems, heldPRs...)
 
 		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
+	}
+
+	// If every repo failed (e.g. API rate limit exhausted), returning a
+	// zero-count result would tell the governor the queue is empty and
+	// idle the agents. Surface the failure so callers keep prior state.
+	if len(repos) > 0 && failedRepos >= len(repos) {
+		return nil, fmt.Errorf("all %d repos failed to enumerate (last error: %w)", len(repos), lastFetchErr)
 	}
 
 	sort.Slice(allIssues, func(i, j int) bool {
