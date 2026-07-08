@@ -11474,7 +11474,7 @@ function burnAreaChart() {
           headers: _inceptionAuthHeaders(),
           body: JSON.stringify({ id: newId }),
         });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
         showToast('Hive ID updated to ' + newId);
       } catch (err) {
         showToast('Failed to save Hive ID: ' + err.message, 'error');
@@ -12059,6 +12059,20 @@ function burnAreaChart() {
         .catch(err => showToast(`Failed: ${err.message}`, 'error'));
     }
 
+    // saveErrorMessage turns a failed save Response into a user-facing
+    // message. 403 means the hub proxied this user in with read-only
+    // access — explain that instead of a bare HTTP status.
+    async function saveErrorMessage(res) {
+      if (res.status === 403) {
+        return 'your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions.';
+      }
+      try {
+        const d = await res.json();
+        if (d && d.error) return d.error;
+      } catch (e) { /* non-JSON body */ }
+      return 'HTTP ' + res.status;
+    }
+
     async function saveConfig() {
       const dirty = _configState.dirty;
 
@@ -12132,14 +12146,14 @@ function burnAreaChart() {
               headers: _inceptionAuthHeaders(),
               body: JSON.stringify({ id: values.hiveId })
             });
-            if (!idRes.ok) throw new Error('HTTP ' + idRes.status);
+            if (!idRes.ok) throw new Error(await saveErrorMessage(idRes));
           } else {
             const res = await fetch(`${base}/${section}`, {
               method: 'PUT',
               headers: _inceptionAuthHeaders(),
               body: JSON.stringify(values)
             });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (!res.ok) throw new Error(await saveErrorMessage(res));
           }
         } catch (err) {
           showToast(`Failed to save ${section}: ${err.message}`, 'error');
