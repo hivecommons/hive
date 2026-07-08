@@ -98,6 +98,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
+	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
@@ -2660,6 +2661,17 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"compress":   cfg.Governor.Logging.Compress,
 			"level":      cfg.Governor.Logging.Level,
 		},
+		"litellm": map[string]interface{}{
+			"endpoint":     cfg.Governor.LiteLLM.Endpoint,
+			"apiKeyEnv":    cfg.Governor.LiteLLM.APIKeyEnv,
+			"apiKeyFile":   cfg.Governor.LiteLLM.APIKeyFile,
+			"defaultModel": cfg.Governor.LiteLLM.DefaultModel,
+			"caBundle":     cfg.Governor.LiteLLM.CABundle,
+			"localProxy":   cfg.Governor.LiteLLM.LocalProxy,
+			// The key VALUE is never returned — only whether one resolves
+			// from the configured file/env var.
+			"hasKey": cfg.Governor.LiteLLM.ResolveAPIKey() != "",
+		},
 		"hub": map[string]interface{}{
 			"enabled":                  cfg.Hub.Enabled,
 			"url":                      cfg.Hub.URL,
@@ -3069,6 +3081,69 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// handleGovernorLiteLLM updates governor.litellm from the dashboard's
+// LiteLLM config tab. The API key VALUE is never accepted or stored —
+// only the env var name / key file path used to resolve it at runtime.
+func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Endpoint     *string `json:"endpoint"`
+		APIKeyEnv    *string `json:"apiKeyEnv"`
+		APIKeyFile   *string `json:"apiKeyFile"`
+		DefaultModel *string `json:"defaultModel"`
+		CABundle     *string `json:"caBundle"`
+		LocalProxy   *bool   `json:"localProxy"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	cfg := s.deps.Config
+	// Apply to a copy first so validation failure leaves config untouched.
+	lc := cfg.Governor.LiteLLM
+	if body.Endpoint != nil {
+		lc.Endpoint = strings.TrimSpace(*body.Endpoint)
+	}
+	if body.APIKeyEnv != nil {
+		lc.APIKeyEnv = strings.TrimSpace(*body.APIKeyEnv)
+	}
+	if body.APIKeyFile != nil {
+		lc.APIKeyFile = strings.TrimSpace(*body.APIKeyFile)
+	}
+	if body.DefaultModel != nil {
+		lc.DefaultModel = strings.TrimSpace(*body.DefaultModel)
+	}
+	if body.CABundle != nil {
+		lc.CABundle = strings.TrimSpace(*body.CABundle)
+	}
+	if body.LocalProxy != nil {
+		lc.LocalProxy = *body.LocalProxy
+	}
+	if err := lc.Validate(); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	cfg.Governor.LiteLLM = lc
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after litellm update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_litellm", auditDetail("section", "litellm"), "")
+
+	// Register the endpoint for model discovery (empty list unregisters)
+	// and re-apply routes for live agents already running on litellm.
+	var endpoints []string
+	if ep := lc.ResolveEndpoint(); ep != "" {
+		endpoints = []string{ep}
+	}
+	s.UpdateInferenceEndpoint("litellm", endpoints)
+	if s.deps.AgentMgr != nil {
+		s.deps.AgentMgr.RefreshInferenceRoutes("litellm")
+	}
+
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
 func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name    string `json:"name"`
@@ -3363,6 +3438,7 @@ func (s *Server) saveSidebarToDisk(sb interface{}) {
 func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	vllmModels := s.queryInferenceModels("vllm")
 	llmdModels := s.queryInferenceModels("llm-d")
+	litellmModels := s.queryInferenceModels("litellm")
 
 	jsonResponse(w, []map[string]interface{}{
 		{"id": "claude", "name": "Claude Code", "models": []string{"opus", "sonnet", "haiku"}},
@@ -3371,6 +3447,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		{"id": "goose", "name": "Goose", "models": []string{"default"}},
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
 		{"id": "llm-d", "name": "llm-d (self-hosted)", "models": llmdModels, "inference": true},
+		{"id": "litellm", "name": "LiteLLM (proxy)", "models": litellmModels, "inference": true},
 	})
 }
 
@@ -3386,7 +3463,7 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	models := fetchModelsFromEndpoints(endpoints)
+	models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
 	if len(models) == 0 {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
 	}
@@ -3396,16 +3473,29 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// inferenceAPIKey returns the bearer key used for a backend's model
+// discovery requests. Only litellm requires auth on /v1/models;
+// vllm/llm-d endpoints are unauthenticated.
+func (s *Server) inferenceAPIKey(backend string) string {
+	if backend != "litellm" || s.deps == nil || s.deps.Config == nil {
+		return ""
+	}
+	return s.deps.Config.Governor.LiteLLM.ResolveAPIKey()
+}
+
 func (s *Server) queryInferenceModels(backend string) []string {
 	if endpoints, ok := s.getInferenceEndpoints(backend); ok {
-		models := fetchModelsFromEndpoints(endpoints)
+		models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
 		if len(models) > 0 {
 			return models
 		}
 	}
 	envVar := "HIVE_VLLM_MODELS"
-	if backend == "llm-d" {
+	switch backend {
+	case "llm-d":
 		envVar = "HIVE_LLMD_MODELS"
+	case "litellm":
+		envVar = "HIVE_LITELLM_MODELS"
 	}
 	if val := os.Getenv(envVar); val != "" {
 		return inferenceModelsFromEnv(envVar, "")
@@ -3416,12 +3506,13 @@ func (s *Server) queryInferenceModels(backend string) []string {
 const inferenceModelQueryTimeout = 5 * time.Second
 
 // fetchModelsFromEndpoints queries /v1/models on each endpoint and returns
-// a deduplicated, combined list of all model IDs found.
-func fetchModelsFromEndpoints(endpoints []string) []string {
+// a deduplicated, combined list of all model IDs found. apiKey is optional
+// (litellm requires bearer auth; vllm/llm-d do not).
+func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
 	seen := make(map[string]bool)
 	var all []string
 	for _, ep := range endpoints {
-		models, err := fetchModelsFromEndpoint(ep)
+		models, err := fetchModelsFromEndpoint(ep, apiKey)
 		if err != nil {
 			continue
 		}
@@ -3435,10 +3526,17 @@ func fetchModelsFromEndpoints(endpoints []string) []string {
 	return all
 }
 
-func fetchModelsFromEndpoint(baseURL string) ([]string, error) {
+func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
 	client := &http.Client{Timeout: inferenceModelQueryTimeout}
-	resp, err := client.Get(modelsURL)
+	req, err := http.NewRequest("GET", modelsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

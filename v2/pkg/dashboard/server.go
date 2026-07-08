@@ -402,6 +402,14 @@ func (s *Server) buildInferenceBackends() []InferenceBackend {
 			ID: b.id, Name: b.name, Inference: true, Models: models,
 		})
 	}
+	// litellm has no in-cluster default — include it only when an endpoint
+	// is registered, so an unconfigured backend isn't SSE-pushed empty.
+	if endpoints, ok := s.getInferenceEndpoints("litellm"); ok && len(endpoints) > 0 {
+		backends = append(backends, InferenceBackend{
+			ID: "litellm", Name: "LiteLLM (proxy)", Inference: true,
+			Models: s.queryInferenceModels("litellm"),
+		})
+	}
 	return backends
 }
 

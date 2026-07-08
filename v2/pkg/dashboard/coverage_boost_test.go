@@ -900,7 +900,7 @@ func TestFetchModelsFromEndpoint_Success(t *testing.T) {
 	}))
 	defer mockSrv.Close()
 
-	models, err := fetchModelsFromEndpoint(mockSrv.URL)
+	models, err := fetchModelsFromEndpoint(mockSrv.URL, "")
 	if err != nil {
 		t.Fatalf("error: %v", err)
 	}
@@ -915,7 +915,7 @@ func TestFetchModelsFromEndpoint_ServerError(t *testing.T) {
 	}))
 	defer mockSrv.Close()
 
-	_, err := fetchModelsFromEndpoint(mockSrv.URL)
+	_, err := fetchModelsFromEndpoint(mockSrv.URL, "")
 	if err == nil {
 		t.Error("expected error for 500 response")
 	}
@@ -931,7 +931,7 @@ func TestFetchModelsFromEndpoints_Deduplicates(t *testing.T) {
 	}))
 	defer mockSrv.Close()
 
-	models := fetchModelsFromEndpoints([]string{mockSrv.URL, mockSrv.URL})
+	models := fetchModelsFromEndpoints([]string{mockSrv.URL, mockSrv.URL}, "")
 	if len(models) != 1 {
 		t.Errorf("expected 1 deduplicated model, got %d", len(models))
 	}
