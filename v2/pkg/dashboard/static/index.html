@@ -5916,9 +5916,9 @@ function burnAreaChart() {
           vx: 0, vy: 0,
           r: GRAPH_NODE_RADIUS_MIN + ratio * (GRAPH_NODE_RADIUS_MAX - GRAPH_NODE_RADIUS_MIN),
           color: layerColors[n.layer] || layerColors.personal,
-          label: (n.title || n.slug).length > GRAPH_LABEL_TRUNCATE_LEN
-            ? (n.title || n.slug).slice(0, GRAPH_LABEL_TRUNCATE_LEN) + '...'
-            : (n.title || n.slug),
+          label: (kbCleanFactTitle(n.title) || n.slug).length > GRAPH_LABEL_TRUNCATE_LEN
+            ? (kbCleanFactTitle(n.title) || n.slug).slice(0, GRAPH_LABEL_TRUNCATE_LEN) + '...'
+            : (kbCleanFactTitle(n.title) || n.slug),
           slug: n.slug,
           data: n,
           pinned: false,
@@ -6085,7 +6085,7 @@ function burnAreaChart() {
           const confPct = Math.round((d.confidence || 0) * 100);
           const tags = (d.tags || []).slice(0, 5).map(t => escapeHtml(t)).join(', ');
           const bodyText = d.body ? escapeHtml(d.body).replace(/\n/g, '<br>') : '';
-          tooltip.innerHTML = `<strong>${escapeHtml(d.title || d.slug)}</strong><br>` +
+          tooltip.innerHTML = `<strong>${escapeHtml(kbCleanFactTitle(d.title) || d.slug)}</strong><br>` +
             `<span style="color:var(--muted)">Type:</span> ${escapeHtml(d.type || 'pattern')} &middot; ` +
             `<span style="color:var(--muted)">Layer:</span> ${escapeHtml(d.layer || 'personal')} &middot; ` +
             `<span style="color:var(--muted)">Confidence:</span> ${confPct}%` +
@@ -6584,17 +6584,40 @@ function burnAreaChart() {
       }
     }
 
+    // Fact hygiene: synthesized/imported facts can carry raw markdown heading
+    // markers in titles ("### Configure build...") or be nothing but a
+    // horizontal-rule line ("--------"). Clean both at render time.
+    const KB_HEADING_MARKER_RE = /^\s*#{1,6}\s+/;   // leading markdown heading syntax
+    const KB_DIVIDER_ONLY_RE = /^[\s\-=_*]+$/;      // content made only of divider chars
+
+    function kbCleanFactTitle(t) {
+      return String(t || '').replace(KB_HEADING_MARKER_RE, '').trim();
+    }
+
+    function kbCleanFactPreview(b) {
+      return String(b || '').replace(KB_HEADING_MARKER_RE, '').trim();
+    }
+
+    function kbIsDividerOnlyFact(f) {
+      const title = String(f.title || '').trim();
+      const body = String(f.body || '').trim();
+      const titleJunk = title === '' || KB_DIVIDER_ONLY_RE.test(title);
+      const bodyJunk = body === '' || KB_DIVIDER_ONLY_RE.test(body);
+      return titleJunk && bodyJunk;
+    }
+
     function renderKnowledgeFacts() {
       const el = document.getElementById('kb-fact-list');
       if (!el) return;
 
-      if (_kbFacts.length === 0) {
+      const visibleFacts = _kbFacts.filter(f => !kbIsDividerOnlyFact(f));
+      if (visibleFacts.length === 0) {
         el.innerHTML = '<div class="kb-empty"><div class="kb-empty-icon">🔍</div>No facts found. Try a different search or layer.</div>';
         return;
       }
 
       let html = '';
-      for (const f of _kbFacts) {
+      for (const f of visibleFacts) {
         const conf = typeof f.confidence === 'number' ? f.confidence : 0;
         const confPct = Math.round(conf * 100);
         const typeClass = 'kb-type-' + (f.type || 'pattern');
@@ -6606,8 +6629,8 @@ function burnAreaChart() {
         html += `<div class="kb-fact-conf-bar"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
         html += '</div>';
         html += '<div class="kb-fact-body">';
-        html += `<div class="kb-fact-title">${escapeHtml(f.title || f.slug || 'Untitled')}</div>`;
-        html += `<div class="kb-fact-snippet">${escapeHtml(f.body || '')}</div>`;
+        html += `<div class="kb-fact-title">${escapeHtml(kbCleanFactTitle(f.title) || f.slug || 'Untitled')}</div>`;
+        html += `<div class="kb-fact-snippet">${escapeHtml(kbCleanFactPreview(f.body))}</div>`;
         html += '<div class="kb-fact-tags">';
         html += `<span class="kb-type-badge ${typeClass}">${escapeHtml(f.type || 'unknown')}</span>`;
         html += `<span class="kb-layer-badge ${layerClass}">${escapeHtml(f.layer || '')}</span>`;
@@ -6627,7 +6650,7 @@ function burnAreaChart() {
       const layerClass = 'kb-layer-' + (f.layer || 'project');
 
       let html = '<div class="kb-detail">';
-      html += `<div class="kb-detail-title">${escapeHtml(f.title || f.slug || 'Untitled')}</div>`;
+      html += `<div class="kb-detail-title">${escapeHtml(kbCleanFactTitle(f.title) || f.slug || 'Untitled')}</div>`;
       html += '<div style="display:flex;gap:6px;margin-bottom:10px">';
       html += `<span class="kb-type-badge ${typeClass}">${escapeHtml(f.type || 'unknown')}</span>`;
       html += `<span class="kb-layer-badge ${layerClass}">${escapeHtml(f.layer || '')}</span>`;
@@ -6658,7 +6681,7 @@ function burnAreaChart() {
       document.querySelectorAll('.kb-fact-item').forEach(item => item.classList.remove('selected'));
       const items = document.querySelectorAll('.kb-fact-item');
       for (const item of items) {
-        if (item.querySelector('.kb-fact-title')?.textContent === (f.title || f.slug)) {
+        if (item.querySelector('.kb-fact-title')?.textContent === (kbCleanFactTitle(f.title) || f.slug)) {
           item.classList.add('selected');
           break;
         }
