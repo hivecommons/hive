@@ -500,16 +500,16 @@ const bytesPerMB = 1024 * 1024
 const percentMultiplier = 100
 
 type ClusterHealthNode struct {
-	Name          string   `json:"name"`
-	CPUCores      int      `json:"cpu_cores"`
-	CPUUsedMillis int64    `json:"cpu_used_millicores"`
-	CPUPercent    int      `json:"cpu_percent"`
-	MemTotalMB    int64    `json:"mem_total_mb"`
-	MemUsedMB     int64    `json:"mem_used_mb"`
-	MemPercent    int      `json:"mem_percent"`
-	DiskPressure  bool     `json:"disk_pressure"`
-	Pods          int      `json:"pods"`
-	PodCapacity   int      `json:"pod_capacity"`
+	Name          string `json:"name"`
+	CPUCores      int    `json:"cpu_cores"`
+	CPUUsedMillis int64  `json:"cpu_used_millicores"`
+	CPUPercent    int    `json:"cpu_percent"`
+	MemTotalMB    int64  `json:"mem_total_mb"`
+	MemUsedMB     int64  `json:"mem_used_mb"`
+	MemPercent    int    `json:"mem_percent"`
+	DiskPressure  bool   `json:"disk_pressure"`
+	Pods          int    `json:"pods"`
+	PodCapacity   int    `json:"pod_capacity"`
 	// HiveCount is the number of distinct hive-hosted-* namespaces with a
 	// running pod on this node (namespaces, not pods, so a hive briefly
 	// running two pods during a rollout is counted once).
@@ -1351,19 +1351,20 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{
-		"hives":               result,
-		"saas_quota":          user.SaaSQuota,
-		"saas_used":           saasCount,
-		"is_admin":            isAdmin,
-		"latest_sha":          getLatestSHA(),
-		"latest_shas":         getLatestSHAs(),
-		"latest_sha_messages": getLatestSHAMessages(),
-		"commit_messages":     getCommitMessages(),
-		"hub_git_hash":        s.hubGitHash,
-		"hub_git_branch":      s.hubGitBranch,
-		"tracked_branches":    trackedBranches,
-		"hub_auto_upgrade":    isHubAutoUpgrade(),
-		"show_my_hives":       true,
+		"hives":                   result,
+		"saas_quota":              user.SaaSQuota,
+		"saas_used":               saasCount,
+		"is_admin":                isAdmin,
+		"latest_sha":              getLatestSHA(),
+		"latest_shas":             getDisplaySHAs(),
+		"latest_sha_messages":     getDisplaySHAMessages(),
+		"latest_sha_image_status": getImageStatuses(),
+		"commit_messages":         getCommitMessages(),
+		"hub_git_hash":            s.hubGitHash,
+		"hub_git_branch":          s.hubGitBranch,
+		"tracked_branches":        trackedBranches,
+		"hub_auto_upgrade":        isHubAutoUpgrade(),
+		"show_my_hives":           true,
 	}
 
 	myReq := loadProvisionRequest(username)
@@ -1438,13 +1439,14 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"authenticated":       true,
-		"show_my_hives":       true,
-		"hives":               hiveAccess,
-		"latest_sha":          getLatestSHA(),
-		"latest_shas":         getLatestSHAs(),
-		"latest_sha_messages": getLatestSHAMessages(),
-		"commit_messages":     getCommitMessages(),
+		"authenticated":           true,
+		"show_my_hives":           true,
+		"hives":                   hiveAccess,
+		"latest_sha":              getLatestSHA(),
+		"latest_shas":             getDisplaySHAs(),
+		"latest_sha_messages":     getDisplaySHAMessages(),
+		"latest_sha_image_status": getImageStatuses(),
+		"commit_messages":         getCommitMessages(),
 	})
 }
 
@@ -2157,9 +2159,30 @@ type branchSHAInfo struct {
 	Message string `json:"message"`
 }
 
+// Container-image build status values for a branch head commit, exposed to
+// the dashboard as latest_sha_image_status.
+const (
+	imageStatusReady    = "ready"    // image tag verified on GHCR
+	imageStatusBuilding = "building" // docker workflow queued/in progress, or image not yet visible
+	imageStatusFailed   = "failed"   // docker workflow completed unsuccessfully
+)
+
+// branchHeadInfo tracks the branch HEAD commit, which may be ahead of the
+// image-verified SHA in latestSHAByBranch while its container image builds.
+type branchHeadInfo struct {
+	SHA         string
+	Message     string
+	ImageStatus string
+}
+
 var (
-	latestSHAMu       sync.RWMutex
+	latestSHAMu sync.RWMutex
+	// latestSHAByBranch only ever advances to SHAs whose container image is
+	// verified pullable on GHCR — it drives upgrade targets.
 	latestSHAByBranch = map[string]branchSHAInfo{}
+	// headSHAByBranch advances to the branch HEAD immediately so the
+	// dashboard can show the newest commit with a build-status indicator.
+	headSHAByBranch = map[string]branchHeadInfo{}
 	// commitMsgBySHA caches the first line of each commit message, keyed by short SHA.
 	commitMsgBySHA = map[string]string{}
 )
@@ -2208,6 +2231,82 @@ func getCommitMessages() map[string]string {
 	cp := make(map[string]string, len(commitMsgBySHA))
 	for k, v := range commitMsgBySHA {
 		cp[k] = v
+	}
+	return cp
+}
+
+// getBranchHead returns the tracked HEAD info for a branch (zero value if
+// no head fetch has succeeded since startup).
+func getBranchHead(branch string) branchHeadInfo {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	return headSHAByBranch[branch]
+}
+
+// setBranchHead records the branch HEAD and its image build status, keeping
+// the previous commit message when the new fetch didn't include one.
+func setBranchHead(branch, sha, msg, status string) {
+	latestSHAMu.Lock()
+	defer latestSHAMu.Unlock()
+	if msg == "" && headSHAByBranch[branch].SHA == sha {
+		msg = headSHAByBranch[branch].Message
+	}
+	headSHAByBranch[branch] = branchHeadInfo{SHA: sha, Message: msg, ImageStatus: status}
+	if msg != "" {
+		commitMsgBySHA[sha] = msg
+	}
+}
+
+// getDisplaySHAs returns the branch→SHA map shown under "Latest images":
+// the branch HEAD when known (its image may still be building), falling back
+// to the last image-verified SHA (e.g. right after a hub restart, before the
+// first head fetch succeeds).
+func getDisplaySHAs() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(latestSHAByBranch)+len(headSHAByBranch))
+	for k, v := range latestSHAByBranch {
+		cp[k] = v.SHA
+	}
+	for k, v := range headSHAByBranch {
+		if v.SHA != "" {
+			cp[k] = v.SHA
+		}
+	}
+	return cp
+}
+
+// getDisplaySHAMessages returns branch→commit-message for the SHAs returned
+// by getDisplaySHAs.
+func getDisplaySHAMessages() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(latestSHAByBranch)+len(headSHAByBranch))
+	for k, v := range latestSHAByBranch {
+		cp[k] = v.Message
+	}
+	for k, v := range headSHAByBranch {
+		if v.SHA != "" {
+			cp[k] = v.Message
+		}
+	}
+	return cp
+}
+
+// getImageStatuses returns branch→image build status for the SHAs returned
+// by getDisplaySHAs. Branches known only from the image-verified cache are
+// ready by definition.
+func getImageStatuses() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(latestSHAByBranch)+len(headSHAByBranch))
+	for k := range latestSHAByBranch {
+		cp[k] = imageStatusReady
+	}
+	for k, v := range headSHAByBranch {
+		if v.SHA != "" && v.ImageStatus != "" {
+			cp[k] = v.ImageStatus
+		}
 	}
 	return cp
 }
@@ -2503,23 +2602,100 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		commitMsg = commitMsg[:idx]
 	}
 
-	// Step 2: verify that a container image with this SHA tag exists on GHCR
-	if !ghcrTagExists(client, candidateSHA, logger) {
-		logger.Info("SHA poll: container image not yet on GHCR", "branch", branch, "sha", candidateSHA)
+	// Step 2: verify that a container image with this SHA tag exists on GHCR.
+	// The image-verified cache (latestSHAByBranch) only advances once it does;
+	// the head cache advances immediately with a build-status indicator so the
+	// dashboard can show the new commit while its image builds.
+	prevHead := getBranchHead(branch)
+	headChanged := prevHead.SHA != candidateSHA
+
+	if candidateSHA == getLatestSHAForBranch(branch) {
+		// Head unchanged since its image was verified — nothing to re-check.
+		setBranchHead(branch, candidateSHA, commitMsg, imageStatusReady)
 		return
 	}
 
-	// If commit message is empty (rate-limited or missing), fetch it separately
-	// from the commits API using the full SHA (one-shot, only on new SHAs).
-	if commitMsg == "" {
-		commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
+	if ghcrTagExists(client, candidateSHA, logger) {
+		// If commit message is empty (rate-limited or missing), fetch it separately
+		// from the commits API using the full SHA (one-shot, only on new SHAs).
+		if commitMsg == "" {
+			commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
+		}
+		latestSHAMu.Lock()
+		latestSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
+		commitMsgBySHA[candidateSHA] = commitMsg
+		latestSHAMu.Unlock()
+		setBranchHead(branch, candidateSHA, commitMsg, imageStatusReady)
+		logger.Info("SHA poll: latest image verified on GHCR", "branch", branch, "sha", candidateSHA)
+		return
 	}
 
-	latestSHAMu.Lock()
-	latestSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
-	commitMsgBySHA[candidateSHA] = commitMsg
-	latestSHAMu.Unlock()
-	logger.Info("SHA poll: latest image verified on GHCR", "branch", branch, "sha", candidateSHA)
+	// Image not on GHCR yet — ask the docker workflow whether the build for
+	// this head commit is still running or has failed.
+	status := fetchImageBuildStatus(client, branchResult.Commit.SHA, logger)
+	if status == "" {
+		// Actions API unavailable (rate-limited/network): keep the last-known
+		// status for this head; a brand-new head with no image is presumed
+		// building. Never invent "failed" from an API error.
+		status = prevHead.ImageStatus
+		if headChanged || status == "" || status == imageStatusReady {
+			status = imageStatusBuilding
+		}
+	}
+	if commitMsg == "" && headChanged {
+		commitMsg = fetchCommitMessage(client, branchResult.Commit.SHA, logger)
+	}
+	setBranchHead(branch, candidateSHA, commitMsg, status)
+	logger.Info("SHA poll: container image not yet on GHCR", "branch", branch, "sha", candidateSHA, "image_status", status)
+}
+
+// dockerWorkflowFile is the workflow that builds and pushes the container
+// images (ghcr.io/kubestellar/hive:<branch>-latest and :<short-sha>) on
+// every push to a tracked branch.
+const dockerWorkflowFile = "docker.yml"
+
+// fetchImageBuildStatus queries the docker workflow run for a specific head
+// commit and maps it to an image build status. Returns "" when the API is
+// unavailable so the caller can keep the last-known status instead of
+// flapping ready/building on transient errors.
+func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Logger) string {
+	runsURL := fmt.Sprintf("https://api.github.com/repos/kubestellar/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", dockerWorkflowFile, fullSHA)
+	req, _ := http.NewRequest("GET", runsURL, nil)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Warn("SHA poll: workflow runs request failed", "sha", fullSHA, "error", err)
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("SHA poll: workflow runs non-200", "sha", fullSHA, "status", resp.StatusCode)
+		return ""
+	}
+	var result struct {
+		WorkflowRuns []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"workflow_runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		logger.Warn("SHA poll: workflow runs decode failed", "sha", fullSHA, "error", err)
+		return ""
+	}
+	if len(result.WorkflowRuns) == 0 {
+		// The push event may not have spawned the workflow run yet.
+		return imageStatusBuilding
+	}
+	run := result.WorkflowRuns[0]
+	if run.Status != "completed" {
+		return imageStatusBuilding // queued, in_progress, waiting, pending
+	}
+	if run.Conclusion == "success" {
+		// Workflow finished but the manifest isn't visible on GHCR yet —
+		// treat as still publishing; the GHCR check flips it to ready.
+		return imageStatusBuilding
+	}
+	return imageStatusFailed // failure, cancelled, timed_out, startup_failure
 }
 
 // fetchCommitMessage fetches the first line of a commit message from the GitHub API.
@@ -3866,6 +4042,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var _latestSHA = '';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
+    var _latestImageStatus = {};
     var _trackedBranchesList = [];
     var _clusterList = [];
     var _commitMessages = {};
@@ -3903,6 +4080,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.latest_sha_messages) _latestSHAMessages = data.latest_sha_messages;
+        if (data.latest_sha_image_status) _latestImageStatus = data.latest_sha_image_status;
         if (data.commit_messages) _commitMessages = data.commit_messages;
         if (data.hub_auto_upgrade !== undefined) _hubAutoUpgrade = data.hub_auto_upgrade;
         var shaEl = document.getElementById('latest-image-sha');
@@ -3913,7 +4091,14 @@ const dashboardHTML = `<!DOCTYPE html>
             for (var bi = 0; bi < branches.length; bi++) {
               var br = branches[bi];
               var brMsg = _latestSHAMessages[br] || '';
-              lines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(br) + '</span><span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHAs[br]) + '</span>' + (brMsg ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(brMsg) + '</span>' : '') + '</div>';
+              var brStatus = _latestImageStatus[br] || 'ready';
+              var brStatusHTML = '';
+              if (brStatus === 'building') {
+                brStatusHTML = '<span style="display:inline-block;flex:none;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite" title="Container image for this commit is still building"></span><span style="font-size:0.65rem;color:var(--muted);opacity:0.7;white-space:nowrap">building image…</span>';
+              } else if (brStatus === 'failed') {
+                brStatusHTML = '<span style="color:var(--red);font-size:0.7rem;cursor:help" title="Image build failed for this commit — upgrades keep using the previous image">✗</span>';
+              }
+              lines += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px"><span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(br) + '</span><span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHAs[br]) + '</span>' + (brMsg ? '<span style="font-size:0.7rem;color:var(--muted);opacity:0.7">: ' + esc(brMsg) + '</span>' : '') + brStatusHTML + '</div>';
             }
           } else if (_latestSHA) {
             lines = '<span style="font-family:monospace;color:var(--muted)">' + esc(_latestSHA) + '</span>';
@@ -4126,6 +4311,8 @@ const dashboardHTML = `<!DOCTYPE html>
             (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent && !latestUnknown);
           if (_upgradingHives[h.id] && _upgradingHives[h.id] !== 'switching' && sha !== _upgradingHives[h.id]) delete _upgradingHives[h.id];
           if (isCurrent && h.upgrading && !isSwitching) { h.upgrading = false; }
+          var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
+          var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the previous image)' : '';
           var status = latestUnknown
             ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
             : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="behind latest ' + esc(branchLatest) + '">↑</span>';
@@ -4135,9 +4322,9 @@ const dashboardHTML = `<!DOCTYPE html>
             var progressTitle = isSwitching ? 'Rolling out ' + esc(h.upgradeTarget || '') + ' — the pill updates when the hive reports the new branch' : 'Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?');
             upgradeIcon = ' <span title="' + progressTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
-            upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">queued</span>';
+            upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint) + '" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">queued</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
-            upgradeIcon = ' <button id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Current: ' + esc(sha) + ' → Latest: ' + esc(branchLatest) + '" style="padding:3px 10px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
+            upgradeIcon = ' <button id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Current: ' + esc(sha) + ' → Latest: ' + esc(branchLatest) + esc(buildingHint) + '" style="padding:3px 10px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
           } else if (latestUnknown && isHosted && h.role === 'owner') {
             upgradeIcon = ' <button disabled title="Waiting for latest version…" style="padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
           }

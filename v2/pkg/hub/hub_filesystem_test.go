@@ -1319,3 +1319,63 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 		t.Errorf("corrupt file should restore nothing, got v2 = %q", got)
 	}
 }
+
+// TestBranchHeadImageStatus verifies the display/head cache semantics: the
+// dashboard shows the branch HEAD with its image build status while the
+// image-verified cache (upgrade targets) stays on the last pullable SHA.
+func TestBranchHeadImageStatus(t *testing.T) {
+	// Snapshot and clear global cache state; restore after the test.
+	latestSHAMu.Lock()
+	savedBranches := latestSHAByBranch
+	savedHeads := headSHAByBranch
+	savedMsgs := commitMsgBySHA
+	latestSHAByBranch = map[string]branchSHAInfo{
+		"v2": {SHA: "aaa1111", Message: "old ready commit"},
+	}
+	headSHAByBranch = map[string]branchHeadInfo{}
+	commitMsgBySHA = map[string]string{}
+	latestSHAMu.Unlock()
+	defer func() {
+		latestSHAMu.Lock()
+		latestSHAByBranch = savedBranches
+		headSHAByBranch = savedHeads
+		commitMsgBySHA = savedMsgs
+		latestSHAMu.Unlock()
+	}()
+
+	// No head fetched yet (e.g. right after restart): display falls back to
+	// the image-verified SHA, which is ready by definition.
+	if got := getDisplaySHAs()["v2"]; got != "aaa1111" {
+		t.Errorf("display SHA without head = %q, want aaa1111", got)
+	}
+	if got := getImageStatuses()["v2"]; got != imageStatusReady {
+		t.Errorf("image status without head = %q, want ready", got)
+	}
+
+	// A new head lands and its image is still building: display advances,
+	// upgrade target does not.
+	setBranchHead("v2", "bbb2222", "new commit", imageStatusBuilding)
+	if got := getDisplaySHAs()["v2"]; got != "bbb2222" {
+		t.Errorf("display SHA with building head = %q, want bbb2222", got)
+	}
+	if got := getDisplaySHAMessages()["v2"]; got != "new commit" {
+		t.Errorf("display message = %q, want 'new commit'", got)
+	}
+	if got := getImageStatuses()["v2"]; got != imageStatusBuilding {
+		t.Errorf("image status = %q, want building", got)
+	}
+	if got := getLatestSHAForBranch("v2"); got != "aaa1111" {
+		t.Errorf("upgrade-target SHA advanced past verified image: got %q, want aaa1111", got)
+	}
+
+	// A later poll with a rate-limited commit message keeps the known one.
+	setBranchHead("v2", "bbb2222", "", imageStatusBuilding)
+	if got := getDisplaySHAMessages()["v2"]; got != "new commit" {
+		t.Errorf("empty message overwrote cached one: got %q, want 'new commit'", got)
+	}
+
+	// Commit messages are indexed by SHA for per-hive tooltips.
+	if got := getCommitMessages()["bbb2222"]; got != "new commit" {
+		t.Errorf("commitMsgBySHA not populated for head: got %q", got)
+	}
+}
