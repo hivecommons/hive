@@ -9009,25 +9009,20 @@ function burnAreaChart() {
       } catch (e) { /* config unreachable — fall through to the prompt */ }
       return new Promise(resolve => {
         const overlay = document.createElement('div');
-        overlay.className = 'hive-dialog-overlay';
-        overlay.innerHTML = `<div class="hive-dialog">
-          <div class="hive-dialog-title">Configure LiteLLM</div>
-          <div class="hive-dialog-body">
-            <p style="margin:0 0 10px">No LiteLLM endpoint is configured yet. Enter the proxy base URL (editable later under Governor Config → LiteLLM).</p>
-            <div class="config-field">
-              <label>Endpoint URL</label>
-              <input type="text" id="litellm-setup-endpoint" placeholder="https://litellm.example.com" style="width:100%">
-            </div>
-            <div class="config-field">
-              <label>API Key Env Name (optional — the key VALUE is never stored)</label>
-              <input type="text" id="litellm-setup-keyenv" placeholder="HIVE_LITELLM_API_KEY" style="width:100%">
-            </div>
-          </div>
-          <div class="hive-dialog-buttons">
-            <button class="hive-dialog-btn cancel">Cancel</button>
-            <button class="hive-dialog-btn primary">Save</button>
+        overlay.className = 'gh-auth-overlay';
+        overlay.innerHTML = `<div class="gh-auth-modal" style="max-width:480px;text-align:left">
+          <h3 style="color:#d97706;text-align:center;margin:0 0 10px">Configure LiteLLM</h3>
+          <p style="color:#6b7280;font-size:0.85rem;line-height:1.5;margin:0 0 14px">No LiteLLM endpoint is configured yet. Enter the proxy base URL (editable later under Governor Config → LiteLLM).</p>
+          <label style="display:block;font-size:0.72rem;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Endpoint URL</label>
+          <input type="text" id="litellm-setup-endpoint" placeholder="https://litellm.example.com" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9rem;margin:0 0 12px;box-sizing:border-box">
+          <label style="display:block;font-size:0.72rem;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">API Key Env Name <span style="font-weight:400;text-transform:none">(optional — the key value is never stored)</span></label>
+          <input type="text" id="litellm-setup-keyenv" placeholder="HIVE_LITELLM_API_KEY" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;font-size:0.9rem;margin:0 0 14px;box-sizing:border-box">
+          <div style="display:flex;gap:8px;justify-content:center">
+            <button class="primary" style="background:#d97706;color:#fff;border:none;padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer">Save</button>
+            <button class="gh-cancel cancel" style="margin-top:0">Cancel</button>
           </div></div>`;
         document.body.appendChild(overlay);
+        overlay.style.display = 'flex';
         const close = (val) => { overlay.remove(); resolve(val); };
         overlay.querySelector('.cancel').onclick = () => close(false);
         overlay.onclick = (e) => { if (e.target === overlay) close(false); };
