@@ -528,6 +528,12 @@ type ClusterHealthSummary struct {
 	TotalMemGB    int `json:"total_mem_gb"`
 	TotalMemPct   int `json:"total_mem_percent"`
 	HiveCount     int `json:"hive_count"`
+	// HiveCapacityRemaining estimates how many MORE hives the cluster can
+	// hold: per Ready, schedulable node, the per-hive request footprint
+	// (see hive_capacity.go) bin-packed into allocatable-minus-requested
+	// capacity, summed across nodes. Pointer so it is omitted entirely when
+	// pod request data was unavailable (nil = no data, 0 = cluster full).
+	HiveCapacityRemaining *int `json:"hive_capacity_remaining,omitempty"`
 }
 
 // GPUSummary reports aggregate GPU counts for a cluster.
@@ -806,6 +812,9 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 			Metadata struct {
 				Name string `json:"name"`
 			} `json:"metadata"`
+			Spec struct {
+				Unschedulable bool `json:"unschedulable"`
+			} `json:"spec"`
 			Status struct {
 				Allocatable map[string]string `json:"allocatable"`
 				Capacity    map[string]string `json:"capacity"`
@@ -826,6 +835,8 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 		memAllocatable int64 // bytes
 		podCapacity    int
 		diskPressure   bool
+		ready          bool
+		unschedulable  bool // cordoned; excluded from hive capacity estimates
 		conditions     []string
 		gpuCapacity    int
 		gpuAllocatable int
@@ -834,11 +845,14 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 	var totalGPUCapacity, totalGPUAllocatable int
 	for _, item := range nodesJSON.Items {
 		ni := &nodeInfo{}
+		// Allocatable (not raw capacity) is what the scheduler can place
+		// pods against, so hive capacity math below uses these values.
 		ni.cpuAllocatable = parseK8sCPU(item.Status.Allocatable["cpu"])
 		ni.memAllocatable = parseK8sMemory(item.Status.Allocatable["memory"])
 		ni.podCapacity = parseInt(item.Status.Capacity["pods"])
 		ni.gpuCapacity = parseInt(item.Status.Capacity[gpuResourceKey])
 		ni.gpuAllocatable = parseInt(item.Status.Allocatable[gpuResourceKey])
+		ni.unschedulable = item.Spec.Unschedulable
 		totalGPUCapacity += ni.gpuCapacity
 		totalGPUAllocatable += ni.gpuAllocatable
 		for _, cond := range item.Status.Conditions {
@@ -846,6 +860,7 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 				ni.diskPressure = true
 			}
 			if cond.Type == "Ready" && cond.Status == "True" {
+				ni.ready = true
 				ni.conditions = append(ni.conditions, "Ready")
 			} else if cond.Type == "Ready" && cond.Status != "True" {
 				ni.conditions = append(ni.conditions, "NotReady")
@@ -904,7 +919,12 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 		})
 	}
 
-	// Count running pods per node.
+	// Count running pods per node and sum their container resource REQUESTS
+	// (requests, not usage — that is what the scheduler bin-packs against).
+	// Listing only Running pods slightly undercounts requests (Pending pods
+	// already assigned to a node are missed), so the capacity estimate below
+	// can be marginally optimistic.
+	var cpuRequestedPerNode, memRequestedPerNode map[string]int64
 	podOut, _ := kubectlForCluster(cluster, "get", "pods", "--all-namespaces", "--field-selector=status.phase=Running", "-o", "json").Output()
 	if len(podOut) > 0 {
 		var podsJSON struct {
@@ -913,17 +933,28 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 					Namespace string `json:"namespace"`
 				} `json:"metadata"`
 				Spec struct {
-					NodeName string `json:"nodeName"`
+					NodeName   string `json:"nodeName"`
+					Containers []struct {
+						Resources struct {
+							Requests map[string]string `json:"requests"`
+						} `json:"resources"`
+					} `json:"containers"`
 				} `json:"spec"`
 			} `json:"items"`
 		}
 		if json.Unmarshal(podOut, &podsJSON) == nil {
 			podCounts := make(map[string]int)
+			cpuRequestedPerNode = make(map[string]int64)
+			memRequestedPerNode = make(map[string]int64)
 			// hiveNamespacesPerNode tracks distinct hive-hosted-* namespaces per
 			// node so each hive is counted once even with multiple pods.
 			hiveNamespacesPerNode := make(map[string]map[string]bool)
 			for _, p := range podsJSON.Items {
 				podCounts[p.Spec.NodeName]++
+				for _, c := range p.Spec.Containers {
+					cpuRequestedPerNode[p.Spec.NodeName] += parseK8sCPU(c.Resources.Requests["cpu"])
+					memRequestedPerNode[p.Spec.NodeName] += parseK8sMemory(c.Resources.Requests["memory"])
+				}
 				if strings.HasPrefix(p.Metadata.Namespace, hiveHostedNamespacePrefix) {
 					if hiveNamespacesPerNode[p.Spec.NodeName] == nil {
 						hiveNamespacesPerNode[p.Spec.NodeName] = make(map[string]bool)
@@ -936,6 +967,21 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 				nodes[i].HiveCount = len(hiveNamespacesPerNode[nodes[i].Name])
 			}
 		}
+	}
+
+	// Estimate remaining hive capacity: bin-pack the per-hive request
+	// footprint into each Ready, schedulable node's free (allocatable minus
+	// requested) capacity. Only computed when the pod listing above parsed,
+	// since without per-node requests the estimate would be meaningless.
+	var hiveCapacityRemaining *int
+	if cpuRequestedPerNode != nil {
+		var totalSlots int64
+		for name, ni := range nodeMap {
+			totalSlots += hiveSlotsForNode(ni.cpuAllocatable, ni.memAllocatable,
+				cpuRequestedPerNode[name], memRequestedPerNode[name], ni.ready, ni.unschedulable)
+		}
+		slots := int(totalSlots)
+		hiveCapacityRemaining = &slots
 	}
 
 	// Build summary.
@@ -967,12 +1013,13 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 	result := PerClusterHealth{
 		Nodes: nodes,
 		Summary: ClusterHealthSummary{
-			TotalNodes:    len(nodes),
-			TotalCPUCores: totalCPUCores,
-			TotalCPUPct:   totalCPUPct,
-			TotalMemGB:    totalMemGB,
-			TotalMemPct:   totalMemPct,
-			HiveCount:     hiveCount,
+			TotalNodes:            len(nodes),
+			TotalCPUCores:         totalCPUCores,
+			TotalCPUPct:           totalCPUPct,
+			TotalMemGB:            totalMemGB,
+			TotalMemPct:           totalMemPct,
+			HiveCount:             hiveCount,
+			HiveCapacityRemaining: hiveCapacityRemaining,
 		},
 		HiveCount: hiveCount,
 	}
