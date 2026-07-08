@@ -5,94 +5,386 @@
   <meta charset="UTF-8">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Learn — Hive Hub</title>
+  <meta property="og:title" content="Learn — how Hive works">
+  <meta property="og:description" content="The concepts behind Hive: the ACMM autonomy framework, the agent fleet, the governor, and the deterministic pipeline that gates every change.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hive.kubestellar.io/learn">
+  <meta name="description" content="Learn how Hive works — the ACMM autonomy framework, the agent fleet, the governor, and the deterministic pipeline that gates every change.">
+  <title>Learn — how Hive works</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0f; color: #e6edf3; }
-    .nav { position: fixed; top: 0; width: 100%; z-index: 50; background: rgba(10,10,15,0.85); backdrop-filter: blur(12px); border-bottom: 1px solid #1e1e2e; }
-    .nav-inner { max-width: 1200px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
-    .nav-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: #e6edf3; text-decoration: none; }
-    .nav-links { display: flex; align-items: center; gap: 20px; font-size: 0.85rem; }
-    .nav-links a { color: #8b949e; text-decoration: none; }
-    .nav-links a:hover { color: #e6edf3; }
-    .nav-login { padding: 6px 14px; background: #12121a; border: 1px solid #1e1e2e; border-radius: 8px; color: #8b949e; font-size: 0.8rem; }
-    .nav-login:hover { border-color: #f59e0b; color: #e6edf3; }
-    .content { max-width: 900px; margin: 0 auto; padding: 80px 24px 48px; }
-    h1 { font-size: 2.5rem; font-weight: 800; margin-bottom: 24px; background: linear-gradient(135deg, #f59e0b, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    h2 { font-size: 1.4rem; font-weight: 700; margin: 32px 0 12px; color: #e6edf3; }
-    p { color: #8b949e; line-height: 1.7; margin-bottom: 16px; }
-    a { color: #f59e0b; }
-    ul { color: #8b949e; line-height: 1.8; margin: 0 0 16px 24px; }
-    li { margin-bottom: 4px; }
-    strong { color: #e6edf3; }
-    .card { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; padding: 24px; margin-bottom: 16px; }
-    .card h3 { font-size: 1.1rem; margin-bottom: 8px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-top: 16px; }
-    code { background: #1e1e2e; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #fbbf24; }
+    :root {
+      color-scheme: dark;
+      --bg: #080b0f;
+      --bg-soft: #0d1218;
+      --panel: #121922;
+      --panel-strong: #17212d;
+      --text: #f6f8fb;
+      --muted: #a8b3c2;
+      --line: #263545;
+      --amber: #f4c75f;
+      --green: #74df9a;
+      --blue: #80bfff;
+      --red: #ff7e7e;
+      --purple: #b482ff;
+      --shadow: 0 24px 80px #0006;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background:
+        radial-gradient(circle at 18% 8%, #80bfff2e, transparent 24rem),
+        radial-gradient(circle at 86% 4%, #f4c75f29, transparent 20rem),
+        linear-gradient(180deg, #090d12 0%, var(--bg) 48%, #0a0e13 100%);
+      min-width: 320px;
+      color: var(--text);
+      margin: 0;
+    }
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Header ── */
+    .site-header {
+      z-index: 10;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      background: #080b0fc7;
+      border-bottom: 1px solid #ffffff14;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 1rem clamp(1rem, 4vw, 4.5rem);
+      position: sticky;
+      top: 0;
+    }
+    .brand, .header-link, nav { align-items: center; display: flex; }
+    .brand { letter-spacing: 0; gap: .75rem; font-weight: 800; }
+    .brand-mark {
+      width: 2.5rem; height: 2.5rem;
+      color: var(--amber);
+      background: linear-gradient(145deg, #f4c75f2e, #80bfff1a);
+      border: 1px solid #f4c75f6b;
+      border-radius: .65rem;
+      place-items: center;
+      font-size: 1.2rem;
+      display: grid;
+    }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
+    nav a:hover, .header-link:hover { color: var(--text); }
+    .header-link {
+      border: 1px solid var(--line);
+      width: fit-content;
+      color: var(--text);
+      border-radius: .55rem;
+      justify-self: end;
+      padding: .72rem 1rem;
+      font-weight: 700;
+    }
+
+    /* ── Utility ── */
+    .section-pad { padding: clamp(3rem, 6vw, 5.5rem) clamp(1rem, 4vw, 4.5rem); max-width: 1200px; margin: 0 auto; }
+    .section-label {
+      color: var(--amber);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin: 0 0 1rem;
+      font-size: .82rem;
+      font-weight: 900;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      letter-spacing: 0;
+      max-width: 20ch;
+      margin-bottom: 1.3rem;
+      font-size: clamp(2.6rem, 6vw, 5rem);
+      line-height: .95;
+    }
+    h2 {
+      letter-spacing: 0;
+      margin-bottom: 1rem;
+      font-size: clamp(1.8rem, 3.5vw, 3rem);
+      line-height: 1;
+    }
+    h3 { font-size: 1.2rem; line-height: 1.2; }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
+    .lede { color: #d7deea; max-width: 44rem; font-size: clamp(1.05rem, 1.3vw, 1.22rem); }
+    .section-heading { max-width: 54rem; margin-bottom: 2.5rem; }
+    code { background: #17212d; border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: var(--amber); }
+
+    /* ── Buttons ── */
+    .button {
+      border-radius: .55rem;
+      justify-content: center;
+      align-items: center;
+      min-height: 3rem;
+      padding: .85rem 1.2rem;
+      font-weight: 800;
+      display: inline-flex;
+      transition: all .2s;
+    }
+    .button.primary { background: var(--amber); color: #17110a; }
+    .button.primary:hover { background: #f8d87a; }
+    .button.tertiary { border: 1px solid var(--line); color: #d7deea; }
+    .button.tertiary:hover { border-color: var(--amber); color: var(--text); }
+
+    /* ── ACMM ladder ── */
+    .acmm-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+    }
+    .acmm-card {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      min-height: 9rem;
+      padding: 1.3rem;
+    }
+    .acmm-card .level {
+      display: inline-block;
+      padding: 2px 12px;
+      border-radius: 9999px;
+      font-size: .74rem;
+      font-weight: 900;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      margin-bottom: .7rem;
+    }
+    .acmm-card h3 { margin-bottom: .45rem; }
+    .acmm-card p { font-size: .9rem; margin-bottom: 0; }
+    .lv-1 { background: #80bfff26; color: var(--blue);  border: 1px solid #80bfff4d; }
+    .lv-2 { background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d; }
+    .lv-3 { background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d; }
+    .lv-4 { background: #f4c75f26; color: var(--amber); border: 1px solid #f4c75f4d; }
+    .lv-5 { background: #ff7e7e26; color: var(--red);   border: 1px solid #ff7e7e4d; }
+    .lv-6 { background: #b482ff26; color: var(--purple);border: 1px solid #b482ff4d; }
+
+    /* ── Agent grid ── */
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+      gap: .8rem;
+    }
+    .agent-card {
+      border: 1px solid var(--line);
+      background: var(--bg-soft);
+      border-radius: .75rem;
+      padding: 1.1rem;
+    }
+    .agent-card span { color: var(--amber); font-weight: 900; display: block; margin-bottom: .35rem; }
+    .agent-card p { font-size: .86rem; margin-bottom: 0; }
+
+    /* ── Feature list ── */
+    .feature-list {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+    }
+    .feature-list li {
+      color: #d0e0f0;
+      background: #80bfff0a;
+      border: 1px solid #80bfff32;
+      border-radius: .85rem;
+      min-height: 7rem;
+      padding: 1.15rem;
+      line-height: 1.5;
+      font-size: .95rem;
+    }
+    .feature-list li strong { display: block; color: var(--text); margin-bottom: .35rem; font-size: 1.02rem; }
+
+    /* ── Governor rail ── */
+    .loop { background: linear-gradient(#0c121900, #121922bf 30%, #12192200); }
+    .loop-rail {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(10rem, 1fr));
+      gap: .75rem;
+      padding-bottom: 1rem;
+      overflow-x: auto;
+    }
+    .loop-step {
+      border: 1px solid var(--line);
+      background: var(--bg-soft);
+      border-radius: .7rem;
+      gap: .8rem;
+      min-height: 7rem;
+      padding: 1rem;
+      display: grid;
+    }
+    .loop-step span { color: var(--amber); font-weight: 900; }
+    .loop-step p { font-size: .86rem; margin-bottom: 0; }
+
+    /* ── Link grid (resources) ── */
+    .link-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+      gap: .8rem;
+    }
+    .link-grid a {
+      border: 1px solid var(--line);
+      background: var(--bg-soft);
+      color: #dbe8f7;
+      border-radius: .75rem;
+      min-height: 5.5rem;
+      padding: 1rem;
+      font-weight: 800;
+      display: block;
+    }
+    .link-grid a:hover { color: var(--amber); border-color: #f4c75f9e; }
+    .link-grid a p { font-size: .82rem; margin: .4rem 0 0; }
+
+    /* ── Footer ── */
+    .footer { border-top: 1px solid var(--line); padding: 2rem clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: .82rem; color: var(--muted); }
+    .footer-links { display: flex; justify-content: center; gap: 1.5rem; margin-bottom: .8rem; }
+    .footer-links a { color: var(--muted); }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ── Responsive ── */
+    @media (max-width: 1100px) {
+      .acmm-grid, .feature-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 720px) {
+      .site-header { grid-template-columns: 1fr; position: static; }
+      nav { flex-wrap: wrap; gap: .85rem; }
+      .header-link { justify-self: start; }
+      .acmm-grid, .feature-list { grid-template-columns: 1fr; }
+      .loop-rail { grid-template-columns: repeat(4, minmax(9rem, 1fr)); }
+    }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-inner">
-      <a href="/" class="nav-brand"><span>🐝</span> Hive Hub <span onclick="window.open(&#39;https://github.com/kubestellar/hive&#39;,&#39;_blank&#39;)" title="Source Code" style="opacity:0.6;margin-left:2px;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span></a>
-      <div class="nav-links">
-        <a href="/">Hives</a>
-        <a href="/learn">Learn</a>
-        <a href="/get-started">Get Started</a>
-        <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
-        <span id="nav-user" style="display:none"></span>
-        <a href="/login" class="nav-login" id="nav-login">Login</a>
-        <a href="#" class="nav-login" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
+
+  <!-- ── Header ── -->
+  <header class="site-header">
+    <a href="/" class="brand">
+      <span class="brand-mark">🐝</span>
+      <span>Hive</span>
+    </a>
+    <nav>
+      <a href="/">Hives</a>
+      <a href="/#how-it-works">How it works</a>
+      <a href="/learn">Learn</a>
+      <a href="/get-started">Get Started</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
+      <span id="nav-user" style="display:none"></span>
+    </nav>
+    <a href="/login" class="header-link" id="nav-login">Login with GitHub</a>
+    <a href="#" class="header-link" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
+  </header>
+
+  <main>
+
+    <!-- ── Intro ── -->
+    <section class="section-pad">
+      <p class="section-label">Learn</p>
+      <h1>How Hive works</h1>
+      <p class="lede">Hive is an open source AI agent orchestration system. A fleet of specialized agents autonomously maintains software repositories &mdash; open source or private &mdash; triaging issues, writing fixes, opening PRs, and merging on green CI. A governor dynamically adjusts agent pace based on issue queue depth, and a deterministic pipeline gates every change.</p>
+      <div style="margin-top:1.6rem;display:flex;gap:.8rem;flex-wrap:wrap">
+        <a class="button primary" href="/get-started">Request a Hive</a>
+        <a class="button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
       </div>
+    </section>
+
+    <!-- ── ACMM ── -->
+    <section class="section-pad" id="acmm">
+      <div class="section-heading">
+        <p class="section-label">Autonomy framework</p>
+        <h2>The ACMM ladder</h2>
+        <p>The <strong style="color:var(--text)">AI-native Codebase Maturity Model (ACMM)</strong> defines six levels of AI agent autonomy, from advisory-only to fully autonomous. Each level controls which agents are active and what actions they can take. Start conservative, climb when you&rsquo;re ready.</p>
+      </div>
+      <div class="acmm-grid">
+        <div class="acmm-card"><span class="level lv-1">L1 &mdash; Idea</span><h3>Advisory only</h3><p>Agents analyze but don&rsquo;t act. Beads and heartbeat logs only.</p></div>
+        <div class="acmm-card"><span class="level lv-2">L2 &mdash; Measured</span><h3>Issues, no PRs</h3><p>Agents can open issues. Quality gates begin.</p></div>
+        <div class="acmm-card"><span class="level lv-3">L3 &mdash; CI/CD</span><h3>Hold-gated PRs</h3><p>Agents open hold-gated PRs. CI must pass. Human approval required.</p></div>
+        <div class="acmm-card"><span class="level lv-4">L4 &mdash; Autonomous PR</span><h3>Merge on green</h3><p>Agents open and merge PRs on green CI. Hold labels for safety.</p></div>
+        <div class="acmm-card"><span class="level lv-5">L5 &mdash; Self-Governing</span><h3>Budget-aware</h3><p>Full autonomy with budget controls. Governor manages pace and cost.</p></div>
+        <div class="acmm-card"><span class="level lv-6">L6 &mdash; Fully Autonomous</span><h3>Multi-loop</h3><p>Multi-loop orchestration. Outreach, community engagement. Highest trust.</p></div>
+      </div>
+    </section>
+
+    <!-- ── Governor ── -->
+    <section class="loop">
+      <div class="section-pad">
+        <div class="section-heading">
+          <p class="section-label">The governor</p>
+          <h2>Pace that follows your backlog</h2>
+          <p>The governor senses queue depth and switches between four modes &mdash; <code>idle</code>, <code>quiet</code>, <code>busy</code>, and <code>surge</code> &mdash; each with its own per-agent cadences. A quiet repo costs almost nothing; a flooded queue gets the full fleet. Every change still passes the same deterministic gates.</p>
+        </div>
+        <div class="loop-rail">
+          <div class="loop-step"><span>idle</span><h3>Watchful</h3><p>Empty queue. Agents sleep; sensing continues.</p></div>
+          <div class="loop-step"><span>quiet</span><h3>Steady</h3><p>A few open issues. Slow, deliberate cadences.</p></div>
+          <div class="loop-step"><span>busy</span><h3>Working</h3><p>Queue is filling. Agents tighten their loops.</p></div>
+          <div class="loop-step"><span>surge</span><h3>All hands</h3><p>Critical backlog. Maximum cadence until drained.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Agents ── -->
+    <section class="section-pad" id="agents">
+      <div class="section-heading">
+        <p class="section-label">The fleet</p>
+        <h2>Specialized agents, one mission</h2>
+        <p>Each agent owns a lane. Together they cover the maintenance lifecycle end to end &mdash; without stepping on each other&rsquo;s work.</p>
+      </div>
+      <div class="agent-grid">
+        <div class="agent-card"><span>Supervisor</span><p>Agent health monitoring, sweep analysis, stall detection.</p></div>
+        <div class="agent-card"><span>Scanner</span><p>Triages issues, dispatches fixes, opens and merges PRs.</p></div>
+        <div class="agent-card"><span>Guide</span><p>Documentation gaps, onboarding analysis, advisory reviews.</p></div>
+        <div class="agent-card"><span>CI-Maintainer</span><p>CI/CD health, workflow fixes, build monitoring.</p></div>
+        <div class="agent-card"><span>Quality</span><p>Test coverage, integration tests, quality gates.</p></div>
+        <div class="agent-card"><span>Sec-Check</span><p>Security scanning, PR security gate.</p></div>
+        <div class="agent-card"><span>Architect</span><p>Cross-cutting RFCs, refactors, new features.</p></div>
+        <div class="agent-card"><span>Strategist</span><p>Experiment design, A/B testing, strategy lab.</p></div>
+        <div class="agent-card"><span>Outreach</span><p>ADOPTERS outreach, community engagement.</p></div>
+        <div class="agent-card"><span>Brainstorm</span><p>On-demand ideation via Inception.</p></div>
+      </div>
+    </section>
+
+    <!-- ── Key features ── -->
+    <section class="section-pad" id="features">
+      <div class="section-heading">
+        <p class="section-label">Under the hood</p>
+        <h2>Built for trust</h2>
+      </div>
+      <ul class="feature-list">
+        <li><strong>Governor</strong>Dynamic mode switching (idle / quiet / busy / surge) with per-agent cadences.</li>
+        <li><strong>Inception</strong>Interactive project scaffolding with llm-wiki and spec-kit.</li>
+        <li><strong>Knowledge Base</strong>Shared facts, wiki vaults, cross-agent priming.</li>
+        <li><strong>Audit Logging</strong>All state changes logged with who, when, and why.</li>
+        <li><strong>ACMM Proxy</strong>Per-agent HTTP proxy enforcing mode restrictions.</li>
+        <li><strong>Contributing</strong>Community agent contribution system with trust tiers.</li>
+      </ul>
+    </section>
+
+    <!-- ── Resources ── -->
+    <section class="section-pad" id="resources">
+      <div class="section-heading">
+        <p class="section-label">Resources</p>
+        <h2>Go deeper</h2>
+      </div>
+      <div class="link-grid">
+        <a href="https://arxiv.org/abs/2604.09388" target="_blank"><span>ACMM Paper</span><p>The autonomy framework on arXiv</p></a>
+        <a href="https://github.com/kubestellar/hive" target="_blank"><span>Source code</span><p>Hive on GitHub</p></a>
+        <a href="https://kubestellar.io/en/acmm-leaderboard" target="_blank"><span>ACMM Leaderboard</span><p>How projects rank on AI-readiness</p></a>
+        <a href="/api-docs"><span>API Docs</span><p>Hub REST API reference</p></a>
+        <a href="/get-started"><span>Get started</span><p>Request a hive in minutes</p></a>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="footer-links">
+      <a href="https://github.com/kubestellar/hive">Source Code</a>
+      <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
+      <a href="https://kubestellar.io">KubeStellar</a>
     </div>
-  </nav>
+    <p style="color:#3a4555">Hive is an open source project by KubeStellar</p>
+  </footer>
 
-  <div class="content">
-    <h1>What is Hive?</h1>
-    <p>Hive is an open source AI agent orchestration system. A fleet of specialized agents autonomously maintain GitHub repositories &mdash; triaging issues, writing fixes, opening PRs, and merging on green CI. A governor dynamically adjusts agent pace based on issue queue depth.</p>
-
-    <h2>ACMM Framework</h2>
-    <p>The <strong>AI-native Codebase Maturity Model (ACMM)</strong> defines 6 levels of AI agent autonomy, from advisory-only (L1) to fully autonomous (L6). Each level controls which agents are active and what actions they can take.</p>
-    <div class="grid">
-      <div class="card"><h3>L1 — Idea</h3><p>Advisory only. Agents analyze but don't act. Beads and heartbeat logs only.</p></div>
-      <div class="card"><h3>L2 — Measured</h3><p>Agents can open issues. No PRs. Quality gates begin.</p></div>
-      <div class="card"><h3>L3 — CI/CD</h3><p>Agents open hold-gated PRs. CI must pass. Human approval required.</p></div>
-      <div class="card"><h3>L4 — Autonomous PR</h3><p>Agents open and merge PRs on green CI. Hold labels for safety.</p></div>
-      <div class="card"><h3>L5 — Self-Governing</h3><p>Full autonomy with budget controls. Governor manages pace and cost.</p></div>
-      <div class="card"><h3>L6 — Fully Autonomous</h3><p>Multi-loop orchestration. Outreach, community engagement. Highest trust.</p></div>
-    </div>
-
-    <h2>Agents</h2>
-    <ul>
-      <li><strong>Supervisor</strong> &mdash; agent health monitoring, sweep analysis, stall detection</li>
-      <li><strong>Scanner</strong> &mdash; triages issues, dispatches fixes, opens and merges PRs</li>
-      <li><strong>Guide</strong> &mdash; documentation gaps, onboarding analysis, advisory reviews</li>
-      <li><strong>CI-Maintainer</strong> &mdash; CI/CD health, workflow fixes, build monitoring</li>
-      <li><strong>Quality</strong> &mdash; test coverage, integration tests, quality gates</li>
-      <li><strong>Sec-Check</strong> &mdash; security scanning, PR security gate</li>
-      <li><strong>Architect</strong> &mdash; cross-cutting RFCs, refactors, new features</li>
-      <li><strong>Strategist</strong> &mdash; experiment design, A/B testing, strategy lab</li>
-      <li><strong>Outreach</strong> &mdash; ADOPTERS outreach, community engagement</li>
-      <li><strong>Brainstorm</strong> &mdash; on-demand ideation via Inception</li>
-    </ul>
-
-    <h2>Key Features</h2>
-    <ul>
-      <li><strong>Governor</strong> &mdash; dynamic mode switching (idle/quiet/busy/surge) with per-agent cadences</li>
-      <li><strong>Inception</strong> &mdash; interactive project scaffolding with llm-wiki and spec-kit</li>
-      <li><strong>Knowledge Base</strong> &mdash; shared facts, wiki vaults, cross-agent priming</li>
-      <li><strong>Audit Logging</strong> &mdash; all state changes logged with who/when/why</li>
-      <li><strong>ACMM Proxy</strong> &mdash; per-agent HTTP proxy enforcing mode restrictions</li>
-      <li><strong>Contributing</strong> &mdash; community agent contribution system</li>
-    </ul>
-
-    <h2>Resources</h2>
-    <ul>
-      <li><a href="https://arxiv.org/abs/2604.09388" target="_blank">ACMM Paper (arXiv)</a></li>
-      <li><a href="https://github.com/kubestellar/hive" target="_blank">Source Code</a></li>
-      <li><a href="https://kubestellar.io/en/acmm-leaderboard" target="_blank">ACMM Leaderboard</a></li>
-    </ul>
-  </div>
   <script>
     function esc(s){var d=document.createElement('div');d.textContent=s;return d.innerHTML;}
     fetch('/api/auth/user').then(function(r){return r.json()}).then(function(d){
