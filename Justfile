@@ -7,7 +7,7 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/kubestellar/hive-contributor:latest")
 hive_hub := env("HIVE_HUB", "wss://hive.kubestellar.io/contribute")
-config_dir := env("HOME") + "/.config/hive"
+config_dir := env("HIVE_CONFIG_DIR", env("HOME") + "/.config/hive")
 
 # Show available commands
 default:
