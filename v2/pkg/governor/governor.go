@@ -87,6 +87,10 @@ type State struct {
 	LastKick      map[string]time.Time    `json:"last_kick"`
 	LastEval      time.Time               `json:"last_eval"`
 	SLAViolations int                     `json:"sla_violations"`
+	// BudgetExhausted mirrors the budget gate as of the last eval: the
+	// weekly limit is set and window spend has reached it, so kicks for
+	// non-exempt agents are suppressed.
+	BudgetExhausted bool `json:"budget_exhausted"`
 }
 
 const (
@@ -192,6 +196,8 @@ func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int)
 		}
 	}
 
+	g.state.BudgetExhausted = g.budgetExhausted()
+
 	due := g.agentsDueForKick()
 
 	snap := EvalSnapshot{
@@ -290,9 +296,24 @@ func (g *Governor) updateCadences() {
 	}
 }
 
+// budgetExhausted reports whether the weekly budget gate is closed.
+// WeeklyLimit == 0 means budgeting is entirely off. Caller must hold g.mu.
+func (g *Governor) budgetExhausted() bool {
+	return g.budget.WeeklyLimit > 0 && g.budget.CurrentSpend >= g.budget.WeeklyLimit
+}
+
 func (g *Governor) agentsDueForKick() []string {
 	now := time.Now()
 	var due []string
+
+	exhausted := g.budgetExhausted()
+	// IgnoredAgents are exempt from budget suppression: they keep getting
+	// kicked even when the weekly budget is exhausted.
+	exempt := make(map[string]bool, len(g.budget.IgnoredAgents))
+	for _, name := range g.budget.IgnoredAgents {
+		exempt[name] = true
+	}
+	suppressed := 0
 
 	for agentName, cadence := range g.state.Cadences {
 		if cadence.Paused {
@@ -307,11 +328,23 @@ func (g *Governor) agentsDueForKick() []string {
 		if ac, ok := g.agents[agentName]; ok && !ac.UsesGovernorKick() {
 			continue
 		}
+		if exhausted && !exempt[agentName] {
+			suppressed++
+			continue
+		}
 
 		lastKick, kicked := g.state.LastKick[agentName]
 		if !kicked || now.Sub(lastKick) >= cadence.Interval {
 			due = append(due, agentName)
 		}
+	}
+
+	if exhausted {
+		g.logger.Info("budget exhausted — suppressing kicks",
+			"spend", g.budget.CurrentSpend,
+			"limit", g.budget.WeeklyLimit,
+			"suppressed", suppressed,
+		)
 	}
 
 	return due
@@ -338,14 +371,15 @@ func (g *Governor) GetState() State {
 		lastKick[k] = v
 	}
 	return State{
-		Mode:          g.state.Mode,
-		QueueIssues:   g.state.QueueIssues,
-		QueuePRs:      g.state.QueuePRs,
-		QueueHold:     g.state.QueueHold,
-		Cadences:      cadences,
-		LastKick:      lastKick,
-		LastEval:      g.state.LastEval,
-		SLAViolations: g.state.SLAViolations,
+		Mode:            g.state.Mode,
+		QueueIssues:     g.state.QueueIssues,
+		QueuePRs:        g.state.QueuePRs,
+		QueueHold:       g.state.QueueHold,
+		Cadences:        cadences,
+		LastKick:        lastKick,
+		LastEval:        g.state.LastEval,
+		SLAViolations:   g.state.SLAViolations,
+		BudgetExhausted: g.state.BudgetExhausted,
 	}
 }
 
