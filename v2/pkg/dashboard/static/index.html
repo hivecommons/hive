@@ -1009,7 +1009,7 @@
     .burn-area-title { font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
 
     /* Cadence advisor */
-    .advisor-section { margin: 12px 0; padding: 12px; background: rgba(88,166,255,0.05); border: 1px solid rgba(88,166,255,0.15); border-radius: 6px; }
+    .advisor-section { margin: 12px 0; padding: 12px; background: color-mix(in srgb, var(--blue) 5%, transparent); border: 1px solid color-mix(in srgb, var(--blue) 15%, transparent); border-radius: 6px; }
     .advisor-title { font-size: 0.85rem; font-weight: 700; margin-bottom: 6px; }
     .advisor-total { font-size: 0.8rem; margin-bottom: 10px; }
     .advisor-bars { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
@@ -1024,8 +1024,11 @@
     .advisor-row-inactive .advisor-agent { color: var(--muted); font-weight: 400; }
     .advisor-inactive-note { flex: 1; color: var(--muted); font-style: italic; font-size: 0.65rem; }
     .advisor-tips { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
-    .advisor-tip { font-size: 0.72rem; color: var(--text); padding: 4px 8px; background: rgba(210,153,34,0.08); border-left: 2px solid var(--yellow); border-radius: 0 4px 4px 0; }
-    .advisor-tip b { color: var(--cyan); }
+    .advisor-tip { font-size: 0.72rem; color: var(--text); padding: 4px 8px; background: color-mix(in srgb, var(--yellow) 8%, transparent); border-left: 2px solid var(--yellow); border-radius: 0 4px 4px 0; }
+    /* Agent names inside tips: bold text color only — the tip's yellow
+       tint/border carries the accent (banner-contrast principle); a second
+       hue (cyan-on-yellow) fought the tint in both modes. */
+    .advisor-tip b { color: var(--text); }
 
     /* Budget bar */
     .budget-bar { margin: 8px 0; }
