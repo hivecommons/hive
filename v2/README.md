@@ -78,7 +78,7 @@ Seven agents ship as defaults (scanner, ci-maintainer, quality, architect, super
 agents:
   scanner:
     enabled: true
-    backend: claude        # claude | copilot | gemini | goose
+    backend: claude        # claude | copilot | gemini | goose | vllm | llm-d | litellm
     model: claude-sonnet-4-6
     caveman_mode: full     # lite | full | ultra | wenyan — compresses output ~65%
     beads_dir: /data/beads/scanner
@@ -136,6 +136,39 @@ governor:
     idle:
       threshold: 0
 ```
+
+## Inference Backends
+
+Besides CLI backends (claude, copilot, …), agents can run against
+self-hosted, OpenAI-compatible inference backends: **vllm**, **llm-d**, and
+**litellm**. The agent still launches the Claude CLI (bare mode); the hive's
+inference translator converts Anthropic Messages API calls to OpenAI format
+and forwards them to the backend. The MITM proxy stays in the path, so mode
+enforcement, logging, and per-agent attribution are unchanged.
+
+Endpoints for vllm/llm-d come from `HIVE_VLLM_ENDPOINT` /
+`HIVE_LLMD_ENDPOINT` (in-cluster defaults exist). LiteLLM is configured
+under `governor.litellm` — via the dashboard's Governor Config → LiteLLM
+tab, or in YAML:
+
+```yaml
+governor:
+  litellm:
+    endpoint: https://litellm.example.com   # HIVE_LITELLM_ENDPOINT overrides
+    api_key_env: HIVE_LITELLM_API_KEY       # env var NAME — never the key value
+    api_key_file: /secrets/litellm_api_key  # or a mounted key file (wins over env)
+    default_model: gpt-4o
+    ca_bundle: /secrets/litellm-ca.pem      # optional PEM for a private CA
+    local_proxy: false                      # run the bundled litellm binary locally
+```
+
+The API key is resolved at use time (file → named env var →
+`HIVE_LITELLM_API_KEY`) and is never written to `hive.yaml` or exposed via
+the API. Model discovery uses the backend's `/v1/models` (with bearer auth
+for litellm); `HIVE_LITELLM_MODELS` is a comma-separated fallback list.
+With `local_proxy: true`, hive supervises a bundled `litellm` process on
+loopback (config at `/data/litellm/config.yaml`) and routes through it
+instead of the remote endpoint — agents never bypass the Go translator.
 
 ## Knowledge
 
