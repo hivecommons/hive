@@ -249,6 +249,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			DetailSummary: detailSummary,
 			StatsConfig:   loadStatsConfig(name),
 			LastError:     proc.LastError,
+			StallNudges:   proc.StallNudges,
 		}
 
 		acmmLevel := 0

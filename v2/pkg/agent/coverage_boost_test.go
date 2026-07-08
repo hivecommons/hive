@@ -1148,6 +1148,78 @@ func TestDismissConsentIfStuck_GraceAndCooldown(t *testing.T) {
 	}
 }
 
+func TestNudgeIfKickStalled(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	idlePane := "╭───╮\n│ ❯ │\n╰───╯\n? for shortcuts"
+
+	// No kick recorded — never nudges.
+	m.nudgeIfKickStalled("vinf", idlePane)
+	if agent.StallNudges != 0 {
+		t.Fatal("no nudge without a recorded kick")
+	}
+
+	// Kick recorded but timeout not elapsed — no nudge.
+	agent.lastInferKickAt = time.Now()
+	agent.lastInferKickPane = paneContentHash(idlePane)
+	agent.stallNudgeSent = false
+	m.nudgeIfKickStalled("vinf", idlePane)
+	if agent.StallNudges != 0 {
+		t.Fatal("no nudge before the stall timeout")
+	}
+
+	// Timeout elapsed, pane unchanged, idle prompt — exactly one nudge.
+	agent.lastInferKickAt = time.Now().Add(-inferenceKickStallTimeout - time.Minute)
+	m.nudgeIfKickStalled("vinf", idlePane)
+	if agent.StallNudges != 1 || !agent.stallNudgeSent {
+		t.Fatalf("expected one nudge, got %d (sent=%v)", agent.StallNudges, agent.stallNudgeSent)
+	}
+
+	// Second watcher pass: still max one nudge per kick.
+	m.nudgeIfKickStalled("vinf", idlePane)
+	if agent.StallNudges != 1 {
+		t.Fatalf("max one nudge per kick, got %d", agent.StallNudges)
+	}
+
+	// New kick re-arms, but a working pane is never nudged.
+	workingPane := idlePane + "\nesc to interrupt"
+	agent.lastInferKickAt = time.Now().Add(-inferenceKickStallTimeout - time.Minute)
+	agent.lastInferKickPane = paneContentHash(workingPane)
+	agent.stallNudgeSent = false
+	m.nudgeIfKickStalled("vinf", workingPane)
+	if agent.StallNudges != 1 {
+		t.Fatal("working pane must not be nudged")
+	}
+
+	// A pane change since the kick disarms the watchdog.
+	agent.lastInferKickPane = paneContentHash("what the pane looked like at kick time")
+	m.nudgeIfKickStalled("vinf", idlePane)
+	if agent.StallNudges != 1 {
+		t.Fatal("changed pane must not be nudged")
+	}
+	if agent.lastInferKickPane != "" {
+		t.Fatal("changed pane should disarm the watchdog")
+	}
+}
+
+func TestPaneContentHash_StableAndDistinct(t *testing.T) {
+	a := paneContentHash("pane content")
+	if a != paneContentHash("pane content") {
+		t.Error("hash should be stable")
+	}
+	if a == paneContentHash("other content") {
+		t.Error("different content should hash differently")
+	}
+	if len(a) != 16 {
+		t.Errorf("hash should be 16 hex chars, got %d", len(a))
+	}
+}
+
 func TestEffectiveBackend(t *testing.T) {
 	agent := &AgentProcess{Config: config.AgentConfig{Backend: "copilot"}}
 	if got := effectiveBackend(agent); got != "copilot" {

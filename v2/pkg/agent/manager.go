@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -83,6 +84,10 @@ type AgentProcess struct {
 	NeedsLogin          bool   // true when pane shows a login prompt
 	consentSeenAt       time.Time // watcher: when a consent screen was first seen in the pane
 	lastConsentDismiss  time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt     time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane   string    // stall watchdog: hash of the visible pane just after kick delivery
+	stallNudgeSent      bool      // stall watchdog: at most one nudge per kick
+	StallNudges         int       // total post-kick stall nudges sent (surfaced to the dashboard)
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -1622,6 +1627,13 @@ func (m *Manager) RemoveAgent(name string) {
 	m.logger.Info("audit: agent removed", "name", name, "id", agent.ID)
 }
 
+// inferencePaneCheck pairs an inference agent name with its captured visible
+// pane for post-kick stall inspection outside the manager read lock.
+type inferencePaneCheck struct {
+	name string
+	pane string
+}
+
 // CheckAndRestartCrashedAgents checks all running agents for crashed CLI
 // processes (bare shell prompt with no child process) and restarts them.
 // Returns the names of agents that were successfully restarted so the
@@ -1630,6 +1642,7 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	m.mu.RLock()
 	var crashed []string
 	var consentStuck, consentCleared []string
+	var stallChecks []inferencePaneCheck
 	for name, agent := range m.agents {
 		if agent.State != StateRunning {
 			continue
@@ -1675,8 +1688,11 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 		if IsInferenceBackend(effectiveBackend(agent)) {
 			if paneShowsConsentScreen(pane) {
 				consentStuck = append(consentStuck, name)
-			} else if !agent.consentSeenAt.IsZero() {
-				consentCleared = append(consentCleared, name)
+			} else {
+				if !agent.consentSeenAt.IsZero() {
+					consentCleared = append(consentCleared, name)
+				}
+				stallChecks = append(stallChecks, inferencePaneCheck{name: name, pane: pane})
 			}
 		}
 	}
@@ -1687,6 +1703,9 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	}
 	for _, name := range consentStuck {
 		m.dismissConsentIfStuck(name)
+	}
+	for _, check := range stallChecks {
+		m.nudgeIfKickStalled(check.name, check.pane)
 	}
 
 	var restarted []string
@@ -1805,6 +1824,13 @@ func (m *Manager) SendKick(name string, message string) error {
 	agent.LastKickMessage = message
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
+
+	// Arm the post-kick stall watchdog for inference agents: if the pane
+	// never changes after this kick and sits at an idle prompt, the watcher
+	// loop sends a single "continue" nudge.
+	if IsInferenceBackend(effectiveBackend(agent)) {
+		m.recordInferenceKick(agent, now)
+	}
 
 	snippet := message
 	const maxSnippetLen = 120
@@ -1971,6 +1997,77 @@ func (m *Manager) dismissConsentIfStuck(name string) {
 	go m.dismissInferencePrompts(agent)
 }
 
+const (
+	// inferenceKickStallTimeout is how long after a kick an unchanged, idle
+	// pane counts as a stalled kick (message swallowed without a response).
+	inferenceKickStallTimeout = 5 * time.Minute
+	// inferenceStallNudgeMessage is the literal message typed into the CLI to
+	// unstick a stalled kick.
+	inferenceStallNudgeMessage = "continue"
+	// cliInputPromptMarker is the CLI's idle input prompt indicator.
+	cliInputPromptMarker = "❯"
+)
+
+// paneContentHash returns a short stable hash of pane content, used to detect
+// whether a pane has changed since a kick was delivered.
+func paneContentHash(pane string) string {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(pane))
+	return fmt.Sprintf("%016x", h.Sum64())
+}
+
+// recordInferenceKick arms the post-kick stall watchdog for an inference
+// agent: remembers when the kick was delivered and what the pane looked like
+// right after delivery. Caller must hold m.mu.
+func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
+	agent.lastInferKickAt = at
+	agent.lastInferKickPane = paneContentHash(m.captureVisiblePaneForAgent(agent))
+	agent.stallNudgeSent = false
+}
+
+// nudgeIfKickStalled sends a single "continue" nudge to an inference agent
+// whose pane has not changed since the last kick was delivered, the stall
+// timeout has elapsed, and the pane shows an idle input prompt (a working CLI
+// shows cliWorkingMarker and is left alone). Any pane change since the kick
+// disarms the watchdog — the CLI consumed the message. At most one nudge is
+// sent per kick; the total is surfaced on the agent snapshot as StallNudges.
+func (m *Manager) nudgeIfKickStalled(name, pane string) {
+	now := time.Now()
+	m.mu.Lock()
+	agent, ok := m.agents[name]
+	if !ok || agent.stallNudgeSent || agent.lastInferKickAt.IsZero() || agent.lastInferKickPane == "" {
+		m.mu.Unlock()
+		return
+	}
+	sinceKick := now.Sub(agent.lastInferKickAt)
+	if sinceKick < inferenceKickStallTimeout {
+		m.mu.Unlock()
+		return
+	}
+	if paneContentHash(pane) != agent.lastInferKickPane {
+		// The pane moved since the kick — the CLI consumed it. Disarm.
+		agent.lastInferKickPane = ""
+		m.mu.Unlock()
+		return
+	}
+	if strings.Contains(pane, cliWorkingMarker) || !strings.Contains(pane, cliInputPromptMarker) {
+		m.mu.Unlock()
+		return
+	}
+	agent.stallNudgeSent = true
+	agent.StallNudges++
+	totalNudges := agent.StallNudges
+	m.mu.Unlock()
+
+	m.logger.Warn("inference agent stalled after kick, sending continue nudge",
+		"name", name,
+		"minutes_since_kick", int(sinceKick.Minutes()),
+		"total_nudges", totalNudges)
+	m.tmuxSendLiteralForAgent(agent, inferenceStallNudgeMessage)
+	time.Sleep(textToEnterDelay)
+	m.tmuxSendEntersForAgent(agent)
+}
+
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.
 func (m *Manager) tmuxSendEntersForAgent(agent *AgentProcess) {
 	for i := 0; i < enterCount; i++ {
@@ -2076,6 +2173,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		KickHistory:     history,
 		LastKickMessage: a.LastKickMessage,
 		NeedsLogin:      needsLogin,
+		StallNudges:     a.StallNudges,
 		HasLaunched:     a.HasLaunched,
 		LaunchedMode:    a.LaunchedMode,
 		tmuxSession:     a.tmuxSession,

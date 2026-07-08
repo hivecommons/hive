@@ -204,6 +204,7 @@ type FrontendAgent struct {
 	ProxyViolations  int    `json:"proxyViolations"`
 	OnDemand         bool   `json:"onDemand,omitempty"`
 	LastError        string `json:"lastError,omitempty"`
+	StallNudges      int    `json:"stallNudges,omitempty"`
 }
 
 type FrontendGovernor struct {
