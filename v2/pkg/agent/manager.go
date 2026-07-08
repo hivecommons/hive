@@ -2134,8 +2134,10 @@ const (
 // the Copilot OAuth token; injected into agents as COPILOT_GITHUB_TOKEN.
 const CopilotUserTokenPath = "/data/copilot-user-token"
 
-// loginPromptPatterns are substrings that indicate an agent is stuck on the
-// Copilot login/authentication screen.
+// loginPromptPatterns are substrings that indicate an agent is stuck on a
+// login/authentication screen (Copilot text prompts, Claude Code OAuth flow,
+// GitHub device flow). Each must be distinctive enough to never appear in
+// ordinary agent output.
 var loginPromptPatterns = []string{
 	"/login",
 	"sign in to use",
@@ -2144,6 +2146,14 @@ var loginPromptPatterns = []string{
 	"Authenticate to use",
 	"log in to use",
 	"Log in to use",
+	// Claude Code OAuth sign-in screen
+	"Use the url below to sign in",
+	"Paste code here if prompted",
+	"Select login method",
+	"/cai/oauth/authorize",
+	// GitHub device-flow screen (Copilot CLI)
+	"Enter one-time code",
+	"github.com/login/device",
 }
 
 // fatalNetworkErrorPatterns are substrings that indicate a transient TLS or
