@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -348,6 +349,7 @@ type GovernorConfig struct {
 	Health        HealthConfig          `yaml:"health"`
 	Budget        BudgetConfig          `yaml:"budget"`
 	Logging       LoggingConfig         `yaml:"logging"`
+	LiteLLM       LiteLLMConfig         `yaml:"litellm"`
 }
 
 type LoggingConfig struct {
@@ -357,6 +359,81 @@ type LoggingConfig struct {
 	MaxBackups int    `yaml:"max_backups"`
 	Compress   bool   `yaml:"compress"`
 	Level      string `yaml:"level"`
+}
+
+// LiteLLM key/endpoint resolution defaults. hive.yaml stores only the env
+// var NAME and/or key FILE PATH — never the key value itself. Config.Save()
+// writes the expanded config back to disk, so a key value stored in YAML
+// would be baked into the file in plaintext.
+const (
+	// DefaultLiteLLMAPIKeyEnv is the env var consulted for the LiteLLM API
+	// key when api_key_env is not set in hive.yaml.
+	DefaultLiteLLMAPIKeyEnv = "HIVE_LITELLM_API_KEY"
+	// DefaultLiteLLMAPIKeyFile is the key file consulted when api_key_file
+	// is not set. Matches the /secrets volume used for k8s Secret mounts.
+	DefaultLiteLLMAPIKeyFile = "/secrets/litellm_api_key"
+	// LiteLLMEndpointEnv overrides governor.litellm.endpoint at runtime
+	// (mirrors HIVE_VLLM_ENDPOINT / HIVE_LLMD_ENDPOINT).
+	LiteLLMEndpointEnv = "HIVE_LITELLM_ENDPOINT"
+)
+
+// LiteLLMConfig configures the litellm inference backend: an OpenAI-compatible
+// LiteLLM proxy (remote or local) that agents reach through the hive's
+// inference translator.
+type LiteLLMConfig struct {
+	Endpoint     string `yaml:"endpoint"`      // base URL, e.g. https://litellm.example.com
+	APIKeyEnv    string `yaml:"api_key_env"`   // env var NAME holding the key; default HIVE_LITELLM_API_KEY
+	APIKeyFile   string `yaml:"api_key_file"`  // path to a file holding the key; default /secrets/litellm_api_key
+	DefaultModel string `yaml:"default_model"` // model used when an agent has none selected
+	CABundle     string `yaml:"ca_bundle"`     // optional PEM path for a private CA (never disables verification)
+	LocalProxy   bool   `yaml:"local_proxy"`   // run the bundled litellm binary as a local translator fallback
+}
+
+// ResolveAPIKey returns the LiteLLM API key using the resolution order:
+// key file (api_key_file, falling back to DefaultLiteLLMAPIKeyFile) →
+// env var named by api_key_env → DefaultLiteLLMAPIKeyEnv. Returns "" when
+// no key is configured. The key value itself is never stored in hive.yaml.
+func (c *LiteLLMConfig) ResolveAPIKey() string {
+	keyFile := c.APIKeyFile
+	if keyFile == "" {
+		keyFile = DefaultLiteLLMAPIKeyFile
+	}
+	if data, err := os.ReadFile(keyFile); err == nil {
+		if key := strings.TrimSpace(string(data)); key != "" {
+			return key
+		}
+	}
+	if c.APIKeyEnv != "" {
+		if key := os.Getenv(c.APIKeyEnv); key != "" {
+			return key
+		}
+	}
+	return os.Getenv(DefaultLiteLLMAPIKeyEnv)
+}
+
+// ResolveEndpoint returns the effective LiteLLM base URL: the
+// HIVE_LITELLM_ENDPOINT env var when set, otherwise the YAML endpoint.
+func (c *LiteLLMConfig) ResolveEndpoint() string {
+	if ep := os.Getenv(LiteLLMEndpointEnv); ep != "" {
+		return ep
+	}
+	return c.Endpoint
+}
+
+// Validate checks that the configured endpoint (when set) parses as an
+// absolute http(s) URL.
+func (c *LiteLLMConfig) Validate() error {
+	if c.Endpoint == "" {
+		return nil
+	}
+	u, err := url.Parse(c.Endpoint)
+	if err != nil {
+		return fmt.Errorf("governor.litellm.endpoint %q is not a valid URL: %w", c.Endpoint, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("governor.litellm.endpoint %q must be an absolute http(s) URL", c.Endpoint)
+	}
+	return nil
 }
 
 type LabelsConfig struct {
@@ -1078,6 +1155,23 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 	}
 }
 
+// InferenceBackends is the canonical list of self-hosted inference backend
+// IDs. It lives in the config package (a leaf in the import graph) so the
+// agent and proxy packages can share it without an import cycle
+// (proxy → agent → config).
+var InferenceBackends = []string{"vllm", "llm-d", "litellm"}
+
+// IsInferenceBackend returns true if the backend name is a self-hosted
+// inference backend rather than a CLI tool.
+func IsInferenceBackend(backend string) bool {
+	for _, b := range InferenceBackends {
+		if b == backend {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Config) validate() error {
 	if c.Project.Org == "" {
 		return fmt.Errorf("project.org is required")
@@ -1089,10 +1183,19 @@ func (c *Config) validate() error {
 	if c.GitHub.Token == "" && c.GitHub.AppID == 0 {
 		return fmt.Errorf("github.token or github.app_id is required")
 	}
+	if err := c.Governor.LiteLLM.Validate(); err != nil {
+		return err
+	}
 	for name, agent := range c.Agents {
 		validBackends := map[string]bool{"claude": true, "copilot": true, "goose": true, "codex": true, "pi": true, "bob": true, "aider": true}
+		// Inference backends (vllm, llm-d, litellm) are valid persisted
+		// agent backends too — they launch the claude CLI routed through
+		// the inference translator.
+		for _, b := range InferenceBackends {
+			validBackends[b] = true
+		}
 		if agent.Backend != "" && !validBackends[agent.Backend] {
-			return fmt.Errorf("agent %s: invalid backend %q (must be claude, copilot, goose, codex, pi, bob, or aider)", name, agent.Backend)
+			return fmt.Errorf("agent %s: invalid backend %q (must be claude, copilot, goose, codex, pi, bob, aider, or an inference backend: %s)", name, agent.Backend, strings.Join(InferenceBackends, ", "))
 		}
 		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
 		if !validCavemanModes[agent.CavemanMode] {

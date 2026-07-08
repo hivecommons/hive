@@ -162,6 +162,22 @@ governor:
       tester: 30m                         # most active when nothing else is happening
       architect: 30m
 
+  # LiteLLM inference backend (optional) — route agents through an
+  # OpenAI-compatible LiteLLM proxy. Agents using backend "litellm" launch
+  # the claude CLI in bare mode and reach the endpoint through the hive's
+  # inference translator (the MITM proxy stays in the path).
+  # SECURITY: never put the API key VALUE here — hive.yaml is rewritten by
+  # the dashboard with env vars expanded. Store only the env var NAME or a
+  # key file path; the key is resolved at use time.
+  # litellm:
+  #   endpoint: https://litellm.example.com   # base URL (HIVE_LITELLM_ENDPOINT overrides)
+  #   api_key_env: HIVE_LITELLM_API_KEY       # env var NAME holding the key (default)
+  #   api_key_file: /secrets/litellm_api_key  # or a mounted key file (default path)
+  #   default_model: gpt-4o                   # model used when an agent has none selected
+  #   ca_bundle: /secrets/litellm-ca.pem      # optional PEM for a private CA
+  #   local_proxy: false                      # run the bundled litellm binary locally
+  #                                           # (config at /data/litellm/config.yaml)
+
 # GitHub authentication — use ONE of these methods
 github:
   # Option 1: Personal access token (simplest)
