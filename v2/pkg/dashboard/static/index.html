@@ -107,9 +107,12 @@
     .oc-nav-item .oc-nav-actions {
       display: none; position: absolute; right: 4px; top: 50%;
       transform: translateY(-50%); gap: 1px;
-      background: inherit; padding-left: 4px;
+      background: var(--bg); padding-left: 4px;
     }
     .oc-nav-item:hover .oc-nav-actions { display: flex; }
+    .oc-nav-item.active .oc-nav-actions { background: var(--oc-accent-light); }
+    /* Hide the mode emoji while hovering so the ⚙/✕ actions don't overlap it. */
+    .oc-nav-item:hover .oc-nav-mode { visibility: hidden; }
     .oc-nav-actions button {
       background: none; border: none; cursor: pointer; padding: 2px 4px;
       font-size: 0.75rem; color: var(--muted); border-radius: 4px; line-height: 1;
@@ -195,7 +198,7 @@
       display: flex; align-items: center; justify-content: space-between;
       padding: 0 20px; z-index: 99;
     }
-    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); }
+    .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; }
     .oc-topbar-center { display: flex; align-items: center; gap: 6px; }
     .oc-topbar-center .oc-tb-link {
       font-size: 0.72rem; color: var(--muted); cursor: pointer; padding: 4px 10px;
@@ -268,7 +271,8 @@
       background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
       margin-bottom: 12px; font-size: 0.72rem; flex-wrap: wrap;
     }
-    body.oc-agent-focused #oc-gov-strip-outer { display: flex; }
+    /* Compact governor strip no longer needed: the full Governor section
+       remains visible while an agent is focused. */
     .oc-gov-strip .gov-metric { display: flex; flex-direction: column; gap: 1px; }
     .oc-gov-strip .gov-metric .gm-label { font-size: 0.6rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.3px; }
     .oc-gov-strip .gov-metric .gm-val { font-weight: 700; font-size: 0.8rem; }
@@ -435,16 +439,9 @@
     .oc-summary-follow-btn.visible { display: flex; }
 
     /* Hide non-agent sections when an agent is focused in Light */
-    body.oc-agent-focused .governor,
-    body.oc-agent-focused .token-usage,
-    body.oc-agent-focused .repos,
-    body.oc-agent-focused #beads-section,
-    body.oc-agent-focused #nous-section,
-    body.oc-agent-focused #knowledge-section,
-    body.oc-agent-focused #contributors-section,
-    body.oc-agent-focused #audit-section,
-    body.oc-agent-focused #acmm-eval-section,
-    body.oc-agent-focused #leaderboard-section { display: none; }
+    /* Sections stay visible when an agent is focused so scrolling up from the
+       agent detail still reaches Governor, Token Usage, etc. (previously these
+       were display:none, forcing a click on the nav to get back). */
     body.oc-strategy-focused #nous-section { display: block; }
     body.oc-agent-focused .agent-card.oc-hidden { display: none; }
 
@@ -1658,6 +1655,13 @@
       max-height: 0 !important;
       padding: 0;
     }
+    /* When the main digest is collapsed, hide the empty card shell too —
+       otherwise a blank bordered box lingers under the header. */
+    #advisory-digest.card-collapsed {
+      border: none;
+      padding: 0;
+      background: transparent;
+    }
 
     /* ── Collapsible sections (#1533) ── */
     .section-header-toggle {
@@ -1914,6 +1918,7 @@
   <header id="oc-topbar" class="oc-topbar">
     <div class="oc-topbar-left">
       <span id="oc-project-name"></span>
+      <span id="oc-git-version" class="git-version"></span>
     </div>
     <div class="oc-topbar-center">
       <span class="oc-tb-link" onclick="openConfigDialog('governor')">⚙️ Config</span>
@@ -1925,7 +1930,6 @@
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
       <span id="oc-hive-id" class="git-version" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:2px 8px;border-radius:4px" onclick="openConfigDialog('governor')"></span>
       <span class="oc-topbar-ts" id="oc-ts"></span>
-      <span id="oc-git-version" class="git-version"></span>
       <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
       <div id="oc-gh-avatar-wrap" style="display:none;position:relative">
         <img id="oc-gh-avatar" src="" alt="" style="width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid #3fb950;vertical-align:middle" onclick="toggleGHUserMenu()">
@@ -3889,6 +3893,10 @@
         body.classList.add('collapsed');
         chevron.classList.add('collapsed');
       }
+      if (sectionId === 'advisory-digest-main') {
+        const card = document.getElementById('advisory-digest');
+        if (card) card.classList.toggle('card-collapsed', !isCollapsed);
+      }
       setAdvisoryCollapsed(sectionId, !isCollapsed);
     }
 
@@ -3897,16 +3905,20 @@
       if (isAdvisoryCollapsed('advisory-digest-main')) {
         const body = document.getElementById('advisory-digest-main-body');
         const chevron = document.getElementById('advisory-digest-main-chevron');
+        const card = document.getElementById('advisory-digest');
         if (body) body.classList.add('collapsed');
         if (chevron) chevron.classList.add('collapsed');
+        if (card) card.classList.add('card-collapsed');
       }
     }
 
     function renderAdvisoryDigest(digest) {
       const el = document.getElementById('advisory-digest');
       if (!el) return;
+      el.classList.toggle('card-collapsed', isAdvisoryCollapsed('advisory-digest-main'));
       if (!digest || !digest.total_count) {
-        setIfChanged(el, '<div id="advisory-digest-main-body" style="color:var(--muted);font-size:0.82rem;text-align:center;padding:20px">No advisory findings yet. Agents will post findings here as they analyze the codebase.</div>');
+        const emptyCollapsed = isAdvisoryCollapsed('advisory-digest-main');
+        setIfChanged(el, `<div id="advisory-digest-main-body" class="advisory-agent-body${emptyCollapsed ? ' collapsed' : ''}" style="color:var(--muted);font-size:0.82rem;text-align:center;padding:20px;${emptyCollapsed ? 'max-height:0' : ''}">No advisory findings yet. Agents will post findings here as they analyze the codebase.</div>`);
         return;
       }
       const sevIcon = s => ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' }[s] || '⚪');
@@ -4222,7 +4234,11 @@
         const avg = tokenData.avgPerSession || 0;
         const cadenceMin = parseCadenceMinutes(agentData.cadence);
         const isOff = agentData.offByCadence === true;
-        const isPaused = !cadenceMin && !isOff;
+        // An agent that is paused, stopped, or on-demand runs zero scheduled
+        // passes regardless of its configured cadence — projecting its burn
+        // would show stale numbers for agents disabled weeks ago.
+        const isInactive = agentData.paused === true || agentData.state === 'stopped' || agentData.onDemand === true;
+        const isPaused = (!cadenceMin || isInactive) && !isOff;
         const passesPerHour = (isPaused || isOff) ? 0 : MINUTES_PER_HOUR / cadenceMin;
         const weeklyBurn = avg * passesPerHour * HOURS_PER_WEEK;
         totalWeeklyBurn += weeklyBurn;
@@ -7419,7 +7435,28 @@ function burnAreaChart() {
       const panel = document.getElementById('contributors-panel');
       if (!panel) return;
       if (!contributors.length) {
-        setIfChanged(panel, '<div style="color:var(--muted);padding:24px;text-align:center;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">No contributors registered yet.</div>');
+        const contributeUrl = window.location.origin + '/contribute';
+        setIfChanged(panel,
+          '<div style="color:var(--text);padding:24px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;max-width:760px">' +
+            '<div style="font-weight:600;font-size:0.95rem;margin-bottom:8px">🤝 Grow your hive with Contributor Relay</div>' +
+            '<div style="color:var(--muted);font-size:0.82rem;line-height:1.6;margin-bottom:12px">' +
+              'Contributor Relay lets anyone lend their own machine and AI subscription to this hive. ' +
+              'Contributors register with their GitHub account, run a lightweight worker locally, and the hive ' +
+              'relays tasks (issue fixes, reviews, docs) to their agents over a secure WebSocket — their compute, your backlog. ' +
+              'Completed tasks build trust: contributors are promoted automatically from <strong>Newcomer</strong> to <strong>Contributor</strong>, <strong>Trusted</strong>, and <strong>Advisor</strong> tiers.' +
+            '</div>' +
+            '<div style="color:var(--muted);font-size:0.82rem;line-height:1.6;margin-bottom:12px">' +
+              '<strong style="color:var(--text)">Invite people in three steps:</strong><br>' +
+              '1. Share your contribute link: <a href="/contribute" target="_blank" style="color:#238636;font-weight:600">' + escapeHtml(contributeUrl) + '</a><br>' +
+              '2. They sign in with GitHub and follow the one-command setup shown on that page.<br>' +
+              '3. Their agents appear here and start picking up tasks — you approve what merges.' +
+            '</div>' +
+            '<div style="display:flex;gap:10px;justify-content:flex-start;flex-wrap:wrap">' +
+              '<a href="/contribute" target="_blank" style="font-size:0.78rem;padding:6px 14px;background:#238636;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">Open /contribute page →</a>' +
+              '<button onclick="navigator.clipboard.writeText(\'' + contributeUrl + '\');showToast(\'Contribute link copied — share it with your community!\', \'success\')" style="font-size:0.78rem;padding:6px 14px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-weight:600">📋 Copy invite link</button>' +
+            '</div>' +
+            '<div style="color:var(--muted);font-size:0.75rem;margin-top:10px">Tip: post the link in your project README, Discord, or a pinned GitHub issue to recruit contributors.</div>' +
+          '</div>');
         return;
       }
       const filtered = contributors.filter(matchesContributorFilter);

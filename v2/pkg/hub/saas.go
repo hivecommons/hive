@@ -604,21 +604,36 @@ const (
 const gpuResourceKey = "nvidia.com/gpu"
 
 func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
-	// Count hives per cluster from SaaS records.
-	hiveCounts := make(map[string]int)
-	for _, sh := range listSaaSHives() {
-		cid := clusterIDForSaaSHive(sh)
-		hiveCounts[cid]++
+	// Count hives per cluster, deduplicated by hive ID. A hosted hive appears
+	// both as a SaaS record and as a registry entry with a ClusterID (they
+	// share the same ID), so counting both sources naively doubles the count.
+	hiveIDsByCluster := make(map[string]map[string]bool)
+	allHiveIDs := make(map[string]bool)
+	addHive := func(clusterID, hiveID string) {
+		if hiveIDsByCluster[clusterID] == nil {
+			hiveIDsByCluster[clusterID] = make(map[string]bool)
+		}
+		hiveIDsByCluster[clusterID][hiveID] = true
+		allHiveIDs[hiveID] = true
 	}
-	// Also count registry hives that have a ClusterID.
+	for _, sh := range listSaaSHives() {
+		addHive(clusterIDForSaaSHive(sh), sh.ID)
+	}
 	s.mu.RLock()
-	totalHiveCount := len(s.registry.Hives)
 	for _, h := range s.registry.Hives {
 		if h.ClusterID != "" {
-			hiveCounts[h.ClusterID]++
+			addHive(h.ClusterID, h.ID)
+		} else {
+			// Self-hosted hives without a cluster still count globally.
+			allHiveIDs[h.ID] = true
 		}
 	}
 	s.mu.RUnlock()
+	hiveCounts := make(map[string]int, len(hiveIDsByCluster))
+	for cid, ids := range hiveIDsByCluster {
+		hiveCounts[cid] = len(ids)
+	}
+	totalHiveCount := len(allHiveIDs)
 
 	// Query all clusters in parallel.
 	type clusterResult struct {
