@@ -81,6 +81,16 @@ type AgentProcess struct {
 	LastError           string // captured from bare copilot diagnostic launch
 	lastTokenRestart    time.Time // cooldown for auto-restart after token detection
 	NeedsLogin          bool   // true when pane shows a login prompt
+	consentSeenAt       time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss  time.Time // watcher: cooldown for re-running dismissInferencePrompts
+}
+
+// effectiveBackend returns the agent's backend accounting for any override.
+func effectiveBackend(agent *AgentProcess) string {
+	if agent.BackendOverride != "" {
+		return agent.BackendOverride
+	}
+	return agent.Config.Backend
 }
 
 // ProjectContext holds project-level config injected into agent boot prompts.
@@ -729,6 +739,13 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 		if backend == "copilot" {
 			go m.watchForTrustPromptForAgent(agent, agentCtx)
+		}
+		if isInference {
+			// The surviving pane may be parked on a consent screen (e.g.
+			// the hub restarted while the CLI awaited consent). The marker
+			// check above cannot tell the difference, so re-arm dismissal;
+			// it exits quickly once the main prompt is visible.
+			go m.dismissInferencePrompts(agent)
 		}
 		return nil
 	}
@@ -1612,6 +1629,7 @@ func (m *Manager) RemoveAgent(name string) {
 func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	m.mu.RLock()
 	var crashed []string
+	var consentStuck, consentCleared []string
 	for name, agent := range m.agents {
 		if agent.State != StateRunning {
 			continue
@@ -1636,7 +1654,8 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 			crashed = append(crashed, name)
 			continue
 		}
-		if !m.tmuxPaneHasCLIForAgent(agent) {
+		pane := m.captureVisiblePaneForAgent(agent)
+		if !paneHasCLIMarker(pane) {
 			var uptimeSeconds float64
 			if agent.StartedAt != nil {
 				uptimeSeconds = time.Since(*agent.StartedAt).Seconds()
@@ -1648,9 +1667,27 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 				"uptime_seconds", int(uptimeSeconds),
 			)
 			crashed = append(crashed, name)
+			continue
+		}
+		// An inference agent parked on a consent screen has a live CLI, so
+		// it is not "crashed" — but it is stuck. Restarting would loop back
+		// to the same screen; re-running prompt dismissal recovers it.
+		if IsInferenceBackend(effectiveBackend(agent)) {
+			if paneShowsConsentScreen(pane) {
+				consentStuck = append(consentStuck, name)
+			} else if !agent.consentSeenAt.IsZero() {
+				consentCleared = append(consentCleared, name)
+			}
 		}
 	}
 	m.mu.RUnlock()
+
+	for _, name := range consentCleared {
+		m.clearConsentTracking(name)
+	}
+	for _, name := range consentStuck {
+		m.dismissConsentIfStuck(name)
+	}
 
 	var restarted []string
 	for _, name := range crashed {
@@ -1878,6 +1915,60 @@ func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 	}
 
 	m.logger.Warn("inference prompt dismissal timed out", "agent", agent.Name)
+}
+
+const (
+	// consentStuckGracePeriod is how long a consent screen must stay visible
+	// across watcher passes before the agent counts as stuck. The launch-time
+	// dismissal goroutine runs for 60s, so a screen still visible this long
+	// after first being seen by the watcher means dismissal lost the race.
+	consentStuckGracePeriod = 30 * time.Second
+	// consentDismissCooldown is the minimum interval between watcher-triggered
+	// dismissal passes for one agent, so a stubborn screen can't spam
+	// keystroke goroutines (each dismissal pass itself polls for 60s).
+	consentDismissCooldown = 2 * time.Minute
+)
+
+// clearConsentTracking resets the consent-stuck timer for an agent whose pane
+// no longer shows a consent screen.
+func (m *Manager) clearConsentTracking(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if agent, ok := m.agents[name]; ok {
+		agent.consentSeenAt = time.Time{}
+	}
+}
+
+// dismissConsentIfStuck re-runs dismissInferencePrompts for an inference agent
+// whose pane has shown a consent screen for longer than the grace period,
+// subject to a per-agent cooldown. Called from the watcher loop
+// (CheckAndRestartCrashedAgents) so an agent that lands on a consent screen
+// after launch — e.g. a crash-recovery restart whose launch-time dismissal
+// timed out — recovers instead of sitting stuck while kicks appear to succeed.
+func (m *Manager) dismissConsentIfStuck(name string) {
+	now := time.Now()
+	m.mu.Lock()
+	agent, ok := m.agents[name]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	if agent.consentSeenAt.IsZero() {
+		agent.consentSeenAt = now
+		m.mu.Unlock()
+		return
+	}
+	stuckFor := now.Sub(agent.consentSeenAt)
+	if stuckFor < consentStuckGracePeriod || now.Sub(agent.lastConsentDismiss) < consentDismissCooldown {
+		m.mu.Unlock()
+		return
+	}
+	agent.lastConsentDismiss = now
+	m.mu.Unlock()
+
+	m.logger.Warn("inference agent stuck on consent screen, re-running prompt dismissal",
+		"name", name, "stuck_seconds", int(stuckFor.Seconds()))
+	go m.dismissInferencePrompts(agent)
 }
 
 // tmuxSendEntersForAgent sends Enter presses using the agent's tmux socket.

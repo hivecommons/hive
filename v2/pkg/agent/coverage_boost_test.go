@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
 )
@@ -1106,6 +1107,55 @@ Enter to confirm`
 				t.Errorf("paneShowsConsentScreen(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestDismissConsentIfStuck_GraceAndCooldown(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	// First sighting only starts the grace timer.
+	m.dismissConsentIfStuck("vinf")
+	if agent.consentSeenAt.IsZero() {
+		t.Fatal("first sighting should start the grace timer")
+	}
+	if !agent.lastConsentDismiss.IsZero() {
+		t.Fatal("no dismissal should fire within the grace period")
+	}
+
+	// Simulate the screen having been visible past the grace period.
+	agent.consentSeenAt = time.Now().Add(-consentStuckGracePeriod - time.Second)
+	m.dismissConsentIfStuck("vinf")
+	if agent.lastConsentDismiss.IsZero() {
+		t.Fatal("dismissal should fire once past the grace period")
+	}
+	first := agent.lastConsentDismiss
+
+	// Cooldown: an immediate re-check must not re-fire.
+	m.dismissConsentIfStuck("vinf")
+	if !agent.lastConsentDismiss.Equal(first) {
+		t.Fatal("cooldown should prevent immediate re-dismissal")
+	}
+
+	// A pane without a consent screen resets the grace timer.
+	m.clearConsentTracking("vinf")
+	if !agent.consentSeenAt.IsZero() {
+		t.Fatal("clearConsentTracking should reset consentSeenAt")
+	}
+}
+
+func TestEffectiveBackend(t *testing.T) {
+	agent := &AgentProcess{Config: config.AgentConfig{Backend: "copilot"}}
+	if got := effectiveBackend(agent); got != "copilot" {
+		t.Errorf("effectiveBackend = %q, want copilot", got)
+	}
+	agent.BackendOverride = "vllm"
+	if got := effectiveBackend(agent); got != "vllm" {
+		t.Errorf("effectiveBackend with override = %q, want vllm", got)
 	}
 }
 
