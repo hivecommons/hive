@@ -5,127 +5,292 @@
   <meta charset="UTF-8">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Get Started — Hive Hub</title>
+  <meta property="og:title" content="Get started — put your repo on autopilot">
+  <meta property="og:description" content="Request a hosted hive in four steps, self-host with Docker Compose, or contribute compute to a public hive. No Kubernetes, no setup.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hive.kubestellar.io/get-started">
+  <meta name="description" content="Get started with Hive — request a hosted hive in four steps, self-host with Docker Compose, or contribute compute to a public hive.">
+  <title>Get started — put your repo on autopilot</title>
   <style>
     :root {
-      --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
-      --text: #e6edf3; --muted: #8b949e; --accent: #f59e0b;
-      --green: #16a34a; --blue: #3b82f6; --red: #ef4444;
+      color-scheme: dark;
+      --bg: #080b0f;
+      --bg-soft: #0d1218;
+      --panel: #121922;
+      --panel-strong: #17212d;
+      --text: #f6f8fb;
+      --muted: #a8b3c2;
+      --line: #263545;
+      --amber: #f4c75f;
+      --green: #74df9a;
+      --blue: #80bfff;
+      --red: #ff7e7e;
+      --shadow: 0 24px 80px #0006;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .nav { position: fixed; top: 0; width: 100%; z-index: 50; background: rgba(10,10,15,0.85); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
-    .nav-inner { max-width: 1200px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; }
-    .nav-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; color: var(--text); text-decoration: none; }
-    .nav-links { display: flex; align-items: center; gap: 20px; font-size: 0.85rem; }
-    .nav-links a { color: var(--muted); text-decoration: none; }
-    .nav-links a:hover { color: var(--text); }
-    .nav-login { padding: 6px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font-size: 0.8rem; }
-    .nav-login:hover { border-color: var(--accent); color: var(--text); }
-    .content { max-width: 900px; margin: 0 auto; padding: 80px 24px 48px; }
-    h1 { font-size: 2.5rem; font-weight: 800; margin-bottom: 12px; background: linear-gradient(135deg, #f59e0b, #fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .subtitle { color: var(--muted); font-size: 1.05rem; line-height: 1.6; margin-bottom: 32px; }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      background:
+        radial-gradient(circle at 18% 8%, #80bfff2e, transparent 24rem),
+        radial-gradient(circle at 86% 4%, #f4c75f29, transparent 20rem),
+        linear-gradient(180deg, #090d12 0%, var(--bg) 48%, #0a0e13 100%);
+      min-width: 320px;
+      color: var(--text);
+      margin: 0;
+    }
+    a { color: inherit; text-decoration: none; }
 
-    /* Wizard flow */
-    .wizard { margin-bottom: 48px; }
-    .wizard-steps { display: flex; gap: 8px; margin-bottom: 28px; align-items: center; }
-    .wizard-step { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--muted); }
-    .wizard-step.active { color: var(--accent); }
-    .wizard-step.done { color: var(--green); }
-    .step-dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.8rem; background: var(--surface); border: 2px solid var(--border); flex-shrink: 0; }
-    .wizard-step.active .step-dot { border-color: var(--accent); background: rgba(245,158,11,0.15); color: var(--accent); }
-    .wizard-step.done .step-dot { border-color: var(--green); background: rgba(22,163,74,0.15); color: var(--green); }
-    .step-arrow { color: var(--border); font-size: 0.7rem; }
-    .wizard-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px; display: none; }
-    .wizard-panel.active { display: block; }
-    .wizard-panel h2 { font-size: 1.3rem; font-weight: 700; margin-bottom: 8px; }
-    .wizard-panel p { color: var(--muted); line-height: 1.6; margin-bottom: 16px; font-size: 0.9rem; }
+    /* ── Header ── */
+    .site-header {
+      z-index: 10;
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      background: #080b0fc7;
+      border-bottom: 1px solid #ffffff14;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 1.5rem;
+      padding: 1rem clamp(1rem, 4vw, 4.5rem);
+      position: sticky;
+      top: 0;
+    }
+    .brand, .header-link, nav { align-items: center; display: flex; }
+    .brand { letter-spacing: 0; gap: .75rem; font-weight: 800; }
+    .brand-mark {
+      width: 2.5rem; height: 2.5rem;
+      color: var(--amber);
+      background: linear-gradient(145deg, #f4c75f2e, #80bfff1a);
+      border: 1px solid #f4c75f6b;
+      border-radius: .65rem;
+      place-items: center;
+      font-size: 1.2rem;
+      display: grid;
+    }
+    nav { color: var(--muted); gap: 1.35rem; font-size: .94rem; }
+    nav a:hover, .header-link:hover { color: var(--text); }
+    .header-link {
+      border: 1px solid var(--line);
+      width: fit-content;
+      color: var(--text);
+      border-radius: .55rem;
+      justify-self: end;
+      padding: .72rem 1rem;
+      font-weight: 700;
+    }
 
-    /* Buttons */
-    .btn-primary { display: inline-block; padding: 10px 24px; background: var(--accent); color: #0a0a0f; font-weight: 600; border-radius: 8px; font-size: 0.9rem; border: none; cursor: pointer; text-decoration: none; transition: background 0.2s; }
-    .btn-primary:hover { background: #fbbf24; text-decoration: none; }
-    .btn-secondary { display: inline-block; padding: 10px 24px; background: var(--surface); border: 1px solid var(--border); color: var(--text); font-weight: 600; border-radius: 8px; font-size: 0.9rem; cursor: pointer; text-decoration: none; transition: all 0.2s; }
-    .btn-secondary:hover { border-color: var(--accent); text-decoration: none; }
-    .btn-github { display: inline-flex; align-items: center; gap: 8px; padding: 12px 28px; background: #24292f; color: #fff; font-weight: 600; border-radius: 8px; font-size: 0.95rem; border: 1px solid #444; cursor: pointer; text-decoration: none; transition: background 0.2s; }
-    .btn-github:hover { background: #30363d; text-decoration: none; }
-    .btn-github svg { flex-shrink: 0; }
-
-    /* Repo selector */
-    .repo-list { display: flex; flex-direction: column; gap: 8px; margin: 16px 0; max-height: 300px; overflow-y: auto; }
-    .repo-item { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: border-color 0.2s; }
-    .repo-item:hover { border-color: var(--accent); }
-    .repo-item.selected { border-color: var(--accent); background: rgba(245,158,11,0.06); }
-    .repo-item input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
-    .repo-name { font-weight: 600; font-size: 0.9rem; }
-    .repo-desc { font-size: 0.78rem; color: var(--muted); }
-
-    /* ACMM selector */
-    .acmm-options { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
-    .acmm-option { display: flex; align-items: flex-start; gap: 12px; padding: 14px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: border-color 0.2s; }
-    .acmm-option:hover { border-color: var(--accent); }
-    .acmm-option.selected { border-color: var(--accent); background: rgba(245,158,11,0.06); }
-    .acmm-option input[type=radio] { accent-color: var(--accent); margin-top: 2px; flex-shrink: 0; }
-    .acmm-option .acmm-label { font-weight: 600; font-size: 0.9rem; margin-bottom: 2px; }
-    .acmm-option .acmm-desc { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
-    .acmm-rec { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 0.65rem; font-weight: 600; background: rgba(22,163,74,0.15); color: #22c55e; border: 1px solid rgba(22,163,74,0.3); margin-left: 8px; }
-
-    /* Divider */
-    .divider { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
-
-    /* Self-host / Contribute sections */
-    .alt-section { margin-bottom: 40px; }
-    .alt-section h2 { font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; }
-    .alt-section p { color: var(--muted); line-height: 1.7; margin-bottom: 16px; }
-    pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 12px 0 20px; overflow-x: auto; font-size: 0.85rem; color: var(--text); line-height: 1.6; }
-    code { background: #1e1e2e; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: #fbbf24; }
-    pre code { background: none; padding: 0; }
-    ul, ol { color: var(--muted); line-height: 1.8; margin: 0 0 16px 24px; }
+    /* ── Utility ── */
+    .section-pad { padding: clamp(3rem, 6vw, 5.5rem) clamp(1rem, 4vw, 4.5rem); max-width: 1200px; margin: 0 auto; }
+    .section-label {
+      color: var(--amber);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      margin: 0 0 1rem;
+      font-size: .82rem;
+      font-weight: 900;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      letter-spacing: 0;
+      max-width: 20ch;
+      margin-bottom: 1.3rem;
+      font-size: clamp(2.6rem, 6vw, 5rem);
+      line-height: .95;
+    }
+    h2 {
+      letter-spacing: 0;
+      margin-bottom: 1rem;
+      font-size: clamp(1.8rem, 3.5vw, 3rem);
+      line-height: 1;
+    }
+    h3 { font-size: 1.2rem; line-height: 1.2; }
+    p { color: var(--muted); font-size: 1.02rem; line-height: 1.7; }
+    .lede { color: #d7deea; max-width: 44rem; font-size: clamp(1.05rem, 1.3vw, 1.22rem); }
+    .section-heading { max-width: 54rem; margin-bottom: 2.5rem; }
+    code { background: #17212d; border: 1px solid var(--line); padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; color: var(--amber); }
+    pre {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: 1.2rem 1.4rem;
+      margin: 1rem 0 1.4rem;
+      overflow-x: auto;
+      font-size: .88rem;
+      color: #d7deea;
+      line-height: 1.7;
+    }
+    pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; }
+    ul, ol { color: var(--muted); line-height: 1.8; margin: 0 0 16px 24px; padding: 0; }
     li { margin-bottom: 8px; }
     strong { color: var(--text); }
 
-    .badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 0.75rem; font-weight: 700; margin-left: 8px; }
-    .badge-ready { background: rgba(22,163,74,0.15); color: #22c55e; border: 1px solid rgba(22,163,74,0.3); }
+    /* ── Buttons ── */
+    .button, .btn-primary, .btn-secondary, .btn-github {
+      border-radius: .55rem;
+      justify-content: center;
+      align-items: center;
+      min-height: 3rem;
+      padding: .85rem 1.2rem;
+      font-weight: 800;
+      font-size: .92rem;
+      font-family: inherit;
+      display: inline-flex;
+      border: none;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .button.primary, .btn-primary { background: var(--amber); color: #17110a; }
+    .button.primary:hover, .btn-primary:hover:not(:disabled) { background: #f8d87a; }
+    .btn-primary:disabled { opacity: .45; cursor: not-allowed; }
+    .button.secondary { color: var(--text); background: #80bfff1a; border: 1px solid #80bfff70; }
+    .button.secondary:hover { background: #80bfff2e; }
+    .button.tertiary, .btn-secondary { border: 1px solid var(--line); color: #d7deea; background: transparent; }
+    .button.tertiary:hover, .btn-secondary:hover { border-color: var(--amber); color: var(--text); }
+    .btn-github { gap: 8px; background: var(--panel-strong); color: var(--text); border: 1px solid var(--line); }
+    .btn-github:hover { border-color: var(--amber); }
+    .btn-github svg { flex-shrink: 0; }
 
-    /* Toast */
+    /* ── Wizard flow ── */
+    .wizard { margin-top: 2.5rem; }
+    .wizard-steps { display: flex; gap: .6rem; margin-bottom: 1.75rem; align-items: center; flex-wrap: wrap; }
+    .wizard-step { display: flex; align-items: center; gap: .55rem; font-size: .84rem; font-weight: 700; color: var(--muted); }
+    .wizard-step.active { color: var(--amber); }
+    .wizard-step.done { color: var(--green); }
+    .step-dot {
+      width: 2rem; height: 2rem;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: .8rem;
+      background: var(--bg-soft);
+      border: 2px solid var(--line);
+      flex-shrink: 0;
+      transition: all .2s;
+    }
+    .wizard-step.active .step-dot { border-color: var(--amber); background: #f4c75f26; color: var(--amber); }
+    .wizard-step.done .step-dot { border-color: var(--green); background: #74df9a26; color: var(--green); }
+    .step-arrow { color: var(--line); font-size: .7rem; }
+    .wizard-panel {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: clamp(1.4rem, 3vw, 2.2rem);
+      display: none;
+    }
+    .wizard-panel.active { display: block; }
+    .wizard-panel h2 { font-size: 1.35rem; line-height: 1.15; margin-bottom: .6rem; }
+    .wizard-panel p { font-size: .92rem; margin-bottom: 1rem; }
+
+    /* ── Repo selector ── */
+    .repo-list { display: flex; flex-direction: column; gap: .55rem; margin: 1rem 0; max-height: 300px; overflow-y: auto; }
+    .repo-item {
+      display: flex; align-items: center; gap: .75rem;
+      padding: .8rem 1rem;
+      background: #080b0f85;
+      border: 1px solid var(--line);
+      border-radius: .7rem;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .repo-item:hover { border-color: #f4c75f9e; }
+    .repo-item.selected { border-color: var(--amber); background: #f4c75f17; }
+    .repo-item input[type=checkbox] { accent-color: var(--amber); width: 16px; height: 16px; }
+    .repo-name { font-weight: 700; font-size: .9rem; color: var(--text); }
+    .repo-desc { font-size: .78rem; color: var(--muted); }
+
+    /* ── ACMM selector ── */
+    .acmm-options { display: flex; flex-direction: column; gap: .65rem; margin: 1rem 0; }
+    .acmm-option {
+      display: flex; align-items: flex-start; gap: .75rem;
+      padding: .9rem 1rem;
+      background: #080b0f85;
+      border: 1px solid var(--line);
+      border-radius: .7rem;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+    }
+    .acmm-option:hover { border-color: #f4c75f9e; }
+    .acmm-option.selected { border-color: var(--amber); background: #f4c75f17; }
+    .acmm-option input[type=radio] { accent-color: var(--amber); margin-top: 2px; flex-shrink: 0; }
+    .acmm-option .acmm-label { font-weight: 700; font-size: .9rem; color: var(--text); margin-bottom: 2px; }
+    .acmm-option .acmm-desc { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+    .acmm-rec {
+      display: inline-block; padding: 2px 10px; border-radius: 9999px;
+      font-size: .65rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase;
+      background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d;
+      margin-left: 8px;
+    }
+
+    /* ── Badges ── */
+    .badge {
+      display: inline-block; padding: 3px 12px; border-radius: 9999px;
+      font-size: .72rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase;
+      margin-left: 10px; vertical-align: middle;
+    }
+    .badge-ready { background: #74df9a26; color: var(--green); border: 1px solid #74df9a4d; }
+
+    /* ── Alt sections (self-host / contribute) ── */
+    .alt-section { scroll-margin-top: 5.5rem; }
+    .alt-card {
+      box-shadow: var(--shadow);
+      background: linear-gradient(#17212deb, #0c1219eb);
+      border: 1px solid #ffffff1a;
+      border-radius: .85rem;
+      padding: clamp(1.4rem, 3vw, 2.2rem);
+    }
+    .alt-card p { font-size: .95rem; }
+    .alt-card pre { box-shadow: none; }
+
+    /* ── Toast ── */
     .toast { position: fixed; top: 70px; right: 24px; z-index: 200; padding: 12px 20px; border-radius: 8px; font-size: 0.85rem; max-width: 400px; color: #fff; }
 
-    @media (max-width: 600px) {
-      .content { padding: 60px 12px 32px; }
-      h1 { font-size: 1.5rem; }
-      .wizard-steps { flex-wrap: wrap; gap: 4px; }
+    /* ── Footer ── */
+    .footer { border-top: 1px solid var(--line); padding: 2rem clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: .82rem; color: var(--muted); }
+    .footer-links { display: flex; justify-content: center; gap: 1.5rem; margin-bottom: .8rem; }
+    .footer-links a { color: var(--muted); }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ── Responsive ── */
+    @media (max-width: 720px) {
+      .site-header { grid-template-columns: 1fr; position: static; }
+      nav { flex-wrap: wrap; gap: .85rem; }
+      .header-link { justify-self: start; }
+      .wizard-steps { gap: .4rem; }
       .step-arrow { display: none; }
-      .wizard-panel { padding: 20px; }
-      pre { font-size: 0.78rem; }
-      .nav-inner { padding: 10px 12px; }
-      .nav-links { gap: 10px; font-size: 0.78rem; flex-wrap: wrap; }
-    }
-    @media (max-width: 400px) {
-      .content { padding: 48px 8px 24px; }
-      h1 { font-size: 1.3rem; }
+      .wizard-panel { padding: 1.25rem; }
+      pre { font-size: .78rem; }
     }
   </style>
 </head>
 <body>
-  <nav class="nav">
-    <div class="nav-inner">
-      <a href="/" class="nav-brand"><span>🐝</span> Hive Hub <span onclick="window.open('https://github.com/kubestellar/hive','_blank')" title="Source Code" style="opacity:0.6;margin-left:2px;cursor:pointer"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span></a>
-      <div class="nav-links">
-        <a href="/">Hives</a>
-        <a href="/learn">Learn</a>
-        <a href="/get-started">Get Started</a>
-        <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
-        <span id="nav-user" style="display:none"></span>
-        <a href="/login" class="nav-login" id="nav-login">Login</a>
-        <a href="#" class="nav-login" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
-      </div>
-    </div>
-  </nav>
 
-  <div class="content">
+  <!-- ── Header ── -->
+  <header class="site-header">
+    <a href="/" class="brand">
+      <span class="brand-mark">🐝</span>
+      <span>Hive</span>
+    </a>
+    <nav>
+      <a href="/">Hives</a>
+      <a href="/#how-it-works">How it works</a>
+      <a href="/learn">Learn</a>
+      <a href="/get-started">Get Started</a>
+      <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
+      <span id="nav-user" style="display:none"></span>
+    </nav>
+    <a href="/login" class="header-link" id="nav-login">Login with GitHub</a>
+    <a href="#" class="header-link" id="nav-logout" style="display:none" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
+  </header>
+
+  <main>
+
+  <!-- ── Hosted wizard ── -->
+  <section class="section-pad">
+    <p class="section-label">Get started</p>
     <h1>Get a hosted hive</h1>
-    <p class="subtitle">Request a hive for your project in four steps. We provision it on our infrastructure &mdash; no Kubernetes, no setup, no compute needed.</p>
+    <p class="lede">Request a hive for your project in four steps. We provision it on our infrastructure &mdash; no Kubernetes, no setup, no compute needed.</p>
 
     <div class="wizard">
       <div class="wizard-steps" id="wizard-steps">
@@ -149,10 +314,10 @@
           </a>
         </div>
         <div id="logged-in-area" style="display:none">
-          <div style="display:flex;align-items:center;gap:12px;padding:16px;background:rgba(22,163,74,0.08);border:1px solid rgba(22,163,74,0.2);border-radius:8px;margin-bottom:16px">
+          <div style="display:flex;align-items:center;gap:12px;padding:16px;background:#74df9a17;border:1px solid #74df9a4d;border-radius:.7rem;margin-bottom:16px">
             <img id="user-avatar" style="width:32px;height:32px;border-radius:50%" src="">
             <div>
-              <span id="user-login" style="font-weight:600"></span>
+              <span id="user-login" style="font-weight:700"></span>
               <span style="color:var(--green);font-size:0.8rem;margin-left:8px">✓ Authenticated</span>
             </div>
           </div>
@@ -184,7 +349,7 @@
         <div id="repo-loading" style="color:var(--muted);padding:24px;text-align:center">Loading your repositories...</div>
         <div id="repo-list" class="repo-list" style="display:none"></div>
         <div id="repo-none" style="display:none;padding:24px;text-align:center;color:var(--muted)">
-          <p>No repositories found. Make sure the <a href="https://github.com/apps/hive-hub" target="_blank">Hive GitHub App</a> is installed on your org.</p>
+          <p>No repositories found. Make sure the <a href="https://github.com/apps/hive-hub" target="_blank" style="color:var(--blue)">Hive GitHub App</a> is installed on your org.</p>
         </div>
         <div style="display:flex;gap:12px;margin-top:16px">
           <button class="btn-secondary" onclick="goToStep(2)">← Back</button>
@@ -226,7 +391,7 @@
             </div>
           </label>
         </div>
-        <div id="request-summary" style="margin:20px 0;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:8px;font-size:0.85rem">
+        <div id="request-summary" style="margin:20px 0;padding:16px;background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
           <div style="margin-bottom:8px"><strong>Summary</strong></div>
           <div style="color:var(--muted)">Repos: <span id="summary-repos" style="color:var(--text)">none selected</span></div>
           <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)">L1 Advisory</span></div>
@@ -237,12 +402,16 @@
         </div>
       </div>
     </div>
+  </section>
 
-    <hr class="divider" id="self-host">
-
-    <div class="alt-section">
-      <h2>Self-host <span class="badge badge-ready">Ready</span></h2>
+  <!-- ── Self-host ── -->
+  <section class="section-pad alt-section" id="self-host">
+    <div class="section-heading">
+      <p class="section-label">Self-host</p>
+      <h2>Your agents, your infrastructure <span class="badge badge-ready">Ready</span></h2>
       <p>Run Hive v2 on your own machine with Docker Compose. Your agents, your repos, your infrastructure.</p>
+    </div>
+    <div class="alt-card">
       <pre><code>git clone -b v2 https://github.com/kubestellar/hive.git
 cd hive/v2
 
@@ -254,27 +423,42 @@ docker compose up -d
 
 # Open the dashboard
 open http://localhost:3001</code></pre>
-      <p>To register with hive.kubestellar.io, set <code>HIVE_HUB_URL=https://hive.kubestellar.io</code> in your environment. Your hive will appear in the <a href="/#hives">Active Hives</a> table within 5 minutes.</p>
+      <p style="margin-bottom:0">To register with hive.kubestellar.io, set <code>HIVE_HUB_URL=https://hive.kubestellar.io</code> in your environment. Your hive will appear in the <a href="/#hives" style="color:var(--blue)">Active Hives</a> table within 5 minutes.</p>
     </div>
+  </section>
 
-    <hr class="divider" id="contribute">
-
-    <div class="alt-section">
+  <!-- ── Contribute ── -->
+  <section class="section-pad alt-section" id="contribute">
+    <div class="section-heading">
+      <p class="section-label">Contribute</p>
       <h2>Contribute compute <span class="badge badge-ready">Ready</span></h2>
-      <p>Lend your AI CLI to run agents for any public hive. Earn trust tiers and climb the <a href="/#leaderboard">leaderboard</a>.</p>
+      <p>Lend your AI CLI to run agents for any public hive. Earn trust tiers and climb the <a href="/#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
+    </div>
+    <div class="alt-card">
       <pre><code>npx @kubestellar/hive-contribute
 
 hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
-      <p>Your CLI runs agents locally. Tasks are assigned by the hive governor. You start as a <strong>newcomer</strong> and progress through contributor → trusted → advisor as you complete work.</p>
+      <p style="margin-bottom:0">Your CLI runs agents locally. Tasks are assigned by the hive governor. You start as a <strong>newcomer</strong> and progress through contributor → trusted → advisor as you complete work.</p>
     </div>
-  </div>
+  </section>
+
+  </main>
+
+  <footer class="footer">
+    <div class="footer-links">
+      <a href="https://github.com/kubestellar/hive">Source Code</a>
+      <a href="https://arxiv.org/abs/2604.09388">ACMM Paper</a>
+      <a href="https://kubestellar.io">KubeStellar</a>
+    </div>
+    <p style="color:#3a4555">Hive is an open source project by KubeStellar</p>
+  </footer>
 
   <script>
     function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
     function toast(msg, type) {
       var t = document.createElement('div');
       t.className = 'toast';
-      t.style.background = type === 'error' ? 'rgba(239,68,68,0.9)' : type === 'success' ? 'rgba(22,163,74,0.9)' : 'rgba(59,130,246,0.9)';
+      t.style.background = type === 'error' ? 'rgba(255,126,126,0.9)' : type === 'success' ? 'rgba(116,223,154,0.9)' : 'rgba(128,191,255,0.9)';
       t.textContent = msg;
       document.body.appendChild(t);
       setTimeout(function() { t.remove(); }, 4000);
@@ -384,7 +568,7 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
         }
         toast('Hive request submitted! An admin will review it shortly.', 'success');
         btn.textContent = 'Request sent ✓';
-        btn.style.background = '#16a34a';
+        btn.style.background = '#74df9a';
       } catch(e) {
         toast('Error: ' + e.message, 'error');
         btn.disabled = false;
