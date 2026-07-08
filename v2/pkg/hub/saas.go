@@ -5195,7 +5195,7 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
         <div style="margin-bottom:12px">
           <label style="font-size:0.8rem;color:var(--muted);margin-bottom:4px;display:block">Preview</label>
-          <div id="banner-preview" style="padding:12px 16px;border-radius:6px;font-size:0.85rem;background:rgba(22,163,74,0.12);border:1px solid rgba(22,163,74,0.3);color:#4ade80">
+          <div id="banner-preview" style="padding:12px 16px;border-radius:6px;font-size:0.85rem;background:rgba(22,163,74,0.12);border:1px solid rgba(22,163,74,0.3);color:var(--text)">
             <em style="opacity:0.6">Type a message above to preview...</em>
           </div>
         </div>
@@ -5500,11 +5500,13 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
 
+    /* Banner text is NEUTRAL (matches the spoke's banner-contrast rule);
+       the color choice shows in the tint and border only. */
     var _bannerColorStyles = {
-      green: {bg: 'rgba(22,163,74,0.12)', border: '1px solid rgba(22,163,74,0.3)', color: '#4ade80'},
-      blue:  {bg: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', color: '#93c5fd'},
-      amber: {bg: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#fcd34d'},
-      gray:  {bg: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.3)', color: '#d1d5db'}
+      green: {bg: 'rgba(22,163,74,0.12)', border: '1px solid rgba(22,163,74,0.3)', color: 'var(--text)'},
+      blue:  {bg: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', color: 'var(--text)'},
+      amber: {bg: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: 'var(--text)'},
+      gray:  {bg: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.3)', color: 'var(--text)'}
     };
 
     (function() {
