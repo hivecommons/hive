@@ -156,6 +156,35 @@ kubectl --context hive-oke delete namespace hive-hosted-<hive-id>
 - The **My Hives → Dashboard** button targets the new URL (i.e. the
   heartbeat has propagated `dashboard_url`).
 
+## Gotcha: old copy-config init containers invert config precedence
+
+Hives provisioned from **older templates** carry a `copy-config` init
+container that prefers the PVC backup over the ConfigMap:
+
+```sh
+if [ -f /data/hive.yaml.bak ]; then cp /data/hive.yaml.bak /etc/hive/hive.yaml; ...
+```
+
+If the migrated `/data` volume carries a stale `hive.yaml.bak`, **every
+ConfigMap edit is silently overridden on the next restart**. The symptom is
+unmistakable: keys are present in the ConfigMap but empty in the pod's
+`/etc/hive/hive.yaml` (this bit the kellyaa migration — the
+`oauth_client_id` fix kept vanishing).
+
+Fix during migration:
+
+1. Move the stale backup aside:
+   `mv /data/hive.yaml.bak /data/hive.yaml.bak.stale-$(date +%s)`
+2. Patch the init container to the current template's command, where the
+   ConfigMap always wins:
+
+   ```sh
+   cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied;    if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi
+   ```
+
+Check the `copy-config` command as a **standard migration step** whenever the
+source hive was provisioned before the template fix.
+
 ## Future work
 
 The migrate API should gain an **"adopt existing deployment"** mode: instead
