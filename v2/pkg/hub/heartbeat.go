@@ -67,6 +67,10 @@ type HeartbeatNodeMetric struct {
 	MemPercent     int      `json:"mem_percent"`
 	Pods           int      `json:"pods"`
 	PodCapacity    int      `json:"pod_capacity"`
+	// HiveCount is the number of distinct hive-hosted-* namespaces with a
+	// running pod on this node (namespaces, not pods, so a hive briefly
+	// running two pods during a rollout is counted once).
+	HiveCount      int      `json:"hive_count,omitempty"`
 	Ready          bool     `json:"ready"`
 	Conditions     []string `json:"conditions"`
 	DiskPressure   bool     `json:"disk_pressure"`

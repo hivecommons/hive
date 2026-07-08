@@ -204,6 +204,9 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	if err == nil && len(podOut) > 0 {
 		var podsJSON struct {
 			Items []struct {
+				Metadata struct {
+					Namespace string `json:"namespace"`
+				} `json:"metadata"`
 				Spec struct {
 					NodeName string `json:"nodeName"`
 				} `json:"spec"`
@@ -211,11 +214,21 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		}
 		if json.Unmarshal(podOut, &podsJSON) == nil {
 			podCounts := make(map[string]int)
+			// hiveNamespacesPerNode tracks distinct hive-hosted-* namespaces per
+			// node so each hive is counted once even with multiple pods.
+			hiveNamespacesPerNode := make(map[string]map[string]bool)
 			for _, p := range podsJSON.Items {
 				podCounts[p.Spec.NodeName]++
+				if strings.HasPrefix(p.Metadata.Namespace, hiveHostedNamespacePrefix) {
+					if hiveNamespacesPerNode[p.Spec.NodeName] == nil {
+						hiveNamespacesPerNode[p.Spec.NodeName] = make(map[string]bool)
+					}
+					hiveNamespacesPerNode[p.Spec.NodeName][p.Metadata.Namespace] = true
+				}
 			}
 			for i := range nodes {
 				nodes[i].Pods = podCounts[nodes[i].Name]
+				nodes[i].HiveCount = len(hiveNamespacesPerNode[nodes[i].Name])
 			}
 		}
 	}
