@@ -3927,7 +3927,7 @@ const dashboardHTML = `<!DOCTYPE html>
             for (var bi = 0; bi < _trackedBranches.length; bi++) {
               var tb = _trackedBranches[bi];
               if (tb !== branchName) {
-                branchOptions += '<div onclick="switchBranch(\'' + esc(h.id) + '\',\'' + esc(tb) + '\',this)" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#c9d1d9;border-radius:4px" onmouseover="this.style.background=\'rgba(59,130,246,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(tb) + '</div>';
+                branchOptions += '<div onclick="event.stopPropagation();switchBranch(\'' + esc(h.id) + '\',\'' + esc(tb) + '\',this)" style="padding:4px 10px;cursor:pointer;font-size:0.65rem;white-space:nowrap;color:#c9d1d9;border-radius:4px" onmouseover="this.style.background=\'rgba(59,130,246,0.2)\'" onmouseout="this.style.background=\'transparent\'">' + esc(tb) + '</div>';
               }
             }
           }
@@ -4117,7 +4117,13 @@ const dashboardHTML = `<!DOCTYPE html>
       pill.style.background = 'rgba(234,179,8,0.2)';
       pill.style.borderColor = 'rgba(234,179,8,0.5)';
       pill.style.color = '#eab308';
-      pill.onclick = function() { cancelBranchSwitch(hiveId, origHTML); };
+      pill.onclick = null;
+      // Install the cancel handler after the selecting click finishes
+      // bubbling — the menu lives inside the pill, so the same click
+      // would otherwise cancel the switch it just started.
+      setTimeout(function() {
+        pill.onclick = function() { cancelBranchSwitch(hiveId, origHTML); };
+      }, 0);
       pill.innerHTML = esc(newBranch) + ' in ' + remaining + 's ✕';
       pill.title = 'Click to cancel';
       var interval = setInterval(function() {
