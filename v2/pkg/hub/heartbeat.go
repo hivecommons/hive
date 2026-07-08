@@ -87,6 +87,10 @@ type HeartbeatClusterSummary struct {
 	TotalMemGB    int `json:"total_mem_gb"`
 	TotalMemPct   int `json:"total_mem_percent"`
 	TotalPods     int `json:"total_pods"`
+	// HiveCapacityRemaining estimates how many MORE hives the cluster can
+	// hold (see hive_capacity.go). Pointer so old spokes that do not report
+	// it are distinguishable from a genuinely full cluster (nil vs 0).
+	HiveCapacityRemaining *int `json:"hive_capacity_remaining,omitempty"`
 }
 
 // HeartbeatGPUSummary reports aggregate GPU counts collected on the spoke.

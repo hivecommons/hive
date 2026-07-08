@@ -1083,6 +1083,8 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 			TotalMemGB:    report.Summary.TotalMemGB,
 			TotalMemPct:   report.Summary.TotalMemPct,
 			HiveCount:     hiveCount,
+			// nil for spokes running older builds that do not report it.
+			HiveCapacityRemaining: report.Summary.HiveCapacityRemaining,
 		},
 		HiveCount:  hiveCount,
 		DataSource: "heartbeat",
