@@ -1023,6 +1023,8 @@
     .advisor-row-inactive { opacity: 0.55; }
     .advisor-row-inactive .advisor-agent { color: var(--muted); font-weight: 400; }
     .advisor-inactive-note { flex: 1; color: var(--muted); font-style: italic; font-size: 0.65rem; }
+    /* Actual window burn of agents the projection excludes (on-demand/paused/off). */
+    .advisor-excluded-burn { font-size: 0.68rem; color: var(--muted); margin-top: 2px; }
     .advisor-tips { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
     .advisor-tip { font-size: 0.72rem; color: var(--text); padding: 4px 8px; background: color-mix(in srgb, var(--yellow) 8%, transparent); border-left: 2px solid var(--yellow); border-radius: 0 4px 4px 0; }
     /* Agent names inside tips: bold text color only — the tip's yellow
@@ -4593,10 +4595,26 @@
 
       const tipsHtml = tips.length > 0 ? `<div class="advisor-tips">${tips.map(t => `<div class="advisor-tip">💡 ${t}</div>`).join('')}</div>` : '';
 
+      // On-demand/paused/off agents project 0 by cadence — correctly — but
+      // they still burn real tokens when kicked manually. Surface that
+      // actual window burn so the projection's blind spot is visible.
+      const excludedBurn = rows
+        .filter(r => r.isPaused || r.isOff)
+        .reduce((sum, r) => {
+          const d = byAgent[r.name] || {};
+          return sum + (d.input || 0) + (d.output || 0) + (d.cacheRead || 0);
+        }, 0);
+      const DEFAULT_LOOKBACK_HOURS = 24;
+      const lookbackHours = (window._lastStatus?.tokens?.lookbackHours) || DEFAULT_LOOKBACK_HOURS;
+      const excludedHtml = excludedBurn > 0
+        ? `<div class="advisor-excluded-burn">on-demand/manual burn last ${lookbackHours}h: <b>${fmtTokens(excludedBurn)}</b> tokens (excluded from projection)</div>`
+        : '';
+
       return `<div class="advisor-section">
         <div class="advisor-title">Cadence Advisor <span style="color:var(--muted);font-size:0.7rem">weekly projection at current cadence</span></div>
         <div class="advisor-total">Projected: <b>${fmtTokens(totalWeeklyBurn)}</b> tokens/week</div>
         <div class="advisor-bars">${barRows}</div>
+        ${excludedHtml}
         ${tipsHtml}
       </div>`;
     }
