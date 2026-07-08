@@ -1635,6 +1635,40 @@ func main() {
 	}
 }
 
+// Dashboard system-alert IDs for the budget thresholds.
+const (
+	budgetWarnAlertID      = "budget-warn"
+	budgetExhaustedAlertID = "budget-exhausted"
+)
+
+// applyBudgetAlerts turns budget threshold crossings into dashboard system
+// alerts and notifications. Crossings fire once per window (governor tracks
+// the one-shot flags); alerts are cleared when the threshold no longer
+// applies (window rolled, limit raised, or budgeting disabled).
+func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions, dashSrv *dashboard.Server, notifier *notify.Notifier) {
+	if !trans.WarnActive {
+		dashSrv.ClearSystemAlert(budgetWarnAlertID)
+	}
+	if !trans.ExhaustedActive {
+		dashSrv.ClearSystemAlert(budgetExhaustedAlertID)
+	}
+
+	budget := gov.GetBudget()
+	if trans.WarnCrossed {
+		msg := fmt.Sprintf("token budget at %d%%+ of weekly limit: %d of %d tokens used",
+			governor.BudgetWarnPct, budget.CurrentSpend, budget.WeeklyLimit)
+		dashSrv.AddSystemAlert(budgetWarnAlertID, "warning", msg)
+		notifier.Send("Budget warning", msg, notify.PriorityDefault)
+	}
+	if trans.ExhaustedCrossed {
+		windowEnd := budget.ResetAt.Add(governor.BudgetWindowDuration)
+		msg := fmt.Sprintf("token budget exhausted: %d of %d tokens used — agent kicks suspended until %s (exempt agents keep running)",
+			budget.CurrentSpend, budget.WeeklyLimit, windowEnd.Format(time.RFC1123))
+		dashSrv.AddSystemAlert(budgetExhaustedAlertID, "error", msg)
+		notifier.Send("Budget exhausted", msg, notify.PriorityHigh)
+	}
+}
+
 func runEvalCycle(
 	ctx context.Context,
 	cfg *config.Config,
@@ -1704,7 +1738,8 @@ func runEvalCycle(
 	// the kick gate sees current-window numbers.
 	if tokenCollector != nil {
 		if summary := tokenCollector.Summary(); summary != nil {
-			gov.UpdateBudgetFromTotals(summary.TotalTokens, summary.ByAgent, summary.ByModel)
+			trans := gov.UpdateBudgetFromTotals(summary.TotalTokens, summary.ByAgent, summary.ByModel)
+			applyBudgetAlerts(gov, trans, dashSrv, notifier)
 		}
 	}
 

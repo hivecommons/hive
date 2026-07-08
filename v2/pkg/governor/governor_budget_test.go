@@ -64,6 +64,49 @@ func TestBudgetZeroLimit_NeverSuppresses(t *testing.T) {
 	}
 }
 
+func TestBudgetTransitions_OneShotPerWindow(t *testing.T) {
+	cfg, agents := standardConfig("scanner")
+	g := New(cfg, agents, testLogger())
+
+	g.SetBudgetLimit(1000)
+	g.SetBudgetResetAt(time.Now()) // open the window with baseline 0
+
+	trans := g.UpdateBudgetFromTotals(950, nil, nil)
+	if !trans.WarnCrossed || !trans.WarnActive {
+		t.Errorf("expected warn crossing at 95%%, got %+v", trans)
+	}
+	if trans.ExhaustedCrossed || trans.ExhaustedActive {
+		t.Errorf("unexpected exhausted state below limit: %+v", trans)
+	}
+
+	trans = g.UpdateBudgetFromTotals(1200, nil, nil)
+	if trans.WarnCrossed {
+		t.Error("warn crossing must fire only once per window")
+	}
+	if !trans.ExhaustedCrossed || !trans.ExhaustedActive {
+		t.Errorf("expected exhausted crossing over limit, got %+v", trans)
+	}
+
+	trans = g.UpdateBudgetFromTotals(1300, nil, nil)
+	if trans.WarnCrossed || trans.ExhaustedCrossed {
+		t.Errorf("crossings must not repeat within a window: %+v", trans)
+	}
+	if !trans.WarnActive || !trans.ExhaustedActive {
+		t.Errorf("active levels should keep reporting: %+v", trans)
+	}
+}
+
+func TestBudgetTransitions_ZeroLimitNeverAlerts(t *testing.T) {
+	cfg, agents := standardConfig("scanner")
+	g := New(cfg, agents, testLogger())
+
+	g.UpdateBudgetFromTotals(0, nil, nil) // opens the window at baseline 0
+	trans := g.UpdateBudgetFromTotals(1_000_000, nil, nil)
+	if trans.WarnCrossed || trans.ExhaustedCrossed || trans.WarnActive || trans.ExhaustedActive {
+		t.Errorf("zero limit must never trigger budget alerts: %+v", trans)
+	}
+}
+
 func TestBudgetWindowRoll_ClearsSuppression(t *testing.T) {
 	cfg, agents := standardConfig("scanner")
 	g := New(cfg, agents, testLogger())

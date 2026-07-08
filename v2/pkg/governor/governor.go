@@ -78,6 +78,26 @@ type BudgetInfo struct {
 // "weekly" limit applies to spend accumulated within it.
 const BudgetWindowDuration = 7 * 24 * time.Hour
 
+// BudgetWarnPct is the percent of the weekly limit at which the soft
+// budget warning fires.
+const BudgetWarnPct = 90
+
+// percentDenominator converts a percentage into a fraction of a whole.
+const percentDenominator = 100
+
+// BudgetTransitions reports budget threshold state from a single
+// UpdateBudgetFromTotals call. WarnCrossed and ExhaustedCrossed are
+// one-shot: they fire at most once per window (flags reset when the window
+// rolls). The Active fields reflect the current spend level every call so
+// callers can clear alerts that no longer apply.
+type BudgetTransitions struct {
+	WarnCrossed      bool
+	ExhaustedCrossed bool
+	Rolled           bool
+	WarnActive       bool
+	ExhaustedActive  bool
+}
+
 type State struct {
 	Mode          Mode                    `json:"mode"`
 	QueueIssues   int                     `json:"queue_issues"`
@@ -110,6 +130,11 @@ type Governor struct {
 	evalHistory []EvalSnapshot
 	kickHistory []KickRecord
 	budget      BudgetInfo
+
+	// One-shot alert flags for the current budget window; reset when the
+	// window rolls so each window alerts at most once per threshold.
+	budgetWarned           bool
+	budgetExhaustedAlerted bool
 }
 
 func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger *slog.Logger) *Governor {
@@ -581,11 +606,13 @@ func (g *Governor) GetBudget() BudgetInfo {
 // UpdateBudgetFromTotals refreshes budget spend from the token collector's
 // lifetime totals. Session-file scans are cumulative, so window spend is
 // derived by subtracting the baseline captured when the window opened.
-// Rolls the window forward once BudgetWindowDuration has elapsed.
-func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]int64, byModel map[string]int64) {
+// Rolls the window forward once BudgetWindowDuration has elapsed and
+// reports threshold crossings so callers can alert exactly once per window.
+func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]int64, byModel map[string]int64) BudgetTransitions {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
+	var trans BudgetTransitions
 	now := time.Now()
 	if g.budget.ResetAt.IsZero() {
 		// First run or legacy snapshot without a window: open one now.
@@ -594,6 +621,9 @@ func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]
 	} else if now.Sub(g.budget.ResetAt) >= BudgetWindowDuration {
 		g.budget.ResetAt = now
 		g.budget.WindowBaseline = totalTokens
+		g.budgetWarned = false
+		g.budgetExhaustedAlerted = false
+		trans.Rolled = true
 		if g.logger != nil {
 			g.logger.Info("budget window rolled",
 				"reset_at", now,
@@ -617,6 +647,23 @@ func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]
 	for k, v := range byModel {
 		g.budget.ByModel[k] = v
 	}
+
+	// WeeklyLimit == 0 disables budgeting entirely: no thresholds, no alerts.
+	if g.budget.WeeklyLimit > 0 {
+		warnThreshold := g.budget.WeeklyLimit * BudgetWarnPct / percentDenominator
+		trans.WarnActive = g.budget.CurrentSpend >= warnThreshold
+		trans.ExhaustedActive = g.budget.CurrentSpend >= g.budget.WeeklyLimit
+		if trans.WarnActive && !g.budgetWarned {
+			g.budgetWarned = true
+			trans.WarnCrossed = true
+		}
+		if trans.ExhaustedActive && !g.budgetExhaustedAlerted {
+			g.budgetExhaustedAlerted = true
+			trans.ExhaustedCrossed = true
+		}
+	}
+
+	return trans
 }
 
 // SeedBudgetWindowBaseline restores the window baseline from a persisted
