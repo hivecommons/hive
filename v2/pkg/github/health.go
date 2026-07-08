@@ -145,15 +145,21 @@ func (c *Client) brewCheck(ctx context.Context, primaryRepo string) int {
 		}
 	}
 
-	release, _, err := c.client.Repositories.GetLatestRelease(ctx, c.org, primaryRepo)
-	if err != nil || release == nil {
+	// The tap's formulas track nightly releases, which GetLatestRelease
+	// excludes (prereleases). Comparing only against the latest stable made
+	// a fresher-than-stable formula fail forever. Accept a match against
+	// any recent release tag — stable or nightly.
+	const brewReleaseWindow = 20 // recent releases to compare against
+	releases, _, err := c.client.Repositories.ListReleases(ctx, c.org, primaryRepo,
+		&gh.ListOptions{PerPage: brewReleaseWindow})
+	if err != nil || len(releases) == 0 {
 		return healthStatusNotFound
 	}
 
-	latestVer := strings.TrimPrefix(release.GetTagName(), "v")
-
-	if formulaVer == latestVer {
-		return healthStatusSuccess
+	for _, release := range releases {
+		if formulaVer == strings.TrimPrefix(release.GetTagName(), "v") {
+			return healthStatusSuccess
+		}
 	}
 	return healthStatusFailure
 }
