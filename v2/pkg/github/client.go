@@ -51,6 +51,7 @@ type PullRequest struct {
 	Repo      string    `json:"repo"`
 	Number    int       `json:"number"`
 	Title     string    `json:"title"`
+	Body      string    `json:"body,omitempty"`
 	Author    string    `json:"author"`
 	Labels    []string  `json:"labels"`
 	Draft     bool      `json:"draft"`
@@ -62,12 +63,12 @@ type PullRequest struct {
 }
 
 type ActionableResult struct {
-	GeneratedAt   time.Time          `json:"generated_at"`
-	Issues        IssueResult        `json:"issues"`
-	PRs           PRResult           `json:"prs"`
-	Hold          HoldResult         `json:"hold"`
-	Clusters      []IssueCluster     `json:"clusters,omitempty"`
-	TotalByRepo   map[string]RepoCounts `json:"total_by_repo,omitempty"`
+	GeneratedAt time.Time             `json:"generated_at"`
+	Issues      IssueResult           `json:"issues"`
+	PRs         PRResult              `json:"prs"`
+	Hold        HoldResult            `json:"hold"`
+	Clusters    []IssueCluster        `json:"clusters,omitempty"`
+	TotalByRepo map[string]RepoCounts `json:"total_by_repo,omitempty"`
 }
 
 type RepoCounts struct {
@@ -87,10 +88,10 @@ type PRResult struct {
 }
 
 type HoldResult struct {
-	Issues int         `json:"issues"`
-	PRs    int         `json:"prs"`
-	Total  int         `json:"total"`
-	Items  []HoldItem  `json:"items"`
+	Issues int        `json:"issues"`
+	PRs    int        `json:"prs"`
+	Total  int        `json:"total"`
+	Items  []HoldItem `json:"items"`
 }
 
 type HoldItem struct {
@@ -180,6 +181,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 
 	var allIssues []Issue
 	var allPRs []PullRequest
+	var issueLinkingPRs []PullRequest
 	var holdItems []HoldItem
 	totalByRepo := make(map[string]RepoCounts)
 
@@ -197,7 +199,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 		allIssues = append(allIssues, issues...)
 		holdItems = append(holdItems, held...)
 
-		prs, heldPRs, prTotal, err := c.fetchPRs(ctx, repo)
+		prs, linkedPRs, heldPRs, prTotal, err := c.fetchPRs(ctx, repo)
 		if err != nil {
 			c.logger.Warn("failed to fetch PRs", "repo", repo, "error", err)
 			failedRepos++
@@ -205,10 +207,12 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 			continue
 		}
 		allPRs = append(allPRs, prs...)
+		issueLinkingPRs = append(issueLinkingPRs, linkedPRs...)
 		holdItems = append(holdItems, heldPRs...)
 
 		totalByRepo[repo] = RepoCounts{Issues: issueTotal, PRs: prTotal}
 	}
+	allIssues = filterIssuesWithOpenRepairPRs(allIssues, issueLinkingPRs)
 
 	// If every repo failed (e.g. API rate limit exhausted), returning a
 	// zero-count result would tell the governor the queue is empty and
@@ -328,7 +332,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time) (a
 	return actionable, held, totalIssues, nil
 }
 
-func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, held []HoldItem, totalPRs int, err error) {
+func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRequest, issueLinking []PullRequest, held []HoldItem, totalPRs int, err error) {
 	owner, repoName := c.splitRepo(repo)
 	opts := &gh.PullRequestListOptions{
 		State:       "open",
@@ -339,7 +343,7 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for {
 		prs, resp, err := c.client.PullRequests.List(ctx, owner, repoName, opts)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
+			return nil, nil, nil, 0, fmt.Errorf("listing PRs for %s/%s: %w", owner, repoName, err)
 		}
 		allPRs = append(allPRs, prs...)
 		if resp.NextPage == 0 {
@@ -351,6 +355,24 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 	for _, pr := range allPRs {
 		totalPRs++
 		labels := extractPRLabels(pr.Labels)
+		candidate := PullRequest{
+			Repo:      repo,
+			Number:    pr.GetNumber(),
+			Title:     pr.GetTitle(),
+			Body:      pr.GetBody(),
+			Author:    safeGetLogin(pr.GetUser()),
+			Labels:    labels,
+			Draft:     pr.GetDraft(),
+			CreatedAt: pr.GetCreatedAt().Time,
+			URL:       pr.GetHTMLURL(),
+			Mergeable: pr.GetMergeable(),
+		}
+		if pr.GetHead() != nil {
+			candidate.HeadSHA = pr.GetHead().GetSHA()
+		}
+		if len(referencedIssueNumbers(candidate.Title+"\n"+candidate.Body)) > 0 {
+			issueLinking = append(issueLinking, candidate)
+		}
 
 		if isHeld(labels) {
 			held = append(held, HoldItem{
@@ -370,26 +392,63 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			continue
 		}
 
-		headSHA := ""
-		if pr.GetHead() != nil {
-			headSHA = pr.GetHead().GetSHA()
-		}
-
-		actionable = append(actionable, PullRequest{
-			Repo:      repo,
-			Number:    pr.GetNumber(),
-			Title:     pr.GetTitle(),
-			Author:    safeGetLogin(pr.GetUser()),
-			Labels:    labels,
-			Draft:     pr.GetDraft(),
-			CreatedAt: pr.GetCreatedAt().Time,
-			URL:       pr.GetHTMLURL(),
-			Mergeable: pr.GetMergeable(),
-			HeadSHA:   headSHA,
-		})
+		actionable = append(actionable, candidate)
 	}
 
-	return actionable, held, totalPRs, nil
+	return actionable, issueLinking, held, totalPRs, nil
+}
+
+func filterIssuesWithOpenRepairPRs(issues []Issue, prs []PullRequest) []Issue {
+	if len(issues) == 0 || len(prs) == 0 {
+		return issues
+	}
+
+	linked := make(map[string]struct{})
+	for _, pr := range prs {
+		for _, issueNumber := range referencedIssueNumbers(pr.Title + "\n" + pr.Body) {
+			linked[issueKey(pr.Repo, issueNumber)] = struct{}{}
+		}
+	}
+	if len(linked) == 0 {
+		return issues
+	}
+
+	filtered := issues[:0]
+	for _, issue := range issues {
+		if _, ok := linked[issueKey(issue.Repo, issue.Number)]; ok {
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+	return filtered
+}
+
+func issueKey(repo string, number int) string {
+	return fmt.Sprintf("%s#%d", repo, number)
+}
+
+func referencedIssueNumbers(text string) []int {
+	matches := issueRefPattern.FindAllStringSubmatch(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{})
+	var numbers []int
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		var n int
+		if _, err := fmt.Sscanf(match[1], "%d", &n); err != nil || n <= 0 {
+			continue
+		}
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		numbers = append(numbers, n)
+	}
+	return numbers
 }
 
 // EnrichCIStatus fetches check-run results for each PR's HEAD commit
@@ -676,6 +735,7 @@ func (c *Client) SearchOutreachPRCount(ctx context.Context, author, org, project
 const perPage = 100
 
 var shaPattern = regexp.MustCompile(`[0-9a-f]{7,40}\b`)
+var issueRefPattern = regexp.MustCompile(`(?:#|GH-|/issues/)(\d+)\b`)
 
 const shaHoldComment = "Thanks for filing this issue! To help us reproduce and investigate, " +
 	"could you please include the **commit SHA** of the build you're running?\n\n" +

@@ -44,6 +44,7 @@ type wireUser struct {
 type wirePR struct {
 	Number    int         `json:"number"`
 	Title     string      `json:"title"`
+	Body      string      `json:"body,omitempty"`
 	User      wireUser    `json:"user"`
 	Labels    []wireLabel `json:"labels"`
 	Draft     bool        `json:"draft"`
@@ -78,6 +79,52 @@ const rfc3339Ago = "2006-01-02T15:04:05Z"
 
 func hoursAgo(h float64) string {
 	return time.Now().UTC().Add(-time.Duration(float64(time.Hour) * h)).Format(time.RFC3339)
+}
+
+func TestEnumerateActionable_SuppressesIssuesWithOpenLinkedPRs(t *testing.T) {
+	org, repo := "org", "repo"
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		issues := []wireIssue{
+			{Number: 2, Title: "Add visual coverage", User: wireUser{"visual-hive"}, CreatedAt: hoursAgo(3)},
+			{Number: 3, Title: "Another actionable issue", User: wireUser{"visual-hive"}, CreatedAt: hoursAgo(2)},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mustMarshal(t, issues))
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/pulls", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		prs := []wirePR{
+			{
+				Number:    37,
+				Title:     "[codex] Add hosted reference changed-file selection",
+				Body:      "Fixes #2\n\nValidation: Visual Hive PR check passed.",
+				User:      wireUser{"codex"},
+				Draft:     true,
+				CreatedAt: hoursAgo(1),
+				HTMLURL:   "https://github.com/org/repo/pull/37",
+				Mergeable: boolPtr(true),
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(mustMarshal(t, prs))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	result, err := c.EnumerateActionable(context.Background())
+	if err != nil {
+		t.Fatalf("EnumerateActionable: %v", err)
+	}
+	if result.Issues.Count != 1 {
+		t.Fatalf("Issues.Count = %d, want 1; items=%+v", result.Issues.Count, result.Issues.Items)
+	}
+	if got := result.Issues.Items[0].Number; got != 3 {
+		t.Fatalf("remaining issue = #%d, want #3", got)
+	}
+	if result.PRs.Count != 0 {
+		t.Fatalf("PRs.Count = %d, want 0 because draft PRs are not actionable", result.PRs.Count)
+	}
 }
 
 // --------------------------------------------------------------------------
@@ -506,8 +553,8 @@ func TestIsHeld(t *testing.T) {
 		{[]string{"hold"}, true},
 		{[]string{"on-hold"}, true},
 		{[]string{"hold/review"}, true},
-		{[]string{"HOLD"}, true},             // case-insensitive
-		{[]string{"bug", "hold"}, true},      // mixed labels
+		{[]string{"HOLD"}, true},        // case-insensitive
+		{[]string{"bug", "hold"}, true}, // mixed labels
 		{[]string{"bug", "enhancement"}, false},
 		{[]string{}, false},
 		{nil, false},
