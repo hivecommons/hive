@@ -524,6 +524,10 @@ func isPublicPath(path string) bool {
 		return true
 	case strings.HasPrefix(path, "/api/contribute"):
 		return true
+	case path == "/leaderboard" || strings.HasPrefix(path, "/leaderboard/"):
+		return true
+	case strings.HasPrefix(path, "/api/leaderboard"):
+		return true
 	case strings.HasPrefix(path, "/api/gh-user-auth/"):
 		return true
 	default:
