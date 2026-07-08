@@ -543,6 +543,34 @@
       </ul>
     </section>
 
+    <!-- ── Supported AI methods ── -->
+    <section class="section-pad" id="methods">
+      <div class="section-heading">
+        <p class="section-label">Bring your own AI</p>
+        <h2>Runs the AI you already have</h2>
+        <p>Each agent picks its own method and model. Use a subscription CLI, an API-key provider, or point agents at your own models &mdash; no provider account required for self-hosted inference.</p>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="hive-table">
+          <thead>
+            <tr><th style="text-align:left">Method</th><th style="text-align:left">Type</th><th style="text-align:left">Models</th><th style="text-align:left">Authentication</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="hive-name">Claude Code</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Anthropic (Opus, Sonnet, Haiku)</td><td style="text-align:left">Anthropic subscription &mdash; dashboard Login button or <code style="background:#17212d;border:1px solid var(--line);padding:1px 5px;border-radius:4px;color:var(--amber)">/login</code> in the agent terminal</td></tr>
+            <tr><td class="hive-name">GitHub Copilot</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Copilot catalog (Claude, GPT, Gemini)</td><td style="text-align:left">GitHub device-flow login</td></tr>
+            <tr><td class="hive-name">Gemini CLI</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Gemini</td><td style="text-align:left">Google account or API key</td></tr>
+            <tr><td class="hive-name">Goose</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Multi-provider</td><td style="text-align:left">Provider API key</td></tr>
+            <tr><td class="hive-name">Codex</td><td style="text-align:left">CLI agent</td><td style="text-align:left">OpenAI</td><td style="text-align:left">OpenAI login or API key</td></tr>
+            <tr><td class="hive-name">Aider</td><td style="text-align:left">CLI agent</td><td style="text-align:left">Multi-provider</td><td style="text-align:left">Provider API key</td></tr>
+            <tr><td class="hive-name">Bob</td><td style="text-align:left">CLI agent</td><td style="text-align:left">IBM</td><td style="text-align:left">CLI login</td></tr>
+            <tr><td class="hive-name">vLLM</td><td style="text-align:left">Self-hosted inference</td><td style="text-align:left">Your own models, your GPUs</td><td style="text-align:left">None &mdash; no provider account</td></tr>
+            <tr><td class="hive-name">llm-d</td><td style="text-align:left">Distributed inference on Kubernetes</td><td style="text-align:left">Your own models, your cluster</td><td style="text-align:left">None &mdash; no provider account</td></tr>
+            <tr><td class="hive-name">LiteLLM <span class="acmm-badge acmm-2" style="margin-left:6px">new</span></td><td style="text-align:left">OpenAI-compatible gateway</td><td style="text-align:left">Anything behind your LiteLLM endpoint</td><td style="text-align:left">Endpoint URL + API key</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- ── Active Hives table ── -->
     <section class="section" id="hives">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
