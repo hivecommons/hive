@@ -423,6 +423,16 @@ const (
 	// DefaultLiteLLMAPIKeyFile is the key file consulted when api_key_file
 	// is not set. Matches the /secrets volume used for k8s Secret mounts.
 	DefaultLiteLLMAPIKeyFile = "/secrets/litellm_api_key"
+	// WritableSecretsDir is the PVC-backed directory where the dashboard
+	// persists secret VALUES entered in the UI. Unlike /secrets (a
+	// read-only Kubernetes Secret mount), /data is the hive's writable
+	// persistent volume, so files written here survive pod restarts and
+	// hosted users can set keys without cluster access.
+	WritableSecretsDir = "/data/secrets"
+	// WritableLiteLLMAPIKeyFile is where the dashboard stores an API key
+	// value entered in the LiteLLM config UI. hive.yaml references it via
+	// api_key_file; the key value itself never enters hive.yaml or logs.
+	WritableLiteLLMAPIKeyFile = WritableSecretsDir + "/litellm_api_key"
 	// LiteLLMEndpointEnv overrides governor.litellm.endpoint at runtime
 	// (mirrors HIVE_VLLM_ENDPOINT / HIVE_LLMD_ENDPOINT).
 	LiteLLMEndpointEnv = "HIVE_LITELLM_ENDPOINT"
@@ -440,26 +450,54 @@ type LiteLLMConfig struct {
 	LocalProxy   bool   `yaml:"local_proxy"`   // run the bundled litellm binary as a local translator fallback
 }
 
-// ResolveAPIKey returns the LiteLLM API key using the resolution order:
-// key file (api_key_file, falling back to DefaultLiteLLMAPIKeyFile) →
-// env var named by api_key_env → DefaultLiteLLMAPIKeyEnv. Returns "" when
-// no key is configured. The key value itself is never stored in hive.yaml.
+// ResolveAPIKey returns the LiteLLM API key. Key FILES are consulted in
+// priority order — the configured api_key_file, then the k8s Secret mount
+// (DefaultLiteLLMAPIKeyFile), then the dashboard-written PVC file
+// (WritableLiteLLMAPIKeyFile) — followed by the env var named by
+// api_key_env and finally DefaultLiteLLMAPIKeyEnv. Returns "" when no key
+// is configured. The key value itself is never stored in hive.yaml.
+//
+// Consulting all three file locations means a key saved via the dashboard
+// keeps working even if hive.yaml is reset (e.g. re-seeded from a
+// ConfigMap) and the api_key_file pointer is lost, and an admin-managed
+// Secret key keeps working if the PVC copy is wiped.
 func (c *LiteLLMConfig) ResolveAPIKey() string {
-	keyFile := c.APIKeyFile
-	if keyFile == "" {
-		keyFile = DefaultLiteLLMAPIKeyFile
-	}
-	if data, err := os.ReadFile(keyFile); err == nil {
-		if key := strings.TrimSpace(string(data)); key != "" {
-			return key
+	key, _ := c.resolveAPIKeyWithSource()
+	return key
+}
+
+// ResolveAPIKeySource reports where ResolveAPIKey found the key without
+// exposing the value: "file:<path>", "env:<NAME>", or "" when no key is
+// configured. Safe to return from APIs (the dashboard shows it as the
+// "Key detected" store).
+func (c *LiteLLMConfig) ResolveAPIKeySource() string {
+	_, source := c.resolveAPIKeyWithSource()
+	return source
+}
+
+func (c *LiteLLMConfig) resolveAPIKeyWithSource() (string, string) {
+	files := []string{c.APIKeyFile, DefaultLiteLLMAPIKeyFile, WritableLiteLLMAPIKeyFile}
+	seen := map[string]bool{"": true}
+	for _, f := range files {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		if data, err := os.ReadFile(f); err == nil {
+			if key := strings.TrimSpace(string(data)); key != "" {
+				return key, "file:" + f
+			}
 		}
 	}
 	if c.APIKeyEnv != "" {
 		if key := os.Getenv(c.APIKeyEnv); key != "" {
-			return key
+			return key, "env:" + c.APIKeyEnv
 		}
 	}
-	return os.Getenv(DefaultLiteLLMAPIKeyEnv)
+	if key := os.Getenv(DefaultLiteLLMAPIKeyEnv); key != "" {
+		return key, "env:" + DefaultLiteLLMAPIKeyEnv
+	}
+	return "", ""
 }
 
 // ResolveEndpoint returns the effective LiteLLM base URL: the
