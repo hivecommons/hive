@@ -88,6 +88,7 @@ type AgentProcess struct {
 	lastInferKickPane   string    // stall watchdog: hash of the visible pane just after kick delivery
 	stallNudgeSent      bool      // stall watchdog: at most one nudge per kick
 	StallNudges         int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	launchGen           int       // increments per launch; stale deliverStartupKick goroutines check it and drop
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -680,6 +681,25 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		bootstrapPrompt = "You are an AI agent. Await further instructions."
 	}
 
+	// Interactive backends get the bootstrap prompt delivered AFTER the CLI
+	// is ready (deliverStartupKick, spawned below) instead of embedding it in
+	// the launch command. Embedding raced the CLI boot: the prompt-bearing
+	// launch line was typed into the pane in the same second as the (re)start
+	// (observed live: `audit: agent kicked trigger=startup` 60ms after
+	// `audit: agent restarting`), before the CLI — or even bash — was ready
+	// to consume it, so the kick text landed in bash and an unbalanced quote
+	// left the shell in PS2 continuation. Goose keeps the embedded --text
+	// prompt: goose run needs it to stay interactive and exits on the ^C that
+	// readiness-gated delivery sends.
+	deferredStartupKick := ""
+	if bootstrapPrompt != "" {
+		switch backend {
+		case "claude", "copilot", "gemini":
+			deferredStartupKick = bootstrapPrompt
+			bootstrapPrompt = ""
+		}
+	}
+
 	if bootstrapPrompt != "" {
 		now := time.Now()
 		agent.LastKick = &now
@@ -695,31 +715,14 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			"trigger", "startup",
 		)
 
+		// Only goose (and unknown backends, which never embed) reach this
+		// block — claude/copilot/gemini bootstrap prompts were deferred to
+		// deliverStartupKick above.
 		promptFile := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
 		if err := os.WriteFile(promptFile, []byte(bootstrapPrompt), 0o644); err != nil {
 			m.logger.Warn("failed to write bootstrap prompt", "name", agent.Name, "error", err)
-		} else {
-			switch backend {
-			case "copilot":
-				launchCmd += fmt.Sprintf(" -i \"$(cat %s)\"", promptFile)
-			case "claude":
-				// Write a launcher script instead of using $(cat) in send-keys.
-				// $(cat file) fails when the tmux shell hasn't fully initialized.
-				// Use -- to separate options from the positional prompt argument,
-				// otherwise --disallowed-tools consumes the prompt as tool names.
-				launcherFile := fmt.Sprintf("/tmp/.hive-launch-%s.sh", agent.Name)
-				launcherContent := fmt.Sprintf("#!/bin/sh\nexec %s -- \"$(cat %s)\"\n", launchCmd, promptFile)
-				if err := os.WriteFile(launcherFile, []byte(launcherContent), 0o755); err != nil {
-					m.logger.Warn("failed to write launcher script", "error", err)
-					launchCmd += fmt.Sprintf(" \"$(cat %s)\"", promptFile)
-				} else {
-					launchCmd = launcherFile
-				}
-			case "gemini":
-				launchCmd += fmt.Sprintf(" -i \"$(cat %s)\"", promptFile)
-			case "goose":
-				launchCmd += fmt.Sprintf(" --text \"$(cat %s)\"", promptFile)
-			}
+		} else if backend == "goose" {
+			launchCmd += fmt.Sprintf(" --text \"$(cat %s)\"", promptFile)
 		}
 	}
 
@@ -772,6 +775,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	now := time.Now()
 	agent.State = StateRunning
 	agent.StartedAt = &now
+	agent.launchGen++
 	m.logger.Info("audit: agent started",
 		"name", agent.Name,
 		"backend", backend,
@@ -786,6 +790,12 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	if backend == "copilot" {
 		go m.watchForTrustPromptForAgent(agent, agentCtx)
+	}
+
+	// Deliver the bootstrap prompt once the CLI is ready — fire-and-forget,
+	// same semantics as the old embedded delivery but gated on readiness.
+	if deferredStartupKick != "" {
+		go m.deliverStartupKick(agent, deferredStartupKick, agent.launchGen)
 	}
 
 	if agent.Config.CavemanMode != "" {
@@ -1784,6 +1794,17 @@ func (m *Manager) SendKick(name string, message string) error {
 		return fmt.Errorf("agent %s disappeared while waiting for input prompt", name)
 	}
 
+	m.deliverKickLocked(agent, message, "send-kick")
+
+	return nil
+}
+
+// deliverKickLocked types a message into the agent's CLI and records the
+// kick bookkeeping (LastKick, history, stall watchdog, audit log). Callers
+// must hold m.mu and must already have verified the CLI is ready for input
+// (crash detect + waitForCLIReadyForAgent + waitForInputPromptForAgent) —
+// this function does no readiness checking of its own.
+func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
 	// Clear stale input before kick (Ctrl+C then Ctrl+U).
 	// Goose 1.37 exits on ^C — skip clear for goose backend.
 	if agent.Config.Backend != "goose" && agent.BackendOverride != "goose" {
@@ -1835,7 +1856,7 @@ func (m *Manager) SendKick(name string, message string) error {
 	snippet := message
 	const maxSnippetLen = 120
 	snippet = truncateStr(snippet, maxSnippetLen)
-	record := KickRecord{Timestamp: now, Agent: name, Snippet: snippet}
+	record := KickRecord{Timestamp: now, Agent: agent.Name, Snippet: snippet}
 	if len(agent.KickHistory) >= kickHistoryCapacity {
 		agent.KickHistory = agent.KickHistory[1:]
 	}
@@ -1847,12 +1868,45 @@ func (m *Manager) SendKick(name string, message string) error {
 		kickPreview = truncateStr(kickPreview, maxKickPreviewLen)
 	}
 	m.logger.Info("audit: agent kicked",
-		"name", name,
+		"name", agent.Name,
 		"message_len", len(message),
 		"preview", kickPreview,
+		"trigger", trigger,
 	)
+}
 
-	return nil
+// deliverStartupKick delivers a bootstrap prompt to a freshly launched agent
+// once its CLI is actually ready for input, mirroring SendKick's readiness
+// chain (CLI marker visible, input prompt shown, not parked on a consent
+// screen — the consent check lives inside waitForInputPromptForAgent). It
+// runs fire-and-forget in a goroutine, bounded by cliReadyTimeout +
+// inputPromptTimeout. If the CLI never becomes ready the prompt is dropped
+// with a warning rather than typed into a bare bash pane — the crash
+// detector restarts the agent and the next launch builds a fresh bootstrap.
+// gen is the agent's launch generation at spawn time; a mismatch at delivery
+// time means the agent was relaunched while we waited (the new launch owns
+// its own startup kick, so this one is stale and dropped).
+func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int) {
+	if !m.waitForCLIReadyForAgent(agent) {
+		m.logger.Warn("startup kick dropped: CLI never became ready",
+			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
+		return
+	}
+	if !m.waitForInputPromptForAgent(agent) {
+		m.logger.Warn("startup kick dropped: CLI never reached input prompt",
+			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
+		return
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.agents[agent.Name]
+	if !ok || current != agent || agent.State != StateRunning || agent.launchGen != gen {
+		m.logger.Warn("startup kick dropped: agent restarted or stopped while waiting",
+			"name", agent.Name, "trigger", "startup")
+		return
+	}
+	m.deliverKickLocked(agent, prompt, "startup")
 }
 
 // tmuxSendLiteralForAgent sends text using the agent's tmux socket.
