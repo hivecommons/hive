@@ -140,6 +140,18 @@ if [ "$(id -u)" = "0" ]; then
   fi
   chown dev:node /home/dev 2>/dev/null || true
   chown dev:node /etc/hive/hive.yaml 2>/dev/null || true
+
+  # Ensure the PVC secrets dir the dashboard writes API keys into
+  # (/data/secrets/litellm_api_key) exists and is owned by the dev user.
+  # The Go binary runs as non-root (uid 1001) and CANNOT chown, so if this
+  # dir ever ends up root-owned the key save fails with EACCES. We create
+  # and chown it here (as root, before dropping to dev) UNCONDITIONALLY —
+  # not gated on DATA_OWNER — because the recursive /data chown above is
+  # skipped when /data is already dev-owned, which would leave a
+  # root-owned /data/secrets uncorrected. Mode 700: owner-only secrets.
+  mkdir -p /data/secrets && chown dev:node /data/secrets 2>/dev/null || true
+  chmod 700 /data/secrets 2>/dev/null || true
+
   mkdir -p /var/run/hive-metrics && chown dev:node /var/run/hive-metrics 2>/dev/null || true
   mkdir -p /var/run/hive-metrics/agent-tokens && chown dev:node /var/run/hive-metrics/agent-tokens 2>/dev/null || true
 

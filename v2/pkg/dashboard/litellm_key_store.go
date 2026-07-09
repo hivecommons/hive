@@ -37,6 +37,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -78,35 +79,90 @@ var errNotInCluster = errors.New("not running in a Kubernetes pod")
 // api_key_file path to record in hive.yaml. Only the chosen store is ever
 // logged — never the key.
 func (s *Server) storeLiteLLMAPIKey(key string) (string, error) {
-	if err := writeLiteLLMKeyFile(key); err != nil {
-		return "", err
+	pvcErr := writeLiteLLMKeyFile(key)
+	if pvcErr == nil {
+		s.logger.Info("litellm api key stored", "api_key_file", writableLiteLLMKeyFile)
+	} else {
+		// The PVC file is the store hive.yaml points at, but a misowned or
+		// read-only volume must not sink the whole save: an in-cluster hive
+		// with the hive-secrets-writer Role can still persist the key via the
+		// Secret (which surfaces at /secrets/litellm_api_key). Attempt that
+		// fallback below and only fail the save if BOTH stores fail.
+		s.logger.Info("litellm api key PVC file write failed; attempting hive-secrets Secret fallback",
+			"api_key_file", writableLiteLLMKeyFile, "reason", pvcErr.Error())
 	}
-	s.logger.Info("litellm api key stored", "api_key_file", writableLiteLLMKeyFile)
-	if err := patchKeyIntoHiveSecrets(litellmSecretDataKey, key); err == nil {
+
+	secretErr := patchKeyIntoHiveSecrets(litellmSecretDataKey, key)
+	switch {
+	case secretErr == nil:
 		s.logger.Info("litellm api key also patched into hive-secrets Secret",
 			"mount_path", config.DefaultLiteLLMAPIKeyFile)
-	} else if !errors.Is(err, errNotInCluster) {
+	case errors.Is(secretErr, errNotInCluster):
+		// Docker/LXC hive — Secret patch legitimately unavailable.
+	default:
 		s.logger.Info("hive-secrets Secret not patched; PVC key file is the only store",
-			"reason", err.Error())
+			"reason", secretErr.Error())
 	}
-	return writableLiteLLMKeyFile, nil
+
+	if pvcErr == nil {
+		// PVC file written: hive.yaml records that path (the authoritative,
+		// instantly-effective store), regardless of the Secret patch outcome.
+		return writableLiteLLMKeyFile, nil
+	}
+
+	// PVC write failed. If the Secret fallback succeeded, the key IS persisted
+	// and surfaces at DefaultLiteLLMAPIKeyFile on Secret-mounting hives — record
+	// that path so ResolveAPIKey finds it.
+	if secretErr == nil || errors.Is(secretErr, errNotInCluster) {
+		if secretErr == nil {
+			return config.DefaultLiteLLMAPIKeyFile, nil
+		}
+		// Not in cluster AND the PVC write failed — nothing persisted the key.
+		return "", pvcErr
+	}
+	// Both stores failed: surface the actionable PVC error (the primary path).
+	return "", pvcErr
 }
 
 // writeLiteLLMKeyFile writes the key value to the PVC key file with
 // owner-only permissions.
+//
+// The hive process runs as a non-root user (uid 1001, the /data owner) and
+// therefore cannot chown. If /data/secrets already exists but is owned by
+// root (or is otherwise unwritable), MkdirAll is a no-op and WriteFile fails
+// with EACCES. We cannot fix ownership from here, but we CAN surface a clear,
+// actionable error instead of a raw "permission denied" — the entrypoint's
+// root-only setup is responsible for pre-creating /data/secrets as dev:node,
+// and this message points the operator at that path when it hasn't.
 func writeLiteLLMKeyFile(key string) error {
 	dir := filepath.Dir(writableLiteLLMKeyFile)
 	if err := os.MkdirAll(dir, litellmKeyDirMode); err != nil {
-		return fmt.Errorf("creating %s: %w", dir, err)
+		return actionableWriteError(dir, err)
 	}
 	if err := os.WriteFile(writableLiteLLMKeyFile, []byte(key), litellmKeyFileMode); err != nil {
-		return fmt.Errorf("writing key file: %w", err)
+		return actionableWriteError(writableLiteLLMKeyFile, err)
 	}
 	// WriteFile does not change the mode of a pre-existing file.
 	if err := os.Chmod(writableLiteLLMKeyFile, litellmKeyFileMode); err != nil {
-		return fmt.Errorf("tightening key file mode: %w", err)
+		return actionableWriteError(writableLiteLLMKeyFile, err)
 	}
 	return nil
+}
+
+// actionableWriteError turns a low-level filesystem error into an operator-
+// readable message. Permission and read-only-filesystem failures on the PVC
+// key path almost always mean the hive's data volume is misowned (the dir is
+// root-owned but the hive runs non-root) or mounted read-only — so we say so
+// explicitly rather than leaking a bare "permission denied". The key value is
+// never part of these errors (only the path is), so they are safe to log.
+func actionableWriteError(path string, err error) error {
+	if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EROFS) {
+		return fmt.Errorf("could not write key to %s — the hive's data volume "+
+			"may be read-only or misowned (expected owner uid 1001); "+
+			"restart the hive so its entrypoint can repair the secrets directory: %w",
+			path, err)
+	}
+	return fmt.Errorf("writing %s: %w", path, err)
 }
 
 // patchKeyIntoHiveSecrets PATCHes the hive-secrets Secret in the pod's own
