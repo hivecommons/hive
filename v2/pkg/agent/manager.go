@@ -536,6 +536,18 @@ const (
 	// bypassConsentDefaultOption is the default (negative) option on the
 	// bypass-permissions consent screen.
 	bypassConsentDefaultOption = "No, exit"
+	// bypassConsentAcceptOption is the affirmative option on the
+	// bypass-permissions consent screen. Its position varies between CLI
+	// versions, so acceptance navigates by matching the selected-line text.
+	bypassConsentAcceptOption = "Yes, I accept"
+	// apiKeyPromptTitle is the heading of the custom-API-key approval prompt,
+	// shown when ANTHROPIC_API_KEY is not in customApiKeyResponses.approved.
+	// Its default selection is "No (recommended)" with the affirmative option
+	// above it.
+	apiKeyPromptTitle = "Detected a custom API key"
+	// apiKeyPromptAcceptOption is the affirmative option on the
+	// custom-API-key approval prompt.
+	apiKeyPromptAcceptOption = "Yes"
 	// cliWorkingMarker is shown while Claude Code is actively processing a
 	// request; a pane in this state is never a consent screen.
 	cliWorkingMarker = "esc to interrupt"
@@ -1945,30 +1957,73 @@ func (m *Manager) tmuxSendLiteralForAgent(agent *AgentProcess, text string) {
 }
 
 // dismissInferencePrompts polls the tmux pane for Claude Code interactive
-// prompts and auto-dismisses them. Works dynamically regardless of prompt
-// text changes between Claude Code versions by:
+// prompts and auto-dismisses them. The "Bypass Permissions mode" consent
+// screen and the custom-API-key approval prompt are handled first and
+// explicitly (see confirmMenuOption): their default selections are negative
+// ("No, exit" / "No (recommended)"), so confirming blind terminates the CLI
+// or declines the seeded key.
+// Other prompts are handled dynamically regardless of prompt text changes
+// between Claude Code versions by:
 //  1. Detecting "Enter to confirm" (universal prompt footer)
 //  2. Finding the selected option (line with "❯" marker)
 //  3. If selected option looks negative (contains "No" or "exit"), navigate
 //     away from it before confirming
 //  4. For "Press Enter to continue" screens, just press Enter
 //
+// The pane is polled fast for the first 10s — the consent screen appears
+// within ~5-8s of launch and every second it lingers is a window for a kick
+// to be swallowed by the menu — then at a relaxed interval.
+//
 // Stops when the main Claude Code input prompt appears ("esc to interrupt").
 func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 	const (
-		promptPollInterval   = 1 * time.Second
-		promptDismissTimeout = 60 * time.Second
-		postKeystrokeDelay   = 500 * time.Millisecond
+		// promptFastPollWindow covers the launch window in which the consent
+		// screen normally appears (~5-8s after CLI start).
+		promptFastPollWindow   = 10 * time.Second
+		promptFastPollInterval = 250 * time.Millisecond
+		promptPollInterval     = 1 * time.Second
+		promptDismissTimeout   = 60 * time.Second
+		postKeystrokeDelay     = 500 * time.Millisecond
 	)
 
-	deadline := time.Now().Add(promptDismissTimeout)
+	start := time.Now()
+	deadline := start.Add(promptDismissTimeout)
 	lastPane := ""
 
 	for time.Now().Before(deadline) {
-		time.Sleep(promptPollInterval)
+		interval := promptPollInterval
+		if time.Since(start) < promptFastPollWindow {
+			interval = promptFastPollInterval
+		}
+		time.Sleep(interval)
 
 		pane := m.captureVisiblePaneForAgent(agent)
-		if pane == "" || pane == lastPane {
+		if pane == "" {
+			continue
+		}
+
+		// Bypass-permissions consent screen: handle first and explicitly,
+		// even if the pane is unchanged since the last poll (a mistimed
+		// keystroke must be retried, not skipped). The affirmative option
+		// sits below the default "No, exit".
+		if strings.Contains(pane, bypassConsentTitle) && !strings.Contains(pane, cliWorkingMarker) {
+			m.logger.Info("accepting bypass-permissions consent", "agent", agent.Name)
+			m.confirmMenuOption(agent, bypassConsentTitle, bypassConsentAcceptOption, "Down")
+			lastPane = "" // re-capture fresh on the next pass
+			continue
+		}
+
+		// Custom-API-key approval prompt: the affirmative "Yes" sits ABOVE
+		// the default "No (recommended)" selection, so the generic
+		// Down-then-Enter fallback below would decline it.
+		if strings.Contains(pane, apiKeyPromptTitle) && !strings.Contains(pane, cliWorkingMarker) {
+			m.logger.Info("approving seeded inference API key", "agent", agent.Name)
+			m.confirmMenuOption(agent, apiKeyPromptTitle, apiKeyPromptAcceptOption, "Up")
+			lastPane = ""
+			continue
+		}
+
+		if pane == lastPane {
 			continue
 		}
 		lastPane = pane
@@ -1992,14 +2047,7 @@ func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 		}
 
 		// Find the currently selected option (marked with ❯)
-		selected := ""
-		for _, line := range strings.Split(pane, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "❯") {
-				selected = trimmed
-				break
-			}
-		}
+		selected := selectedMenuOption(pane)
 
 		m.logger.Info("inference prompt detected",
 			"agent", agent.Name,
@@ -2025,6 +2073,50 @@ func (m *Manager) dismissInferencePrompts(agent *AgentProcess) {
 	}
 
 	m.logger.Warn("inference prompt dismissal timed out", "agent", agent.Name)
+}
+
+// selectedMenuOption returns the trimmed text of the "❯"-selected line of an
+// interactive CLI menu, or "" if no line is selected.
+func selectedMenuOption(pane string) string {
+	for _, line := range strings.Split(pane, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "❯") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// confirmMenuOption drives an interactive CLI menu identified by title to the
+// option whose text contains want, then confirms it with Enter. Navigation
+// matches the "❯"-selected line text rather than pressing a fixed number of
+// keys, so it lands on the right option whichever position it occupies (menu
+// option order differs between Claude CLI versions). navKey is the arrow key
+// to step with ("Down" or "Up"). Returns true once the option was confirmed
+// or the screen is gone.
+func (m *Manager) confirmMenuOption(agent *AgentProcess, title, want, navKey string) bool {
+	const (
+		// menuMaxNavigateSteps bounds arrow-key navigation; the handled menus
+		// have 2 options, extra headroom covers future variants.
+		menuMaxNavigateSteps = 4
+		postKeystrokeDelay   = 500 * time.Millisecond
+	)
+	for step := 0; step < menuMaxNavigateSteps; step++ {
+		pane := m.captureVisiblePaneForAgent(agent)
+		if !strings.Contains(pane, title) || strings.Contains(pane, cliWorkingMarker) {
+			return true // screen already dismissed
+		}
+		if strings.Contains(selectedMenuOption(pane), want) {
+			m.tmuxSendKeysForAgent(agent, "Enter")
+			time.Sleep(postKeystrokeDelay)
+			return true
+		}
+		m.tmuxSendKeysForAgent(agent, navKey)
+		time.Sleep(postKeystrokeDelay)
+	}
+	m.logger.Warn("inference menu: wanted option not reached",
+		"agent", agent.Name, "title", title, "want", want)
+	return false
 }
 
 const (

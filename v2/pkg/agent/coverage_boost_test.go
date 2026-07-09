@@ -719,10 +719,21 @@ func TestEnsureClaudeSettings_CreatesFiles(t *testing.T) {
 	if parsed["bypassPermissions"] != true {
 		t.Error("bypassPermissions should be true")
 	}
+	if parsed["skipDangerousModePermissionPrompt"] != true {
+		t.Error("skipDangerousModePermissionPrompt should be true — it is the only key that suppresses the bypass-permissions consent dialog")
+	}
 
 	// Check standalone settings file
-	if _, err := os.Stat(claudeInferenceSettingsPath); err != nil {
-		t.Errorf("standalone settings file not created: %v", err)
+	flagData, err := os.ReadFile(claudeInferenceSettingsPath)
+	if err != nil {
+		t.Fatalf("standalone settings file not created: %v", err)
+	}
+	var flagParsed map[string]interface{}
+	if err := json.Unmarshal(flagData, &flagParsed); err != nil {
+		t.Fatalf("standalone settings invalid JSON: %v", err)
+	}
+	if flagParsed["skipDangerousModePermissionPrompt"] != true {
+		t.Error("standalone settings skipDangerousModePermissionPrompt should be true")
 	}
 
 	// Check .claude.json user config
@@ -757,6 +768,159 @@ func TestEnsureClaudeSettings_Idempotent(t *testing.T) {
 	settingsFile := filepath.Join(idempotentHomePath, ".claude", "settings.json")
 	if _, err := os.Stat(settingsFile); err != nil {
 		t.Errorf("settings should still exist: %v", err)
+	}
+}
+
+func TestSeedClaudeSettingsFile_RepairsMissingKey(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// Simulate a settings file seeded by an older hive version: no
+	// skipDangerousModePermissionPrompt, plus keys that must be preserved.
+	old := `{"permissions":{"allow":["Bash"],"deny":[]},"hasCompletedOnboarding":true,"bypassPermissions":true,"hasAcknowledgedDisclaimer":true}`
+	if err := os.WriteFile(path, []byte(old), 0o666); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m.seedClaudeSettingsFile("repair-agent", path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("invalid JSON after repair: %v", err)
+	}
+	if parsed["skipDangerousModePermissionPrompt"] != true {
+		t.Error("skipDangerousModePermissionPrompt should be merged in")
+	}
+	perms, ok := parsed["permissions"].(map[string]interface{})
+	if !ok {
+		t.Fatal("permissions should remain an object")
+	}
+	allow, ok := perms["allow"].([]interface{})
+	if !ok || len(allow) != 1 || allow[0] != "Bash" {
+		t.Error("existing permissions must not be overwritten on repair")
+	}
+}
+
+func TestSeedClaudeSettingsFile_CompleteFileUntouched(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	m.seedClaudeSettingsFile("complete-agent", path)
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after seed: %v", err)
+	}
+
+	m.seedClaudeSettingsFile("complete-agent", path)
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read after reseed: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Error("complete settings should not be rewritten")
+	}
+}
+
+func TestInferenceUserConfigSeed_ApprovedKeyForms(t *testing.T) {
+	// Short name: full key is within the CLI's 20-char comparison suffix,
+	// so only the full form is needed.
+	seed := inferenceUserConfigSeed("kellyaa")
+	responses := seed["customApiKeyResponses"].(map[string]any)
+	approved := responses["approved"].([]string)
+	if len(approved) != 1 || approved[0] != "sk-hive-kellyaa" {
+		t.Errorf("short-name approved = %v, want [sk-hive-kellyaa]", approved)
+	}
+
+	// Long name: the CLI matches key.slice(-20), so the truncated form must
+	// be seeded alongside the full key.
+	seed = inferenceUserConfigSeed("test-settings")
+	responses = seed["customApiKeyResponses"].(map[string]any)
+	approved = responses["approved"].([]string)
+	fullKey := "sk-hive-test-settings"
+	wantSuffix := fullKey[len(fullKey)-apiKeyApprovalSuffixLen:]
+	if len(approved) != 2 || approved[0] != fullKey || approved[1] != wantSuffix {
+		t.Errorf("long-name approved = %v, want [%s %s]", approved, fullKey, wantSuffix)
+	}
+}
+
+func TestSeedClaudeUserConfig_MergesTruncatedAPIKey(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".claude.json")
+
+	// Config seeded by an older hive version: full key only, no truncated
+	// form. The top-level merge alone would skip customApiKeyResponses.
+	old := `{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true,"customApiKeyResponses":{"approved":["sk-hive-long-agent-name"],"rejected":["other"]}}`
+	if err := os.WriteFile(path, []byte(old), 0o666); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m.seedClaudeUserConfig("long-agent-name", path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("invalid JSON after repair: %v", err)
+	}
+	responses := parsed["customApiKeyResponses"].(map[string]interface{})
+	approved := responses["approved"].([]interface{})
+	fullKey := "sk-hive-long-agent-name"
+	wantSuffix := fullKey[len(fullKey)-apiKeyApprovalSuffixLen:]
+	found := false
+	for _, v := range approved {
+		if v == wantSuffix {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("approved = %v, should include truncated form %q", approved, wantSuffix)
+	}
+	rejected := responses["rejected"].([]interface{})
+	if len(rejected) != 1 || rejected[0] != "other" {
+		t.Errorf("rejected = %v, existing entries must be preserved", rejected)
+	}
+}
+
+func TestSelectedMenuOption(t *testing.T) {
+	tests := []struct {
+		name string
+		pane string
+		want string
+	}{
+		{
+			name: "no-first consent variant",
+			pane: "WARNING: Claude Code running in Bypass Permissions mode\n ❯ 1. No, exit\n   2. Yes, I accept\nEnter to confirm · Esc to cancel",
+			want: "❯ 1. No, exit",
+		},
+		{
+			name: "yes-first consent variant",
+			pane: "WARNING: Claude Code running in Bypass Permissions mode\n ❯ 1. Yes, I accept\n   2. No, exit\nEnter to confirm · Esc to cancel",
+			want: "❯ 1. Yes, I accept",
+		},
+		{
+			name: "no selection",
+			pane: "plain shell output\n$ ",
+			want: "",
+		},
+		{
+			name: "empty pane",
+			pane: "",
+			want: "",
+		},
+	}
+	for _, tc := range tests {
+		if got := selectedMenuOption(tc.pane); got != tc.want {
+			t.Errorf("selectedMenuOption(%s) = %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 
