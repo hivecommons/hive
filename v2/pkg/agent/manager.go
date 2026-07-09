@@ -597,6 +597,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	if agent.ModelOverride != "" {
 		model = agent.ModelOverride
 	}
+	modelIn := model
 	model = normalizeModelName(model, backend)
 
 	bootstrapPrompt := agent.BootstrapOverride
@@ -618,6 +619,13 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		binary = "claude"
 		m.ensureClaudeSettings(agent.Name, agent.UID)
 		if m.inferenceRouteCallback != nil {
+			// inference-model-passthrough: the model set here becomes the
+			// outbound OpenAI "model" field that the gateway checks for
+			// entitlement, so it must equal the configured model verbatim.
+			// Log in->out (never keys) so a mismatch is greppable.
+			m.logger.Info("inference route model passthrough",
+				"agent", agent.Name, "backend", backend,
+				"model_in", modelIn, "model_out", model)
 			m.inferenceRouteCallback(agent.Name, backend, model)
 		}
 		backend = "claude"
@@ -3226,8 +3234,16 @@ func (m *Manager) ensureWorldWritable(root string) {
 // normalizeModelName converts YAML-friendly model names to the format each
 // CLI backend expects. Claude CLI uses hyphens (claude-opus-4-7), while
 // Copilot and other backends use dots (claude-opus-4.7).
+//
+// Self-hosted inference backends (vllm, llm-d, litellm) are the outbound
+// gateway model id verbatim — the string must match an entitled model on the
+// gateway EXACTLY (prefixes like "Azure/", dots vs hyphens, case). Rewriting
+// it (e.g. "Azure/gpt-4" -> "Azure/gpt.4", "gpt-4o-2024-08-06" ->
+// "gpt-4o-2024-08.06") produces a model the team is not entitled to and the
+// gateway 403s ("team not allowed to access model") even for entitled models.
+// So never normalize inference model names — pass them through untouched.
 func normalizeModelName(model, backend string) string {
-	if backend == "claude" {
+	if backend == "claude" || IsInferenceBackend(backend) {
 		return model
 	}
 	idx := strings.LastIndex(model, "-")

@@ -50,6 +50,42 @@ func TestTranslateAnthropicToOpenAI_StringSystem(t *testing.T) {
 	}
 }
 
+// TestTranslateAnthropicToOpenAI_ModelPassthrough asserts that the outbound
+// OpenAI "model" is exactly the target (route) model, byte-for-byte, and that
+// the model claude --bare puts in the Anthropic request body is ignored. The
+// gateway checks this field for entitlement; any rewrite (dropping the
+// "Azure/" prefix, dot/hyphen swaps, case changes) makes an entitled model
+// 403 with "team not allowed to access model".
+func TestTranslateAnthropicToOpenAI_ModelPassthrough(t *testing.T) {
+	// claude --bare sends a claude-ish model in the body; it must be ignored.
+	body := `{
+		"model": "claude-opus-4-6",
+		"max_tokens": 256,
+		"messages": [{"role": "user", "content": "Hi"}]
+	}`
+
+	for _, target := range []string{
+		"Azure/gpt-4o",
+		"Azure/gpt-4.1",
+		"Azure/gpt-4",
+		"gpt-4o-2024-08-06",
+		"aws/anthropic.claude-3-5-sonnet",
+		"Qwen/Qwen2.5-1.5B-Instruct",
+	} {
+		result, err := translateAnthropicToOpenAI([]byte(body), target, 0, "")
+		if err != nil {
+			t.Fatalf("target %q: %v", target, err)
+		}
+		var req openaiRequest
+		if err := json.Unmarshal(result, &req); err != nil {
+			t.Fatalf("target %q: %v", target, err)
+		}
+		if req.Model != target {
+			t.Errorf("outbound model = %q, want verbatim %q", req.Model, target)
+		}
+	}
+}
+
 func TestTranslateAnthropicToOpenAI_BlockSystem(t *testing.T) {
 	body := `{
 		"model": "claude-sonnet-4-6",

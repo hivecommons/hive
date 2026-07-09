@@ -684,4 +684,23 @@ func TestNormalizeModelNameUnit(t *testing.T) {
 	if got := normalizeModelName("gpt-next", "copilot"); got != "gpt-next" {
 		t.Errorf("no digit suffix: got %q, want gpt-next", got)
 	}
+
+	// Inference backends must pass the model through VERBATIM: it becomes the
+	// outbound gateway "model" field and must match an entitled model exactly.
+	// Rewriting it (e.g. "Azure/gpt-4" -> "Azure/gpt.4") makes the gateway 403
+	// with "team not allowed to access model" even on entitled models.
+	for _, backend := range []string{"litellm", "vllm", "llm-d"} {
+		for _, model := range []string{
+			"Azure/gpt-4o",
+			"Azure/gpt-4.1",
+			"Azure/gpt-4",       // trailing "-4" would become "gpt.4" if normalized
+			"gpt-4o-2024-08-06", // trailing "-06" would become "-08.06" if normalized
+			"Qwen/Qwen2.5-1.5B-Instruct",
+			"aws/anthropic.claude-3-5-sonnet",
+		} {
+			if got := normalizeModelName(model, backend); got != model {
+				t.Errorf("inference backend %q must pass %q through verbatim, got %q", backend, model, got)
+			}
+		}
+	}
 }
