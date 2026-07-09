@@ -859,6 +859,38 @@ subjects:
   namespace: {{.Namespace}}
 ---
 {{- end}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-secrets-writer
+  namespace: {{.Namespace}}
+rules:
+# Least privilege: the hive pod may read and patch ONLY its own
+# hive-secrets Secret, so dashboard-entered API keys (e.g. the LiteLLM
+# key) are stored in the Secret instead of on the PVC.
+- apiGroups: [""]
+  resources: ["secrets"]
+  resourceNames: ["hive-secrets"]
+  verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-secrets-writer
+  namespace: {{.Namespace}}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-secrets-writer
+subjects:
+- kind: ServiceAccount
+{{- if .RequiresSCC}}
+  name: hive-sa
+{{- else}}
+  name: default
+{{- end}}
+  namespace: {{.Namespace}}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1112,11 +1144,12 @@ spec:
           mountPath: /etc/hive
         - name: data
           mountPath: /data
-{{- if .UseApp}}
+        # hive-secrets is always whole-volume-mounted (no subPath) so keys
+        # the pod patches into the Secret (e.g. litellm_api_key entered in
+        # the dashboard) propagate to /secrets/<key> without a restart.
         - name: secrets
           mountPath: /secrets
           readOnly: true
-{{- end}}
       volumes:
       - name: config
         configMap:
@@ -1126,11 +1159,9 @@ spec:
       - name: data
         persistentVolumeClaim:
           claimName: hive-data
-{{- if .UseApp}}
       - name: secrets
         secret:
           secretName: hive-secrets
-{{- end}}
 ---
 apiVersion: v1
 kind: Service
