@@ -2256,7 +2256,7 @@
   </div>
 
   <div id="acmm-eval-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('acmm-eval-section')"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation</h2>
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('acmm-eval-section')"><span class="section-chevron">▼</span> 🎯 ACMM Evaluation <button class="btn" onclick="event.stopPropagation();openACMMDialog()" title="Click to change maturity level" style="vertical-align:middle;margin-left:8px;font-weight:400">Change level ▾</button></h2>
     <div class="section-body">
       <div id="acmm-eval-card" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
         <div class="kb-stat-grid" id="acmm-eval-stats">
@@ -12064,6 +12064,7 @@ function burnAreaChart() {
     // ── Governor Tab Renderers ──
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
+      const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">General hive instance settings.</p>
         <div class="config-field">
@@ -12073,6 +12074,14 @@ function burnAreaChart() {
             <button onclick="saveHiveId()" style="font-size:0.75rem;padding:6px 14px;background:var(--green);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-weight:600">Save</button>
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Format: hive-adjective-noun (e.g. hive-bold-hawk). Changes take effect immediately.</span>
+        </div>
+        <div class="config-field">
+          <label>Maturity Level <span class="config-info">i<span class="config-tooltip">ACMM (AI-native Continuous Maturity Model) level — controls which agents run and how autonomous they are, from advisory-only (L1) to fully autonomous (L6).</span></span></label>
+          <div style="display:flex;gap:10px;align-items:center">
+            <span style="display:inline-block;padding:3px 12px;border-radius:999px;font-size:0.75rem;font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber)">${currentACMMLevel > 0 ? acmmLevelLabel(currentACMMLevel) : 'Not set'}</span>
+            <button class="btn" onclick="closeConfigDialog();openACMMDialog()" title="Open the ACMM maturity level selector">Change&hellip;</button>
+          </div>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
         </div>`;
     }
 
