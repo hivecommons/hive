@@ -3513,14 +3513,12 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 	fallback := false
 	if len(models) == 0 {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
-		if backend == "litellm" {
-			// Discovery is authoritative (LiteLLM entitlement-filters
-			// /v1/models per API key); only when it fails do we fall back
-			// to the common static aliases, flagged so the UI can mark
-			// them as unverified against the configured key.
-			models = litellmStaticModelAliases
-			fallback = true
-		}
+		// Discovery is authoritative (a LiteLLM gateway entitlement-filters
+		// /v1/models per API key); only when it fails do we fall back to
+		// the common static aliases, flagged so the UI can mark them as
+		// unverified against the configured endpoint/key.
+		models = inferenceStaticModelAliases
+		fallback = true
 	}
 	jsonResponse(w, map[string]interface{}{
 		"backend":  backend,
@@ -3530,36 +3528,55 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 }
 
 // inferenceAPIKey returns the bearer key used for a backend's model
-// discovery requests. Only litellm requires auth on /v1/models;
-// vllm/llm-d endpoints are unauthenticated.
+// discovery requests. litellm requires auth on /v1/models. vllm/llm-d are
+// usually unauthenticated, but the configured endpoint may in fact be a
+// LiteLLM gateway, which entitlement-filters /v1/models and hides
+// key-gated models from anonymous callers — so resolve a backend-specific
+// key first (governor.vllm / governor.llm-d api_key_env|api_key_file, or
+// the HIVE_VLLM_API_KEY / HIVE_LLMD_API_KEY defaults), then fall back to
+// the litellm key. A plain vLLM/llm-d server without --api-key ignores the
+// Authorization header, so sending a key is harmless there.
 func (s *Server) inferenceAPIKey(backend string) string {
-	if backend != "litellm" || s.deps == nil || s.deps.Config == nil {
+	if s.deps == nil || s.deps.Config == nil {
 		return ""
 	}
-	return s.deps.Config.Governor.LiteLLM.ResolveAPIKey()
+	gov := &s.deps.Config.Governor
+	switch backend {
+	case "vllm":
+		if key := gov.VLLM.ResolveAPIKey(config.DefaultVLLMAPIKeyEnv); key != "" {
+			return key
+		}
+	case "llm-d":
+		if key := gov.LLMD.ResolveAPIKey(config.DefaultLLMDAPIKeyEnv); key != "" {
+			return key
+		}
+	}
+	return gov.LiteLLM.ResolveAPIKey()
 }
 
-// litellmStaticModelAliases is the FALLBACK model list for the LiteLLM
-// dropdown, offered only when authed model discovery against the configured
-// endpoint fails (or no endpoint/env override is configured), so the
-// dropdown is never empty. Discovery is authoritative: LiteLLM's /v1/models
-// is entitlement-filtered per API key, so when discovery succeeds we show
-// ONLY the discovered set — appending these aliases on top would offer
-// unlicensed models that just 403 at runtime. The entries are the common
-// Claude/Gemini CLI-backend models in the UNDERSCORE version convention
-// LiteLLM proxies expect (claude-opus-4_8, gemini-2_5-pro) — unlike the
-// Claude CLI (hyphens, claude-opus-4-8) and the Copilot/Gemini backends
-// (dots, claude-opus-4.8 / gemini-2.5-pro). Derived from the
-// CLAUDE_CLI_MODELS/COPILOT_CLI_MODELS lists in static/index.html and the
-// gemini backend list in handleBackends; keep in sync when those change.
-var litellmStaticModelAliases = []string{
-	"claude-opus-4_8",
-	"claude-opus-4_7",
-	"claude-opus-4_6",
-	"claude-sonnet-4_6",
-	"claude-haiku-4_5",
-	"gemini-2_5-pro",
-	"gemini-2_5-flash",
+// inferenceStaticModelAliases is the FALLBACK model list for the inference
+// model dropdowns (vllm, llm-d, litellm), offered only when runtime
+// /v1/models discovery against the backend's configured endpoint fails
+// (and no HIVE_*_MODELS env override is set), so a dropdown is never
+// empty. Discovery is authoritative: a LiteLLM gateway entitlement-filters
+// /v1/models per API key, so when discovery succeeds we show ONLY the
+// discovered set — appending these aliases on top would offer unlicensed
+// models that just 403 at runtime. The entries use the LiteLLM gateway
+// naming convention observed live: UNDERSCORES between words and a DOT in
+// the version (claude_opus_4.8) — unlike the Claude CLI (all hyphens,
+// claude-opus-4-8) and the Copilot/Gemini backends (hyphenated words with
+// a dotted version, claude-opus-4.8 / gemini-2.5-pro). Model set derived
+// from the CLAUDE_CLI_MODELS/COPILOT_CLI_MODELS lists in static/index.html
+// and the gemini backend list in handleBackends; keep in sync when those
+// change.
+var inferenceStaticModelAliases = []string{
+	"claude_opus_4.8",
+	"claude_opus_4.7",
+	"claude_opus_4.6",
+	"claude_sonnet_4.6",
+	"claude_haiku_4.5",
+	"gemini_2.5_pro",
+	"gemini_2.5_flash",
 }
 
 func (s *Server) queryInferenceModels(backend string) []string {
@@ -3579,12 +3596,9 @@ func (s *Server) queryInferenceModels(backend string) []string {
 	if val := os.Getenv(envVar); val != "" {
 		return inferenceModelsFromEnv(envVar, "")
 	}
-	if backend == "litellm" {
-		// Discovery failed or litellm is unconfigured — fall back to the
-		// common static aliases (unverified against any API key).
-		return litellmStaticModelAliases
-	}
-	return nil
+	// Discovery failed or the backend is unconfigured — fall back to the
+	// common static aliases (unverified against any endpoint/key).
+	return inferenceStaticModelAliases
 }
 
 const inferenceModelQueryTimeout = 5 * time.Second

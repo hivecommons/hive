@@ -673,9 +673,11 @@ func TestQueryInferenceModels_DefaultModel(t *testing.T) {
 	t.Setenv("HIVE_VLLM_MODELS", "")
 	t.Setenv("HIVE_LLMD_MODELS", "")
 
+	// With no endpoints registered and no env override, every inference
+	// backend falls back to the static common aliases.
 	models := srv.queryInferenceModels("vllm")
-	if len(models) != 1 {
-		t.Errorf("expected 1 default model, got %v", models)
+	if len(models) != len(inferenceStaticModelAliases) {
+		t.Errorf("expected %d static fallback aliases, got %v", len(inferenceStaticModelAliases), models)
 	}
 }
 
