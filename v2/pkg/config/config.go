@@ -353,6 +353,54 @@ type GovernorConfig struct {
 	Budget        BudgetConfig          `yaml:"budget"`
 	Logging       LoggingConfig         `yaml:"logging"`
 	LiteLLM       LiteLLMConfig         `yaml:"litellm"`
+	VLLM          InferenceAuthConfig   `yaml:"vllm"`
+	LLMD          InferenceAuthConfig   `yaml:"llm-d"`
+}
+
+// Discovery-auth defaults for the self-hosted inference backends. Like
+// LiteLLM, hive.yaml stores only the env var NAME and/or key FILE PATH —
+// never the key value itself (Config.Save() writes the expanded config
+// back to disk, so a key value in YAML would be persisted in plaintext).
+const (
+	// DefaultVLLMAPIKeyEnv is the env var consulted for the vLLM model
+	// discovery API key when governor.vllm.api_key_env is not set.
+	DefaultVLLMAPIKeyEnv = "HIVE_VLLM_API_KEY"
+	// DefaultLLMDAPIKeyEnv is the env var consulted for the llm-d model
+	// discovery API key when governor.llm-d.api_key_env is not set.
+	DefaultLLMDAPIKeyEnv = "HIVE_LLMD_API_KEY"
+)
+
+// InferenceAuthConfig holds optional /v1/models discovery auth for a
+// self-hosted inference backend (vllm, llm-d). Plain vLLM/llm-d servers
+// need no key, but the configured endpoint may actually be a LiteLLM
+// gateway, which entitlement-filters /v1/models per API key and hides
+// key-gated models from anonymous callers.
+type InferenceAuthConfig struct {
+	APIKeyEnv  string `yaml:"api_key_env"`  // env var NAME holding the key; never the key value
+	APIKeyFile string `yaml:"api_key_file"` // path to a file holding the key
+}
+
+// ResolveAPIKey returns the backend's discovery API key using the
+// resolution order: key file (api_key_file) → env var named by
+// api_key_env → defaultEnv. Returns "" when no key is configured. The key
+// value itself is never stored in hive.yaml.
+func (c *InferenceAuthConfig) ResolveAPIKey(defaultEnv string) string {
+	if c.APIKeyFile != "" {
+		if data, err := os.ReadFile(c.APIKeyFile); err == nil {
+			if key := strings.TrimSpace(string(data)); key != "" {
+				return key
+			}
+		}
+	}
+	if c.APIKeyEnv != "" {
+		if key := os.Getenv(c.APIKeyEnv); key != "" {
+			return key
+		}
+	}
+	if defaultEnv != "" {
+		return os.Getenv(defaultEnv)
+	}
+	return ""
 }
 
 type LoggingConfig struct {
