@@ -9569,6 +9569,27 @@ function burnAreaChart() {
       }
     }
 
+    // Refresh an inference backend's model list whenever its dropdown is
+    // opened, so options reflect runtime state (endpoint/key changes, new
+    // models). fetchInferenceModels rate-limits via its
+    // INFERENCE_MODEL_CACHE_TTL_MS cache, so this cannot hammer the API.
+    document.addEventListener('focusin', async (e) => {
+      const sel = e.target;
+      if (!sel || !sel.matches || !sel.matches('select[data-change-action="switchModel"]')) return;
+      const agentName = sel.dataset.agent;
+      const a = (window._lastAgents || []).find(x => x.name === agentName);
+      const backend = a && a.cli;
+      if (!backend || !INFERENCE_BACKENDS.includes(backend)) return;
+      const prev = JSON.stringify(INFERENCE_MODELS[backend] || []);
+      const models = await fetchInferenceModels(backend);
+      if (JSON.stringify(models) !== prev) {
+        const current = sel.value;
+        sel.innerHTML = '<option value="">model ▾</option>' +
+          models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
+        sel.value = current;
+      }
+    });
+
     async function switchModel(agent, model) {
       if (!model) return;
       const toast = showToast(`Switching ${agent} model → ${model} (restarting session)...`, 'info', true);
