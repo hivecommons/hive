@@ -4400,7 +4400,10 @@
       try {
         const resp = await fetch(`/api/inference/models/${encodeURIComponent(backend)}`);
         const data = await resp.json();
-        const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() }));
+        // data.fallback: endpoint discovery failed and the server returned
+        // static common aliases — mark them as unverified against the key.
+        const labelSuffix = data.fallback ? ' (common alias, unverified)' : '';
+        const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
         INFERENCE_MODELS[backend] = models;
         _inferenceModelCache[backend] = { models, ts: now };
         return models;
