@@ -2959,8 +2959,8 @@
             ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>
           <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model">
-            <option value="" disabled selected>model ▾</option>
-            ${modelsForBackend(a.cli).map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
+            <option value="" disabled${a.model ? '' : ' selected'}>model ▾</option>
+            ${modelOptionsHtml(a.cli, a.model)}
           </select>
         </div>
         <div class="oc-detail-fields">
@@ -3907,8 +3907,8 @@
               ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
             </select>
             <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model. Higher-tier models (Opus) cost more tokens; lower-tier (Haiku) are cheaper but less capable.">
-              <option value="" disabled selected>model ▾</option>
-              ${modelsForBackend(a.cli).map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
+              <option value="" disabled${a.model ? '' : ' selected'}>model ▾</option>
+              ${modelOptionsHtml(a.cli, a.model)}
             </select>
           </div>
           </div>
@@ -4485,10 +4485,42 @@
       if (backend === 'claude') return CLAUDE_CLI_MODELS;
       return COPILOT_CLI_MODELS;
     }
-    async function fetchInferenceModels(backend) {
+    // _modelIdMatches: an agent's stored model may lack (or carry) the
+    // gateway provider prefix that discovery reports (e.g. stored "gpt-4o"
+    // vs discovered "Azure/gpt-4o", or vice-versa). Match on the full id,
+    // the suffix after the last slash, or the normalized dotted/hyphenated
+    // version so the current model preselects regardless of prefix.
+    function _modelIdMatches(optionValue, current) {
+      if (!current) return false;
+      if (optionValue === current) return true;
+      const optTail = optionValue.split('/').pop();
+      const curTail = current.split('/').pop();
+      if (optTail === curTail) return true;
+      return _modelsEqual(optTail, curTail);
+    }
+    // modelOptionsHtml builds the <option> list for a model dropdown:
+    // discovered/known models first (already discovered-first from the API),
+    // the current model preselected (prefix-insensitive), and — if the
+    // current model is not in the list — a preselected fallback option so
+    // the dropdown never silently drops an agent's active selection.
+    function modelOptionsHtml(backend, currentModel) {
+      const models = modelsForBackend(backend);
+      const cur = currentModel || '';
+      let matched = false;
+      const opts = models.map(m => {
+        const sel = !matched && _modelIdMatches(m.value, cur);
+        if (sel) matched = true;
+        return `<option value="${esc(m.value)}"${sel ? ' selected' : ''}>${esc(m.label)}</option>`;
+      });
+      if (cur && !matched) {
+        opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current)</option>`);
+      }
+      return opts.join('');
+    }
+    async function fetchInferenceModels(backend, force) {
       const now = Date.now();
       const cached = _inferenceModelCache[backend];
-      if (cached && (now - cached.ts) < INFERENCE_MODEL_CACHE_TTL_MS) {
+      if (!force && cached && (now - cached.ts) < INFERENCE_MODEL_CACHE_TTL_MS) {
         return cached.models;
       }
       try {
