@@ -11096,9 +11096,26 @@ function burnAreaChart() {
     }
 
     function renderGovLiteLLM(litellm) {
+      // The server never returns the key VALUE — only hasKey, a masked
+      // tail hint ("••••WMg"), and the store it resolved from. The API
+      // Key input always starts EMPTY (never pre-filled): typing a value
+      // replaces the stored key, leaving it blank keeps it.
+      const keyHint = litellm.keyHint ? ` (${esc(litellm.keyHint)})` : '';
       const keyLine = litellm.hasKey
-        ? `Key detected: yes — from ${esc(litellmKeySourceLabel(litellm.keySource))}`
+        ? `Key detected: yes${keyHint} — from ${esc(litellmKeySourceLabel(litellm.keySource))}`
         : 'Key detected: no — paste your gateway key above';
+      // Pre-guardrail leak remediation: a key VALUE previously pasted into
+      // the env-name/file fields comes back MASKED from the server with a
+      // LooksLikeKey flag. Render the input empty (never echo even the
+      // masked form as an editable value) plus a warning to move the key.
+      const keyEnvWarning = litellm.apiKeyEnvLooksLikeKey
+        ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyEnv || '')}) looks like a key VALUE, not an environment variable name — move it to the API Key field above and Save; storing a key clears this field automatically.</div>`
+        : '';
+      const keyFileWarning = litellm.apiKeyFileLooksLikeKey
+        ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyFile || '')}) looks like a key VALUE, not a file path — move it to the API Key field above and Save.</div>`
+        : '';
+      const keyEnvValue = litellm.apiKeyEnvLooksLikeKey ? '' : (litellm.apiKeyEnv || '');
+      const keyFileValue = litellm.apiKeyFileLooksLikeKey ? '' : (litellm.apiKeyFile || '');
       return `
         <div class="config-field">
           <label>Endpoint URL <span class="config-info">i<span class="config-tooltip">Base URL of the LiteLLM proxy (e.g. https://litellm.example.com). Agents reach it through the hive's inference translator — the MITM proxy stays in the path. The HIVE_LITELLM_ENDPOINT env var overrides this at runtime.</span></span></label>
@@ -11117,13 +11134,15 @@ function burnAreaChart() {
           <summary style="cursor:pointer;font-size:0.75rem;color:var(--muted)">Advanced — self-hosted key sources &amp; proxy options</summary>
           <div class="config-field" style="margin-top:10px">
             <label>Read Key From Environment Variable <span class="config-info">i<span class="config-tooltip">For self-hosted operators who manage the key outside the dashboard. Takes the NAME of an environment variable — never the key itself.</span></span></label>
-            <input type="text" value="${esc(litellm.apiKeyEnv || '')}" placeholder="HIVE_LITELLM_API_KEY" onchange="onLitellmKeyEnvChange(this)">
+            <input type="text" value="${esc(keyEnvValue)}" placeholder="HIVE_LITELLM_API_KEY" onchange="onLitellmKeyEnvChange(this)">
             <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Enter the NAME of an environment variable on the hive container that contains your key (self-hosted installs). Hosted users: paste your key in the API Key field above instead.</div>
+            ${keyEnvWarning}
           </div>
           <div class="config-field">
             <label>Read Key From File Path <span class="config-info">i<span class="config-tooltip">For self-hosted operators. Path to a mounted file containing the key (e.g. a Kubernetes Secret mount).</span></span></label>
-            <input type="text" value="${esc(litellm.apiKeyFile || '')}" placeholder="/secrets/litellm_api_key" onchange="onLitellmKeyFileChange(this)">
+            <input type="text" value="${esc(keyFileValue)}" placeholder="/secrets/litellm_api_key" onchange="onLitellmKeyFileChange(this)">
             <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Path to a file that contains your key, such as a Kubernetes Secret mount (self-hosted installs). Hosted users: paste your key in the API Key field above instead.</div>
+            ${keyFileWarning}
           </div>
           <div class="config-field">
             <label>CA Bundle Path <span class="config-info">i<span class="config-tooltip">Optional PEM file for a private CA (e.g. an internal VPC endpoint). Certificate verification is never disabled — the CA is added to the trust pool.</span></span></label>

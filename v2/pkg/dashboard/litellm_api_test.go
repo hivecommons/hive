@@ -323,3 +323,86 @@ func TestHandleGovernorLiteLLM_KeyFileGuardrail(t *testing.T) {
 		t.Fatalf("code = %d, want 200 for absolute path (body: %s)", w.Code, w.Body.String())
 	}
 }
+
+// --- GET masking: a key VALUE pasted into env/file fields never echoes ---
+
+func TestHandleGovernorConfigGet_MasksKeyLikeEnvName(t *testing.T) {
+	const pastedKey = "sk-8uOe6IBkSSxEU7lfEp1WMg"
+	srv := newFullServer(t)
+	srv.deps.Config.Governor.LiteLLM.Endpoint = "https://litellm.example.com"
+	// Pre-guardrail leak scenario: the user pasted the actual key into
+	// the env-name field and it was persisted to hive.yaml.
+	srv.deps.Config.Governor.LiteLLM.APIKeyEnv = pastedKey
+
+	req := httptest.NewRequest("GET", "/api/config/governor", nil)
+	w := httptest.NewRecorder()
+	srv.handleGovernorConfigGet(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), pastedKey) {
+		t.Fatal("response echoes the pasted key value")
+	}
+	var result map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	section := result["litellm"].(map[string]any)
+	if section["apiKeyEnvLooksLikeKey"] != true {
+		t.Error("apiKeyEnvLooksLikeKey should be true")
+	}
+	masked, _ := section["apiKeyEnv"].(string)
+	if !strings.HasPrefix(masked, "••••") || !strings.HasSuffix(masked, "1WMg") {
+		t.Errorf("apiKeyEnv should be a masked tail hint, got %q", masked)
+	}
+}
+
+func TestHandleGovernorConfigGet_KeyHintMaskedTail(t *testing.T) {
+	srv := newFullServer(t)
+	t.Setenv("HIVE_LITELLM_API_KEY", "sk-resolvedsecretkeyvalue")
+	srv.deps.Config.Governor.LiteLLM.Endpoint = "https://litellm.example.com"
+
+	req := httptest.NewRequest("GET", "/api/config/governor", nil)
+	w := httptest.NewRecorder()
+	srv.handleGovernorConfigGet(w, req)
+
+	if strings.Contains(w.Body.String(), "sk-resolvedsecretkeyvalue") {
+		t.Fatal("response contains the resolved key value")
+	}
+	var result map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	section := result["litellm"].(map[string]any)
+	if section["hasKey"] != true {
+		t.Fatalf("hasKey = %v", section["hasKey"])
+	}
+	if hint, _ := section["keyHint"].(string); hint != "••••alue" {
+		t.Errorf("keyHint = %q, want masked last-4 tail", hint)
+	}
+}
+
+// --- storing a real key scrubs a pasted key from api_key_env ---
+
+func TestHandleGovernorLiteLLM_StoringKeyScrubsPastedEnvValue(t *testing.T) {
+	origKeyFile := writableLiteLLMKeyFile
+	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "litellm_api_key")
+	t.Cleanup(func() { writableLiteLLMKeyFile = origKeyFile })
+
+	srv := newFullServer(t)
+	srv.deps.Config.Governor.LiteLLM.APIKeyEnv = "sk-previouslypastedkeyvalue"
+
+	body := `{"endpoint": "https://litellm.example.com", "apiKey": "sk-thecorrectkey123"}`
+	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorLiteLLM(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d (body: %s)", w.Code, w.Body.String())
+	}
+	if got := srv.deps.Config.Governor.LiteLLM.APIKeyEnv; got != "" {
+		t.Errorf("pasted key value still in APIKeyEnv: %q", got)
+	}
+}

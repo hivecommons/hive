@@ -2708,18 +2708,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"compress":   cfg.Governor.Logging.Compress,
 			"level":      cfg.Governor.Logging.Level,
 		},
-		"litellm": map[string]interface{}{
-			"endpoint":     cfg.Governor.LiteLLM.Endpoint,
-			"apiKeyEnv":    cfg.Governor.LiteLLM.APIKeyEnv,
-			"apiKeyFile":   cfg.Governor.LiteLLM.APIKeyFile,
-			"defaultModel": cfg.Governor.LiteLLM.DefaultModel,
-			"caBundle":     cfg.Governor.LiteLLM.CABundle,
-			"localProxy":   cfg.Governor.LiteLLM.LocalProxy,
-			// The key VALUE is never returned — only whether one resolves
-			// and from which store ("file:<path>" / "env:<NAME>").
-			"hasKey":    cfg.Governor.LiteLLM.ResolveAPIKey() != "",
-			"keySource": cfg.Governor.LiteLLM.ResolveAPIKeySource(),
-		},
+		"litellm": litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"hub": map[string]interface{}{
 			"enabled":                  cfg.Hub.Enabled,
 			"url":                      cfg.Hub.URL,
@@ -3206,6 +3195,63 @@ func redactSecret(msg, secret string) string {
 	return strings.ReplaceAll(msg, secret, "[redacted]")
 }
 
+// maskHintVisibleChars is how many trailing characters of a secret survive
+// masking in UI hints ("••••WMg" style) — enough to recognize a key,
+// useless to reconstruct one.
+const maskHintVisibleChars = 4
+
+// maskSecretHint returns a display-safe hint for a secret value: bullets
+// plus the last few characters. Values too short to safely reveal a tail
+// are fully masked.
+func maskSecretHint(v string) string {
+	if len(v) <= maskHintVisibleChars*2 {
+		return "••••"
+	}
+	return "••••" + v[len(v)-maskHintVisibleChars:]
+}
+
+// litellmSectionResponse builds the governor-config GET payload for the
+// LiteLLM tab. The resolved key VALUE is never serialized — only hasKey,
+// the store it came from, and a masked tail hint. The apiKeyEnv/apiKeyFile
+// CONFIG fields normally hold a var NAME / file PATH (not secrets), but a
+// user who pasted an actual key into them before the guardrails existed
+// would otherwise get it echoed straight back into the tab — in one live
+// case the raw key rendered in plaintext during screen shares. Key-like
+// values in those fields are therefore masked too, with LooksLikeKey
+// flags so the UI can tell the user to move the value.
+func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
+	apiKeyEnv := lc.APIKeyEnv
+	apiKeyEnvLooksLikeKey := looksLikeAPIKeyValue(apiKeyEnv)
+	if apiKeyEnvLooksLikeKey {
+		apiKeyEnv = maskSecretHint(apiKeyEnv)
+	}
+	apiKeyFile := lc.APIKeyFile
+	apiKeyFileLooksLikeKey := !strings.HasPrefix(apiKeyFile, "/") && looksLikeAPIKeyValue(apiKeyFile)
+	if apiKeyFileLooksLikeKey {
+		apiKeyFile = maskSecretHint(apiKeyFile)
+	}
+	key := lc.ResolveAPIKey()
+	keyHint := ""
+	if key != "" {
+		keyHint = maskSecretHint(key)
+	}
+	return map[string]interface{}{
+		"endpoint":               lc.Endpoint,
+		"apiKeyEnv":              apiKeyEnv,
+		"apiKeyEnvLooksLikeKey":  apiKeyEnvLooksLikeKey,
+		"apiKeyFile":             apiKeyFile,
+		"apiKeyFileLooksLikeKey": apiKeyFileLooksLikeKey,
+		"defaultModel":           lc.DefaultModel,
+		"caBundle":               lc.CABundle,
+		"localProxy":             lc.LocalProxy,
+		"hasKey":                 key != "",
+		"keyHint":                keyHint,
+		// redactSecret guards the pathological case of a key-like env var
+		// NAME appearing in the source string.
+		"keySource": redactSecret(lc.ResolveAPIKeySource(), key),
+	}
+}
+
 // liteLLMProbeResult runs the live probe against the effective endpoint
 // using the SAME key resolution the inference translator uses
 // (ResolveAPIKey: api_key_file → Secret mount → PVC file → env), unless
@@ -3319,6 +3365,14 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		lc.APIKeyFile = keyFile
+		// Remediation for the pre-guardrail leak: a key VALUE pasted into
+		// the env-name field never worked as a name (os.Getenv("sk-...")
+		// is empty) and is a plaintext secret in hive.yaml. Now that a
+		// real key is stored properly, scrub it.
+		if looksLikeAPIKeyValue(lc.APIKeyEnv) {
+			lc.APIKeyEnv = ""
+			s.logger.Info("cleared key-like value from litellm api_key_env (replaced by stored API key)")
+		}
 	}
 	cfg.Governor.LiteLLM = lc
 
