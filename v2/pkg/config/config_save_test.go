@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,5 +133,69 @@ func TestRemoveAgentFileSuccess(t *testing.T) {
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Error("agent yaml file should be removed")
+	}
+}
+
+// --- dashboard overlay (K8s persistence across pod restarts) ---
+
+func TestSaveWritesDashboardOverlayInK8sMode(t *testing.T) {
+	dir := t.TempDir()
+	origOverlay := DashboardOverlayFile
+	DashboardOverlayFile = filepath.Join(dir, "hive.yaml.dashboard")
+	t.Cleanup(func() { DashboardOverlayFile = origOverlay })
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.0.0.1")
+	t.Setenv("HIVE_GITHUB_TOKEN", "ghp_secrettoken12345")
+
+	cfg := &Config{
+		SourcePath: filepath.Join(dir, "hive.yaml"),
+		Project:    ProjectConfig{Org: "testorg"},
+		Agents:     map[string]AgentConfig{"scanner": {Role: "scanner"}},
+		GitHub:     GitHubConfig{Token: "ghp_secrettoken12345"},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	data, err := os.ReadFile(DashboardOverlayFile)
+	if err != nil {
+		t.Fatalf("overlay not written: %v", err)
+	}
+	content := string(data)
+	// Secret-free: the env-derived token is collapsed back to its ${VAR}
+	// form so the PVC overlay never holds the raw secret.
+	if strings.Contains(content, "ghp_secrettoken12345") {
+		t.Fatal("overlay contains the raw github token")
+	}
+	if !strings.Contains(content, "${HIVE_GITHUB_TOKEN}") {
+		t.Error("overlay should reference the token via ${HIVE_GITHUB_TOKEN}")
+	}
+	if !strings.Contains(content, "testorg") {
+		t.Error("overlay missing project org")
+	}
+	// The live config is untouched by the scrub.
+	if cfg.GitHub.Token != "ghp_secrettoken12345" {
+		t.Errorf("Save mutated the live config token: %q", cfg.GitHub.Token)
+	}
+}
+
+func TestSaveSkipsDashboardOverlayOutsideK8s(t *testing.T) {
+	dir := t.TempDir()
+	origOverlay := DashboardOverlayFile
+	DashboardOverlayFile = filepath.Join(dir, "hive.yaml.dashboard")
+	t.Cleanup(func() { DashboardOverlayFile = origOverlay })
+	// No KUBERNETES_SERVICE_HOST and (on dev/CI machines) no
+	// serviceaccount token file — Docker mode.
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+
+	cfg := &Config{
+		SourcePath: filepath.Join(dir, "hive.yaml"),
+		Project:    ProjectConfig{Org: "testorg"},
+		Agents:     map[string]AgentConfig{"scanner": {Role: "scanner"}},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := os.Stat(DashboardOverlayFile); !os.IsNotExist(err) {
+		t.Errorf("overlay should not be written outside Kubernetes (stat err: %v)", err)
 	}
 }

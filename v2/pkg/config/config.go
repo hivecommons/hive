@@ -1462,23 +1462,23 @@ func (c *Config) Save() error {
 	// and other runtime changes are lost on container restart.
 	f, err := os.OpenFile(c.SourcePath, os.O_WRONLY|os.O_TRUNC, 0o644)
 	if err != nil {
-		// File may not exist yet — fall back to create.
+		// File may not exist yet — fall back to create. Continue below so
+		// the PVC backup and dashboard overlay are still written.
 		if writeErr := os.WriteFile(c.SourcePath, data, 0o644); writeErr != nil {
 			return fmt.Errorf("writing config (create fallback): %w", writeErr)
 		}
-		return nil
-	}
-
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return fmt.Errorf("writing config: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return fmt.Errorf("syncing config: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("closing config: %w", err)
+	} else {
+		if _, err := f.Write(data); err != nil {
+			f.Close()
+			return fmt.Errorf("writing config: %w", err)
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return fmt.Errorf("syncing config: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("closing config: %w", err)
+		}
 	}
 
 	// Write a rolling backup to the PVC. This is NOT the primary config —
@@ -1498,7 +1498,75 @@ func (c *Config) Save() error {
 	} else {
 		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupPath)
 	}
+
+	c.saveDashboardOverlay()
 	return nil
+}
+
+// DashboardOverlayFile is where Save() persists a secret-free copy of the
+// dashboard-edited config on the PVC in Kubernetes mode. The copy-config
+// init container re-seeds /etc/hive/hive.yaml FROM THE CONFIGMAP on every
+// pod boot, so without this overlay every dashboard save (LiteLLM
+// endpoint, notifications, agent tweaks, ...) silently vanished on the
+// next restart or upgrade. The entrypoint merges this file over the
+// ConfigMap seed at boot; the ConfigMap stays authoritative for the
+// hub/admin-managed keys (acmm_level, hub.is_public).
+//
+// A package var (not const) only so tests can point it at a temp dir; it
+// never changes at runtime in production.
+var DashboardOverlayFile = "/data/hive.yaml.dashboard"
+
+// IsKubernetesPod reports whether the process is running inside a
+// Kubernetes pod (mirrors the entrypoint's IS_KUBERNETES detection).
+func IsKubernetesPod() bool {
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return true
+	}
+	_, err := os.Stat("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	return err == nil
+}
+
+// saveDashboardOverlay writes the secret-free PVC overlay in Kubernetes
+// mode. Failures are logged, never fatal: the primary save already
+// succeeded, the overlay only affects persistence across pod restarts.
+func (c *Config) saveDashboardOverlay() {
+	if !IsKubernetesPod() {
+		// Docker/LXC mode: /data/hive.yaml.bak is already the boot-time
+		// source of truth there, so dashboard saves persist without an
+		// overlay.
+		return
+	}
+	data, err := c.dashboardOverlayBytes()
+	if err != nil {
+		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
+		return
+	}
+	if err := os.WriteFile(DashboardOverlayFile, data, 0o644); err != nil {
+		log.Printf("[config] warning: failed to write dashboard overlay %s (dashboard saves will not survive pod restarts): %v", DashboardOverlayFile, err)
+		return
+	}
+	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
+}
+
+// dashboardOverlayBytes marshals the config with env-derived secret VALUES
+// collapsed back to their env-var forms, so the PVC overlay stays
+// secret-free. Load() re-expands ${VAR} references and applyBootstrapEnv
+// re-fills the dashboard auth token from the pod env, so nothing is lost.
+func (c *Config) dashboardOverlayBytes() ([]byte, error) {
+	// Shallow copy: top-level fields are struct values, so mutating the
+	// copy's GitHub/Dashboard sections leaves the live config untouched
+	// (the shared Agents map is not modified).
+	cp := *c
+	if tok := os.Getenv("HIVE_GITHUB_TOKEN"); tok != "" && cp.GitHub.Token == tok {
+		cp.GitHub.Token = "${HIVE_GITHUB_TOKEN}"
+	}
+	for _, env := range []string{"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN"} {
+		if v := os.Getenv(env); v != "" && cp.Dashboard.AuthToken == v {
+			cp.Dashboard.AuthToken = ""
+			break
+		}
+	}
+	return yaml.Marshal(&cp)
 }
 
 // WildcardMatch checks if text matches a pattern supporting:
