@@ -55,10 +55,10 @@ func buildClientHello(hostname string) []byte {
 	chBody = append(chBody, 0) // session ID length = 0
 
 	// Cipher suites: 2 bytes length + one suite
-	chBody = append(chBody, 0x00, 0x02)       // 2 bytes of cipher suites
-	chBody = append(chBody, 0x00, 0x2f)       // TLS_RSA_WITH_AES_128_CBC_SHA
-	chBody = append(chBody, 0x01)             // compression methods length
-	chBody = append(chBody, 0x00)             // null compression
+	chBody = append(chBody, 0x00, 0x02) // 2 bytes of cipher suites
+	chBody = append(chBody, 0x00, 0x2f) // TLS_RSA_WITH_AES_128_CBC_SHA
+	chBody = append(chBody, 0x01)       // compression methods length
+	chBody = append(chBody, 0x00)       // null compression
 
 	// Extensions
 	chBody = append(chBody, byte(len(extensions)>>8), byte(len(extensions)))
@@ -110,11 +110,11 @@ func TestExtractSNIPartialRecord(t *testing.T) {
 func TestExtractSNINoExtensions(t *testing.T) {
 	// Build a ClientHello without extensions
 	chBody := make([]byte, 0, 128)
-	chBody = append(chBody, 0x03, 0x03) // version
-	chBody = append(chBody, make([]byte, 32)...) // random
-	chBody = append(chBody, 0) // session ID len
+	chBody = append(chBody, 0x03, 0x03)             // version
+	chBody = append(chBody, make([]byte, 32)...)    // random
+	chBody = append(chBody, 0)                      // session ID len
 	chBody = append(chBody, 0x00, 0x02, 0x00, 0x2f) // cipher suites
-	chBody = append(chBody, 0x01, 0x00) // compression
+	chBody = append(chBody, 0x01, 0x00)             // compression
 
 	hsHeader := []byte{0x01}
 	hsLen := len(chBody)
@@ -178,12 +178,12 @@ func TestExtractSNIHandshakeTooShort(t *testing.T) {
 func TestExtractSNISessionIDPresent(t *testing.T) {
 	// ClientHello with a session ID
 	chBody := make([]byte, 0, 200)
-	chBody = append(chBody, 0x03, 0x03) // version
-	chBody = append(chBody, make([]byte, 32)...) // random
-	chBody = append(chBody, 4)  // session ID length = 4
+	chBody = append(chBody, 0x03, 0x03)             // version
+	chBody = append(chBody, make([]byte, 32)...)    // random
+	chBody = append(chBody, 4)                      // session ID length = 4
 	chBody = append(chBody, 0xAA, 0xBB, 0xCC, 0xDD) // session ID
 	chBody = append(chBody, 0x00, 0x02, 0x00, 0x2f) // cipher suites
-	chBody = append(chBody, 0x01, 0x00) // compression
+	chBody = append(chBody, 0x01, 0x00)             // compression
 
 	hostname := "with-session.example.com"
 	sniBytes := []byte(hostname)
@@ -716,6 +716,68 @@ func TestSetAndClearInferenceRoute(t *testing.T) {
 	}
 }
 
+// SetInferenceRoute is called while the agent-manager mutex is held (agent
+// launch, SetModelOverride, SetBackendOverride). It must return promptly and
+// never block on the up-to-3s max-model-len endpoint probe, otherwise a model
+// switch pins the manager mutex and stalls the dashboard — reading as
+// "Application is not available" on the OpenShift router. Use an unroutable
+// endpoint so the probe would hang for the full timeout if it ran inline.
+func TestSetInferenceRouteDoesNotBlockOnEndpointProbe(t *testing.T) {
+	p := newTestProxy()
+	p.inference = newInferenceRouter()
+
+	// 203.0.113.0/24 (TEST-NET-3) is reserved and unroutable: a real probe
+	// would block until maxModelLenQueryTimeout (3s).
+	route := &InferenceRoute{Backend: "vllm", Endpoint: "http://203.0.113.1:8000", Model: "test"}
+
+	done := make(chan struct{})
+	go func() {
+		p.SetInferenceRoute("agent-block", route)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Returned promptly — route was set without waiting on the probe.
+	case <-time.After(maxModelLenQueryTimeout - 500*time.Millisecond):
+		t.Fatal("SetInferenceRoute blocked on the max-model-len endpoint probe; " +
+			"it must set the route synchronously and probe asynchronously")
+	}
+
+	if got := p.inference.Get("agent-block"); got == nil || got.Model != "test" {
+		t.Error("route should be set immediately, before the async probe completes")
+	}
+}
+
+// UpdateMaxContextLen must not clobber a route that has since been changed to a
+// different endpoint/model — a slow probe from a prior model switch could
+// otherwise overwrite the value the user just switched to.
+func TestUpdateMaxContextLenStaleGuard(t *testing.T) {
+	ir := newInferenceRouter()
+	ir.Set("a", &InferenceRoute{Endpoint: "http://e1", Model: "m1"})
+
+	if !ir.UpdateMaxContextLen("a", "http://e1", "m1", 8192) {
+		t.Fatal("update should apply for the matching endpoint/model")
+	}
+	if got := ir.Get("a"); got.MaxContextLen != 8192 {
+		t.Errorf("MaxContextLen = %d, want 8192", got.MaxContextLen)
+	}
+
+	// Route changed to a new model: a stale probe result must be rejected.
+	ir.Set("a", &InferenceRoute{Endpoint: "http://e2", Model: "m2"})
+	if ir.UpdateMaxContextLen("a", "http://e1", "m1", 4096) {
+		t.Error("stale update for old endpoint/model must be rejected")
+	}
+	if got := ir.Get("a"); got.MaxContextLen != 0 {
+		t.Errorf("stale update leaked into new route: MaxContextLen = %d, want 0", got.MaxContextLen)
+	}
+
+	// Missing agent: no panic, returns false.
+	if ir.UpdateMaxContextLen("missing", "http://e1", "m1", 100) {
+		t.Error("update for a missing agent must return false")
+	}
+}
+
 // ---------- handleConn: CONNECT path (non-GitHub host) ----------
 
 func TestHandleConnCONNECTNonGitHub(t *testing.T) {
@@ -1162,7 +1224,7 @@ func TestStartInferenceTranslator(t *testing.T) {
 
 		resp, err := http.DefaultClient.Do(upstreamReq)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"type":"error"}`, ), http.StatusBadGateway)
+			http.Error(w, fmt.Sprintf(`{"type":"error"}`), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()

@@ -27,12 +27,12 @@ import (
 )
 
 const (
-	proxyListenPort         = 18443
-	InferenceTranslatePort  = 18444
-	modeFilePrefix          = "/tmp/.hive-mode-"
-	maxViolationLog         = 1000
-	CACertPath              = "/data/proxy-ca.pem"
-	caKeyPath               = "/data/proxy-ca-key.pem"
+	proxyListenPort        = 18443
+	InferenceTranslatePort = 18444
+	modeFilePrefix         = "/tmp/.hive-mode-"
+	maxViolationLog        = 1000
+	CACertPath             = "/data/proxy-ca.pem"
+	caKeyPath              = "/data/proxy-ca-key.pem"
 )
 
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
@@ -384,7 +384,6 @@ func (c *prefixConn) Read(b []byte) (int, error) {
 	}
 	return c.Conn.Read(b)
 }
-
 
 // identifyAgentFromReq determines the agent name for a request. It always
 // tries UID-based identification first (unforgeable, works for any client
@@ -868,15 +867,30 @@ func newBufferedReader(c net.Conn) *bufio.Reader {
 }
 
 // SetInferenceRoute configures an agent to use a self-hosted inference backend.
-// It also queries the model's max context length from the endpoint.
+//
+// The route is stored immediately and the caller returns without blocking. The
+// model's max context length is queried in the background because this function
+// is invoked from callers that hold the agent-manager mutex (agent launch,
+// SetModelOverride, SetBackendOverride). A synchronous endpoint probe here
+// (up to maxModelLenQueryTimeout) would pin that mutex for its whole duration,
+// stalling /api/status and other dashboard handlers — which on a single-replica
+// pod reads to the OpenShift router as "Application is not available". The
+// max-context-len only feeds token capping and defaults gracefully to 0
+// (no cap) until the async probe fills it in.
 func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
-	if route.MaxContextLen == 0 {
-		if maxLen := queryMaxModelLen(route.Endpoint, route.Model, route.APIKey, route.CABundle); maxLen > 0 {
-			route.MaxContextLen = maxLen
-		}
-	}
 	p.inference.Set(agentName, route)
 	p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen)
+
+	if route.MaxContextLen == 0 {
+		endpoint, model, apiKey, caBundle := route.Endpoint, route.Model, route.APIKey, route.CABundle
+		go func() {
+			if maxLen := queryMaxModelLen(endpoint, model, apiKey, caBundle); maxLen > 0 {
+				if p.inference.UpdateMaxContextLen(agentName, endpoint, model, maxLen) {
+					p.logger.Info("inference route max context length resolved", "agent", agentName, "model", model, "maxContextLen", maxLen)
+				}
+			}
+		}()
+	}
 }
 
 // ClearInferenceRoute removes an agent's inference backend override.

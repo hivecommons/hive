@@ -142,6 +142,22 @@ func (ir *inferenceRouter) Get(agentName string) *InferenceRoute {
 	return ir.routes[agentName]
 }
 
+// UpdateMaxContextLen sets the max context length on an agent's stored route,
+// but only if the route still points at the same endpoint and model that the
+// (asynchronous) query was issued for. This prevents a slow probe from an old
+// model switch from clobbering a route the user changed again in the meantime.
+// Returns true if the update was applied.
+func (ir *inferenceRouter) UpdateMaxContextLen(agentName, endpoint, model string, maxLen int) bool {
+	ir.mu.Lock()
+	defer ir.mu.Unlock()
+	route, ok := ir.routes[agentName]
+	if !ok || route.Endpoint != endpoint || route.Model != model {
+		return false
+	}
+	route.MaxContextLen = maxLen
+	return true
+}
+
 // anthropicHosts are hosts that should be intercepted when an agent has
 // an inference route configured.
 var anthropicHosts = map[string]bool{
@@ -378,4 +394,3 @@ func resolveInferencePreamble(route *InferenceRoute, agentName string) string {
 	}
 	return DefaultInferencePreamble
 }
-

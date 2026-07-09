@@ -1032,6 +1032,13 @@ metadata:
   namespace: {{.Namespace}}
 spec:
   replicas: 1
+  # Zero-downtime rollout: maxUnavailable=0 keeps the old pod serving until the
+  # surge pod passes its readinessProbe, so the OpenShift router never sees zero
+  # Ready endpoints (which renders as "Application is not available"). This
+  # REQUIRES the hive-data PVC to be ReadWriteMany so both pods can mount /data
+  # during the surge — see the PVC definitions above (NFS and dynamic storage
+  # both request ReadWriteMany). A ReadWriteOnce PVC would deadlock the surge
+  # pod on volume attach across nodes; do not set maxSurge>0 with an RWO volume.
   strategy:
     type: RollingUpdate
     rollingUpdate:
