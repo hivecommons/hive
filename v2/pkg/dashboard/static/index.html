@@ -9473,9 +9473,12 @@ function burnAreaChart() {
       dismissToast(toast, `${agent} restart counter reset`, 'success');
     }
 
-    // Prompts for the LiteLLM endpoint the first time the backend is
-    // selected anywhere in the UI. Resolves true when litellm is (or has
-    // just been) configured; false when the user cancels.
+    // Prompts for the LiteLLM endpoint + API key the first time the
+    // backend is selected anywhere in the UI. Resolves true when litellm
+    // is (or has just been) configured; false when the user cancels. The
+    // key VALUE goes to the server's private key store — never hive.yaml —
+    // and the save runs a live /v1/models test whose result is shown
+    // inline (endpoint/key mistakes fail here, not as agent 401s later).
     async function ensureLiteLLMConfigured() {
       try {
         const resp = await fetch('/api/config/governor');
@@ -9490,17 +9493,31 @@ function burnAreaChart() {
         overlay.className = 'gh-auth-overlay';
         overlay.innerHTML = `<div class="gh-auth-modal" style="max-width:480px;text-align:left">
           <h3 style="color:var(--amber);text-align:center">Configure LiteLLM</h3>
-          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM endpoint is configured yet. Enter the proxy base URL (editable later under Governor Config → LiteLLM).</p>
+          <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Governor Config → LiteLLM).</p>
           <div class="config-field">
             <label>Endpoint URL</label>
             <input type="text" id="litellm-setup-endpoint" placeholder="https://litellm.example.com" style="width:100%;box-sizing:border-box">
           </div>
           <div class="config-field">
-            <label>API Key Env Name <span style="font-weight:400;text-transform:none">(optional — the key value is never stored)</span></label>
-            <input type="text" id="litellm-setup-keyenv" placeholder="HIVE_LITELLM_API_KEY" style="width:100%;box-sizing:border-box">
+            <label>API Key <span style="font-weight:400;text-transform:none">(stored privately on this hive — never in hive.yaml or logs)</span></label>
+            <input type="password" id="litellm-setup-key" placeholder="sk-..." autocomplete="new-password" style="width:100%;box-sizing:border-box">
           </div>
+          <details style="margin:0 0 12px">
+            <summary style="cursor:pointer;font-size:0.75rem;color:var(--muted)">Advanced — self-hosted key sources</summary>
+            <div class="config-field" style="margin-top:8px">
+              <label>Read Key From Environment Variable</label>
+              <input type="text" id="litellm-setup-keyenv" placeholder="HIVE_LITELLM_API_KEY" style="width:100%;box-sizing:border-box">
+              <div style="font-size:0.7rem;color:var(--muted);margin-top:2px">Enter the NAME of an environment variable on the hive container that contains your key (self-hosted installs). Hosted users: paste your key in the API Key field above instead.</div>
+            </div>
+            <div class="config-field">
+              <label>Read Key From File Path</label>
+              <input type="text" id="litellm-setup-keyfile" placeholder="/secrets/litellm_api_key" style="width:100%;box-sizing:border-box">
+              <div style="font-size:0.7rem;color:var(--muted);margin-top:2px">Path to a file that contains your key, such as a Kubernetes Secret mount (self-hosted installs).</div>
+            </div>
+          </details>
+          <div id="litellm-setup-result" style="display:none;font-size:0.75rem;margin:0 0 10px;white-space:pre-wrap;line-height:1.4"></div>
           <div style="display:flex;gap:8px;justify-content:center">
-            <button class="hive-dialog-btn primary">Save</button>
+            <button class="hive-dialog-btn primary">Save &amp; Test</button>
             <button class="hive-dialog-btn cancel">Cancel</button>
           </div></div>`;
         document.body.appendChild(overlay);
@@ -9508,27 +9525,56 @@ function burnAreaChart() {
         const close = (val) => { overlay.remove(); resolve(val); };
         overlay.querySelector('.cancel').onclick = () => close(false);
         overlay.onclick = (e) => { if (e.target === overlay) close(false); };
+        const resultEl = overlay.querySelector('#litellm-setup-result');
+        const showResult = (msg, ok) => {
+          resultEl.textContent = msg;
+          resultEl.style.display = 'block';
+          resultEl.style.color = ok ? 'var(--green)' : 'var(--red)';
+        };
         overlay.querySelector('.primary').onclick = async () => {
           const endpoint = overlay.querySelector('#litellm-setup-endpoint').value.trim();
-          if (!endpoint) { showToast('Endpoint URL is required', 'error'); return; }
+          if (!endpoint) { showResult('Endpoint URL is required', false); return; }
+          const key = overlay.querySelector('#litellm-setup-key').value.trim();
           const keyEnv = overlay.querySelector('#litellm-setup-keyenv').value.trim();
+          const keyFile = overlay.querySelector('#litellm-setup-keyfile').value.trim();
+          // Same guardrails as the server: a key VALUE pasted into the
+          // NAME/PATH fields would leak into hive.yaml and resolve to an
+          // empty key at runtime.
+          if (keyEnv && looksLikeApiKeyValue(keyEnv)) {
+            showResult('This looks like an API key — paste it in the API Key field above; the advanced field takes an environment variable NAME (e.g. HIVE_LITELLM_API_KEY).', false);
+            return;
+          }
+          if (keyFile && !keyFile.startsWith('/') && looksLikeApiKeyValue(keyFile)) {
+            showResult('This looks like an API key — paste it in the API Key field above; the advanced field takes a file PATH (e.g. /secrets/litellm_api_key).', false);
+            return;
+          }
           const body = { endpoint };
+          if (key) body.apiKey = key;
           if (keyEnv) body.apiKeyEnv = keyEnv;
+          if (keyFile) body.apiKeyFile = keyFile;
           try {
             const res = await fetch('/api/config/governor/litellm', {
               method: 'PUT',
               headers: _inceptionAuthHeaders(),
               body: JSON.stringify(body)
             });
+            const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-              const err = await res.json().catch(() => ({}));
-              showToast(err.error || 'Failed to save LiteLLM config', 'error');
+              showResult(data.error || 'Failed to save LiteLLM config', false);
               return;
             }
-            showToast('LiteLLM endpoint saved', 'success');
+            if (data.probe && !data.probe.ok) {
+              // Saved, but the live /v1/models test failed — keep the
+              // dialog open with the gateway's actual error so the user
+              // can fix the key/endpoint and try again immediately.
+              showResult('Saved, but the connection test failed: ' + data.probe.error + '\nFix the endpoint or key and Save & Test again.', false);
+              return;
+            }
+            const n = data.probe && data.probe.ok ? data.probe.models : null;
+            showToast(n === null ? 'LiteLLM endpoint saved' : `LiteLLM configured — ${n} model${n === 1 ? '' : 's'} available`, 'success');
             close(true);
           } catch (e) {
-            showToast('Network error: ' + e.message, 'error');
+            showResult('Network error: ' + e.message, false);
           }
         };
         overlay.querySelector('#litellm-setup-endpoint').focus();
@@ -10984,51 +11030,134 @@ function burnAreaChart() {
       }
     }
 
+    // looksLikeApiKeyValue mirrors the server-side guardrail: env var
+    // NAMES are short with underscores; key values start with sk- or run
+    // long without any underscore. Catches keys pasted into the NAME/PATH
+    // fields (which would bake the key into hive.yaml and resolve to an
+    // empty key at runtime — a real leak that hit a hosted user).
+    function looksLikeApiKeyValue(v) {
+      const API_KEY_LIKE_LENGTH = 40; // matches apiKeyLikeLength server-side
+      return v.startsWith('sk-') || (v.length > API_KEY_LIKE_LENGTH && !v.includes('_'));
+    }
+
+    // litellmKeySourceLabel turns the API's keySource ("file:<path>" /
+    // "env:<NAME>") into human copy. Never contains the key value.
+    function litellmKeySourceLabel(src) {
+      if (!src) return '';
+      if (src.startsWith('env:')) return `environment variable ${src.slice(4)}`;
+      const path = src.startsWith('file:') ? src.slice(5) : src;
+      if (path.startsWith('/data/')) return `dashboard-saved key (${path})`;
+      if (path.startsWith('/secrets/')) return `Kubernetes Secret mount (${path})`;
+      return `key file ${path}`;
+    }
+
+    // litellmProbeMessage formats a probe result ({ok, models} or
+    // {ok:false, error}) from the save/test endpoints. Live results only —
+    // the server never counts static fallback aliases here.
+    function litellmProbeMessage(probe) {
+      if (probe.ok) {
+        return { ok: true, msg: `LiteLLM OK — ${probe.models} model${probe.models === 1 ? '' : 's'} available` };
+      }
+      return { ok: false, msg: `LiteLLM connection failed: ${probe.error}` };
+    }
+
+    // showLiteLLMTestResult writes a probe result to the tab's inline
+    // result line (when the LiteLLM tab is open) and returns the
+    // formatted message for toasts.
+    function showLiteLLMTestResult(probe) {
+      const r = litellmProbeMessage(probe);
+      const el = document.getElementById('litellm-test-result');
+      if (el) {
+        el.textContent = r.msg;
+        el.style.display = 'block';
+        el.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+      }
+      return r;
+    }
+
+    function onLitellmKeyEnvChange(input) {
+      const v = input.value.trim();
+      if (v && looksLikeApiKeyValue(v)) {
+        showToast('This looks like an API key — paste it in the API Key field above; this field takes an environment variable NAME (e.g. HIVE_LITELLM_API_KEY)', 'error');
+        input.value = '';
+        return;
+      }
+      markDirty('litellm', 'apiKeyEnv', v);
+    }
+
+    function onLitellmKeyFileChange(input) {
+      const v = input.value.trim();
+      if (v && !v.startsWith('/') && looksLikeApiKeyValue(v)) {
+        showToast('This looks like an API key — paste it in the API Key field above; this field takes a file PATH (e.g. /secrets/litellm_api_key)', 'error');
+        input.value = '';
+        return;
+      }
+      markDirty('litellm', 'apiKeyFile', v);
+    }
+
     function renderGovLiteLLM(litellm) {
-      const keyEnvName = litellm.apiKeyEnv || 'HIVE_LITELLM_API_KEY';
-      const keyFilePath = litellm.apiKeyFile || '/secrets/litellm_api_key';
+      const keyLine = litellm.hasKey
+        ? `Key detected: yes — from ${esc(litellmKeySourceLabel(litellm.keySource))}`
+        : 'Key detected: no — paste your gateway key above';
       return `
         <div class="config-field">
           <label>Endpoint URL <span class="config-info">i<span class="config-tooltip">Base URL of the LiteLLM proxy (e.g. https://litellm.example.com). Agents reach it through the hive's inference translator — the MITM proxy stays in the path. The HIVE_LITELLM_ENDPOINT env var overrides this at runtime.</span></span></label>
           <input type="text" value="${esc(litellm.endpoint || '')}" placeholder="https://litellm.example.com" onchange="markDirty('litellm','endpoint',this.value)">
         </div>
         <div class="config-field">
-          <label>API Key Env Name <span class="config-info">i<span class="config-tooltip">Name of the environment variable holding the LiteLLM API key. The key VALUE is never stored in hive.yaml or shown here. A key file at ${esc(keyFilePath)} takes precedence when present.</span></span></label>
-          <input type="text" value="${esc(litellm.apiKeyEnv || '')}" placeholder="HIVE_LITELLM_API_KEY" onchange="markDirty('litellm','apiKeyEnv',this.value)">
-          <div style="font-size:0.72rem;margin-top:4px;color:${litellm.hasKey ? 'var(--green)' : 'var(--red)'}">Key detected: ${litellm.hasKey ? 'yes' : `no — set ${esc(keyEnvName)} or mount ${esc(keyFilePath)}`}</div>
+          <label>API Key <span class="config-info">i<span class="config-tooltip">Paste the key from your gateway/provider. It is stored privately on this hive (owner-only file on the persistent volume, plus the hive's Kubernetes Secret when available) — never in hive.yaml, logs, or config downloads. Saving runs a live connection test.</span></span></label>
+          <input type="password" value="" placeholder="${litellm.hasKey ? '(key is set — enter a new key to replace it)' : 'sk-...'}" autocomplete="new-password" onchange="markDirty('litellm','apiKey',this.value.trim())">
+          <div style="font-size:0.72rem;margin-top:4px;color:${litellm.hasKey ? 'var(--green)' : 'var(--red)'}">${keyLine}</div>
         </div>
         <div class="config-field">
           <label>Default Model <span class="config-info">i<span class="config-tooltip">Model used when an agent on the litellm backend has no model selected. Use Test Connection to list available models.</span></span></label>
           <input type="text" value="${esc(litellm.defaultModel || '')}" placeholder="e.g. gpt-4o" onchange="markDirty('litellm','defaultModel',this.value)">
         </div>
-        <div class="config-field">
-          <label>CA Bundle Path <span class="config-info">i<span class="config-tooltip">Optional PEM file for a private CA (e.g. an internal VPC endpoint). Certificate verification is never disabled — the CA is added to the trust pool.</span></span></label>
-          <input type="text" value="${esc(litellm.caBundle || '')}" placeholder="/secrets/litellm-ca.pem" onchange="markDirty('litellm','caBundle',this.value)">
-        </div>
-        <div class="config-toggle">
-          <div class="config-toggle-switch ${litellm.localProxy ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="litellm" data-key="localProxy"></div>
-          <span class="config-toggle-label">Local Proxy Fallback <span class="config-info">i<span class="config-tooltip">Run the bundled litellm binary as a local translator (config at /data/litellm/config.yaml). Off by default — the hive's Go translator forwards directly to the remote endpoint.</span></span></span>
-        </div>
+        <details style="margin:4px 0 8px">
+          <summary style="cursor:pointer;font-size:0.75rem;color:var(--muted)">Advanced — self-hosted key sources &amp; proxy options</summary>
+          <div class="config-field" style="margin-top:10px">
+            <label>Read Key From Environment Variable <span class="config-info">i<span class="config-tooltip">For self-hosted operators who manage the key outside the dashboard. Takes the NAME of an environment variable — never the key itself.</span></span></label>
+            <input type="text" value="${esc(litellm.apiKeyEnv || '')}" placeholder="HIVE_LITELLM_API_KEY" onchange="onLitellmKeyEnvChange(this)">
+            <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Enter the NAME of an environment variable on the hive container that contains your key (self-hosted installs). Hosted users: paste your key in the API Key field above instead.</div>
+          </div>
+          <div class="config-field">
+            <label>Read Key From File Path <span class="config-info">i<span class="config-tooltip">For self-hosted operators. Path to a mounted file containing the key (e.g. a Kubernetes Secret mount).</span></span></label>
+            <input type="text" value="${esc(litellm.apiKeyFile || '')}" placeholder="/secrets/litellm_api_key" onchange="onLitellmKeyFileChange(this)">
+            <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Path to a file that contains your key, such as a Kubernetes Secret mount (self-hosted installs). Hosted users: paste your key in the API Key field above instead.</div>
+          </div>
+          <div class="config-field">
+            <label>CA Bundle Path <span class="config-info">i<span class="config-tooltip">Optional PEM file for a private CA (e.g. an internal VPC endpoint). Certificate verification is never disabled — the CA is added to the trust pool.</span></span></label>
+            <input type="text" value="${esc(litellm.caBundle || '')}" placeholder="/secrets/litellm-ca.pem" onchange="markDirty('litellm','caBundle',this.value)">
+          </div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${litellm.localProxy ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="litellm" data-key="localProxy"></div>
+            <span class="config-toggle-label">Local Proxy Fallback <span class="config-info">i<span class="config-tooltip">Run the bundled litellm binary as a local translator (config at /data/litellm/config.yaml). Off by default — the hive's Go translator forwards directly to the remote endpoint.</span></span></span>
+          </div>
+        </details>
         <div style="margin-top:12px">
           <button onclick="testLiteLLMConnection()" style="padding:6px 14px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--fg);cursor:pointer;font-size:0.78rem">Test Connection</button>
+          <div id="litellm-test-result" style="display:none;font-size:0.75rem;margin-top:8px;white-space:pre-wrap"></div>
         </div>`;
     }
 
     async function testLiteLLMConnection() {
       const toast = showToast('Testing LiteLLM connection…', 'info', true);
       try {
-        const resp = await fetch('/api/inference/models/litellm');
-        const data = await resp.json();
+        // Live probe only (/v1/models with the same key resolution the
+        // translator uses). The old /api/inference/models path silently
+        // substituted the static fallback aliases, reporting "OK — 7
+        // models" against gateways that 401'd everything.
+        const resp = await fetch('/api/config/governor/litellm/test', {
+          method: 'POST',
+          headers: _inceptionAuthHeaders()
+        });
+        const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
           dismissToast(toast, data.error || 'LiteLLM endpoint not configured — save the endpoint first', 'error');
           return;
         }
-        const count = (data.models || []).length;
-        if (count > 0) {
-          dismissToast(toast, `LiteLLM OK — ${count} model${count === 1 ? '' : 's'} available`, 'success');
-        } else {
-          dismissToast(toast, 'Connected, but no models returned (check the API key)', 'error');
-        }
+        const r = showLiteLLMTestResult(data.probe || { ok: false, error: 'no probe result returned' });
+        dismissToast(toast, r.msg, r.ok ? 'success' : 'error');
       } catch (e) {
         dismissToast(toast, 'LiteLLM test failed: ' + e.message, 'error');
       }
@@ -12884,6 +13013,16 @@ function burnAreaChart() {
               body: JSON.stringify(values)
             });
             if (!res.ok) throw new Error(await saveErrorMessage(res));
+            if (_configState.type === 'governor' && section === 'litellm') {
+              // Saving the LiteLLM tab auto-runs the live connection test
+              // server-side; surface its result exactly like the Test
+              // Connection button would (inline line + toast).
+              const data = await res.json().catch(() => null);
+              if (data && data.probe) {
+                const r = showLiteLLMTestResult(data.probe);
+                showToast(r.msg, r.ok ? 'success' : 'error');
+              }
+            }
           }
         } catch (err) {
           showToast(`Failed to save ${section}: ${err.message}`, 'error');
