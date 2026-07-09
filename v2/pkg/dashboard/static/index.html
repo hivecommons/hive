@@ -4594,10 +4594,16 @@
         const data = await resp.json();
         // data.fallback: endpoint discovery failed and the server returned
         // static common aliases — mark them as unverified against the key.
-        const labelSuffix = data.fallback ? ' (common alias, unverified)' : '';
+        // data.entitled: the server already narrowed data.models to the set
+        // the configured key is entitled to (some gateways advertise the full
+        // catalog on /v1/models but scope the key to a subset that 403s at
+        // inference). The dropdown therefore shows only usable models; the
+        // label notes the scope so users know why non-entitled models are gone.
+        const labelSuffix = data.fallback ? ' (common alias, unverified)'
+          : (data.entitled ? ' (your key)' : '');
         const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
         INFERENCE_MODELS[backend] = models;
-        _inferenceModelCache[backend] = { models, ts: now, fallback: !!data.fallback };
+        _inferenceModelCache[backend] = { models, ts: now, fallback: !!data.fallback, entitled: !!data.entitled };
         // A real (non-fallback) discovery may have changed the entitlement-
         // filtered model set — reconcile agents/defaults whose selected model
         // is no longer available. No-op when the list is a static fallback or
@@ -11418,7 +11424,13 @@ function burnAreaChart() {
     // the server never counts static fallback aliases here.
     function litellmProbeMessage(probe) {
       if (probe.ok) {
-        return { ok: true, msg: `LiteLLM OK — ${probe.models} model${probe.models === 1 ? '' : 's'} available` };
+        const base = `LiteLLM OK — ${probe.models} model${probe.models === 1 ? '' : 's'} available`;
+        // probe.usable: the gateway advertises the full catalog but this key's
+        // team is scoped to fewer (the rest 403 at inference). Show both counts
+        // so the smaller usable number is not a surprise later.
+        const usable = (typeof probe.usable === 'number' && probe.usable < probe.models)
+          ? ` (${probe.usable} usable with your key)` : '';
+        return { ok: true, msg: base + usable };
       }
       return { ok: false, msg: `LiteLLM connection failed: ${probe.error}` };
     }

@@ -1163,6 +1163,10 @@ func main() {
 		logger.Error("failed to create github proxy", "error", err)
 	} else {
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
+		// Lets the dashboard narrow the LiteLLM model dropdown to the set the
+		// configured key is entitled to, learned by the proxy from a key-info
+		// probe or a "team not allowed" 403.
+		dashboard.SetEntitledModelsProvider(githubProxy.EntitledModels)
 
 		// Wire the inference token sink so the translator records per-agent
 		// usage (from the gateway's OpenAI usage block) into the same metrics

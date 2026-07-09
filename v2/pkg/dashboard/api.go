@@ -3339,7 +3339,23 @@ func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string
 	if err != nil {
 		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
 	}
-	return map[string]interface{}{"ok": true, "models": n}
+	result := map[string]interface{}{"ok": true, "models": n}
+	// If the proxy has learned this key's entitled subset (some gateways
+	// advertise the full catalog on /v1/models but scope the key to fewer),
+	// surface how many of the ADVERTISED models are actually usable so Test
+	// Connection can say "N models available (M usable with your key)". Use
+	// the intersection against the advertised list — not the raw entitled
+	// count, which may list ids this gateway doesn't advertise.
+	if fn := getEntitledModelsFn(); fn != nil {
+		if entitled, _, ok := fn(ep); ok && len(entitled) > 0 {
+			if advertised, ferr := fetchModelsFromEndpoint(ep, probeKey); ferr == nil {
+				if usable := len(intersectEntitled(advertised, entitled)); usable < n {
+					result["usable"] = usable
+				}
+			}
+		}
+	}
+	return result
 }
 
 // handleGovernorLiteLLMTest is the Test Connection endpoint: a live
@@ -3819,11 +3835,67 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		models = inferenceStaticModelAliases
 		fallback = true
 	}
-	jsonResponse(w, map[string]interface{}{
+
+	resp := map[string]interface{}{
 		"backend":  backend,
 		"models":   models,
 		"fallback": fallback,
-	})
+	}
+	// Some LiteLLM gateways advertise the FULL catalog on /v1/models but scope
+	// a key's team to a SUBSET; a non-entitled model 403s at inference. When
+	// the proxy has learned the entitled set (key-info probe or a "team not
+	// allowed" 403), narrow the returned list to it so the dropdown offers
+	// only usable models. Not applied to the static fallback (unverified).
+	if !fallback {
+		if entitled, source, ok := s.entitledModelsFor(backend, endpoints); ok {
+			usable := intersectEntitled(models, entitled)
+			if len(usable) > 0 {
+				resp["models"] = usable
+				resp["entitled"] = true
+				resp["entitledSource"] = source
+			}
+		}
+	}
+	jsonResponse(w, resp)
+}
+
+// entitledModelsFor returns the entitled model set the proxy has learned for a
+// LiteLLM backend's endpoint, if any. Only litellm gateways entitlement-filter
+// per key; vllm/llm-d return no entitlement signal.
+func (s *Server) entitledModelsFor(backend string, endpoints []string) (models []string, source string, known bool) {
+	if backend != "litellm" {
+		return nil, "", false
+	}
+	fn := getEntitledModelsFn()
+	if fn == nil {
+		return nil, "", false
+	}
+	for _, ep := range endpoints {
+		if m, src, ok := fn(ep); ok {
+			return m, src, true
+		}
+	}
+	return nil, "", false
+}
+
+// intersectEntitled returns the discovered models that are also in the entitled
+// set, preserving discovery order. Matching tolerates a missing/extra provider
+// prefix (stored "gpt-4o" vs entitled "Azure/gpt-4o") by comparing the id tail
+// after the last slash when the full ids differ.
+func intersectEntitled(discovered, entitled []string) []string {
+	full := make(map[string]bool, len(entitled))
+	tail := make(map[string]bool, len(entitled))
+	for _, e := range entitled {
+		full[e] = true
+		tail[e[strings.LastIndex(e, "/")+1:]] = true
+	}
+	out := make([]string, 0, len(discovered))
+	for _, d := range discovered {
+		if full[d] || tail[d[strings.LastIndex(d, "/")+1:]] {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // inferenceAPIKey returns the bearer key used for a backend's model

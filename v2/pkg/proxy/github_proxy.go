@@ -54,6 +54,12 @@ type GitHubProxy struct {
 
 	inference *inferenceRouter
 
+	// entitlements caches the per-key entitled model set for LiteLLM
+	// gateways (keyed by endpoint), learned from a key-info probe or a
+	// "team not allowed" 403 body, so the dashboard can offer only usable
+	// models.
+	entitlements *entitlementStore
+
 	// tokenSink records per-agent token usage for bare-mode inference
 	// agents, whose usage the file-scanning token collector cannot see
 	// otherwise. May be nil (Record is a safe no-op on a nil sink).
@@ -103,6 +109,7 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 		violations:   make(map[string]int),
 		certCache:    make(map[string]cachedCert),
 		inference:    newInferenceRouter(),
+		entitlements: newEntitlementStore(),
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -903,6 +910,84 @@ func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute)
 			}
 		}()
 	}
+
+	// Best-effort: learn the key's entitled model set from a LiteLLM
+	// key-info endpoint before any 403 happens, so the dashboard can offer
+	// only usable models up front. Only litellm gateways entitlement-filter
+	// per key; vllm/llm-d do not. The 403-parse path (recordInferenceError)
+	// remains the authoritative fallback when no key-info endpoint responds.
+	if route.Backend == "litellm" && route.APIKey != "" {
+		p.entitlements.rememberProbe(route.Endpoint, route.APIKey, route.CABundle)
+		go p.probeEntitlements(route.Endpoint, route.APIKey, route.CABundle)
+	}
+}
+
+// probeEntitlements queries a LiteLLM gateway's per-key info endpoints for the
+// key's entitled model set and caches it. A nil result (no key-info endpoint,
+// or an unrestricted key) leaves any existing 403-derived entry untouched.
+func (p *GitHubProxy) probeEntitlements(endpoint, apiKey, caBundle string) {
+	if !p.entitlements.beginProbe(endpoint) {
+		return // another probe for this endpoint is already in flight
+	}
+	defer p.entitlements.endProbe(endpoint)
+	transport, err := inferenceTransport(caBundle)
+	if err != nil {
+		transport = nil
+	}
+	if models := probeEntitledModels(endpoint, apiKey, transport); len(models) > 0 {
+		p.entitlements.set(endpoint, apiKey, models, "key-info")
+		p.logger.Info("litellm entitled models discovered via key-info",
+			"endpoint", endpoint, "count", len(models))
+	}
+}
+
+// EntitledModels returns the entitled model set known for a LiteLLM endpoint
+// (from a key-info probe or a "team not allowed" 403), the signal source, and
+// whether the set is known. It is the accessor the dashboard uses to narrow
+// model dropdowns to what the configured key can actually use.
+//
+// A stale entry (older than entitlementTTL) is still returned so the served
+// model list stays STABLE for an unchanged key — a filtered list that flapped
+// back to the full catalog between probes would make the dashboard's
+// auto-heal (see reconcileModelsAfterDiscovery, #1848) see models reappear
+// and vanish across refreshes. Staleness instead triggers a bounded
+// background re-probe that overwrites the entry only on a fresh signal.
+func (p *GitHubProxy) EntitledModels(endpoint string) (models []string, source string, known bool) {
+	models, source, known, stale := p.entitlements.get(endpoint)
+	if stale {
+		if ep, apiKey, caBundle, ok := p.entitlements.probeParams(endpoint); ok {
+			go p.probeEntitlements(ep, apiKey, caBundle)
+		}
+	}
+	return models, source, known
+}
+
+// recordInferenceError inspects an upstream inference error body for a
+// LiteLLM "team not allowed to access model" 403 and, when found, caches the
+// entitled model set it lists (keyed by the route's endpoint) so the
+// dashboard's model list narrows to the usable set. Only a 403 carrying the
+// gateway's team-scope marker is treated as an entitlement signal —
+// provider-side failures relayed by the gateway (upstream 404 not-found, 400
+// bad-request, 5xx) say nothing about the key's scope and are ignored, as is
+// any other 403 (bad key, rate limit).
+//
+// It deliberately does NOT switch the agent's route itself: automatic model
+// switching is governed by the dashboard's reconcile policy (#1848 — unpinned
+// + governor suggestion, or confirmed genuine unavailability, at most once
+// per list change). Once the entitled set is cached here, the dashboard's
+// filtered discovery list drives that heal path for any agent left on a
+// non-entitled model.
+func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName string, status int, body []byte) {
+	if route == nil || route.Backend != "litellm" || status != http.StatusForbidden {
+		return
+	}
+	entitled := parseTeam403Models(string(body))
+	if len(entitled) == 0 {
+		return
+	}
+	p.entitlements.set(route.Endpoint, route.APIKey, entitled, "403")
+	p.logger.Info("litellm entitled models learned from 403",
+		"agent", agentName, "endpoint", route.Endpoint, "count", len(entitled), "model", route.Model)
 }
 
 // ClearInferenceRoute removes an agent's inference backend override.
@@ -1010,6 +1095,10 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 				"status", resp.StatusCode,
 				"body", truncateBytes(errBody, 500),
 			)
+			// A LiteLLM "team not allowed to access model" 403 carries the
+			// entitled set — cache it so the dashboard's model list narrows
+			// and its reconcile policy (#1848) can heal the agent.
+			p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
 			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference backend returned %d: %s"}}`,
 				resp.StatusCode, truncateBytes(errBody, 200))
 			w.Header().Set("Content-Type", "application/json")
@@ -1159,6 +1248,24 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		errBody, _ := io.ReadAll(resp.Body)
+		p.logger.Error("inference upstream error", "agent", agentName, "status", resp.StatusCode, "body", truncateBytes(errBody, 500))
+		// Same entitlement capture as the HTTP translator path.
+		p.recordInferenceError(route, agentName, resp.StatusCode, errBody)
+		anthropicErr := &http.Response{
+			StatusCode: resp.StatusCode,
+			ProtoMajor: 1,
+			ProtoMinor: 1,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(fmt.Sprintf(
+				`{"type":"error","error":{"type":"api_error","message":"inference backend returned %d: %s"}}`,
+				resp.StatusCode, jsonEscape(truncateBytes(errBody, 200))))),
+		}
+		anthropicErr.Write(conn)
+		return
+	}
+
 	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 	if isStreaming {
@@ -1222,4 +1329,17 @@ func truncateBytes(b []byte, max int) string {
 		return string(b)
 	}
 	return string(b[:max]) + "..."
+}
+
+// jsonEscape escapes a string for safe interpolation into a JSON string
+// literal (upstream error bodies can contain quotes/backslashes/newlines that
+// would otherwise corrupt the hand-built error envelope).
+func jsonEscape(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	// Marshal wraps the value in quotes; strip them since the caller supplies
+	// its own surrounding quotes in the format string.
+	return string(b[1 : len(b)-1])
 }

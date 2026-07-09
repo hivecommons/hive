@@ -63,7 +63,26 @@ var (
 
 	proxyViolationsMu sync.RWMutex
 	proxyViolationsFn func() map[string]int
+
+	entitledModelsMu sync.RWMutex
+	entitledModelsFn func(endpoint string) (models []string, source string, known bool)
 )
+
+// SetEntitledModelsProvider registers a function that reports the per-key
+// entitled model set the proxy has learned for a LiteLLM endpoint (from a
+// key-info probe or a "team not allowed" 403). The dashboard uses it to narrow
+// the LiteLLM model dropdown to models the configured key can actually use.
+func SetEntitledModelsProvider(fn func(endpoint string) (models []string, source string, known bool)) {
+	entitledModelsMu.Lock()
+	defer entitledModelsMu.Unlock()
+	entitledModelsFn = fn
+}
+
+func getEntitledModelsFn() func(endpoint string) (models []string, source string, known bool) {
+	entitledModelsMu.RLock()
+	defer entitledModelsMu.RUnlock()
+	return entitledModelsFn
+}
 
 // AgentStatusPayload is a lightweight payload containing only agent metadata,
 // broadcast on a fast cadence (every ~10s) independent of the full eval cycle.
