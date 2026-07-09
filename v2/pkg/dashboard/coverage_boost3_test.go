@@ -561,7 +561,9 @@ func TestSecurityHeaders_WithAuthToken(t *testing.T) {
 	srv := NewServer(0, logger)
 	srv.authToken = "secret-token"
 
-	handler := srv.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Authentication now lives in the authenticate middleware (moved out of
+	// securityHeaders so it runs before roleEnforcement); test it there.
+	handler := srv.authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -823,7 +825,7 @@ func newFullServerWithAgents(t *testing.T) *Server {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo"},
 		},
-		Data:   config.DataConfig{AgentsDir: t.TempDir()},
+		Data: config.DataConfig{AgentsDir: t.TempDir()},
 		Agents: map[string]config.AgentConfig{
 			"scanner":    {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
 			"reviewer":   {ID: "rev-001", Role: "reviewer", Backend: "claude", Model: "sonnet", DisplayName: "Reviewer", Enabled: true},
@@ -850,11 +852,11 @@ func newFullServerWithAgents(t *testing.T) *Server {
 
 	srv := NewServer(0, logger)
 	srv.deps = &Dependencies{
-		Config:   cfg,
-		AgentMgr: mgr,
-		Governor: gov,
-		Logger:   logger,
-		Ctx:      context.Background(),
+		Config:         cfg,
+		AgentMgr:       mgr,
+		Governor:       gov,
+		Logger:         logger,
+		Ctx:            context.Background(),
 		RefreshFunc:    func() {},
 		PersistFunc:    func() {},
 		SkipReloadFunc: func() {},

@@ -14,18 +14,18 @@ import (
 )
 
 type Config struct {
-	Project       ProjectConfig                `yaml:"project"`
-	Policies      PoliciesConfig               `yaml:"policies"`
-	Agents        map[string]AgentConfig        `yaml:"agents"`
-	Governor      GovernorConfig               `yaml:"governor"`
-	GitHub        GitHubConfig                 `yaml:"github"`
-	Notifications NotificationsConfig          `yaml:"notifications"`
-	Dashboard     DashboardConfig              `yaml:"dashboard"`
-	Data          DataConfig                   `yaml:"data"`
-	Knowledge     KnowledgeConfig              `yaml:"knowledge"`
-	Hub           HubConfig                    `yaml:"hub"`
-	HiveID        string                       `yaml:"hive_id"`
-	ACMMLevel     *int                         `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Project       ProjectConfig          `yaml:"project"`
+	Policies      PoliciesConfig         `yaml:"policies"`
+	Agents        map[string]AgentConfig `yaml:"agents"`
+	Governor      GovernorConfig         `yaml:"governor"`
+	GitHub        GitHubConfig           `yaml:"github"`
+	Notifications NotificationsConfig    `yaml:"notifications"`
+	Dashboard     DashboardConfig        `yaml:"dashboard"`
+	Data          DataConfig             `yaml:"data"`
+	Knowledge     KnowledgeConfig        `yaml:"knowledge"`
+	Hub           HubConfig              `yaml:"hub"`
+	HiveID        string                 `yaml:"hive_id"`
+	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
 
 	SourcePath string `yaml:"-" json:"-"`
 }
@@ -39,15 +39,15 @@ type DocSourceConfigYAML struct {
 }
 
 type KnowledgeConfig struct {
-	Enabled    bool                  `yaml:"enabled"`
-	Engine     string                `yaml:"engine"`
-	Layers     []KnowledgeLayer      `yaml:"layers"`
-	Vaults     []VaultConfig         `yaml:"vaults"`
-	GitSources []GitSourceConfigYAML `yaml:"git_sources"`
-	Documents  []DocSourceConfigYAML `yaml:"documents"`
-	Curator         KnowledgeCurator         `yaml:"curator"`
-	Primer          KnowledgePrimer          `yaml:"primer"`
-	BeadSynthesizer BeadSynthesizerConfig    `yaml:"bead_synthesizer"`
+	Enabled         bool                  `yaml:"enabled"`
+	Engine          string                `yaml:"engine"`
+	Layers          []KnowledgeLayer      `yaml:"layers"`
+	Vaults          []VaultConfig         `yaml:"vaults"`
+	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
+	Documents       []DocSourceConfigYAML `yaml:"documents"`
+	Curator         KnowledgeCurator      `yaml:"curator"`
+	Primer          KnowledgePrimer       `yaml:"primer"`
+	BeadSynthesizer BeadSynthesizerConfig `yaml:"bead_synthesizer"`
 }
 
 // BeadSynthesizerConfig controls automatic synthesis of completed beads into wiki facts.
@@ -218,22 +218,22 @@ type AgentConfig struct {
 	Description     string `yaml:"description" json:"description,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
-	Role             string            `yaml:"role" json:"role,omitempty"`
-	SortOrder        int               `yaml:"sort_order" json:"sort_order,omitempty"`
-	Emoji            string            `yaml:"emoji" json:"emoji,omitempty"`
-	Color            string            `yaml:"color" json:"color,omitempty"`
-	Aliases          []string          `yaml:"aliases" json:"aliases,omitempty"`
-	LaneKeywords     []string          `yaml:"lane_keywords" json:"lane_keywords,omitempty"`
-	DetectKeywords   []string          `yaml:"detect_keywords" json:"detect_keywords,omitempty"`
-	KickTemplate     string            `yaml:"kick_template" json:"kick_template,omitempty"`
-	IncludeRepos     *bool             `yaml:"include_repos" json:"include_repos,omitempty"`
-	MetricsCollector string            `yaml:"metrics_collector" json:"metrics_collector,omitempty"`
-	BeadRole         string            `yaml:"bead_role" json:"bead_role,omitempty"`
+	Role             string              `yaml:"role" json:"role,omitempty"`
+	SortOrder        int                 `yaml:"sort_order" json:"sort_order,omitempty"`
+	Emoji            string              `yaml:"emoji" json:"emoji,omitempty"`
+	Color            string              `yaml:"color" json:"color,omitempty"`
+	Aliases          []string            `yaml:"aliases" json:"aliases,omitempty"`
+	LaneKeywords     []string            `yaml:"lane_keywords" json:"lane_keywords,omitempty"`
+	DetectKeywords   []string            `yaml:"detect_keywords" json:"detect_keywords,omitempty"`
+	KickTemplate     string              `yaml:"kick_template" json:"kick_template,omitempty"`
+	IncludeRepos     *bool               `yaml:"include_repos" json:"include_repos,omitempty"`
+	MetricsCollector string              `yaml:"metrics_collector" json:"metrics_collector,omitempty"`
+	BeadRole         string              `yaml:"bead_role" json:"bead_role,omitempty"`
 	StatsDisplay     []StatsDisplayEntry `yaml:"stats_display" json:"stats_display,omitempty"`
-	ACMMLevels       []int             `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
-	Mode             string            `yaml:"mode" json:"mode,omitempty"`
-	OnDemand         bool              `yaml:"on_demand" json:"on_demand,omitempty"`
-	CavemanMode      string            `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
+	ACMMLevels       []int               `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
+	Mode             string              `yaml:"mode" json:"mode,omitempty"`
+	OnDemand         bool                `yaml:"on_demand" json:"on_demand,omitempty"`
+	CavemanMode      string              `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
 
 	// Channels declares how this agent gets triggered (kick, webhook, discord, schedule, bead).
 	// When nil/empty, the agent uses governor timer kicks by default (implicit kick channel).
@@ -603,12 +603,12 @@ func (m ModeConfig) MarshalYAML() (interface{}, error) {
 }
 
 type GitHubConfig struct {
-	AppID                int64  `yaml:"app_id"`
-	InstallationID       int64  `yaml:"installation_id"`
-	DocsInstallationID   int64  `yaml:"docs_installation_id"`
-	KeyFile              string `yaml:"key_file"`
-	Token                string `yaml:"token"`
-	OAuthClientID        string `yaml:"oauth_client_id"`
+	AppID              int64  `yaml:"app_id"`
+	InstallationID     int64  `yaml:"installation_id"`
+	DocsInstallationID int64  `yaml:"docs_installation_id"`
+	KeyFile            string `yaml:"key_file"`
+	Token              string `yaml:"token"`
+	OAuthClientID      string `yaml:"oauth_client_id"`
 	// AppSlug is the GitHub App URL slug for the install link.
 	// For public GitHub: "kubestellar-hive". For GHE: your app's slug.
 	AppSlug string `yaml:"app_slug"`
@@ -692,26 +692,26 @@ type DiscordConfig struct {
 }
 
 type HubConfig struct {
-	Enabled                bool     `yaml:"enabled"`
-	URL                    string   `yaml:"url"`
-	IsPublic               bool     `yaml:"is_public"`
-	SnapshotURL            string   `yaml:"snapshot_url"`
-	DashboardURL           string   `yaml:"dashboard_url"`
-	HiveType               string   `yaml:"hive_type"`
-	ClusterID              string   `yaml:"cluster_id"`
-	AutoSnapshot           bool     `yaml:"auto_snapshot"`
-	AutoUpgrade            bool     `yaml:"auto_upgrade"`
-	ContributeSuspended    bool     `yaml:"contribute_suspended"`
-	ContributeAllowLabels  []string `yaml:"contribute_allow_labels"`
-	ContributeDenyLabels   []string `yaml:"contribute_deny_labels"`
-	ContributeDenyTitles   []string `yaml:"contribute_deny_titles"`
-	ContributeDenyAuthors         []string `yaml:"contribute_deny_authors"`
-	ContributeAllowModels         []string `yaml:"contribute_allow_models"`
-	ContributeRejectUnknownModels bool     `yaml:"contribute_reject_unknown_models"`
+	Enabled                       bool                `yaml:"enabled"`
+	URL                           string              `yaml:"url"`
+	IsPublic                      bool                `yaml:"is_public"`
+	SnapshotURL                   string              `yaml:"snapshot_url"`
+	DashboardURL                  string              `yaml:"dashboard_url"`
+	HiveType                      string              `yaml:"hive_type"`
+	ClusterID                     string              `yaml:"cluster_id"`
+	AutoSnapshot                  bool                `yaml:"auto_snapshot"`
+	AutoUpgrade                   bool                `yaml:"auto_upgrade"`
+	ContributeSuspended           bool                `yaml:"contribute_suspended"`
+	ContributeAllowLabels         []string            `yaml:"contribute_allow_labels"`
+	ContributeDenyLabels          []string            `yaml:"contribute_deny_labels"`
+	ContributeDenyTitles          []string            `yaml:"contribute_deny_titles"`
+	ContributeDenyAuthors         []string            `yaml:"contribute_deny_authors"`
+	ContributeAllowModels         []string            `yaml:"contribute_allow_models"`
+	ContributeRejectUnknownModels bool                `yaml:"contribute_reject_unknown_models"`
 	DisabledRepos                 []string            `yaml:"disabled_repos"`
-	DisabledTiers          []string            `yaml:"disabled_tiers"`
-	TierLimits             map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin    int                 `yaml:"snapshot_interval_min"`
+	DisabledTiers                 []string            `yaml:"disabled_tiers"`
+	TierLimits                    map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin           int                 `yaml:"snapshot_interval_min"`
 }
 
 type TierRate struct {
@@ -725,14 +725,89 @@ type DashboardConfig struct {
 	SnapshotDir        string `yaml:"snapshot_dir"`
 	AuthToken          string `yaml:"auth_token"`
 	AgentPollIntervalS int    `yaml:"agent_poll_interval_s"`
+	// AuthorizedUsers is the allowlist of GitHub usernames permitted to log in
+	// to a direct-route (non-hub-proxied) spoke via the device flow. The first
+	// entry is treated as the owner (read-write); the rest are granted viewers
+	// (read-only) unless an explicit "username:role" suffix is given. On the
+	// hub-proxied path, nginx injects X-Hive-User/X-Hive-Role and this list is
+	// not consulted. Empty on hub-proxied hives; populated by provisioning for
+	// hosted hives so direct-route device-flow logins are per-user authorized.
+	AuthorizedUsers []string `yaml:"authorized_users"`
+}
+
+// Role strings used for direct-route spoke authorization. These mirror the
+// roles the hub injects via X-Hive-Role on the proxied path so the read-only
+// gating in the dashboard behaves identically on both paths.
+const (
+	RoleOwner = "owner"
+	RoleRead  = "read"
+)
+
+// AuthorizedRole resolves a GitHub username against the spoke's authorized-users
+// allowlist and returns the user's role and whether they are authorized.
+//
+// Each entry is either "username" or "username:role" (role = "owner" or "read").
+// An entry without an explicit role defaults to "owner" for the first entry
+// (the hive owner) and "read" for the rest (granted viewers). Matching is
+// case-insensitive because GitHub usernames are case-insensitive.
+//
+// A spoke with an empty AuthorizedUsers list is NOT a direct-route spoke that
+// enforces device-flow authz (it is either hub-proxied or misconfigured); the
+// caller decides how to treat that case — see IsDirectRouteAuthzEnabled.
+func (d DashboardConfig) AuthorizedRole(username string) (string, bool) {
+	if username == "" {
+		return "", false
+	}
+	want := strings.ToLower(username)
+	for i, entry := range d.AuthorizedUsers {
+		name, role := splitAuthorizedEntry(entry)
+		if name == "" {
+			continue
+		}
+		if strings.ToLower(name) != want {
+			continue
+		}
+		if role == "" {
+			if i == 0 {
+				role = RoleOwner
+			} else {
+				role = RoleRead
+			}
+		}
+		return role, true
+	}
+	return "", false
+}
+
+// IsDirectRouteAuthzEnabled reports whether this spoke has a per-hive
+// authorized-users allowlist and must therefore enforce per-user authorization
+// on device-flow logins. Hub-proxied hives leave this empty and rely on nginx.
+func (d DashboardConfig) IsDirectRouteAuthzEnabled() bool {
+	return len(d.AuthorizedUsers) > 0
+}
+
+// splitAuthorizedEntry parses a "username" or "username:role" allowlist entry.
+func splitAuthorizedEntry(entry string) (name, role string) {
+	entry = strings.TrimSpace(entry)
+	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
+		name = strings.TrimSpace(entry[:idx])
+		role = strings.ToLower(strings.TrimSpace(entry[idx+1:]))
+		if role != RoleOwner && role != RoleRead {
+			// Unknown role suffix — treat the whole thing as a bare username so
+			// a stray colon can never silently downgrade or escalate access.
+			return strings.TrimSpace(entry), ""
+		}
+		return name, role
+	}
+	return entry, ""
 }
 
 type DataConfig struct {
-	MetricsDir          string `yaml:"metrics_dir"`
-	LogsDir             string `yaml:"logs_dir"`
-	ClaudeSessionsDir   string `yaml:"claude_sessions_dir"`
-	CopilotSessionsDir  string `yaml:"copilot_sessions_dir"`
-	AgentsDir           string `yaml:"agents_dir"`
+	MetricsDir         string `yaml:"metrics_dir"`
+	LogsDir            string `yaml:"logs_dir"`
+	ClaudeSessionsDir  string `yaml:"claude_sessions_dir"`
+	CopilotSessionsDir string `yaml:"copilot_sessions_dir"`
+	AgentsDir          string `yaml:"agents_dir"`
 }
 
 var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
@@ -912,6 +987,28 @@ func (c *Config) applyBootstrapEnv() {
 			c.Dashboard.AuthToken = v
 		}
 	}
+	// K8s-provisioned spokes receive their per-hive authorized GitHub users as a
+	// comma-separated env var (owner first). This is what lets a direct-route
+	// spoke reject unauthorized device-flow logins without the hub proxy.
+	if len(c.Dashboard.AuthorizedUsers) == 0 {
+		if v := os.Getenv("HIVE_AUTHORIZED_USERS"); v != "" {
+			c.Dashboard.AuthorizedUsers = parseAuthorizedUsers(v)
+		}
+	}
+}
+
+// parseAuthorizedUsers splits a comma-separated authorized-users list, trimming
+// whitespace and dropping empty entries. Order is preserved so the first entry
+// remains the owner.
+func parseAuthorizedUsers(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if u := strings.TrimSpace(p); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 func expandEnvVars(s string) string {
@@ -1163,52 +1260,52 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 			Emoji: "🔍", Color: "#3498db", Aliases: []string{"sc"},
 			LaneKeywords:   []string{"bug", "triage", "typo", "fix"},
 			DetectKeywords: []string{"scanner", "triage", "issue", "bug"},
-			BeadRole: "worker", SortOrder: 20, IncludeRepos: true,
+			BeadRole:       "worker", SortOrder: 20, IncludeRepos: true,
 		},
 		"ci-maintainer": {
 			Emoji: "🔧", Color: "#2ecc71", Aliases: []string{"ci"},
 			LaneKeywords:   []string{"workflow-failure", "ci-failure", "nightly", "coverage", "regression", "ga4", "analytics"},
 			DetectKeywords: []string{"ci-maintainer", "review", "ci", "coverage", "ga4"},
-			BeadRole: "worker", SortOrder: 30, IncludeRepos: true,
+			BeadRole:       "worker", SortOrder: 30, IncludeRepos: true,
 		},
 		"architect": {
 			Emoji: "🏗", Color: "#9b59b6", Aliases: []string{"ar"},
 			LaneKeywords:   []string{"rfc", "architecture", "refactor", "redesign", "migration", "breaking change", "protocol", "api design"},
 			DetectKeywords: []string{"architect", "rfc", "refactor"},
-			BeadRole: "worker", SortOrder: 40, IncludeRepos: true,
+			BeadRole:       "worker", SortOrder: 40, IncludeRepos: true,
 		},
 		"outreach": {
 			Emoji: "🌐", Color: "#e67e22", Aliases: []string{"ou"},
 			LaneKeywords:   []string{"adopters", "outreach", "community", "engagement"},
 			DetectKeywords: []string{"outreach", "adopters", "community"},
-			BeadRole: "worker", SortOrder: 50, IncludeRepos: false,
+			BeadRole:       "worker", SortOrder: 50, IncludeRepos: false,
 		},
 		"supervisor": {
 			Emoji: "👑", Color: "#e74c3c", Aliases: []string{"su"},
 			DetectKeywords: []string{"supervisor", "sweep", "monitor"},
-			BeadRole: "supervisor", SortOrder: 10, IncludeRepos: true,
+			BeadRole:       "supervisor", SortOrder: 10, IncludeRepos: true,
 		},
 		"sec-check": {
 			Emoji: "🛡", Color: "#1abc9c", Aliases: []string{"se"},
 			DetectKeywords: []string{"security", "sec-check", "vulnerability"},
-			BeadRole: "worker", SortOrder: 60, IncludeRepos: true,
+			BeadRole:       "worker", SortOrder: 60, IncludeRepos: true,
 		},
 		"quality": {
 			Emoji: "🧪", Color: "#3498db", Aliases: []string{"te", "qa"},
 			LaneKeywords:   []string{"test-gap", "test-strategy", "test-coverage", "test-scaffold", "untested", "missing-tests"},
 			DetectKeywords: []string{"quality", "test", "coverage"},
-			BeadRole: "worker", SortOrder: 35, IncludeRepos: true,
+			BeadRole:       "worker", SortOrder: 35, IncludeRepos: true,
 		},
 		"strategist": {
 			Emoji: "🧠", Color: "#f39c12", Aliases: []string{"sg"},
 			DetectKeywords: []string{"strategist", "strategy"},
-			BeadRole: "worker", SortOrder: 70, IncludeRepos: true,
+			BeadRole:       "worker", SortOrder: 70, IncludeRepos: true,
 		},
 		"guide": {
 			Emoji: "📖", Color: "#8e44ad", Aliases: []string{"gu"},
 			LaneKeywords:   []string{"docs", "documentation", "readme", "guide", "tutorial", "onboarding"},
 			DetectKeywords: []string{"guide", "docs", "documentation"},
-			BeadRole: "worker", SortOrder: 45, IncludeRepos: true,
+			BeadRole:       "worker", SortOrder: 45, IncludeRepos: true,
 		},
 	}
 

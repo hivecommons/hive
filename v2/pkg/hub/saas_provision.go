@@ -49,6 +49,11 @@ const (
 	// dashboardTokenBytes is the number of random bytes for dashboard auth tokens.
 	dashboardTokenBytes = 32
 
+	// saasRoleOwner / saasRoleRead are the role strings stored in each
+	// SaaSUser.Hives map and injected into the spoke's authorized-users list.
+	saasRoleOwner = "owner"
+	saasRoleRead  = "read"
+
 	// ingressTypeOpenShiftRoute selects OpenShift Route generation.
 	ingressTypeOpenShiftRoute = "openshift-route"
 
@@ -368,6 +373,40 @@ func countUserHives(username string) int {
 	return count
 }
 
+// authorizedUsersForHive builds the comma-separated authorized-users list a
+// spoke needs to enforce per-user device-flow authorization on its direct
+// (non-hub-proxied) route. Format: "owner:owner,viewer1:read,viewer2:read".
+//
+// The owner always comes first with role "owner" (read-write). Every OTHER
+// SaaS user the hub granted this hive (any of "owner"/"read-write"/"read") is
+// appended as "read" — a read-only viewer on the direct route. Granting a
+// non-owner write access on the direct route is deliberately deferred (only the
+// single provisioned owner is write-capable there); see the PR notes for the
+// multi-user-grant follow-up. This fails safe: a grant can never widen access
+// beyond read on the direct route. Usernames are sanitized to guard the env
+// value, and the owner is de-duplicated so they appear exactly once.
+func authorizedUsersForHive(h *SaaSHive) string {
+	entries := make([]string, 0, 4)
+	seen := map[string]bool{}
+	owner := sanitize(h.Owner)
+	if owner != "" {
+		entries = append(entries, owner+":"+saasRoleOwner)
+		seen[strings.ToLower(owner)] = true
+	}
+	for _, u := range listAllSaaSUsers() {
+		if _, ok := u.Hives[h.ID]; !ok {
+			continue
+		}
+		name := sanitize(u.GitHubUsername)
+		if name == "" || seen[strings.ToLower(name)] {
+			continue
+		}
+		entries = append(entries, name+":"+saasRoleRead)
+		seen[strings.ToLower(name)] = true
+	}
+	return strings.Join(entries, ",")
+}
+
 func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, logger *slog.Logger) error {
 	dir := filepath.Join(saasHivesDir, h.ID, "manifests")
 	os.MkdirAll(dir, 0o755)
@@ -408,17 +447,18 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 	}
 
 	data := map[string]any{
-		"ID":             h.ID,
-		"Namespace":      "hive-hosted-" + h.ID,
-		"Org":            sanitize(h.Org),
-		"Repos":          reposYAML,
-		"PrimaryRepo":    sanitize(h.PrimaryRepo),
-		"ACMMLevel":      h.ACMMLevel,
-		"Token":          req.GitHubToken,
-		"UseApp":         useApp,
-		"UseAppFull":     useAppFull,
-		"AppID":          sanitize(req.AppID),
-		"InstallationID": sanitize(req.InstallationID),
+		"ID":              h.ID,
+		"Namespace":       "hive-hosted-" + h.ID,
+		"Org":             sanitize(h.Org),
+		"Repos":           reposYAML,
+		"PrimaryRepo":     sanitize(h.PrimaryRepo),
+		"AuthorizedUsers": authorizedUsersForHive(h),
+		"ACMMLevel":       h.ACMMLevel,
+		"Token":           req.GitHubToken,
+		"UseApp":          useApp,
+		"UseAppFull":      useAppFull,
+		"AppID":           sanitize(req.AppID),
+		"InstallationID":  sanitize(req.InstallationID),
 		"AppPrivateKey": func() string {
 			lines := strings.Split(strings.TrimSpace(req.AppPrivateKey), "\n")
 			for i := range lines {
@@ -1123,6 +1163,10 @@ spec:
           value: https://hive.kubestellar.io
         - name: HIVE_HUB_SECRET
           value: "{{.HubSecret}}"
+{{- if .AuthorizedUsers}}
+        - name: HIVE_AUTHORIZED_USERS
+          value: "{{.AuthorizedUsers}}"
+{{- end}}
 {{- if .HasInference}}
         - name: HIVE_VLLM_ENDPOINT
           value: "{{.InferenceEndpoint}}"

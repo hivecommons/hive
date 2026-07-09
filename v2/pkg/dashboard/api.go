@@ -530,15 +530,15 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		githubBaseURL = "https://github.com"
 	}
 	jsonResponse(w, map[string]interface{}{
-		"org":              cfg.Project.Org,
-		"repos":            cfg.Project.Repos,
-		"ai_author":        cfg.Project.AIAuthor,
-		"agents":           len(cfg.EnabledAgents()),
-		"eval_interval_s":  cfg.Governor.EvalIntervalS,
-		"primaryRepo":      primaryRepo,
-		"hub_url":          cfg.Hub.URL,
-		"hive_id":          cfg.HiveID,
-		"github_base_url":  githubBaseURL,
+		"org":             cfg.Project.Org,
+		"repos":           cfg.Project.Repos,
+		"ai_author":       cfg.Project.AIAuthor,
+		"agents":          len(cfg.EnabledAgents()),
+		"eval_interval_s": cfg.Governor.EvalIntervalS,
+		"primaryRepo":     primaryRepo,
+		"hub_url":         cfg.Hub.URL,
+		"hive_id":         cfg.HiveID,
+		"github_base_url": githubBaseURL,
 	})
 }
 
@@ -885,11 +885,11 @@ func (s *Server) handleWidget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]interface{}{
-		"mode":     state.Mode,
-		"issues":   state.QueueIssues,
-		"prs":      state.QueuePRs,
-		"running":  running,
-		"paused":   paused,
+		"mode":      state.Mode,
+		"issues":    state.QueueIssues,
+		"prs":       state.QueuePRs,
+		"running":   running,
+		"paused":    paused,
 		"last_eval": state.LastEval,
 	})
 }
@@ -923,9 +923,9 @@ func (s *Server) handlePane(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, map[string]interface{}{
-		"agent":  name,
-		"lines":  output,
-		"count":  len(output),
+		"agent": name,
+		"lines": output,
+		"count": len(output),
 	})
 }
 
@@ -1201,7 +1201,7 @@ func (s *Server) handleIssueCosts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleModelAdvisor(w http.ResponseWriter, r *http.Request) {
 	budget := s.deps.Governor.GetBudget()
 	jsonResponse(w, map[string]interface{}{
-		"budget":        budget,
+		"budget":         budget,
 		"recommendation": "Use haiku for simple tasks, sonnet for default, opus for complex refactors",
 	})
 }
@@ -1267,6 +1267,27 @@ func (s *Server) handleGHAuth(w http.ResponseWriter, r *http.Request) {
 const userTokenPath = "/data/gh-user-token"
 
 func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) {
+	// The login status must reflect THIS request's user, not the single
+	// persisted token. On a direct-route spoke, resolving from the per-user
+	// session is the only correct answer — otherwise every visitor would see
+	// the last-authenticated user's identity (the reported vulnerability).
+	if sess := s.sessionFromRequest(r); sess != nil {
+		jsonResponse(w, map[string]interface{}{"logged_in": true, "username": sess.Username, "role": sess.Role})
+		return
+	}
+	// Hub-proxied path: nginx injects the per-user X-Hive-User/X-Hive-Role, so
+	// report THAT user rather than the single shared persisted token (which
+	// would show every proxied visitor the owner's identity).
+	if hubUser := r.Header.Get("X-Hive-User"); hubUser != "" {
+		jsonResponse(w, map[string]interface{}{"logged_in": true, "username": hubUser, "role": r.Header.Get("X-Hive-Role")})
+		return
+	}
+	if s.directRouteAuthzEnabled() {
+		// No valid session on a direct-route spoke → not logged in for this
+		// request, regardless of any persisted owner token on disk.
+		jsonResponse(w, map[string]interface{}{"logged_in": false})
+		return
+	}
 	tokenData, err := os.ReadFile(userTokenPath)
 	if err != nil || len(strings.TrimSpace(string(tokenData))) == 0 {
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
@@ -1331,40 +1352,69 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpTokenPath := userTokenPath + ".tmp"
-	if err := os.WriteFile(tmpTokenPath, []byte(token), 0o600); err != nil {
-		jsonError(w, "failed to save token: "+err.Error(), http.StatusInternalServerError)
+	// Resolve the GitHub identity BEFORE persisting anything. An unauthorized
+	// user's token must never be written to disk or wired in as the hive's user
+	// client — otherwise a rejected login would still leak its token into the
+	// shared client and become the hive's identity.
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	if err != nil || user == nil || user.Login == "" {
+		s.deviceFlowState = nil
+		jsonResponse(w, map[string]interface{}{"status": "error", "error": "could not verify GitHub identity"})
 		return
 	}
-	if err := os.Rename(tmpTokenPath, userTokenPath); err != nil {
-		jsonError(w, "failed to persist token: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	user, _ := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
 	s.deviceFlowState = nil
-	username := ""
-	avatarURL := ""
-	if user != nil {
-		username = user.Login
-		avatarURL = user.AvatarURL
-	}
-	s.deps.Logger.Info("GitHub user authenticated via device flow", "username", username)
+	username := user.Login
+	avatarURL := user.AvatarURL
 
-	if s.deps.SetUserClient != nil {
-		s.deps.SetUserClient(token)
+	// Per-hive authorization: on a direct-route spoke, only GitHub users on the
+	// configured allowlist may obtain a session. The hub-proxied path is gated
+	// upstream by nginx and leaves the allowlist empty, so it is unaffected.
+	role := config.RoleOwner
+	if s.directRouteAuthzEnabled() {
+		resolvedRole, ok := s.deps.Config.Dashboard.AuthorizedRole(username)
+		if !ok {
+			// Do NOT persist the token, do NOT set a session, do NOT log the
+			// user in. Reject before any state is written.
+			s.deps.Logger.Warn("device-flow login rejected: user not authorized for this hive", "username", username)
+			s.auditFromRequest(r, "gh_auth_denied", auditDetail("username", username), "")
+			jsonError(w, "your GitHub account is not authorized to access this hive. Contact the hive owner to request access.", http.StatusForbidden)
+			return
+		}
+		role = resolvedRole
 	}
 
+	// The persisted token and the hive's shared user GitHub client represent the
+	// hive's WRITE identity (advisory posting, autonomous actions). Only the
+	// owner (read-write) may set them; a read-only viewer logging in must never
+	// clobber the owner's token/client with their own identity. Viewers still
+	// get a per-user session below, they just don't become the hive's actor.
+	if role == config.RoleOwner {
+		tmpTokenPath := userTokenPath + ".tmp"
+		if err := os.WriteFile(tmpTokenPath, []byte(token), 0o600); err != nil {
+			jsonError(w, "failed to save token: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := os.Rename(tmpTokenPath, userTokenPath); err != nil {
+			jsonError(w, "failed to persist token: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if s.deps.SetUserClient != nil {
+			s.deps.SetUserClient(token)
+		}
+	}
+
+	s.deps.Logger.Info("GitHub user authenticated via device flow", "username", username, "role", role)
+
+	// Issue a per-user session (opaque random id → username+role) instead of a
+	// single shared cookie. Each authenticated user gets their own session so
+	// requests resolve to the user that owns their cookie — never a shared one.
 	if s.authToken != "" {
-		http.SetCookie(w, &http.Cookie{
-			Name:     sessionCookieName,
-			Value:    s.authToken,
-			Path:     "/",
-			MaxAge:   sessionCookieMaxAge,
-			HttpOnly: true,
-			Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-			SameSite: http.SameSiteLaxMode,
-		})
+		sid := s.createUserSession(username, role)
+		if sid == "" {
+			jsonError(w, "failed to create session", http.StatusInternalServerError)
+			return
+		}
+		setSessionCookie(w, r, sid)
 	}
 
 	s.auditFromRequest(r, "gh_auth_complete", auditDetail("username", username), "")
@@ -1372,39 +1422,38 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) {
-	os.Remove(userTokenPath)
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	// Clear only THIS request's session so logging out affects one user, not
+	// everyone. Removing the disk token only makes sense when the logging-out
+	// user is the one whose token is persisted (the owner/last-authenticated
+	// user); on a direct-route spoke a read-only viewer logging out must not
+	// wipe the owner's persisted token.
+	var loggedOut, loggedOutRole string
+	if c, err := r.Cookie(sessionCookieName); err == nil && c.Value != "" {
+		if sess := s.lookupSession(c.Value); sess != nil {
+			loggedOut = sess.Username
+			loggedOutRole = sess.Role
+		}
+		s.deleteSession(c.Value)
+	}
+	// Only clear the persisted GitHub token when the logging-out user is the
+	// owner (read-write). Use the role bound to the session at login time — not
+	// a fresh config lookup — so a later allowlist change can't leave a
+	// logging-out owner's own token stranded on disk. Viewer logouts leave the
+	// hive's user client intact.
+	if !s.directRouteAuthzEnabled() || loggedOutRole == config.RoleOwner {
+		os.Remove(userTokenPath)
+	}
+	clearSessionCookie(w)
 	s.auditFromRequest(r, "gh_auth_logout", "", "")
-	s.deps.Logger.Info("GitHub user logged out")
+	s.deps.Logger.Info("GitHub user logged out", "username", loggedOut)
 	jsonResponse(w, map[string]interface{}{"status": "logged_out"})
 }
 
 func (s *Server) handleGHUserAuthSession(w http.ResponseWriter, r *http.Request) {
-	if s.authToken == "" {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-	tokenData, err := os.ReadFile(userTokenPath)
-	if err != nil || strings.TrimSpace(string(tokenData)) == "" {
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookieName,
-		Value:    s.authToken,
-		Path:     "/",
-		MaxAge:   sessionCookieMaxAge,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https",
-		SameSite: http.SameSiteLaxMode,
-	})
+	// This endpoint only lands the user on the dashboard after the device flow
+	// completed. The per-user session cookie was already set by the poll
+	// handler; we never mint a session here (doing so from a shared secret or a
+	// disk token file would grant any caller a valid session).
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -1592,10 +1641,10 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"aliases":         agentCfg.Aliases,
 			"cavemanMode":     agentCfg.CavemanMode,
 		},
-		"cadences": cadences,
-		"models":   models,
-		"pipeline": pipeline,
-		"hooks":    hooks,
+		"cadences":       cadences,
+		"models":         models,
+		"pipeline":       pipeline,
+		"hooks":          hooks,
 		"restrictions":   restrictions,
 		"stats":          stats,
 		"prompt":         lastPrompt,
@@ -2710,14 +2759,14 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		},
 		"litellm": litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"hub": map[string]interface{}{
-			"enabled":                  cfg.Hub.Enabled,
-			"url":                      cfg.Hub.URL,
-			"dashboard_url":            cfg.Hub.DashboardURL,
-			"snapshot_url":             cfg.Hub.SnapshotURL,
-			"is_public":               cfg.Hub.IsPublic,
-			"auto_snapshot":           cfg.Hub.AutoSnapshot,
-			"auto_upgrade":            cfg.Hub.AutoUpgrade,
-			"snapshot_interval_min":   cfg.Hub.SnapshotIntervalMin,
+			"enabled":                          cfg.Hub.Enabled,
+			"url":                              cfg.Hub.URL,
+			"dashboard_url":                    cfg.Hub.DashboardURL,
+			"snapshot_url":                     cfg.Hub.SnapshotURL,
+			"is_public":                        cfg.Hub.IsPublic,
+			"auto_snapshot":                    cfg.Hub.AutoSnapshot,
+			"auto_upgrade":                     cfg.Hub.AutoUpgrade,
+			"snapshot_interval_min":            cfg.Hub.SnapshotIntervalMin,
 			"contribute_suspended":             cfg.Hub.ContributeSuspended,
 			"contribute_allow_labels":          cfg.Hub.ContributeAllowLabels,
 			"contribute_deny_labels":           cfg.Hub.ContributeDenyLabels,
@@ -2805,7 +2854,9 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 		s.deps.Config.Governor.Sensing.PullbackSeconds = body.PullbackSeconds
 	}
 
-	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config", "error", err) }
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config", "error", err)
+	}
 	s.auditFromRequest(r, "config_governor_sensing", auditDetail("section", "sensing"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
@@ -2916,7 +2967,9 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 		s.deps.Config.Governor.Budget.CriticalPct = body.CriticalPct
 	}
 
-	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after budget update", "error", err) }
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after budget update", "error", err)
+	}
 	s.auditFromRequest(r, "config_governor_budget", auditDetail("section", "budget"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
@@ -2959,7 +3012,9 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 		}
 		s.deps.Config.Notifications.Discord.Webhook = body.DiscordWebhook
 	}
-	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after notification update", "error", err) }
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after notification update", "error", err)
+	}
 	s.auditFromRequest(r, "config_governor_notifications", auditDetail("section", "notifications"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
@@ -2989,7 +3044,9 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 	if body.ModelLock != nil {
 		s.deps.Config.Governor.Health.ModelLock = *body.ModelLock
 	}
-	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after health update", "error", err) }
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after health update", "error", err)
+	}
 	s.auditFromRequest(r, "config_governor_health", auditDetail("section", "health"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
@@ -3033,7 +3090,9 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config after logging update", "error", err) }
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after logging update", "error", err)
+	}
 	s.auditFromRequest(r, "config_governor_logging", auditDetail("section", "logging"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
@@ -3041,22 +3100,22 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Enabled                       *bool               `json:"enabled"`
-		URL                           string              `json:"url"`
-		DashboardURL                  string              `json:"dashboard_url"`
-		SnapshotURL                   string              `json:"snapshot_url"`
-		IsPublic                      *bool               `json:"is_public"`
-		AutoSnapshot                  *bool               `json:"auto_snapshot"`
-		AutoUpgrade                   *bool               `json:"auto_upgrade"`
-		ContributeSuspended           *bool               `json:"contribute_suspended"`
-		ContributeAllowLabels         []string            `json:"contribute_allow_labels"`
-		ContributeDenyLabels          []string            `json:"contribute_deny_labels"`
-		ContributeDenyTitles          []string            `json:"contribute_deny_titles"`
-		ContributeDenyAuthors         []string            `json:"contribute_deny_authors"`
-		ContributeAllowModels         []string            `json:"contribute_allow_models"`
-		ContributeRejectUnknownModels *bool               `json:"contribute_reject_unknown_models"`
-		DisabledRepos                 []string            `json:"disabled_repos"`
-		DisabledTiers                 []string            `json:"disabled_tiers"`
+		Enabled                       *bool                      `json:"enabled"`
+		URL                           string                     `json:"url"`
+		DashboardURL                  string                     `json:"dashboard_url"`
+		SnapshotURL                   string                     `json:"snapshot_url"`
+		IsPublic                      *bool                      `json:"is_public"`
+		AutoSnapshot                  *bool                      `json:"auto_snapshot"`
+		AutoUpgrade                   *bool                      `json:"auto_upgrade"`
+		ContributeSuspended           *bool                      `json:"contribute_suspended"`
+		ContributeAllowLabels         []string                   `json:"contribute_allow_labels"`
+		ContributeDenyLabels          []string                   `json:"contribute_deny_labels"`
+		ContributeDenyTitles          []string                   `json:"contribute_deny_titles"`
+		ContributeDenyAuthors         []string                   `json:"contribute_deny_authors"`
+		ContributeAllowModels         []string                   `json:"contribute_allow_models"`
+		ContributeRejectUnknownModels *bool                      `json:"contribute_reject_unknown_models"`
+		DisabledRepos                 []string                   `json:"disabled_repos"`
+		DisabledTiers                 []string                   `json:"disabled_tiers"`
 		TierLimits                    map[string]config.TierRate `json:"tier_limits"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -3461,7 +3520,9 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 	}
 	s.deps.Config.Agents[body.Name] = agentCfg
 	s.deps.AgentMgr.AddAgent(body.Name, agentCfg)
-	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config", "error", err) }
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config", "error", err)
+	}
 
 	s.auditFromRequest(r, "add_agent", auditDetail("backend", body.Backend, "model", body.Model), body.Name)
 	s.refreshAndPersist()
@@ -3556,7 +3617,9 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.saveConfig(); err != nil { s.logger.Error("failed to persist config", "error", err) }
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config", "error", err)
+	}
 	if s.deps.EnumerateFunc != nil {
 		go s.deps.EnumerateFunc()
 	}
@@ -3575,10 +3638,10 @@ func (s *Server) handleGitHubAppInstallClicked(w http.ResponseWriter, r *http.Re
 
 func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		AppID          *int64  `json:"app_id"`
-		InstallationID *int64  `json:"installation_id"`
-		KeyFile        string  `json:"key_file"`
-		PrivateKey     string  `json:"private_key"`
+		AppID          *int64 `json:"app_id"`
+		InstallationID *int64 `json:"installation_id"`
+		KeyFile        string `json:"key_file"`
+		PrivateKey     string `json:"private_key"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -4049,20 +4112,20 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	typeLabels := map[string]string{
-		"pattern":        "Patterns",
-		"gotcha":         "Gotchas",
-		"decision":       "Decisions",
-		"regression":     "Regressions",
-		"test_scaffold":  "Test Scaffolds",
-		"integration":    "Integration",
-		"coverage_rule":  "Coverage Rules",
-		"idea":           "Ideas",
-		"vision":         "Vision",
-		"constitution":   "Constitution",
-		"requirement":    "Requirements",
-		"constraint":     "Constraints",
-		"stakeholder":    "Stakeholders",
-		"general":        "General",
+		"pattern":       "Patterns",
+		"gotcha":        "Gotchas",
+		"decision":      "Decisions",
+		"regression":    "Regressions",
+		"test_scaffold": "Test Scaffolds",
+		"integration":   "Integration",
+		"coverage_rule": "Coverage Rules",
+		"idea":          "Ideas",
+		"vision":        "Vision",
+		"constitution":  "Constitution",
+		"requirement":   "Requirements",
+		"constraint":    "Constraints",
+		"stakeholder":   "Stakeholders",
+		"general":       "General",
 	}
 
 	var sb strings.Builder
@@ -5321,6 +5384,15 @@ func maskSecret(s string) string {
 }
 
 func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
+	// On a direct-route spoke the shared token must never be handed to a
+	// browser: identity there is per-user (device-flow sessions), and the
+	// shared token no longer grants API access on that path (see authenticate).
+	// Exposing it publicly here would leak the internal server-to-server secret
+	// (used as X-Hive-Internal by the local proxy) to any visitor.
+	if s.directRouteAuthzEnabled() {
+		jsonError(w, "not available on this hive", http.StatusNotFound)
+		return
+	}
 	token := s.authToken
 	if token == "" {
 		token = os.Getenv("HIVE_DASHBOARD_TOKEN")
@@ -5507,4 +5579,3 @@ func (s *Server) handleBeadsCreate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	jsonResponse(w, b)
 }
-

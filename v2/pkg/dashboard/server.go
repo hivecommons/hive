@@ -66,6 +66,13 @@ type Server struct {
 	deviceFlowMu    sync.Mutex
 	deviceFlowState *github.DeviceFlowState
 
+	// userSessions maps a random opaque session id (stored in the client's
+	// hive_session cookie on direct-route spokes) to the authenticated user.
+	// This replaces the previous single shared s.authToken cookie so two
+	// different people get two distinct sessions and each sees THEMSELVES.
+	sessionMu    sync.RWMutex
+	userSessions map[string]*userSession
+
 	claudeOAuthFlow claudeOAuthFlow
 
 	copilotAuthFlow copilotAuthFlow
@@ -85,12 +92,12 @@ type Server struct {
 	ready   bool
 	readyAt time.Time
 
-	githubAppMu                 sync.RWMutex
-	githubAppRequired           bool
-	githubAppInstallURL         string
-	githubAppPermIssue          string // non-empty when app is installed but lacks required permissions
-	pendingGitHubAppInstall     bool
-	pendingGitHubAppInstallAt   time.Time
+	githubAppMu               sync.RWMutex
+	githubAppRequired         bool
+	githubAppInstallURL       string
+	githubAppPermIssue        string // non-empty when app is installed but lacks required permissions
+	pendingGitHubAppInstall   bool
+	pendingGitHubAppInstallAt time.Time
 
 	systemAlertsMu sync.RWMutex
 	systemAlerts   []SystemAlert
@@ -103,32 +110,32 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	Timestamp     string              `json:"timestamp"`
-	HiveID        string              `json:"hiveId"`
-	Agents        []FrontendAgent     `json:"agents"`
-	Governor      FrontendGovernor    `json:"governor"`
-	Tokens        FrontendTokens      `json:"tokens"`
-	Repos         []FrontendRepo      `json:"repos"`
-	Beads         FrontendBeads       `json:"beads"`
-	Health        map[string]any      `json:"health"`
-	Budget        FrontendBudget      `json:"budget"`
-	CadenceMatrix []FrontendCadence   `json:"cadenceMatrix"`
-	GHRateLimits  map[string]any      `json:"ghRateLimits"`
-	AgentMetrics  map[string]any      `json:"agentMetrics"`
-	Hold          FrontendHold        `json:"hold"`
-	IssueToMerge  map[string]any      `json:"issueToMerge"`
-	ACMMLevel        int                 `json:"acmmLevel"`
-	ACMMPackAgents   []string            `json:"acmmPackAgents"`
-	AdvisoryDigest   any                 `json:"advisoryDigest,omitempty"`
-	ContributorPool    *ContributorPoolStatus `json:"contributorPool,omitempty"`
-	SystemResources     *SystemResources    `json:"systemResources,omitempty"`
-	GitHubAppRequired   bool               `json:"githubAppRequired,omitempty"`
-	GitHubAppInstallURL string             `json:"githubAppInstallURL,omitempty"`
-	GitHubAppPermIssue  string             `json:"githubAppPermIssue,omitempty"`
-	GitHubBaseURL       string             `json:"githubBaseURL,omitempty"`
-	InferenceBackends   []InferenceBackend `json:"inferenceBackends,omitempty"`
-	SystemAlerts        []SystemAlert      `json:"systemAlerts,omitempty"`
-	HubBanner           *HubBannerState    `json:"hubBanner,omitempty"`
+	Timestamp           string                 `json:"timestamp"`
+	HiveID              string                 `json:"hiveId"`
+	Agents              []FrontendAgent        `json:"agents"`
+	Governor            FrontendGovernor       `json:"governor"`
+	Tokens              FrontendTokens         `json:"tokens"`
+	Repos               []FrontendRepo         `json:"repos"`
+	Beads               FrontendBeads          `json:"beads"`
+	Health              map[string]any         `json:"health"`
+	Budget              FrontendBudget         `json:"budget"`
+	CadenceMatrix       []FrontendCadence      `json:"cadenceMatrix"`
+	GHRateLimits        map[string]any         `json:"ghRateLimits"`
+	AgentMetrics        map[string]any         `json:"agentMetrics"`
+	Hold                FrontendHold           `json:"hold"`
+	IssueToMerge        map[string]any         `json:"issueToMerge"`
+	ACMMLevel           int                    `json:"acmmLevel"`
+	ACMMPackAgents      []string               `json:"acmmPackAgents"`
+	AdvisoryDigest      any                    `json:"advisoryDigest,omitempty"`
+	ContributorPool     *ContributorPoolStatus `json:"contributorPool,omitempty"`
+	SystemResources     *SystemResources       `json:"systemResources,omitempty"`
+	GitHubAppRequired   bool                   `json:"githubAppRequired,omitempty"`
+	GitHubAppInstallURL string                 `json:"githubAppInstallURL,omitempty"`
+	GitHubAppPermIssue  string                 `json:"githubAppPermIssue,omitempty"`
+	GitHubBaseURL       string                 `json:"githubBaseURL,omitempty"`
+	InferenceBackends   []InferenceBackend     `json:"inferenceBackends,omitempty"`
+	SystemAlerts        []SystemAlert          `json:"systemAlerts,omitempty"`
+	HubBanner           *HubBannerState        `json:"hubBanner,omitempty"`
 }
 
 // HubBannerState is a banner message from the hub admin displayed on spoke dashboards.
@@ -209,12 +216,12 @@ type FrontendAgent struct {
 }
 
 type FrontendGovernor struct {
-	Active     bool                    `json:"active"`
-	Mode       string                  `json:"mode"`
-	Issues     int                     `json:"issues"`
-	PRs        int                     `json:"prs"`
-	Thresholds FrontendThresholds      `json:"thresholds"`
-	NextKick   string                  `json:"nextKick,omitempty"`
+	Active     bool               `json:"active"`
+	Mode       string             `json:"mode"`
+	Issues     int                `json:"issues"`
+	PRs        int                `json:"prs"`
+	Thresholds FrontendThresholds `json:"thresholds"`
+	NextKick   string             `json:"nextKick,omitempty"`
 }
 
 type FrontendThresholds struct {
@@ -224,11 +231,11 @@ type FrontendThresholds struct {
 }
 
 type FrontendTokens struct {
-	LookbackHours  int                            `json:"lookbackHours"`
-	Sessions       []FrontendSession              `json:"sessions"`
-	Totals         FrontendTokenTotals             `json:"totals"`
-	ByAgent        map[string]FrontendTokenBucket  `json:"byAgent"`
-	ByModel        map[string]FrontendTokenBucket  `json:"byModel"`
+	LookbackHours int                            `json:"lookbackHours"`
+	Sessions      []FrontendSession              `json:"sessions"`
+	Totals        FrontendTokenTotals            `json:"totals"`
+	ByAgent       map[string]FrontendTokenBucket `json:"byAgent"`
+	ByModel       map[string]FrontendTokenBucket `json:"byModel"`
 }
 
 type FrontendTokenTotals struct {
@@ -262,12 +269,12 @@ type FrontendSession struct {
 }
 
 type FrontendRepo struct {
-	Name             string        `json:"name"`
-	Full             string        `json:"full"`
-	Issues           int           `json:"issues"`
-	PRs              int           `json:"prs"`
-	ActionableIssues []any         `json:"actionableIssues"`
-	OpenPrs          []any         `json:"openPrs"`
+	Name             string `json:"name"`
+	Full             string `json:"full"`
+	Issues           int    `json:"issues"`
+	PRs              int    `json:"prs"`
+	ActionableIssues []any  `json:"actionableIssues"`
+	OpenPrs          []any  `json:"openPrs"`
 }
 
 type FrontendBeads struct {
@@ -313,14 +320,14 @@ type FrontendHold struct {
 // TokenSparklineEntry is a single timestamped snapshot of token metrics,
 // persisted to disk so sparklines survive container restarts.
 type TokenSparklineEntry struct {
-	Timestamp    int64                       `json:"t"`
-	Input        int64                       `json:"tokenInput"`
-	Output       int64                       `json:"tokenOutput"`
-	CacheRead    int64                       `json:"tokenCacheRead"`
-	CacheCreate  int64                       `json:"tokenCacheCreate"`
-	Messages     int                         `json:"tokenMessages"`
-	ByAgent      map[string]int64            `json:"tokens,omitempty"`
-	ByModel      map[string]int64            `json:"tokenModels,omitempty"`
+	Timestamp   int64            `json:"t"`
+	Input       int64            `json:"tokenInput"`
+	Output      int64            `json:"tokenOutput"`
+	CacheRead   int64            `json:"tokenCacheRead"`
+	CacheCreate int64            `json:"tokenCacheCreate"`
+	Messages    int              `json:"tokenMessages"`
+	ByAgent     map[string]int64 `json:"tokens,omitempty"`
+	ByModel     map[string]int64 `json:"tokenModels,omitempty"`
 }
 
 // tokenSparklineMaxEntries caps the on-disk history to ~24h at 5-min intervals.
@@ -349,6 +356,7 @@ func NewServer(port int, logger *slog.Logger) *Server {
 		agentPipelines: make(map[string]map[string]bool),
 		agentHooks:     make(map[string]map[string][]any),
 		audit:          newAuditLog(),
+		userSessions:   make(map[string]*userSession),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -364,6 +372,7 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		agentPipelines: make(map[string]map[string]bool),
 		agentHooks:     make(map[string]map[string][]any),
 		audit:          newAuditLog(),
+		userSessions:   make(map[string]*userSession),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -448,7 +457,9 @@ func (s *Server) Start() error {
 	}
 	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
 
-	handler := s.roleEnforcement(s.securityHeaders(s.mux))
+	// authenticate is outermost so the identity headers it injects from a
+	// per-user session are visible to roleEnforcement's read-only write-gate.
+	handler := s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -471,42 +482,101 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
+}
 
-		if s.authToken != "" && !isPublicPath(r.URL.Path) {
-			trusted := secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
-			if !trusted && r.Header.Get("X-Hive-User") != "" && r.Header.Get("X-Hive-Role") != "" {
-				// Trust nginx auth-url proxied requests that have both user
-				// and role headers (set by the hub's auth endpoint). Requiring
-				// both headers prevents trivial bypass via a single forged header.
+// authenticate resolves the caller's identity and enforces authentication. It
+// runs OUTERMOST — before roleEnforcement — so that the X-Hive-User/X-Hive-Role
+// it injects from a per-user session are visible to roleEnforcement's read-only
+// write-gate. (If this ran inside roleEnforcement, roleEnforcement would read an
+// empty role and never block a read-only viewer's writes.)
+func (s *Server) authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.authToken == "" || isPublicPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		directRouteAuthz := s.directRouteAuthzEnabled()
+
+		// On a direct-route spoke (per-hive allowlist present) we MUST NOT trust
+		// client-supplied X-Hive-User/X-Hive-Role: there is no hub nginx in
+		// front to strip forged identity headers. Strip them here so identity
+		// can only come from a server-side session we minted.
+		if directRouteAuthz {
+			r.Header.Del("X-Hive-User")
+			r.Header.Del("X-Hive-Role")
+		}
+
+		// Internal automation authenticates with the shared token via the
+		// X-Hive-Internal header; this is a trusted server-to-server path
+		// (the local proxy injects it) and carries no browser user identity.
+		trusted := secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
+
+		// Hub-proxied path: nginx injects both headers from the hub's
+		// per-user/per-hive auth-check. Only trust them when this spoke is NOT a
+		// direct-route spoke (see strip above). Requiring both headers prevents
+		// trivial bypass via a single forged header.
+		if !trusted && !directRouteAuthz &&
+			r.Header.Get("X-Hive-User") != "" && r.Header.Get("X-Hive-Role") != "" {
+			trusted = true
+		}
+
+		// Per-user session path (device flow): resolve the session id in the
+		// hive_session cookie to THIS request's user and inject that user's
+		// identity. Two different people therefore get two different sessions
+		// and each sees themselves — no shared identity.
+		if !trusted {
+			if sess := s.sessionFromRequest(r); sess != nil {
+				r.Header.Set("X-Hive-User", sess.Username)
+				r.Header.Set("X-Hive-Role", sess.Role)
 				trusted = true
 			}
-			if !trusted {
-				token := r.Header.Get("Authorization")
-				if token == "" {
-					token = r.URL.Query().Get("token")
-				}
-				if token == "" {
-					if c, err := r.Cookie(sessionCookieName); err == nil {
-						token = c.Value
-					}
-				}
-				expected := "Bearer " + s.authToken
-				if !secureCompare(token, expected) && !secureCompare(token, s.authToken) {
-					if strings.HasPrefix(r.URL.Path, "/api/") {
-						w.Header().Set("Content-Type", "application/json")
-						http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-					} else {
-						w.Header().Set("Content-Type", "text/html; charset=utf-8")
-						w.WriteHeader(http.StatusUnauthorized)
-						w.Write([]byte(loginPage))
-					}
-					return
-				}
+		}
+
+		// Bearer/query shared-token path for programmatic API clients. This is
+		// an internal credential, not a browser session, so it is only accepted
+		// from the Authorization header or ?token= — never from the session
+		// cookie. On a direct-route spoke it is DISABLED: the shared token grants
+		// no per-user identity, so accepting it would let any holder act as an
+		// unscoped owner and defeat the per-hive allowlist. Direct-route callers
+		// must use a per-user session instead.
+		if !trusted && !directRouteAuthz {
+			token := r.Header.Get("Authorization")
+			if token == "" {
+				token = r.URL.Query().Get("token")
 			}
+			expected := "Bearer " + s.authToken
+			if secureCompare(token, expected) || secureCompare(token, s.authToken) {
+				trusted = true
+			}
+		}
+
+		if !trusted {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				w.Header().Set("Content-Type", "application/json")
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			} else {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(loginPage))
+			}
+			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// directRouteAuthzEnabled reports whether this spoke enforces per-user
+// authorization on device-flow logins (a per-hive authorized-users allowlist is
+// configured). When true the spoke is reached directly (no hub nginx), so
+// client-supplied identity headers are untrusted and identity comes only from a
+// server-side session.
+func (s *Server) directRouteAuthzEnabled() bool {
+	return s.deps != nil && s.deps.Config != nil &&
+		s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled()
 }
 
 // isPublicPath returns true for paths that should be accessible without
@@ -640,7 +710,7 @@ async function poll(interval){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.roleEnforcement(s.securityHeaders(s.mux))
+	return s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {
@@ -979,7 +1049,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 	if s.contributeHub != nil {
 		active := s.contributeHub.ActiveCount()
 		checks["contribute"] = map[string]any{
-			"status":             "pass",
+			"status":              "pass",
 			"active_contributors": active,
 		}
 	}
@@ -1045,9 +1115,9 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(stalled) > 0 {
 			checks["stall_detection"] = map[string]any{
-				"status":  "warn",
-				"detail":  "agents kicked but no output for 30+ min",
-				"agents":  stalled,
+				"status": "warn",
+				"detail": "agents kicked but no output for 30+ min",
+				"agents": stalled,
 			}
 			if overall == "ok" {
 				overall = "degraded"
