@@ -2203,6 +2203,18 @@ const (
 	// zero tool executions (observed live with weak OSS models on
 	// inference backends, e.g. deepseek-r1-14b via litellm/vllm).
 	inferenceActionNudgeMessage = "You produced a plan but executed nothing. Execute it yourself NOW using your tools, starting with step 1. Do not reply with prose only."
+	// inferenceMaxOutputTokensDefault caps CLAUDE_CODE_MAX_OUTPUT_TOKENS for
+	// inference-backend agents. 16384 is a safe universal floor across the
+	// commercial models operators point litellm at: Azure GPT-4o allows at
+	// most 16384 completion tokens and 400s ("max_tokens is too large:
+	// 128000. This model supports at most 16384 completion tokens") on
+	// anything higher; GPT-4.1/GPT-5 and most vLLM/Claude backends meet or
+	// exceed 16384. A previous 128000 value (chosen so verbose OSS models
+	// would not truncate) made every request to a capped commercial model
+	// fail. 16384 output tokens is still generous for agent work, so we
+	// trade "never truncate huge OSS outputs" for "works on capped
+	// commercial models" — the correct default.
+	inferenceMaxOutputTokensDefault = 16384
 	// cliActiveCounterMarker appears inside Claude Code's live activity
 	// spinner, e.g. "✶ Infusing… (18s · ↓ 94 tokens)" (verified against
 	// Claude Code v2.1.204). The completed form ("✻ Worked for 26s") has no
@@ -3415,9 +3427,16 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
 		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", baseURL, false})
 		vars = append(vars, agentEnvPair{"NO_PROXY", "127.0.0.1,localhost", false})
-		// Open-source models may generate verbose output; raise the CLI
-		// output-token cap to avoid "exceeded maximum" errors.
-		vars = append(vars, agentEnvPair{"CLAUDE_CODE_MAX_OUTPUT_TOKENS", "128000", false})
+		// Cap the CLI output-token budget at a value every commercial model
+		// litellm may front will accept. A prior 128000 (chosen so verbose
+		// OSS models would not truncate) exceeds Azure GPT-4o's 16384
+		// completion-token cap, so every request 400s with
+		// "max_tokens is too large: 128000. This model supports at most
+		// 16384 completion tokens". See inferenceMaxOutputTokensDefault.
+		// TODO: the gateway 400 body names the model's real cap ("supports
+		// at most N completion tokens"); a future enhancement could parse it
+		// to auto-adjust per-model instead of using a universal floor.
+		vars = append(vars, agentEnvPair{"CLAUDE_CODE_MAX_OUTPUT_TOKENS", strconv.Itoa(inferenceMaxOutputTokensDefault), false})
 	}
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{"COPILOT_GITHUB_TOKEN", m.copilotAuthToken, true})
