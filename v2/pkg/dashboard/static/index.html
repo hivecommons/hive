@@ -1976,8 +1976,32 @@
     @media (max-width: 480px) {
       .welcome-step-body { padding-left: 12px; }
     }
+    /* ── Genie minimize ──
+       On dismiss the panel scales down and flies toward the top-bar ? button
+       so the user sees where the checklist went (and how to reopen it). The
+       transform target is computed at runtime; only the timing/easing live
+       here as tokens. GENIE_MS below must match --welcome-genie-ms. */
+    :root { --welcome-genie-ms: 400ms; --welcome-genie-ease: cubic-bezier(0.4, 0.0, 1, 1); }
+    .welcome-modal.welcome-genie {
+      transition: transform var(--welcome-genie-ms) var(--welcome-genie-ease),
+                  opacity var(--welcome-genie-ms) var(--welcome-genie-ease);
+      pointer-events: none;
+    }
+    #welcome-overlay.welcome-genie-overlay {
+      transition: background var(--welcome-genie-ms) var(--welcome-genie-ease);
+      background: transparent;
+    }
+    /* One-shot pulse on the ? button when the panel lands on it. */
+    @keyframes welcome-target-pulse {
+      0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--blue) 55%, transparent); }
+      50% { transform: scale(1.18); box-shadow: 0 0 0 6px color-mix(in srgb, var(--blue) 0%, transparent); }
+      100% { transform: scale(1); box-shadow: 0 0 0 0 transparent; }
+    }
+    #welcome-topbar-btn.welcome-target-pulse { animation: welcome-target-pulse 0.4s ease-out; }
     @media (prefers-reduced-motion: reduce) {
       .welcome-check, .welcome-step-chevron { transition: none; }
+      .welcome-modal.welcome-genie, #welcome-overlay.welcome-genie-overlay { transition: none; }
+      #welcome-topbar-btn.welcome-target-pulse { animation: none; }
     }
   </style>
 </head>
@@ -13850,10 +13874,92 @@ function burnAreaChart() {
         refreshWelcomeAutoChecks(window._lastStatus || null);
       }).catch(() => {});
       renderWelcomeDialog();
-      document.getElementById('welcome-overlay').classList.remove('hidden');
+      const overlay = document.getElementById('welcome-overlay');
+      // Clear any in-flight genie state so the panel opens at full size.
+      overlay.classList.remove('welcome-genie-overlay');
+      const panel = overlay.querySelector('.welcome-modal');
+      if (panel) {
+        panel.classList.remove('welcome-genie');
+        panel.style.transform = '';
+        panel.style.transformOrigin = '';
+        panel.style.opacity = '';
+      }
+      overlay.classList.remove('hidden');
     }
+    // Genie-minimize timing. GENIE_MS must match --welcome-genie-ms in CSS;
+    // it is the fallback deadline in case transitionend never fires (the
+    // panel can be display:none'd mid-flight if the tab is backgrounded).
+    const WELCOME_GENIE_MS = 400;
+    const WELCOME_GENIE_FALLBACK_MS = WELCOME_GENIE_MS + 80;
+    // Scale the panel down to roughly the ? button's footprint as it flies in.
+    const WELCOME_GENIE_MIN_SCALE = 0.06;
+
+    function _prefersReducedMotion() {
+      return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    // Finalize a genie animation: hide the overlay and reset the animation
+    // state so the next open starts clean. Idempotent.
+    function _finishWelcomeGenie(overlay, panel) {
+      if (!overlay || overlay.classList.contains('hidden')) return;
+      overlay.classList.add('hidden');
+      overlay.classList.remove('welcome-genie-overlay');
+      if (panel) {
+        panel.classList.remove('welcome-genie');
+        panel.style.transform = '';
+        panel.style.transformOrigin = '';
+        panel.style.opacity = '';
+      }
+    }
+
     function closeWelcomeDialog() {
-      document.getElementById('welcome-overlay').classList.add('hidden');
+      const overlay = document.getElementById('welcome-overlay');
+      if (!overlay || overlay.classList.contains('hidden')) return;
+      const panel = overlay.querySelector('.welcome-modal');
+      const target = document.getElementById('welcome-topbar-btn');
+      // Instant hide when motion is reduced, the panel/target are missing, or
+      // the reopen affordance is not visible (nothing to fly toward).
+      if (_prefersReducedMotion() || !panel || !target ||
+          target.offsetParent === null) {
+        _finishWelcomeGenie(overlay, panel);
+        return;
+      }
+      const panelRect = panel.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      if (!panelRect.width || !panelRect.height) { _finishWelcomeGenie(overlay, panel); return; }
+      // Translate the panel's centre to the ? button's centre, then shrink it.
+      const panelCX = panelRect.left + panelRect.width / 2;
+      const panelCY = panelRect.top + panelRect.height / 2;
+      const targetCX = targetRect.left + targetRect.width / 2;
+      const targetCY = targetRect.top + targetRect.height / 2;
+      const dx = targetCX - panelCX;
+      const dy = targetCY - panelCY;
+      panel.style.transformOrigin = 'center center';
+      panel.classList.add('welcome-genie');
+      // Kick the transform on the next frame so the transition actually runs.
+      requestAnimationFrame(function () {
+        panel.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + WELCOME_GENIE_MIN_SCALE + ')';
+        panel.style.opacity = '0.2';
+        overlay.classList.add('welcome-genie-overlay');
+      });
+      let done = false;
+      const finish = function () {
+        if (done) return;
+        done = true;
+        _finishWelcomeGenie(overlay, panel);
+        // Pulse the ? button once so the eye lands on where it went.
+        target.classList.remove('welcome-target-pulse');
+        void target.offsetWidth; // restart the animation
+        target.classList.add('welcome-target-pulse');
+        setTimeout(function () { target.classList.remove('welcome-target-pulse'); }, WELCOME_GENIE_FALLBACK_MS);
+      };
+      panel.addEventListener('transitionend', function te(e) {
+        if (e.target === panel && e.propertyName === 'transform') {
+          panel.removeEventListener('transitionend', te);
+          finish();
+        }
+      });
+      setTimeout(finish, WELCOME_GENIE_FALLBACK_MS);
     }
     function dismissWelcomeDialog() {
       _welcomeState.dismissed = true;
