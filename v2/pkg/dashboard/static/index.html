@@ -1200,6 +1200,7 @@
     /* .config-field inputs — shared input recipe (end of style block) */
     .config-field input[type="text"],
     .config-field input[type="number"],
+    .config-field input[type="password"],
     .config-field textarea,
     .config-field select { width: 100%; }
     .config-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -1806,6 +1807,7 @@
        DOM untouched, z-indexes retained at each pattern's rule (they
        encode stacking intent). The acmm JS-built overlay keeps its inline
        styles until the Phase 4 template sweep. */
+    body.modal-open { overflow: hidden; }
     .gh-auth-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
       position: fixed; inset: 0;
       background: rgba(0, 0, 0, 0.55);
@@ -1833,7 +1835,7 @@
        .config-field input): --bg-soft field on --line border (the token
        remap makes this white-on-gray in light mode), var(--radius), and a
        subtle 2px amber focus ring. Grouped selectors — no renames. */
-    .config-field input[type="text"], .config-field input[type="number"], .config-field select,
+    .config-field input[type="text"], .config-field input[type="number"], .config-field input[type="password"], .config-field select,
     .config-field textarea,
     .nous-config-section textarea, .nous-config-section input[type="text"], .nous-config-section input[type="number"],
     .config-list-add input,
@@ -1847,7 +1849,7 @@
       padding: 8px 10px;
       outline: none;
     }
-    .config-field input[type="text"]:focus, .config-field input[type="number"]:focus, .config-field select:focus,
+    .config-field input[type="text"]:focus, .config-field input[type="number"]:focus, .config-field input[type="password"]:focus, .config-field select:focus,
     .config-field textarea:focus,
     .nous-config-section textarea:focus, .nous-config-section input[type="text"]:focus, .nous-config-section input[type="number"]:focus,
     .config-list-add input:focus,
@@ -2605,6 +2607,38 @@
       setLayout(next);
       applyLayout(next);
     }
+    // Body scroll-lock while ANY modal overlay is open — otherwise wheel
+    // scrolling leaks through the backdrop to the dashboard behind it. A
+    // single observer covers every overlay (config, acmm, welcome, gh-auth,
+    // hive-dialog, nous) and any added later; per-modal open/close handlers
+    // no longer need to touch body.style.overflow.
+    (function installModalScrollLock() {
+      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay';
+      function anyOverlayOpen() {
+        var overlays = document.querySelectorAll(OVERLAY_SELECTOR);
+        for (var i = 0; i < overlays.length; i++) {
+          var el = overlays[i];
+          if (el.classList.contains('hidden')) continue;
+          var disp = el.style.display || getComputedStyle(el).display;
+          if (disp !== 'none') return true;
+        }
+        return false;
+      }
+      function sync() { document.body.classList.toggle('modal-open', anyOverlayOpen()); }
+      var obs = new MutationObserver(sync);
+      function start() {
+        document.querySelectorAll(OVERLAY_SELECTOR).forEach(function(el) {
+          obs.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+        });
+        // Catch overlays created later (e.g. acmm dialog appended on first open).
+        obs.observe(document.body, { childList: true, subtree: false });
+        sync();
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+      } else { start(); }
+    })();
+
     const OC_TOPBAR_HEIGHT = 64;
     function _ocAgentFromHash() {
       const h = location.hash.replace('#', '');
