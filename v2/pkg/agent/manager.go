@@ -812,7 +812,13 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		switch backend {
 		case "goose", "codex", "aider":
 			go func(a *AgentProcess, cavemanMode string) {
-				time.Sleep(cavemanActivationDelay)
+				// Same readiness gate as kicks: a fixed post-launch delay
+				// raced the CLI boot and could type /caveman into bash.
+				if !m.waitForInputPromptForAgent(a) {
+					m.logger.Warn("caveman activation skipped: CLI never reached input prompt",
+						"agent", a.Name, "mode", cavemanMode)
+					return
+				}
 				m.tmuxSendLiteralForAgent(a, "/caveman "+cavemanMode)
 				time.Sleep(textToEnterDelay)
 				m.tmuxSendEntersForAgent(a)
@@ -2160,7 +2166,6 @@ const (
 	cliReadyTimeout         = 60 * time.Second
 	inputPromptPollInterval = 2 * time.Second
 	inputPromptTimeout      = 120 * time.Second
-	cavemanActivationDelay  = 5 * time.Second
 	// preLaunchShellClearDelay gives bash time to process the C-c that
 	// clears stale PS2 quote-continuation state before the launch command
 	// is typed into the pane.
