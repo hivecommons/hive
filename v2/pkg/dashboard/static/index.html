@@ -1936,11 +1936,37 @@
        not status labels. Ghost-button affordance: amber outline at rest,
        brighter tint + solid border + underline on hover. Amber remaps per
        theme, so this reads correctly in both light and dark modes. */
-    #acmm-badge, #acmm-sidebar-badge { transition: background 0.15s, border-color 0.15s; }
+    #acmm-badge, #acmm-sidebar-badge { display: inline-block; transition: background 0.15s, border-color 0.15s; }
     #acmm-badge:hover, #acmm-sidebar-badge:hover {
       background: color-mix(in srgb, var(--amber) 26%, transparent);
       border-color: var(--amber);
       text-decoration: underline;
+    }
+    /* Dropdown caret sized up relative to the badge text so the control
+       affordance catches the eye; zero line-height + middle alignment keep
+       the taller glyph from stretching the pill in either theme. */
+    #acmm-badge .acmm-caret, #acmm-sidebar-badge .acmm-caret {
+      font-size: 1.25em;
+      line-height: 0;
+      margin-left: 4px;
+      vertical-align: middle;
+      display: inline-block;
+    }
+    /* One-shot attention shimmy when the dashboard opens (class added on
+       first badge render, removed on animationend — see updateACMMBadge). */
+    @keyframes acmm-shimmy {
+      0%, 100% { transform: translateX(0); }
+      15% { transform: translateX(-3px); }
+      30% { transform: translateX(3px); }
+      45% { transform: translateX(-2px); }
+      60% { transform: translateX(2px); }
+      75% { transform: translateX(-1px); }
+    }
+    #acmm-badge.acmm-shimmy, #acmm-sidebar-badge.acmm-shimmy {
+      animation: acmm-shimmy 0.7s ease-in-out 1;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #acmm-badge.acmm-shimmy, #acmm-sidebar-badge.acmm-shimmy { animation: none; }
     }
   </style>
 </head>
@@ -10735,13 +10761,39 @@ function burnAreaChart() {
     }
 
     function updateACMMBadge(level, packAgents) {
-      // Trailing ▾ signals the badge is a dropdown-style control, not a label.
-      const text = 'ACMM ' + acmmLevelLabel(level) + ' ▾';
+      // Trailing ▾ signals the badge is a dropdown-style control, not a
+      // label. Rendered as a span so CSS can size it up relative to the
+      // badge text (acmmLevelLabel returns fixed constants — HTML-safe).
+      const html = 'ACMM ' + acmmLevelLabel(level) + '<span class="acmm-caret">▾</span>';
       const badge = document.getElementById('acmm-badge');
-      if (badge) badge.textContent = text;
+      if (badge) badge.innerHTML = html;
       const sbBadge = document.getElementById('acmm-sidebar-badge');
-      if (sbBadge) sbBadge.textContent = text;
+      if (sbBadge) sbBadge.innerHTML = html;
       applyACMMVisibility(level, packAgents);
+      scheduleACMMShimmy();
+    }
+
+    // One-shot attention shimmy: each time the dashboard opens, wiggle the
+    // ACMM badges once so the level control catches the eye. Scheduled from
+    // the first badge render, after a settle delay; never loops, and skipped
+    // entirely for users who prefer reduced motion (CSS also disables it).
+    const ACMM_SHIMMY_DELAY_MS = 1500;   // let the page settle before drawing the eye
+    const ACMM_SHIMMY_CLEANUP_MS = 1500; // fallback class removal (> 0.7s animation) if animationend never fires
+    let _acmmShimmied = false;
+    function scheduleACMMShimmy() {
+      if (_acmmShimmied) return;
+      _acmmShimmied = true;
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      setTimeout(() => {
+        ['acmm-badge', 'acmm-sidebar-badge'].forEach(id => {
+          const el = document.getElementById(id);
+          if (!el) return;
+          el.classList.add('acmm-shimmy');
+          const cleanup = () => el.classList.remove('acmm-shimmy');
+          el.addEventListener('animationend', cleanup, { once: true });
+          setTimeout(cleanup, ACMM_SHIMMY_CLEANUP_MS);
+        });
+      }, ACMM_SHIMMY_DELAY_MS);
     }
 
     function applyACMMVisibility(level, packAgents) {
