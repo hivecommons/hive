@@ -1837,6 +1837,17 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		time.Sleep(clearBeforeKickDelay)
 	}
 
+	// Weak OSS models served over inference backends often answer a kick
+	// with a prose plan addressed to a reader and execute zero tool calls
+	// (observed live: litellm/vllm + deepseek-r1-14b produced a coherent
+	// PLAN and returned to the idle prompt without running anything).
+	// Append an action-forcing block here — where the effective backend is
+	// knowable — instead of editing the kick templates, which are shared
+	// with commercial CLI backends that do not need it.
+	if IsInferenceBackend(effectiveBackend(agent)) {
+		message += "\n\n" + inferenceKickActionSuffix
+	}
+
 	// Send message in chunks (400 rune max per chunk, rune-safe)
 	runes := []rune(message)
 	if len(runes) <= chunkSize {
@@ -2066,6 +2077,17 @@ func (m *Manager) dismissConsentIfStuck(name string) {
 		"name", name, "stuck_seconds", int(stuckFor.Seconds()))
 	go m.dismissInferencePrompts(agent)
 }
+
+// inferenceKickActionSuffix is appended to every kick sent to an agent whose
+// effective backend is a self-hosted inference backend (vllm/llm-d/litellm).
+// Weak OSS models tend to answer a kick conversationally — describing steps
+// for someone else to follow — instead of acting; this block demands
+// immediate tool execution. Commercial CLI backends don't receive it.
+const inferenceKickActionSuffix = "IMPORTANT — EXECUTE, DO NOT NARRATE: " +
+	"You have real tools (Bash, file edit, gh). Perform the work NOW in " +
+	"this session. Do not describe steps for someone else, do not summarize " +
+	"a plan and stop. Begin immediately by running your first command. " +
+	"Every response that contains no tool execution is a failure."
 
 const (
 	// inferenceKickStallTimeout is how long after a kick an unchanged, idle
