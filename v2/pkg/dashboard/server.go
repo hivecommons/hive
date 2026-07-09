@@ -205,6 +205,7 @@ type FrontendAgent struct {
 	OnDemand         bool   `json:"onDemand,omitempty"`
 	LastError        string `json:"lastError,omitempty"`
 	StallNudges      int    `json:"stallNudges,omitempty"`
+	ActionNudges     int    `json:"actionNudges,omitempty"`
 }
 
 type FrontendGovernor struct {

@@ -250,6 +250,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			StatsConfig:   loadStatsConfig(name),
 			LastError:     proc.LastError,
 			StallNudges:   proc.StallNudges,
+			ActionNudges:  proc.ActionNudges,
 		}
 
 		acmmLevel := 0

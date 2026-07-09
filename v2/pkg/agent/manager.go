@@ -89,6 +89,9 @@ type AgentProcess struct {
 	stallNudgeSent      bool      // stall watchdog: at most one nudge per kick
 	StallNudges         int       // total post-kick stall nudges sent (surfaced to the dashboard)
 	launchGen           int       // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks  int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	actionNudgeSent     bool      // no-action watchdog: at most one action nudge per kick
+	ActionNudges        int       // total prose-only-response action nudges sent (surfaced to the dashboard)
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -1873,9 +1876,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	agent.KickRefused = false
 	agent.KickRefusalReason = ""
 
-	// Arm the post-kick stall watchdog for inference agents: if the pane
-	// never changes after this kick and sits at an idle prompt, the watcher
-	// loop sends a single "continue" nudge.
+	// Arm the post-kick watchdog for inference agents: the watcher loop
+	// sends a "continue" nudge if the pane freezes at an idle prompt, and
+	// an action nudge if the model responds with prose but runs no tools.
 	if IsInferenceBackend(effectiveBackend(agent)) {
 		m.recordInferenceKick(agent, now)
 	}
@@ -2098,7 +2101,68 @@ const (
 	inferenceStallNudgeMessage = "continue"
 	// cliInputPromptMarker is the CLI's idle input prompt indicator.
 	cliInputPromptMarker = "❯"
+	// inferenceActionNudgeGrace is the minimum time after a kick before the
+	// no-action check may fire, so the watcher never misreads the brief
+	// post-Enter window (kick echoed, spinner not yet rendered) as a
+	// completed prose-only response.
+	inferenceActionNudgeGrace = 2 * time.Minute
+	// inferenceActionNudgeMessage is typed into the CLI when the model
+	// answered a kick with prose only — a plan addressed to a reader with
+	// zero tool executions (observed live with weak OSS models on
+	// inference backends, e.g. deepseek-r1-14b via litellm/vllm).
+	inferenceActionNudgeMessage = "You produced a plan but executed nothing. Execute it yourself NOW using your tools, starting with step 1. Do not reply with prose only."
+	// cliActiveCounterMarker appears inside Claude Code's live activity
+	// spinner, e.g. "✶ Infusing… (18s · ↓ 94 tokens)" (verified against
+	// Claude Code v2.1.204). The completed form ("✻ Worked for 26s") has no
+	// counter, so this distinguishes an in-flight response from a finished
+	// one on versions whose footer no longer shows cliWorkingMarker.
+	cliActiveCounterMarker = "s · ↓"
 )
+
+// toolSummaryRe matches Claude Code's collapsed tool-activity summary lines,
+// rendered only when tools actually executed (verified against Claude Code
+// v2.1.204): "Running 1 shell command…" while a Bash call is in flight, and
+// "Ran 1 shell command" / "Read 1 file, ran 2 shell commands" once done.
+// Edit/write variants are included for completeness across versions.
+var toolSummaryRe = regexp.MustCompile(`(?i)\b(?:ran|running) \d+ shell command|\bread \d+ file|\bedited \d+ file|\bwrote \d+ file|\bupdated \d+ file`)
+
+// expandedToolCallMarkers are literal fragments of Claude Code's expanded
+// per-tool rendering. "⎿" is the result elbow drawn under a tool call
+// (verified live on v2.1.204: "⎿  $ sleep 15 && echo probe3"); the
+// "⏺ Name(" forms are the expanded tool-call headers older CLI versions
+// render. A bare "⏺" is NOT a tool marker — v2.1.204 uses it as the bullet
+// for every assistant response block, including pure prose.
+var expandedToolCallMarkers = []string{
+	"⎿",
+	"⏺ Bash(",
+	"⏺ Read(",
+	"⏺ Write(",
+	"⏺ Edit(",
+	"⏺ Update(",
+	"⏺ Search(",
+	"⏺ Fetch(",
+	"⏺ Task(",
+}
+
+// countToolMarkers counts tool-execution markers in captured pane content.
+// The no-action watchdog compares the count after a kick against the count
+// recorded at kick delivery: scrollback keeps markers from work done before
+// the kick, so only an increase proves the model executed tools since.
+func countToolMarkers(pane string) int {
+	n := len(toolSummaryRe.FindAllStringIndex(pane, -1))
+	for _, marker := range expandedToolCallMarkers {
+		n += strings.Count(pane, marker)
+	}
+	return n
+}
+
+// paneShowsActiveWork reports whether the CLI is mid-response: either the
+// legacy "esc to interrupt" footer hint or the live spinner counter is
+// visible. The idle input prompt "❯" alone proves nothing on v2.1.204 —
+// the input box stays rendered while a response streams.
+func paneShowsActiveWork(pane string) bool {
+	return strings.Contains(pane, cliWorkingMarker) || strings.Contains(pane, cliActiveCounterMarker)
+}
 
 // paneContentHash returns a short stable hash of pane content, used to detect
 // whether a pane has changed since a kick was delivered.
@@ -2115,47 +2179,85 @@ func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
 	agent.lastInferKickAt = at
 	agent.lastInferKickPane = paneContentHash(m.captureVisiblePaneForAgent(agent))
 	agent.stallNudgeSent = false
+	// Baseline for the no-action check: markers already in scrollback from
+	// work done before this kick must not count as post-kick tool activity.
+	agent.lastInferKickMarks = countToolMarkers(m.captureTmuxPaneForAgent(agent))
+	agent.actionNudgeSent = false
 }
 
-// nudgeIfKickStalled sends a single "continue" nudge to an inference agent
-// whose pane has not changed since the last kick was delivered, the stall
-// timeout has elapsed, and the pane shows an idle input prompt (a working CLI
-// shows cliWorkingMarker and is left alone). Any pane change since the kick
-// disarms the watchdog — the CLI consumed the message. At most one nudge is
-// sent per kick; the total is surfaced on the agent snapshot as StallNudges.
+// nudgeIfKickStalled watches an inference agent after a kick and corrects
+// two distinct failure modes, sending at most one nudge each (so at most two
+// combined nudges per kick):
+//
+//   - Frozen pane: the pane has not changed since the kick was delivered and
+//     the stall timeout elapsed — the CLI swallowed the message. Sends the
+//     "continue" nudge (counted in StallNudges).
+//   - Prose-only response: the pane changed (the CLI consumed the kick), the
+//     response completed back at the idle input prompt, but the tool-marker
+//     count has not risen above the baseline recorded at kick delivery — the
+//     model narrated a plan instead of acting. Sends the action nudge
+//     (counted in ActionNudges).
+//
+// A CLI that is mid-response (paneShowsActiveWork) is always left alone, and
+// post-kick tool activity disarms the watchdog entirely.
 func (m *Manager) nudgeIfKickStalled(name, pane string) {
 	now := time.Now()
 	m.mu.Lock()
 	agent, ok := m.agents[name]
-	if !ok || agent.stallNudgeSent || agent.lastInferKickAt.IsZero() || agent.lastInferKickPane == "" {
+	if !ok || agent.lastInferKickAt.IsZero() || agent.lastInferKickPane == "" {
+		m.mu.Unlock()
+		return
+	}
+	if paneShowsActiveWork(pane) || !strings.Contains(pane, cliInputPromptMarker) {
 		m.mu.Unlock()
 		return
 	}
 	sinceKick := now.Sub(agent.lastInferKickAt)
-	if sinceKick < inferenceKickStallTimeout {
+
+	if paneContentHash(pane) == agent.lastInferKickPane {
+		// Frozen pane: the CLI never consumed the kick.
+		if agent.stallNudgeSent || sinceKick < inferenceKickStallTimeout {
+			m.mu.Unlock()
+			return
+		}
+		agent.stallNudgeSent = true
+		agent.StallNudges++
+		totalNudges := agent.StallNudges
+		m.mu.Unlock()
+
+		m.logger.Warn("inference agent stalled after kick, sending continue nudge",
+			"name", name,
+			"minutes_since_kick", int(sinceKick.Minutes()),
+			"total_nudges", totalNudges)
+		m.tmuxSendLiteralForAgent(agent, inferenceStallNudgeMessage)
+		time.Sleep(textToEnterDelay)
+		m.tmuxSendEntersForAgent(agent)
+		return
+	}
+
+	// The pane moved since the kick — the CLI consumed it and the response
+	// completed (idle prompt, no active-work indicator). Check whether any
+	// tools ran since the kick before declaring the response prose-only.
+	if agent.actionNudgeSent || sinceKick < inferenceActionNudgeGrace {
 		m.mu.Unlock()
 		return
 	}
-	if paneContentHash(pane) != agent.lastInferKickPane {
-		// The pane moved since the kick — the CLI consumed it. Disarm.
+	if countToolMarkers(m.captureTmuxPaneForAgent(agent)) > agent.lastInferKickMarks {
+		// Real tool activity since the kick — the agent is acting. Disarm.
 		agent.lastInferKickPane = ""
 		m.mu.Unlock()
 		return
 	}
-	if strings.Contains(pane, cliWorkingMarker) || !strings.Contains(pane, cliInputPromptMarker) {
-		m.mu.Unlock()
-		return
-	}
-	agent.stallNudgeSent = true
-	agent.StallNudges++
-	totalNudges := agent.StallNudges
+	agent.actionNudgeSent = true
+	agent.ActionNudges++
+	totalActionNudges := agent.ActionNudges
 	m.mu.Unlock()
 
-	m.logger.Warn("inference agent stalled after kick, sending continue nudge",
+	m.logger.Warn("inference agent answered kick with prose only, sending action nudge",
 		"name", name,
 		"minutes_since_kick", int(sinceKick.Minutes()),
-		"total_nudges", totalNudges)
-	m.tmuxSendLiteralForAgent(agent, inferenceStallNudgeMessage)
+		"total_action_nudges", totalActionNudges)
+	m.tmuxSendLiteralForAgent(agent, inferenceActionNudgeMessage)
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
 }
@@ -2269,6 +2371,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		LastKickMessage: a.LastKickMessage,
 		NeedsLogin:      needsLogin,
 		StallNudges:     a.StallNudges,
+		ActionNudges:    a.ActionNudges,
 		HasLaunched:     a.HasLaunched,
 		LaunchedMode:    a.LaunchedMode,
 		tmuxSession:     a.tmuxSession,

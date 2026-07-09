@@ -1196,14 +1196,127 @@ func TestNudgeIfKickStalled(t *testing.T) {
 		t.Fatal("working pane must not be nudged")
 	}
 
-	// A pane change since the kick disarms the watchdog.
+	// A pane change with post-kick tool activity disarms the watchdog.
+	// (No tmux session in tests → captureTmuxPaneForAgent returns "" →
+	// countToolMarkers is 0; a negative baseline simulates "count rose".)
 	agent.lastInferKickPane = paneContentHash("what the pane looked like at kick time")
+	agent.lastInferKickMarks = -1
 	m.nudgeIfKickStalled("vinf", idlePane)
-	if agent.StallNudges != 1 {
-		t.Fatal("changed pane must not be nudged")
+	if agent.StallNudges != 1 || agent.ActionNudges != 0 {
+		t.Fatal("changed pane with tool activity must not be nudged")
 	}
 	if agent.lastInferKickPane != "" {
-		t.Fatal("changed pane should disarm the watchdog")
+		t.Fatal("changed pane with tool activity should disarm the watchdog")
+	}
+}
+
+func TestNudgeIfKickStalled_ActionNudge(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	// Prose-only response: the model answered the kick with a plan and
+	// returned to the idle prompt without a single tool marker.
+	prosePane := "❯ [agent:scanner] fix the failing issues\n" +
+		"⏺ To fix the failing issues, follow these steps. First you ensure the\n" +
+		"  branch is up to date, then you open a pull request with the fix.\n" +
+		"✻ Worked for 26s\n" +
+		"❯ \n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+
+	// Within the grace period — never nudged.
+	agent.lastInferKickAt = time.Now().Add(-inferenceActionNudgeGrace + time.Minute)
+	agent.lastInferKickPane = paneContentHash("pane as captured at kick delivery")
+	agent.lastInferKickMarks = 0
+	m.nudgeIfKickStalled("vinf", prosePane)
+	if agent.ActionNudges != 0 {
+		t.Fatal("no action nudge within the grace period")
+	}
+
+	// Past the grace period with zero new tool markers — exactly one nudge.
+	// (No tmux session in tests → the scrollback capture is empty → the
+	// marker count stays at the baseline.)
+	agent.lastInferKickAt = time.Now().Add(-inferenceActionNudgeGrace - time.Minute)
+	m.nudgeIfKickStalled("vinf", prosePane)
+	if agent.ActionNudges != 1 || !agent.actionNudgeSent {
+		t.Fatalf("expected one action nudge, got %d (sent=%v)", agent.ActionNudges, agent.actionNudgeSent)
+	}
+	if agent.StallNudges != 0 {
+		t.Fatal("prose-only response must not count as a frozen-pane stall")
+	}
+
+	// Second watcher pass: max one action nudge per kick.
+	m.nudgeIfKickStalled("vinf", prosePane)
+	if agent.ActionNudges != 1 {
+		t.Fatalf("max one action nudge per kick, got %d", agent.ActionNudges)
+	}
+
+	// A CLI mid-response (live spinner counter) is left alone even though
+	// the footer no longer shows "esc to interrupt" on v2.1.204.
+	streamingPane := prosePane + "\n✶ Infusing… (18s · ↓ 94 tokens)"
+	agent.actionNudgeSent = false
+	m.nudgeIfKickStalled("vinf", streamingPane)
+	if agent.ActionNudges != 1 {
+		t.Fatal("streaming pane must not be nudged")
+	}
+
+	// A new kick re-arms both nudges.
+	now := time.Now()
+	m.mu.Lock()
+	m.recordInferenceKick(agent, now)
+	m.mu.Unlock()
+	if agent.actionNudgeSent || agent.stallNudgeSent {
+		t.Fatal("recordInferenceKick must reset both nudge flags")
+	}
+}
+
+func TestCountToolMarkers(t *testing.T) {
+	cases := []struct {
+		name string
+		pane string
+		want int
+	}{
+		{"empty", "", 0},
+		// A bare ⏺ is the bullet for every assistant block, prose included.
+		{"prose only", "⏺ To fix this, follow these steps and you ensure the tests pass.\n✻ Worked for 26s", 0},
+		{"mid-run bash (v2.1.204)", "⏺ Running 1 shell command…\n  ⎿  $ sleep 15 && echo probe3 (12s)", 2},
+		{"collapsed summary (v2.1.204)", "  Ran 1 shell command\n⏺ Done — it printed probe3.", 1},
+		{"collapsed read+bash (v2.1.204)", "  Read 1 file, ran 1 shell command\n⏺ Done.", 2},
+		{"expanded legacy tool call", "⏺ Bash(git status)\n  ⎿  On branch main", 2},
+		{"expanded legacy read", "⏺ Read(main.go)", 1},
+		{"plural summary", "  Ran 3 shell commands\n  Edited 2 files", 2},
+		{"idle prompt only", "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := countToolMarkers(tc.pane); got != tc.want {
+				t.Errorf("countToolMarkers(%s) = %d, want %d", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPaneShowsActiveWork(t *testing.T) {
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"legacy footer hint", "some output\nesc to interrupt", true},
+		{"live spinner counter (v2.1.204)", "✶ Infusing… (18s · ↓ 94 tokens)", true},
+		{"completed response", "⏺ Done.\n✻ Worked for 26s\n❯ ", false},
+		{"idle prompt", "❯ \n  ⏵⏵ bypass permissions on", false},
+		{"empty", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := paneShowsActiveWork(tc.pane); got != tc.want {
+				t.Errorf("paneShowsActiveWork(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
 
