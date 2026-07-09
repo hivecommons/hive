@@ -3513,6 +3513,11 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 	if len(models) == 0 {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
 	}
+	if backend == "litellm" {
+		// LiteLLM also proxies the Claude CLI/Copilot model families —
+		// offer those aliases in addition to whatever the endpoint reports.
+		models = unionLitellmClaudeModels(models)
+	}
 	jsonResponse(w, map[string]interface{}{
 		"backend": backend,
 		"models":  models,
@@ -3529,24 +3534,67 @@ func (s *Server) inferenceAPIKey(backend string) string {
 	return s.deps.Config.Governor.LiteLLM.ResolveAPIKey()
 }
 
-func (s *Server) queryInferenceModels(backend string) []string {
-	if endpoints, ok := s.getInferenceEndpoints(backend); ok {
-		models := fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
-		if len(models) > 0 {
-			return models
+// litellmClaudeModelAliases is the static list of Claude-family models that
+// are reachable through the claude/copilot CLI backends and therefore worth
+// offering in the LiteLLM model dropdown alongside live-discovered endpoint
+// models. LiteLLM proxies expect these aliases with UNDERSCORE version
+// separators (claude-opus-4_8) — unlike the Claude CLI (hyphens,
+// claude-opus-4-8) and the Copilot CLI (dots, claude-opus-4.8). Derived from
+// the CLAUDE_CLI_MODELS/COPILOT_CLI_MODELS lists in static/index.html; keep
+// in sync when those lists change.
+var litellmClaudeModelAliases = []string{
+	"claude-opus-4_8",
+	"claude-opus-4_7",
+	"claude-opus-4_6",
+	"claude-sonnet-4_6",
+	"claude-sonnet-4_5",
+	"claude-haiku-4_5",
+	"claude-fable-5",
+}
+
+// unionLitellmClaudeModels merges the models discovered from the LiteLLM
+// endpoint with the static Claude aliases. Discovered models keep their
+// order and come first; static aliases are appended after, de-duplicated —
+// a discovered model with the same name wins and appears once.
+func unionLitellmClaudeModels(discovered []string) []string {
+	seen := make(map[string]bool, len(discovered))
+	merged := make([]string, 0, len(discovered)+len(litellmClaudeModelAliases))
+	for _, m := range discovered {
+		if !seen[m] {
+			seen[m] = true
+			merged = append(merged, m)
 		}
 	}
-	envVar := "HIVE_VLLM_MODELS"
-	switch backend {
-	case "llm-d":
-		envVar = "HIVE_LLMD_MODELS"
-	case "litellm":
-		envVar = "HIVE_LITELLM_MODELS"
+	for _, m := range litellmClaudeModelAliases {
+		if !seen[m] {
+			seen[m] = true
+			merged = append(merged, m)
+		}
 	}
-	if val := os.Getenv(envVar); val != "" {
-		return inferenceModelsFromEnv(envVar, "")
+	return merged
+}
+
+func (s *Server) queryInferenceModels(backend string) []string {
+	var models []string
+	if endpoints, ok := s.getInferenceEndpoints(backend); ok {
+		models = fetchModelsFromEndpoints(endpoints, s.inferenceAPIKey(backend))
 	}
-	return nil
+	if len(models) == 0 {
+		envVar := "HIVE_VLLM_MODELS"
+		switch backend {
+		case "llm-d":
+			envVar = "HIVE_LLMD_MODELS"
+		case "litellm":
+			envVar = "HIVE_LITELLM_MODELS"
+		}
+		if val := os.Getenv(envVar); val != "" {
+			models = inferenceModelsFromEnv(envVar, "")
+		}
+	}
+	if backend == "litellm" {
+		return unionLitellmClaudeModels(models)
+	}
+	return models
 }
 
 const inferenceModelQueryTimeout = 5 * time.Second
