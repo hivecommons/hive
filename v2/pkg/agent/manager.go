@@ -764,6 +764,16 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	envCmd := m.buildEnvPrefix(agent)
 	fullCmd := envCmd + launchCmd
 
+	// A previously spilled kick can leave bash in PS2 quote-continuation
+	// (an unbalanced quote): anything typed next is appended to the open
+	// string literal instead of executing, so the launch command would be
+	// silently eaten. Abort any pending continuation or partially typed
+	// line before typing the launch command. The pane holds only bash at
+	// this point (the CLI-already-running check above returned early), so
+	// C-c cannot kill a live CLI.
+	m.tmuxSendKeysForAgent(agent, "C-c")
+	time.Sleep(preLaunchShellClearDelay)
+
 	m.tmuxSendLiteralForAgent(agent, fullCmd)
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
@@ -2151,6 +2161,10 @@ const (
 	inputPromptPollInterval = 2 * time.Second
 	inputPromptTimeout      = 120 * time.Second
 	cavemanActivationDelay  = 5 * time.Second
+	// preLaunchShellClearDelay gives bash time to process the C-c that
+	// clears stale PS2 quote-continuation state before the launch command
+	// is typed into the pane.
+	preLaunchShellClearDelay = 500 * time.Millisecond
 )
 
 func (m *Manager) SeedLastKick(name string, t time.Time) {
