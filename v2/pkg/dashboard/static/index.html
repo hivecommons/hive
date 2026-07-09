@@ -1942,6 +1942,41 @@
       border-color: var(--amber);
       text-decoration: underline;
     }
+
+    /* ══ Welcome / Getting Started dialog ══
+       Panel, overlay, and footer buttons come from the Phase-2 modal and
+       button recipes (.config-overlay/.config-modal/.hive-dialog-btn);
+       only the checklist internals are defined here. Tokens only. */
+    .welcome-modal { max-width: 680px; width: 92%; max-height: 86vh; display: flex; flex-direction: column; }
+    .welcome-body { padding: 4px 24px 16px; overflow-y: auto; }
+    .welcome-progress { font-size: 0.72em; font-weight: 400; color: var(--muted); margin-left: 8px; white-space: nowrap; }
+    .welcome-intro { font-size: var(--fs-base); color: var(--text); margin: 12px 0 16px; line-height: 1.55; }
+    .welcome-step { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 8px; background: color-mix(in srgb, var(--panel-strong) 40%, transparent); }
+    .welcome-step-header { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; user-select: none; }
+    .welcome-step-title { flex: 1; font-size: var(--fs-base); font-weight: 600; color: var(--text); }
+    .welcome-step.done .welcome-step-title { color: var(--muted); }
+    .welcome-check { width: 20px; height: 20px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line-strong); border-radius: 5px; font-size: 0.8rem; color: var(--bg); background: transparent; transition: background 0.15s, border-color 0.15s; }
+    .welcome-step.done .welcome-check { background: var(--green); border-color: var(--green); }
+    .welcome-check.manual { cursor: pointer; }
+    .welcome-check.manual:hover { border-color: var(--green); }
+    .welcome-step-chevron { color: var(--muted); font-size: 0.7rem; transition: transform 0.15s; }
+    .welcome-step.open .welcome-step-chevron { transform: rotate(90deg); }
+    .welcome-step-body { display: none; padding: 0 12px 12px 42px; font-size: var(--fs-sm); color: var(--muted); line-height: 1.55; }
+    .welcome-step.open .welcome-step-body { display: block; }
+    .welcome-step-body strong { color: var(--text); }
+    .welcome-step-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .welcome-auto-note { display: block; margin-top: 8px; font-size: var(--fs-xs); color: var(--muted); font-style: italic; }
+    .welcome-more-title { font-size: var(--fs-sm); font-weight: 600; color: var(--muted); margin: 14px 0 6px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .welcome-more-item { font-size: var(--fs-sm); color: var(--muted); padding: 3px 0 3px 8px; line-height: 1.5; }
+    .welcome-more-link { color: var(--blue); cursor: pointer; font-weight: 600; }
+    .welcome-more-link:hover { text-decoration: underline; }
+    .welcome-footer { justify-content: space-between; }
+    @media (max-width: 480px) {
+      .welcome-step-body { padding-left: 12px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .welcome-check, .welcome-step-chevron { transition: none; }
+    }
   </style>
 </head>
 <body>
@@ -2100,6 +2135,19 @@
     </div>
   </div>
 </div>
+<div id="welcome-overlay" class="config-overlay hidden">
+  <div class="config-modal welcome-modal">
+    <div class="config-header">
+      <h2 class="config-title">🐝 Getting Started<span id="welcome-progress" class="welcome-progress"></span></h2>
+      <button class="config-close" onclick="closeWelcomeDialog()">&times;</button>
+    </div>
+    <div class="config-body welcome-body" id="welcome-body"></div>
+    <div class="config-footer welcome-footer">
+      <button class="hive-dialog-btn" onclick="closeWelcomeDialog()" title="Close for now — the checklist opens again on the next dashboard load">Remind me next time</button>
+      <button class="hive-dialog-btn primary" onclick="dismissWelcomeDialog()" title="Stop opening this checklist on load — reopen it any time from Getting Started in the sidebar or the ? button in the top bar">Don't show on load</button>
+    </div>
+  </div>
+</div>
 <div class="gh-auth-alert" id="gh-auth-alert">GitHub API authentication failed. Check GitHub App key or token configuration.</div>
   <div class="gh-rate-alert" id="gh-rate-alert"></div>
 
@@ -2148,6 +2196,7 @@
       <a class="oc-nav-item" data-section="contributors-section" onclick="ocNavigate('contributors-section')"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
       <a class="oc-nav-item" data-section="audit-section" onclick="ocNavigate('audit-section')"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="nous-section" onclick="ocNavigate('nous-section')"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
+      <a class="oc-nav-item" id="welcome-nav-item" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
     </div>
     <div class="system-gauges" id="system-gauges">
@@ -2190,6 +2239,7 @@
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
       <span id="oc-hive-id" class="git-version" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:2px 8px;border-radius:4px" onclick="openConfigDialog('governor')"></span>
       <span class="oc-topbar-ts" id="oc-ts"></span>
+      <button class="btn" id="welcome-topbar-btn" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started checklist">?</button>
       <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
       <div id="oc-gh-avatar-wrap" style="display:none;position:relative">
         <img id="oc-gh-avatar" src="" alt="" style="width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid var(--green);vertical-align:middle" onclick="toggleGHUserMenu()">
@@ -10579,6 +10629,8 @@ function burnAreaChart() {
       if (e.key !== 'Escape') return;
       const acmmOverlay = document.getElementById('acmm-dialog-overlay');
       if (acmmOverlay && acmmOverlay.style.display === 'flex') { acmmCloseDialog(); return; }
+      const welcomeOverlay = document.getElementById('welcome-overlay');
+      if (welcomeOverlay && !welcomeOverlay.classList.contains('hidden')) { closeWelcomeDialog(); return; }
       if (_configModalOpen) { closeConfigDialog(); return; }
       if (_acmmOpen) { closeACMMDialog(); return; }
       const nousOverlay = document.getElementById('nous-config-overlay');
@@ -13702,8 +13754,77 @@ function burnAreaChart() {
       }
     }
 
+    // ── Welcome / Getting Started dialog ──────────────────────────────
+    // A living checklist for new hive owners: opens on every dashboard
+    // load (write-access users only) until dismissed, and stays reachable
+    // from the sidebar Resources list and the topbar ? button.
+
+    // Per-browser persistence blob: {dismissed: bool, checks: {stepId: bool}}
+    // (same localStorage pattern as hive-layout-mode / hive-section-collapsed-*).
+    const WELCOME_LS_KEY = 'hive-welcome-state-v1';
+    // X-Hive-Role value the hub proxies read-only preview users in with —
+    // the same /api/role signal the avatar menu uses to gate owner actions.
+    const HIVE_ROLE_READ = 'read';
+    // Role assumed when the header is absent (standalone spoke = owner);
+    // mirrors the /api/role server-side default.
+    const HIVE_ROLE_DEFAULT = 'owner';
+
+    function loadWelcomeState() {
+      try {
+        const raw = localStorage.getItem(WELCOME_LS_KEY);
+        if (raw) {
+          const s = JSON.parse(raw);
+          return { dismissed: s.dismissed === true, checks: (s && typeof s.checks === 'object' && s.checks) || {} };
+        }
+      } catch (e) { /* corrupted blob — start fresh */ }
+      return { dismissed: false, checks: {} };
+    }
+    function saveWelcomeState() {
+      try { localStorage.setItem(WELCOME_LS_KEY, JSON.stringify(_welcomeState)); } catch (e) { /* storage blocked — non-fatal */ }
+    }
+    let _welcomeState = loadWelcomeState();
+    let _welcomeWriteAccess = false;
+
+    async function initWelcomeDialog() {
+      // Write-access gating: read-only previews never see the checklist or
+      // its entry points. On fetch failure (e.g. static snapshot) stay hidden.
+      let role = HIVE_ROLE_READ;
+      try {
+        const resp = await fetch('/api/role');
+        const data = await resp.json();
+        role = data.role || HIVE_ROLE_DEFAULT;
+      } catch (e) { /* API unreachable — treat as read-only */ }
+      if (role === HIVE_ROLE_READ) return;
+      _welcomeWriteAccess = true;
+      const navItem = document.getElementById('welcome-nav-item');
+      if (navItem) navItem.style.display = '';
+      const topBtn = document.getElementById('welcome-topbar-btn');
+      if (topBtn) topBtn.style.display = '';
+      if (!_welcomeState.dismissed) openWelcomeDialog();
+    }
+
+    function openWelcomeDialog() {
+      renderWelcomeDialog();
+      document.getElementById('welcome-overlay').classList.remove('hidden');
+    }
+    function closeWelcomeDialog() {
+      document.getElementById('welcome-overlay').classList.add('hidden');
+    }
+    function dismissWelcomeDialog() {
+      _welcomeState.dismissed = true;
+      saveWelcomeState();
+      closeWelcomeDialog();
+    }
+
+    function renderWelcomeDialog() {
+      const body = document.getElementById('welcome-body');
+      if (!body) return;
+      body.innerHTML = '<p class="welcome-intro">Your hive is a fleet of AI agents that work your repositories — triaging issues, writing fixes, and opening PRs — while the governor paces them to match the workload. A few one-time choices below make it productive.</p>';
+    }
+
     checkGHAuth();
     setInterval(checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
+    initWelcomeDialog();
     checkClaudeAuth();
     var CLAUDE_AUTH_CHECK_INTERVAL_MS = 60000;
     setInterval(checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
