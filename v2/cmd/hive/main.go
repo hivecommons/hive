@@ -268,7 +268,12 @@ func main() {
 			num, err := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
 			if err != nil {
 				logger.Error("failed to ensure advisory issue", "repo", primaryRepo, "error", err)
-				if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
+				// GitHub returns 403 for rate limiting too — a transient
+				// condition that must not raise the "App Not Installed"
+				// banner (matches the guard on the repo-change path).
+				if strings.Contains(err.Error(), "rate limit") {
+					logger.Warn("GitHub API rate limit hit during advisory issue ensure", "repo", primaryRepo)
+				} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
 					githubAppRequired = true
 					logger.Warn("GitHub App not installed or credentials invalid — setting githubAppRequired flag", "error", err)
 				}
