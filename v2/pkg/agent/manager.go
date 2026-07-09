@@ -774,6 +774,22 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	}
 	agent.forceRelaunch = false
 
+	// Single-CLI guarantee: reap any pre-existing or leaked CLI for this agent
+	// before launching a new one. Without this a relaunch (model/backend switch,
+	// crash-restart) spawns a second claude alongside the old one — the old
+	// process keeps hitting the gateway on a stale model and 403-floods the
+	// pane. The reaper matches by HIVE_AGENT env, so it also catches a process
+	// that survived tmux kill-session by detaching from the pane. Runs on every
+	// real launch (the CLI-already-running early return above skips it, keeping
+	// the healthy single CLI).
+	if reaped := m.reapAgentCLI(agent); reaped > 0 {
+		m.logger.Info("reaped stale CLI before launch",
+			"name", agent.Name, "reaped", reaped, "session", agent.tmuxSession)
+		// Give the kernel a moment to tear down the killed process so the new
+		// launch starts from a clean slate (no lingering socket on the gateway).
+		time.Sleep(preLaunchShellClearDelay)
+	}
+
 	m.fixSharedConfigPerms(agent)
 
 	envCmd := m.buildEnvPrefix(agent)
@@ -1714,6 +1730,21 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 			if agent.StartedAt != nil {
 				uptimeSeconds = time.Since(*agent.StartedAt).Seconds()
 			}
+			// Don't declare a freshly-launched agent crashed: the CLI needs a
+			// few seconds to render its UI marker (longer for inference, which
+			// may sit on a consent screen or first-token latency). Restarting
+			// inside this window spawns a second CLI before the first has even
+			// finished booting — the exact race that let three claude processes
+			// on three models coexist after a fresh pod boot. Wait past the
+			// grace period before treating a bare pane as a crash.
+			if agent.StartedAt != nil && uptimeSeconds < cliBootGraceSeconds {
+				m.logger.Debug("agent pane bare but within boot grace; not restarting",
+					"name", name,
+					"uptime_seconds", int(uptimeSeconds),
+					"grace_seconds", cliBootGraceSeconds,
+				)
+				continue
+			}
 			m.logger.Warn("agent CLI crashed (bare shell detected)",
 				"name", name,
 				"session", agent.tmuxSession,
@@ -2398,6 +2429,11 @@ const (
 	// clears stale PS2 quote-continuation state before the launch command
 	// is typed into the pane.
 	preLaunchShellClearDelay = 500 * time.Millisecond
+	// cliBootGraceSeconds is how long after StartedAt a bare pane (no CLI
+	// marker) is tolerated before CheckAndRestartCrashedAgents treats it as a
+	// crash. It matches cliReadyTimeout (60s) so a still-booting CLI is never
+	// restarted underneath itself, which would spawn a second concurrent CLI.
+	cliBootGraceSeconds = 60
 )
 
 func (m *Manager) SeedLastKick(name string, t time.Time) {
@@ -3615,10 +3651,20 @@ func (m *Manager) RestartWithBootstrap(ctx context.Context, name, prompt string)
 		}
 	}
 
+	// Terminate the agent's CLI process(es) before recreating the session.
+	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
+	// not UID isolation is enabled — killAgentProcesses (UID-based) is a no-op
+	// when agents share the dev UID, which let stale claude processes on old
+	// models survive a model/backend switch and keep hitting the gateway.
+	reaped := m.reapAgentCLI(agent)
 	if agent.UID > 0 {
+		// UID isolation on: also sweep any non-CLI helper processes (MCP
+		// servers, hung copilot binaries) owned exclusively by this agent.
 		killed := killAgentProcesses(agent.UID, m.logger)
 		m.logger.Info("killed orphaned agent processes",
-			"name", name, "uid", agent.UID, "killed", killed)
+			"name", name, "uid", agent.UID, "killed", killed, "reaped_cli", reaped)
+	} else if reaped > 0 {
+		m.logger.Info("reaped agent CLI on restart", "name", name, "reaped_cli", reaped)
 	}
 
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
@@ -3668,6 +3714,108 @@ func (m *Manager) RestartThenSendKick(ctx context.Context, name, message string)
 
 	// Step 3: Send the message via SendKick — waits for prompt, chunks reliably.
 	return m.SendKick(name, message)
+}
+
+// cliProcessMarkers are substrings that identify a CLI process in its
+// /proc/<pid>/cmdline. The Claude CLI (and inference backends, which also use
+// it) runs as `claude` (often re-exec'd via node); copilot/gemini/goose/bob run
+// under their own names. Matching cmdline substrings catches the CLI regardless
+// of the interpreter the process reports as its comm name.
+var cliProcessMarkers = []string{
+	"claude",
+	"copilot",
+	"gemini",
+	"goose",
+	"bob",
+}
+
+// reapAgentCLI finds and SIGKILLs every CLI process belonging to the given
+// agent, matched by the HIVE_AGENT=<name> marker in /proc/<pid>/environ. This
+// marker is inlined into every launch command (buildEnvPrefix) and set on the
+// tmux session (ensureTmuxSession), so it uniquely identifies an agent's CLI
+// processes — unlike UID matching, which cannot distinguish agents that share
+// the dev UID (UID isolation disabled). Returns the number of processes killed.
+//
+// This is the single-CLI guarantee: before every (re)launch, any pre-existing
+// or leaked CLI for the agent is terminated, so an agent can never accumulate
+// concurrent claude processes on different models. tmux kill-session alone is
+// insufficient — a detached node/claude child can survive the session's SIGHUP
+// and keep hitting the gateway (403-flooding the pane on a stale model).
+func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
+	const procPath = "/proc"
+	marker := "HIVE_AGENT=" + agent.Name
+
+	entries, err := os.ReadDir(procPath)
+	if err != nil {
+		m.logger.Warn("reapAgentCLI: failed to read /proc", "agent", agent.Name, "error", err)
+		return 0
+	}
+
+	killed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		if pid == os.Getpid() {
+			continue
+		}
+
+		// cmdline is NUL-separated; read it raw and check for a CLI binary.
+		cmdlineRaw, err := os.ReadFile(filepath.Join(procPath, entry.Name(), "cmdline"))
+		if err != nil || len(cmdlineRaw) == 0 {
+			continue
+		}
+		cmdline := strings.ReplaceAll(string(cmdlineRaw), "\x00", " ")
+		if !containsCLIMarker(cmdline) {
+			continue
+		}
+
+		// environ is NUL-separated KEY=VALUE pairs. Match the exact agent so we
+		// never kill another agent's CLI when UIDs are shared.
+		environRaw, err := os.ReadFile(filepath.Join(procPath, entry.Name(), "environ"))
+		if err != nil {
+			continue
+		}
+		if !environHasMarker(string(environRaw), marker) {
+			continue
+		}
+
+		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
+			killed++
+			m.logger.Info("reaped agent CLI process",
+				"agent", agent.Name, "pid", pid, "cmdline", truncateStr(cmdline, 120))
+		}
+	}
+	if killed > 0 {
+		m.logger.Info("reapAgentCLI complete", "agent", agent.Name, "killed", killed)
+	}
+	return killed
+}
+
+// containsCLIMarker reports whether a /proc cmdline names a known CLI binary.
+func containsCLIMarker(cmdline string) bool {
+	for _, marker := range cliProcessMarkers {
+		if strings.Contains(cmdline, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// environHasMarker reports whether a raw NUL-separated /proc environ blob
+// contains the exact HIVE_AGENT=<name> pair. Splitting on NUL and comparing
+// whole entries avoids a prefix collision between "scanner" and "scanner-2".
+func environHasMarker(environ, marker string) bool {
+	for _, pair := range strings.Split(environ, "\x00") {
+		if pair == marker {
+			return true
+		}
+	}
+	return false
 }
 
 // killAgentProcesses finds all processes owned by the given UID via /proc and
@@ -3740,10 +3888,20 @@ func (m *Manager) Restart(ctx context.Context, name string) error {
 		}
 	}
 
+	// Terminate the agent's CLI process(es) before recreating the session.
+	// reapAgentCLI matches by the HIVE_AGENT env marker, so it works whether or
+	// not UID isolation is enabled — killAgentProcesses (UID-based) is a no-op
+	// when agents share the dev UID, which let stale claude processes on old
+	// models survive a model/backend switch and keep hitting the gateway.
+	reaped := m.reapAgentCLI(agent)
 	if agent.UID > 0 {
+		// UID isolation on: also sweep any non-CLI helper processes (MCP
+		// servers, hung copilot binaries) owned exclusively by this agent.
 		killed := killAgentProcesses(agent.UID, m.logger)
 		m.logger.Info("killed orphaned agent processes",
-			"name", name, "uid", agent.UID, "killed", killed)
+			"name", name, "uid", agent.UID, "killed", killed, "reaped_cli", reaped)
+	} else if reaped > 0 {
+		m.logger.Info("reaped agent CLI on restart", "name", name, "reaped_cli", reaped)
 	}
 
 	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
