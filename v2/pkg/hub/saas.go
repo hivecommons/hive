@@ -4304,8 +4304,11 @@ const dashboardHTML = `<!DOCTYPE html>
           /* Branch switch in flight: the hive still reports the OLD branch
              (often current on it) until the new pod heartbeats — without
              this, isCurrent suppresses every progress indicator. */
-          var targetBranch = (h.upgradeTarget || '').replace(/-latest$/, '');
-          var isSwitching = !!(h.upgrading && targetBranch && targetBranch !== branchName);
+          /* Only a "<branch>-latest" target is a branch switch; plain-SHA
+             targets are same-branch upgrades and must say "Upgrading". */
+          var isBranchTarget = /-latest$/.test(h.upgradeTarget || '');
+          var targetBranch = isBranchTarget ? h.upgradeTarget.replace(/-latest$/, '') : '';
+          var isSwitching = !!(h.upgrading && isBranchTarget && targetBranch !== branchName);
           if (_upgradingHives[h.id] === 'switching' && (isSwitching || h.upgrading)) delete _upgradingHives[h.id];
           var isUpgrading = isSwitching || _upgradingHives[h.id] === 'switching' ||
             (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent && !latestUnknown);
