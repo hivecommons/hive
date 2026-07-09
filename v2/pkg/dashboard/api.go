@@ -3161,29 +3161,38 @@ func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
 		return 0, fmt.Errorf("cannot reach gateway: %w", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
-	gatewayMsg := strings.TrimSpace(string(body))
-	switch {
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		// The two auth failures lead users to different fixes.
-		if apiKey == "" {
-			return 0, fmt.Errorf("gateway requires an API key and none is configured (HTTP %d): %s",
+
+	if resp.StatusCode != http.StatusOK {
+		// Error path: only a truncated slice of the body is surfaced to the
+		// dialog (error bodies can be huge and may echo the key).
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
+		gatewayMsg := strings.TrimSpace(string(body))
+		switch {
+		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+			// The two auth failures lead users to different fixes.
+			if apiKey == "" {
+				return 0, fmt.Errorf("gateway requires an API key and none is configured (HTTP %d): %s",
+					resp.StatusCode, gatewayMsg)
+			}
+			return 0, fmt.Errorf("gateway rejected the configured key (HTTP %d): %s",
 				resp.StatusCode, gatewayMsg)
+		default:
+			return 0, fmt.Errorf("gateway returned HTTP %d: %s", resp.StatusCode, gatewayMsg)
 		}
-		return 0, fmt.Errorf("gateway rejected the configured key (HTTP %d): %s",
-			resp.StatusCode, gatewayMsg)
-	case resp.StatusCode != http.StatusOK:
-		return 0, fmt.Errorf("gateway returned HTTP %d: %s", resp.StatusCode, gatewayMsg)
 	}
-	var result struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
+
+	// Success path: parse the FULL body with the exact same lenient decoder
+	// the model-discovery dropdown uses (fetchModelsFromEndpoint) — a JSON
+	// object with a "data" array of items each carrying an "id" string is
+	// sufficient. We do NOT require top-level object=="list" (some gateways
+	// omit or reorder it) and tolerate extra/unknown fields. Reading only a
+	// truncated prefix here (the old bug) corrupted large valid lists into
+	// invalid JSON and produced a false "non-OpenAI response" negative.
+	models, err := parseModelsResponse(resp.Body)
+	if err != nil {
 		return 0, fmt.Errorf("gateway returned a non-OpenAI /v1/models response")
 	}
-	return len(result.Data), nil
+	return len(models), nil
 }
 
 // redactSecret removes any occurrence of a secret value from a message so
@@ -3861,20 +3870,33 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 		return nil, fmt.Errorf("upstream returned %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	models, err := parseModelsResponse(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
+	return models, nil
+}
 
+// parseModelsResponse decodes an OpenAI-style GET /v1/models body into the
+// list of model IDs. It is the single source of truth shared by the
+// model-discovery dropdown (fetchModelsFromEndpoint) and the Test Connection
+// probe (probeLiteLLMModels), so both agree on what "N models" means.
+//
+// It is deliberately lenient: any JSON object with a "data" array whose items
+// carry a non-empty "id" string is accepted. It does NOT require top-level
+// object=="list" (gateways may omit or reorder it), imposes no field order,
+// and tolerates extra/unknown per-item fields (object, created, owned_by, …).
+// IDs are returned verbatim, so provider-prefixed / hyphenated ids like
+// "Azure/gpt-5.1-codex-2025-11-13" or "claude-opus-4-7" survive intact.
+func parseModelsResponse(r io.Reader) ([]string, error) {
 	var result struct {
 		Data []struct {
 			ID string `json:"id"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
+	if err := json.NewDecoder(r).Decode(&result); err != nil {
+		return nil, err
 	}
-
 	models := make([]string, 0, len(result.Data))
 	for _, m := range result.Data {
 		if m.ID != "" {
