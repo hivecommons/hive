@@ -4575,6 +4575,10 @@
         const models = currentIds.map(m => ({ value: m, label: m.split('/').pop() }));
         INFERENCE_MODELS[b.id] = models;
         _inferenceModelCache[b.id] = { models, ts: Date.now() };
+        // If the Governor→LiteLLM tab is open when a live "models pulled"
+        // push arrives, re-render the Default Model dropdown against the
+        // same freshly-discovered data (no separate fetch).
+        if (b.id === 'litellm') refreshLitellmDefaultModelField();
       }
     }
 
@@ -11023,6 +11027,12 @@ function burnAreaChart() {
       } else {
         body.innerHTML = renderGovernorTab(tabId);
         if (tabId === 'Hub') fetchQueueCount();
+        // Opening the LiteLLM tab triggers a fresh model discovery (bypassing
+        // the TTL cache) so a just-added key's models populate the Default
+        // Model dropdown without a full reload.
+        if (tabId === 'LiteLLM') {
+          fetchInferenceModels('litellm', true).then(refreshLitellmDefaultModelField).catch(() => {});
+        }
       }
     }
 
@@ -11214,6 +11224,65 @@ function burnAreaChart() {
       markDirty('litellm', 'apiKeyFile', v);
     }
 
+    // Sentinel value for the "type a custom id" option in the Default Model
+    // select — chosen so it can never collide with a real model id.
+    const LITELLM_CUSTOM_MODEL_SENTINEL = '__custom__';
+
+    // litellmDefaultModelFieldHtml renders the Governor→LiteLLM "Default
+    // Model" control. When discovery has returned models for the litellm
+    // backend it renders a <select> of the discovered ids (verbatim,
+    // prefixes intact) with the current value preselected, plus a
+    // "Custom…" escape hatch that reveals a free-text input. When
+    // discovery is empty/unconfigured it falls back to a plain text input
+    // so the field is never a dead end.
+    function litellmDefaultModelFieldHtml(current) {
+      const models = modelsForBackend('litellm');
+      const cur = current || '';
+      if (!models.length) {
+        return `<input type="text" value="${esc(cur)}" placeholder="e.g. gpt-4o" onchange="markDirty('litellm','defaultModel',this.value)">`;
+      }
+      const inList = cur && models.some(m => m.value === cur);
+      const options = models.map(m =>
+        `<option value="${esc(m.value)}"${m.value === cur ? ' selected' : ''}>${esc(m.value)}</option>`).join('');
+      // Current value is set but not among discovered ids → preselect a
+      // "(custom)" option carrying it so the selection is never lost.
+      const customOptLabel = inList ? 'Custom…' : `${esc(cur)} (custom)`;
+      const customSelected = cur && !inList;
+      const emptyOpt = cur ? '' : '<option value="" selected disabled>Select a discovered model…</option>';
+      return `
+        <select onchange="onLitellmDefaultModelSelect(this)">
+          ${emptyOpt}${options}
+          <option value="${LITELLM_CUSTOM_MODEL_SENTINEL}"${customSelected ? ' selected' : ''}>${customOptLabel}</option>
+        </select>
+        <input type="text" value="${customSelected ? esc(cur) : ''}" placeholder="e.g. Azure/gpt-4o" style="margin-top:6px;display:${customSelected ? 'block' : 'none'}" data-litellm-custom-model onchange="markDirty('litellm','defaultModel',this.value)">`;
+    }
+
+    // onLitellmDefaultModelSelect handles the discovered-model <select>:
+    // picking a real id records it; picking "Custom…" reveals the free-text
+    // input and defers the value to its onchange.
+    function onLitellmDefaultModelSelect(sel) {
+      const custom = sel.parentElement.querySelector('[data-litellm-custom-model]');
+      if (sel.value === LITELLM_CUSTOM_MODEL_SENTINEL) {
+        if (custom) { custom.style.display = 'block'; custom.focus(); }
+        return;
+      }
+      if (custom) custom.style.display = 'none';
+      markDirty('litellm', 'defaultModel', sel.value);
+    }
+
+    // refreshLitellmDefaultModelField re-renders the Default Model control
+    // in place after a fresh discovery lands (tab open / key save), so a
+    // just-added key's models appear without a full reload. Preserves any
+    // unsaved dirty value the user has already typed/picked.
+    function refreshLitellmDefaultModelField() {
+      const host = document.getElementById('litellm-default-model-field');
+      if (!host) return;
+      const dirtyVal = (_configState.dirty.litellm || {}).defaultModel;
+      const saved = (_configState.data.litellm || {}).defaultModel;
+      const current = dirtyVal !== undefined ? dirtyVal : (saved || '');
+      host.innerHTML = litellmDefaultModelFieldHtml(current);
+    }
+
     function renderGovLiteLLM(litellm) {
       // The server never returns the key VALUE — only hasKey, a masked
       // tail hint ("••••WMg"), and the store it resolved from. The API
@@ -11246,8 +11315,8 @@ function burnAreaChart() {
           <div style="font-size:0.72rem;margin-top:4px;color:${litellm.hasKey ? 'var(--green)' : 'var(--red)'}">${keyLine}</div>
         </div>
         <div class="config-field">
-          <label>Default Model <span class="config-info">i<span class="config-tooltip">Model used when an agent on the litellm backend has no model selected. Use Test Connection to list available models.</span></span></label>
-          <input type="text" value="${esc(litellm.defaultModel || '')}" placeholder="e.g. gpt-4o" onchange="markDirty('litellm','defaultModel',this.value)">
+          <label>Default Model <span class="config-info">i<span class="config-tooltip">Model used when an agent on the litellm backend has no model selected. Populated from the models discovered on the configured endpoint — choose "Custom…" to type an id the gateway does not list yet.</span></span></label>
+          <div id="litellm-default-model-field">${litellmDefaultModelFieldHtml(litellm.defaultModel || '')}</div>
         </div>
         <details style="margin:4px 0 8px">
           <summary style="cursor:pointer;font-size:0.75rem;color:var(--muted)">Advanced — self-hosted key sources &amp; proxy options</summary>
@@ -13160,6 +13229,10 @@ function burnAreaChart() {
                 const r = showLiteLLMTestResult(data.probe);
                 showToast(r.msg, r.ok ? 'success' : 'error');
               }
+              // A saved key can unlock (or change) the entitlement-filtered
+              // model set — force a fresh discovery and re-render the
+              // Default Model dropdown so the new models appear immediately.
+              fetchInferenceModels('litellm', true).then(refreshLitellmDefaultModelField).catch(() => {});
             }
           }
         } catch (err) {
