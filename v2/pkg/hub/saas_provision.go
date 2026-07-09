@@ -1074,9 +1074,19 @@ spec:
       - name: init-permissions
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
-        command: ["sh", "-c", "chown -R {{.InitContainerUID}}:{{.InitContainerGID}} /data 2>/dev/null; echo permissions-set"]
-        securityContext:
-          runAsUser: 0
+        # Best-effort ownership normalization. /data is already 1001:1000 on
+        # these hives, so this recursive chown is belt-and-suspenders and must
+        # never be fatal: on OpenShift the restricted SCC rejects runAsUser:0
+        # and assigns an arbitrary non-root UID, so the chown runs as a
+        # non-owner and fails on any file it doesn't own (e.g. a stale
+        # root-owned /data/*.tmp). Suppress errors AND force exit 0 so a
+        # non-ownable file can't crash-loop init and wedge the rolling update
+        # (maxUnavailable=0/maxSurge=1 means a never-Ready surge pod hangs the
+        # rollout indefinitely). We deliberately do NOT request runAsUser:0:
+        # it is invalid under the restricted SCC and pointless here since the
+        # files that matter are already correctly owned — letting the SCC
+        # assign the UID makes the chown a no-op success.
+        command: ["sh", "-c", "chown -R {{.InitContainerUID}}:{{.InitContainerGID}} /data 2>/dev/null || true; echo permissions-set"]
         volumeMounts:
         - name: data
           mountPath: /data
