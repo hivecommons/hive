@@ -1944,6 +1944,29 @@
       border-color: var(--amber);
       text-decoration: underline;
     }
+    /* Enlarged dropdown caret on the ACMM badges. The badge label sits at a
+       small font-size; a slightly larger caret makes the "this opens a
+       picker" affordance read clearly without inflating the label text. */
+    .acmm-caret { font-size: 1.15em; line-height: 1; vertical-align: -1px; }
+
+    /* ══ One-shot attention shimmy ══
+       A gentle single-run wiggle applied on page load to draw the eye to an
+       interactive affordance (the ACMM badge, the topbar ? button). The class
+       is added shortly after load and removed on animationend, so it plays
+       exactly once per page load. Honors prefers-reduced-motion. */
+    @keyframes attn-shimmy {
+      0%   { transform: translateX(0)    rotate(0deg); }
+      15%  { transform: translateX(-2px) rotate(-1.5deg); }
+      30%  { transform: translateX(2px)  rotate(1.5deg); }
+      45%  { transform: translateX(-2px) rotate(-1deg); }
+      60%  { transform: translateX(2px)  rotate(1deg); }
+      75%  { transform: translateX(-1px) rotate(-0.5deg); }
+      100% { transform: translateX(0)    rotate(0deg); }
+    }
+    .attn-shimmy { animation: attn-shimmy 0.7s ease-in-out 1; transform-origin: center; }
+    @media (prefers-reduced-motion: reduce) {
+      .attn-shimmy { animation: none; }
+    }
 
     /* ══ Welcome / Getting Started dialog ══
        Panel, overlay, and footer buttons come from the Phase-2 modal and
@@ -10980,11 +11003,14 @@ function burnAreaChart() {
 
     function updateACMMBadge(level, packAgents) {
       // Trailing ▾ signals the badge is a dropdown-style control, not a label.
-      const text = 'ACMM ' + acmmLevelLabel(level) + ' ▾';
+      // The caret is wrapped in .acmm-caret so it renders slightly larger than
+      // the small badge label, strengthening the "opens a picker" affordance.
+      const label = 'ACMM ' + acmmLevelLabel(level) + ' ';
+      const html = escapeHtml(label) + '<span class="acmm-caret">▾</span>';
       const badge = document.getElementById('acmm-badge');
-      if (badge) badge.textContent = text;
+      if (badge) badge.innerHTML = html;
       const sbBadge = document.getElementById('acmm-sidebar-badge');
-      if (sbBadge) sbBadge.textContent = text;
+      if (sbBadge) sbBadge.innerHTML = html;
       applyACMMVisibility(level, packAgents);
     }
 
@@ -14384,6 +14410,38 @@ function burnAreaChart() {
     checkGHAuth();
     setInterval(checkGHAuth, GH_AUTH_CHECK_INTERVAL_MS);
     initWelcomeDialog();
+
+    // ── One-shot attention shimmy ──────────────────────────────────────
+    // Draw the eye, once per page load, to two interactive affordances users
+    // often miss: the ACMM level badge and the topbar ? (Getting Started
+    // reopen) button. Fires after the page has settled, staggered so the two
+    // wiggles read as one intentional gesture rather than a glitch. The class
+    // is removed on animationend so it can re-trigger on the next page load.
+    // Skipped entirely under prefers-reduced-motion.
+    const SHIMMY_INITIAL_DELAY_MS = 1500; // let first paint + layout settle
+    const SHIMMY_STAGGER_MS = 250;        // gap between badge and ? button
+    function _prefersReducedMotionShimmy() {
+      return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    }
+    function _shimmyOnce(el) {
+      if (!el) return;
+      el.classList.add('attn-shimmy');
+      el.addEventListener('animationend', function handler() {
+        el.classList.remove('attn-shimmy');
+        el.removeEventListener('animationend', handler);
+      });
+    }
+    function triggerAttentionShimmy() {
+      if (_prefersReducedMotionShimmy()) return;
+      setTimeout(function () {
+        _shimmyOnce(document.getElementById('acmm-badge'));
+        setTimeout(function () {
+          _shimmyOnce(document.getElementById('welcome-topbar-btn'));
+        }, SHIMMY_STAGGER_MS);
+      }, SHIMMY_INITIAL_DELAY_MS);
+    }
+    triggerAttentionShimmy();
+
     checkClaudeAuth();
     var CLAUDE_AUTH_CHECK_INTERVAL_MS = 60000;
     setInterval(checkClaudeAuth, CLAUDE_AUTH_CHECK_INTERVAL_MS);
