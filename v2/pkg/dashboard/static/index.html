@@ -4531,13 +4531,64 @@
         const labelSuffix = data.fallback ? ' (common alias, unverified)' : '';
         const models = (data.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
         INFERENCE_MODELS[backend] = models;
-        _inferenceModelCache[backend] = { models, ts: now };
+        _inferenceModelCache[backend] = { models, ts: now, fallback: !!data.fallback };
+        // A real (non-fallback) discovery may have changed the entitlement-
+        // filtered model set — reconcile agents/defaults whose selected model
+        // is no longer available. No-op when the list is a static fallback or
+        // when every current selection is still present (idempotent).
+        reconcileModelsAfterDiscovery(backend, models, !!data.fallback);
         return models;
       } catch (e) {
         return INFERENCE_MODELS[backend] || [];
       }
     }
     INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b));
+
+    // reconcileModelsAfterDiscovery auto-heals selections that a key swap
+    // (or endpoint change) stripped out: when a REAL discovery (not the
+    // static fallback) returns a non-empty model set, any agent on this
+    // backend whose selected model is no longer in the set is switched to
+    // the first available model, via the same switchModel() path the
+    // dropdown uses (so it persists + relaunches, not a cosmetic change).
+    // Strictly: keep the current model when it is still present — no
+    // re-select, no toast, no relaunch. Idempotent: repeated refreshes with
+    // a compatible list never mutate a valid selection.
+    function reconcileModelsAfterDiscovery(backend, models, fallback) {
+      // Guard: only act on a genuinely successful discovery. Never switch
+      // based on unverified static aliases or an empty list.
+      if (fallback || !models || !models.length) return;
+      const available = models.map(m => m.value);
+      const first = available[0];
+      const isAvailable = (m) => available.some(v => _modelIdMatches(v, m));
+
+      // 1) Agents whose effective method is this backend.
+      (window._lastAgents || []).forEach(a => {
+        if (a.cli !== backend) return;
+        if (!a.model) return;                 // no explicit model — nothing to heal
+        if (isAvailable(a.model)) return;     // still valid — leave untouched (idempotent)
+        const label = a.displayName || a.name;
+        showToast(`${label}: model ${a.model.split('/').pop()} unavailable on ${backend} — switched to ${first.split('/').pop()}`, 'info');
+        switchModel(a.name, first);           // persists + relaunches via /api/model
+      });
+
+      // 2) LiteLLM Default Model — only when the config dialog holds governor
+      // data (that is where the saved default is available to the UI). If the
+      // saved default is gone from the new set, persist the first available.
+      if (backend === 'litellm' && _configState.type === 'governor') {
+        const saved = (_configState.data.litellm || {}).defaultModel;
+        if (saved && !isAvailable(saved)) {
+          _configState.data.litellm.defaultModel = first;
+          fetch('/api/config/governor/litellm', {
+            method: 'PUT',
+            headers: _inceptionAuthHeaders(),
+            body: JSON.stringify({ defaultModel: first })
+          }).then(() => {
+            showToast(`Default LiteLLM model ${saved.split('/').pop()} unavailable on new key — set to ${first.split('/').pop()}`, 'info');
+            refreshLitellmDefaultModelField();
+          }).catch(() => {});
+        }
+      }
+    }
 
     const _lastKnownModels = {};
     const _dismissedModelBanners = new Set();
