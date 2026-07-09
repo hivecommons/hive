@@ -1932,6 +1932,16 @@
     .row-card { cursor: pointer; padding: 8px; margin-bottom: 4px; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 6px; transition: border-color .15s; }
     .error-note { color: var(--red); font-size: 0.82rem; }
     .repo-chip-btn { padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line-strong); background: var(--bg); cursor: pointer; font-size: 0.72rem; color: var(--text); }
+    /* ACMM level badges — interactive controls that open the level selector,
+       not status labels. Ghost-button affordance: amber outline at rest,
+       brighter tint + solid border + underline on hover. Amber remaps per
+       theme, so this reads correctly in both light and dark modes. */
+    #acmm-badge, #acmm-sidebar-badge { transition: background 0.15s, border-color 0.15s; }
+    #acmm-badge:hover, #acmm-sidebar-badge:hover {
+      background: color-mix(in srgb, var(--amber) 26%, transparent);
+      border-color: var(--amber);
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
@@ -2077,7 +2087,7 @@
 <div id="acmm-overlay" class="config-overlay hidden">
   <div class="config-modal" style="max-width:800px;max-height:85vh">
     <div class="config-header">
-      <h2 class="config-title">ACMM Maturity Level</h2>
+      <h2 class="config-title">ACMM Maturity Level <span id="acmm-dialog-current" style="font-size:0.72em;font-weight:400;color:var(--muted)"></span></h2>
       <button class="config-close" onclick="closeACMMDialog()">&times;</button>
     </div>
     <div class="config-body" style="padding:16px 24px;overflow-y:auto;max-height:calc(85vh - 120px)">
@@ -2104,7 +2114,7 @@
       </div>
     </div>
     <div style="padding:4px 16px 8px;text-align:center">
-      <span id="acmm-sidebar-badge" title="ACMM Maturity Level — click to change" style="cursor:pointer;display:inline-block;padding:3px 12px;border-radius:999px;font-size:0.7rem;font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber);letter-spacing:0.5px" onclick="openACMMDialog()"></span>
+      <span id="acmm-sidebar-badge" title="Click to change maturity level" style="cursor:pointer;display:inline-block;padding:3px 12px;border-radius:999px;font-size:0.7rem;font-weight:700;background:color-mix(in srgb, var(--amber) 14%, transparent);border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);color:var(--amber);letter-spacing:0.5px" onclick="openACMMDialog()"></span>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Control</div>
@@ -2202,7 +2212,7 @@
   <h1><span class="bee">🐝</span> KubeStellar Hive Dashboard&nbsp;<span id="project-name">for KubeStellar/Console</span> <span class="timestamp" id="ts"></span>
     <span class="git-version" id="git-version"></span>
     <span class="git-version" id="hive-id-badge" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:2px 8px;border-radius:4px" onclick="openConfigDialog('governor')"></span>
-    <span class="git-version" id="acmm-badge" title="ACMM Maturity Level — click to change" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:2px 8px;border-radius:999px;background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" onclick="openACMMDialog()"></span>
+    <span class="git-version" id="acmm-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:2px 8px;border-radius:999px;background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" onclick="openACMMDialog()"></span>
     <button class="layout-toggle" id="layout-toggle" onclick="toggleLayout()" title="Switch between Light mode (sidebar + detail panel) and Dark mode (dark theme grid). Your preference is saved in the browser.">☾ Switch to Dark Mode</button>
     <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
   </h1>
@@ -10522,6 +10532,14 @@ function burnAreaChart() {
       document.getElementById('acmm-overlay').classList.remove('hidden');
       document.getElementById('acmm-apply-error').style.display = 'none';
 
+      // Restate the current level in the title so users arriving from any
+      // entry point (badge, config dialog, eval section) see where they are.
+      const currentEl = document.getElementById('acmm-dialog-current');
+      if (currentEl) {
+        const lvl = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
+        currentEl.textContent = '(current: ' + (lvl > 0 ? acmmLevelLabel(lvl) : 'not set') + ')';
+      }
+
       if (!_acmmPacks) {
         try {
           const res = await fetch('/api/packs');
@@ -10685,13 +10703,20 @@ function burnAreaChart() {
       }
     }
 
-    function updateACMMBadge(level, packAgents) {
+    // Short "L3 Measured"-style label for an ACMM pack level. Shared by the
+    // badges, the level dialog subtitle, and the Governor config General tab.
+    function acmmLevelLabel(level) {
       const levelNames = ['', 'L1 Assisted', 'L2 Instructed', 'L3 Measured', 'L4 Adaptive', 'L5 Semi-Automated', 'L6 Autonomous'];
-      const text = levelNames[level] || 'L' + level;
+      return levelNames[level] || 'L' + level;
+    }
+
+    function updateACMMBadge(level, packAgents) {
+      // Trailing ▾ signals the badge is a dropdown-style control, not a label.
+      const text = 'ACMM ' + acmmLevelLabel(level) + ' ▾';
       const badge = document.getElementById('acmm-badge');
-      if (badge) badge.textContent = 'ACMM ' + text;
+      if (badge) badge.textContent = text;
       const sbBadge = document.getElementById('acmm-sidebar-badge');
-      if (sbBadge) sbBadge.textContent = 'ACMM ' + text;
+      if (sbBadge) sbBadge.textContent = text;
       applyACMMVisibility(level, packAgents);
     }
 
