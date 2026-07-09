@@ -13850,13 +13850,18 @@ function burnAreaChart() {
         title: 'Install the GitHub App',
         auto: (data) => data ? data.githubAppRequired !== true : null,
         body: 'The GitHub App unlocks issues, advisory reports, and PRs on your primary repo — without it the hive can only observe.',
-        autoNote: 'Checks itself once the app is detected on your repository.'
+        autoNote: 'Checks itself once the app is detected on your repository.',
+        actions: [
+          { label: 'Install GitHub App', onclick: 'welcomeInstallGitHubApp()' },
+          { label: 'Re-check', onclick: 'welcomeRecheckGitHubApp(event)' }
+        ]
       },
       {
         id: 'methods',
         title: 'Pick a method for each agent',
         auto: null,
-        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Governor Config → LiteLLM). Mix and match per agent.'
+        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Governor Config → LiteLLM). Mix and match per agent.',
+        actions: [{ label: 'Show me', onclick: 'welcomeShowAgentCard()' }]
       },
       {
         id: 'logins',
@@ -13866,49 +13871,55 @@ function burnAreaChart() {
           return data.agents.every(a => !_welcomeAgentNeedsLogin(a));
         },
         body: 'Credentials are shared <strong>per method, not per agent</strong> — one copilot device-code login covers every copilot agent, and claude uses a paste-the-code flow. Inference methods (vllm / llm-d / litellm) never log in; they use the endpoint + key instead.',
-        autoNote: 'Checks itself once every agent’s method is authenticated.'
+        autoNote: 'Checks itself once every agent’s method is authenticated.',
+        actions: [{ label: 'Show me', onclick: 'welcomeShowLogin()' }]
       },
       {
         id: 'terminal',
         title: 'Watch an agent in its terminal',
         auto: null,
-        body: 'The cyan <strong>▶ terminal</strong> button on each agent card opens the agent’s live tmux session: watch it work in real time, scroll its history, or type <strong>/login</strong> in the CLI when a login needs interaction. Etiquette: it is the agent’s working session — observe, don’t drive, except for logins.'
+        body: 'The cyan <strong>▶ terminal</strong> button on each agent card opens the agent’s live tmux session: watch it work in real time, scroll its history, or type <strong>/login</strong> in the CLI when a login needs interaction. Etiquette: it is the agent’s working session — observe, don’t drive, except for logins.',
+        actions: [{ label: '▶ Open a terminal', onclick: 'welcomeOpenTerminal()' }]
       },
       {
         id: 'models',
         title: 'Choose models',
         auto: null,
-        body: 'The <strong>model dropdown</strong> on each agent card lists models auto-discovered for its method. 📌 pinning a model stops the governor from auto-selecting a different one — it never blocks your own changes.'
+        body: 'The <strong>model dropdown</strong> on each agent card lists models auto-discovered for its method. 📌 pinning a model stops the governor from auto-selecting a different one — it never blocks your own changes.',
+        actions: [{ label: 'Show me', onclick: 'welcomeShowAgentCard()' }]
       },
       {
         id: 'repos',
         title: 'Add repos &amp; mark the primary',
         auto: () => window._primaryRepo ? true : false,
         body: 'Governor Config → <strong>Repos</strong>: add every repository the agents should watch, and set the <strong>primary</strong> repo — it hosts the advisory issue and default markings.',
-        autoNote: 'Checks itself once a primary repo is set.'
+        autoNote: 'Checks itself once a primary repo is set.',
+        actions: [{ label: 'Show me', onclick: "welcomeShowConfigTab('Repos')" }]
       },
       {
         id: 'cadences',
         title: 'Tune cadences',
         auto: null,
-        body: 'Governor Config → <strong>Agents</strong>: per-mode kick intervals (idle / quiet / busy / surge), on-demand vs scheduled agents, and pausing. The intensity bar on the Governor panel shows the current mode.'
+        body: 'Governor Config → <strong>Agents</strong>: per-mode kick intervals (idle / quiet / busy / surge), on-demand vs scheduled agents, and pausing. The intensity bar on the Governor panel shows the current mode.',
+        actions: [{ label: 'Show me', onclick: "welcomeShowConfigTab('Agents')" }]
       },
       {
         id: 'acmm',
         title: 'Set your ACMM level',
         auto: null,
-        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>: L1 (advisory-only) → L6 (fully autonomous), each level additive. A default is preset — confirm it matches how much autonomy you want.'
+        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>: L1 (advisory-only) → L6 (fully autonomous), each level additive. A default is preset — confirm it matches how much autonomy you want.',
+        actions: [{ label: 'Show me', onclick: 'welcomeShowACMM()' }]
       }
     ];
 
     // Collapsed "More to explore" one-liners under the core steps.
     const WELCOME_MORE_ITEMS = [
-      { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Governor Config → Budget).' },
-      { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Governor Config → Notifications).' },
-      { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.' },
-      { id: 'contributors', label: 'Contributor Relay', desc: 'let outside contributors drive agents, with a leaderboard.' },
-      { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).' },
-      { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.' }
+      { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Governor Config → Budget).', onclick: "welcomeShowConfigTab('Budget')" },
+      { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Governor Config → Notifications).', onclick: "welcomeShowConfigTab('Notifications')" },
+      { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', onclick: "welcomeShowSection('knowledge-section')" },
+      { id: 'contributors', label: 'Contributor Relay', desc: 'let outside contributors drive agents, with a leaderboard.', onclick: "welcomeShowSection('contributors-section')" },
+      { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).', onclick: "welcomeShowConfigTab('Hub')" },
+      { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', onclick: 'toggleLayout()' }
     ];
 
     /** Done-state for one step: auto steps compute from the payload, manual
@@ -13948,11 +13959,12 @@ function burnAreaChart() {
           + `</div>`
           + `<div class="welcome-step-body">${step.body}`
           + (step.autoNote ? `<span class="welcome-auto-note">${step.autoNote}</span>` : '')
+          + (step.actions ? `<div class="welcome-step-actions">` + step.actions.map(a => `<button class="btn" onclick="${a.onclick}">${a.label}</button>`).join('') + `</div>` : '')
           + `</div></div>`;
       }
       html += '<div class="welcome-more-title">More to explore</div>';
       for (const item of WELCOME_MORE_ITEMS) {
-        html += `<div class="welcome-more-item"><span class="welcome-more-link" id="welcome-more-${item.id}">${item.label}</span> — ${item.desc}</div>`;
+        html += `<div class="welcome-more-item"><span class="welcome-more-link" id="welcome-more-${item.id}" onclick="${item.onclick}">${item.label}</span> — ${item.desc}</div>`;
       }
       body.innerHTML = html;
       updateWelcomeProgress();
@@ -13993,6 +14005,72 @@ function burnAreaChart() {
       const data = window._lastStatus || null;
       const done = WELCOME_STEPS.filter(s => welcomeStepDone(s, data)).length;
       el.textContent = done + ' of ' + WELCOME_STEPS.length + ' done';
+    }
+
+    // ── Welcome deep links ("Show me" wiring) ─────────────────────────
+    // Every action reuses an existing entry point: openConfigDialog(tab),
+    // openACMMDialog(), ocSelectAgent() agent focus, terminalUrl(), and the
+    // GitHub App banner's install URL + recheckGitHubApp().
+
+    /** First agent matching pred (else first agent) from the last payload. */
+    function _welcomeFirstAgentName(pred) {
+      const agents = (window._lastStatus && window._lastStatus.agents) || [];
+      const match = pred ? agents.find(pred) : null;
+      return (match || agents[0] || {}).name || null;
+    }
+    /** Focus the first agent card (method/model dropdowns live there). */
+    function welcomeShowAgentCard() {
+      closeWelcomeDialog();
+      const name = _welcomeFirstAgentName();
+      if (name) ocSelectAgent(name);
+    }
+    /** Focus the first agent whose method still needs a login. */
+    function welcomeShowLogin() {
+      closeWelcomeDialog();
+      const name = _welcomeFirstAgentName(_welcomeAgentNeedsLogin);
+      if (name) ocSelectAgent(name);
+    }
+    /** Open the first agent's live tmux session in a new tab. */
+    function welcomeOpenTerminal() {
+      const name = _welcomeFirstAgentName();
+      if (!name) { showToast('No agents yet — terminals open from each agent card', 'info'); return; }
+      window.open(terminalUrl(name), '_blank', 'noopener');
+    }
+    /** Open the GitHub App install page (same URL the banner links to). */
+    function welcomeInstallGitHubApp() {
+      const url = (window._lastStatus && window._lastStatus.githubAppInstallURL) || '';
+      if (url) { window.open(url, '_blank', 'noopener'); return; }
+      const installed = !!(window._lastStatus) && window._lastStatus.githubAppRequired !== true;
+      showToast(installed ? 'GitHub App already installed ✓' : 'Install URL not available yet — waiting for the next status refresh', 'info');
+    }
+    /** Re-check installation via the banner action, then flip the
+        auto-check immediately instead of waiting for the next SSE tick. */
+    async function welcomeRecheckGitHubApp(ev) {
+      const btn = ev ? ev.target : null;
+      if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+      await recheckGitHubApp();
+      // recheckGitHubApp() hides the banner when the app is detected —
+      // mirror that outcome onto the cached payload.
+      const banner = document.getElementById('gh-app-install-banner');
+      const installed = !!(banner && banner.hasAttribute('hidden'));
+      if (installed && window._lastStatus) window._lastStatus.githubAppRequired = false;
+      if (btn) { btn.disabled = false; btn.textContent = installed ? 'Installed ✓' : 'Re-check'; }
+      refreshWelcomeAutoChecks(window._lastStatus || null);
+    }
+    /** Jump to a Governor Config tab (Repos, Agents, Budget, …). */
+    function welcomeShowConfigTab(tab) {
+      closeWelcomeDialog();
+      openConfigDialog('governor', null, tab);
+    }
+    /** Open the ACMM maturity-level dialog. */
+    function welcomeShowACMM() {
+      closeWelcomeDialog();
+      openACMMDialog();
+    }
+    /** Navigate to a dashboard section (knowledge, contributors, …). */
+    function welcomeShowSection(section) {
+      closeWelcomeDialog();
+      ocNavigate(section);
     }
 
     /** Called from render() on every status refresh so auto-checks flip
