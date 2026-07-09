@@ -4298,15 +4298,20 @@ const dashboardHTML = `<!DOCTYPE html>
           /* Branch switch in flight: the hive still reports the OLD branch
              (often current on it) until the new pod heartbeats — without
              this, isCurrent suppresses every progress indicator. */
-          /* Only a "<branch>-latest" target is a branch switch; plain-SHA
-             targets are same-branch upgrades and must say "Upgrading". */
-          var isBranchTarget = /-latest$/.test(h.upgradeTarget || '');
-          var targetBranch = isBranchTarget ? h.upgradeTarget.replace(/-latest$/, '') : '';
-          var isSwitching = !!(h.upgrading && isBranchTarget && targetBranch !== branchName);
-          if (_upgradingHives[h.id] === 'switching' && (isSwitching || h.upgrading)) delete _upgradingHives[h.id];
-          var isUpgrading = isSwitching || _upgradingHives[h.id] === 'switching' ||
-            (_upgradingHives[h.id] && sha === _upgradingHives[h.id]) || (h.upgrading && !isCurrent && !latestUnknown);
-          if (_upgradingHives[h.id] && _upgradingHives[h.id] !== 'switching' && sha !== _upgradingHives[h.id]) delete _upgradingHives[h.id];
+          /* Switch-vs-upgrade is decided in ONE place (hiveUpgradeState) so the
+             spinner, label and title always agree. Only a target on a DIFFERENT
+             branch is a switch; a plain-SHA (auto-upgrade) target always reads
+             "Upgrading", even if a stale switch sentinel lingers. */
+          var upgradeState = hiveUpgradeState(h, branchName);
+          var isSwitching = upgradeState.isSwitching;
+          var targetBranch = upgradeState.targetBranch;
+          /* Drop a stale switch sentinel (resolved to a same-branch SHA) so it
+             stops forcing the upgrading state on later auto-upgrades. */
+          if (upgradeState.switchSentinelStale) delete _upgradingHives[h.id];
+          var sentinel = _upgradingHives[h.id];
+          var isUpgrading = isSwitching ||
+            (sentinel && sha === sentinel) || (h.upgrading && !isCurrent && !latestUnknown);
+          if (sentinel && sha !== sentinel && !isSwitching) delete _upgradingHives[h.id];
           if (isCurrent && h.upgrading && !isSwitching) { h.upgrading = false; }
           var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
           var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the previous image)' : '';
@@ -4436,6 +4441,46 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _upgradingHives = {};
+
+    /* Prefix marking a client-side branch-switch sentinel in _upgradingHives.
+       The intended target branch follows the prefix (e.g. "switch:v3") so the
+       label can tell a genuine branch switch apart from a same-branch upgrade
+       purely from state — a bare sentinel could not. */
+    var SWITCH_SENTINEL_PREFIX = 'switch:';
+    /* Suffix the hub appends to a branch-switch upgrade target. */
+    var BRANCH_TARGET_SUFFIX = '-latest';
+
+    /* Single source of truth for switch-vs-upgrade, consumed by the spinner,
+       the label and the title so they can never disagree. Resolves the target
+       branch from the server's "<branch>-latest" upgradeTarget or, before the
+       server reflects it, from the optimistic client sentinel ("switch:<branch>").
+       A genuine branch switch means a target branch that is present AND differs
+       from the branch the hive currently reports. A plain-SHA target — an
+       auto-upgrade — yields no target branch and is therefore an upgrade, never
+       a switch, regardless of any sticky sentinel. */
+    function hiveUpgradeState(h, branchName) {
+      var sentinel = _upgradingHives[h.id];
+      var hasSwitchSentinel = typeof sentinel === 'string'
+        && sentinel.indexOf(SWITCH_SENTINEL_PREFIX) === 0;
+      var upgradeTarget = h.upgradeTarget || '';
+      var isBranchTarget = upgradeTarget.length > BRANCH_TARGET_SUFFIX.length
+        && upgradeTarget.slice(-BRANCH_TARGET_SUFFIX.length) === BRANCH_TARGET_SUFFIX;
+      var targetBranch = '';
+      if (isBranchTarget) {
+        targetBranch = upgradeTarget.slice(0, -BRANCH_TARGET_SUFFIX.length);
+      } else if (hasSwitchSentinel) {
+        targetBranch = sentinel.slice(SWITCH_SENTINEL_PREFIX.length);
+      }
+      /* A same-branch target is not a switch — drop it so nothing downstream
+         mistakes an auto-upgrade for one. */
+      var isSwitching = !!(targetBranch && targetBranch !== branchName);
+      if (!isSwitching) targetBranch = '';
+      /* A switch sentinel that no longer resolves to a switch (target became a
+         same-branch SHA / auto-upgrade) is stale and must not force upgrading. */
+      var switchSentinelStale = hasSwitchSentinel && !isSwitching;
+      return { isSwitching: isSwitching, targetBranch: targetBranch, switchSentinelStale: switchSentinelStale };
+    }
+
     async function upgradeHive(id, currentSHA, branch) {
       var fromSHA = currentSHA ? currentSHA.substring(0, 7) : '?';
       var branchLatest = (branch && _latestSHAs[branch]) || _latestSHA;
@@ -4541,7 +4586,7 @@ const dashboardHTML = `<!DOCTYPE html>
         });
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Branch switch failed', 'error'); loadHives(); return; }
-        _upgradingHives[hiveId] = 'switching';
+        _upgradingHives[hiveId] = SWITCH_SENTINEL_PREFIX + newBranch;
         hiveToast('Switched ' + hiveId + ' to ' + newBranch + ' — waiting for rollout', 'success');
         loadHives();
         setTimeout(loadHives, 10000);
