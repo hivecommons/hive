@@ -8286,6 +8286,7 @@ function burnAreaChart() {
       }
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
+      refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
       renderSystemAlerts(data.systemAlerts || []);
       if (!_dropdownOpen && !_configModalOpen) {
@@ -13804,6 +13805,16 @@ function burnAreaChart() {
     }
 
     function openWelcomeDialog() {
+      // Refresh the primary-repo signal: window._primaryRepo is set by the
+      // /api/config fetch at boot, so a repo saved through the config dialog
+      // would otherwise stay stale until a full page reload.
+      fetch('/api/config').then(r => r.json()).then(cfg => {
+        const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
+          ? cfg.org + '/' + cfg.primaryRepo
+          : (cfg.primaryRepo || '');
+        if (repoDisplay) window._primaryRepo = repoDisplay;
+        refreshWelcomeAutoChecks(window._lastStatus || null);
+      }).catch(() => {});
       renderWelcomeDialog();
       document.getElementById('welcome-overlay').classList.remove('hidden');
     }
@@ -13816,10 +13827,184 @@ function burnAreaChart() {
       closeWelcomeDialog();
     }
 
+    /** Same needs-login formula as the agent-card Auth badge. */
+    function _welcomeAgentNeedsLogin(a) {
+      return a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
+    }
+
+    // Checklist steps. `auto(data)` derives done-state live from the latest
+    // status payload (re-evaluated on every render pass, so checks flip as
+    // the hive changes); steps without `auto` are manual click-to-check
+    // boxes persisted in hive-welcome-state-v1. Content is static markup —
+    // the dialog renders once on open, never in the hot render path.
+    const WELCOME_STEPS = [
+      {
+        id: 'welcome',
+        title: 'Welcome to your hive',
+        // Reading this step is step one — opening the dialog completes it.
+        auto: () => true,
+        body: 'Your hive is a fleet of AI <strong>agents</strong> that work your repositories — triaging issues, writing fixes, opening PRs. The <strong>governor</strong> paces them automatically as the workload changes (idle → quiet → busy → surge). This checklist covers the one-time choices that make the hive productive, and it updates itself as you complete them.'
+      },
+      {
+        id: 'github-app',
+        title: 'Install the GitHub App',
+        auto: (data) => data ? data.githubAppRequired !== true : null,
+        body: 'The GitHub App unlocks issues, advisory reports, and PRs on your primary repo — without it the hive can only observe.',
+        autoNote: 'Checks itself once the app is detected on your repository.'
+      },
+      {
+        id: 'methods',
+        title: 'Pick a method for each agent',
+        auto: null,
+        body: 'Each agent card has a <strong>method dropdown</strong>: <strong>claude / copilot / gemini</strong> run on subscription CLIs, while <strong>vllm / llm-d / litellm</strong> use a self-hosted inference endpoint (litellm takes an endpoint + API key under Governor Config → LiteLLM). Mix and match per agent.'
+      },
+      {
+        id: 'logins',
+        title: 'Log in once per method',
+        auto: (data) => {
+          if (!data || !Array.isArray(data.agents) || data.agents.length === 0) return null;
+          return data.agents.every(a => !_welcomeAgentNeedsLogin(a));
+        },
+        body: 'Credentials are shared <strong>per method, not per agent</strong> — one copilot device-code login covers every copilot agent, and claude uses a paste-the-code flow. Inference methods (vllm / llm-d / litellm) never log in; they use the endpoint + key instead.',
+        autoNote: 'Checks itself once every agent’s method is authenticated.'
+      },
+      {
+        id: 'terminal',
+        title: 'Watch an agent in its terminal',
+        auto: null,
+        body: 'The cyan <strong>▶ terminal</strong> button on each agent card opens the agent’s live tmux session: watch it work in real time, scroll its history, or type <strong>/login</strong> in the CLI when a login needs interaction. Etiquette: it is the agent’s working session — observe, don’t drive, except for logins.'
+      },
+      {
+        id: 'models',
+        title: 'Choose models',
+        auto: null,
+        body: 'The <strong>model dropdown</strong> on each agent card lists models auto-discovered for its method. 📌 pinning a model stops the governor from auto-selecting a different one — it never blocks your own changes.'
+      },
+      {
+        id: 'repos',
+        title: 'Add repos &amp; mark the primary',
+        auto: () => window._primaryRepo ? true : false,
+        body: 'Governor Config → <strong>Repos</strong>: add every repository the agents should watch, and set the <strong>primary</strong> repo — it hosts the advisory issue and default markings.',
+        autoNote: 'Checks itself once a primary repo is set.'
+      },
+      {
+        id: 'cadences',
+        title: 'Tune cadences',
+        auto: null,
+        body: 'Governor Config → <strong>Agents</strong>: per-mode kick intervals (idle / quiet / busy / surge), on-demand vs scheduled agents, and pausing. The intensity bar on the Governor panel shows the current mode.'
+      },
+      {
+        id: 'acmm',
+        title: 'Set your ACMM level',
+        auto: null,
+        body: 'The amber badge in the sidebar opens the <strong>maturity-level dialog</strong>: L1 (advisory-only) → L6 (fully autonomous), each level additive. A default is preset — confirm it matches how much autonomy you want.'
+      }
+    ];
+
+    // Collapsed "More to explore" one-liners under the core steps.
+    const WELCOME_MORE_ITEMS = [
+      { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Governor Config → Budget).' },
+      { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Governor Config → Notifications).' },
+      { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.' },
+      { id: 'contributors', label: 'Contributor Relay', desc: 'let outside contributors drive agents, with a leaderboard.' },
+      { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).' },
+      { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.' }
+    ];
+
+    /** Done-state for one step: auto steps compute from the payload, manual
+        steps read the persisted checkbox. */
+    function welcomeStepDone(step, data) {
+      if (step.auto) return step.auto(data) === true;
+      return _welcomeState.checks[step.id] === true;
+    }
+
+    // Steps the user expanded this session (first undone step opens by default).
+    const _welcomeOpenSteps = new Set();
+
     function renderWelcomeDialog() {
       const body = document.getElementById('welcome-body');
       if (!body) return;
-      body.innerHTML = '<p class="welcome-intro">Your hive is a fleet of AI agents that work your repositories — triaging issues, writing fixes, and opening PRs — while the governor paces them to match the workload. A few one-time choices below make it productive.</p>';
+      const data = window._lastStatus || null;
+      if (_welcomeOpenSteps.size === 0) {
+        const firstUndone = WELCOME_STEPS.find(s => !welcomeStepDone(s, data));
+        _welcomeOpenSteps.add(firstUndone ? firstUndone.id : WELCOME_STEPS[0].id);
+      }
+      let html = '';
+      let n = 0;
+      for (const step of WELCOME_STEPS) {
+        n++;
+        const done = welcomeStepDone(step, data);
+        const open = _welcomeOpenSteps.has(step.id);
+        const checkCls = step.auto ? 'welcome-check' : 'welcome-check manual';
+        const checkTitle = step.auto
+          ? 'Checked automatically from the hive’s live status'
+          : 'Click to mark this step done (saved in this browser)';
+        const checkAttrs = step.auto ? '' : ` onclick="toggleWelcomeCheck(event,'${step.id}')" role="checkbox" aria-checked="${done}" tabindex="0" onkeydown="if(event.key===' '||event.key==='Enter')toggleWelcomeCheck(event,'${step.id}')"`;
+        html += `<div class="welcome-step${done ? ' done' : ''}${open ? ' open' : ''}" id="welcome-step-${step.id}">`
+          + `<div class="welcome-step-header" onclick="toggleWelcomeStep('${step.id}')">`
+          + `<span class="${checkCls}" title="${checkTitle}"${checkAttrs}>${done ? '✓' : ''}</span>`
+          + `<span class="welcome-step-title">${n}. ${step.title}</span>`
+          + `<span class="welcome-step-chevron">▶</span>`
+          + `</div>`
+          + `<div class="welcome-step-body">${step.body}`
+          + (step.autoNote ? `<span class="welcome-auto-note">${step.autoNote}</span>` : '')
+          + `</div></div>`;
+      }
+      html += '<div class="welcome-more-title">More to explore</div>';
+      for (const item of WELCOME_MORE_ITEMS) {
+        html += `<div class="welcome-more-item"><span class="welcome-more-link" id="welcome-more-${item.id}">${item.label}</span> — ${item.desc}</div>`;
+      }
+      body.innerHTML = html;
+      updateWelcomeProgress();
+    }
+
+    function toggleWelcomeStep(id) {
+      if (_welcomeOpenSteps.has(id)) _welcomeOpenSteps.delete(id); else _welcomeOpenSteps.add(id);
+      const el = document.getElementById('welcome-step-' + id);
+      if (el) el.classList.toggle('open', _welcomeOpenSteps.has(id));
+    }
+
+    function toggleWelcomeCheck(ev, id) {
+      ev.stopPropagation();
+      const step = WELCOME_STEPS.find(s => s.id === id);
+      if (!step || step.auto) return;
+      _welcomeState.checks[id] = _welcomeState.checks[id] !== true;
+      saveWelcomeState();
+      _syncWelcomeStepEl(step, window._lastStatus || null);
+      updateWelcomeProgress();
+    }
+
+    /** Update one rendered step's check/done visuals in place. */
+    function _syncWelcomeStepEl(step, data) {
+      const el = document.getElementById('welcome-step-' + step.id);
+      if (!el) return;
+      const done = welcomeStepDone(step, data);
+      el.classList.toggle('done', done);
+      const check = el.querySelector('.welcome-check');
+      if (check) {
+        check.textContent = done ? '✓' : '';
+        if (!step.auto) check.setAttribute('aria-checked', String(done));
+      }
+    }
+
+    function updateWelcomeProgress() {
+      const el = document.getElementById('welcome-progress');
+      if (!el) return;
+      const data = window._lastStatus || null;
+      const done = WELCOME_STEPS.filter(s => welcomeStepDone(s, data)).length;
+      el.textContent = done + ' of ' + WELCOME_STEPS.length + ' done';
+    }
+
+    /** Called from render() on every status refresh so auto-checks flip
+        live. No-op unless the dialog is actually open. */
+    function refreshWelcomeAutoChecks(data) {
+      if (!_welcomeWriteAccess) return;
+      const overlay = document.getElementById('welcome-overlay');
+      if (!overlay || overlay.classList.contains('hidden')) return;
+      for (const step of WELCOME_STEPS) {
+        if (step.auto) _syncWelcomeStepEl(step, data);
+      }
+      updateWelcomeProgress();
     }
 
     checkGHAuth();
