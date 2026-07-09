@@ -52,6 +52,9 @@ var (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "visual" {
+		os.Exit(runVisualCommand(os.Args[2:]))
+	}
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
 	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" {

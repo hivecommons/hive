@@ -56,6 +56,19 @@ kubectl apply -f deploy/k8s/deployment.yaml
 kubectl apply -f deploy/k8s/service.yaml
 ```
 
+## Visual Hive evidence import
+
+Hive can consume Visual Hive's deterministic evidence without giving the producer direct access to the bead store. The importer validates bundle lifetime, source provenance, ACMM ceiling, safe relative paths, regular-file status, file sizes, SHA-256 digests, secret/path leaks, and the aggregate digest before parsing any work item.
+
+```bash
+hive visual import validate --bundle /artifacts/manifest.json --max-acmm 3
+hive visual import apply --bundle /artifacts/manifest.json --max-acmm 3 --beads-dir /data/beads/quality
+```
+
+`apply` persists the entire batch with one atomic store write and skips existing `external_ref` values, so workflow retries are idempotent. Trusted imports require a successful non-PR GitHub Actions bundle. `--allow-local` exists only for an explicit local/fork proof and must not be used for untrusted artifacts.
+
+Visual Hive remains the deterministic verdict authority. Imported beads may route investigation or repair work, but Hive must rerun the supplied Visual Hive validation before resolving the work.
+
 ## Configuration
 
 All config lives in a single `hive.yaml`. Environment variables are interpolated with `${VAR}` syntax. See `hive.yaml.example` for the full reference.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,19 +80,19 @@ func (ft flexTime) MarshalJSON() ([]byte, error) {
 }
 
 type Bead struct {
-	ID          string            `json:"id"`
-	Title       string            `json:"title"`
-	Type        BeadType          `json:"type"`
-	Status      Status            `json:"status"`
-	Priority    Priority          `json:"priority"`
-	Actor       string            `json:"actor"`
-	ExternalRef string            `json:"external_ref,omitempty"`
+	ID          string                 `json:"id"`
+	Title       string                 `json:"title"`
+	Type        BeadType               `json:"type"`
+	Status      Status                 `json:"status"`
+	Priority    Priority               `json:"priority"`
+	Actor       string                 `json:"actor"`
+	ExternalRef string                 `json:"external_ref,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	Notes       string            `json:"notes,omitempty"`
-	CreatedAt   flexTime          `json:"created_at"`
-	UpdatedAt   flexTime          `json:"updated_at"`
-	ClosedAt    *flexTime         `json:"closed_at,omitempty"`
-	DependsOn   []string          `json:"depends_on,omitempty"`
+	Notes       string                 `json:"notes,omitempty"`
+	CreatedAt   flexTime               `json:"created_at"`
+	UpdatedAt   flexTime               `json:"updated_at"`
+	ClosedAt    *flexTime              `json:"closed_at,omitempty"`
+	DependsOn   []string               `json:"depends_on,omitempty"`
 }
 
 // Meta returns a metadata value as a string, or "" if missing/non-string.
@@ -112,6 +113,27 @@ type Store struct {
 	hiveID string
 	beads  map[string]*Bead
 	mu     sync.RWMutex
+}
+
+// BatchInput is a fully validated work item prepared by an external evidence
+// importer. SourceID is used only to reconnect dependencies within the batch.
+type BatchInput struct {
+	SourceID    string
+	Title       string
+	Type        BeadType
+	Status      Status
+	Priority    Priority
+	Actor       string
+	ExternalRef string
+	Metadata    map[string]interface{}
+	Notes       string
+	DependsOn   []string
+}
+
+// BatchResult describes an idempotent batch import.
+type BatchResult struct {
+	Created int `json:"created"`
+	Skipped int `json:"skipped"`
 }
 
 func NewStore(dir string) (*Store, error) {
@@ -175,6 +197,111 @@ func (s *Store) Create(title string, beadType BeadType, priority Priority, actor
 	s.beads[b.ID] = b
 	s.evictOldClosed()
 	return b, s.persist(b)
+}
+
+// ImportBatch validates and persists all items with one atomic beads.json
+// rename. Existing external references are skipped, making retries idempotent.
+func (s *Store) ImportBatch(items []BatchInput) (BatchResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result := BatchResult{}
+	existingByRef := make(map[string]*Bead, len(s.beads))
+	for _, bead := range s.beads {
+		if bead.ExternalRef != "" {
+			existingByRef[bead.ExternalRef] = bead
+		}
+	}
+	seenRefs := make(map[string]bool, len(items))
+	seenSources := make(map[string]bool, len(items))
+	for _, item := range items {
+		if strings.TrimSpace(item.SourceID) == "" || strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.ExternalRef) == "" {
+			return result, fmt.Errorf("batch item requires source ID, title, and external reference")
+		}
+		if !validBeadTypes[item.Type] {
+			return result, fmt.Errorf("invalid bead type %q", item.Type)
+		}
+		if !validStatus(item.Status) || item.Priority < PriorityCritical || item.Priority > PriorityMinor {
+			return result, fmt.Errorf("invalid status or priority for %q", item.ExternalRef)
+		}
+		if seenRefs[item.ExternalRef] {
+			return result, fmt.Errorf("duplicate external reference %q in batch", item.ExternalRef)
+		}
+		if seenSources[item.SourceID] {
+			return result, fmt.Errorf("duplicate source ID %q in batch", item.SourceID)
+		}
+		seenRefs[item.ExternalRef] = true
+		seenSources[item.SourceID] = true
+	}
+
+	now := flexTime{time.Now().UTC()}
+	createdIDs := make([]string, 0, len(items))
+	sourceToID := make(map[string]string, len(items))
+	for _, item := range items {
+		if existing := existingByRef[item.ExternalRef]; existing != nil {
+			sourceToID[item.SourceID] = existing.ID
+			result.Skipped++
+			continue
+		}
+		id := uuid.New().String()[:12]
+		metadata := make(map[string]interface{}, len(item.Metadata)+1)
+		for key, value := range item.Metadata {
+			metadata[key] = value
+		}
+		if s.hiveID != "" {
+			metadata[hiveIDMetadataKey] = s.hiveID
+		}
+		bead := &Bead{
+			ID: id, Title: item.Title, Type: item.Type, Status: item.Status,
+			Priority: item.Priority, Actor: item.Actor, ExternalRef: item.ExternalRef,
+			Metadata: metadata, Notes: item.Notes, CreatedAt: now, UpdatedAt: now,
+		}
+		if item.Status == StatusDone || item.Status == StatusClosed {
+			closedAt := now
+			bead.ClosedAt = &closedAt
+		}
+		s.beads[id] = bead
+		createdIDs = append(createdIDs, id)
+		sourceToID[item.SourceID] = id
+		result.Created++
+	}
+	for _, item := range items {
+		if sourceToID[item.SourceID] == "" {
+			continue
+		}
+		bead := s.beads[sourceToID[item.SourceID]]
+		if bead == nil || !contains(createdIDs, bead.ID) {
+			continue
+		}
+		for _, dependency := range item.DependsOn {
+			if target := sourceToID[dependency]; target != "" {
+				bead.DependsOn = append(bead.DependsOn, target)
+			}
+		}
+	}
+	if result.Created == 0 {
+		return result, nil
+	}
+	if err := s.persist(nil); err != nil {
+		for _, id := range createdIDs {
+			delete(s.beads, id)
+		}
+		return BatchResult{}, err
+	}
+	return result, nil
+}
+
+func validStatus(status Status) bool {
+	return status == StatusOpen || status == StatusInProgress || status == StatusBlocked || status == StatusDone || status == StatusClosed
+}
+
+func contains(values []string, candidate string) bool {
+	for _, value := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) evictOldClosed() {
