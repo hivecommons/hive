@@ -3514,9 +3514,10 @@ func (s *Server) handleInferenceModels(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("no models found from any endpoint", "backend", backend, "endpoints", len(endpoints))
 	}
 	if backend == "litellm" {
-		// LiteLLM also proxies the Claude CLI/Copilot model families —
-		// offer those aliases in addition to whatever the endpoint reports.
-		models = unionLitellmClaudeModels(models)
+		// LiteLLM also proxies the Claude and Gemini CLI-backend model
+		// families — offer those aliases in addition to whatever the
+		// endpoint reports.
+		models = unionLitellmStaticModels(models)
 	}
 	jsonResponse(w, map[string]interface{}{
 		"backend": backend,
@@ -3534,38 +3535,39 @@ func (s *Server) inferenceAPIKey(backend string) string {
 	return s.deps.Config.Governor.LiteLLM.ResolveAPIKey()
 }
 
-// litellmClaudeModelAliases is the static list of Claude-family models that
-// are reachable through the claude/copilot CLI backends and therefore worth
-// offering in the LiteLLM model dropdown alongside live-discovered endpoint
-// models. LiteLLM proxies expect these aliases with UNDERSCORE version
-// separators (claude-opus-4_8) — unlike the Claude CLI (hyphens,
-// claude-opus-4-8) and the Copilot CLI (dots, claude-opus-4.8). Derived from
-// the CLAUDE_CLI_MODELS/COPILOT_CLI_MODELS lists in static/index.html; keep
-// in sync when those lists change.
-var litellmClaudeModelAliases = []string{
+// litellmStaticModelAliases is the static list of Claude- and Gemini-family
+// models that are reachable through the claude/copilot/gemini CLI backends
+// and therefore worth offering in the LiteLLM model dropdown alongside
+// live-discovered endpoint models. LiteLLM proxies expect these aliases with
+// UNDERSCORE version separators (claude-opus-4_8, gemini-2_5-pro) — unlike
+// the Claude CLI (hyphens, claude-opus-4-8) and the Copilot/Gemini backends
+// (dots, claude-opus-4.8 / gemini-2.5-pro). Derived from the
+// CLAUDE_CLI_MODELS/COPILOT_CLI_MODELS lists in static/index.html and the
+// gemini backend list in handleBackends; keep in sync when those change.
+var litellmStaticModelAliases = []string{
 	"claude-opus-4_8",
 	"claude-opus-4_7",
 	"claude-opus-4_6",
 	"claude-sonnet-4_6",
-	"claude-sonnet-4_5",
 	"claude-haiku-4_5",
-	"claude-fable-5",
+	"gemini-2_5-pro",
+	"gemini-2_5-flash",
 }
 
-// unionLitellmClaudeModels merges the models discovered from the LiteLLM
-// endpoint with the static Claude aliases. Discovered models keep their
-// order and come first; static aliases are appended after, de-duplicated —
-// a discovered model with the same name wins and appears once.
-func unionLitellmClaudeModels(discovered []string) []string {
+// unionLitellmStaticModels merges the models discovered from the LiteLLM
+// endpoint with the static aliases. Discovered models keep their order and
+// come first; static aliases are appended after, de-duplicated — a
+// discovered model with the same name wins and appears once.
+func unionLitellmStaticModels(discovered []string) []string {
 	seen := make(map[string]bool, len(discovered))
-	merged := make([]string, 0, len(discovered)+len(litellmClaudeModelAliases))
+	merged := make([]string, 0, len(discovered)+len(litellmStaticModelAliases))
 	for _, m := range discovered {
 		if !seen[m] {
 			seen[m] = true
 			merged = append(merged, m)
 		}
 	}
-	for _, m := range litellmClaudeModelAliases {
+	for _, m := range litellmStaticModelAliases {
 		if !seen[m] {
 			seen[m] = true
 			merged = append(merged, m)
@@ -3592,7 +3594,7 @@ func (s *Server) queryInferenceModels(backend string) []string {
 		}
 	}
 	if backend == "litellm" {
-		return unionLitellmClaudeModels(models)
+		return unionLitellmStaticModels(models)
 	}
 	return models
 }
