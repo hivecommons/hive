@@ -99,6 +99,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
+	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
@@ -2715,8 +2716,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"caBundle":     cfg.Governor.LiteLLM.CABundle,
 			"localProxy":   cfg.Governor.LiteLLM.LocalProxy,
 			// The key VALUE is never returned — only whether one resolves
-			// from the configured file/env var.
-			"hasKey": cfg.Governor.LiteLLM.ResolveAPIKey() != "",
+			// and from which store ("file:<path>" / "env:<NAME>").
+			"hasKey":    cfg.Governor.LiteLLM.ResolveAPIKey() != "",
+			"keySource": cfg.Governor.LiteLLM.ResolveAPIKeySource(),
 		},
 		"hub": map[string]interface{}{
 			"enabled":                  cfg.Hub.Enabled,
@@ -3127,12 +3129,130 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// apiKeyLikeLength: env var NAMES are short and conventionally use
+// underscores, while bearer keys are typically 40+ chars without any.
+const apiKeyLikeLength = 40
+
+// looksLikeAPIKeyValue guards the env-name field against users pasting an
+// actual API key VALUE into it (which would bake "sk-..." into hive.yaml
+// as an env var name and silently resolve to an empty key at runtime).
+func looksLikeAPIKeyValue(s string) bool {
+	return strings.HasPrefix(s, "sk-") ||
+		(len(s) > apiKeyLikeLength && !strings.Contains(s, "_"))
+}
+
+const (
+	// litellmProbeTimeout bounds the save-time /v1/models check.
+	litellmProbeTimeout = 8 * time.Second
+	// litellmProbeMaxErrBody caps how much of a gateway error body is
+	// surfaced back to the dialog.
+	litellmProbeMaxErrBody = 512
+)
+
+// probeLiteLLMModels queries {endpoint}/v1/models with the given key and
+// returns the number of models the gateway offers. This is a LIVE probe
+// only — it never falls back to the static model aliases, so a failing
+// gateway can never masquerade as "N models available" (the bug where
+// Test Connection reported the 7 static fallback aliases as success).
+// On failure the error carries the gateway's actual message (truncated)
+// so the UI can show e.g. LiteLLM's "token not found" instead of a bare
+// status code.
+func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
+	modelsURL := strings.TrimRight(endpoint, "/") + "/v1/models"
+	req, err := http.NewRequest("GET", modelsURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("building request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	client := &http.Client{Timeout: litellmProbeTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("cannot reach gateway: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
+	gatewayMsg := strings.TrimSpace(string(body))
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		// The two auth failures lead users to different fixes.
+		if apiKey == "" {
+			return 0, fmt.Errorf("gateway requires an API key and none is configured (HTTP %d): %s",
+				resp.StatusCode, gatewayMsg)
+		}
+		return 0, fmt.Errorf("gateway rejected the configured key (HTTP %d): %s",
+			resp.StatusCode, gatewayMsg)
+	case resp.StatusCode != http.StatusOK:
+		return 0, fmt.Errorf("gateway returned HTTP %d: %s", resp.StatusCode, gatewayMsg)
+	}
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, fmt.Errorf("gateway returned a non-OpenAI /v1/models response")
+	}
+	return len(result.Data), nil
+}
+
+// redactSecret removes any occurrence of a secret value from a message so
+// gateway error bodies can never echo the key back to the client or logs.
+func redactSecret(msg, secret string) string {
+	if secret == "" {
+		return msg
+	}
+	return strings.ReplaceAll(msg, secret, "[redacted]")
+}
+
+// liteLLMProbeResult runs the live probe against the effective endpoint
+// using the SAME key resolution the inference translator uses
+// (ResolveAPIKey: api_key_file → Secret mount → PVC file → env), unless
+// overrideKey is set (a key just submitted in the same request, which the
+// key files may not reflect yet). Returns nil when no endpoint is
+// configured.
+func (s *Server) liteLLMProbeResult(lc *config.LiteLLMConfig, overrideKey string) map[string]interface{} {
+	ep := lc.ResolveEndpoint()
+	if ep == "" {
+		return nil
+	}
+	probeKey := overrideKey
+	if probeKey == "" {
+		probeKey = lc.ResolveAPIKey()
+	}
+	n, err := probeLiteLLMModels(ep, probeKey)
+	if err != nil {
+		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
+	}
+	return map[string]interface{}{"ok": true, "models": n}
+}
+
+// handleGovernorLiteLLMTest is the Test Connection endpoint: a live
+// /v1/models probe with the currently effective endpoint + key. Unlike
+// /api/inference/models/{backend} it NEVER substitutes the static
+// fallback aliases, so the result reflects only what the gateway said.
+func (s *Server) handleGovernorLiteLLMTest(w http.ResponseWriter, r *http.Request) {
+	lc := s.deps.Config.Governor.LiteLLM
+	probe := s.liteLLMProbeResult(&lc, "")
+	if probe == nil {
+		jsonError(w, "no litellm endpoint configured", http.StatusBadRequest)
+		return
+	}
+	jsonResponse(w, map[string]interface{}{"ok": true, "probe": probe})
+}
+
 // handleGovernorLiteLLM updates governor.litellm from the dashboard's
-// LiteLLM config tab. The API key VALUE is never accepted or stored —
-// only the env var name / key file path used to resolve it at runtime.
+// LiteLLM config tab / first-use dialog. An API key VALUE (apiKey) is
+// stored via storeLiteLLMAPIKey (PVC file + best-effort hive-secrets
+// Secret) — never in hive.yaml, logs, or responses; hive.yaml records
+// only the file path. After saving, the gateway is probed at /v1/models
+// and the result returned so a bad endpoint/key fails visibly at save
+// time instead of as agent 401s later.
 func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Endpoint     *string `json:"endpoint"`
+		APIKey       *string `json:"apiKey"`
 		APIKeyEnv    *string `json:"apiKeyEnv"`
 		APIKeyFile   *string `json:"apiKeyFile"`
 		DefaultModel *string `json:"defaultModel"`
@@ -3150,10 +3270,26 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 		lc.Endpoint = strings.TrimSpace(*body.Endpoint)
 	}
 	if body.APIKeyEnv != nil {
-		lc.APIKeyEnv = strings.TrimSpace(*body.APIKeyEnv)
+		keyEnv := strings.TrimSpace(*body.APIKeyEnv)
+		if looksLikeAPIKeyValue(keyEnv) {
+			jsonError(w, "this looks like an API key — paste it in the API Key field instead; "+
+				"this field takes an environment variable NAME (e.g. HIVE_LITELLM_API_KEY)",
+				http.StatusBadRequest)
+			return
+		}
+		lc.APIKeyEnv = keyEnv
 	}
 	if body.APIKeyFile != nil {
-		lc.APIKeyFile = strings.TrimSpace(*body.APIKeyFile)
+		keyFile := strings.TrimSpace(*body.APIKeyFile)
+		// Same paste-the-key-value guardrail as the env-name field; real
+		// key file paths are absolute, keys never are.
+		if !strings.HasPrefix(keyFile, "/") && looksLikeAPIKeyValue(keyFile) {
+			jsonError(w, "this looks like an API key — paste it in the API Key field instead; "+
+				"this field takes a file PATH (e.g. /secrets/litellm_api_key)",
+				http.StatusBadRequest)
+			return
+		}
+		lc.APIKeyFile = keyFile
 	}
 	if body.DefaultModel != nil {
 		lc.DefaultModel = strings.TrimSpace(*body.DefaultModel)
@@ -3168,6 +3304,22 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Store a submitted key VALUE outside hive.yaml and point api_key_file
+	// at it. Empty apiKey means "no change" so the tab can be re-saved
+	// without re-entering the key.
+	submittedKey := ""
+	if body.APIKey != nil {
+		submittedKey = strings.TrimSpace(*body.APIKey)
+	}
+	if submittedKey != "" {
+		keyFile, err := s.storeLiteLLMAPIKey(submittedKey)
+		if err != nil {
+			jsonError(w, "failed to store API key: "+redactSecret(err.Error(), submittedKey),
+				http.StatusInternalServerError)
+			return
+		}
+		lc.APIKeyFile = keyFile
+	}
 	cfg.Governor.LiteLLM = lc
 
 	if err := s.saveConfig(); err != nil {
@@ -3177,6 +3329,9 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 
 	// Register the endpoint for model discovery (empty list unregisters)
 	// and re-apply routes for live agents already running on litellm.
+	// This must come after the key store above: SetInferenceRoute
+	// snapshots the key into each route, so the refresh is what makes a
+	// rotated key take effect without an agent restart.
 	var endpoints []string
 	if ep := lc.ResolveEndpoint(); ep != "" {
 		endpoints = []string{ep}
@@ -3187,7 +3342,15 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "updated"})
+
+	// Save-time validation probe (live /v1/models — never the static
+	// fallback list) so the dialog can immediately show "N models
+	// available" or the gateway's real error.
+	resp := map[string]interface{}{"ok": true, "status": "updated"}
+	if probe := s.liteLLMProbeResult(&lc, submittedKey); probe != nil {
+		resp["probe"] = probe
+	}
+	jsonResponse(w, resp)
 }
 
 func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) {

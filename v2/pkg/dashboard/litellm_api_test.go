@@ -2,8 +2,11 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -90,5 +93,233 @@ func TestHandleGovernorConfigGet_LiteLLMSection(t *testing.T) {
 	}
 	if section["hasKey"] != true {
 		t.Errorf("hasKey = %v, want true (key resolves from env)", section["hasKey"])
+	}
+}
+
+// --- env-name guardrail: key values pasted into the env NAME field ---
+
+func TestHandleGovernorLiteLLM_EnvNameGuardrail(t *testing.T) {
+	cases := []struct {
+		name   string
+		keyEnv string
+		wantOK bool
+	}{
+		{"sk-prefixed key value", "sk-3aF9xQ7bLm2v", false},
+		{"long dashed key value", strings.Repeat("aB3x-", 12), false},
+		{"conventional env name", "HIVE_LITELLM_API_KEY", true},
+		{"custom env name", "MY_GATEWAY_KEY", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newFullServer(t)
+			body := `{"endpoint": "https://litellm.example.com", "apiKeyEnv": "` + tc.keyEnv + `"}`
+			req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			srv.handleGovernorLiteLLM(w, req)
+			if tc.wantOK && w.Code != http.StatusOK {
+				t.Fatalf("code = %d, want 200 (body: %s)", w.Code, w.Body.String())
+			}
+			if !tc.wantOK {
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("code = %d, want 400 for key-like env name", w.Code)
+				}
+				if !strings.Contains(w.Body.String(), "looks like an API key") {
+					t.Errorf("error should explain the field takes a NAME: %s", w.Body.String())
+				}
+				if srv.deps.Config.Governor.LiteLLM.APIKeyEnv != "" {
+					t.Errorf("key-like value persisted into APIKeyEnv: %q", srv.deps.Config.Governor.LiteLLM.APIKeyEnv)
+				}
+			}
+		})
+	}
+}
+
+// --- apiKey value storage: PVC file, 0600, never echoed ---
+
+func TestHandleGovernorLiteLLM_APIKeyValueStored(t *testing.T) {
+	origKeyFile := writableLiteLLMKeyFile
+	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "secrets", "litellm_api_key")
+	t.Cleanup(func() { writableLiteLLMKeyFile = origKeyFile })
+
+	const secret = "sk-verysecretkeyvalue123456"
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+secret {
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":{"message":"Authentication Error: token not found"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"data":[{"id":"claude_opus_4.8"},{"id":"gemini_2.5_pro"}]}`)
+	}))
+	defer gateway.Close()
+
+	srv := newFullServer(t)
+	body := `{"endpoint": "` + gateway.URL + `", "apiKey": "` + secret + `"}`
+	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorLiteLLM(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d (body: %s)", w.Code, w.Body.String())
+	}
+	// Key value written to the PVC file with owner-only perms.
+	data, err := os.ReadFile(writableLiteLLMKeyFile)
+	if err != nil {
+		t.Fatalf("key file not written: %v", err)
+	}
+	if string(data) != secret {
+		t.Errorf("key file content mismatch")
+	}
+	info, _ := os.Stat(writableLiteLLMKeyFile)
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("key file mode = %v, want 0600", info.Mode().Perm())
+	}
+	// hive.yaml records only the file path.
+	if got := srv.deps.Config.Governor.LiteLLM.APIKeyFile; got != writableLiteLLMKeyFile {
+		t.Errorf("APIKeyFile = %q, want %q", got, writableLiteLLMKeyFile)
+	}
+	// The key value never appears in the response.
+	if strings.Contains(w.Body.String(), secret) {
+		t.Fatal("response echoes the API key value")
+	}
+	// Save-time probe reports live model count.
+	var resp struct {
+		Probe struct {
+			OK     bool   `json:"ok"`
+			Models int    `json:"models"`
+			Error  string `json:"error"`
+		} `json:"probe"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Probe.OK || resp.Probe.Models != 2 {
+		t.Errorf("probe = %+v, want ok with 2 models", resp.Probe)
+	}
+}
+
+// --- save-time probe surfaces the gateway's real error, redacted ---
+
+func TestHandleGovernorLiteLLM_ProbeSurfacesGatewayError(t *testing.T) {
+	origKeyFile := writableLiteLLMKeyFile
+	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "litellm_api_key")
+	t.Cleanup(func() { writableLiteLLMKeyFile = origKeyFile })
+
+	const secret = "sk-wrongkeyvalue9876543210"
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		// Echo the key back like a chatty gateway might — it must be redacted.
+		fmt.Fprintf(w, `{"error":{"message":"token not found: %s"}}`, secret)
+	}))
+	defer gateway.Close()
+
+	srv := newFullServer(t)
+	body := `{"endpoint": "` + gateway.URL + `", "apiKey": "` + secret + `"}`
+	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorLiteLLM(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d (config save should succeed even when the probe fails)", w.Code)
+	}
+	if strings.Contains(w.Body.String(), secret) {
+		t.Fatal("probe error echoes the API key value")
+	}
+	var resp struct {
+		Probe struct {
+			OK    bool   `json:"ok"`
+			Error string `json:"error"`
+		} `json:"probe"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Probe.OK {
+		t.Fatal("probe.ok = true, want false for a 401 gateway")
+	}
+	if !strings.Contains(resp.Probe.Error, "token not found") {
+		t.Errorf("probe error should carry the gateway message, got: %s", resp.Probe.Error)
+	}
+	if !strings.Contains(resp.Probe.Error, "rejected the configured key") {
+		t.Errorf("probe error should say the key was rejected, got: %s", resp.Probe.Error)
+	}
+}
+
+// --- Test Connection endpoint: live results only, never static fallback ---
+
+func TestHandleGovernorLiteLLMTest_NeverCountsFallbackAliases(t *testing.T) {
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, `{"error":{"message":"No api key passed in."}}`)
+	}))
+	defer gateway.Close()
+
+	srv := newFullServer(t)
+	srv.deps.Config.Governor.LiteLLM.Endpoint = gateway.URL
+
+	req := httptest.NewRequest("POST", "/api/config/governor/litellm/test", nil)
+	w := httptest.NewRecorder()
+	srv.handleGovernorLiteLLMTest(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d", w.Code)
+	}
+	var resp struct {
+		Probe struct {
+			OK     bool   `json:"ok"`
+			Models int    `json:"models"`
+			Error  string `json:"error"`
+		} `json:"probe"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Probe.OK {
+		t.Fatal("probe reported success against a 401 gateway (static fallback leak?)")
+	}
+	if !strings.Contains(resp.Probe.Error, "requires an API key") {
+		t.Errorf("no-key 401 should say a key is required, got: %s", resp.Probe.Error)
+	}
+	if !strings.Contains(resp.Probe.Error, "No api key passed in") {
+		t.Errorf("probe error should carry the gateway body, got: %s", resp.Probe.Error)
+	}
+}
+
+func TestHandleGovernorLiteLLMTest_NoEndpoint(t *testing.T) {
+	srv := newFullServer(t)
+	req := httptest.NewRequest("POST", "/api/config/governor/litellm/test", nil)
+	w := httptest.NewRecorder()
+	srv.handleGovernorLiteLLMTest(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400 when no endpoint configured", w.Code)
+	}
+}
+
+// --- file-path field guardrail ---
+
+func TestHandleGovernorLiteLLM_KeyFileGuardrail(t *testing.T) {
+	srv := newFullServer(t)
+	body := `{"endpoint": "https://litellm.example.com", "apiKeyFile": "sk-3aF9xQ7bLm2v"}`
+	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handleGovernorLiteLLM(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400 for key-like file path", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "file PATH") {
+		t.Errorf("error should explain the field takes a path: %s", w.Body.String())
+	}
+	// A real absolute path is accepted.
+	srv2 := newFullServer(t)
+	body = `{"endpoint": "https://litellm.example.com", "apiKeyFile": "/secrets/litellm_api_key"}`
+	req = httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv2.handleGovernorLiteLLM(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 for absolute path (body: %s)", w.Code, w.Body.String())
 	}
 }
