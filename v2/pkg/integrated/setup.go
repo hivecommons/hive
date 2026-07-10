@@ -412,6 +412,7 @@ jobs:
             .visual-hive
             !.visual-hive/bundles/**
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
       - name: Build Hive lifecycle bundle bound to evidence artifact
         shell: bash
@@ -430,6 +431,7 @@ jobs:
           name: visual-hive-bundle-${{ github.run_id }}
           path: .visual-hive/bundles
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 14
 `, config.DefaultBranch, checkoutActionSHA, checkoutActionSHA, config.VisualHiveRepo, config.VisualHiveRef, setupNodeActionSHA, uploadArtifactActionSHA, uploadArtifactActionSHA)
 }
