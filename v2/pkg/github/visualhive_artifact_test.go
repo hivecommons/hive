@@ -37,6 +37,9 @@ func TestFetchAndVerifyVisualHiveBundleBindsGitHubProvenance(t *testing.T) {
 			writer.Header().Set("Location", server.URL+"/signed-artifact")
 			writer.WriteHeader(http.StatusFound)
 		case "/signed-artifact":
+			if request.Header.Get("Authorization") != "" {
+				t.Errorf("signed artifact request leaked GitHub authorization")
+			}
 			writer.Header().Set("Content-Type", "application/zip")
 			_, _ = writer.Write(zipData)
 		default:

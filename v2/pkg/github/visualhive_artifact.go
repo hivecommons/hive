@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/kubestellar/hive/v2/pkg/visualhive"
@@ -161,11 +163,18 @@ func (c *Client) downloadAndExtractVisualHiveArtifact(ctx context.Context, owner
 	if err != nil {
 		return "", fmt.Errorf("request Visual Hive artifact download: %w", err)
 	}
+	if downloadURL.Scheme != "https" && !isLoopbackDownload(downloadURL.Hostname()) {
+		return "", fmt.Errorf("refusing non-HTTPS Visual Hive artifact download URL")
+	}
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL.String(), nil)
 	if err != nil {
 		return "", err
 	}
-	response, err := c.client.Client().Do(httpRequest)
+	// DownloadArtifact returns a short-lived signed object URL. Sending the
+	// GitHub API Authorization header to that storage host both leaks authority
+	// across a trust boundary and is rejected by GitHub's artifact backend.
+	downloadClient := &http.Client{Timeout: 2 * time.Minute}
+	response, err := downloadClient.Do(httpRequest)
 	if err != nil {
 		return "", fmt.Errorf("download Visual Hive artifact: %w", err)
 	}
@@ -198,6 +207,14 @@ func (c *Client) downloadAndExtractVisualHiveArtifact(ctx context.Context, owner
 		}
 	}
 	return findVisualHiveManifest(finalDir)
+}
+
+func isLoopbackDownload(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func extractVisualHiveZip(zipPath, destination string) error {
