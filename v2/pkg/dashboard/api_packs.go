@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -15,12 +16,12 @@ func (s *Server) handlePacksList(w http.ResponseWriter, r *http.Request) {
 	currentLevel := s.detectCurrentLevel()
 
 	type packSummary struct {
-		Level       int                `json:"level"`
-		Name        string             `json:"name"`
-		Description string             `json:"description"`
-		AgentCount  int                `json:"agentCount"`
+		Level       int                 `json:"level"`
+		Name        string              `json:"name"`
+		Description string              `json:"description"`
+		AgentCount  int                 `json:"agentCount"`
 		Governor    config.PackGovernor `json:"governor"`
-		Current     bool               `json:"current"`
+		Current     bool                `json:"current"`
 		Agents      []config.PackAgent  `json:"agents"`
 	}
 
@@ -68,6 +69,13 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 	var skipped []string
 
 	var updated []string
+	// Collect per-agent create failures instead of aborting the whole apply on
+	// the first one. Aborting mid-loop leaves a partially reconciled roster
+	// (some of the level's agents added, the rest missing) that no longer
+	// matches acmm_level — the exact "level says N, roster says fewer" drift we
+	// are fixing. We reconcile every agent we can, then surface a combined
+	// error so the caller does NOT record the level as cleanly applied.
+	var createErrs []string
 	for _, pa := range pack.Agents {
 		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
 			changed := false
@@ -140,8 +148,13 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 		}
 
 		if err := config.SaveAgentFile(agentsDir, pa.Name, agentCfg); err != nil {
-			s.logger.Error("failed to save agent from pack", "agent", pa.Name, "error", err)
-			return nil, fmt.Errorf("failed to save agent %s: %w", pa.Name, err)
+			// Do not abort: keep reconciling the rest of the roster. The agent
+			// is still added to the in-memory config below so it appears in
+			// /api/status and is retried on the next apply; the combined error
+			// returned at the end prevents the level from being recorded as
+			// cleanly applied.
+			s.logger.Error("failed to save agent overlay file from pack (continuing)", "agent", pa.Name, "error", err)
+			createErrs = append(createErrs, fmt.Sprintf("%s: %v", pa.Name, err))
 		}
 
 		s.deps.Config.Agents[pa.Name] = agentCfg
@@ -223,14 +236,21 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 	go s.refreshAsync()
 	s.logger.Info("ACMM pack applied", "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed))
 
-	return &ApplyPackResult{
+	result := &ApplyPackResult{
 		Name:    pack.Name,
 		Created: created,
 		Updated: updated,
 		Skipped: skipped,
 		Paused:  paused,
 		Resumed: resumed,
-	}, nil
+	}
+	if len(createErrs) > 0 {
+		// Return the result alongside the error so callers can still see what
+		// was reconciled, but the non-nil error signals the roster is not
+		// fully persisted and the level must not be reported as cleanly set.
+		return result, fmt.Errorf("failed to persist %d pack agent(s): %s", len(createErrs), strings.Join(createErrs, "; "))
+	}
+	return result, nil
 }
 
 func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
@@ -252,15 +272,15 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 
 	s.auditFromRequest(r, "apply_pack", auditDetail("level", levelStr, "name", result.Name), "")
 	jsonResponse(w, map[string]interface{}{
-		"ok":         true,
-		"status":     "applied",
-		"level":      level,
-		"name":       result.Name,
-		"created":    result.Created,
-		"updated":    result.Updated,
-		"skipped":    result.Skipped,
-		"paused":     result.Paused,
-		"resumed":    result.Resumed,
+		"ok":      true,
+		"status":  "applied",
+		"level":   level,
+		"name":    result.Name,
+		"created": result.Created,
+		"updated": result.Updated,
+		"skipped": result.Skipped,
+		"paused":  result.Paused,
+		"resumed": result.Resumed,
 	})
 }
 
@@ -300,11 +320,21 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	s.deps.AgentMgr.ClearAllModeOverrides()
 
 	// ApplyPack cascades pack-defined agent fields (mode, kick_template,
-	// description, etc.) into the live config. Without this, the mode-clear
-	// above leaves every agent with mode="" and the gh proxy blocks merges.
+	// description, etc.) into the live config AND reconciles the roster —
+	// adding every agent the level introduces (e.g. strategist/architect at
+	// L5) plus their governor cadences. Without this, the mode-clear above
+	// leaves every agent with mode="" and the gh proxy blocks merges.
+	//
+	// If ApplyPack fails the roster is NOT reconciled to the level, so we must
+	// NOT report success: acmm_level was already written above, and returning
+	// 200 here is exactly what left kellyaa at "acmm_level: 5, 8 agents,
+	// strategist missing". Surface the error so the operator sees the drift
+	// and can retry instead of trusting a false success.
 	packResult, packErr := s.ApplyPack(level)
 	if packErr != nil {
-		s.logger.Warn("failed to apply pack after level change", "level", level, "error", packErr)
+		s.logger.Error("failed to reconcile roster after level change", "level", level, "error", packErr)
+		jsonError(w, "level set but roster reconciliation failed: "+packErr.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	paused, resumed := s.syncAgentVisibility(level)
