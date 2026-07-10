@@ -101,7 +101,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 		if err := writeManagedFiles(config.CheckoutDir, candidate, inspection); err != nil {
 			return result, err
 		}
-		title = fmt.Sprintf("%s Visual Hive to %s", strings.Title(string(options.Operation)), requested[:12])
+		title = fmt.Sprintf("%s Visual Hive to %s", titleCaseOperation(options.Operation), requested[:12])
 	case OperationUninstall:
 		candidate.Paused = true
 		for _, relative := range managed {
@@ -168,6 +168,14 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 		store.Audit(AuditEntry{Action: string(options.Operation), Allowed: true, Repository: config.Repository, Detail: result.PRURL})
 	}
 	return result, nil
+}
+
+func titleCaseOperation(operation ManagementOperation) string {
+	value := string(operation)
+	if value == "" {
+		return value
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }
 
 func deleteManagedState(stateDir string) error {

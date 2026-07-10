@@ -53,6 +53,8 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 	if err != nil {
 		return SetupResult{}, err
 	}
+	prior, priorErr := store.Load()
+	hasPrior := priorErr == nil && strings.EqualFold(prior.Repository, options.Repository)
 	checkout := filepath.Join(store.Dir(), "checkouts", safeRepoName(options.Repository))
 	defaultBranch, err := ensureCheckout(ctx, options.Repository, checkout)
 	if err != nil {
@@ -101,6 +103,11 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		CheckoutDir:           checkout, StateDir: options.StateDir, SetupBranch: branch,
 		InstalledAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
+	if hasPrior {
+		config.InstalledAt = prior.InstalledAt
+		config.SetupPRNumber, config.SetupPRURL = prior.SetupPRNumber, prior.SetupPRURL
+		config.PreviousVersion, config.Paused = prior.PreviousVersion, prior.Paused
+	}
 	if err := writeManagedFiles(checkout, config, inspection); err != nil {
 		return result, err
 	}
@@ -117,6 +124,19 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		return result, err
 	}
 	idempotent := strings.TrimSpace(diff) == ""
+	if idempotent && hasPrior {
+		sha, shaErr := git(ctx, checkout, "rev-parse", "HEAD")
+		if shaErr != nil {
+			return result, shaErr
+		}
+		if err := store.Save(config); err != nil {
+			return result, err
+		}
+		result.Applied, result.Idempotent, result.Config = true, true, &config
+		result.Branch, result.PRNumber, result.PRURL = prior.SetupBranch, prior.SetupPRNumber, prior.SetupPRURL
+		result.CommitSHA = strings.TrimSpace(sha)
+		return result, nil
+	}
 	if !idempotent {
 		if _, err := git(ctx, checkout, "-c", "user.name=Hive Setup", "-c", "user.email=hive-setup@users.noreply.github.com", "commit", "-m", "chore: install Hive and Visual Hive"); err != nil {
 			return result, err
