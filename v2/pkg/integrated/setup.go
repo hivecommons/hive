@@ -115,8 +115,7 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 	if err := authorizeSetup(store, options.Policy, options.Repository, automation.ActionSetupCommit); err != nil {
 		return result, err
 	}
-	addArgs := append([]string{"add", "--"}, managed...)
-	if _, err := git(ctx, checkout, addArgs...); err != nil {
+	if err := stageManagedPaths(ctx, checkout, managed); err != nil {
 		return result, err
 	}
 	diff, err := git(ctx, checkout, "diff", "--cached", "--name-only")
@@ -514,4 +513,29 @@ func cloneCommands(values [][]string) [][]string {
 		result[index] = append([]string(nil), values[index]...)
 	}
 	return result
+}
+
+func stageManagedPaths(ctx context.Context, checkout string, paths []string) error {
+	stageable := make([]string, 0, len(paths))
+	for _, relative := range paths {
+		if _, err := os.Lstat(filepath.Join(checkout, filepath.FromSlash(relative))); err == nil {
+			stageable = append(stageable, relative)
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		tracked, err := git(ctx, checkout, "ls-files", "--", relative)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(tracked) != "" {
+			stageable = append(stageable, relative)
+		}
+	}
+	if len(stageable) == 0 {
+		return nil
+	}
+	args := append([]string{"add", "-A", "--"}, stageable...)
+	_, err := git(ctx, checkout, args...)
+	return err
 }

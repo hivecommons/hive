@@ -114,8 +114,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 	if err := authorizeSetup(store, policy, config.Repository, automation.ActionSetupCommit); err != nil {
 		return result, err
 	}
-	addArgs := append([]string{"add", "-A", "--"}, managed...)
-	if _, err := git(ctx, config.CheckoutDir, addArgs...); err != nil {
+	if err := stageManagedPaths(ctx, config.CheckoutDir, managed); err != nil {
 		return result, err
 	}
 	changed, err := git(ctx, config.CheckoutDir, "diff", "--cached", "--name-only")
