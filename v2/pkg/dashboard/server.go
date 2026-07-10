@@ -89,6 +89,11 @@ type Server struct {
 	inferenceMu        sync.RWMutex
 	inferenceEndpoints map[string][]string // backend id → list of base URLs
 
+	// cliModels caches best-effort runtime model discovery for the CLI
+	// backends (copilot/claude/gemini/goose), each with its own discovery
+	// source and static fallback. See cli_models.go.
+	cliModels *cliModelCache
+
 	ready   bool
 	readyAt time.Time
 
@@ -357,6 +362,7 @@ func NewServer(port int, logger *slog.Logger) *Server {
 		agentHooks:     make(map[string]map[string][]any),
 		audit:          newAuditLog(),
 		userSessions:   make(map[string]*userSession),
+		cliModels:      newCLIModelCache(),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -373,6 +379,7 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		agentHooks:     make(map[string]map[string][]any),
 		audit:          newAuditLog(),
 		userSessions:   make(map[string]*userSession),
+		cliModels:      newCLIModelCache(),
 	}
 	s.registerCoreRoutes()
 	return s

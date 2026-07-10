@@ -3775,11 +3775,21 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	llmdModels := s.queryInferenceModels("llm-d")
 	litellmModels := s.queryInferenceModels("litellm")
 
+	// CLI backends each have a DIFFERENT discovery source (see cli_models.go):
+	// copilot → per-account Copilot /models, gemini → generativelanguage
+	// /v1beta/models, claude → maintained static list (no API exists), goose →
+	// configured provider's static list. Every probe is best-effort and falls
+	// back to a current static list, so a dropdown is never empty.
+	claudeCLI := s.queryCLIModels("claude")
+	copilotCLI := s.queryCLIModels("copilot")
+	geminiCLI := s.queryCLIModels("gemini")
+	gooseCLI := s.queryCLIModels("goose")
+
 	jsonResponse(w, []map[string]interface{}{
-		{"id": "claude", "name": "Claude Code", "models": []string{"opus", "sonnet", "haiku"}},
-		{"id": "copilot", "name": "GitHub Copilot", "models": []string{"gpt-4o", "gpt-4o-mini"}},
-		{"id": "gemini", "name": "Gemini", "models": []string{"gemini-2.5-pro", "gemini-2.5-flash"}},
-		{"id": "goose", "name": "Goose", "models": []string{"default"}},
+		{"id": "claude", "name": "Claude Code", "models": claudeCLI.models, "fallback": claudeCLI.fallback},
+		{"id": "copilot", "name": "GitHub Copilot", "models": copilotCLI.models, "fallback": copilotCLI.fallback},
+		{"id": "gemini", "name": "Gemini", "models": geminiCLI.models, "fallback": geminiCLI.fallback},
+		{"id": "goose", "name": "Goose", "models": gooseCLI.models, "fallback": gooseCLI.fallback},
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
 		{"id": "llm-d", "name": "llm-d (self-hosted)", "models": llmdModels, "inference": true},
 		{"id": "litellm", "name": "LiteLLM (proxy)", "models": litellmModels, "inference": true},

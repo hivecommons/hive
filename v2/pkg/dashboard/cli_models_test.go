@@ -1,0 +1,197 @@
+package dashboard
+
+import (
+	"io"
+	"log/slog"
+	"strings"
+	"testing"
+	"time"
+)
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestParseCopilotModelsResponse_FiltersChat(t *testing.T) {
+	body := `{"data":[
+		{"id":"gpt-4o","capabilities":{"type":"chat"}},
+		{"id":"gpt-4o-mini-2024-07-18","capabilities":{"type":"chat"}},
+		{"id":"text-embedding-3-small","capabilities":{"type":"embeddings"}},
+		{"id":"","capabilities":{"type":"chat"}}
+	]}`
+	got, err := parseCopilotModelsResponse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := []string{"gpt-4o", "gpt-4o-mini-2024-07-18"}
+	if !equalStrings(got, want) {
+		t.Fatalf("got %v, want %v (embeddings and empty id should be dropped)", got, want)
+	}
+}
+
+func TestParseCopilotModelsResponse_NoTypeReturnsAll(t *testing.T) {
+	// Older/edge responses may omit capabilities.type entirely — we then keep
+	// every non-empty id rather than returning an empty list.
+	body := `{"data":[{"id":"gpt-4o"},{"id":"gpt-4o-mini"}]}`
+	got, err := parseCopilotModelsResponse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !equalStrings(got, []string{"gpt-4o", "gpt-4o-mini"}) {
+		t.Fatalf("got %v, want all ids", got)
+	}
+}
+
+func TestParseCopilotModelsResponse_Malformed(t *testing.T) {
+	if _, err := parseCopilotModelsResponse(strings.NewReader("not json")); err == nil {
+		t.Fatal("expected error on malformed body")
+	}
+}
+
+func TestParseCopilotAPIHost(t *testing.T) {
+	body := `{"login":"x","endpoints":{"api":"https://api.enterprise.githubcopilot.com","proxy":"y"}}`
+	host, ok := parseCopilotAPIHost(strings.NewReader(body))
+	if !ok || host != "https://api.enterprise.githubcopilot.com" {
+		t.Fatalf("got %q ok=%v, want enterprise api host", host, ok)
+	}
+}
+
+func TestParseCopilotAPIHost_Missing(t *testing.T) {
+	if _, ok := parseCopilotAPIHost(strings.NewReader(`{"login":"x"}`)); ok {
+		t.Fatal("expected ok=false when endpoints.api absent")
+	}
+}
+
+func TestParseGeminiModelsResponse_FiltersGenerateContent(t *testing.T) {
+	body := `{"models":[
+		{"name":"models/gemini-3-pro-preview","supportedGenerationMethods":["generateContent","countTokens"]},
+		{"name":"models/embedding-001","supportedGenerationMethods":["embedContent"]},
+		{"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]}
+	]}`
+	got, err := parseGeminiModelsResponse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := []string{"gemini-3-pro-preview", "gemini-2.5-flash"}
+	if !equalStrings(got, want) {
+		t.Fatalf("got %v, want %v (embedding-only + models/ prefix should be handled)", got, want)
+	}
+}
+
+func TestDedupeModels(t *testing.T) {
+	got := dedupeModels([]string{"a", "b", "a", "", "c", "b"})
+	if !equalStrings(got, []string{"a", "b", "c"}) {
+		t.Fatalf("got %v, want [a b c]", got)
+	}
+}
+
+// TestQueryCLIModels_ClaudeStatic verifies claude returns a non-empty,
+// non-fallback (authoritative static) list without any network call.
+func TestQueryCLIModels_ClaudeStatic(t *testing.T) {
+	s := &Server{cliModels: newCLIModelCache()}
+	r := s.queryCLIModels("claude")
+	if len(r.models) == 0 {
+		t.Fatal("claude models should never be empty")
+	}
+	if r.fallback {
+		t.Fatal("claude static list is authoritative, not a fallback")
+	}
+	if !contains(r.models, "claude-opus-4-8") {
+		t.Fatalf("claude models missing current id: %v", r.models)
+	}
+}
+
+// TestQueryCLIModels_CopilotFallbackNoToken verifies that without a Copilot
+// token, discovery yields the static fallback (non-empty, fallback=true) and
+// does not error.
+func TestQueryCLIModels_CopilotFallbackNoToken(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("copilot")
+	if len(r.models) == 0 {
+		t.Fatal("copilot fallback must be non-empty")
+	}
+	if !r.fallback {
+		t.Fatal("copilot with no token must be marked fallback")
+	}
+}
+
+// TestQueryCLIModels_GeminiFallbackNoKey verifies gemini falls back when no
+// API key is configured.
+func TestQueryCLIModels_GeminiFallbackNoKey(t *testing.T) {
+	for _, v := range []string{"GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_GENAI_API_KEY"} {
+		t.Setenv(v, "")
+	}
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("gemini")
+	if len(r.models) == 0 || !r.fallback {
+		t.Fatalf("gemini with no key must be a non-empty fallback, got %+v", r)
+	}
+}
+
+// TestQueryCLIModels_GooseUsesProvider verifies goose maps a configured
+// provider to its static list.
+func TestQueryCLIModels_GooseUsesProvider(t *testing.T) {
+	t.Setenv("GOOSE_PROVIDER", "anthropic")
+	t.Setenv("GOOSE_MODEL", "")
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("goose")
+	if !contains(r.models, "claude-opus-4-8") {
+		t.Fatalf("goose+anthropic should include anthropic models, got %v", r.models)
+	}
+	if !r.fallback {
+		t.Fatal("goose provider list is a curated fallback, not live discovery")
+	}
+}
+
+func TestQueryCLIModels_GooseUnconfigured(t *testing.T) {
+	t.Setenv("GOOSE_PROVIDER", "")
+	t.Setenv("GOOSE_MODEL", "")
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("goose")
+	if !equalStrings(r.models, []string{"default"}) {
+		t.Fatalf("unconfigured goose should be [default], got %v", r.models)
+	}
+}
+
+func TestQueryCLIModels_GoosePinnedModelFirst(t *testing.T) {
+	t.Setenv("GOOSE_PROVIDER", "ollama")
+	t.Setenv("GOOSE_MODEL", "my-pinned-model")
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("goose")
+	if len(r.models) == 0 || r.models[0] != "my-pinned-model" {
+		t.Fatalf("pinned GOOSE_MODEL should be first, got %v", r.models)
+	}
+}
+
+// TestCLIModelCache_TTL verifies the cache returns a stored value within TTL
+// and misses after it expires.
+func TestCLIModelCache_TTL(t *testing.T) {
+	c := newCLIModelCache()
+	c.set("copilot", cliModelResult{models: []string{"x"}})
+	if _, ok := c.get("copilot"); !ok {
+		t.Fatal("expected cache hit within TTL")
+	}
+	// Force expiry by backdating the entry.
+	c.mu.Lock()
+	c.entries["copilot"] = cliModelCacheEntry{
+		result: cliModelResult{models: []string{"x"}},
+		at:     time.Now().Add(-cliModelCacheTTL - time.Second),
+	}
+	c.mu.Unlock()
+	if _, ok := c.get("copilot"); ok {
+		t.Fatal("expected cache miss after TTL")
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

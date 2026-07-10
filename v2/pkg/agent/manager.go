@@ -157,6 +157,16 @@ func (m *Manager) SetCopilotToken(token string) {
 	m.copilotAuthToken = token
 }
 
+// CopilotToken returns the cached Copilot (GitHub OAuth) token, or "" if
+// none is set. Used by the dashboard's model-discovery probe to authenticate
+// against the Copilot models endpoint. The value is a secret and must never
+// be logged.
+func (m *Manager) CopilotToken() string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.copilotAuthToken
+}
+
 // BackendAuthAvailable reports whether shared credentials exist for a CLI
 // backend, so the dashboard can show honest auth state even for agents with
 // no running pane (e.g. on-demand agents that never launched). Claude checks
