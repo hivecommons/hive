@@ -424,7 +424,7 @@ jobs:
           while IFS= read -r contract; do
             if [ -n "$contract" ]; then args+=(--evaluated-contract "$contract"); fi
           done < .visual-hive/evaluated-contracts.txt
-          node "$VISUAL_HIVE_CLI" hive bundle --config visual-hive.config.yaml --issues .visual-hive/issues.json --scan-scope full --authoritative-for-resolution "${args[@]}"
+          node "$VISUAL_HIVE_CLI" hive bundle --config visual-hive.config.yaml --issues .visual-hive/issues.json --acmm-request %d --scan-scope full --authoritative-for-resolution "${args[@]}"
       - name: Upload trusted Hive bundle
         id: bundle
         uses: actions/upload-artifact@%s
@@ -434,7 +434,7 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 14
-`, config.DefaultBranch, checkoutActionSHA, checkoutActionSHA, config.VisualHiveRepo, config.VisualHiveRef, setupNodeActionSHA, uploadArtifactActionSHA, uploadArtifactActionSHA)
+`, config.DefaultBranch, checkoutActionSHA, checkoutActionSHA, config.VisualHiveRepo, config.VisualHiveRef, setupNodeActionSHA, uploadArtifactActionSHA, config.ACMMLevel, uploadArtifactActionSHA)
 }
 
 func quickstart(config Config, inspection RepositoryInspection) string {

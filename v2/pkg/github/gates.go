@@ -312,6 +312,7 @@ func normalizeCheckState(status, conclusion string) string {
 }
 
 func normalizeName(value string) string {
+	value = strings.NewReplacer("-", " ", "_", " ").Replace(value)
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
 }
 

@@ -20,9 +20,9 @@ func TestInspectPullRequestGateAndMergeExactSHA(t *testing.T) {
 		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/pulls/7/files":
 			_, _ = io.WriteString(writer, `[{"filename":"tests/widget.test.ts"}]`)
 		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/branches/main/protection":
-			_, _ = io.WriteString(writer, `{"required_status_checks":{"strict":true,"contexts":["Visual Hive PR","unit"]},"required_pull_request_reviews":{"required_approving_review_count":0}}`)
+			_, _ = io.WriteString(writer, `{"required_status_checks":{"strict":true,"contexts":["visual-hive","unit"]},"required_pull_request_reviews":{"required_approving_review_count":0}}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/commits/abc/check-runs":
-			_, _ = io.WriteString(writer, `{"total_count":2,"check_runs":[{"name":"Visual Hive PR","head_sha":"abc","status":"completed","conclusion":"success","html_url":"https://example.test/run/1"},{"name":"unit","head_sha":"abc","status":"completed","conclusion":"success"}]}`)
+			_, _ = io.WriteString(writer, `{"total_count":2,"check_runs":[{"name":"visual-hive","head_sha":"abc","status":"completed","conclusion":"success","html_url":"https://example.test/run/1"},{"name":"unit","head_sha":"abc","status":"completed","conclusion":"success"}]}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/commits/abc/status":
 			_, _ = io.WriteString(writer, `{"state":"success","statuses":[]}`)
 		case request.Method == http.MethodPut && request.URL.Path == "/repos/owner/repo/pulls/7/merge":

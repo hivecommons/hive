@@ -527,6 +527,17 @@ func digestBundleContent(manifest Manifest, fileLines []string) string {
 		manifest.Source.WorkflowArtifactID,
 		manifest.Source.Conclusion,
 	}, "\x00"))
+	lines = append(lines, strings.Join([]string{
+		"metadata",
+		manifest.Project,
+		manifest.Mode,
+		manifest.Verdict,
+		fmt.Sprintf("%d", manifest.ACMMRequest),
+		fmt.Sprintf("%d", manifest.ExternalCallsMade),
+		manifest.Producer.Name,
+		manifest.Producer.Version,
+		manifest.Producer.GitCommit,
+	}, "\x00"))
 	lines = append(lines, "replay\x00"+manifest.ReplayProtection.Key)
 	return digest([]byte(strings.Join(lines, "\n")))
 }

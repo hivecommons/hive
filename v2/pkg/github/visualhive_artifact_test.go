@@ -123,6 +123,7 @@ func buildVerifiedBundleZip(t *testing.T) []byte {
 		"file\x00files/.visual-hive/hive/beads.json\x00" + fileDigest + "\x002",
 		"scan\x00full\x00true\x00\x00\x00plan-1\x00tools-1",
 		"source\x00owner/repo\x00123\x00refs/heads/main\x00abc123\x0042\x0098\x00success",
+		"metadata\x00demo\x00measured\x00ready\x004\x000\x00visual-hive\x000.2.0\x00producer-sha",
 		"replay\x00" + manifest.ReplayProtection.Key,
 	}, "\n")))
 	manifest.Provenance.SubjectDigest = manifest.OverallDigest

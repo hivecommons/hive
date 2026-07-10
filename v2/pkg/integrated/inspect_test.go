@@ -37,7 +37,7 @@ func TestBuildSetupPlanKeepsCoverageAndAuthoritySeparate(t *testing.T) {
 }
 
 func TestWorkflowUsesTwoArtifactProvenanceAndPinnedActions(t *testing.T) {
-	value := workflow(Config{DefaultBranch: "main", VisualHiveRepo: "owner/visual-hive", VisualHiveRef: "0123456789012345678901234567890123456789"})
+	value := workflow(Config{DefaultBranch: "main", VisualHiveRepo: "owner/visual-hive", VisualHiveRef: "0123456789012345678901234567890123456789", ACMMLevel: 4})
 	for _, required := range []string{checkoutActionSHA, setupNodeActionSHA, uploadArtifactActionSHA, "steps.evidence.outputs.artifact-id", "visual-hive-bundle-${{ github.run_id }}"} {
 		if !containsString(value, required) {
 			t.Fatalf("workflow missing %q", required)
@@ -51,6 +51,9 @@ func TestWorkflowUsesTwoArtifactProvenanceAndPinnedActions(t *testing.T) {
 	}
 	if !containsString(value, "hive integration-smoke") {
 		t.Fatal("workflow must validate Hive import artifacts before finalizing a lifecycle bundle")
+	}
+	if !containsString(value, "--acmm-request 4") {
+		t.Fatal("workflow must bind bundle authority to Hive's configured ACMM level")
 	}
 	if containsString(value, "pull_request_target") || containsString(value, "issues: write") || containsString(value, "pull-requests: write") {
 		t.Fatalf("workflow has an unsafe write lane:\n%s", value)

@@ -423,7 +423,8 @@ func waitForPullRequestGate(ctx context.Context, client *hivegithub.Client, repo
 
 func hasVisualHiveCheck(gate hivegithub.PullRequestGate) bool {
 	for _, check := range gate.Checks {
-		if strings.Contains(strings.ToLower(check.Name), "visual hive") && check.State != "pending" && check.State != "queued" && check.State != "in_progress" {
+		name := strings.NewReplacer("-", " ", "_", " ").Replace(strings.ToLower(check.Name))
+		if strings.Contains(name, "visual hive") && check.State != "pending" && check.State != "queued" && check.State != "in_progress" {
 			return true
 		}
 	}
