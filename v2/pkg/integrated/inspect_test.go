@@ -49,6 +49,9 @@ func TestWorkflowUsesTwoArtifactProvenanceAndPinnedActions(t *testing.T) {
 	if strings.Count(value, "include-hidden-files: true") != 2 {
 		t.Fatal("both hidden .visual-hive artifact uploads must opt in explicitly")
 	}
+	if !containsString(value, "hive integration-smoke") {
+		t.Fatal("workflow must validate Hive import artifacts before finalizing a lifecycle bundle")
+	}
 	if containsString(value, "pull_request_target") || containsString(value, "issues: write") || containsString(value, "pull-requests: write") {
 		t.Fatalf("workflow has an unsafe write lane:\n%s", value)
 	}
