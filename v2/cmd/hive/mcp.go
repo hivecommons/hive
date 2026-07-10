@@ -32,6 +32,7 @@ func runMCPTool(ctx context.Context, name string, arguments map[string]any) (any
 	switch name {
 	case "hive_setup_plan", "hive_setup_apply":
 		args = []string{"setup", "--repo", stringArgument(arguments, "repo", ""), "--coverage", stringArgument(arguments, "coverage", ""), "--automation", stringArgument(arguments, "automation", ""), "--provider", stringArgument(arguments, "provider", "codex"), "--state-dir", stateDir, "--json"}
+		args = append(args, "--max-active-issues", fmt.Sprint(integerArgument(arguments, "max_active_issues", 5)))
 		if name == "hive_setup_plan" {
 			args = append(args, "--plan")
 		} else {
@@ -101,6 +102,16 @@ func stringArgument(arguments map[string]any, name, fallback string) string {
 
 func booleanArgument(arguments map[string]any, name string, fallback bool) bool {
 	if value, ok := arguments[name].(bool); ok {
+		return value
+	}
+	return fallback
+}
+
+func integerArgument(arguments map[string]any, name string, fallback int) int {
+	if value, ok := arguments[name].(float64); ok {
+		return int(value)
+	}
+	if value, ok := arguments[name].(int); ok {
 		return value
 	}
 	return fallback

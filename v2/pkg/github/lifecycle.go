@@ -23,6 +23,14 @@ func (c *Client) UpsertLifecycleIssue(ctx context.Context, repository, marker, t
 	if err != nil {
 		return 0, "", false, err
 	}
+	if issueNumber == 0 {
+		if legacyMarker := legacyVisualHiveMarker(body); legacyMarker != "" {
+			issueNumber, err = c.findLifecycleIssue(ctx, owner, repo, legacyMarker)
+			if err != nil {
+				return 0, "", false, err
+			}
+		}
+	}
 	request := &gh.IssueRequest{Title: gh.Ptr(title), Body: gh.Ptr(body), Labels: &labels, State: gh.Ptr("open")}
 	if issueNumber > 0 {
 		issue, _, err := c.client.Issues.Edit(ctx, owner, repo, issueNumber, request)
@@ -36,6 +44,19 @@ func (c *Client) UpsertLifecycleIssue(ctx context.Context, repository, marker, t
 		return 0, "", false, fmt.Errorf("create lifecycle issue: %w", err)
 	}
 	return issue.GetNumber(), issue.GetHTMLURL(), true, nil
+}
+
+func legacyVisualHiveMarker(body string) string {
+	const prefix = "<!-- visual-hive-issue dedupe:"
+	start := strings.Index(body, prefix)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(body[start:], "-->")
+	if end < 0 {
+		return ""
+	}
+	return strings.TrimSpace(body[start : start+end+3])
 }
 
 func (c *Client) UpdateLifecycleIssue(ctx context.Context, repository string, number int, title, body, state string, labels []string) (int, string, error) {

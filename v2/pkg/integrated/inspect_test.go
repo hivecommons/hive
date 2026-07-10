@@ -27,9 +27,12 @@ func TestInspectCheckoutBuildsRepositorySpecificSignals(t *testing.T) {
 }
 
 func TestBuildSetupPlanKeepsCoverageAndAuthoritySeparate(t *testing.T) {
-	plan := buildSetupPlan(SetupOptions{Repository: "owner/repo", Coverage: CoverageComprehensive, Automation: AutomationIssues, Provider: "codex", VisualHive: true}, RepositoryInspection{DefaultBranch: "main"})
+	plan := buildSetupPlan(SetupOptions{Repository: "owner/repo", Coverage: CoverageComprehensive, Automation: AutomationIssues, Provider: "codex", VisualHive: true, MaxActiveIssues: 5}, RepositoryInspection{DefaultBranch: "main"})
 	if plan.Coverage != CoverageComprehensive || plan.Automation != AutomationIssues || plan.ACMMLevel != 4 {
 		t.Fatalf("dimensions were conflated: %+v", plan)
+	}
+	if plan.MaxActiveIssues != 5 {
+		t.Fatalf("active issue WIP limit was not preserved: %+v", plan)
 	}
 	if len(plan.TestingLayers) < 10 || !plan.ReadOnly {
 		t.Fatalf("comprehensive read-only plan incomplete: %+v", plan)

@@ -141,6 +141,7 @@ func applyWorkflowEvidence(ctx context.Context, stateDir string, config Config, 
 	}
 	apply, err := lifecycle.ApplyBundle(bundle, beadStore, visualhive.ApplyLifecycleOptions{
 		TargetRef: config.DefaultBranch, VerificationRunID: fmt.Sprintf("%d", workflow.RunID), VerificationURL: workflow.RunURL,
+		MaxActiveIssues: config.MaxActiveIssues,
 	})
 	if err != nil {
 		return bundle.Validation, visualhive.ApplyLifecycleResult{}, visualhive.OutboxProcessorResult{}, err

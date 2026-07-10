@@ -246,6 +246,23 @@ func TestLifecycleAuditIsAppendOnlyJSONL(t *testing.T) {
 	}
 }
 
+func TestIssuePublicationSelectionEnforcesActiveWIPAndRanksDirectFailuresFirst(t *testing.T) {
+	observations := []Observation{
+		{RepositoryFingerprint: "coverage", State: "present", Severity: "high", IssueKind: "missing_visual_coverage"},
+		{RepositoryFingerprint: "regression", State: "present", Severity: "high", IssueKind: "visual_regression"},
+		{RepositoryFingerprint: "medium", State: "present", Severity: "medium", IssueKind: "visual_regression"},
+	}
+	findings := map[string]*FindingLifecycle{
+		"existing": {RepositoryFingerprint: "existing", IssueNumber: 17, Status: StatusIssueOpen},
+	}
+
+	selected := selectIssuePublications(observations, findings, 2)
+
+	if len(selected) != 1 || !selected["regression"] {
+		t.Fatalf("expected one remaining slot to select the direct high-severity failure, got %v", selected)
+	}
+}
+
 func writeLifecycleBundle(t *testing.T, root, bundleID, state, ref string, authoritative bool) string {
 	t.Helper()
 	manifestPath := writeTestBundle(t, root, false)

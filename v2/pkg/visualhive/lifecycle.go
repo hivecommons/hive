@@ -125,6 +125,7 @@ type ApplyLifecycleOptions struct {
 	TargetRef         string
 	VerificationRunID string
 	VerificationURL   string
+	MaxActiveIssues   int
 }
 
 type ApplyLifecycleResult struct {
@@ -138,6 +139,7 @@ type ApplyLifecycleResult struct {
 	OutboxCreated int      `json:"outbox_created"`
 	BeadsCreated  int      `json:"beads_created"`
 	BeadsSkipped  int      `json:"beads_skipped"`
+	Deferred      int      `json:"deferred"`
 	FindingIDs    []string `json:"finding_ids"`
 }
 
@@ -219,6 +221,7 @@ func (s *LifecycleStore) ApplyBundle(bundle *ValidatedBundle, beadStore *beads.S
 	}
 
 	observedFingerprints := make(map[string]bool, len(manifest.Observations))
+	publicationSet := selectIssuePublications(manifest.Observations, s.state.Findings, options.MaxActiveIssues)
 	for _, observation := range manifest.Observations {
 		observedFingerprints[observation.RepositoryFingerprint] = true
 		finding := s.state.Findings[observation.RepositoryFingerprint]
@@ -294,6 +297,11 @@ func (s *LifecycleStore) ApplyBundle(bundle *ValidatedBundle, beadStore *beads.S
 			} else {
 				action = OutboxUpdateIssue
 			}
+		} else if !publicationSet[observation.RepositoryFingerprint] {
+			result.Deferred++
+			s.auditLocked(LifecycleAuditEntry{Action: "defer_open_issue", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: "active issue work-in-progress limit reached"})
+			result.FindingIDs = append(result.FindingIDs, observation.RepositoryFingerprint)
+			continue
 		}
 		if s.enqueueLocked(outboxForFinding(action, finding, manifest, now)) {
 			result.OutboxCreated++
@@ -348,6 +356,81 @@ func (s *LifecycleStore) ApplyBundle(bundle *ValidatedBundle, beadStore *beads.S
 	}
 	sort.Strings(result.FindingIDs)
 	return result, nil
+}
+
+func selectIssuePublications(observations []Observation, findings map[string]*FindingLifecycle, maxActive int) map[string]bool {
+	selected := map[string]bool{}
+	if maxActive <= 0 {
+		for _, observation := range observations {
+			if observation.State == "present" {
+				selected[observation.RepositoryFingerprint] = true
+			}
+		}
+		return selected
+	}
+	active := 0
+	for _, finding := range findings {
+		if finding != nil && finding.IssueNumber > 0 && finding.Status != StatusResolved && finding.Status != StatusIssueClosed {
+			active++
+		}
+	}
+	slots := maxActive - active
+	if slots <= 0 {
+		return selected
+	}
+	candidates := make([]Observation, 0, len(observations))
+	for _, observation := range observations {
+		if observation.State != "present" {
+			continue
+		}
+		if finding := findings[observation.RepositoryFingerprint]; finding != nil && finding.IssueNumber > 0 {
+			continue
+		}
+		candidates = append(candidates, observation)
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if severityRank(left.Severity) != severityRank(right.Severity) {
+			return severityRank(left.Severity) > severityRank(right.Severity)
+		}
+		if issueKindRank(left.IssueKind) != issueKindRank(right.IssueKind) {
+			return issueKindRank(left.IssueKind) > issueKindRank(right.IssueKind)
+		}
+		return left.RepositoryFingerprint < right.RepositoryFingerprint
+	})
+	for _, observation := range candidates {
+		if len(selected) >= slots {
+			break
+		}
+		selected[observation.RepositoryFingerprint] = true
+	}
+	return selected
+}
+
+func severityRank(value string) int {
+	switch value {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func issueKindRank(value string) int {
+	switch value {
+	case "visual_regression", "selector_contract_failure", "screenshot_diff", "mutation_survivor", "accessibility_failure", "console_error", "network_error", "security_failure":
+		return 4
+	case "workflow_safety", "provider_governance":
+		return 3
+	case "weak_visual_test", "missing_visual_coverage":
+		return 2
+	default:
+		return 1
+	}
 }
 
 func (s *LifecycleStore) PendingOutbox() []OutboxEntry {

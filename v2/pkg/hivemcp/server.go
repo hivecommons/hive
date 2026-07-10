@@ -156,12 +156,13 @@ func tool(name, title, description string, readOnly, destructive bool, schema ma
 
 func setupSchema() map[string]any {
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"repo", "coverage", "automation"}, "properties": map[string]any{
-		"repo":        map[string]any{"type": "string", "pattern": `^[^/]+/[^/]+$`},
-		"coverage":    map[string]any{"type": "string", "enum": []string{"essential", "standard", "comprehensive", "custom"}},
-		"automation":  map[string]any{"type": "string", "enum": []string{"advisory", "issues", "repair-pr", "auto-merge"}},
-		"provider":    map[string]any{"type": "string", "default": "codex"},
-		"visual_hive": map[string]any{"type": "boolean", "default": true},
-		"state_dir":   map[string]any{"type": "string"},
+		"repo":              map[string]any{"type": "string", "pattern": `^[^/]+/[^/]+$`},
+		"coverage":          map[string]any{"type": "string", "enum": []string{"essential", "standard", "comprehensive", "custom"}},
+		"automation":        map[string]any{"type": "string", "enum": []string{"advisory", "issues", "repair-pr", "auto-merge"}},
+		"provider":          map[string]any{"type": "string", "default": "codex"},
+		"visual_hive":       map[string]any{"type": "boolean", "default": true},
+		"max_active_issues": map[string]any{"type": "integer", "minimum": 1, "maximum": 100, "default": 5},
+		"state_dir":         map[string]any{"type": "string"},
 	}}
 }
 

@@ -37,6 +37,7 @@ type SetupOptions struct {
 	VisualHiveArgs    []string
 	VisualHiveRepo    string
 	VisualHiveRef     string
+	MaxActiveIssues   int
 	GitHub            *hivegithub.Client
 	Policy            automation.Policy
 }
@@ -95,7 +96,8 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		Coverage: options.Coverage, Automation: options.Automation, Provider: options.Provider,
 		ProviderCommand: options.ProviderCommand, ProviderArgs: append([]string(nil), options.ProviderArgs...),
 		ACMMLevel: acmmForAutomation(options.Automation), VisualHive: options.VisualHive,
-		VisualHiveRepo: options.VisualHiveRepo, VisualHiveRef: options.VisualHiveRef,
+		MaxActiveIssues: options.MaxActiveIssues,
+		VisualHiveRepo:  options.VisualHiveRepo, VisualHiveRef: options.VisualHiveRef,
 		VisualHiveCommand: options.VisualHiveCommand, VisualHiveArgs: append([]string(nil), options.VisualHiveArgs...),
 		TestCommands: cloneCommands(inspection.TestCommands), AllowedRepairPaths: []string{"src/**", "test/**", "tests/**", "**/*.test.*", "**/*.spec.*", "**/*_test.go"},
 		AllowedAutoMergePaths: []string{"test/**", "tests/**", "**/*.test.*", "**/*.spec.*", "**/*_test.go"},
@@ -183,6 +185,9 @@ func validateSetupOptions(options SetupOptions) error {
 	if options.StateDir == "" || options.Provider == "" || options.ProviderCommand == "" {
 		return fmt.Errorf("state directory and provider are required")
 	}
+	if options.MaxActiveIssues < 1 || options.MaxActiveIssues > 100 {
+		return fmt.Errorf("maximum active issues must be from 1 through 100")
+	}
 	if options.Apply && options.VisualHive && (options.VisualHiveCommand == "" || options.VisualHiveRepo == "" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(options.VisualHiveRef)) {
 		return fmt.Errorf("Visual Hive setup requires a command, repository, and immutable 40-character commit SHA")
 	}
@@ -205,6 +210,7 @@ func buildSetupPlan(options SetupOptions, inspection RepositoryInspection) Setup
 		SchemaVersion: PlanSchema, GeneratedAt: time.Now().UTC(), Repository: options.Repository,
 		Coverage: options.Coverage, Automation: options.Automation, Provider: options.Provider,
 		ACMMLevel: acmmForAutomation(options.Automation), VisualHive: options.VisualHive, Inspection: inspection,
+		MaxActiveIssues: options.MaxActiveIssues,
 		TestingLayers:   layersForCoverage(options.Coverage),
 		FilesToManage:   managedFiles,
 		RequiredActions: []string{"Review and merge the setup PR", "Run hive doctor", "Launch the first complete production scan"},
@@ -315,7 +321,7 @@ func writeManagedFiles(root string, config Config, inspection RepositoryInspecti
 	repositoryConfig := map[string]any{
 		"schema_version": ConfigSchema, "repository": config.Repository, "repository_id": config.RepositoryID,
 		"default_branch": config.DefaultBranch, "coverage": config.Coverage, "automation": config.Automation,
-		"provider": config.Provider, "acmm_level": config.ACMMLevel, "visual_hive": config.VisualHive,
+		"provider": config.Provider, "acmm_level": config.ACMMLevel, "max_active_issues": config.MaxActiveIssues, "visual_hive": config.VisualHive,
 		"visual_hive_repository": config.VisualHiveRepo, "visual_hive_ref": config.VisualHiveRef,
 		"test_commands": config.TestCommands, "allowed_repair_paths": config.AllowedRepairPaths,
 		"allowed_auto_merge_paths": config.AllowedAutoMergePaths, "allowed_auto_merge_risk": config.AllowedAutoMergeRisk,
@@ -438,11 +444,11 @@ jobs:
 }
 
 func quickstart(config Config, inspection RepositoryInspection) string {
-	return fmt.Sprintf("# Hive + Visual Hive\n\nThis repository is managed by Hive with `%s` coverage and `%s` automation authority. Visual Hive runs deterministic checks; Hive alone owns issues, repair branches, pull requests, merges, and closure.\n\n## Operator commands\n\nSet `HIVE_STATE_DIR` to the persistent Hive data directory, then run:\n\n```sh\nhive doctor --json\nhive status --json\nhive run --json\nhive pause\nhive resume\n```\n\nDefault branch: `%s`. Detected languages: %s.\n", config.Coverage, config.Automation, config.DefaultBranch, strings.Join(inspection.Languages, ", "))
+	return fmt.Sprintf("# Hive + Visual Hive\n\nThis repository is managed by Hive with `%s` coverage and `%s` automation authority. Visual Hive runs deterministic checks; Hive alone owns issues, repair branches, pull requests, merges, and closure. Hive keeps at most %d managed findings active as GitHub issues at once; every additional finding remains durable as a bead until capacity is available.\n\n## Operator commands\n\nSet `HIVE_STATE_DIR` to the persistent Hive data directory, then run:\n\n```sh\nhive doctor --json\nhive status --json\nhive run --json\nhive pause\nhive resume\n```\n\nDefault branch: `%s`. Detected languages: %s.\n", config.Coverage, config.Automation, config.MaxActiveIssues, config.DefaultBranch, strings.Join(inspection.Languages, ", "))
 }
 
 func setupPRBody(marker string, plan SetupPlan) string {
-	return fmt.Sprintf("%s\n\nInstalls Hive + Visual Hive as one production testing and repair experience.\n\n- Coverage: **%s**\n- Automation authority: **%s**\n- ACMM enforcement: **L%d**\n- Provider: **%s**\n- Detected languages: %s\n- Testing layers: %s\n\nThe Visual workflow is read-only and uploads provenance-bound evidence. Hive is the only GitHub lifecycle writer. Review tracked baselines and branch protection before enabling auto-merge.", marker, plan.Coverage, plan.Automation, plan.ACMMLevel, plan.Provider, strings.Join(plan.Inspection.Languages, ", "), strings.Join(plan.TestingLayers, ", "))
+	return fmt.Sprintf("%s\n\nInstalls Hive + Visual Hive as one production testing and repair experience.\n\n- Coverage: **%s**\n- Automation authority: **%s**\n- ACMM enforcement: **L%d**\n- Active issue WIP limit: **%d**\n- Provider: **%s**\n- Detected languages: %s\n- Testing layers: %s\n\nThe Visual workflow is read-only and uploads provenance-bound evidence. Hive is the only GitHub lifecycle writer. Review tracked baselines and branch protection before enabling auto-merge.", marker, plan.Coverage, plan.Automation, plan.ACMMLevel, plan.MaxActiveIssues, plan.Provider, strings.Join(plan.Inspection.Languages, ", "), strings.Join(plan.TestingLayers, ", "))
 }
 
 func authorizeSetup(store *Store, policy automation.Policy, repository string, action automation.Action) error {

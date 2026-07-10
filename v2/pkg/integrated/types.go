@@ -53,6 +53,7 @@ type SetupPlan struct {
 	Automation      Automation           `json:"automation"`
 	Provider        string               `json:"provider"`
 	ACMMLevel       int                  `json:"acmm_level"`
+	MaxActiveIssues int                  `json:"max_active_issues"`
 	VisualHive      bool                 `json:"visual_hive"`
 	Inspection      RepositoryInspection `json:"inspection"`
 	TestingLayers   []string             `json:"testing_layers"`
@@ -73,6 +74,7 @@ type Config struct {
 	ProviderCommand       string                `json:"provider_command"`
 	ProviderArgs          []string              `json:"provider_args,omitempty"`
 	ACMMLevel             int                   `json:"acmm_level"`
+	MaxActiveIssues       int                   `json:"max_active_issues"`
 	VisualHive            bool                  `json:"visual_hive"`
 	VisualHiveRepo        string                `json:"visual_hive_repo"`
 	VisualHiveRef         string                `json:"visual_hive_ref"`

@@ -140,6 +140,7 @@ func runSetupCommand(args []string) int {
 	visualCommand := flags.String("visual-hive-command", "node", "Visual Hive CLI launcher")
 	visualRepo := flags.String("visual-hive-repo", valueOrEnv("VISUAL_HIVE_REPOSITORY", "DavidDiaz0317/visual-hive"), "Visual Hive source repository")
 	visualRef := flags.String("visual-hive-ref", os.Getenv("VISUAL_HIVE_REF"), "immutable Visual Hive commit SHA")
+	maxActiveIssues := flags.Int("max-active-issues", 5, "maximum concurrently open Hive-managed findings")
 	stateDir := flags.String("state-dir", defaultIntegratedStateDir(), "persistent Hive state directory")
 	planOnly := flags.Bool("plan", false, "produce a read-only setup plan")
 	start := flags.Bool("start", false, "start after the setup PR is merged and doctor is green")
@@ -196,7 +197,8 @@ func runSetupCommand(args []string) int {
 		VisualHive: *visualHive, StateDir: *stateDir, Apply: !*planOnly, Start: *start,
 		VisualHiveCommand: *visualCommand, VisualHiveArgs: append([]string(nil), visualArgs...),
 		VisualHiveRepo: *visualRepo, VisualHiveRef: *visualRef, GitHub: client,
-		Policy: automation.Policy{ACMMLevel: acmm, Mode: mode, AllowedRepositories: []string{*repository}, MaxRepairAttempts: 3},
+		MaxActiveIssues: *maxActiveIssues,
+		Policy:          automation.Policy{ACMMLevel: acmm, Mode: mode, AllowedRepositories: []string{*repository}, MaxRepairAttempts: 3},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "setup failed:", err)

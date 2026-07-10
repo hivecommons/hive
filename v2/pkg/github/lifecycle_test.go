@@ -51,6 +51,35 @@ func TestLifecycleIssueUpsertDeduplicatesByMarker(t *testing.T) {
 	}
 }
 
+func TestLifecycleIssueUpsertAdoptsLegacyVisualHiveFingerprint(t *testing.T) {
+	marker := "<!-- hive-visual-fingerprint: repository-hash -->"
+	legacy := "<!-- visual-hive-issue dedupe:visual-hive:owner:repo:finding -->"
+	created := false
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/issues":
+			_, _ = io.WriteString(writer, `[{"number":11,"html_url":"https://github.test/owner/repo/issues/11","body":"`+legacy+`"}]`)
+		case request.Method == http.MethodPatch && request.URL.Path == "/repos/owner/repo/issues/11":
+			assertIssueRequest(t, request, "open")
+			_, _ = io.WriteString(writer, `{"number":11,"html_url":"https://github.test/owner/repo/issues/11"}`)
+		case request.Method == http.MethodPost:
+			created = true
+			http.Error(writer, "must adopt", http.StatusInternalServerError)
+		default:
+			http.Error(writer, request.Method+" "+request.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+
+	number, _, wasCreated, err := client.UpsertLifecycleIssue(context.Background(), "owner/repo", marker, "Finding", marker+"\n"+legacy+"\nbody", []string{"hive/active"})
+
+	if err != nil || number != 11 || wasCreated || created {
+		t.Fatalf("legacy issue was not adopted: number=%d created=%t post=%t err=%v", number, wasCreated, created, err)
+	}
+}
+
 func TestUpdateLifecycleIssueClosesExplicitly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Method != http.MethodPatch || request.URL.Path != "/repos/owner/repo/issues/9" {
