@@ -167,7 +167,7 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-			if err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model); err != nil {
+			if _, _, err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model); err != nil {
 				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 			}
 			return

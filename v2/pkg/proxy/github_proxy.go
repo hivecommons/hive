@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
+	"github.com/kubestellar/hive/v2/pkg/tokens"
 )
 
 const (
@@ -52,6 +53,17 @@ type GitHubProxy struct {
 	certCache map[string]cachedCert
 
 	inference *inferenceRouter
+
+	// tokenSink records per-agent token usage for bare-mode inference
+	// agents, whose usage the file-scanning token collector cannot see
+	// otherwise. May be nil (Record is a safe no-op on a nil sink).
+	tokenSink *tokens.InferenceSink
+}
+
+// SetTokenSink wires the inference token sink so the translator can record
+// per-agent usage from upstream OpenAI responses into the shared token store.
+func (p *GitHubProxy) SetTokenSink(sink *tokens.InferenceSink) {
+	p.tokenSink = sink
 }
 
 type cachedCert struct {
@@ -1016,8 +1028,12 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-			if err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model); err != nil {
+			in, out, err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model)
+			if err != nil {
 				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
+			}
+			if in > 0 || out > 0 {
+				p.tokenSink.Record(agentName, route.Model, in, out)
 			}
 			return
 		}
@@ -1033,6 +1049,10 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			"len", len(respBody),
 			"preview", truncateBytes(respBody, 500),
 		)
+
+		if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
+			p.tokenSink.Record(agentName, route.Model, in, out)
+		}
 
 		translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 		if err != nil {
@@ -1149,8 +1169,12 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		if _, err := conn.Write([]byte(hdr)); err != nil {
 			return
 		}
-		if err := translateOpenAISSEToAnthropic(resp.Body, conn, route.Model); err != nil {
+		in, out, err := translateOpenAISSEToAnthropic(resp.Body, conn, route.Model)
+		if err != nil {
 			p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
+		}
+		if in > 0 || out > 0 {
+			p.tokenSink.Record(agentName, route.Model, in, out)
 		}
 		return
 	}
@@ -1159,6 +1183,10 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	if err != nil {
 		p.writeHTTPError(conn, http.StatusBadGateway, "failed to read inference response")
 		return
+	}
+
+	if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
+		p.tokenSink.Record(agentName, route.Model, in, out)
 	}
 
 	translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)

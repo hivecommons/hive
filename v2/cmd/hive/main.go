@@ -26,9 +26,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/kubestellar/hive/v2/pkg/advisory"
-	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/agent"
-	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/classify"
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -36,7 +34,9 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/discord"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/governor"
+	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/notify"
 	"github.com/kubestellar/hive/v2/pkg/policies"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
@@ -558,7 +558,7 @@ func main() {
 	if badgeURL == "" {
 		badgeURL = "https://gist.githubusercontent.com/clubanderson/b9a9ae8469f1897a22d5a40629bc1e82/raw/coverage-badge.json"
 	}
-		primaryRepo := cfg.Project.PrimaryRepo
+	primaryRepo := cfg.Project.PrimaryRepo
 	if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 		primaryRepo = cfg.Project.Repos[0]
 	}
@@ -1164,6 +1164,13 @@ func main() {
 	} else {
 		dashboard.SetProxyViolationsProvider(githubProxy.Violations)
 
+		// Wire the inference token sink so the translator records per-agent
+		// usage (from the gateway's OpenAI usage block) into the same metrics
+		// dir the token collector scans. Without this, bare-mode inference
+		// agents (litellm/vllm/llm-d) never write a scannable session file and
+		// their consumption reads as zero.
+		githubProxy.SetTokenSink(tokens.NewInferenceSink(cfg.Data.MetricsDir, logger))
+
 		vllmEndpoints := parseEndpointList(envOrDefault("HIVE_VLLM_ENDPOINT", "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000"))
 		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"))
 		inferenceEndpoints := map[string][]string{
@@ -1340,6 +1347,23 @@ func main() {
 				ACMMLevel:   acmmLvl,
 				Agents:      agents,
 				Governor:    hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				// Tokens carries the spoke's authoritative cumulative token
+				// total (same store the dashboard token panel and governor
+				// budget read). It flows to the hub's My Hives token column so
+				// heartbeat-only hives (reached via heartbeat, not hub-kubectl)
+				// display real consumption. Refreshed each heartbeat, so the
+				// column is as fresh as the last heartbeat. Despite the
+				// "24h"-suffixed field name this is a lifetime/window total,
+				// consistent with what the spoke dashboard already shows.
+				Tokens24h: func() int64 {
+					if tokenCollector == nil {
+						return 0
+					}
+					if summary := tokenCollector.Summary(); summary != nil {
+						return summary.TotalTokens
+					}
+					return 0
+				}(),
 				Contributors: func() hub.ContributorSummary {
 					reg, active := dashSrv.ContributorSummary()
 					return hub.ContributorSummary{Registered: reg, Active: active}
@@ -1349,7 +1373,7 @@ func main() {
 					out := make([]hub.LeaderboardEntry, len(lb))
 					for i, e := range lb {
 						out[i] = hub.LeaderboardEntry{
-							GitHubUsername:  e.GitHubUsername,
+							GitHubUsername: e.GitHubUsername,
 							AvatarURL:      e.AvatarURL,
 							TrustTier:      e.TrustTier,
 							TasksCompleted: e.TasksCompleted,
@@ -1371,7 +1395,7 @@ func main() {
 					}
 					return ""
 				}(),
-				Health:       dashSrv.HealthSummary(),
+				Health: dashSrv.HealthSummary(),
 				DashboardURL: func() string {
 					if cfg.Hub.DashboardURL != "" {
 						return cfg.Hub.DashboardURL
@@ -1383,13 +1407,13 @@ func main() {
 					}
 					return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 				}(),
-				SnapshotURL:  cfg.Hub.SnapshotURL,
-				HiveType:     cfg.Hub.HiveType,
-				ClusterID:    cfg.Hub.ClusterID,
-				IsPublic:     cfg.Hub.IsPublic,
-				Version:           "3.0.0",
-				GitHash:           gitShort,
-				GitBranch:         gitBranch,
+				SnapshotURL:             cfg.Hub.SnapshotURL,
+				HiveType:                cfg.Hub.HiveType,
+				ClusterID:               cfg.Hub.ClusterID,
+				IsPublic:                cfg.Hub.IsPublic,
+				Version:                 "3.0.0",
+				GitHash:                 gitShort,
+				GitBranch:               gitBranch,
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
 				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
@@ -1548,7 +1572,7 @@ func main() {
 			out := make([]hub.LeaderboardEntry, len(lb))
 			for i, e := range lb {
 				out[i] = hub.LeaderboardEntry{
-					GitHubUsername:  e.GitHubUsername,
+					GitHubUsername: e.GitHubUsername,
 					AvatarURL:      e.AvatarURL,
 					TrustTier:      e.TrustTier,
 					TasksCompleted: e.TasksCompleted,
@@ -2217,22 +2241,22 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	}
 
 	state := &snapshot.PersistedState{
-		Agents:           agents,
-		GovernorMode:     string(govState.Mode),
-		BudgetLimit:      budget.WeeklyLimit,
-		BudgetIgnored:    budget.IgnoredAgents,
-		BudgetIgnoreAll:  budget.IgnoreAll,
-		CadenceOverrides: cadenceOverrides,
-		LastKicks:        govState.LastKick,
+		Agents:               agents,
+		GovernorMode:         string(govState.Mode),
+		BudgetLimit:          budget.WeeklyLimit,
+		BudgetIgnored:        budget.IgnoredAgents,
+		BudgetIgnoreAll:      budget.IgnoreAll,
+		CadenceOverrides:     cadenceOverrides,
+		LastKicks:            govState.LastKick,
 		BudgetSpend:          budget.CurrentSpend,
 		BudgetResetAt:        budget.ResetAt,
 		BudgetByAgent:        budget.ByAgent,
 		BudgetByModel:        budget.ByModel,
 		BudgetWindowBaseline: budget.WindowBaseline,
-		KickHistory:      kickEntries,
-		IssueCosts:       issueCosts,
-		LastEval:         govState.LastEval,
-		ACMMLevel:        cfg.ACMMLevel,
+		KickHistory:          kickEntries,
+		IssueCosts:           issueCosts,
+		LastEval:             govState.LastEval,
+		ACMMLevel:            cfg.ACMMLevel,
 	}
 
 	if err := snapshot.SaveState(path, state, logger); err != nil {

@@ -363,7 +363,7 @@ func TestTranslateOpenAISSEToAnthropic(t *testing.T) {
 	}, "\n")
 
 	var buf strings.Builder
-	err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "test-model")
+	_, _, err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "test-model")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestTranslateOpenAISSEToAnthropic_ToolCalls(t *testing.T) {
 	}, "\n")
 
 	var buf strings.Builder
-	err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "test-model")
+	_, _, err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "test-model")
 	if err != nil {
 		t.Fatal(err)
 	}

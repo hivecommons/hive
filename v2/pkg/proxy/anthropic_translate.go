@@ -27,6 +27,11 @@ func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen i
 		Model:  targetModel,
 		Stream: req.Stream,
 	}
+	if req.Stream {
+		// Request the terminal usage chunk so streamed inference responses
+		// carry token counts we can attribute to the agent.
+		openaiReq.StreamOptions = &openaiStreamOptions{IncludeUsage: true}
+	}
 
 	var totalChars int
 
@@ -232,6 +237,21 @@ func translateAnthropicToolChoice(raw json.RawMessage) json.RawMessage {
 	}
 }
 
+// extractOpenAIUsage pulls the prompt/completion token counts from an upstream
+// OpenAI (non-streaming) chat completion response body. Returns (0, 0) when no
+// usage block is present. Used to attribute inference-agent token consumption
+// into the token store.
+func extractOpenAIUsage(body []byte) (inputTokens, outputTokens int64) {
+	var resp openaiResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, 0
+	}
+	if resp.Usage == nil {
+		return 0, 0
+	}
+	return int64(resp.Usage.PromptTokens), int64(resp.Usage.CompletionTokens)
+}
+
 // translateOpenAIResponseToAnthropic converts a non-streaming OpenAI Chat
 // Completions response into an Anthropic Messages response.
 func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, error) {
@@ -295,8 +315,11 @@ func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, erro
 
 // translateOpenAISSEToAnthropic reads an OpenAI SSE stream and writes the
 // equivalent Anthropic SSE events to the writer. The caller must close the
-// reader when done.
-func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error {
+// reader when done. It returns the token usage reported in the stream's
+// terminal usage chunk (present when the outbound request set
+// stream_options.include_usage). Returns (0, 0) when the gateway did not emit
+// usage.
+func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inputTokens, outputTokens int64, err error) {
 	msgID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 
 	writeSSE(w, "message_start", anthropicSSEMessageStart{
@@ -315,6 +338,7 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error
 	const maxSSELine = 256 * 1024
 	scanner.Buffer(make([]byte, maxSSELine), maxSSELine)
 
+	var totalInputTokens int
 	var totalOutputTokens int
 	var contentBlockIndex int
 	textBlockStarted := false
@@ -430,11 +454,14 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) error
 
 		if chunk.Usage != nil {
 			totalOutputTokens = chunk.Usage.CompletionTokens
+			if chunk.Usage.PromptTokens > 0 {
+				totalInputTokens = chunk.Usage.PromptTokens
+			}
 		}
 	}
 
 	writeSSE(w, "message_stop", map[string]string{"type": "message_stop"})
-	return scanner.Err()
+	return int64(totalInputTokens), int64(totalOutputTokens), scanner.Err()
 }
 
 type sseToolCallAccumulator struct {
@@ -560,9 +587,11 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 
 		if f, ok := w.(http.Flusher); ok {
 			flushWriter := &flushResponseWriter{w: w, f: f}
-			return translateOpenAISSEToAnthropic(resp.Body, flushWriter, route.Model)
+			_, _, err := translateOpenAISSEToAnthropic(resp.Body, flushWriter, route.Model)
+			return err
 		}
-		return translateOpenAISSEToAnthropic(resp.Body, w, route.Model)
+		_, _, err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model)
+		return err
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -672,17 +701,26 @@ type anthropicSSEMessage struct {
 }
 
 type openaiRequest struct {
-	Model      string          `json:"model"`
-	Messages   []openaiMessage `json:"messages"`
-	MaxTokens  int             `json:"max_tokens,omitempty"`
-	Stream     bool            `json:"stream,omitempty"`
-	Tools      []openaiTool    `json:"tools,omitempty"`
-	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
+	Model         string               `json:"model"`
+	Messages      []openaiMessage      `json:"messages"`
+	MaxTokens     int                  `json:"max_tokens,omitempty"`
+	Stream        bool                 `json:"stream,omitempty"`
+	StreamOptions *openaiStreamOptions `json:"stream_options,omitempty"`
+	Tools         []openaiTool         `json:"tools,omitempty"`
+	ToolChoice    json.RawMessage      `json:"tool_choice,omitempty"`
+}
+
+// openaiStreamOptions asks the gateway to emit a terminal usage chunk on
+// streamed responses. Without include_usage most OpenAI-compatible gateways
+// omit token counts from SSE responses, so inference-agent streaming usage
+// would be uncountable.
+type openaiStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type openaiToolChoiceNamed struct {
-	Type     string                    `json:"type"`
-	Function openaiToolChoiceFunction  `json:"function"`
+	Type     string                   `json:"type"`
+	Function openaiToolChoiceFunction `json:"function"`
 }
 
 type openaiToolChoiceFunction struct {
@@ -733,13 +771,14 @@ type openaiResponse struct {
 type openaiUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type openaiSSEChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string               `json:"content"`
-			ToolCalls []openaiSSEToolCall   `json:"tool_calls,omitempty"`
+			Content   string              `json:"content"`
+			ToolCalls []openaiSSEToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`

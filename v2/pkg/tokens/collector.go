@@ -21,6 +21,11 @@ type SessionEntry struct {
 	OutputTokens  int64  `json:"output_tokens,omitempty"`
 	Message       string `json:"message,omitempty"`
 	Role          string `json:"role,omitempty"`
+	// Agent, when set, pins the session to a specific agent instead of
+	// relying on keyword detection from the first user message. Inference
+	// (bare-mode) agents set this so the translator-written usage records
+	// attribute cleanly. Normal Claude/Copilot session files omit it.
+	Agent string `json:"agent,omitempty"`
 }
 
 type SessionSummary struct {
@@ -47,39 +52,39 @@ type AgentModelBucket struct {
 }
 
 type AggregateSummary struct {
-	TotalTokens    int64                        `json:"total_tokens"`
-	TotalInput     int64                        `json:"total_input"`
-	TotalOutput    int64                        `json:"total_output"`
-	TotalCacheRead int64                        `json:"total_cache_read"`
-	TotalCacheCreate int64                      `json:"total_cache_create"`
-	TotalMessages  int                          `json:"total_messages"`
-	ByAgent        map[string]int64             `json:"by_agent"`
-	ByModel        map[string]int64             `json:"by_model"`
-	ByAgentDetail  map[string]*AgentModelBucket `json:"by_agent_detail"`
-	ByModelDetail  map[string]*AgentModelBucket `json:"by_model_detail"`
-	Sessions       []SessionSummary             `json:"sessions"`
-	SessionCount   int                          `json:"session_count"`
+	TotalTokens      int64                        `json:"total_tokens"`
+	TotalInput       int64                        `json:"total_input"`
+	TotalOutput      int64                        `json:"total_output"`
+	TotalCacheRead   int64                        `json:"total_cache_read"`
+	TotalCacheCreate int64                        `json:"total_cache_create"`
+	TotalMessages    int                          `json:"total_messages"`
+	ByAgent          map[string]int64             `json:"by_agent"`
+	ByModel          map[string]int64             `json:"by_model"`
+	ByAgentDetail    map[string]*AgentModelBucket `json:"by_agent_detail"`
+	ByModelDetail    map[string]*AgentModelBucket `json:"by_model_detail"`
+	Sessions         []SessionSummary             `json:"sessions"`
+	SessionCount     int                          `json:"session_count"`
 }
 
 const (
-	defaultScanInterval  = 30 * time.Second
-	defaultPersistPath   = "/data/token-summary.json"
+	defaultScanInterval = 30 * time.Second
+	defaultPersistPath  = "/data/token-summary.json"
 )
 
 type Collector struct {
-	sessionsDir         string
-	claudeSessionsDir   string
-	copilotSessionsDir  string
-	persistPath         string
-	detector            func(string) string
-	logger              *slog.Logger
-	mu                  sync.RWMutex
-	latest              *AggregateSummary
-	issueCosts          map[string]int64
-	scanInterval        time.Duration
-	prevSessionCount    int
-	prevTotalTokens     int64
-	prevByAgent         map[string]int64
+	sessionsDir        string
+	claudeSessionsDir  string
+	copilotSessionsDir string
+	persistPath        string
+	detector           func(string) string
+	logger             *slog.Logger
+	mu                 sync.RWMutex
+	latest             *AggregateSummary
+	issueCosts         map[string]int64
+	scanInterval       time.Duration
+	prevSessionCount   int
+	prevTotalTokens    int64
+	prevByAgent        map[string]int64
 }
 
 func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
@@ -290,11 +295,16 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 	scanner.Buffer(make([]byte, 0, maxScanBufSize), maxScanBufSize)
 
 	firstUserMsg := ""
+	explicitAgent := ""
 	var lastTimestamp int64
 	for scanner.Scan() {
 		var entry SessionEntry
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
+		}
+
+		if entry.Agent != "" && explicitAgent == "" {
+			explicitAgent = entry.Agent
 		}
 
 		if entry.Role == "user" && firstUserMsg == "" {
@@ -318,7 +328,9 @@ func parseSessionFile(path string, agentDetector func(string) string) (*SessionS
 	summary.TotalTokens = summary.InputTokens + summary.OutputTokens + summary.CacheRead + summary.CacheCreate
 	summary.LastActive = lastTimestamp
 
-	if agentDetector != nil && firstUserMsg != "" {
+	if explicitAgent != "" {
+		summary.Agent = explicitAgent
+	} else if agentDetector != nil && firstUserMsg != "" {
 		summary.Agent = agentDetector(firstUserMsg)
 	}
 

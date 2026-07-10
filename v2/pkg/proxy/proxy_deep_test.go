@@ -1589,7 +1589,7 @@ func TestHandleInferenceRequestStreaming(t *testing.T) {
 func TestTranslateOpenAISSEToAnthropicEmptyStream(t *testing.T) {
 	sseInput := "data: [DONE]\n\n"
 	var buf strings.Builder
-	err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
+	_, _, err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1605,7 +1605,7 @@ func TestTranslateOpenAISSEToAnthropicEmptyStream(t *testing.T) {
 func TestTranslateOpenAISSEToAnthropicBadJSON(t *testing.T) {
 	sseInput := "data: {invalid json}\n\ndata: [DONE]\n\n"
 	var buf strings.Builder
-	err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
+	_, _, err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1618,7 +1618,7 @@ func TestTranslateOpenAISSEToAnthropicBadJSON(t *testing.T) {
 func TestTranslateOpenAISSEToAnthropicNonDataLines(t *testing.T) {
 	sseInput := ": comment\nevent: something\nretry: 1000\ndata: [DONE]\n\n"
 	var buf strings.Builder
-	err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
+	_, _, err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1635,7 +1635,7 @@ func TestTranslateOpenAISSEWithUsage(t *testing.T) {
 	}, "\n")
 
 	var buf strings.Builder
-	err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
+	_, _, err := translateOpenAISSEToAnthropic(strings.NewReader(sseInput), &buf, "model")
 	if err != nil {
 		t.Fatal(err)
 	}
