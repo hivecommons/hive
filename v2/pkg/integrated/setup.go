@@ -398,11 +398,30 @@ jobs:
         run: |
           mv .hive-visual-tooling "$RUNNER_TEMP/visual-hive-tooling"
           echo "VISUAL_HIVE_CLI=$RUNNER_TEMP/visual-hive-tooling/packages/cli/dist/index.js" >> "$GITHUB_ENV"
+      - name: Install target dependencies and matching Playwright browser
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            corepack enable
+            yarn install --immutable
+          elif [ -f package.json ]; then
+            npm install
+          fi
+          playwright_cli="$RUNNER_TEMP/visual-hive-tooling/node_modules/@playwright/test/cli.js"
+          if [ -f node_modules/@playwright/test/cli.js ]; then
+            playwright_cli="node_modules/@playwright/test/cli.js"
+          fi
+          node "$playwright_cli" install --with-deps chromium
       - name: Run complete deterministic production scan
         shell: bash
         run: |
           set +e
-          node "$VISUAL_HIVE_CLI" pipeline --config visual-hive.config.yaml --mode full --ci --continue-on-error
+          node "$VISUAL_HIVE_CLI" pipeline --config visual-hive.config.yaml --mode full --ci --continue-on-error --skip-install
           pipeline_exit=$?
           set -e
           printf '%%s\n' "$pipeline_exit" > .visual-hive/pipeline-exit-code.txt

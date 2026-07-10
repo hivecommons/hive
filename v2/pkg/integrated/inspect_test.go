@@ -55,6 +55,9 @@ func TestWorkflowUsesTwoArtifactProvenanceAndPinnedActions(t *testing.T) {
 	if !containsString(value, "hive integration-smoke") {
 		t.Fatal("workflow must validate Hive import artifacts before finalizing a lifecycle bundle")
 	}
+	if !containsString(value, "playwright_cli") || !containsString(value, "install --with-deps chromium") || !containsString(value, "--skip-install") {
+		t.Fatal("workflow must install the target Playwright browser revision once before the production scan")
+	}
 	if !containsString(value, "--acmm-request 4") {
 		t.Fatal("workflow must bind bundle authority to Hive's configured ACMM level")
 	}
