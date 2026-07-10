@@ -43,6 +43,9 @@ func TestWorkflowUsesTwoArtifactProvenanceAndPinnedActions(t *testing.T) {
 			t.Fatalf("workflow missing %q", required)
 		}
 	}
+	if !containsString(value, "pipeline-exit-code.txt") || !containsString(value, "set +e") {
+		t.Fatal("workflow must publish evidence after a deterministic red verdict")
+	}
 	if containsString(value, "pull_request_target") || containsString(value, "issues: write") || containsString(value, "pull-requests: write") {
 		t.Fatalf("workflow has an unsafe write lane:\n%s", value)
 	}

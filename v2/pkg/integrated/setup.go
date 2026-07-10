@@ -396,7 +396,12 @@ jobs:
       - name: Run complete deterministic production scan
         shell: bash
         run: |
+          set +e
           node "$VISUAL_HIVE_CLI" pipeline --config visual-hive.config.yaml --mode full --ci --continue-on-error
+          pipeline_exit=$?
+          set -e
+          printf '%%s\n' "$pipeline_exit" > .visual-hive/pipeline-exit-code.txt
+          echo "Visual Hive deterministic pipeline exit: $pipeline_exit"
           node "$VISUAL_HIVE_CLI" issues --config visual-hive.config.yaml --write
           node -e 'const fs=require("fs");const candidates=[".visual-hive/plan.full.json",".visual-hive/plan.json"];const p=candidates.find(fs.existsSync);const v=p?JSON.parse(fs.readFileSync(p,"utf8")):{};const rows=Array.isArray(v.items)?v.items:[];const ids=[...new Set(rows.map(x=>x.contractId||x.id).filter(Boolean))].sort();fs.writeFileSync(".visual-hive/evaluated-contracts.txt",ids.join("\n")+"\n")'
       - name: Upload independently verifiable evidence
