@@ -39,8 +39,8 @@ func TestGitSourceSlug(t *testing.T) {
 
 func TestNewGitSource_Defaults(t *testing.T) {
 	config := GitSourceConfig{
-		Name: "test",
-		URL:  "https://github.com/org/repo",
+		Name:  "test",
+		URL:   "https://github.com/org/repo",
 		Layer: LayerProject,
 	}
 
@@ -67,7 +67,7 @@ func TestNewGitSource_WithSubpath(t *testing.T) {
 
 	gs := NewGitSource(config, "/tmp/test-knowledge", slog.Default())
 
-	expectedClone := "/tmp/test-knowledge/git-sources/github.com_org_repo__docs_skills"
+	expectedClone := filepath.Join("/tmp/test-knowledge", "git-sources", "github.com_org_repo__docs_skills")
 	if gs.CloneDir() != expectedClone {
 		t.Errorf("clone dir = %q, want %q", gs.CloneDir(), expectedClone)
 	}

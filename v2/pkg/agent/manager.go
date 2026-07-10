@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/claude"
@@ -25,11 +24,11 @@ import (
 type ProcessState string
 
 const (
-	StateIdle     ProcessState = "idle"
-	StateRunning  ProcessState = "running"
-	StateStopped  ProcessState = "stopped"
-	StateFailed   ProcessState = "failed"
-	StatePaused   ProcessState = "paused"
+	StateIdle    ProcessState = "idle"
+	StateRunning ProcessState = "running"
+	StateStopped ProcessState = "stopped"
+	StateFailed  ProcessState = "failed"
+	StatePaused  ProcessState = "paused"
 )
 
 type KickRecord struct {
@@ -48,50 +47,50 @@ const (
 )
 
 type AgentProcess struct {
-	Name            string
-	ID              string
-	Config          config.AgentConfig
-	State           ProcessState
-	PID             int
-	UID             int
-	StartedAt       *time.Time
-	LastKick        *time.Time
-	Paused          bool
-	PausedAt        time.Time
-	PausedReason    string
-	PausedTrigger   string
-	PinnedCLI       string
-	PinnedModel     string
-	ModelOverride   string
-	BackendOverride string
-	RestartCount    int
-	OutputBuffer    *RingBuffer
-	lastPaneCapture []string
-	paneMu          sync.RWMutex
-	KickHistory     []KickRecord
+	Name               string
+	ID                 string
+	Config             config.AgentConfig
+	State              ProcessState
+	PID                int
+	UID                int
+	StartedAt          *time.Time
+	LastKick           *time.Time
+	Paused             bool
+	PausedAt           time.Time
+	PausedReason       string
+	PausedTrigger      string
+	PinnedCLI          string
+	PinnedModel        string
+	ModelOverride      string
+	BackendOverride    string
+	RestartCount       int
+	OutputBuffer       *RingBuffer
+	lastPaneCapture    []string
+	paneMu             sync.RWMutex
+	KickHistory        []KickRecord
 	LastKickMessage    string
 	KickRefused        bool
 	KickRefusalReason  string
 	LaunchedMode       AgentMode
-	HasLaunched     bool
-	tmuxSession     string
-	tmuxSocket      string
-	cancel context.CancelFunc
-	forceRelaunch       bool
-	BootstrapOverride   string // when set, replaces buildBootstrapPrompt output
-	LastError           string // captured from bare copilot diagnostic launch
-	lastTokenRestart    time.Time // cooldown for auto-restart after token detection
-	NeedsLogin          bool   // true when pane shows a login prompt
-	consentSeenAt       time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss  time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt     time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane   string    // stall watchdog: hash of the visible pane just after kick delivery
-	stallNudgeSent      bool      // stall watchdog: at most one nudge per kick
-	StallNudges         int       // total post-kick stall nudges sent (surfaced to the dashboard)
-	launchGen           int       // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks  int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
-	actionNudgeSent     bool      // no-action watchdog: at most one action nudge per kick
-	ActionNudges        int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+	HasLaunched        bool
+	tmuxSession        string
+	tmuxSocket         string
+	cancel             context.CancelFunc
+	forceRelaunch      bool
+	BootstrapOverride  string    // when set, replaces buildBootstrapPrompt output
+	LastError          string    // captured from bare copilot diagnostic launch
+	lastTokenRestart   time.Time // cooldown for auto-restart after token detection
+	NeedsLogin         bool      // true when pane shows a login prompt
+	consentSeenAt      time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt    time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane  string    // stall watchdog: hash of the visible pane just after kick delivery
+	stallNudgeSent     bool      // stall watchdog: at most one nudge per kick
+	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	launchGen          int       // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	actionNudgeSent    bool      // no-action watchdog: at most one action nudge per kick
+	ActionNudges       int       // total prose-only-response action nudges sent (surfaced to the dashboard)
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -577,7 +576,6 @@ func paneShowsConsentScreen(pane string) bool {
 	}
 	return false
 }
-
 
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	backend := agent.Config.Backend
@@ -1195,7 +1193,6 @@ func (m *Manager) findACMMFragments() []string {
 	return files
 }
 
-
 func (m *Manager) buildProjectPreamble(agent *AgentProcess) string {
 	p := m.project
 	if p.Org == "" || len(p.Repos) == 0 {
@@ -1450,7 +1447,6 @@ func findOverlap(prev, curr []string) int {
 	}
 	return -1
 }
-
 
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
 // or the timeout expires. Returns true if the CLI became ready.
@@ -2422,13 +2418,13 @@ func (m *Manager) tmuxSendKeysForAgent(agent *AgentProcess, keys ...string) {
 }
 
 const (
-	clearBeforeKickDelay  = 2 * time.Second
-	enterCount            = 3
-	enterDelay            = 300 * time.Millisecond
-	textToEnterDelay      = 1 * time.Second
-	chunkSize             = 400
-	chunkDelay            = 1 * time.Second
-	staleCheckDelay       = 1 * time.Second
+	clearBeforeKickDelay    = 2 * time.Second
+	enterCount              = 3
+	enterDelay              = 300 * time.Millisecond
+	textToEnterDelay        = 1 * time.Second
+	chunkSize               = 400
+	chunkDelay              = 1 * time.Second
+	staleCheckDelay         = 1 * time.Second
 	cliReadyPollInterval    = 2 * time.Second
 	cliReadyTimeout         = 60 * time.Second
 	inputPromptPollInterval = 2 * time.Second
@@ -3008,8 +3004,8 @@ func (m *Manager) fixSharedConfigPerms(agent *AgentProcess) {
 }
 
 const (
-	claudeInferenceSettingsPath  = "/tmp/.claude-inference-settings.json"
-	claudeInferenceHomePrefix = "/tmp/.claude-inference-home-"
+	claudeInferenceSettingsPath = "/tmp/.claude-inference-settings.json"
+	claudeInferenceHomePrefix   = "/tmp/.claude-inference-home-"
 )
 
 // inferenceHomePath returns the per-agent inference HOME directory.
@@ -3800,7 +3796,7 @@ func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 			continue
 		}
 
-		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
+		if err := killProcessPID(pid); err == nil {
 			killed++
 			m.logger.Info("reaped agent CLI process",
 				"agent", agent.Name, "pid", pid, "cmdline", truncateStr(cmdline, 120))
@@ -3881,7 +3877,7 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 			continue
 		}
 
-		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
+		if err := killProcessPID(pid); err == nil {
 			killed++
 		}
 	}

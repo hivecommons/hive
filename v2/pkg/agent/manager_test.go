@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -32,10 +34,14 @@ func TestMain(m *testing.M) {
 
 	stubBinDir = dir
 
-	const stubScript = "#!/bin/sh\nexec cat\n"
-
+	stubName := func(name string) string { return name }
+	stubScript := "#!/bin/sh\nexec cat\n"
+	if runtime.GOOS == "windows" {
+		stubName = func(name string) string { return name + ".cmd" }
+		stubScript = "@echo off\r\nmore\r\n"
+	}
 	for _, name := range []string{"claude", "copilot", "gemini", "goose", "bob"} {
-		path := fmt.Sprintf("%s/%s", dir, name)
+		path := filepath.Join(dir, stubName(name))
 		if err := os.WriteFile(path, []byte(stubScript), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "TestMain: writing stub %s: %v\n", name, err)
 			os.Exit(1)
@@ -43,7 +49,7 @@ func TestMain(m *testing.M) {
 	}
 
 	originalPath := os.Getenv("PATH")
-	os.Setenv("PATH", dir+":"+originalPath)
+	os.Setenv("PATH", dir+string(os.PathListSeparator)+originalPath)
 	defer os.Setenv("PATH", originalPath)
 
 	os.Exit(m.Run())
@@ -261,7 +267,7 @@ func TestBackendBinary_KnownBackendsResolveToStubs(t *testing.T) {
 				t.Errorf("backendBinary(%q) unexpected error: %v", backend, err)
 				return
 			}
-			if !strings.HasPrefix(path, "/") {
+			if !filepath.IsAbs(path) {
 				t.Errorf("backendBinary(%q) returned non-absolute path %q", backend, path)
 			}
 			if path == "" {
@@ -276,7 +282,7 @@ func TestBackendBinary_ReturnsAbsolutePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backendBinary(claude) error: %v", err)
 	}
-	if !strings.HasPrefix(path, "/") {
+	if !filepath.IsAbs(path) {
 		t.Errorf("expected absolute path, got %q", path)
 	}
 }
@@ -457,6 +463,9 @@ func TestPause_SetsPausedFlag(t *testing.T) {
 }
 
 func TestResume_ClearsPausedFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy tmux/su-exec agent runtime is Linux-only")
+	}
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())
 	cfgs := map[string]config.AgentConfig{
 		"worker": makeAgentConfig("claude", "sonnet"),
@@ -621,6 +630,9 @@ func TestStart_UnknownAgentReturnsError(t *testing.T) {
 }
 
 func TestStart_UnknownBackendSetsFailed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy tmux/su-exec agent runtime is Linux-only")
+	}
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())
 	cfgs := map[string]config.AgentConfig{
 		"bad": makeAgentConfig("not-a-real-backend", ""),

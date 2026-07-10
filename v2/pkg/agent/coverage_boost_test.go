@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,9 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestSave_InvalidPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix /proc error-path fixture")
+	}
 	u := NewUIDMap()
 	u.AllocateUIDs([]string{"scanner"})
 
@@ -1805,6 +1809,9 @@ func TestClearExpiredTokens_MissingFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFixSharedConfigPerms_FixesPerms(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix group mode bits")
+	}
 	cleanup := configTestHelper(t)
 	defer cleanup()
 

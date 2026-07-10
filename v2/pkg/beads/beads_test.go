@@ -9,8 +9,8 @@ import (
 
 // ptr helpers
 
-func statusPtr(s Status) *Status   { return &s }
-func strPtr(s string) *string      { return &s }
+func statusPtr(s Status) *Status { return &s }
+func strPtr(s string) *string    { return &s }
 
 // TestNewStore_CreatesDirectoryAndEmptyStore verifies that NewStore creates the
 // target directory if it does not exist and starts with an empty ledger.
@@ -621,8 +621,11 @@ func TestList_CombinedFilter(t *testing.T) {
 }
 
 func TestNewStore_MkdirError(t *testing.T) {
-	// Try to create a store in a path that can't be created
-	_, err := NewStore("/dev/null/impossible")
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewStore(filepath.Join(parentFile, "impossible"))
 	if err == nil {
 		t.Error("expected error for invalid directory path")
 	}

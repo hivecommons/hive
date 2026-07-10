@@ -28,19 +28,21 @@ func TestWriteLiteLLMKeyFile_CreatesDirAndFile(t *testing.T) {
 	if string(got) != key {
 		t.Errorf("key file content mismatch")
 	}
-	info, err := os.Stat(writableLiteLLMKeyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != litellmKeyFileMode {
-		t.Errorf("key file mode = %v, want %v", info.Mode().Perm(), os.FileMode(litellmKeyFileMode))
-	}
-	dirInfo, err := os.Stat(filepath.Dir(writableLiteLLMKeyFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dirInfo.Mode().Perm() != litellmKeyDirMode {
-		t.Errorf("secrets dir mode = %v, want %v", dirInfo.Mode().Perm(), os.FileMode(litellmKeyDirMode))
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(writableLiteLLMKeyFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != litellmKeyFileMode {
+			t.Errorf("key file mode = %v, want %v", info.Mode().Perm(), os.FileMode(litellmKeyFileMode))
+		}
+		dirInfo, err := os.Stat(filepath.Dir(writableLiteLLMKeyFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dirInfo.Mode().Perm() != litellmKeyDirMode {
+			t.Errorf("secrets dir mode = %v, want %v", dirInfo.Mode().Perm(), os.FileMode(litellmKeyDirMode))
+		}
 	}
 }
 

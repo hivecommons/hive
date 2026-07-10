@@ -1,3 +1,5 @@
+//go:build integration
+
 package test
 
 import (
@@ -14,9 +16,9 @@ import (
 )
 
 var (
-	hiveURL   = envOr("HIVE_URL", "http://192.168.4.85:3003")
-	hiveToken = envOr("HIVE_TOKEN", "0f87edfe470a78005be214d521b82c3d2d63e437d8875b9b56488b887f697ce8")
-	cdpURL    = envOr("CDP_URL", "ws://127.0.0.1:9222")
+	hiveURL       = envOr("HIVE_URL", "http://192.168.4.85:3003")
+	hiveToken     = envOr("HIVE_TOKEN", "0f87edfe470a78005be214d521b82c3d2d63e437d8875b9b56488b887f697ce8")
+	cdpURL        = envOr("CDP_URL", "ws://127.0.0.1:9222")
 	screenshotDir = envOr("SCREENSHOT_DIR", "/tmp/inception-e2e")
 )
 
@@ -261,7 +263,7 @@ func verifyCDPPhase(phase string, pass int) string {
 	}
 
 	// Check progress bar shows correct active stage
-	progressCheck, _ := cdpEval(ws, fmt.Sprintf(`(function(){ var el = document.getElementById('inception-panel'); if (!el) return 'no_panel'; var text = el.textContent; var hasIdea = text.includes('Idea'); var hasClarify = text.includes('Clarify'); var hasStructure = text.includes('Structure'); return hasIdea && hasClarify && hasStructure ? 'progress_bar_ok' : 'progress_bar_missing'; })()`, ))
+	progressCheck, _ := cdpEval(ws, fmt.Sprintf(`(function(){ var el = document.getElementById('inception-panel'); if (!el) return 'no_panel'; var text = el.textContent; var hasIdea = text.includes('Idea'); var hasClarify = text.includes('Clarify'); var hasStructure = text.includes('Structure'); return hasIdea && hasClarify && hasStructure ? 'progress_bar_ok' : 'progress_bar_missing'; })()`))
 	if progressCheck != "progress_bar_ok" {
 		return fmt.Sprintf("CDP: progress bar missing stages at phase %s", phase)
 	}

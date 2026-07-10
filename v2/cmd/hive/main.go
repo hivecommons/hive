@@ -26,9 +26,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/kubestellar/hive/v2/pkg/advisory"
-	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/agent"
-	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/classify"
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -36,7 +34,9 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/discord"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/governor"
+	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
+	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/notify"
 	"github.com/kubestellar/hive/v2/pkg/policies"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
@@ -54,6 +54,15 @@ var (
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "visual" {
 		os.Exit(runVisualCommand(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp-server" {
+		os.Exit(runMCPServer())
+	}
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "setup", "status", "doctor", "pause", "resume", "run", "set-coverage", "set-automation", "upgrade", "rollback", "uninstall":
+			os.Exit(runIntegratedCommand(os.Args[1], os.Args[2:]))
+		}
 	}
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
@@ -561,7 +570,7 @@ func main() {
 	if badgeURL == "" {
 		badgeURL = "https://gist.githubusercontent.com/clubanderson/b9a9ae8469f1897a22d5a40629bc1e82/raw/coverage-badge.json"
 	}
-		primaryRepo := cfg.Project.PrimaryRepo
+	primaryRepo := cfg.Project.PrimaryRepo
 	if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 		primaryRepo = cfg.Project.Repos[0]
 	}
@@ -1352,7 +1361,7 @@ func main() {
 					out := make([]hub.LeaderboardEntry, len(lb))
 					for i, e := range lb {
 						out[i] = hub.LeaderboardEntry{
-							GitHubUsername:  e.GitHubUsername,
+							GitHubUsername: e.GitHubUsername,
 							AvatarURL:      e.AvatarURL,
 							TrustTier:      e.TrustTier,
 							TasksCompleted: e.TasksCompleted,
@@ -1374,7 +1383,7 @@ func main() {
 					}
 					return ""
 				}(),
-				Health:       dashSrv.HealthSummary(),
+				Health: dashSrv.HealthSummary(),
 				DashboardURL: func() string {
 					if cfg.Hub.DashboardURL != "" {
 						return cfg.Hub.DashboardURL
@@ -1386,13 +1395,13 @@ func main() {
 					}
 					return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 				}(),
-				SnapshotURL:  cfg.Hub.SnapshotURL,
-				HiveType:     cfg.Hub.HiveType,
-				ClusterID:    cfg.Hub.ClusterID,
-				IsPublic:     cfg.Hub.IsPublic,
-				Version:           "3.0.0",
-				GitHash:           gitShort,
-				GitBranch:         gitBranch,
+				SnapshotURL:             cfg.Hub.SnapshotURL,
+				HiveType:                cfg.Hub.HiveType,
+				ClusterID:               cfg.Hub.ClusterID,
+				IsPublic:                cfg.Hub.IsPublic,
+				Version:                 "3.0.0",
+				GitHash:                 gitShort,
+				GitBranch:               gitBranch,
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
 				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
@@ -1551,7 +1560,7 @@ func main() {
 			out := make([]hub.LeaderboardEntry, len(lb))
 			for i, e := range lb {
 				out[i] = hub.LeaderboardEntry{
-					GitHubUsername:  e.GitHubUsername,
+					GitHubUsername: e.GitHubUsername,
 					AvatarURL:      e.AvatarURL,
 					TrustTier:      e.TrustTier,
 					TasksCompleted: e.TasksCompleted,
@@ -2220,22 +2229,22 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	}
 
 	state := &snapshot.PersistedState{
-		Agents:           agents,
-		GovernorMode:     string(govState.Mode),
-		BudgetLimit:      budget.WeeklyLimit,
-		BudgetIgnored:    budget.IgnoredAgents,
-		BudgetIgnoreAll:  budget.IgnoreAll,
-		CadenceOverrides: cadenceOverrides,
-		LastKicks:        govState.LastKick,
+		Agents:               agents,
+		GovernorMode:         string(govState.Mode),
+		BudgetLimit:          budget.WeeklyLimit,
+		BudgetIgnored:        budget.IgnoredAgents,
+		BudgetIgnoreAll:      budget.IgnoreAll,
+		CadenceOverrides:     cadenceOverrides,
+		LastKicks:            govState.LastKick,
 		BudgetSpend:          budget.CurrentSpend,
 		BudgetResetAt:        budget.ResetAt,
 		BudgetByAgent:        budget.ByAgent,
 		BudgetByModel:        budget.ByModel,
 		BudgetWindowBaseline: budget.WindowBaseline,
-		KickHistory:      kickEntries,
-		IssueCosts:       issueCosts,
-		LastEval:         govState.LastEval,
-		ACMMLevel:        cfg.ACMMLevel,
+		KickHistory:          kickEntries,
+		IssueCosts:           issueCosts,
+		LastEval:             govState.LastEval,
+		ACMMLevel:            cfg.ACMMLevel,
 	}
 
 	if err := snapshot.SaveState(path, state, logger); err != nil {

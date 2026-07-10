@@ -47,45 +47,55 @@ type AgentModelBucket struct {
 }
 
 type AggregateSummary struct {
-	TotalTokens    int64                        `json:"total_tokens"`
-	TotalInput     int64                        `json:"total_input"`
-	TotalOutput    int64                        `json:"total_output"`
-	TotalCacheRead int64                        `json:"total_cache_read"`
-	TotalCacheCreate int64                      `json:"total_cache_create"`
-	TotalMessages  int                          `json:"total_messages"`
-	ByAgent        map[string]int64             `json:"by_agent"`
-	ByModel        map[string]int64             `json:"by_model"`
-	ByAgentDetail  map[string]*AgentModelBucket `json:"by_agent_detail"`
-	ByModelDetail  map[string]*AgentModelBucket `json:"by_model_detail"`
-	Sessions       []SessionSummary             `json:"sessions"`
-	SessionCount   int                          `json:"session_count"`
+	TotalTokens      int64                        `json:"total_tokens"`
+	TotalInput       int64                        `json:"total_input"`
+	TotalOutput      int64                        `json:"total_output"`
+	TotalCacheRead   int64                        `json:"total_cache_read"`
+	TotalCacheCreate int64                        `json:"total_cache_create"`
+	TotalMessages    int                          `json:"total_messages"`
+	ByAgent          map[string]int64             `json:"by_agent"`
+	ByModel          map[string]int64             `json:"by_model"`
+	ByAgentDetail    map[string]*AgentModelBucket `json:"by_agent_detail"`
+	ByModelDetail    map[string]*AgentModelBucket `json:"by_model_detail"`
+	Sessions         []SessionSummary             `json:"sessions"`
+	SessionCount     int                          `json:"session_count"`
 }
 
 const (
-	defaultScanInterval  = 30 * time.Second
-	defaultPersistPath   = "/data/token-summary.json"
+	defaultScanInterval = 30 * time.Second
+	defaultPersistPath  = "/data/token-summary.json"
 )
 
 type Collector struct {
-	sessionsDir         string
-	claudeSessionsDir   string
-	copilotSessionsDir  string
-	persistPath         string
-	detector            func(string) string
-	logger              *slog.Logger
-	mu                  sync.RWMutex
-	latest              *AggregateSummary
-	issueCosts          map[string]int64
-	scanInterval        time.Duration
-	prevSessionCount    int
-	prevTotalTokens     int64
-	prevByAgent         map[string]int64
+	sessionsDir        string
+	claudeSessionsDir  string
+	copilotSessionsDir string
+	persistPath        string
+	detector           func(string) string
+	logger             *slog.Logger
+	mu                 sync.RWMutex
+	latest             *AggregateSummary
+	issueCosts         map[string]int64
+	scanInterval       time.Duration
+	prevSessionCount   int
+	prevTotalTokens    int64
+	prevByAgent        map[string]int64
 }
 
 func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
+	return NewCollectorWithPersistPath(sessionsDir, defaultPersistPath, logger)
+}
+
+// NewCollectorWithPersistPath constructs a collector whose snapshot location
+// is known before restoration. It keeps tests, multiple local hives, and other
+// isolated runtimes from sharing the process-wide default snapshot.
+func NewCollectorWithPersistPath(sessionsDir, persistPath string, logger *slog.Logger) *Collector {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	c := &Collector{
 		sessionsDir:  sessionsDir,
-		persistPath:  defaultPersistPath,
+		persistPath:  persistPath,
 		detector:     DefaultAgentDetector,
 		logger:       logger,
 		issueCosts:   make(map[string]int64),

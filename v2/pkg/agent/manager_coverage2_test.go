@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1539,8 +1540,8 @@ func TestConfigHasTokens_MissingField(t *testing.T) {
 func TestClearExpiredTokens_Logic(t *testing.T) {
 	// Test the JSON manipulation clearExpiredTokens does
 	input := map[string]interface{}{
-		"copilotTokens":  map[string]interface{}{"user1": "token"},
-		"loggedInUsers":  []interface{}{"user1"},
+		"copilotTokens":    map[string]interface{}{"user1": "token"},
+		"loggedInUsers":    []interface{}{"user1"},
 		"lastLoggedInUser": "user1",
 		"otherSetting":     "keep",
 	}
@@ -1571,6 +1572,9 @@ func TestClearExpiredTokens_Logic(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFixSharedConfigPerms_Logic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix group mode bits")
+	}
 	// Test the permission fixing logic by creating a temp file and checking
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.json")

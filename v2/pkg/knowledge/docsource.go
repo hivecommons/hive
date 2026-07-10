@@ -142,9 +142,9 @@ func (ds *DocumentSource) Import(ctx context.Context) (*DocMetadata, error) {
 	}
 
 	chunks, extractedTitle := ds.parseContent(content, contentType)
-	title := ds.config.Name
+	title := extractedTitle
 	if title == "" {
-		title = extractedTitle
+		title = ds.config.Name
 	}
 
 	sourceURL := ds.config.URL

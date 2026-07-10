@@ -1051,7 +1051,7 @@ func TestCheckWorkflow_NoRuns(t *testing.T) {
 	mux.HandleFunc("/repos/org/repo/actions/workflows", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_count": 1,
-			"workflows":  []map[string]interface{}{{"id": 1, "name": "CI"}},
+			"workflows":   []map[string]interface{}{{"id": 1, "name": "CI"}},
 		})
 	})
 	mux.HandleFunc("/repos/org/repo/actions/workflows/1/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -1113,7 +1113,7 @@ func TestCiPassRate_NoRuns(t *testing.T) {
 	mux.HandleFunc("/repos/org/repo/actions/workflows", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_count": 1,
-			"workflows":  []map[string]interface{}{{"id": 1, "name": "CI"}},
+			"workflows":   []map[string]interface{}{{"id": 1, "name": "CI"}},
 		})
 	})
 	mux.HandleFunc("/repos/org/repo/actions/workflows/1/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -1138,7 +1138,7 @@ func TestReleaseCheck_NoRuns(t *testing.T) {
 	mux.HandleFunc("/repos/org/repo/actions/workflows", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"total_count": 1,
-			"workflows":  []map[string]interface{}{{"id": 1, "name": "Release"}},
+			"workflows":   []map[string]interface{}{{"id": 1, "name": "Release"}},
 		})
 	})
 	mux.HandleFunc("/repos/org/repo/actions/workflows/1/runs", func(w http.ResponseWriter, r *http.Request) {
@@ -1310,8 +1310,8 @@ func TestEnumerateActionable_PRsFetchError(t *testing.T) {
 
 	c := newTestClient(t, server, org, []string{repo})
 	result, err := c.EnumerateActionable(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected an all-repositories-failed error")
 	}
 	// Issues were fetched but PR error causes continue — repo not in totalByRepo.
 	if result.PRs.Count != 0 {

@@ -21,6 +21,7 @@ type Watcher struct {
 	pollInterval time.Duration
 	policies     map[string][]byte
 	mu           sync.RWMutex
+	wg           sync.WaitGroup
 	logger       *slog.Logger
 }
 
@@ -48,9 +49,20 @@ func (w *Watcher) Start(ctx context.Context) error {
 		return fmt.Errorf("loading policies: %w", err)
 	}
 
-	go w.pollLoop(ctx)
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+		w.pollLoop(ctx)
+	}()
 
 	return nil
+}
+
+// Wait blocks until the polling goroutine has stopped after its context is
+// cancelled. Callers use it during shutdown so an in-flight git pull cannot
+// outlive the managed checkout.
+func (w *Watcher) Wait() {
+	w.wg.Wait()
 }
 
 func (w *Watcher) GetPolicy(agentName string) ([]byte, bool) {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -171,9 +172,11 @@ func TestHandleGovernorLiteLLM_APIKeyValueStored(t *testing.T) {
 	if string(data) != secret {
 		t.Errorf("key file content mismatch")
 	}
-	info, _ := os.Stat(writableLiteLLMKeyFile)
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("key file mode = %v, want 0600", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(writableLiteLLMKeyFile)
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("key file mode = %v, want 0600", info.Mode().Perm())
+		}
 	}
 	// hive.yaml records only the file path.
 	if got := srv.deps.Config.Governor.LiteLLM.APIKeyFile; got != writableLiteLLMKeyFile {

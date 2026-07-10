@@ -62,12 +62,12 @@ type PullRequest struct {
 }
 
 type ActionableResult struct {
-	GeneratedAt   time.Time          `json:"generated_at"`
-	Issues        IssueResult        `json:"issues"`
-	PRs           PRResult           `json:"prs"`
-	Hold          HoldResult         `json:"hold"`
-	Clusters      []IssueCluster     `json:"clusters,omitempty"`
-	TotalByRepo   map[string]RepoCounts `json:"total_by_repo,omitempty"`
+	GeneratedAt time.Time             `json:"generated_at"`
+	Issues      IssueResult           `json:"issues"`
+	PRs         PRResult              `json:"prs"`
+	Hold        HoldResult            `json:"hold"`
+	Clusters    []IssueCluster        `json:"clusters,omitempty"`
+	TotalByRepo map[string]RepoCounts `json:"total_by_repo,omitempty"`
 }
 
 type RepoCounts struct {
@@ -87,10 +87,10 @@ type PRResult struct {
 }
 
 type HoldResult struct {
-	Issues int         `json:"issues"`
-	PRs    int         `json:"prs"`
-	Total  int         `json:"total"`
-	Items  []HoldItem  `json:"items"`
+	Issues int        `json:"issues"`
+	PRs    int        `json:"prs"`
+	Total  int        `json:"total"`
+	Items  []HoldItem `json:"items"`
 }
 
 type HoldItem struct {
@@ -214,7 +214,7 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 	// zero-count result would tell the governor the queue is empty and
 	// idle the agents. Surface the failure so callers keep prior state.
 	if len(repos) > 0 && failedRepos >= len(repos) {
-		return nil, fmt.Errorf("all %d repos failed to enumerate (last error: %w)", len(repos), lastFetchErr)
+		return result, fmt.Errorf("all %d repos failed to enumerate (last error: %w)", len(repos), lastFetchErr)
 	}
 
 	sort.Slice(allIssues, func(i, j int) bool {

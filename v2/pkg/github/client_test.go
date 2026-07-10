@@ -258,8 +258,8 @@ func TestEnumerateActionable_APIError(t *testing.T) {
 	// EnumerateActionable logs warnings but does not return an error when individual
 	// repos fail — it continues to the next repo.
 	result, err := c.EnumerateActionable(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected an all-repositories-failed error")
 	}
 	// No data collected — counts should be zero.
 	if result.Issues.Count != 0 || result.PRs.Count != 0 {
@@ -506,8 +506,8 @@ func TestIsHeld(t *testing.T) {
 		{[]string{"hold"}, true},
 		{[]string{"on-hold"}, true},
 		{[]string{"hold/review"}, true},
-		{[]string{"HOLD"}, true},             // case-insensitive
-		{[]string{"bug", "hold"}, true},      // mixed labels
+		{[]string{"HOLD"}, true},        // case-insensitive
+		{[]string{"bug", "hold"}, true}, // mixed labels
 		{[]string{"bug", "enhancement"}, false},
 		{[]string{}, false},
 		{nil, false},
@@ -685,8 +685,8 @@ func TestEnumerateActionable_IssuesErrorContinuesToPRs(t *testing.T) {
 
 	c := newTestClient(t, server, org, []string{repo})
 	result, err := c.EnumerateActionable(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected an all-repositories-failed error")
 	}
 	// When issues fetch fails, fetchIssues returns error; EnumerateActionable
 	// logs and calls `continue` — so fetchPRs is NOT called for that repo.

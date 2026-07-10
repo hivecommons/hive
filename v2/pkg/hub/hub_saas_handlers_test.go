@@ -637,6 +637,8 @@ func TestHandleSaaSAuthCheckWithUserNoAccess(t *testing.T) {
 }
 
 func TestLoadAccessRequestsNonexistent(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
 	reqs := loadAccessRequests("nonexistent-hive-xyz")
 	if reqs != nil {
 		t.Error("should return nil for nonexistent hive")
@@ -1091,4 +1093,3 @@ func TestIsCSRFSafeGetAlwaysPasses(t *testing.T) {
 		}
 	}
 }
-

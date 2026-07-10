@@ -165,6 +165,8 @@ func TestHandleToggleVisibilityForbidden(t *testing.T) {
 // ============================================================
 
 func TestHandleDeleteHiveWithAuth(t *testing.T) {
+	cleanupDirs := helperSetupTempDirs(t)
+	defer cleanupDirs()
 	cleanup := helperSetupAuthUser(t, "ghp_del_user", "del-user")
 	defer cleanup()
 
@@ -187,8 +189,8 @@ func TestHandleDeleteHiveWithAuth(t *testing.T) {
 	req2.Header.Set("Authorization", "Bearer ghp_del_user")
 	w2 := httptest.NewRecorder()
 	mux.ServeHTTP(w2, req2)
-	if w2.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", w2.Code)
+	if w2.Code != http.StatusOK {
+		t.Errorf("expected idempotent delete status 200, got %d", w2.Code)
 	}
 }
 
@@ -596,6 +598,8 @@ func TestHandleUserTokenAdminRequestOther(t *testing.T) {
 // ============================================================
 
 func TestHandleRequestProvisionValidBody(t *testing.T) {
+	cleanupDirs := helperSetupTempDirs(t)
+	defer cleanupDirs()
 	cleanup := helperSetupAuthUser(t, "ghp_prov_valid", "prov-valid-user")
 	defer cleanup()
 

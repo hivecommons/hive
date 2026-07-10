@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -11,7 +12,11 @@ import (
 )
 
 func TestBuildImpossibleOutputDir(t *testing.T) {
-	b := NewBuilder("/dev/null/impossible", slog.Default())
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b := NewBuilder(filepath.Join(parentFile, "impossible"), slog.Default())
 	err := b.Build(&dashboard.StatusPayload{
 		Governor: dashboard.FrontendGovernor{Mode: "idle"},
 	})
@@ -52,7 +57,7 @@ func TestCleanupEmptyDirNoError(t *testing.T) {
 }
 
 func TestCleanupNonexistentDirError(t *testing.T) {
-	b := NewBuilder("/tmp/nonexistent-snapshot-dir-xyz", slog.Default())
+	b := NewBuilder(filepath.Join(t.TempDir(), "missing"), slog.Default())
 	err := b.Cleanup(time.Hour)
 	if err == nil {
 		t.Error("should error for nonexistent dir")
@@ -109,13 +114,20 @@ func TestCleanupPreservesLatestAndIndex(t *testing.T) {
 }
 
 func TestSaveStateWriteError(t *testing.T) {
-	err := SaveState("/dev/null/impossible/state.json", &PersistedState{}, slog.Default())
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := SaveState(filepath.Join(parentFile, "impossible", "state.json"), &PersistedState{}, slog.Default())
 	if err == nil {
 		t.Error("should error with impossible path")
 	}
 }
 
 func TestSaveState_WriteFailureReadOnlyDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix directory mode bits")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("root can write anywhere")
 	}

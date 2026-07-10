@@ -123,7 +123,11 @@ func TestLoadState_TooOld(t *testing.T) {
 func TestSaveState_BadPath(t *testing.T) {
 	logger := testLogger()
 	state := &PersistedState{Agents: map[string]AgentState{}}
-	err := SaveState("/nonexistent/dir/state.json", state, logger)
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := SaveState(filepath.Join(parentFile, "state.json"), state, logger)
 	if err == nil {
 		t.Error("expected error for bad path")
 	}
