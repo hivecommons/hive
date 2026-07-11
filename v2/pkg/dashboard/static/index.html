@@ -3002,7 +3002,7 @@
           <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" style="font-size:1rem;opacity:0.7" title="Open configuration dialog for this agent (cadences, model, pipeline, hooks, etc.)">⚙️</button>
           <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" style="margin-left:auto" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
           <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different method (CLI or inference backend)">
-            <option value="" disabled selected>method ▾</option>
+            <option value="" disabled selected>${a.cli ? esc(backendLabel(a.cli)) + ' ▾' : 'method ▾'}</option>
             ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>
           <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model">
@@ -3950,7 +3950,7 @@
             <button class="btn" data-action="kick" data-agent="${esc(a.name)}" title="Send the custom prompt above to this agent immediately, bypassing the governor cadence timer">send</button>
             <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
             <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different method (CLI or inference backend). Free backends (copilot, goose) do not count toward token budget.">
-              <option value="" disabled selected>method ▾</option>
+              <option value="" disabled selected>${a.cli ? esc(backendLabel(a.cli)) + ' ▾' : 'method ▾'}</option>
               ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
             </select>
             <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model. Higher-tier models (Opus) cost more tokens; lower-tier (Haiku) are cheaper but less capable.">
@@ -4557,10 +4557,14 @@
       const opts = models.map(m => {
         const sel = !matched && _modelIdMatches(m.value, cur);
         if (sel) matched = true;
-        return `<option value="${esc(m.value)}"${sel ? ' selected' : ''}>${esc(m.label)}</option>`;
+        // The selected option's label doubles as the button's visible text
+        // (native <select> renders it in place of the placeholder), so it
+        // carries the same " ▾" caret as the method button for a
+        // consistent "<value> ▾" look across both dropdown buttons.
+        return `<option value="${esc(m.value)}"${sel ? ' selected' : ''}>${esc(m.label)}${sel ? ' ▾' : ''}</option>`;
       });
       if (cur && !matched) {
-        opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current)</option>`);
+        opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>`);
       }
       return opts.join('');
     }
