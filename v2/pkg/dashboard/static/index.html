@@ -4644,12 +4644,54 @@
     // reconcileModelsAfterDiscovery auto-heals selections that a key swap
     // (or endpoint change) stripped out: when a REAL discovery (not the
     // static fallback) returns a non-empty model set, any agent on this
-    // backend whose selected model is no longer in the set is switched to
-    // the first available model, via the same switchModel() path the
-    // dropdown uses (so it persists + relaunches, not a cosmetic change).
+    // backend whose selected model is GENUINELY no longer in the set is
+    // switched to the first available model, via the same switchModel()
+    // path the dropdown uses (so it persists + relaunches, not a cosmetic
+    // change).
+    //
+    // Auto-heal policy: a model may switch automatically in exactly two
+    // cases — (a) unpinned + governor auto-selection (server-side; pins
+    // block that path there), or (b) the current model is genuinely gone
+    // from discovery. Case (b) applies to every backend, CLI included, and
+    // may heal even a PINNED model (a pinned-but-dead model would leave the
+    // agent broken) — but only under the strict confirmation rules below.
+    //
+    // "Genuinely gone" is enforced three ways, because live CLI discovery
+    // is nondeterministic: the Copilot /models endpoint was observed live
+    // returning 31 vs 35 chat models for the SAME token across calls
+    // seconds apart, with rollout-gated ids (e.g. claude-opus-4.6,
+    // claude-fable-5) dropping out of individual samples. Treating one
+    // sample as authoritative stampeded every agent — pinned included —
+    // onto the first model of a bad sample, repeatedly (#1845 regression):
+    //   1. availability uses the SAME tolerant matcher as the dropdown
+    //      preselect (_modelIdMatches: exact, prefix-stripped tail, and
+    //      dotted/hyphenated version normalization) — a model present in
+    //      any id spelling is KEPT, never switched;
+    //   2. absence must persist for MODEL_HEAL_CONFIRM_MS across repeated
+    //      discovery refreshes (spanning multiple independent server-side
+    //      probes) — a lone bad sample warns on the console and heals
+    //      nothing; reappearance resets the clock;
+    //   3. a heal fires at most once per (backend, agent, model) until that
+    //      model is seen available again — repeated refresh ticks with an
+    //      unchanged list can never re-fire a switch/restart loop.
     // Strictly: keep the current model when it is still present — no
     // re-select, no toast, no relaunch. Idempotent: repeated refreshes with
     // a compatible list never mutate a valid selection.
+
+    // How long a model must be CONTINUOUSLY absent from successful
+    // discoveries before auto-heal may act. Longer than two server-side
+    // discovery cache TTLs (cliModelCacheTTL = 30s), so confirmation always
+    // spans at least two independent upstream probes, not one cached bad
+    // sample re-served within its TTL.
+    const MODEL_HEAL_CONFIRM_MS = 65000;
+    // First-seen-absent timestamps: `${backend}|${agent}` -> {model, since}.
+    // Cleared the moment the model shows up as available again.
+    const _modelAbsenceSince = {};
+    // Fired-heal guard: `${backend}|${agent}|${model}` -> true. Ensures one
+    // switch (one session restart) per genuine disappearance; cleared only
+    // when the model is observed available again.
+    const _modelHealFired = {};
+
     function reconcileModelsAfterDiscovery(backend, models, fallback) {
       // Guard: only act on a genuinely successful discovery. Never switch
       // based on unverified static aliases or an empty list.
@@ -4657,23 +4699,58 @@
       const available = models.map(m => m.value);
       const first = available[0];
       const isAvailable = (m) => available.some(v => _modelIdMatches(v, m));
+      const now = Date.now();
+
+      // _confirmAbsent implements rules 2+3 above for one keyed selection.
+      // Returns true only when the model has been absent long enough AND
+      // this disappearance has not already been healed.
+      const _confirmAbsent = (key, model) => {
+        const firedKey = `${key}|${model}`;
+        const rec = _modelAbsenceSince[key];
+        if (!rec || rec.model !== model) {
+          // First observation of this absence — start the clock, warn, keep.
+          _modelAbsenceSince[key] = { model, since: now };
+          console.warn(`model ${model} missing from ${backend} discovery (${available.length} models) — keeping selection; auto-heal only if still absent after ${Math.round(MODEL_HEAL_CONFIRM_MS / 1000)}s`);
+          return false;
+        }
+        if (now - rec.since < MODEL_HEAL_CONFIRM_MS) return false;
+        if (_modelHealFired[firedKey]) return false; // already healed this disappearance
+        _modelHealFired[firedKey] = true;
+        delete _modelAbsenceSince[key];
+        return true;
+      };
+      // _markAvailable clears absence/fired state so a future GENUINE
+      // disappearance of the same model is eligible to heal again.
+      const _markAvailable = (key, model) => {
+        const rec = _modelAbsenceSince[key];
+        if (rec && rec.model === model) delete _modelAbsenceSince[key];
+        delete _modelHealFired[`${key}|${model}`];
+      };
 
       // 1) Agents whose effective method is this backend.
       (window._lastAgents || []).forEach(a => {
         if (a.cli !== backend) return;
         if (!a.model) return;                 // no explicit model — nothing to heal
-        if (isAvailable(a.model)) return;     // still valid — leave untouched (idempotent)
+        const key = `${backend}|${a.name}`;
+        if (isAvailable(a.model)) { _markAvailable(key, a.model); return; } // still valid — leave untouched (idempotent)
+        if (!_confirmAbsent(key, a.model)) return; // unconfirmed or already healed — no switch
         const label = a.displayName || a.name;
-        showToast(`${label}: model ${a.model.split('/').pop()} unavailable on ${backend} — switched to ${first.split('/').pop()}`, 'info');
+        const pinNote = (a.pinnedModel || a.pinnedBoth) ? ' (was pinned — model gone from provider)' : '';
+        showToast(`${label}: model ${a.model.split('/').pop()} no longer available on ${backend} — switched to ${first.split('/').pop()}${pinNote}`, 'info');
         switchModel(a.name, first);           // persists + relaunches via /api/model
       });
 
       // 2) LiteLLM Default Model — only when the config dialog holds governor
       // data (that is where the saved default is available to the UI). If the
       // saved default is gone from the new set, persist the first available.
+      // Same confirmation rules as agent heals — a lone bad sample or a
+      // repeated refresh tick never rewrites the saved default.
       if (backend === 'litellm' && _configState.type === 'governor') {
         const saved = (_configState.data.litellm || {}).defaultModel;
-        if (saved && !isAvailable(saved)) {
+        const defKey = `${backend}|__defaultModel__`;
+        if (saved && isAvailable(saved)) {
+          _markAvailable(defKey, saved);
+        } else if (saved && _confirmAbsent(defKey, saved)) {
           _configState.data.litellm.defaultModel = first;
           fetch('/api/config/governor/litellm', {
             method: 'PUT',

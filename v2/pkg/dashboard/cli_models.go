@@ -47,6 +47,21 @@ const (
 	// or hanging upstream cannot stall the /api/config/backends response.
 	cliModelQueryTimeout = 5 * time.Second
 
+	// cliModelDropAfterMisses is how many consecutive successful live
+	// discovery probes a previously-seen model must be missing from before
+	// it is dropped from the served list. The Copilot /models response is
+	// nondeterministic mid-rollout — verified live: the same token returned
+	// 31 vs 35 chat-capable models across calls seconds apart, with
+	// rollout-gated ids (claude-opus-4.6, claude-fable-5, gemini-3.x,
+	// kimi-k2.7-code) absent from individual samples. Serving one bad
+	// sample as authoritative made the dashboard auto-heal switch every
+	// agent off a model the account is in fact entitled to. Retention only
+	// smooths LIVE results; static fallback lists bypass it entirely, and a
+	// genuinely revoked model still drops after this many consecutive
+	// misses (roughly cliModelDropAfterMisses × cliModelCacheTTL of stable
+	// absence).
+	cliModelDropAfterMisses = 3
+
 	// --- Copilot ---
 
 	// copilotUserEndpointURL returns per-account Copilot metadata, including
@@ -157,13 +172,69 @@ type cliModelCacheEntry struct {
 }
 
 // cliModelCache is a short-TTL per-backend cache guarding the discovery probes.
+// It also carries the live-list retention state (see stabilize).
 type cliModelCache struct {
 	mu      sync.Mutex
 	entries map[string]cliModelCacheEntry
+	// retained tracks, per backend, every model id seen in a successful live
+	// probe together with its consecutive-miss count (0 = present in the
+	// latest probe). Used by stabilize() to smooth nondeterministic upstream
+	// responses. Insertion order is kept in retainedOrder so the served list
+	// stays stable for the frontend's list-change detection.
+	retained      map[string]map[string]int
+	retainedOrder map[string][]string
 }
 
 func newCLIModelCache() *cliModelCache {
-	return &cliModelCache{entries: make(map[string]cliModelCacheEntry)}
+	return &cliModelCache{
+		entries:       make(map[string]cliModelCacheEntry),
+		retained:      make(map[string]map[string]int),
+		retainedOrder: make(map[string][]string),
+	}
+}
+
+// stabilize merges a fresh successful LIVE discovery result with recently-seen
+// models for the backend: a model that was present in earlier live probes but
+// is missing from this one is retained (appended after the fresh ids, in
+// first-seen order) until it has been missing from cliModelDropAfterMisses
+// consecutive probes. This shields consumers — most importantly the
+// dashboard's model auto-heal — from upstream sampling noise while still
+// converging on genuine entitlement changes. Never called for fallback lists.
+func (c *cliModelCache) stabilize(backend string, fresh []string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	misses := c.retained[backend]
+	if misses == nil {
+		misses = make(map[string]int)
+		c.retained[backend] = misses
+	}
+	inFresh := make(map[string]bool, len(fresh))
+	for _, m := range fresh {
+		inFresh[m] = true
+		if _, known := misses[m]; !known {
+			c.retainedOrder[backend] = append(c.retainedOrder[backend], m)
+		}
+		misses[m] = 0
+	}
+
+	out := append([]string(nil), fresh...)
+	keptOrder := c.retainedOrder[backend][:0]
+	for _, m := range c.retainedOrder[backend] {
+		if inFresh[m] {
+			keptOrder = append(keptOrder, m)
+			continue
+		}
+		misses[m]++
+		if misses[m] >= cliModelDropAfterMisses {
+			delete(misses, m) // genuinely gone — stop retaining
+			continue
+		}
+		keptOrder = append(keptOrder, m)
+		out = append(out, m) // retained: missing, but not yet confirmed gone
+	}
+	c.retainedOrder[backend] = keptOrder
+	return out
 }
 
 // get returns a cached result if it is still within the TTL.
@@ -212,6 +283,11 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	if len(r.models) == 0 {
 		r.models = dedupeModels(cliStaticFallback(backend))
 		r.fallback = true
+	} else if !r.fallback && s.cliModels != nil {
+		// Smooth nondeterministic live results (see cliModelDropAfterMisses):
+		// a model seen recently is kept through transient upstream omissions
+		// so a single bad sample cannot trigger downstream auto-heal churn.
+		r.models = s.cliModels.stabilize(backend, r.models)
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)

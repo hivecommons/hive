@@ -195,3 +195,70 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// --- stabilize: live-list retention across nondeterministic upstream samples ---
+
+// TestCLIModelCacheStabilize_TransientMissRetained verifies a model seen in a
+// previous live probe survives samples that transiently omit it (the observed
+// Copilot /models 31-vs-35 flapping), and reappearance resets its miss count.
+func TestCLIModelCacheStabilize_TransientMissRetained(t *testing.T) {
+	c := newCLIModelCache()
+	full := []string{"claude-opus-4.7", "claude-opus-4.6", "gpt-5.4"}
+	bad := []string{"claude-opus-4.7", "gpt-5.4"} // sample missing claude-opus-4.6
+
+	if got := c.stabilize("copilot", full); !equalStrings(got, full) {
+		t.Fatalf("first probe should pass through, got %v", got)
+	}
+	// Misses 1..cliModelDropAfterMisses-1: the model must be retained.
+	for i := 1; i < cliModelDropAfterMisses; i++ {
+		got := c.stabilize("copilot", bad)
+		if !contains(got, "claude-opus-4.6") {
+			t.Fatalf("miss %d: claude-opus-4.6 must be retained, got %v", i, got)
+		}
+	}
+	// Reappearance resets the miss counter...
+	if got := c.stabilize("copilot", full); !contains(got, "claude-opus-4.6") {
+		t.Fatalf("reappearance: got %v", got)
+	}
+	// ...so the drop clock starts over.
+	for i := 1; i < cliModelDropAfterMisses; i++ {
+		if got := c.stabilize("copilot", bad); !contains(got, "claude-opus-4.6") {
+			t.Fatalf("post-reset miss %d: claude-opus-4.6 must be retained, got %v", i, got)
+		}
+	}
+}
+
+// TestCLIModelCacheStabilize_DropsAfterConsecutiveMisses verifies a genuinely
+// removed model is dropped once (and only once) it has been missing from
+// cliModelDropAfterMisses consecutive live probes.
+func TestCLIModelCacheStabilize_DropsAfterConsecutiveMisses(t *testing.T) {
+	c := newCLIModelCache()
+	full := []string{"claude-opus-4.7", "claude-opus-4.6"}
+	bad := []string{"claude-opus-4.7"}
+
+	c.stabilize("copilot", full)
+	var got []string
+	for i := 0; i < cliModelDropAfterMisses; i++ {
+		got = c.stabilize("copilot", bad)
+	}
+	if contains(got, "claude-opus-4.6") {
+		t.Fatalf("model must drop after %d consecutive misses, got %v", cliModelDropAfterMisses, got)
+	}
+	// And the served order/content now equals the fresh probe exactly.
+	if !equalStrings(got, bad) {
+		t.Fatalf("got %v, want %v", got, bad)
+	}
+}
+
+// TestCLIModelCacheStabilize_PerBackendIsolation verifies retention state is
+// keyed per backend.
+func TestCLIModelCacheStabilize_PerBackendIsolation(t *testing.T) {
+	c := newCLIModelCache()
+	c.stabilize("copilot", []string{"a", "b"})
+	if got := c.stabilize("gemini", []string{"x"}); !equalStrings(got, []string{"x"}) {
+		t.Fatalf("gemini must not inherit copilot retention, got %v", got)
+	}
+	if got := c.stabilize("copilot", []string{"a"}); !contains(got, "b") {
+		t.Fatalf("copilot retention lost, got %v", got)
+	}
+}
