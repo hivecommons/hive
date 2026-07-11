@@ -4520,17 +4520,32 @@
       { value: 'gpt-5.2', label: 'GPT-5.2' },
     ];
     const KNOWN_MODELS = COPILOT_CLI_MODELS;
-    const INFERENCE_MODELS = {};
+    const CLI_BACKENDS = ['claude', 'copilot', 'gemini', 'goose'];
+    // BACKEND_MODELS holds the live-discovered model list for every backend
+    // (inference AND cli), keyed by backend id. INFERENCE_MODELS is kept as
+    // an alias to the same object for backward compatibility with existing
+    // call sites that read/write it directly (e.g. SSE push handling).
+    const BACKEND_MODELS = {};
+    const INFERENCE_MODELS = BACKEND_MODELS;
     const INFERENCE_MODEL_CACHE_TTL_MS = 30000;
     const _inferenceModelCache = {};
+    // Hardcoded fallbacks per CLI backend, used only until /api/config/backends
+    // responds for the first time (so a dropdown is never empty on paint).
+    const CLI_FALLBACK_MODELS = {
+      claude: CLAUDE_CLI_MODELS,
+      copilot: COPILOT_CLI_MODELS,
+      gemini: COPILOT_CLI_MODELS,
+      goose: COPILOT_CLI_MODELS,
+    };
     function backendLabel(b) {
       if (INFERENCE_BACKENDS.includes(b)) return b + ' ⚡';
       return b;
     }
     function modelsForBackend(backend) {
-      if (INFERENCE_BACKENDS.includes(backend)) return INFERENCE_MODELS[backend] || [];
-      if (backend === 'claude') return CLAUDE_CLI_MODELS;
-      return COPILOT_CLI_MODELS;
+      const discovered = BACKEND_MODELS[backend];
+      if (discovered && discovered.length) return discovered;
+      if (INFERENCE_BACKENDS.includes(backend)) return [];
+      return CLI_FALLBACK_MODELS[backend] || COPILOT_CLI_MODELS;
     }
     // _modelIdMatches: an agent's stored model may lack (or carry) the
     // gateway provider prefix that discovery reports (e.g. stored "gpt-4o"
@@ -4590,6 +4605,37 @@
       }
     }
     INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b));
+
+    const CLI_MODEL_CACHE_TTL_MS = 30000;
+    let _cliModelsFetchedAt = 0;
+    // fetchBackendsConfig hits the same /api/config/backends endpoint that
+    // powers backend discovery server-side (PR #1843) and populates
+    // BACKEND_MODELS for the CLI backends (copilot/claude/gemini/goose) with
+    // the live-discovered model ids, exactly as fetchInferenceModels does
+    // for vllm/llm-d/litellm. Until this resolves, modelsForBackend() serves
+    // CLI_FALLBACK_MODELS so a dropdown is never empty on first paint.
+    async function fetchBackendsConfig(force) {
+      const now = Date.now();
+      if (!force && _cliModelsFetchedAt && (now - _cliModelsFetchedAt) < CLI_MODEL_CACHE_TTL_MS) {
+        return;
+      }
+      try {
+        const resp = await fetch('/api/config/backends');
+        const list = await resp.json();
+        _cliModelsFetchedAt = now;
+        (list || []).forEach(b => {
+          if (!CLI_BACKENDS.includes(b.id)) return; // inference backends handled by fetchInferenceModels
+          const labelSuffix = b.fallback ? ' (common alias, unverified)' : '';
+          const models = (b.models || []).map(m => ({ value: m, label: m.split('/').pop() + labelSuffix }));
+          if (!models.length) return; // keep prior (possibly fallback) list rather than blanking the dropdown
+          BACKEND_MODELS[b.id] = models;
+          reconcileModelsAfterDiscovery(b.id, models, !!b.fallback);
+        });
+      } catch (e) {
+        // Leave BACKEND_MODELS / fallbacks untouched — retried on next refresh hook.
+      }
+    }
+    fetchBackendsConfig();
 
     // reconcileModelsAfterDiscovery auto-heals selections that a key swap
     // (or endpoint change) stripped out: when a REAL discovery (not the
@@ -9825,12 +9871,13 @@ function burnAreaChart() {
     async function updateModelDropdown(agent, backend) {
       const modelSelects = document.querySelectorAll(`select[data-change-action="switchModel"][data-agent="${agent}"]`);
       const isInference = INFERENCE_BACKENDS.includes(backend);
-      if (isInference) {
+      const isCli = CLI_BACKENDS.includes(backend);
+      if (isInference || isCli) {
         modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">loading models…</option>';
           sel.disabled = true;
         });
-        const models = await fetchInferenceModels(backend);
+        const models = isInference ? await fetchInferenceModels(backend) : (await fetchBackendsConfig(), modelsForBackend(backend));
         modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">model ▾</option>' +
             models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
@@ -9844,19 +9891,23 @@ function burnAreaChart() {
       }
     }
 
-    // Refresh an inference backend's model list whenever its dropdown is
-    // opened, so options reflect runtime state (endpoint/key changes, new
-    // models). fetchInferenceModels rate-limits via its
-    // INFERENCE_MODEL_CACHE_TTL_MS cache, so this cannot hammer the API.
+    // Refresh a backend's model list whenever its dropdown is opened, so
+    // options reflect runtime state (endpoint/key changes, new models) —
+    // for BOTH inference backends (vllm/llm-d/litellm) and CLI backends
+    // (copilot/claude/gemini/goose). fetchInferenceModels/fetchBackendsConfig
+    // rate-limit via their own TTL caches, so this cannot hammer the API.
     document.addEventListener('focusin', async (e) => {
       const sel = e.target;
       if (!sel || !sel.matches || !sel.matches('select[data-change-action="switchModel"]')) return;
       const agentName = sel.dataset.agent;
       const a = (window._lastAgents || []).find(x => x.name === agentName);
       const backend = a && a.cli;
-      if (!backend || !INFERENCE_BACKENDS.includes(backend)) return;
-      const prev = JSON.stringify(INFERENCE_MODELS[backend] || []);
-      const models = await fetchInferenceModels(backend);
+      if (!backend) return;
+      const isInference = INFERENCE_BACKENDS.includes(backend);
+      const isCli = CLI_BACKENDS.includes(backend);
+      if (!isInference && !isCli) return;
+      const prev = JSON.stringify(BACKEND_MODELS[backend] || []);
+      const models = isInference ? await fetchInferenceModels(backend) : (await fetchBackendsConfig(), modelsForBackend(backend));
       if (JSON.stringify(models) !== prev) {
         const current = sel.value;
         sel.innerHTML = '<option value="">model ▾</option>' +
