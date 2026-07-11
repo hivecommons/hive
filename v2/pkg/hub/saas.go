@@ -3791,6 +3791,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <a href="/get-started">Get Started</a>
       <a href="/dashboard" style="color:var(--amber)">My Hives</a>
       <a href="/api/docs" target="_blank">API</a>
+      <a href="https://kubestellar.io/docs/hive/overview/introduction" target="_blank" rel="noopener">Docs</a>
       <span id="nav-user" class="nav-user"></span>
     </nav>
     <div class="header-right">
