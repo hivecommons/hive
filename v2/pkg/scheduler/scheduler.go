@@ -295,6 +295,22 @@ func (s *Scheduler) BuildKickMessages(actionable *github.ActionableResult, agent
 	return messages
 }
 
+// BuildAgentMessageFromLastActionable builds a kick message for the named
+// agent from the scheduler's cached actionable snapshot, classifying issues
+// exactly like governor-driven kicks do. The dashboard's manual-kick path
+// previously called BuildAgentMessage with a nil issue list, so every manual
+// kick delivered an EMPTY work list — agents (whose policies forbid running
+// gh issue list themselves) then correctly reported "nothing to do" no matter
+// how deep the queue was.
+func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string {
+	actionable := s.GetLastActionable()
+	var classified []github.Issue
+	if actionable != nil {
+		classified = classify.ClassifyAll(actionable.Issues.Items)
+	}
+	return s.BuildAgentMessage(agentName, classified, actionable)
+}
+
 func (s *Scheduler) buildReposSection() string {
 	var b strings.Builder
 	b.WriteString("AUTHORIZED REPOS (you may ONLY interact with these):\n")
@@ -525,9 +541,11 @@ func (s *Scheduler) buildCIFailingList() string {
 func (s *Scheduler) ghAuthInstructions() string {
 	return `## Project Authentication
 
-GitHub access is pre-configured in your environment. The GH_TOKEN and
-SSL_CERT_FILE variables are already set by the hive runtime. Use gh
-commands normally — authentication is handled automatically.
+GitHub access is handled transparently by the hive proxy. Do NOT expect a
+GH_TOKEN environment variable — it is deliberately unset in agent sessions
+(the Copilot CLI claims it for its own auth). Run gh and git commands
+normally; requests are authenticated in transit. Never treat a missing
+GH_TOKEN as a blocker.
 
 `
 }

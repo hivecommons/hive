@@ -953,7 +953,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if msg == "" && s.deps.Scheduler != nil {
-		msg = s.deps.Scheduler.BuildAgentMessage(name, nil, s.deps.Scheduler.GetLastActionable())
+		msg = s.deps.Scheduler.BuildAgentMessageFromLastActionable(name)
 	}
 
 	if err := s.deps.AgentMgr.SendKick(name, msg); err != nil {
