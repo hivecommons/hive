@@ -72,6 +72,9 @@ type Server struct {
 	// different people get two distinct sessions and each sees THEMSELVES.
 	sessionMu    sync.RWMutex
 	userSessions map[string]*userSession
+	// sessionStorePath, when non-empty, persists userSessions across restarts
+	// (see EnableSessionPersistence). Guarded by sessionMu.
+	sessionStorePath string
 
 	claudeOAuthFlow claudeOAuthFlow
 

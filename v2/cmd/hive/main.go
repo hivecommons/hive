@@ -488,6 +488,10 @@ func main() {
 
 	dashSrv := dashboard.NewServerWithAuth(cfg.Dashboard.Port, cfg.Dashboard.AuthToken, logger)
 
+	// Persist per-user dashboard sessions next to the config (the PVC in
+	// hosted mode) so direct-route users aren't logged out by pod restarts.
+	dashSrv.EnableSessionPersistence(filepath.Join(filepath.Dir(*configPath), "dashboard-sessions.json"))
+
 	// Seed token sparkline history now that the dashboard server exists
 	if len(pendingTokenSeed) > 0 {
 		dashSrv.SeedTokenSparklineHistory(pendingTokenSeed)

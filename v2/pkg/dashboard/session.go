@@ -3,7 +3,9 @@ package dashboard
 import (
 	crand "crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -29,6 +31,70 @@ const sessionIDBytes = 32
 // sessionTTL bounds how long a device-flow session remains valid before the
 // user must re-authenticate. It mirrors the cookie MaxAge.
 const sessionTTL = time.Duration(sessionCookieMaxAge) * time.Second
+
+// EnableSessionPersistence makes per-user sessions survive process restarts
+// by mirroring the session map to path (created 0600 — session ids are bearer
+// credentials, so the file lives in the same trust domain as dashboard-token).
+// Without this, direct-route spokes log every user out on every pod restart:
+// the hive_session cookie lasts 30 days but the map it resolves against was
+// memory-only, and a direct-route spoke has no hub gateway to re-inject
+// identity headers. Call once at startup before the server begins serving.
+func (s *Server) EnableSessionPersistence(path string) {
+	s.sessionMu.Lock()
+	defer s.sessionMu.Unlock()
+	s.sessionStorePath = path
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) && s.logger != nil {
+			s.logger.Warn("session store unreadable — starting with no restored sessions", "path", path, "error", err)
+		}
+		return
+	}
+	var stored map[string]*userSession
+	if err := json.Unmarshal(data, &stored); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("session store corrupt — starting with no restored sessions", "path", path, "error", err)
+		}
+		return
+	}
+	now := time.Now()
+	restored := 0
+	for id, sess := range stored {
+		if now.After(sess.ExpiresAt) {
+			continue
+		}
+		s.userSessions[id] = sess
+		restored++
+	}
+	if restored > 0 && s.logger != nil {
+		s.logger.Info("restored dashboard sessions", "count", restored, "path", path)
+	}
+}
+
+// persistSessionsLocked mirrors the session map to the store path, if
+// persistence is enabled. Callers must hold sessionMu for writing. The file is
+// small (one entry per live login), so a full atomic rewrite per mutation is
+// cheaper than the complexity of anything incremental.
+func (s *Server) persistSessionsLocked() {
+	if s.sessionStorePath == "" {
+		return
+	}
+	data, err := json.Marshal(s.userSessions)
+	if err != nil {
+		return
+	}
+	tmp := s.sessionStorePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to write session store", "path", s.sessionStorePath, "error", err)
+		}
+		return
+	}
+	if err := os.Rename(tmp, s.sessionStorePath); err != nil && s.logger != nil {
+		s.logger.Warn("failed to replace session store", "path", s.sessionStorePath, "error", err)
+	}
+}
 
 // newSessionID returns a cryptographically-random opaque session id, or empty
 // string if the system RNG fails (the caller must treat that as an error and
@@ -63,6 +129,7 @@ func (s *Server) createUserSession(username, role string) string {
 		Role:      role,
 		ExpiresAt: now.Add(sessionTTL),
 	}
+	s.persistSessionsLocked()
 	s.sessionMu.Unlock()
 	return id
 }
@@ -82,6 +149,7 @@ func (s *Server) lookupSession(id string) *userSession {
 	if time.Now().After(sess.ExpiresAt) {
 		s.sessionMu.Lock()
 		delete(s.userSessions, id)
+		s.persistSessionsLocked()
 		s.sessionMu.Unlock()
 		return nil
 	}
@@ -95,6 +163,7 @@ func (s *Server) deleteSession(id string) {
 	}
 	s.sessionMu.Lock()
 	delete(s.userSessions, id)
+	s.persistSessionsLocked()
 	s.sessionMu.Unlock()
 }
 
