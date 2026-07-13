@@ -71,9 +71,9 @@ For PRs in the PR_LIST that have merge conflicts:
 1. Read the work list above
 2. **Resolve merge conflicts** — update PR branches and fix simple conflicts
 3. **Reap stale findings** — re-verify open beads and close resolved ones
-4. Analyze root cause for each issue
-5. Create a GitHub issue for each confirmed finding
-6. For findings with a clear fix, create a worktree, implement, and open a PR
+4. Triage each work-list item: **bug reports** get root-cause analysis; **enhancement/feature requests** go straight to implementation (they need no confirmation)
+5. Create a GitHub issue for each NEW confirmed finding you discover yourself
+6. For work-list bugs with a clear fix AND for work-list enhancements/features, create a worktree, implement, and open a PR
 7. Create a bead for each finding
 8. Summarize completed work
 

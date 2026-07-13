@@ -69,7 +69,7 @@ ${PR_LIST}
 1. Read the work list above
 2. **Reap stale findings** — re-verify open beads (`bd list --status=open --actor=scanner --json`) and close resolved ones
 3. For each issue, analyze the codebase to understand root cause and complexity
-4. Create a GitHub issue for each confirmed finding
+4. Create a GitHub issue for each NEW confirmed finding you discover yourself — for human-filed enhancements already in the work list, post an analysis comment with an implementation plan on the EXISTING issue instead of filing a duplicate
 5. Create a bead linking to the GitHub issue
 6. Summarize findings in your response
 
