@@ -21,6 +21,7 @@ type Client struct {
 	repos        []string
 	exemptLabels []string
 	logger       *slog.Logger
+	appAuth      *AppAuth // nil for token-authenticated clients
 }
 
 // GoGitHub returns the underlying go-github client for direct API access.
@@ -29,6 +30,15 @@ func (c *Client) GoGitHub() *gh.Client {
 		return nil
 	}
 	return c.client
+}
+
+// AppAuth returns the GitHub App auth backing this client, or nil when the
+// client authenticates with a static token instead of an app installation.
+func (c *Client) AppAuth() *AppAuth {
+	if c == nil {
+		return nil
+	}
+	return c.appAuth
 }
 
 type Issue struct {

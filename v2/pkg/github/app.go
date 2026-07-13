@@ -234,6 +234,40 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	return nil
 }
 
+// InstallationInfo describes the GitHub App installation this hive is
+// authenticating as, resolved live from the GitHub API via the app JWT.
+type InstallationInfo struct {
+	InstallationID int64
+	Account        string // login of the org/user the installation belongs to
+	IssuesPerm     string // granted issues permission: "read", "write", or "" (none)
+}
+
+// VerifyInstallation resolves the configured installation and returns the
+// account it belongs to plus the granted issues permission. A successful
+// token mint alone does not prove write access: a stale installation_id can
+// mint valid tokens for a DIFFERENT org (public reads still work, writes 403
+// with "Resource not accessible by integration"), and an installation can be
+// granted less than the app requests until the org owner approves.
+func (a *AppAuth) VerifyInstallation(ctx context.Context) (*InstallationInfo, error) {
+	jwtToken, err := a.generateJWT()
+	if err != nil {
+		return nil, fmt.Errorf("generating JWT: %w", err)
+	}
+
+	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
+	setBaseURL(jwtClient, a.apiURL)
+	inst, _, err := jwtClient.Apps.GetInstallation(ctx, a.installationID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving installation %d: %w", a.installationID, err)
+	}
+
+	return &InstallationInfo{
+		InstallationID: a.installationID,
+		Account:        inst.GetAccount().GetLogin(),
+		IssuesPerm:     inst.GetPermissions().GetIssues(),
+	}, nil
+}
+
 type appTransport struct {
 	auth *AppAuth
 	base http.RoundTripper
@@ -261,9 +295,10 @@ func NewClientFromApp(auth *AppAuth, org string, repos []string, logger *slog.Lo
 	setBaseURL(client, auth.apiURL)
 
 	return &Client{
-		client: client,
-		org:    org,
-		repos:  repos,
-		logger: logger,
+		client:  client,
+		org:     org,
+		repos:   repos,
+		logger:  logger,
+		appAuth: auth,
 	}
 }

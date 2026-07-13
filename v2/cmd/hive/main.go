@@ -97,6 +97,17 @@ func main() {
 	cfg.HiveID = loadOrGenerateHiveID(logger)
 	os.Setenv("HIVE_ID", cfg.HiveID)
 
+	// Surface config provenance: when the dashboard-save backup exists, init
+	// containers restore it over the ConfigMap seed on restart, so edits made
+	// only to the seed (or only to the live file) silently lose to the backup.
+	bakPath := *configPath + ".bak"
+	if _, statErr := os.Stat(bakPath); statErr == nil {
+		logger.Info("config backup present — restored over the seed on pod restart; fixes must land in the live config so the next save refreshes it",
+			"path", bakPath,
+			"github_installation_id", cfg.GitHub.InstallationID,
+		)
+	}
+
 	logger.Info("hive starting",
 		"org", cfg.Project.Org,
 		"repos", cfg.Project.Repos,
@@ -991,7 +1002,17 @@ func main() {
 				}
 				advisoryIssues[recheckRepo] = num
 				os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
-				logger.Info("github app recheck: app detected", "repo", recheckRepo, "number", num)
+				// Finding the advisory issue only proves the app is installed
+				// (reads succeed on public repos even with a token from the
+				// wrong installation). Verify write capability before letting
+				// the handler clear the banner, so Re-check can't produce a
+				// clears-then-returns flip-flop.
+				if diag := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
+					dashSrv.SetGitHubAppPermIssue(diag)
+					logger.Warn("github app recheck: app detected but write not verified", "repo", recheckRepo, "detail", diag)
+					return false
+				}
+				logger.Info("github app recheck: app detected, write verified", "repo", recheckRepo, "number", num)
 				return true
 			})
 		}
@@ -1133,6 +1154,10 @@ func main() {
 			newCfg.ACMMLevel = cfg.ACMMLevel
 		}
 
+		// Capture the outgoing GitHub App identity before the swap so we can
+		// tell whether the reload changed it.
+		prevGitHub := cfg.GitHub
+
 		// Swap the in-memory config pointer contents
 		*cfg = *newCfg
 
@@ -1143,6 +1168,36 @@ func main() {
 		}
 		gov.UpdateConfig(cfg.Governor)
 		initAgentConfigDrivenSystems(cfg)
+
+		// Rebuild GitHub App auth when its identity changed. AppAuth captures
+		// app_id/installation_id at construction, so without this a corrected
+		// installation_id in hive.yaml keeps minting tokens for the OLD
+		// installation until the pod restarts.
+		if prevGitHub.AppID != cfg.GitHub.AppID ||
+			prevGitHub.InstallationID != cfg.GitHub.InstallationID ||
+			prevGitHub.KeyFile != cfg.GitHub.KeyFile ||
+			prevGitHub.APIURL != cfg.GitHub.APIURL {
+			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+				newAppAuth, appErr := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
+				if appErr != nil {
+					logger.Error("github app auth rebuild after config reload failed", "error", appErr)
+				} else {
+					newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+					if len(cfg.Governor.Labels.Exempt) > 0 {
+						newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
+					}
+					ghClient = newClient
+					appAuth = newAppAuth
+					agentMgr.SetAppAuth(newAppAuth)
+					dashSrv.UpdateGitHubClient(newClient, newAppAuth)
+					logger.Info("github app auth rebuilt after config reload",
+						"app_id", cfg.GitHub.AppID,
+						"installation_id", cfg.GitHub.InstallationID,
+					)
+				}
+			}
+		}
+
 		refreshDashboard()
 	}, logger)
 	dashSrv.SetSkipReloadFunc(configWatcher.SkipNext)
@@ -1708,6 +1763,35 @@ func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions,
 	}
 }
 
+// diagnoseGitHubAppWrite returns "" when the configured GitHub App
+// installation belongs to expectedOwner and grants issues:write. Otherwise it
+// returns a banner-ready diagnosis distinguishing the two write-failure causes
+// that produce identical 403s: an installation_id pointing at a different
+// org's installation, and a permission update the org owner hasn't approved
+// yet. A nil appAuth (token-authenticated hive) yields "" — nothing to check.
+func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
+	if appAuth == nil {
+		return ""
+	}
+	info, err := appAuth.VerifyInstallation(ctx)
+	if err != nil {
+		return fmt.Sprintf("Could not verify the GitHub App installation: %v", err)
+	}
+	if expectedOwner != "" && !strings.EqualFold(info.Account, expectedOwner) {
+		return fmt.Sprintf("This hive is authenticating as GitHub App installation %d, which belongs to '%s' — not '%s'. Check github.installation_id in the hive config.",
+			info.InstallationID, info.Account, expectedOwner)
+	}
+	if info.IssuesPerm != "write" {
+		granted := info.IssuesPerm
+		if granted == "" {
+			granted = "none"
+		}
+		return fmt.Sprintf("The GitHub App is installed for '%s' but granted Issues: %s (Issues: Read & Write required). The org owner must approve the updated permissions at the app installation settings page.",
+			info.Account, granted)
+	}
+	return ""
+}
+
 func runEvalCycle(
 	ctx context.Context,
 	cfg *config.Config,
@@ -1968,10 +2052,17 @@ func runEvalCycle(
 					if err := postClient.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); err != nil {
 						logger.Warn("failed to post advisory digest", "repo", primaryRepo, "issue", issueNum, "error", err)
 						if strings.Contains(err.Error(), "403") && strings.Contains(err.Error(), "Resource not accessible by integration") {
-							// App is installed (we found the issue) but can't write — permission gap
-							dashSrv.SetGitHubAppPermIssue("The GitHub App is installed but lacks Issues: Read & Write permission. The org owner must approve updated permissions at the app installation settings page.")
+							// App is installed (we found the issue) but can't write.
+							// Resolve the actual cause — pending permission approval
+							// vs. an installation_id pointing at the wrong org — so
+							// the banner tells the user what to actually fix.
+							msg := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org)
+							if msg == "" {
+								msg = "The GitHub App is installed but lacks Issues: Read & Write permission. The org owner must approve updated permissions at the app installation settings page."
+							}
+							dashSrv.SetGitHubAppPermIssue(msg)
 							dashSrv.SetGitHubAppRequired(true)
-							logger.Warn("GitHub App installed but insufficient permissions — cannot write issue comments", "repo", primaryRepo)
+							logger.Warn("GitHub App installed but insufficient permissions — cannot write issue comments", "repo", primaryRepo, "detail", msg)
 						} else if strings.Contains(err.Error(), "rate limit") {
 							logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", primaryRepo)
 						} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {

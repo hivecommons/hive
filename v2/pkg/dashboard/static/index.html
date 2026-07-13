@@ -3988,18 +3988,27 @@
         if (isPermIssue) {
           banner.classList.add('perm-issue');
           if (title) title.textContent = 'GitHub App — Insufficient Permissions';
-          if (desc) desc.textContent = 'The app is installed but cannot write to this repository. The org owner must approve updated permissions.';
+          if (desc) desc.textContent = 'The app is installed but cannot write to this repository.';
           if (link) { link.textContent = 'View App Settings'; link.href = data.githubAppInstallURL || 'https://github.com/apps/kubestellar-hive'; }
-          if (!existingDetails) {
-            var details = document.createElement('div');
+          var details = existingDetails;
+          if (!details) {
+            details = document.createElement('div');
             details.id = 'gh-app-perm-details';
             details.className = 'gh-app-perm-details';
+            desc.parentElement.appendChild(details);
+          }
+          // The server composes the diagnosis (pending org approval vs.
+          // installation_id pointing at the wrong org), so render its exact
+          // message rather than assuming which case we're in. textContent
+          // keeps the server string safe to display verbatim.
+          if (typeof data.githubAppPermIssue === 'string' && data.githubAppPermIssue) {
+            details.textContent = data.githubAppPermIssue;
+          } else {
             details.innerHTML = '<strong>Current permissions:</strong><br>'
               + '<span class="perm-ok">✓ Issues: Read</span> — can find and read issues<br>'
               + '<span class="perm-missing">✗ Issues: Write</span> — cannot create or update issue comments<br>'
               + '<br><strong>Required:</strong> Issues: Read &amp; Write<br>'
               + '<em>The org owner must go to Organization Settings → GitHub Apps → kubestellar-hive → Configure and accept the updated permissions.</em>';
-            desc.parentElement.appendChild(details);
           }
         } else {
           banner.classList.remove('perm-issue');
