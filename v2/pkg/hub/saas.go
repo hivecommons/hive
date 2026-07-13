@@ -1580,7 +1580,9 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	user.Hives[hiveID] = "owner"
 	saveSaaSUser(user)
 
+	provisionWG.Add(1)
 	go func() {
+		defer provisionWG.Done()
 		cluster := s.clusterForHive(h)
 		if cluster == nil {
 			h.Status = "error"
@@ -2189,6 +2191,11 @@ var (
 
 // trackedBranches lists branches that produce Docker images via CI.
 var trackedBranches = []string{"v2", "v3"}
+
+// provisionWG tracks async hive-provisioning goroutines so tests (which swap
+// the package-level saas*Dir path variables) can wait for them to drain
+// before mutating shared state.
+var provisionWG sync.WaitGroup
 
 const latestSHAPollInterval = 2 * time.Minute
 

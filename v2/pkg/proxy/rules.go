@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"sync"
 	"encoding/json"
 	"regexp"
 	"strings"
@@ -17,22 +18,29 @@ type ProxyRule struct {
 }
 
 // githubHosts are the hostnames the proxy inspects.
+var githubHostsMu sync.RWMutex
 var githubHosts = map[string]bool{
 	"api.github.com": true,
 	"github.com":     true,
 }
 
 // RegisterGitHubHost adds a custom hostname (e.g. GHE instance) to the
-// allowlist so that the proxy applies mode enforcement to it.
+// allowlist so that the proxy applies mode enforcement to it. Callers can
+// register hosts while proxy goroutines are already serving, so the map is
+// mutex-guarded.
 func RegisterGitHubHost(host string) {
 	if host == "" {
 		return
 	}
+	githubHostsMu.Lock()
 	githubHosts[host] = true
+	githubHostsMu.Unlock()
 }
 
 // IsGitHubHost returns true if the host should be subject to mode enforcement.
 func IsGitHubHost(host string) bool {
+	githubHostsMu.RLock()
+	defer githubHostsMu.RUnlock()
 	return githubHosts[host]
 }
 

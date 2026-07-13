@@ -17,6 +17,10 @@ func helperSetupTempDirs(t *testing.T) func() {
 	t.Helper()
 	dir := t.TempDir()
 
+	// Async provisioning goroutines from previously-run tests read the
+	// package-level path variables swapped below; drain them first.
+	provisionWG.Wait()
+
 	oldUsers := saasUsersDir
 	oldHives := saasHivesDir
 	oldHMAC := hmacKeyPath
@@ -34,6 +38,7 @@ func helperSetupTempDirs(t *testing.T) func() {
 	os.MkdirAll(provisionRequestsDir, 0o755)
 
 	return func() {
+		provisionWG.Wait()
 		saasUsersDir = oldUsers
 		saasHivesDir = oldHives
 		hmacKeyPath = oldHMAC

@@ -93,8 +93,10 @@ func TestDocumentSource_ImportURL(t *testing.T) {
 		t.Fatalf("Import failed: %v", err)
 	}
 
-	if meta.Title != "Test Paper" {
-		t.Errorf("title = %q, want Test Paper", meta.Title)
+	// The configured Name wins over the HTML-extracted title; extraction is
+	// only the fallback when Name is empty.
+	if meta.Title != "test-paper" {
+		t.Errorf("title = %q, want test-paper (config name)", meta.Title)
 	}
 	if meta.ContentType != "text/html" {
 		t.Errorf("content_type = %q, want text/html", meta.ContentType)
@@ -207,7 +209,7 @@ func TestDocumentSource_NoSourceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for document with no URL or file path")
 	}
-	if !strings.Contains(err.Error(), "neither url nor file_path") {
+	if !strings.Contains(err.Error(), "has no url, file_path, or context7_id") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

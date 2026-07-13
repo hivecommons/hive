@@ -124,6 +124,7 @@ type HubServer struct {
 	hubGitBranch   string
 	hubSecret      string
 	httpServer     *http.Server
+	httpMu         sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
 	clusters       map[string]ClusterConfig
 	heartbeatHealth   map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
 	heartbeatHealthMu sync.RWMutex
@@ -229,23 +230,31 @@ const (
 func (s *HubServer) Start(port int) error {
 	addr := fmt.Sprintf(":%d", port)
 	s.logger.Info("hub server starting", "addr", addr)
-	s.httpServer = &http.Server{
+	srv := &http.Server{
 		Addr:         addr,
 		Handler:      s.mux,
 		ReadTimeout:  hubReadTimeout,
 		WriteTimeout: hubWriteTimeout,
 		IdleTimeout:  hubIdleTimeout,
 	}
-	return s.httpServer.ListenAndServe()
+	// Start typically runs in its own goroutine while Shutdown is called
+	// from another; guard the handoff of the server handle.
+	s.httpMu.Lock()
+	s.httpServer = srv
+	s.httpMu.Unlock()
+	return srv.ListenAndServe()
 }
 
 func (s *HubServer) Shutdown(timeout time.Duration) error {
-	if s.httpServer == nil {
+	s.httpMu.Lock()
+	srv := s.httpServer
+	s.httpMu.Unlock()
+	if srv == nil {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return s.httpServer.Shutdown(ctx)
+	return srv.Shutdown(ctx)
 }
 
 func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {

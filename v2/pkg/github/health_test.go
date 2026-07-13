@@ -462,9 +462,9 @@ func TestBrewCheck_VersionMatch(t *testing.T) {
 			"content":  "dmVyc2lvbiAiMS4yLjMi", // version "1.2.3"
 		})
 	})
-	mux.HandleFunc("/repos/org/repo1/releases/latest", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
-			"tag_name": "v1.2.3",
+	mux.HandleFunc("/repos/org/repo1/releases", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"tag_name": "v1.2.3"},
 		})
 	})
 	server := httptest.NewServer(mux)
@@ -486,9 +486,9 @@ func TestBrewCheck_VersionMismatch(t *testing.T) {
 			"content":  "dmVyc2lvbiAiMS4yLjMi", // version "1.2.3"
 		})
 	})
-	mux.HandleFunc("/repos/org/repo1/releases/latest", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
-			"tag_name": "v2.0.0",
+	mux.HandleFunc("/repos/org/repo1/releases", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"tag_name": "v2.0.0"},
 		})
 	})
 	server := httptest.NewServer(mux)
@@ -1171,12 +1171,13 @@ func TestEnumerateActionable_SingleRepoError(t *testing.T) {
 	})
 
 	result, err := client.EnumerateActionable(context.Background())
-	// Should not fail entirely but may have empty results
-	if err != nil {
-		t.Logf("error (expected): %v", err)
+	// The only repo failed entirely, so EnumerateActionable reports the
+	// outage instead of returning an empty (queue-looks-idle) result.
+	if err == nil {
+		t.Fatal("expected error when the only repo fails to enumerate")
 	}
-	if result == nil {
-		t.Fatal("expected non-nil result even with errors")
+	if result != nil {
+		t.Errorf("expected nil result on total failure, got %+v", result)
 	}
 }
 

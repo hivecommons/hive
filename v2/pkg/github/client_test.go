@@ -255,16 +255,15 @@ func TestEnumerateActionable_APIError(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, org, []string{repo})
-	// EnumerateActionable logs warnings but does not return an error when individual
-	// repos fail — it continues to the next repo.
+	// When EVERY repo fails to enumerate, EnumerateActionable returns an
+	// error so the governor keeps prior state instead of reading an API
+	// outage as an empty queue.
 	result, err := c.EnumerateActionable(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when all repos fail to enumerate")
 	}
-	// No data collected — counts should be zero.
-	if result.Issues.Count != 0 || result.PRs.Count != 0 {
-		t.Errorf("expected zero counts on API error, got issues=%d prs=%d",
-			result.Issues.Count, result.PRs.Count)
+	if result != nil {
+		t.Errorf("expected nil result on total failure, got %+v", result)
 	}
 }
 
@@ -685,18 +684,13 @@ func TestEnumerateActionable_IssuesErrorContinuesToPRs(t *testing.T) {
 
 	c := newTestClient(t, server, org, []string{repo})
 	result, err := c.EnumerateActionable(context.Background())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// The issues failure skips fetchPRs, so the single repo counts as fully
+	// failed — and with every repo failed, an error is returned.
+	if err == nil {
+		t.Fatal("expected error when the only repo fails to enumerate")
 	}
-	// When issues fetch fails, fetchIssues returns error; EnumerateActionable
-	// logs and calls `continue` — so fetchPRs is NOT called for that repo.
-	// Both counts should be 0.
-	if result.Issues.Count != 0 {
-		t.Errorf("Issues.Count = %d, want 0", result.Issues.Count)
-	}
-	// PRs also 0 because the continue skips fetchPRs.
-	if result.PRs.Count != 0 {
-		t.Errorf("PRs.Count = %d, want 0 (fetchPRs skipped after issues error)", result.PRs.Count)
+	if result != nil {
+		t.Errorf("expected nil result on total failure, got %+v", result)
 	}
 }
 

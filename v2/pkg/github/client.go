@@ -209,9 +209,10 @@ func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, er
 
 		prs, heldPRs, prTotal, err := c.fetchPRs(ctx, repo)
 		if err != nil {
+			// Issues for this repo were already collected; a PR-only failure
+			// is partial and must not count toward the all-repos-failed guard,
+			// which would discard real issue data and report an outage.
 			c.logger.Warn("failed to fetch PRs", "repo", repo, "error", err)
-			failedRepos++
-			lastFetchErr = err
 			continue
 		}
 		allPRs = append(allPRs, prs...)

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1085,17 +1086,19 @@ func TestRefreshAfterMutation_NilDeps_Boost(t *testing.T) {
 
 func TestRefreshAndPersist(t *testing.T) {
 	srv := newFullServer(t)
-	refreshed := false
-	persisted := false
-	srv.deps.RefreshFunc = func() { refreshed = true }
-	srv.deps.PersistFunc = func() { persisted = true }
+	var refreshed, persisted atomic.Bool
+	srv.deps.RefreshFunc = func() { refreshed.Store(true) }
+	srv.deps.PersistFunc = func() { persisted.Store(true) }
 	srv.refreshAndPersist()
-	// These are async (go func), give a moment
-	time.Sleep(50 * time.Millisecond)
-	if !refreshed {
+	// These run in goroutines — poll instead of racing on plain bools.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !(refreshed.Load() && persisted.Load()) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !refreshed.Load() {
 		t.Error("refresh not called")
 	}
-	if !persisted {
+	if !persisted.Load() {
 		t.Error("persist not called")
 	}
 }
