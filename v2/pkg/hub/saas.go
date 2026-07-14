@@ -2327,13 +2327,78 @@ func discoveredImageBranches() []string {
 
 	const listTimeout = 8 * time.Second
 	client := &http.Client{Timeout: listTimeout}
-	branches := listLatestImageBranches(client)
+	imageBranches := listLatestImageBranches(client)
+
+	// A merged branch is deleted but its <branch>-latest image lingers on
+	// GHCR, so the image list alone would offer dead branches in the
+	// switcher. Keep only image branches whose branch still EXISTS on the
+	// repo. Branch names are compared in their sanitized (tag) form because
+	// the image tag is branchToTag(branch); e.g. real "feat/x" ⇒ image
+	// "feat-x-latest" ⇒ we must match it back to the live "feat/x".
+	live := map[string]struct{}{}
+	for _, b := range listRepoBranches(client) {
+		live[branchToTag(b)] = struct{}{}
+	}
+	branches := imageBranches
+	if len(live) > 0 { // only filter when the branch list fetch succeeded
+		branches = branches[:0]
+		for _, b := range imageBranches {
+			if _, ok := live[b]; ok {
+				branches = append(branches, b)
+			}
+		}
+	}
 
 	imageBranchMu.Lock()
 	imageBranchCache = branches
 	imageBranchCachedAt = time.Now()
 	imageBranchMu.Unlock()
 	return branches
+}
+
+// listRepoBranches returns the names of branches on kubestellar/hive via the
+// GitHub API (paginated). Best-effort: returns nil on any failure so callers
+// treat "unknown" as "don't filter" rather than hiding valid branches.
+func listRepoBranches(client *http.Client) []string {
+	var names []string
+	url := "https://api.github.com/repos/kubestellar/hive/branches?per_page=100"
+	const maxPages = 10
+	for page := 0; url != "" && page < maxPages; page++ {
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil
+		}
+		var body []struct {
+			Name string `json:"name"`
+		}
+		decErr := json.NewDecoder(resp.Body).Decode(&body)
+		link := resp.Header.Get("Link")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || decErr != nil {
+			return nil
+		}
+		for _, b := range body {
+			names = append(names, b.Name)
+		}
+		url = nextGitHubLink(link)
+	}
+	return names
+}
+
+// nextGitHubLink extracts the rel="next" URL from a GitHub Link header (an
+// absolute URL), or "".
+func nextGitHubLink(link string) string {
+	for _, part := range strings.Split(link, ",") {
+		if !strings.Contains(part, `rel="next"`) {
+			continue
+		}
+		if i, j := strings.Index(part, "<"), strings.Index(part, ">"); i >= 0 && j > i {
+			return part[i+1 : j]
+		}
+	}
+	return ""
 }
 
 // listLatestImageBranches queries the GHCR tag list for
