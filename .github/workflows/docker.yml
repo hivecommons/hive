@@ -120,10 +120,16 @@ jobs:
         if: steps.head-check.outputs.stale != 'true'
         working-directory: /tmp/digests
         run: |
+          shopt -s nullglob
+          digests=(*)
+          if [ ${#digests[@]} -eq 0 ]; then
+            echo "No digests to merge (per-arch builds published none) — skipping."
+            exit 0
+          fi
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive:${{ github.ref_name }}-latest \
             -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.git_short }} \
-            $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' *)
+            $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' "${digests[@]}")
 
   build-contributor:
     strategy:
@@ -222,11 +228,17 @@ jobs:
         if: steps.head-check.outputs.stale != 'true'
         working-directory: /tmp/contrib-digests
         run: |
+          shopt -s nullglob
+          digests=(*)
+          if [ ${#digests[@]} -eq 0 ]; then
+            echo "No digests to merge (per-arch builds published none) — skipping."
+            exit 0
+          fi
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-contributor:latest \
             -t ghcr.io/kubestellar/hive-contributor:${{ github.ref_name }}-latest \
             -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.git_short }} \
-            $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' *)
+            $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' "${digests[@]}")
 
   build-hub:
     strategy:
@@ -327,8 +339,14 @@ jobs:
         if: steps.head-check.outputs.stale != 'true'
         working-directory: /tmp/hub-digests
         run: |
+          shopt -s nullglob
+          digests=(*)
+          if [ ${#digests[@]} -eq 0 ]; then
+            echo "No digests to merge (per-arch builds published none) — skipping."
+            exit 0
+          fi
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-hub:latest \
             -t ghcr.io/kubestellar/hive-hub:${{ github.ref_name }}-latest \
             -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.git_short }} \
-            $(printf 'ghcr.io/kubestellar/hive-hub@sha256:%s ' *)
+            $(printf 'ghcr.io/kubestellar/hive-hub@sha256:%s ' "${digests[@]}")
