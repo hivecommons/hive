@@ -232,6 +232,17 @@ type SaaSHive struct {
 	OCIExportID     string                 `json:"oci_export_id,omitempty"`
 	ClusterID       string                 `json:"cluster_id,omitempty"`
 
+	// GitHubBaseURL / GitHubAPIURL pin this hive's GitHub host. The GitHub
+	// host is a property of the HIVE (where its org/repos live), not the
+	// cluster: a cluster-level GHE default silently breaks hives for
+	// public-GitHub orgs provisioned onto that cluster (empty
+	// oauth_client_id → broken direct-route sign-in, and all API traffic
+	// aimed at the wrong host). "public" (or an explicit github.com URL)
+	// forces public GitHub; empty falls back to the cluster default for
+	// backward compatibility.
+	GitHubBaseURL string `json:"github_base_url,omitempty"`
+	GitHubAPIURL  string `json:"github_api_url,omitempty"`
+
 	// Migration tracking fields (Phase 7).
 	MigrationStatus    string `json:"migration_status,omitempty"`     // "migrating", "completed", "failed"
 	MigrationFrom      string `json:"migration_from,omitempty"`       // source cluster ID
@@ -257,6 +268,48 @@ type CreateHiveRequest struct {
 	// is_public: true in the provisioning template. Send false explicitly
 	// to provision a private hive.
 	IsPublic *bool `json:"is_public"`
+	// GitHubBaseURL / GitHubAPIURL: per-hive GitHub host override (see
+	// SaaSHive). Use "public" to force public github.com on a cluster
+	// whose defaults point at a GHE instance.
+	GitHubBaseURL string `json:"github_base_url,omitempty"`
+	GitHubAPIURL  string `json:"github_api_url,omitempty"`
+}
+
+// githubHostPublic is the sentinel request value that forces public
+// github.com even when the target cluster's defaults point at GHE.
+const githubHostPublic = "public"
+
+// effectiveGitHubBaseURL resolves the GitHub web base URL for a hive:
+// hive-level override first (with "public"/github.com meaning public →
+// empty string, the template's public-GitHub representation), then the
+// cluster default.
+func effectiveGitHubBaseURL(h *SaaSHive, cluster *ClusterConfig) string {
+	switch h.GitHubBaseURL {
+	case "":
+		return cluster.GitHubBaseURL
+	case githubHostPublic, "https://github.com":
+		return ""
+	default:
+		return h.GitHubBaseURL
+	}
+}
+
+// effectiveGitHubAPIURL resolves the GitHub API URL with the same
+// precedence as effectiveGitHubBaseURL.
+func effectiveGitHubAPIURL(h *SaaSHive, cluster *ClusterConfig) string {
+	switch h.GitHubAPIURL {
+	case "":
+		// An explicit public base URL implies the public API too — don't
+		// let a cluster GHE API URL leak under a public web host.
+		if h.GitHubBaseURL == githubHostPublic || h.GitHubBaseURL == "https://github.com" {
+			return ""
+		}
+		return cluster.GitHubAPIURL
+	case githubHostPublic, "https://api.github.com":
+		return ""
+	default:
+		return h.GitHubAPIURL
+	}
 }
 
 func generateHiveID(org, repo string) string {
@@ -519,15 +572,19 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"HasInference":      cluster.InferenceEndpoint != "",
 		"IsPublic":          h.IsPublic,
 		"HiveType":          "hosted",
-		"HasGHE":            cluster.GitHubBaseURL != "",
-		"GitHubBaseURL":     cluster.GitHubBaseURL,
-		"GitHubAPIURL":      cluster.GitHubAPIURL,
+		"HasGHE":            effectiveGitHubBaseURL(h, cluster) != "",
+		"GitHubBaseURL":     effectiveGitHubBaseURL(h, cluster),
+		"GitHubAPIURL":      effectiveGitHubAPIURL(h, cluster),
 		"OAuthClientID": func() string {
+			// Follow the hive's EFFECTIVE GitHub host, not the cluster
+			// default — a public-GitHub hive on a GHE-defaulted cluster
+			// must still get the public Device Flow client ID or its
+			// direct-route sign-in is broken.
+			if effectiveGitHubBaseURL(h, cluster) == "" {
+				return publicGitHubOAuthClientID
+			}
 			if cluster.OAuthClientID != "" {
 				return cluster.OAuthClientID
-			}
-			if cluster.GitHubBaseURL == "" {
-				return publicGitHubOAuthClientID
 			}
 			return ""
 		}(),

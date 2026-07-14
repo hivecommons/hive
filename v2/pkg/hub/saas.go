@@ -1578,6 +1578,10 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		// the pre-#1604 template that hardcoded is_public: true. Owners
 		// can toggle visibility later from My Hives.
 		IsPublic: req.IsPublic == nil || *req.IsPublic,
+		// Per-hive GitHub host override (empty = cluster default). Lets a
+		// public-GitHub org provision correctly on a GHE-defaulted cluster.
+		GitHubBaseURL: req.GitHubBaseURL,
+		GitHubAPIURL:  req.GitHubAPIURL,
 	}
 
 	if err := saveSaaSHive(h); err != nil {
