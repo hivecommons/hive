@@ -665,7 +665,7 @@ a:hover{text-decoration:underline}
     <p class="instructions">Enter this code at GitHub:</p>
     <div class="code-wrap">
       <div class="code-box" id="user-code">--------</div>
-      <button class="copy-btn" id="copy-btn" onclick="copyCode()">Copy</button>
+      <button class="copy-btn" id="copy-btn" onclick="copyAndOpen()">Copy &amp; Open</button>
     </div>
     <p class="instructions"><a id="verify-link" href="#" target="_blank" rel="noopener">Open GitHub verification page ↗</a></p>
     <p class="status"><span class="spinner"></span> Waiting for authorization…</p>
@@ -683,13 +683,20 @@ a:hover{text-decoration:underline}
 function showStep(id){['step-start','step-code','step-done','step-error'].forEach(
   s=>document.getElementById(s).style.display=s===id?'block':'none')}
 function showError(msg){document.getElementById('error-msg').textContent=msg;showStep('step-error')}
-function copyCode(){
+function copyAndOpen(){
   var code=document.getElementById('user-code').textContent;
-  navigator.clipboard.writeText(code).then(function(){
-    var btn=document.getElementById('copy-btn');
+  var url=document.getElementById('verify-link').href;
+  var btn=document.getElementById('copy-btn');
+  function open(){
+    // Open the GitHub verification page in a new tab where the code is
+    // already on the clipboard, ready to paste — one click, not two.
+    if(url && url!=='#'){window.open(url,'_blank','noopener')}
     btn.textContent='Copied!';btn.classList.add('copied');
-    setTimeout(function(){btn.textContent='Copy';btn.classList.remove('copied')},2000);
-  })
+    setTimeout(function(){btn.textContent='Copy \u0026 Open';btn.classList.remove('copied')},2000);
+  }
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(code).then(open,open);
+  } else { open(); }
 }
 async function startFlow(){
   document.getElementById('btn-start').disabled=true;
