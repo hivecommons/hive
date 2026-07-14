@@ -1207,6 +1207,22 @@ func main() {
 	dashSrv.SetSkipReloadFunc(configWatcher.SkipNext)
 	go configWatcher.Start(ctx)
 
+	// Persist operator pause/resume into the on-disk config so it survives
+	// restarts and upgrades. Without this, a pod restart rebuilt every agent
+	// un-paused, silently undoing an operator's pause on the next upgrade.
+	agentMgr.SetPersistPauseCallback(func(name string, paused bool) {
+		ac, ok := cfg.Agents[name]
+		if !ok || ac.Paused == paused {
+			return
+		}
+		ac.Paused = paused
+		cfg.Agents[name] = ac
+		configWatcher.SkipNext() // don't let our own write trigger a reload
+		if err := cfg.Save(); err != nil {
+			logger.Warn("failed to persist agent pause state", "agent", name, "paused", paused, "error", err)
+		}
+	})
+
 	// Register custom GHE hostnames with the proxy allowlist so mode
 	// enforcement applies to GitHub Enterprise API and web requests.
 	for _, rawURL := range []string{cfg.GitHub.ResolvedAPIURL(), cfg.GitHub.ResolvedBaseURL()} {

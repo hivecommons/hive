@@ -209,6 +209,10 @@ type AgentConfig struct {
 	Model           string `yaml:"model" json:"model,omitempty"`
 	BeadsDir        string `yaml:"beads_dir" json:"beads_dir,omitempty"`
 	Enabled         bool   `yaml:"enabled" json:"enabled,omitempty"`
+	// Paused persists an operator pause across restarts/upgrades. Without
+	// this, every pod restart rebuilt agents un-paused (Go zero value), so
+	// an operator pause was silently undone on the next upgrade.
+	Paused          bool   `yaml:"paused" json:"paused,omitempty"`
 	ClearOnKick     bool   `yaml:"clear_on_kick" json:"clear_on_kick"`
 	CLIPinned       bool   `yaml:"cli_pinned" json:"cli_pinned,omitempty"`
 	StaleTimeout    int    `yaml:"stale_timeout" json:"stale_timeout,omitempty"`

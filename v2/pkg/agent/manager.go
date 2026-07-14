@@ -125,6 +125,19 @@ type Manager struct {
 
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
+
+	// persistPauseCallback, when set, persists an agent's paused state to
+	// the on-disk config so it survives restarts. Nil in tests / bare setups.
+	persistPauseCallback func(name string, paused bool)
+}
+
+// SetPersistPauseCallback wires a function that persists an agent's paused
+// state to config (called on pause/resume). Idempotent saves are the
+// caller's responsibility.
+func (m *Manager) SetPersistPauseCallback(fn func(name string, paused bool)) {
+	m.mu.Lock()
+	m.persistPauseCallback = fn
+	m.mu.Unlock()
 }
 
 // AppTokenMinter is implemented by github.AppAuth to mint per-agent scoped tokens.
@@ -327,6 +340,9 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 			Config:       cfg,
 			State:        StateStopped,
 			UID:          agentUID,
+			// Restore a persisted operator pause so a restart/upgrade
+			// doesn't silently un-pause the agent.
+			Paused:       cfg.Paused,
 			OutputBuffer: NewRingBuffer(outputBufferCapacity),
 			tmuxSession:  "hive-" + name,
 			tmuxSocket:   tmuxSocket,
@@ -3579,6 +3595,10 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 		m.tmuxSendKeysForAgent(agent, "C-c", "")
 	}
 	agent.State = StatePaused
+	agent.Config.Paused = true
+	if m.persistPauseCallback != nil {
+		m.persistPauseCallback(name, true)
+	}
 	m.logger.Info("audit: agent paused",
 		"name", name,
 		"trigger", trigger,
@@ -3610,6 +3630,10 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	prevTrigger := agent.PausedTrigger
 	prevReason := agent.PausedReason
 	agent.Paused = false
+	agent.Config.Paused = false
+	if m.persistPauseCallback != nil {
+		m.persistPauseCallback(name, false)
+	}
 	agent.PausedAt = time.Time{}
 	agent.PausedReason = ""
 	agent.PausedTrigger = ""
