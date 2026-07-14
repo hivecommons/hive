@@ -2101,7 +2101,16 @@ func runEvalCycle(
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount)
+						// A successful write proves the app is installed AND has
+						// write access — clear BOTH the perm issue and the
+						// app-required banner flag. Previously only the perm
+						// issue was cleared, so githubAppRequired (set true at
+						// startup or on an early transient failure) stuck on
+						// forever and the "GitHub App Not Installed" banner
+						// never went away despite tokens working.
 						dashSrv.SetGitHubAppPermIssue("")
+						dashSrv.SetGitHubAppRequired(false)
+						dashSrv.ClearPendingGitHubAppInstall()
 					}
 				}
 			}
