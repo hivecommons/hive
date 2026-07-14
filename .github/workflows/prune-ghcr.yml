@@ -31,5 +31,8 @@ jobs:
           token: ${{ secrets.GHCR_PRUNE_TOKEN }}
           image-names: "hive hive-hub hive-contributor"
           tag-selection: untagged
-          cut-off: 2d              # spare untagged from the last 2 days (in-flight builds)
+          cut-off: 3h              # untagged digests are unreachable by name; only
+                                  # spare the last few hours so an in-flight build's
+                                  # per-arch children aren't deleted before their
+                                  # manifest list is created.
           dry-run: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
