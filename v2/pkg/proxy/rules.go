@@ -37,6 +37,13 @@ func RegisterGitHubHost(host string) {
 	githubHostsMu.Unlock()
 }
 
+// unregisterGitHubHost removes a hostname from the allowlist (test cleanup).
+func unregisterGitHubHost(host string) {
+	githubHostsMu.Lock()
+	delete(githubHosts, host)
+	githubHostsMu.Unlock()
+}
+
 // IsGitHubHost returns true if the host should be subject to mode enforcement.
 func IsGitHubHost(host string) bool {
 	githubHostsMu.RLock()

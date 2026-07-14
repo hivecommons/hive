@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -143,8 +144,15 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
 	s.mux.HandleFunc("GET /api/saas/admin/hub-banner", s.requireAdmin(s.handleGetHubBanner))
 
-	go s.startProvisionWatcher()
-	go s.StartLatestSHAPoller()
+	// Under `go test` these long-lived pollers leak across test cases: they
+	// immediately hit the GitHub API and read the package-level saas path
+	// variables that the filesystem test helper swaps per-test, which the
+	// race detector rightly flags. Production behavior is unchanged; tests
+	// that need poller logic call the functions directly.
+	if !testing.Testing() {
+		go s.startProvisionWatcher()
+		go s.StartLatestSHAPoller()
+	}
 }
 
 func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
