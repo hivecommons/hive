@@ -61,6 +61,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             GIT_HASH=${{ github.sha }}
+            GIT_BRANCH=${{ github.ref_name }}
           no-cache-filters: builder
           outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ steps.slug.outputs.slug }}

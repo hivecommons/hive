@@ -10666,6 +10666,12 @@ function burnAreaChart() {
         const ocEl = document.getElementById('oc-git-version');
         const commitTooltip = v.latestMessage ? escapeHtml(v.latestMessage) : escapeHtml(v.hash);
         let html = `<a href="https://github.com/kubestellar/hive/commit/${escapeHtml(v.hash)}" target="_blank" style="color:inherit;text-decoration:none" title="${commitTooltip}">${escapeHtml(v.short)}</a>`;
+        // Branch pill next to the SHA — shows which branch this spoke tracks
+        // (v2/v3 release, or a personal dev branch like mk). Skip only the
+        // unknown placeholder so the pill is always present for real builds.
+        if (v.branch && v.branch !== 'unknown') {
+          html += ` <span title="Tracking branch ${escapeHtml(v.branch)}" style="display:inline-block;padding:1px 7px;margin-left:6px;border-radius:999px;font-size:0.62rem;font-weight:600;background:color-mix(in srgb, var(--accent) 16%, transparent);border:1px solid color-mix(in srgb, var(--accent) 40%, transparent);color:var(--accent);vertical-align:middle">${escapeHtml(v.branch)}</span>`;
+        }
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
