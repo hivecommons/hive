@@ -1003,6 +1003,7 @@ func main() {
 				num, err := ghClient.EnsureAdvisoryIssue(ctx, recheckRepo)
 				if err != nil {
 					logger.Debug("github app recheck: not accessible", "repo", recheckRepo, "error", err)
+					dashSrv.AuditLog("system", "github_app_check", "result=not accessible (app not installed / no read)", "")
 					return false
 				}
 				advisoryIssues[recheckRepo] = num
@@ -1015,9 +1016,11 @@ func main() {
 				if diag := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
 					dashSrv.SetGitHubAppPermIssue(diag)
 					logger.Warn("github app recheck: app detected but write not verified", "repo", recheckRepo, "detail", diag)
+					dashSrv.AuditLog("system", "github_app_check", "result=installed but write NOT verified: "+diag, "")
 					return false
 				}
 				logger.Info("github app recheck: app detected, write verified", "repo", recheckRepo, "number", num)
+				dashSrv.AuditLog("system", "github_app_check", "result=OK (installed, write verified)", "")
 				return true
 			})
 		}
@@ -1379,6 +1382,19 @@ func main() {
 	if len(onDemandFromPack) > 0 {
 		logger.Info("on-demand agents from pack definitions", "agents", onDemandFromPack)
 	}
+	// One visible "hive restarted" marker per boot, so the audit log shows a
+	// restart happened (and at what build) instead of only a burst of
+	// per-agent agent_start rows. Include a count of persisted pauses being
+	// restored so the operator can confirm pause state survived the restart.
+	pausedCount := 0
+	for _, ac := range cfg.EnabledAgents() {
+		if ac.Paused {
+			pausedCount++
+		}
+	}
+	dashSrv.AuditLog("system", "hive_restart",
+		fmt.Sprintf("build=%s version=%s; restoring %d paused agent(s)", gitShort, "3.0.0", pausedCount), "")
+
 	const agentLaunchDelaySec = 15
 	agentIndex := 0
 	for name, ac := range cfg.EnabledAgents() {
@@ -1395,7 +1411,13 @@ func main() {
 		if err := agentMgr.Start(ctx, name); err != nil {
 			logger.Warn("failed to start agent", "name", name, "error", err)
 		} else {
-			dashSrv.AuditLog("system", "agent_start", "trigger=startup", name)
+			// Surface whether a persisted operator pause was honored on this
+			// restart, so the audit log shows pause state survived (or didn't).
+			detail := "trigger=startup"
+			if ac.Paused {
+				detail = "trigger=startup; restored paused (persisted)"
+			}
+			dashSrv.AuditLog("system", "agent_start", detail, name)
 		}
 		agentIndex++
 	}
