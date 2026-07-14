@@ -137,6 +137,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/deny-provision/{username}", s.requireAdmin(s.handleDenyProvision))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
+	s.mux.HandleFunc("DELETE /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminDeleteUser))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAuth(s.handleListClusters))
@@ -414,6 +415,48 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	s.logger.Info("audit: admin updated user", "target", username, "quota", u.SaaSQuota, "blocked", u.Blocked)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// handleAdminDeleteUser removes a hub user record. It refuses to delete the
+// hub admin, and refuses to delete a user who still owns hosted hives — those
+// must be deleted (or reassigned) first so no namespace is orphaned. Deleting
+// a user does not touch GitHub; it only removes the hub's local account
+// record (login state, quota, encrypted token).
+func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	if username == hubAdminUsername {
+		http.Error(w, `{"error":"cannot delete the hub admin"}`, http.StatusForbidden)
+		return
+	}
+	if strings.Contains(username, "..") || strings.Contains(username, "/") || strings.Contains(username, "\\") {
+		http.Error(w, `{"error":"invalid username"}`, http.StatusBadRequest)
+		return
+	}
+	u := loadSaaSUser(username)
+	if u == nil {
+		http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+		return
+	}
+	var ownedHives []string
+	for hiveID, role := range u.Hives {
+		if role == "owner" {
+			ownedHives = append(ownedHives, hiveID)
+		}
+	}
+	if len(ownedHives) > 0 {
+		msg, _ := json.Marshal(fmt.Sprintf("user still owns %d hive(s); delete or reassign them first: %s", len(ownedHives), strings.Join(ownedHives, ", ")))
+		http.Error(w, `{"error":`+string(msg)+`}`, http.StatusConflict)
+		return
+	}
+	path := filepath.Join(saasUsersDir, username+".json")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		s.logger.Warn("admin delete user: remove failed", "target", username, "error", err)
+		http.Error(w, `{"error":"failed to delete user record"}`, http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("audit: admin deleted user", "target", username, "by", s.getAuthUser(r))
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
 }
 
 // --- Cluster Helpers ---
@@ -5167,7 +5210,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + blocked + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
-          '<td>' + (isAdmin ? '' : '<button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--red)') + ';color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button>') + '</td>' +
+          '<td>' + (isAdmin ? '' : '<button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--red)') + ';color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" style="padding:3px 10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Delete</button>') + '</td>' +
           '</tr>' + hiveRows;
       }).join('');
       document.getElementById('users-container').innerHTML =
@@ -5183,6 +5226,24 @@ const dashboardHTML = `<!DOCTYPE html>
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(updates)
         });
+        loadAdminUsers();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
+    async function deleteUser(username, hiveCount) {
+      if (hiveCount > 0) {
+        hiveToast('Cannot delete ' + username + ' — they still own ' + hiveCount + ' hive(s). Delete or reassign those first.', 'error');
+        return;
+      }
+      if (!await hiveConfirm('Delete hub user ' + username + '? This removes their hub account record (login, quota, saved token). It does not touch GitHub.')) return;
+      try {
+        var resp = await fetch('/api/saas/admin/users/' + encodeURIComponent(username), { method: 'DELETE' });
+        if (!resp.ok) {
+          var e = await resp.json().catch(function(){ return {}; });
+          hiveToast('Delete failed: ' + (e.error || resp.status), 'error');
+          return;
+        }
+        hiveToast('Deleted ' + username, 'success');
         loadAdminUsers();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
