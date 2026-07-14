@@ -1960,8 +1960,19 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	// Bootstrap case: trackedBranchList only includes branches already
+	// assigned to some hive, so the FIRST hive moved to a new dev branch
+	// would never validate. Accept any branch that actually exists on the
+	// hive repo — a live one-shot check (fetchBranchSHA populates the SHA
+	// cache as a side effect, so the branch is tracked from here on).
 	if !validBranch {
-		http.Error(w, `{"error":"unknown branch"}`, http.StatusBadRequest)
+		fetchBranchSHA(s.logger, body.Branch)
+		if getLatestSHAForBranch(body.Branch) != "" {
+			validBranch = true
+		}
+	}
+	if !validBranch {
+		http.Error(w, `{"error":"unknown branch (does not exist on the hive repo)"}`, http.StatusBadRequest)
 		return
 	}
 	cluster := s.clusterForHive(h)
