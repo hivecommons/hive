@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bufio"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
