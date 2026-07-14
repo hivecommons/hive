@@ -182,13 +182,14 @@ func TestHandleDeleteHiveWithAuth(t *testing.T) {
 		t.Errorf("expected 400 or 404, got %d", w.Code)
 	}
 
-	// Normal not found
+	// Deleting a hive whose SaaS entry is already gone is idempotent: the
+	// handler still purges any in-memory registry entry and reports deleted.
 	req2 := httptest.NewRequest("DELETE", "/api/saas/hives/nonexist", nil)
 	req2.Header.Set("Authorization", "Bearer ghp_del_user")
 	w2 := httptest.NewRecorder()
 	mux.ServeHTTP(w2, req2)
-	if w2.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", w2.Code)
+	if w2.Code != http.StatusOK {
+		t.Errorf("expected 200 (idempotent delete), got %d", w2.Code)
 	}
 }
 

@@ -441,13 +441,14 @@ func TestHandleDeleteHiveNotOwner(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /api/saas/hives/{id}", srv.handleDeleteHive)
 
-	// Hive doesn't exist → 404 (covers the loadSaaSHive nil path)
+	// Hive doesn't exist → idempotent 200 (covers the loadSaaSHive nil
+	// path, which purges any registry leftover and reports deleted).
 	req := httptest.NewRequest("DELETE", "/api/saas/hives/nonexistent", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", w.Code)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 (idempotent delete), got %d", w.Code)
 	}
 }
 
