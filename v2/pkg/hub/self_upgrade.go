@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -52,6 +53,86 @@ func RolloutRestartSelf(logger *slog.Logger) error {
 		"deployment", selfUpgradeDeployName,
 	)
 	return nil
+}
+
+// SwitchImageSelf patches this pod's own Deployment to change the image of
+// every container (including init containers) to the given tag via the
+// in-cluster K8s API. Used for branch switches delivered over heartbeat to
+// spokes whose hub can't reach them via kubectl (the spoke has no kubectl
+// binary, but its SA holds the hive-self-upgrade role: patch on
+// deployment/hive). A strategic-merge patch merges containers by name, so we
+// enumerate the deployment's containers first and set each image.
+func SwitchImageSelf(logger *slog.Logger, image string) error {
+	ns, err := os.ReadFile(k8sNamespacePath)
+	if err != nil {
+		return fmt.Errorf("reading namespace: %w", err)
+	}
+	namespace := strings.TrimSpace(string(ns))
+	if namespace == "" {
+		return fmt.Errorf("empty namespace from %s", k8sNamespacePath)
+	}
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
+
+	names, err := k8sDeploymentContainerNames(path)
+	if err != nil {
+		return fmt.Errorf("listing deployment containers: %w", err)
+	}
+	if len(names.containers) == 0 && len(names.initContainers) == 0 {
+		return fmt.Errorf("no containers found on deployment %s/%s", namespace, selfUpgradeDeployName)
+	}
+
+	var cs, ics []string
+	for _, n := range names.containers {
+		cs = append(cs, fmt.Sprintf(`{"name":%q,"image":%q}`, n, image))
+	}
+	for _, n := range names.initContainers {
+		ics = append(ics, fmt.Sprintf(`{"name":%q,"image":%q}`, n, image))
+	}
+	patch := fmt.Sprintf(
+		`{"spec":{"template":{"spec":{"containers":[%s],"initContainers":[%s]},"metadata":{"annotations":{"hive.kubestellar.io/restart-at":%q}}}}}`,
+		strings.Join(cs, ","), strings.Join(ics, ","), time.Now().UTC().Format(time.RFC3339),
+	)
+	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
+		return fmt.Errorf("patching deployment image: %w", err)
+	}
+	logger.Info("deployment image switched via in-cluster API, pod will roll",
+		"namespace", namespace, "deployment", selfUpgradeDeployName, "image", image)
+	return nil
+}
+
+type deploymentContainerNames struct {
+	containers     []string
+	initContainers []string
+}
+
+// k8sDeploymentContainerNames GETs the deployment and returns its container +
+// init-container names, so a strategic-merge image patch targets them by name.
+func k8sDeploymentContainerNames(path string) (deploymentContainerNames, error) {
+	var out deploymentContainerNames
+	body, err := k8sAPIGet(path)
+	if err != nil {
+		return out, err
+	}
+	var dep struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers     []struct{ Name string `json:"name"` } `json:"containers"`
+					InitContainers []struct{ Name string `json:"name"` } `json:"initContainers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(body, &dep); err != nil {
+		return out, err
+	}
+	for _, c := range dep.Spec.Template.Spec.Containers {
+		out.containers = append(out.containers, c.Name)
+	}
+	for _, c := range dep.Spec.Template.Spec.InitContainers {
+		out.initContainers = append(out.initContainers, c.Name)
+	}
+	return out, nil
 }
 
 func k8sAPIPatch(path string, body []byte) error {

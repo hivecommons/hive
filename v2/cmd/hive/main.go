@@ -1645,31 +1645,15 @@ func main() {
 			}
 		}), hub.SwitchBranchCallback(func(tag string) {
 			// Branch switch delivered via heartbeat (the hub couldn't reach
-			// this cluster over kubectl). We patch our OWN deployment image
-			// from inside the cluster — the pod's SA holds the
-			// hive-self-upgrade role (patch on deployment/hive). K8s then
-			// rolls the pod onto the new tag.
+			// this cluster over kubectl). Patch our OWN deployment image via
+			// the in-cluster K8s API — the pod has no kubectl binary, but its
+			// SA holds the hive-self-upgrade role (patch on deployment/hive).
+			// K8s then rolls the pod onto the new tag.
 			image := "ghcr.io/kubestellar/hive:" + tag
-			ns := os.Getenv("POD_NAMESPACE")
-			if ns == "" {
-				if b, rerr := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace"); rerr == nil {
-					ns = strings.TrimSpace(string(b))
-				}
-			}
-			if ns == "" {
-				logger.Warn("branch switch via heartbeat: cannot determine namespace, skipping", "tag", tag)
+			if err := hub.SwitchImageSelf(logger, image); err != nil {
+				logger.Warn("branch switch via heartbeat failed", "tag", tag, "image", image, "error", err)
 				return
 			}
-			// "*=" updates every container (incl. init containers) so nothing
-			// is left on the old tag — mirrors the hub-side kubectl path.
-			cmd := exec.CommandContext(ctx, "kubectl", "set", "image", "deployment/hive", "*="+image, "-n", ns)
-			if out, cerr := cmd.CombinedOutput(); cerr != nil {
-				logger.Warn("branch switch via heartbeat: kubectl set image failed",
-					"tag", tag, "ns", ns, "error", cerr, "output", string(out))
-				return
-			}
-			logger.Info("branch switch via heartbeat: deployment image patched, pod will roll",
-				"tag", tag, "image", image, "ns", ns)
 		}))
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {
