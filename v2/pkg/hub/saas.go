@@ -1536,7 +1536,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, r := range strings.Split(req.Repos, ",") {
-		if !isValidName(strings.TrimSpace(r)) {
+		if !isValidRepoRef(strings.TrimSpace(r)) {
 			http.Error(w, `{"error":"invalid repo name"}`, http.StatusBadRequest)
 			return
 		}
@@ -3550,7 +3550,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	for _, repo := range strings.Split(body.Repos, ",") {
-		if !isValidName(strings.TrimSpace(repo)) {
+		if !isValidRepoRef(strings.TrimSpace(repo)) {
 			http.Error(w, `{"error":"invalid repo name"}`, http.StatusBadRequest)
 			return
 		}
