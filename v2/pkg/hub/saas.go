@@ -2351,29 +2351,64 @@ func listLatestImageBranches(client *http.Client) []string {
 	if err := json.NewDecoder(tokenResp.Body).Decode(&tok); err != nil {
 		return nil
 	}
-	req, _ := http.NewRequest("GET", "https://ghcr.io/v2/kubestellar/hive/tags/list?n=200", nil)
-	req.Header.Set("Authorization", "Bearer "+tok.Token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-	var body struct {
-		Tags []string `json:"tags"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil
-	}
-	var branches []string
-	for _, t := range body.Tags {
-		if strings.HasSuffix(t, "-latest") {
-			branches = append(branches, strings.TrimSuffix(t, "-latest"))
+
+	// The registry tag list is paginated via RFC5988 Link headers. Untagged
+	// build digests aside, the repo can hold thousands of SHA tags, so the
+	// "<branch>-latest" tags we want may live on a later page — follow Link
+	// until exhausted (bounded) rather than reading only the first page.
+	branchSet := map[string]struct{}{}
+	next := "https://ghcr.io/v2/kubestellar/hive/tags/list?n=1000"
+	const maxPages = 20 // bound: up to ~20k tags
+	for page := 0; next != "" && page < maxPages; page++ {
+		req, _ := http.NewRequest("GET", next, nil)
+		req.Header.Set("Authorization", "Bearer "+tok.Token)
+		resp, err := client.Do(req)
+		if err != nil {
+			break
 		}
+		var body struct {
+			Tags []string `json:"tags"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&body)
+		link := resp.Header.Get("Link")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || decodeErr != nil {
+			break
+		}
+		for _, t := range body.Tags {
+			if strings.HasSuffix(t, "-latest") {
+				branchSet[strings.TrimSuffix(t, "-latest")] = struct{}{}
+			}
+		}
+		next = nextLinkURL(link)
+	}
+	branches := make([]string, 0, len(branchSet))
+	for b := range branchSet {
+		branches = append(branches, b)
 	}
 	return branches
+}
+
+// nextLinkURL extracts the rel="next" URL from a registry Link header, or "".
+// GHCR returns a relative path (e.g. </v2/.../tags/list?last=...&n=1000>),
+// which we resolve against the registry host.
+func nextLinkURL(link string) string {
+	for _, part := range strings.Split(link, ",") {
+		if !strings.Contains(part, `rel="next"`) {
+			continue
+		}
+		start := strings.Index(part, "<")
+		end := strings.Index(part, ">")
+		if start < 0 || end < 0 || end <= start {
+			return ""
+		}
+		u := part[start+1 : end]
+		if strings.HasPrefix(u, "/") {
+			return "https://ghcr.io" + u
+		}
+		return u
+	}
+	return ""
 }
 
 // provisionWG tracks async hive-provisioning goroutines so tests (which swap

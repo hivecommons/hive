@@ -1,0 +1,35 @@
+name: Prune GHCR untagged images
+
+# Docker builds push per-arch digests and attestation manifests that become
+# untagged once the <branch>-latest manifest list is created. These orphaned
+# versions accumulate fast (thousands/day) and bury the real -latest tags in
+# the registry tag list. Prune old UNTAGGED versions only; never touch tagged
+# ones (v2-latest, v3-latest, mk-latest, SHA tags, and their live per-arch
+# children are all tagged/referenced and thus spared).
+#
+# NOTE: deleting org-owned package versions requires a PAT (classic) with the
+# `delete:packages` scope, stored as secret GHCR_PRUNE_TOKEN. The default
+# GITHUB_TOKEN cannot delete versions of an organization package.
+on:
+  schedule:
+    - cron: '17 4 * * *'   # daily, 04:17 UTC — off-peak
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List what would be deleted without deleting'
+        type: boolean
+        default: true
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune untagged hive images
+        uses: snok/container-retention-policy@v3.0.0
+        with:
+          account: kubestellar
+          token: ${{ secrets.GHCR_PRUNE_TOKEN }}
+          image-names: "hive hive-hub hive-contributor"
+          tag-selection: untagged
+          cut-off: 2d              # spare untagged from the last 2 days (in-flight builds)
+          dry-run: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
