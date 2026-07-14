@@ -2322,6 +2322,10 @@
       <div class="gh-app-title">GitHub App Not Installed</div>
       <div class="gh-app-desc">This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.</div>
     </div>
+    <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
+      title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
+      style="width:120px;padding:6px 8px;margin-right:6px;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);font-size:0.8rem" />
+    <button onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
     <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
@@ -4078,6 +4082,47 @@
           + '<span style="color:' + textColor + '">' + a.message.replace(/</g, '&lt;') + '</span>'
           + '</div>';
       }).join('');
+    }
+
+    async function submitGitHubInstallationID() {
+      var input = document.getElementById('gh-app-install-id-input');
+      var btn = document.getElementById('gh-app-set-id-btn');
+      var raw = (input && input.value || '').trim();
+      var id = parseInt(raw, 10);
+      if (!raw || isNaN(id) || id <= 0) {
+        if (typeof hiveToast === 'function') hiveToast('Enter the numeric installation ID (from github.com/settings/installations/<ID>)', 'error');
+        return;
+      }
+      if (btn) { btn.disabled = true; btn.textContent = 'Setting...'; }
+      try {
+        // Persists installation_id and live-reinits the GitHub client (no
+        // restart) via the existing config-github handler.
+        var resp = await fetch('/api/config/github', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ installation_id: id })
+        });
+        var data = await resp.json().catch(function(){ return {}; });
+        if (!resp.ok) {
+          if (typeof hiveToast === 'function') hiveToast('Failed: ' + (data.error || resp.status), 'error');
+          return;
+        }
+        if (data.reinit === 'ok') {
+          if (typeof hiveToast === 'function') hiveToast('Installation ID set and GitHub App connected', 'success');
+          var banner = document.getElementById('gh-app-install-banner');
+          if (banner) { banner.classList.remove('perm-issue'); banner.setAttribute('hidden', ''); banner.style.cssText = 'display:none'; }
+        } else if (data.reinit === 'failed') {
+          if (typeof hiveToast === 'function') hiveToast('ID saved, but connect failed: ' + (data.reinit_error || 'check app install/permissions'), 'error');
+        } else {
+          // Saved but reinit not attempted (e.g. app key missing) — re-check
+          // will surface the remaining gap.
+          if (typeof hiveToast === 'function') hiveToast('Installation ID saved. Click Re-check to verify.', 'success');
+        }
+      } catch(e) {
+        if (typeof hiveToast === 'function') hiveToast('Error: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Set ID'; }
+      }
     }
 
     async function recheckGitHubApp() {
