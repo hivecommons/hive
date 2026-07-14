@@ -60,9 +60,19 @@ if not isinstance(overlay, dict):
 if not (overlay.get('project') or {}).get('org') or not overlay.get('agents'):
     sys.exit(1)
 
-# ConfigMap (hub/admin) wins for its managed keys when it sets them.
-if 'acmm_level' in seed:
+# The dashboard OVERLAY wins for acmm_level: the ConfigMap seed only ever
+# carries the provision-time level and is NOT updated when the level is
+# changed via the dashboard/apply-pack (which persists to the overlay). So
+# the seed value is stale after any level change, and letting it win here
+# silently reverted the level on every restart (issue #1856: a hive raised
+# to L5 dropped back to its provisioned L3 on the next pod restart). Only
+# fall back to the seed's acmm_level when the overlay has none.
+if seed.get('acmm_level') is not None and overlay.get('acmm_level') is not None and seed['acmm_level'] != overlay['acmm_level']:
+    sys.stderr.write("[entrypoint] acmm_level: overlay=%s wins over stale ConfigMap seed=%s (issue #1856)\n" % (overlay['acmm_level'], seed['acmm_level']))
+if 'acmm_level' not in overlay and 'acmm_level' in seed:
     overlay['acmm_level'] = seed['acmm_level']
+# hub.is_public is genuinely hub-managed (updated live via heartbeat), so
+# the seed still wins for it when set.
 if isinstance(seed.get('hub'), dict) and 'is_public' in seed['hub']:
     overlay.setdefault('hub', {})['is_public'] = seed['hub']['is_public']
 
@@ -73,7 +83,7 @@ with open(tmp_path, 'w') as f:
 os.replace(tmp_path, seed_path)
 PYEOF
       then
-        echo "[entrypoint] K8s mode — dashboard overlay merged over ConfigMap seed (ConfigMap wins for acmm_level, hub.is_public)"
+        echo "[entrypoint] K8s mode — dashboard overlay merged over ConfigMap seed (overlay wins for acmm_level; ConfigMap wins for hub.is_public)"
       else
         echo "[entrypoint] K8s mode — dashboard overlay invalid, using ConfigMap seed as-is"
       fi
