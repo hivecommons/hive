@@ -174,7 +174,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"${ISSUE_LIST}", issueList,
 		"${PR_LIST}", prList,
 		"${AUTHORIZED_REPOS}", s.buildReposSection(),
-		"${GH_AUTH}", s.ghAuthInstructions(),
+		"${GH_AUTH}", s.ghAuthInstructions(agentName),
 		"${PROJECT_ORG}", s.cfg.Project.Org,
 		"${PROJECT_NAME}", s.cfg.Project.Name,
 		"${PROJECT_PRIMARY_REPO}", fullPrimaryRepo,
@@ -538,16 +538,27 @@ func (s *Scheduler) buildCIFailingList() string {
 	return b.String()
 }
 
-func (s *Scheduler) ghAuthInstructions() string {
-	return `## Project Authentication
+// ghAuthInstructions tells the agent how to authenticate each tool class.
+// The per-agent token file is 0600, owned by the agent's UID, and scoped to
+// the agent's trust tier — pointing gh at it preserves both enforcement
+// layers (tier-scoped token + proxy mode inspection). Never point agents at
+// the shared gh-app-token.cache: reading it skips the credential helper's
+// UID/mode gate and hands every agent an unscoped token.
+func (s *Scheduler) ghAuthInstructions(agentName string) string {
+	return fmt.Sprintf(`## Project Authentication
 
-GitHub access is handled transparently by the hive proxy. Do NOT expect a
-GH_TOKEN environment variable — it is deliberately unset in agent sessions
-(the Copilot CLI claims it for its own auth). Run gh and git commands
-normally; requests are authenticated in transit. Never treat a missing
-GH_TOKEN as a blocker.
+- git push / git fetch: run them normally. A credential helper supplies a
+  push-capable token automatically. Do NOT export GH_TOKEN for git and do
+  NOT use HIVE_GITHUB_TOKEN (it is read-only; overriding breaks pushes).
+- gh CLI: export your per-agent token first:
+    export GH_TOKEN=$(cat /var/run/hive-metrics/agent-tokens/gh-token-%s.cache)
+  It is scoped to YOUR tier. Never read another agent's token file or the
+  shared gh-app-token.cache.
+- A missing GH_TOKEN at session start is expected (the Copilot CLI owns that
+  variable) — it is never a blocker. All GitHub traffic flows through the
+  hive proxy either way.
 
-`
+`, agentName)
 }
 
 func (s *Scheduler) reposSection() string {
