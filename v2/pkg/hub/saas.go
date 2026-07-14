@@ -5064,7 +5064,10 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!ts) return '';
       var d = new Date(ts);
       if (isNaN(d.getTime())) return ts.substring(0, 10);
-      return d.toLocaleString('en-US', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'America/New_York'}).replace(',','') + ' EDT';
+      // 12-hour clock with a compact single-letter meridiem (e.g. "9:21p").
+      var parts = d.toLocaleString('en-US', {year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/New_York'}).replace(',','').split(' ');
+      var meridiem = (parts.pop() || '').toLowerCase().charAt(0); // "AM"->"a", "PM"->"p"
+      return parts.join(' ') + meridiem + ' EDT';
     }
 
     function sortUsers(key) {
