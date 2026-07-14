@@ -130,7 +130,7 @@ jobs:
             exit 0
           fi
           docker buildx imagetools create \
-            -t ghcr.io/kubestellar/hive:${{ github.ref_name }}-latest \
+            -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.branch_tag }}-latest \
             -t ghcr.io/kubestellar/hive:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' "${digests[@]}")
 
@@ -239,7 +239,7 @@ jobs:
           fi
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-contributor:latest \
-            -t ghcr.io/kubestellar/hive-contributor:${{ github.ref_name }}-latest \
+            -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.branch_tag }}-latest \
             -t ghcr.io/kubestellar/hive-contributor:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' "${digests[@]}")
 
@@ -350,6 +350,6 @@ jobs:
           fi
           docker buildx imagetools create \
             -t ghcr.io/kubestellar/hive-hub:latest \
-            -t ghcr.io/kubestellar/hive-hub:${{ github.ref_name }}-latest \
+            -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.branch_tag }}-latest \
             -t ghcr.io/kubestellar/hive-hub:${{ steps.meta.outputs.git_short }} \
             $(printf 'ghcr.io/kubestellar/hive-hub@sha256:%s ' "${digests[@]}")

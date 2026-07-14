@@ -1923,6 +1923,14 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"upgrading"}`))
 }
 
+// branchToTag converts a git branch name into a valid Docker image tag.
+// Branch names may contain '/' (e.g. feat/x) which is illegal in a tag; the
+// docker.yml build sanitizes the same way (feat/x -> feat-x-latest), so the
+// hub must match to find the image.
+func branchToTag(branch string) string {
+	return strings.ReplaceAll(branch, "/", "-")
+}
+
 func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
 	if isTrustedOrigin(origin) {
@@ -1981,7 +1989,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ns := "hive-hosted-" + id
-	imageTag := body.Branch + "-latest"
+	imageTag := branchToTag(body.Branch) + "-latest"
 	image := "ghcr.io/kubestellar/hive:" + imageTag
 	// "*=" updates every container including init containers (copy-config,
 	// init-permissions) — pinning only "hive" left inits on the old branch tag.
@@ -2003,7 +2011,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
 			s.registry.Hives[i].Upgrading = true
-			s.registry.Hives[i].UpgradeTarget = body.Branch + "-latest"
+			s.registry.Hives[i].UpgradeTarget = branchToTag(body.Branch) + "-latest"
 			s.registry.Hives[i].UpgradeStartedAt = time.Now()
 			break
 		}
