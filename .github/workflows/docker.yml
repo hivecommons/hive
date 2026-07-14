@@ -2,12 +2,15 @@ name: Build and Push Docker Image
 
 on:
   push:
+    # Build an image for EVERY branch: any branch can be assigned to a hive
+    # via the hub's branch switcher (v2/v3 releases, plus experimental dev
+    # branches like mk), and each needs a <branch>-latest image to roll out.
+    # Exclude bot branches so dependency PRs don't consume image CI — they
+    # build on the base branch when merged.
     branches:
-      - v2
-      - v3
-      # Personal dev branches: hives can be assigned to these via the hub's
-      # branch switcher; each needs an image build to roll out.
-      - mk
+      - '**'
+      - '!dependabot/**'
+      - '!copilot/**'
   workflow_dispatch:
 
 # Serialize Docker builds per branch so concurrent merges don't race.
