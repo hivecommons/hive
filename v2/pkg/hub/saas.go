@@ -4335,6 +4335,25 @@ const dashboardHTML = `<!DOCTYPE html>
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (!h.githubAppRequired) { lines.push('✓ GitHub App installed'); }
       if (!checks.length) lines.push('No check data');
+      // Heartbeat freshness — so a reading that is minutes old isn't mistaken
+      // for current health (the source of "stuck Degraded" reports: the last
+      // heartbeat carried a transient failure and never got refreshed).
+      if (h.lastHeartbeat) {
+        var ageMs = Date.now() - new Date(h.lastHeartbeat).getTime();
+        if (!isNaN(ageMs) && ageMs >= 0) {
+          var ageMin = Math.floor(ageMs / 60000);
+          var ageStr = ageMin < 1 ? 'just now' : (ageMin === 1 ? '1 min ago' : ageMin + ' min ago');
+          lines.push('— as of ' + ageStr);
+          // A reading older than 2× the heartbeat interval is stale; don't
+          // present it as a live status.
+          var staleAfterMs = 5 * 60000;
+          if (ageMs > staleAfterMs && st !== 'unknown') {
+            statusLabel = statusLabel + ' (stale)';
+            lines[0] = statusLabel;
+            c = colors.warning; ic = icons.warning;
+          }
+        }
+      }
       return '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span></span>';
     }
     function dashboardLink(h) {
