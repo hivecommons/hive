@@ -4672,7 +4672,7 @@ const dashboardHTML = `<!DOCTYPE html>
           var sentinel = _upgradingHives[h.id];
           var isUpgrading = isSwitching ||
             (sentinel && sha === sentinel) || (h.upgrading && !isCurrent && !latestUnknown);
-          if (sentinel && sha !== sentinel && !isSwitching) delete _upgradingHives[h.id];
+          if (sentinel && sha !== sentinel && !isSwitching) { delete _upgradingHives[h.id]; delete _switchStartedAt[h.id]; }
           if (isCurrent && h.upgrading && !isSwitching) { h.upgrading = false; }
           var imageBuilding = (_latestImageStatus[branchName] || '') === 'building';
           var buildingHint = imageBuilding ? ' (image still building — upgrading now pulls the previous image)' : '';
@@ -4681,8 +4681,9 @@ const dashboardHTML = `<!DOCTYPE html>
             : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="behind latest ' + esc(branchLatest) + '">↑</span>';
           var upgradeIcon = '';
           if (isUpgrading) {
-            var progressLabel = isSwitching ? 'Switching to ' + esc(targetBranch) : 'Upgrading';
-            var progressTitle = isSwitching ? 'Rolling out ' + esc(h.upgradeTarget || '') + ' — the pill updates when the hive reports the new branch' : 'Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?');
+            var switchStale = isSwitching && _switchStartedAt[h.id] && (Date.now() - _switchStartedAt[h.id] > SWITCH_STALE_MS);
+            var progressLabel = isSwitching ? (switchStale ? 'Switching to ' + esc(targetBranch) + ' — taking longer than expected' : 'Switching to ' + esc(targetBranch)) : 'Upgrading';
+            var progressTitle = isSwitching ? (switchStale ? 'The hive has not reported branch ' + esc(targetBranch) + ' yet — it may be offline or its build predates in-cluster switch support. It will apply on its next successful check-in.' : 'Rolling out ' + esc(h.upgradeTarget || '') + ' — the pill updates when the hive reports the new branch') : 'Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?');
             upgradeIcon = ' <span title="' + progressTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
             upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint) + '" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">queued</span>';
@@ -4803,6 +4804,8 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _upgradingHives = {};
+    var _switchStartedAt = {}; // hiveId → ms timestamp the switch was initiated
+    var SWITCH_STALE_MS = 8 * 60 * 1000; // warn if a switch hasn't landed in 8 min
 
     /* Prefix marking a client-side branch-switch sentinel in _upgradingHives.
        The intended target branch follows the prefix (e.g. "switch:v3") so the
@@ -4911,9 +4914,15 @@ const dashboardHTML = `<!DOCTYPE html>
         if (remaining <= 0) {
           clearInterval(interval);
           delete _switchTimers[hiveId];
-          pill.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>' + esc(newBranch);
+          pill.innerHTML = '<span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Switching to ' + esc(newBranch);
           pill.style.cursor = 'default';
           pill.onclick = null;
+          // Set the switching sentinel BEFORE the request so any loadHives()
+          // re-render during the POST round-trip keeps showing "Switching to
+          // <branch>" — previously the sentinel was set only after the fetch
+          // resolved, leaving a gap where the pill reverted to plain status.
+          _upgradingHives[hiveId] = SWITCH_SENTINEL_PREFIX + newBranch;
+          _switchStartedAt[hiveId] = Date.now();
           doSwitchBranch(hiveId, newBranch);
           return;
         }
@@ -4947,14 +4956,21 @@ const dashboardHTML = `<!DOCTYPE html>
           body: JSON.stringify({ branch: newBranch })
         });
         var data = await resp.json();
-        if (!resp.ok) { hiveToast(data.error || 'Branch switch failed', 'error'); loadHives(); return; }
-        _upgradingHives[hiveId] = SWITCH_SENTINEL_PREFIX + newBranch;
-        hiveToast('Switched ' + hiveId + ' to ' + newBranch + ' — waiting for rollout', 'success');
+        if (!resp.ok) {
+          delete _upgradingHives[hiveId]; delete _switchStartedAt[hiveId]; // clear switching state on failure
+          hiveToast(data.error || 'Branch switch failed', 'error');
+          loadHives();
+          return;
+        }
+        // Sentinel already set before the fetch; keep it until the hive
+        // reports the new branch (cleared in the render path).
+        hiveToast('Switching ' + hiveId + ' to ' + newBranch + ' — applies on next check-in', 'success');
         loadHives();
         setTimeout(loadHives, 10000);
         setTimeout(loadHives, 30000);
         setTimeout(loadHives, 60000);
       } catch(e) {
+        delete _upgradingHives[hiveId]; delete _switchStartedAt[hiveId]; // clear switching state on error
         hiveToast('Error: ' + e.message, 'error');
         loadHives();
       }
