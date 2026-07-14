@@ -146,6 +146,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onGitHubAppConfig GitHubAppConfigCallback
 	var onHubBanner HubBannerCallback
 	var onVisibility VisibilityCallback
+	var onSwitchBranch SwitchBranchCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -156,6 +157,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onHubBanner = fn
 		case VisibilityCallback:
 			onVisibility = fn
+		case SwitchBranchCallback:
+			onSwitchBranch = fn
 		}
 	}
 
@@ -167,7 +170,11 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp == nil {
 			return
 		}
-		if resp.UpgradeTo != "" && onUpgrade != nil {
+		if resp.SwitchToTag != "" && onSwitchBranch != nil {
+			// Branch switch takes precedence over a plain SHA upgrade — it
+			// changes the image tag, which a same-tag re-pull can't do.
+			onSwitchBranch(resp.SwitchToTag)
+		} else if resp.UpgradeTo != "" && onUpgrade != nil {
 			onUpgrade(resp.UpgradeTo)
 		}
 		if resp.GitHubAppConfig != nil && onGitHubAppConfig != nil {
@@ -362,6 +369,11 @@ type HeartbeatResponse struct {
 	HubGitHash      string                    `json:"hub_git_hash,omitempty"`
 	LatestSHA       string                    `json:"latest_sha,omitempty"`
 	LatestTag       string                    `json:"latest_tag,omitempty"`
+	// SwitchToTag instructs the spoke to change its own deployment image to
+	// ghcr.io/kubestellar/hive:<SwitchToTag> and restart. Used for branch
+	// switches on clusters the hub can't reach over kubectl — the spoke has
+	// in-cluster RBAC (hive-self-upgrade role) to patch its own deployment.
+	SwitchToTag     string                    `json:"switch_to_tag,omitempty"`
 	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
 	IsPublic        *bool                     `json:"is_public,omitempty"`
@@ -380,6 +392,11 @@ type HubBannerCallback func(banner *HubBanner)
 
 // VisibilityCallback is called when the hub overrides the spoke's IsPublic setting.
 type VisibilityCallback func(isPublic bool)
+
+// SwitchBranchCallback is called when the hub instructs the spoke (via
+// heartbeat) to switch its deployment image to a specific tag — used for
+// branch switches on clusters the hub can't reach over kubectl.
+type SwitchBranchCallback func(tag string)
 
 // GitHubAppConfigCallback is called when the hub delivers GitHub App config
 // via the heartbeat response (app ID, installation ID, private key).

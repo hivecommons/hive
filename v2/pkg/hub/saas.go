@@ -1996,8 +1996,28 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		s.logger.Warn("branch switch failed", "hive", id, "branch", body.Branch, "output", string(out))
-		http.Error(w, `{"error":"branch switch failed — check hub logs"}`, http.StatusInternalServerError)
+		// The hub can't reach this hive's cluster over kubectl (e.g. vllm-d
+		// from the hive-oke hub). Fall back to the heartbeat path: record the
+		// target tag; the spoke — which has in-cluster RBAC (hive-self-upgrade
+		// role) to patch its own deployment — applies it on its next
+		// heartbeat. This is the ONLY path that works for unreachable
+		// clusters, so it's not an error.
+		s.logger.Warn("branch switch kubectl failed, using heartbeat fallback",
+			"hive", id, "branch", body.Branch, "output", string(out))
+		s.mu.Lock()
+		s.heartbeatSwitchTag[id] = imageTag
+		for i := range s.registry.Hives {
+			if s.registry.Hives[i].ID == id {
+				s.registry.Hives[i].Upgrading = true
+				s.registry.Hives[i].UpgradeTarget = imageTag
+				s.registry.Hives[i].UpgradeStartedAt = time.Now()
+				break
+			}
+		}
+		s.mu.Unlock()
+		s.logger.Info("audit: hive branch switch queued via heartbeat", "hive_id", id, "branch", body.Branch, "image", image, "by", username)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"status": "switching", "branch": body.Branch, "image": image, "via": "heartbeat"})
 		return
 	}
 	// Restart the deployment to pull the new image

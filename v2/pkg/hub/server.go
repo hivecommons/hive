@@ -156,6 +156,10 @@ type HubServer struct {
 	// Key: hive ID, value: target SHA.  Cleared when the spoke reports the
 	// target SHA, proving the upgrade completed.
 	heartbeatUpgrade map[string]string
+	// heartbeatSwitchTag tracks hives that should switch their deployment
+	// image to a specific tag (branch switch) via heartbeat, for clusters
+	// the hub can't reach over kubectl. Cleared once the spoke reports it.
+	heartbeatSwitchTag map[string]string
 
 	// pendingWebhooks stores GitHub App installation webhooks that arrived
 	// before the matching spoke heartbeat.  Key: lowercase org name.
@@ -211,7 +215,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		hubSecret:        secret,
 		clusters:         loadClusters(logger),
 		heartbeatHealth:  make(map[string]*HeartbeatHealthEntry),
-		heartbeatUpgrade: make(map[string]string),
+		heartbeatUpgrade:   make(map[string]string),
+		heartbeatSwitchTag: make(map[string]string),
 		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
@@ -608,10 +613,36 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		spokeManaged = false
 	}
 
-	// Fallback for hub-managed hives where kubectl failed (path 3).
+	// Pending branch switch (image-tag change) delivered via heartbeat for
+	// clusters the hub can't kubectl-reach. Takes precedence over a plain
+	// SHA upgrade. Cleared when the spoke reports running that tag's build.
 	s.mu.RLock()
+	switchTag := s.heartbeatSwitchTag[payload.HiveID]
 	hbTarget := s.heartbeatUpgrade[payload.HiveID]
 	s.mu.RUnlock()
+	if switchTag != "" {
+		// Clear once the spoke reports it's on the target branch — its tag is
+		// branchToTag(GitBranch)+"-latest". Otherwise keep instructing.
+		if payload.GitBranch != "" && branchToTag(payload.GitBranch)+"-latest" == switchTag {
+			s.mu.Lock()
+			delete(s.heartbeatSwitchTag, payload.HiveID)
+			for i := range s.registry.Hives {
+				if s.registry.Hives[i].ID == payload.HiveID {
+					s.registry.Hives[i].Upgrading = false
+					s.registry.Hives[i].UpgradeTarget = ""
+					break
+				}
+			}
+			s.mu.Unlock()
+			s.logger.Info("heartbeat: spoke branch switch complete",
+				"hive_id", payload.HiveID, "branch", payload.GitBranch)
+			switchTag = ""
+		} else {
+			resp.SwitchToTag = switchTag
+			s.logger.Info("heartbeat: instructing spoke to switch branch image",
+				"hive_id", payload.HiveID, "tag", switchTag)
+		}
+	}
 	if hbTarget != "" && (payload.GitHash == hbTarget || (latestSHA != "" && payload.GitHash == latestSHA)) {
 		// Spoke already at the target or at latest — clear the fallback entry.
 		s.mu.Lock()
