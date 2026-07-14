@@ -465,7 +465,7 @@ func (s *Scheduler) buildSupervisorMessage(actionable *github.ActionableResult) 
 	b.WriteString("[agent:supervisor]\n")
 	b.WriteString(fmt.Sprintf("MONITORING PASS %s\n\n", now.Format("1/2 3:04 PM MST")))
 
-	b.WriteString(s.ghAuthInstructions())
+	b.WriteString(s.ghAuthInstructions("supervisor"))
 	b.WriteString(s.reposSection())
 
 	b.WriteString("ROLE: You are the SUPERVISOR. Your job is to MONITOR other agents, NOT to fix issues yourself.\n")
@@ -657,7 +657,7 @@ func (s *Scheduler) buildArchitectMessage(issues []github.Issue, actionable *git
 	b.WriteString("[agent:architect]\n")
 	b.WriteString("Full architect pass — refactor/perf scan across all repos.\n\n")
 
-	b.WriteString(s.ghAuthInstructions())
+	b.WriteString(s.ghAuthInstructions("architect"))
 
 	architectIssues := filterByLane(issues, "architect")
 	if len(architectIssues) > 0 {
@@ -711,7 +711,7 @@ func (s *Scheduler) buildOutreachMessage(actionable *github.ActionableResult) st
 	b.WriteString("[agent:outreach]\n")
 	b.WriteString(fmt.Sprintf("Full outreach pass. Time: %s\n\n", now.Format("1/2 3:04 PM MST")))
 
-	b.WriteString(s.ghAuthInstructions())
+	b.WriteString(s.ghAuthInstructions("outreach"))
 
 	b.WriteString("YOUR RESPONSIBILITIES:\n")
 	b.WriteString("  1. Open PRs on external repos to promote adoption (awesome-lists, adopters files, install guides)\n")
@@ -736,7 +736,7 @@ func (s *Scheduler) buildSecCheckMessage(actionable *github.ActionableResult) st
 	b.WriteString("[agent:sec-check]\n")
 	b.WriteString(fmt.Sprintf("Security review pass. Time: %s\n\n", now.Format("1/2 3:04 PM MST")))
 
-	b.WriteString(s.ghAuthInstructions())
+	b.WriteString(s.ghAuthInstructions("sec-check"))
 
 	b.WriteString("YOUR RESPONSIBILITIES:\n")
 	b.WriteString("  1. Scan repos for security vulnerabilities (OWASP top 10, dependency CVEs)\n")
