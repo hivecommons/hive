@@ -1370,7 +1370,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"commit_messages":         getCommitMessages(),
 		"hub_git_hash":            s.hubGitHash,
 		"hub_git_branch":          s.hubGitBranch,
-		"tracked_branches":        trackedBranches,
+		"tracked_branches":        s.trackedBranchList(),
 		"hub_auto_upgrade":        isHubAutoUpgrade(),
 		"show_my_hives":           true,
 	}
@@ -1907,7 +1907,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	validBranch := false
-	for _, b := range trackedBranches {
+	for _, b := range s.trackedBranchList() {
 		if b == body.Branch {
 			validBranch = true
 			break
@@ -2197,8 +2197,35 @@ var (
 	commitMsgBySHA = map[string]string{}
 )
 
-// trackedBranches lists branches that produce Docker images via CI.
+// trackedBranches lists the always-tracked branches that produce Docker
+// images via CI. Personal dev branches (e.g. mk) are tracked dynamically:
+// see HubServer.trackedBranchList.
 var trackedBranches = []string{"v2", "v3"}
+
+// trackedBranchList returns the static CI branches plus every branch some
+// registered hive is assigned to, so a personal dev branch gets SHA polling,
+// Latest-images display, branch-switch validation, and auto-upgrade without
+// a hub code change per branch. Static branches keep their order and come
+// first. Caller must not hold s.mu.
+func (s *HubServer) trackedBranchList() []string {
+	seen := make(map[string]bool, len(trackedBranches))
+	out := make([]string, 0, len(trackedBranches))
+	for _, b := range trackedBranches {
+		if !seen[b] {
+			seen[b] = true
+			out = append(out, b)
+		}
+	}
+	s.mu.RLock()
+	for _, h := range s.registry.Hives {
+		if b := h.GitBranch; b != "" && !seen[b] {
+			seen[b] = true
+			out = append(out, b)
+		}
+	}
+	s.mu.RUnlock()
+	return out
+}
 
 // provisionWG tracks async hive-provisioning goroutines so tests (which swap
 // the package-level saas*Dir path variables) can wait for them to drain
@@ -2349,7 +2376,7 @@ func snapshotBranchSHAs() map[string]branchSHAInfo {
 // freshly restarted hub serves the previous values while live fetches are
 // failing or rate-limited. Branches no longer in trackedBranches are dropped;
 // branches already populated by a live fetch are never overwritten.
-func loadPersistedSHAs(logger *slog.Logger) {
+func loadPersistedSHAs(logger *slog.Logger, branches []string) {
 	data, err := os.ReadFile(latestSHAsPath)
 	if err != nil {
 		return // first run or no PVC — nothing to restore
@@ -2361,7 +2388,7 @@ func loadPersistedSHAs(logger *slog.Logger) {
 	}
 	latestSHAMu.Lock()
 	defer latestSHAMu.Unlock()
-	for _, branch := range trackedBranches {
+	for _, branch := range branches {
 		info, ok := persisted[branch]
 		if !ok || info.SHA == "" {
 			continue
@@ -2402,9 +2429,9 @@ func persistLatestSHAs(logger *slog.Logger) {
 
 func (s *HubServer) StartLatestSHAPoller() {
 	// Serve last-known-good SHAs immediately; live fetches below refresh them.
-	loadPersistedSHAs(s.logger)
+	loadPersistedSHAs(s.logger, s.trackedBranchList())
 	prevInfos := snapshotBranchSHAs()
-	fetchAllBranchSHAs(s.logger)
+	fetchAllBranchSHAs(s.logger, s.trackedBranchList())
 	if cur := snapshotBranchSHAs(); !maps.Equal(cur, prevInfos) {
 		persistLatestSHAs(s.logger)
 	}
@@ -2415,7 +2442,9 @@ func (s *HubServer) StartLatestSHAPoller() {
 	for range ticker.C {
 		oldSHAs := getLatestSHAs()
 		oldInfos := snapshotBranchSHAs()
-		fetchAllBranchSHAs(s.logger)
+		// Re-resolve each tick so branches from newly registered hives are
+		// picked up without a hub restart.
+		fetchAllBranchSHAs(s.logger, s.trackedBranchList())
 		newSHAs := getLatestSHAs()
 		if !maps.Equal(snapshotBranchSHAs(), oldInfos) {
 			persistLatestSHAs(s.logger)
@@ -2568,8 +2597,8 @@ func (s *HubServer) triggerAutoUpgrades() {
 	}
 }
 
-func fetchAllBranchSHAs(logger *slog.Logger) {
-	for _, branch := range trackedBranches {
+func fetchAllBranchSHAs(logger *slog.Logger, branches []string) {
+	for _, branch := range branches {
 		fetchBranchSHA(logger, branch)
 	}
 }

@@ -1284,7 +1284,7 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 	}
 	latestSHAMu.Unlock()
 
-	loadPersistedSHAs(slog.Default())
+	loadPersistedSHAs(slog.Default(), trackedBranches)
 
 	if got := getLatestSHAForBranch("v2"); got != "aaa1111" {
 		t.Errorf("v2 SHA not restored from disk: got %q, want aaa1111", got)
@@ -1307,7 +1307,7 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 	latestSHAByBranch = map[string]branchSHAInfo{}
 	latestSHAMu.Unlock()
 	persistLatestSHAs(slog.Default())
-	loadPersistedSHAs(slog.Default())
+	loadPersistedSHAs(slog.Default(), trackedBranches)
 	if got := getLatestSHAForBranch("v2"); got != "aaa1111" {
 		t.Errorf("empty persist clobbered file: v2 = %q, want aaa1111", got)
 	}
@@ -1319,7 +1319,7 @@ func TestPersistAndLoadLatestSHAs(t *testing.T) {
 	latestSHAMu.Lock()
 	latestSHAByBranch = map[string]branchSHAInfo{}
 	latestSHAMu.Unlock()
-	loadPersistedSHAs(slog.Default())
+	loadPersistedSHAs(slog.Default(), trackedBranches)
 	if got := getLatestSHAForBranch("v2"); got != "" {
 		t.Errorf("corrupt file should restore nothing, got v2 = %q", got)
 	}

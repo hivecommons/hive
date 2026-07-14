@@ -5,6 +5,9 @@ on:
     branches:
       - v2
       - v3
+      # Personal dev branches: hives can be assigned to these via the hub's
+      # branch switcher; each needs an image build to roll out.
+      - mk
   workflow_dispatch:
 
 # Serialize Docker builds per branch so concurrent merges don't race.
