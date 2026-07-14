@@ -400,12 +400,20 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		// the auto-unpause overwrote the persisted flag — corrupting the saved
 		// pause set (issue: kellyaa's pauses reverted on restart despite being
 		// on inference backends).
-		if IsInferenceBackend(backend) && !agent.Config.Paused {
+		// Auto-unpause inference agents ONLY for a non-operator (transient/
+		// system) pause. An operator pause — dashboard-api trigger, or the
+		// persisted Config.Paused flag — must ALWAYS survive, exactly like a
+		// copilot-backed agent does. Keying on the backend alone wiped
+		// operator pauses of litellm/vllm/llm-d agents on every restart
+		// (kellyaa: her litellm-routed agents un-paused while the copilot
+		// strategist stayed paused, which is what exposed this).
+		operatorPaused := agent.Config.Paused || agent.PausedTrigger == "dashboard-api"
+		if IsInferenceBackend(backend) && !operatorPaused {
 			agent.Paused = false
-			m.logger.Info("auto-unpaused inference agent (transient pause, not operator-persisted)", "name", agent.Name, "backend", backend)
+			m.logger.Info("auto-unpaused inference agent (transient pause, not operator)", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger)
 		} else {
 			agent.State = StatePaused
-			m.logger.Info("agent starting paused", "name", agent.Name, "backend", backend, "persisted", agent.Config.Paused)
+			m.logger.Info("agent starting paused", "name", agent.Name, "backend", backend, "trigger", agent.PausedTrigger, "persisted", agent.Config.Paused)
 			return nil
 		}
 	}
