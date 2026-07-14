@@ -392,11 +392,20 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		backend = agent.BackendOverride
 	}
 	if agent.Paused {
-		if IsInferenceBackend(backend) {
+		// Auto-unpause inference agents that were only transiently paused —
+		// but NEVER override a persisted operator pause (Config.Paused set via
+		// the dashboard and saved to hive.yaml). Previously this cleared EVERY
+		// inference-backend pause on startup, so an operator pause of a
+		// litellm/vllm/llm-d agent was silently undone on every restart AND
+		// the auto-unpause overwrote the persisted flag — corrupting the saved
+		// pause set (issue: kellyaa's pauses reverted on restart despite being
+		// on inference backends).
+		if IsInferenceBackend(backend) && !agent.Config.Paused {
 			agent.Paused = false
-			m.logger.Info("auto-unpaused inference agent", "name", agent.Name, "backend", backend)
+			m.logger.Info("auto-unpaused inference agent (transient pause, not operator-persisted)", "name", agent.Name, "backend", backend)
 		} else {
 			agent.State = StatePaused
+			m.logger.Info("agent starting paused", "name", agent.Name, "backend", backend, "persisted", agent.Config.Paused)
 			return nil
 		}
 	}
