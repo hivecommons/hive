@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"sync"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -1210,7 +1211,17 @@ func main() {
 	// Persist operator pause/resume into the on-disk config so it survives
 	// restarts and upgrades. Without this, a pod restart rebuilt every agent
 	// un-paused, silently undoing an operator's pause on the next upgrade.
+	// Concurrent pauses (e.g. an ACMM pack pausing several agents in a loop,
+	// or login-detector firing while the operator pauses) each did an
+	// unsynchronized cfg.Agents map write + cfg.Save(). The saves clobbered
+	// each other (last writer wins), so only some pauses reached the PVC and
+	// the rest were silently lost on the next restart. Serialize the
+	// read-modify-save under a dedicated mutex so every pause transition is
+	// durably persisted.
+	var pausePersistMu sync.Mutex
 	agentMgr.SetPersistPauseCallback(func(name string, paused bool) {
+		pausePersistMu.Lock()
+		defer pausePersistMu.Unlock()
 		ac, ok := cfg.Agents[name]
 		if !ok || ac.Paused == paused {
 			return
