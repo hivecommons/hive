@@ -2557,30 +2557,50 @@ func (s *HubServer) triggerAutoUpgrades() {
 
 			if isStale {
 				// Upgrade has been stuck longer than staleUpgradeTimeout.
-				// The target SHA may contain a crashing bug that a newer
-				// commit fixes. Advance the target to latest so the spoke
-				// can pick up the fix.
+				// Recover it. Two things can be wrong: (a) the target SHA
+				// contains a crashing bug a newer commit fixes — advance the
+				// target to latest; (b) the kubectl rollout never reached the
+				// spoke (e.g. the hub can't route to the hive's cluster API),
+				// so the upgrade was never actually delivered.
+				//
+				// The heartbeat fallback (heartbeatUpgrade → the spoke
+				// self-restarts on its next heartbeat) is the ONLY path that
+				// works when kubectl can't reach the cluster, so re-arm it
+				// unconditionally for a stale upgrade — not only when the
+				// target advances. Previously, when the target already equalled
+				// latest, this branch was skipped entirely and the hive stayed
+				// latched-upgrading forever behind an unreachable kubectl.
 				latestSHA := getLatestSHAForBranch(branch)
+				recoverTarget := upgradeTarget
 				if latestSHA != "" && latestSHA != upgradeTarget {
 					s.logger.Warn("advancing upgrade target for stale upgrade",
 						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
 						"old_target", upgradeTarget, "new_target", latestSHA)
+					recoverTarget = latestSHA
+				} else {
+					s.logger.Warn("re-arming heartbeat fallback for stale upgrade",
+						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
+						"target", recoverTarget)
+				}
+				if recoverTarget != "" {
 					s.mu.Lock()
 					for i := range s.registry.Hives {
 						if s.registry.Hives[i].ID == h.ID {
-							s.registry.Hives[i].UpgradeTarget = latestSHA
+							s.registry.Hives[i].UpgradeTarget = recoverTarget
 							s.registry.Hives[i].UpgradeStartedAt = time.Now()
 							break
 						}
 					}
-					s.heartbeatUpgrade[h.ID] = latestSHA
+					s.heartbeatUpgrade[h.ID] = recoverTarget
 					s.mu.Unlock()
 					hiveCluster := s.clusterForHive(&h)
 					if hiveCluster != nil && !hiveCluster.InCluster {
 						ns := "hive-hosted-" + h.ID
 						cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
 						if out, err := cmd.CombinedOutput(); err != nil {
-							s.logger.Warn("stale upgrade kubectl restart failed",
+							// Expected when the hub can't reach the hive's
+							// cluster — the heartbeat fallback above handles it.
+							s.logger.Warn("stale upgrade kubectl restart failed (heartbeat fallback armed)",
 								"hive", h.ID, "output", string(out))
 						}
 					}
