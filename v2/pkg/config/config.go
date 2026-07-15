@@ -8,10 +8,21 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// saveMu serializes all Config.Save() calls process-wide. Multiple goroutines
+// persist config concurrently — the mutex-guarded pause callback, the async
+// dashboard PersistFunc, the ACMM-level saver, HTTP mutation handlers. Each
+// does yaml.Marshal(c) + write. Without serialization, two Save() calls race:
+// the one that finishes writing LAST wins the file, and if it marshaled a
+// staler snapshot (e.g. before a later pause committed to c.Agents), that
+// pause is silently lost. Pausing 7 agents in quick succession reliably left
+// only the last 1-2 on the PVC. Serializing every Save() closes the race.
+var saveMu sync.Mutex
 
 type Config struct {
 	Project       ProjectConfig          `yaml:"project"`
@@ -1546,6 +1557,50 @@ func (c *Config) validateSaveGuard() error {
 // from overwriting the bind-mounted hive.yaml — a scenario that causes
 // crash-loops on the next startup ("project.org is required").
 func (c *Config) Save() error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	return c.saveLocked()
+}
+
+// SetAgentPausedAndSave atomically updates one agent's Paused field and
+// persists the config, all under saveMu. This is the pause-callback path
+// (AgentMgr.Pause/Resume). Doing the c.Agents read-modify-write and the Save
+// under the SAME lock as every other saver eliminates both the map-mutation
+// race (two goroutines writing c.Agents) and the file-level lost-write race.
+// Returns whether a change was made (false when already at the target state).
+func (c *Config) SetAgentPausedAndSave(name string, paused bool) (bool, error) {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	ac, ok := c.Agents[name]
+	if !ok || ac.Paused == paused {
+		return false, nil
+	}
+	ac.Paused = paused
+	c.Agents[name] = ac
+	return true, c.saveLocked()
+}
+
+// ReconcilePausedAndSave sets each named agent's Paused field to the given
+// live value and persists, all under saveMu. This is the async PersistFunc
+// path (persistState): it carries the authoritative live paused set from the
+// agent manager, so its write is a correcting one rather than a stale snapshot
+// that could clobber a concurrent pause. Serializing it with SetAgentPausedAndSave
+// under saveMu is what closes the race that dropped pauses when many agents
+// were paused in quick succession.
+func (c *Config) ReconcilePausedAndSave(livePaused map[string]bool) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	for name, paused := range livePaused {
+		if ac, ok := c.Agents[name]; ok && ac.Paused != paused {
+			ac.Paused = paused
+			c.Agents[name] = ac
+		}
+	}
+	return c.saveLocked()
+}
+
+// saveLocked performs the actual marshal-and-write. Callers MUST hold saveMu.
+func (c *Config) saveLocked() error {
 	if c.SourcePath == "" {
 		return fmt.Errorf("config has no source path")
 	}

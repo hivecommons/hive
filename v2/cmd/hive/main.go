@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"sync"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -1221,20 +1220,13 @@ func main() {
 	// the rest were silently lost on the next restart. Serialize the
 	// read-modify-save under a dedicated mutex so every pause transition is
 	// durably persisted.
-	var pausePersistMu sync.Mutex
 	agentMgr.SetPersistPauseCallback(func(name string, paused bool) {
-		pausePersistMu.Lock()
-		defer pausePersistMu.Unlock()
-		ac, ok := cfg.Agents[name]
-		if !ok || ac.Paused == paused {
-			return
-		}
-		ac.Paused = paused
-		cfg.Agents[name] = ac
 		configWatcher.SkipNext() // don't let our own write trigger a reload
-		if err := cfg.Save(); err != nil {
+		changed, err := cfg.SetAgentPausedAndSave(name, paused)
+		if err != nil {
 			logger.Warn("failed to persist agent pause state", "agent", name, "paused", paused, "error", err)
 		}
+		_ = changed
 	})
 
 	// Register custom GHE hostnames with the proxy allowlist so mode
@@ -2431,7 +2423,17 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 		logger.Error("failed to persist state", "error", err)
 	}
 
-	if err := cfg.Save(); err != nil {
+	// Reconcile the persisted pause field from the authoritative live manager
+	// state and save, atomically under the config save mutex. persistState runs
+	// async (go PersistFunc()) on every pause/resume; doing the c.Agents update
+	// and Save under saveMu (via ReconcilePausedAndSave) means it can neither
+	// race the pause callback's map write nor clobber its file write with a
+	// stale paused=false. livePaused is built from AllStatuses(), read above.
+	livePaused := make(map[string]bool, len(agents))
+	for name, as := range agents {
+		livePaused[name] = as.Paused
+	}
+	if err := cfg.ReconcilePausedAndSave(livePaused); err != nil {
 		logger.Error("failed to persist config to yaml", "error", err)
 		if dashSrv != nil {
 			dashSrv.AddSystemAlert("config-save-failed", "error",
