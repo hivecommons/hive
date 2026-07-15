@@ -12264,7 +12264,12 @@ function burnAreaChart() {
 
     function renderAgentCadences(c) {
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Time between kicks per governor mode. Use <b>m</b> (minutes) or <b>h</b> (hours), e.g. <code>30m</code>, <code>2h</code>. Set to <code>0</code> to turn the agent off in that mode.</p>
+        <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px">
+          <b>What this is.</b> How often the governor kicks this agent, set separately for each queue-depth mode (idle, quiet, busy, surge).
+          <b>Why use it.</b> It lets you run the agent slowly when there's little to do and faster when work piles up, controlling token spend.
+          <b>Where it shows up.</b> These intervals drive the governor's kick timing and appear in the Governor cadence table.
+          <b>How to configure.</b> Enter a duration like <code>30m</code> or <code>2h</code> (units <code>m</code>/<code>h</code>) per mode; <code>0</code> disables the agent in that mode.
+        </div>
         <div class="config-field-row4">
           <div class="config-field"><label>Idle <span class="config-info">i<span class="config-tooltip">Kick interval when the governor is in idle mode (0 actionable issues). Set to 0 to disable this agent during idle. Default varies by agent role.</span></span></label><input type="text" value="${cadenceToHuman(c.idle)}" onchange="markDirty('cadences','idle',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value))"></div>
           <div class="config-field"><label>Quiet <span class="config-info">i<span class="config-tooltip">Kick interval when the governor is in quiet mode (few actionable issues). Agents typically run at a moderate pace in this mode.</span></span></label><input type="text" value="${cadenceToHuman(c.quiet)}" onchange="markDirty('cadences','quiet',cadenceFromHuman(this.value));this.value=cadenceToHuman(cadenceFromHuman(this.value))"></div>
@@ -12275,7 +12280,12 @@ function burnAreaChart() {
 
     function renderAgentPipeline(p) {
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Pre-kick pipeline stages. Disable stages to skip them for this agent.</p>
+        <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px">
+          <b>What this is.</b> The deterministic pre-kick pipeline stages that run for this agent before the LLM is invoked.
+          <b>Why use it.</b> These stages filter and classify incoming work so the agent only sees what's relevant, saving tokens and time.
+          <b>Where it shows up.</b> It affects what filtering and classification happens on each kick before the model receives any work.
+          <b>How to configure.</b> Toggle a stage off to skip it for this agent; leave it on to keep that stage in the pipeline.
+        </div>
         ${PIPELINE_STAGES.map(stage => `
           <div class="config-toggle">
             <div class="config-toggle-switch ${p[stage] !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="pipeline" data-key="${stage}"></div>
@@ -12292,6 +12302,12 @@ function burnAreaChart() {
         `<div class="config-list-item"><span>${esc(s)}</span><button class="remove-item" data-action="removeListItem" data-section="hooks" data-key="postIdle" data-index="${i}">✕</button></div>`
       ).join('');
       return `
+        <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px">
+          <b>What this is.</b> Shell scripts this agent runs before each kick (pre-kick) and after it returns to idle (post-idle).
+          <b>Why use it.</b> Use them for setup before work (pull code, warm caches, check prerequisites) and cleanup after (commit, notify, collect metrics).
+          <b>Where it shows up.</b> Pre-kick scripts must exit 0 or the kick is skipped; post-idle scripts run once the agent goes idle.
+          <b>How to configure.</b> Enter the absolute path to a shell script and add it to the pre-kick or post-idle list; they run in order.
+        </div>
         <div class="config-list">
           <label style="font-size:0.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;display:block">Pre-Kick Scripts <span class="config-info">i<span class="config-tooltip">Shell scripts executed before each governor kick. Use for setup tasks like pulling latest code, clearing caches, or checking prerequisites. Scripts run in order and must exit 0 for the kick to proceed.</span></span></label>
           ${preList || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">None configured</div>'}
@@ -12348,7 +12364,7 @@ function burnAreaChart() {
         return h;
       }
 
-      let html = '<p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Per-agent command restrictions enforced by the gh wrapper. Agent rules are editable; global and policy rules are read-only.</p>';
+      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px"><b>What this is.</b> Allow/deny rules, layered across agent, global, and policy scopes, that gate which commands this agent may run. <b>Why use it.</b> They keep an agent inside its lane by blocking risky or out-of-scope actions before they execute. <b>Where it shows up.</b> Rules are enforced by the gh wrapper and shown here grouped by scope, indicating which actions are permitted. <b>How to configure.</b> Edit the agent-scope rules here (glob pattern plus optional reason); global and policy rules come from policy config and are read-only.</div>';
       html += renderSection('Agent restrictions', 'var(--blue)', agentRules, { editable: true, icon: '🔧' });
       html += '<div style="border-top:1px solid var(--border);padding-top:12px">';
       html += renderSection('Global (all agents)', 'var(--red)', globalRules, { icon: '🌐' });
@@ -12363,7 +12379,7 @@ function burnAreaChart() {
     const CHANNEL_TYPES = ['kick','webhook','discord','schedule','bead'];
 
     function renderAgentChannels(channels) {
-      let html = '<p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Declare how this agent gets triggered. When empty, the agent uses governor timer kicks by default.</p>';
+      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px"><b>What this is.</b> The trigger channels that can wake this agent: governor timer kick, webhook, discord, schedule (cron), or bead. <b>Why use it.</b> They let an agent respond to real events (a pushed commit, a Discord message, a cron tick) instead of only the governor timer. <b>Where it shows up.</b> Each active channel is listed here; with no channels defined the agent falls back to governor timer kicks. <b>How to configure.</b> Add a channel by type and fill its fields (a schedule channel needs a cron expression, a webhook needs events); toggle to enable or disable.</div>';
       if (!channels || channels.length === 0) {
         html += '<div style="font-size:0.8rem;color:var(--muted);padding:16px 0;text-align:center;border:1px dashed var(--border);border-radius:8px">No explicit channels — this agent uses governor timer kicks by default.</div>';
       } else {
@@ -12465,7 +12481,7 @@ function burnAreaChart() {
     };
 
     function renderAgentTools(tools) {
-      let html = '<p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">Declarative tool permissions. When set, these override Mode-based restrictions from the General tab.</p>';
+      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px"><b>What this is.</b> The agent\'s tool-permission tier (advisory, issues-only, issues-prs, or full) plus per-tool allow/deny overrides. <b>Why use it.</b> It controls which MCP tools the agent can call, letting you grant or withhold write actions like creating PRs or merging. <b>Where it shows up.</b> When set, these declarative permissions override the Mode-based restrictions from the General tab. <b>How to configure.</b> Pick a preset, then add rules for exceptions; an explicit allow rule overrides a deny that the preset would otherwise apply.</div>';
       if (!tools) {
         html += '<div style="font-size:0.8rem;color:var(--muted);padding:16px 0;text-align:center;border:1px dashed var(--border);border-radius:8px">No explicit tool config — using Mode-based restrictions from the General tab. <a href="#" onclick="switchConfigTab(\'General\');return false" style="color:var(--accent)">Go to General</a></div>';
         html += '<div style="margin-top:12px;text-align:center"><button onclick="enableToolsConfig()" style="padding:8px 16px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--fg);cursor:pointer;font-size:0.78rem">Enable Declarative Tools</button></div>';
@@ -12560,7 +12576,7 @@ function burnAreaChart() {
     const CONN_TYPES = ['mcp','api','knowledge'];
 
     function renderAgentConnections(connections) {
-      let html = '<p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">External service integrations: MCP servers, APIs, and knowledge sources.</p>';
+      let html = '<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px"><b>What this is.</b> External integrations the agent can use — an MCP server, an API, or a knowledge source — each with a name, type, and URI. <b>Why use it.</b> They extend the agent beyond its built-in toolset, letting it reach services like a Jira API or a custom MCP server. <b>Where it shows up.</b> Configured connections are listed here and become available to the agent at runtime. <b>How to configure.</b> Enter a name, choose the type (mcp/api/knowledge), and provide the URI (e.g. <code>stdio:///usr/local/bin/mcp-github</code>), then add it.</div>';
       if (!connections || connections.length === 0) {
         html += '<div style="font-size:0.8rem;color:var(--muted);padding:16px 0;text-align:center;border:1px dashed var(--border);border-radius:8px">No external connections configured.</div>';
       } else {
@@ -13274,7 +13290,13 @@ function burnAreaChart() {
         </div>`;
       }).join('');
 
-      return `<div class="config-stats-list">${rows}</div>
+      return `<div style="font-size:0.78rem;color:var(--muted);line-height:1.55;background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:6px;padding:10px 12px;margin-bottom:14px">
+          <b>What this is.</b> Custom metrics shown on this agent's dashboard card, each pulling a <code>field</code> from a named <code>source</code> such as the agent's metrics collector or stats.json.
+          <b>Why use it.</b> It surfaces the agent-specific KPIs you care about right on the card, without opening the full detail view.
+          <b>Where it shows up.</b> Each configured entry renders as a metric on this agent's card in the chosen style.
+          <b>How to configure.</b> Add a row and set its label, source, field, and style (plus an optional icon and target); reorder or remove rows as needed.
+        </div>
+        <div class="config-stats-list">${rows}</div>
         <button class="btn-add" onclick="addStat()" style="margin-top:8px">+ Add Stat</button>
         <p style="color:var(--muted);font-size:0.75rem;margin-top:8px">Configure which metrics appear on this agent's card. Changes take effect after saving.</p>`;
     }
