@@ -3268,6 +3268,37 @@ const (
 	litellmProbeMaxErrBody = 512
 )
 
+// litellmKeyMaterialPatterns match key-identifying material that some gateways
+// (e.g. LiteLLM) echo back in auth-failure bodies: the SHA-256 key hash, the
+// masked "Received API Key = sk-...XXXX" hint, and bare sk- tokens. We keep the
+// human-useful "401 auth failed" signal but strip these — the key hash is a
+// stable fingerprint of the secret that should not appear in the dashboard or
+// logs.
+var litellmKeyMaterialPatterns = []*regexp.Regexp{
+	// "Key Hash (Token) = <64 hex>" (also matches "Key Hash = <hex>").
+	regexp.MustCompile(`(?i)(key hash[^=]*=\s*)[0-9a-f]{16,}`),
+	// "Received API Key = sk-...GTNw" (masked hint) or any explicit key= field.
+	regexp.MustCompile(`(?i)(received api key\s*=\s*)\S+`),
+	// Any bare sk- token that slipped through.
+	regexp.MustCompile(`sk-[A-Za-z0-9._\-]{6,}`),
+	// A long standalone hex fingerprint (32+ hex chars).
+	regexp.MustCompile(`\b[0-9a-f]{32,}\b`),
+}
+
+// redactLiteLLMKeyMaterial removes API-key hints and key hashes from a gateway
+// error body before it is surfaced to the dashboard or logged.
+func redactLiteLLMKeyMaterial(s string) string {
+	for i, re := range litellmKeyMaterialPatterns {
+		if i < 2 {
+			// Keep the field label, redact the value.
+			s = re.ReplaceAllString(s, "${1}[redacted]")
+		} else {
+			s = re.ReplaceAllString(s, "[redacted]")
+		}
+	}
+	return s
+}
+
 // probeLiteLLMModels queries {endpoint}/v1/models with the given key and
 // returns the number of models the gateway offers. This is a LIVE probe
 // only — it never falls back to the static model aliases, so a failing
@@ -3296,7 +3327,7 @@ func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
 		// Error path: only a truncated slice of the body is surfaced to the
 		// dialog (error bodies can be huge and may echo the key).
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, litellmProbeMaxErrBody))
-		gatewayMsg := strings.TrimSpace(string(body))
+		gatewayMsg := redactLiteLLMKeyMaterial(strings.TrimSpace(string(body)))
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 			// The two auth failures lead users to different fixes.
