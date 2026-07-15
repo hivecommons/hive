@@ -2949,13 +2949,32 @@ const (
 	diagnosticPollSec    = 2
 )
 
-// authErrorPatterns indicate the token is bad and should be cleared.
+// authErrorPatterns indicate the stored token was DEFINITIVELY rejected by the
+// server and should be cleared. These are server-side rejections, not CLI
+// prompts. A bare interactive login/"re-authenticate" prompt is intentionally
+// NOT here: on a slow cold start after an upgrade the Copilot CLI can surface a
+// login/device-flow prompt while the token on disk is still valid, and clearing
+// it there destroys a good token and forces the user to re-login on every
+// upgrade. Only a genuine credential rejection purges the token.
 var authErrorPatterns = []string{
 	"Bad credentials",
 	"401 Unauthorized",
 	"token found but could not be validated",
 	"Failed to fetch OAuth user login",
-	"re-authenticate",
+}
+
+// matchesAuthError reports whether copilot diagnostic output shows a definitive
+// server-side credential rejection that justifies purging the stored token. A
+// bare login/"re-authenticate" prompt does NOT match — that is handled by
+// paneShowsLoginPrompt (a non-destructive "needs login" UI signal) so a slow
+// cold start after an upgrade cannot destroy a still-valid token.
+func matchesAuthError(output string) bool {
+	for _, pat := range authErrorPatterns {
+		if strings.Contains(output, pat) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess) {
@@ -2998,14 +3017,7 @@ func (m *Manager) runCopilotDiagnostic(ctx context.Context, agent *AgentProcess)
 			if output == "" {
 				continue
 			}
-			isAuthError := false
-			for _, pat := range authErrorPatterns {
-				if strings.Contains(output, pat) {
-					isAuthError = true
-					break
-				}
-			}
-			if isAuthError {
+			if matchesAuthError(output) {
 				m.logger.Warn("diagnostic: auth error detected, clearing token",
 					"agent", agent.Name, "output_snippet", truncateStr(output, 200))
 				agent.LastError = "auth token expired or invalid"
