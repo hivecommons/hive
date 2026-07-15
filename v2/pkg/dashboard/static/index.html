@@ -10731,8 +10731,14 @@ function burnAreaChart() {
           showToast('Upgrade complete!', 'success');
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';
         } else if (v.behind) {
-          html += ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆ behind</span>`;
-          html += ` <button id="spoke-upgrade-btn" onclick="selfUpgrade('${escapeHtml(v.latestHash || '')}')" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">Upgrade</button>`;
+          html += ` <span class="git-behind" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">⬆</span>`;
+          if (v.autoUpgrade) {
+            // Hub-managed: the hub rolls the upgrade automatically, so no manual
+            // button — show a "managed" hint instead.
+            html += ` <span style="color:var(--muted);font-size:0.68rem;margin-left:6px;white-space:nowrap" title="This hive is upgraded automatically by the hub (auto-upgrade). Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">managed</span>`;
+          } else {
+            html += ` <button id="spoke-upgrade-btn" onclick="selfUpgrade('${escapeHtml(v.latestHash || '')}')" style="padding:3px 10px;font-size:0.7rem;background:var(--green);color:var(--bg);border:none;border-radius:4px;cursor:pointer;margin-left:6px;white-space:nowrap" title="Current: ${escapeHtml(v.short || '?')} → Latest: ${escapeHtml(v.latestShort || '?')}">Upgrade</button>`;
+          }
         } else if (v.latestHash) {
           html += ' <span style="color:var(--green)" title="Up to date with remote">✓</span>';
         }
@@ -10917,7 +10923,7 @@ function burnAreaChart() {
 
     const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', 'Last Prompt', 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'LiteLLM'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'LiteLLM', 'Variables'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -11458,6 +11464,7 @@ function burnAreaChart() {
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'LiteLLM': return renderGovLiteLLM(d.litellm || {});
+        case 'Variables': return renderGovVariables();
         default: return '';
       }
     }
@@ -11590,6 +11597,129 @@ function burnAreaChart() {
       const saved = (_configState.data.litellm || {}).defaultModel;
       const current = dirtyVal !== undefined ? dirtyVal : (saved || '');
       host.innerHTML = litellmDefaultModelFieldHtml(current);
+    }
+
+    // ── Variables tab: operator-defined ${VAR} substitutions ──
+    // Reads GET /api/config/variables (never returns secret values — only
+    // name/type/scope/source + the exec/http gate flags). static and env
+    // variables can be added/edited/deleted here; script and http variables are
+    // shown read-only because they can execute code or reach the network and are
+    // therefore seed-only (GitOps), enforced server-side.
+    function renderGovVariables() {
+      loadVariables();
+      return `
+        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
+          Define your own <code>\${NAME}</code> substitutions for kick templates and config.
+          <b>static</b> and <b>env</b> variables can be managed here; <b>script</b> and <b>http</b>
+          variables (which run commands or fetch URLs) are configured in the seed config only.
+        </div>
+        <div id="variables-status" style="font-size:0.72rem;color:var(--muted);margin-bottom:8px"></div>
+        <div id="variables-list"><div style="color:var(--muted);font-size:0.75rem;padding:4px 0">Loading variables…</div></div>
+        <div style="margin-top:16px;border-top:1px solid var(--border,#2a2a2a);padding-top:12px">
+          <div style="font-weight:600;font-size:0.78rem;margin-bottom:8px">Add a variable</div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Name</label><input id="var-add-name" placeholder="MY_VAR" style="text-transform:uppercase"></div>
+            <div class="config-field"><label>Type</label>
+              <select id="var-add-type" onchange="onVarAddTypeChange()">
+                <option value="static">static (fixed value)</option>
+                <option value="env">env (environment variable)</option>
+              </select>
+            </div>
+            <div class="config-field"><label>Scope</label>
+              <select id="var-add-scope">
+                <option value="template">template</option>
+                <option value="config">config</option>
+                <option value="both">both</option>
+              </select>
+            </div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field" id="var-add-value-field"><label>Value</label><input id="var-add-value" placeholder="production"></div>
+            <div class="config-field" id="var-add-env-field" style="display:none"><label>Env var name</label><input id="var-add-env" placeholder="HIVE_REGION"></div>
+            <div class="config-field"><label>Default (optional)</label><input id="var-add-default" placeholder="fallback if unset"></div>
+          </div>
+          <button class="config-btn" onclick="saveNewVariable()" style="margin-top:6px">Add variable</button>
+        </div>`;
+    }
+
+    function onVarAddTypeChange() {
+      const t = document.getElementById('var-add-type').value;
+      const vf = document.getElementById('var-add-value-field');
+      const ef = document.getElementById('var-add-env-field');
+      if (t === 'env') { vf.style.display = 'none'; ef.style.display = ''; }
+      else { vf.style.display = ''; ef.style.display = 'none'; }
+    }
+
+    async function loadVariables() {
+      const listEl = document.getElementById('variables-list');
+      const statusEl = document.getElementById('variables-status');
+      try {
+        const r = await fetch('/api/config/variables');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (statusEl) {
+          statusEl.innerHTML = `script execution: <b>${d.exec_enabled ? 'enabled' : 'disabled'}</b> · http fetch: <b>${d.http_enabled ? 'enabled' : 'disabled'}</b> <span style="opacity:0.7">(seed-only)</span>`;
+        }
+        renderVariablesList(d.variables || []);
+      } catch (e) {
+        if (listEl) listEl.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">Could not load variables.</div>';
+      }
+    }
+
+    function renderVariablesList(vars) {
+      const el = document.getElementById('variables-list');
+      if (!el) return;
+      if (vars.length === 0) {
+        el.innerHTML = '<div style="color:var(--muted);font-size:0.75rem;padding:4px 0">No variables defined.</div>';
+        return;
+      }
+      el.innerHTML = vars.map(v => {
+        const seedOnly = (v.type === 'script' || v.type === 'http');
+        const del = seedOnly
+          ? '<span style="color:var(--muted);font-size:0.68rem;white-space:nowrap" title="script/http variables are managed in the seed config">seed-managed</span>'
+          : `<button class="config-btn" style="padding:2px 8px;font-size:0.68rem" onclick="deleteVariable('${esc(v.name)}')">delete</button>`;
+        return `<div class="config-list-item" style="align-items:center;gap:8px">
+          <code style="flex:0 0 auto">\${${esc(v.name)}}</code>
+          <span style="color:var(--muted);font-size:0.7rem">${esc(v.type)}</span>
+          <span style="color:var(--muted);font-size:0.7rem">${esc(v.scope)}</span>
+          <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:0.7rem" title="${esc(v.source)}">${esc(v.source)}</span>
+          ${del}
+        </div>`;
+      }).join('');
+    }
+
+    async function saveNewVariable() {
+      const name = (document.getElementById('var-add-name').value || '').trim().toUpperCase();
+      const type = document.getElementById('var-add-type').value;
+      const scope = document.getElementById('var-add-scope').value;
+      const def = (document.getElementById('var-add-default').value || '').trim();
+      if (!name) { showToast('Enter a variable name', 'error'); return; }
+      const body = { type, scope };
+      if (def) body.default = def;
+      if (type === 'env') body.env = (document.getElementById('var-add-env').value || '').trim() || name;
+      else body.value = document.getElementById('var-add-value').value || '';
+      try {
+        const r = await fetch('/api/config/variables/' + encodeURIComponent(name), {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.error || ('Failed (HTTP ' + r.status + ')'), 'error'); return; }
+        showToast('Variable ${' + name + '} saved', 'success');
+        document.getElementById('var-add-name').value = '';
+        document.getElementById('var-add-value').value = '';
+        document.getElementById('var-add-default').value = '';
+        loadVariables();
+      } catch (e) { showToast('Failed to save variable', 'error'); }
+    }
+
+    async function deleteVariable(name) {
+      try {
+        const r = await fetch('/api/config/variables/' + encodeURIComponent(name), { method: 'DELETE' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(d.error || ('Failed (HTTP ' + r.status + ')'), 'error'); return; }
+        showToast('Variable ${' + name + '} deleted', 'success');
+        loadVariables();
+      } catch (e) { showToast('Failed to delete variable', 'error'); }
     }
 
     function renderGovLiteLLM(litellm) {

@@ -36,6 +36,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)
 	s.mux.HandleFunc("GET /api/config/variables", s.handleVariablesList)
+	s.mux.HandleFunc("PUT /api/config/variables/{name}", s.handleVariableUpsert)
+	s.mux.HandleFunc("DELETE /api/config/variables/{name}", s.handleVariableDelete)
 	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
 	s.mux.HandleFunc("GET /api/snapshot", s.handleSnapshotAPI)
@@ -400,6 +402,13 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"hash":    versionHash,
 		"short":   versionShort,
 		"branch":  upstreamBranch(),
+	}
+	// autoUpgrade tells the dashboard whether the hub manages this spoke's
+	// upgrades. When true the manual spoke Upgrade button is hidden — the hub
+	// rolls the upgrade out automatically, so offering a manual button is
+	// redundant and confusing.
+	if s.deps != nil && s.deps.Config != nil {
+		resp["autoUpgrade"] = s.deps.Config.Hub.AutoUpgrade
 	}
 
 	s.versionMu.RLock()
@@ -1847,6 +1856,129 @@ func (s *Server) handleVariablesList(w http.ResponseWriter, r *http.Request) {
 		"exec_enabled": v.Security.AllowExec,
 		"http_enabled": v.Security.AllowHTTP,
 	})
+}
+
+// variableNamePattern restricts dashboard-created variable names to the safe
+// ${NAME} identifier shape (letters, digits, underscore; not starting with a
+// digit). This is what a kick template references as ${NAME}.
+var variableNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// looksLikeApiKeyValue heuristically flags a string that looks like a secret
+// key value rather than a safe static config value — an sk-/ghp-/token-style
+// prefix, or a long high-entropy run with no spaces. Mirrors the client-side
+// guard that keeps operators from inlining a secret into hive.yaml (where
+// Config.Save would persist it in plaintext).
+func looksLikeApiKeyValue(v string) bool {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return false
+	}
+	lower := strings.ToLower(v)
+	for _, p := range []string{"sk-", "sk_", "ghp_", "gho_", "github_pat_", "xoxb-", "bearer "} {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	// A long token with no whitespace and no path/URL punctuation is likely a
+	// secret, not a config value like "production" or "us-east-1".
+	if len(v) >= 32 && !strings.ContainsAny(v, " /\\:.") {
+		return true
+	}
+	return false
+}
+
+// handleVariableUpsert creates or updates a single operator variable via the
+// dashboard. It is deliberately restricted to the two SAFE resolver types —
+// static and env — which cannot execute code or reach the network. script and
+// http variables, and the exec/http security policy, are seed-only (GitOps): a
+// user-writable overlay must never be able to introduce them, so this endpoint
+// rejects them. The change is persisted to the dashboard overlay like any other
+// dashboard config edit.
+func (s *Server) handleVariableUpsert(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	name := r.PathValue("name")
+	if !variableNamePattern.MatchString(name) {
+		jsonError(w, "invalid variable name (use letters, digits, underscore; not starting with a digit)", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Type    string  `json:"type"`
+		Scope   string  `json:"scope"`
+		Value   string  `json:"value"`
+		Env     string  `json:"env"`
+		Default *string `json:"default"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	switch body.Type {
+	case "static", "env":
+		// allowed
+	case "script", "http":
+		jsonError(w, "script and http variables can only be defined in the seed config (GitOps), not from the dashboard", http.StatusForbidden)
+		return
+	default:
+		jsonError(w, "type must be 'static' or 'env'", http.StatusBadRequest)
+		return
+	}
+	switch body.Scope {
+	case "", "template", "config", "both":
+		// allowed
+	default:
+		jsonError(w, "scope must be 'template', 'config', or 'both'", http.StatusBadRequest)
+		return
+	}
+	// Guard against a secret value being pasted into a static var (it would be
+	// persisted to hive.yaml in plaintext). Reuse the same heuristic the LiteLLM
+	// key fields use.
+	if body.Type == "static" && looksLikeApiKeyValue(body.Value) {
+		jsonError(w, "that value looks like an API key or secret; use type 'env' pointing at an environment variable instead of inlining a secret", http.StatusBadRequest)
+		return
+	}
+
+	def := config.VarDef{Type: body.Type, Scope: body.Scope, Value: body.Value, Env: body.Env, Default: body.Default}
+
+	if s.deps.Config.Variables.Defs == nil {
+		s.deps.Config.Variables.Defs = map[string]config.VarDef{}
+	}
+	s.deps.Config.Variables.Defs[name] = def
+	if err := s.saveConfig(); err != nil {
+		jsonError(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.auditFromRequest(r, "variable_upsert", auditDetail("name", name, "type", body.Type), "")
+	jsonResponse(w, map[string]any{"status": "saved", "name": name})
+}
+
+// handleVariableDelete removes an operator variable. Only static/env variables
+// are dashboard-managed, so this refuses to delete a script/http variable
+// (those are seed-only and must be removed via the seed config).
+func (s *Server) handleVariableDelete(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "config not loaded", http.StatusInternalServerError)
+		return
+	}
+	name := r.PathValue("name")
+	def, ok := s.deps.Config.Variables.Defs[name]
+	if !ok {
+		jsonError(w, "variable not found", http.StatusNotFound)
+		return
+	}
+	if def.Type == "script" || def.Type == "http" {
+		jsonError(w, "script and http variables are seed-managed and cannot be deleted from the dashboard", http.StatusForbidden)
+		return
+	}
+	delete(s.deps.Config.Variables.Defs, name)
+	if err := s.saveConfig(); err != nil {
+		jsonError(w, "failed to save: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.auditFromRequest(r, "variable_delete", auditDetail("name", name), "")
+	jsonResponse(w, map[string]any{"status": "deleted", "name": name})
 }
 
 func (s *Server) substituteTemplateVars(template, agentName string) string {
