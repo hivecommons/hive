@@ -139,3 +139,60 @@ func TestSetLevelFailsWhenRosterReconcileFails(t *testing.T) {
 		t.Errorf("expected reconciliation-failed error, got body=%s", w.Body.String())
 	}
 }
+
+// TestApplyPackReconcilesStalePackFields is the regression test for the
+// level-change drift bug: an agent carrying pack-behavior fields from a LOWER
+// level (kick_template, mode, model, description) must be reconciled to the
+// CURRENT level's pack when the level changes. Before the fix, kick_template
+// and mode reconciled but model/description/role did not — so hives that
+// climbed levels (kellyaa L5, ai-native L3, console L6) kept scanner/quality on
+// their old advisory templates and sonnet model even though acmm_level moved up.
+func TestApplyPackReconcilesStalePackFields(t *testing.T) {
+	srv := newFullServer(t) // L2, scanner present
+
+	// Seed the scanner with STALE fields as if left over from a lower level:
+	// the L2/L3 advisory template + description, and the sonnet model.
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.KickTemplate = "scanner-advisory.md"
+	scanner.Mode = "ADVISORY"
+	scanner.Model = "claude-sonnet-4-6"
+	scanner.Description = "Scans code for issues and suggests fixes, but does NOT create PRs or issues."
+	srv.deps.Config.Agents["scanner"] = scanner
+
+	if _, err := srv.ApplyPack(5); err != nil {
+		t.Fatalf("ApplyPack(5): %v", err)
+	}
+
+	// The L5 pack's scanner definition is the source of truth.
+	pack, err := config.ACMMPackByLevel(5)
+	if err != nil {
+		t.Fatalf("ACMMPackByLevel(5): %v", err)
+	}
+	var want config.PackAgent
+	for _, pa := range pack.Agents {
+		if pa.Name == "scanner" {
+			want = pa
+		}
+	}
+	if want.Name == "" {
+		t.Fatal("scanner not found in L5 pack")
+	}
+
+	got := srv.deps.Config.Agents["scanner"]
+	if got.KickTemplate != want.KickTemplate {
+		t.Errorf("kick_template not reconciled: got %q want %q", got.KickTemplate, want.KickTemplate)
+	}
+	if got.Mode != want.Mode {
+		t.Errorf("mode not reconciled: got %q want %q", got.Mode, want.Mode)
+	}
+	if want.Model != "" && got.Model != want.Model {
+		t.Errorf("model not reconciled (the specific gap): got %q want %q", got.Model, want.Model)
+	}
+	if want.Description != "" && got.Description != want.Description {
+		t.Errorf("description not reconciled: got %q want %q", got.Description, want.Description)
+	}
+	// The stale advisory template must be gone.
+	if got.KickTemplate == "scanner-advisory.md" {
+		t.Error("scanner still on stale advisory template after L5 apply")
+	}
+}

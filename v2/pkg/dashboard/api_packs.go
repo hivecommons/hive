@@ -80,16 +80,20 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
 			changed := false
 
-			// Merge pack fields as defaults — user overrides take precedence.
-			// Backend/Model: use pack value only if user left it empty.
-			if existing.Backend == "" && pa.Backend != "" {
-				existing.Backend = pa.Backend
-				changed = true
-			}
-			if existing.Model == "" && pa.Model != "" {
-				existing.Model = pa.Model
-				changed = true
-			}
+			// Pack-behavior fields define what an agent DOES at a given ACMM
+			// level (which kick template it runs, its issue/PR mode, which model,
+			// its role/description). These MUST be reconciled to the current pack
+			// on every level change — otherwise a value written by a PREVIOUS
+			// level's pack is indistinguishable from a user override and sticks
+			// forever, so the agent keeps behaving at its old level. That is the
+			// exact drift observed in the field: hives that climbed levels kept
+			// scanner/ci-maintainer/quality on their lower-level advisory
+			// templates and models even though acmm_level had moved up. Reconcile
+			// these replace-on-diff (kick_template and mode already did; model,
+			// description, role, bead_role, display_name did NOT — that gap is the
+			// bug). Genuine per-agent overrides belong in the explicit override
+			// fields (BackendOverride, ModelOverride, pins), which live on the
+			// agent process and are NOT touched here.
 			if pa.KickTemplate != "" && existing.KickTemplate != pa.KickTemplate {
 				existing.KickTemplate = pa.KickTemplate
 				changed = true
@@ -98,21 +102,32 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 				existing.Mode = pa.Mode
 				changed = true
 			}
-			// Fill in descriptive fields from pack if user didn't set them.
-			if existing.DisplayName == "" && pa.DisplayName != "" {
-				existing.DisplayName = pa.DisplayName
+			if pa.Model != "" && existing.Model != pa.Model {
+				existing.Model = pa.Model
 				changed = true
 			}
-			if existing.Description == "" && pa.Description != "" {
+			if pa.Description != "" && existing.Description != pa.Description {
 				existing.Description = pa.Description
 				changed = true
 			}
-			if existing.Role == "" && pa.Role != "" {
+			if pa.Role != "" && existing.Role != pa.Role {
 				existing.Role = pa.Role
 				changed = true
 			}
-			if existing.BeadRole == "" && pa.BeadRole != "" {
+			if pa.BeadRole != "" && existing.BeadRole != pa.BeadRole {
 				existing.BeadRole = pa.BeadRole
+				changed = true
+			}
+			if pa.DisplayName != "" && existing.DisplayName != pa.DisplayName {
+				existing.DisplayName = pa.DisplayName
+				changed = true
+			}
+
+			// Backend is fill-if-empty: it never varies by level (always the same
+			// per agent across all packs), and users legitimately pin it, so the
+			// pack must not stomp a user's choice.
+			if existing.Backend == "" && pa.Backend != "" {
+				existing.Backend = pa.Backend
 				changed = true
 			}
 
