@@ -884,6 +884,49 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 	return &cfg, nil
 }
 
+// LoadWithDashboardOverlay loads the config from path, then — in Kubernetes
+// mode — re-applies the dashboard overlay's agent configs on top, mirroring
+// the entrypoint's boot-time seed+overlay merge.
+//
+// Why this exists: the ConfigMap seed at path carries only provision-time
+// agent fields. Runtime reconciliation (ApplyPack raising a hive's ACMM level
+// updates kick_template/mode/model) is persisted to the dashboard overlay, NOT
+// the seed. The entrypoint merges the overlay over the seed once at boot, but a
+// live ConfigMap remount rewrites the seed back to its stale values and fires
+// the config watcher. If the watcher reloaded the raw seed it would silently
+// revert every reconciled agent field (observed: a hive raised to L5 dropped
+// its scanner back to the L2/L3 advisory template at runtime). Applying the
+// overlay here keeps the reload consistent with boot.
+func LoadWithDashboardOverlay(path string) (*Config, error) {
+	cfg, err := Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if !IsKubernetesPod() {
+		return cfg, nil
+	}
+	data, err := os.ReadFile(DashboardOverlayFile)
+	if err != nil {
+		// No overlay (or unreadable) — the seed is authoritative, as at boot.
+		return cfg, nil
+	}
+	var overlay Config
+	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &overlay); err != nil {
+		return cfg, nil // malformed overlay: fall back to seed, don't fail the reload
+	}
+	// Guard: the overlay must look like a full hive config (same check the
+	// entrypoint and validateSaveGuard apply) before we trust its agents.
+	if overlay.Project.Org == "" || len(overlay.Agents) == 0 {
+		return cfg, nil
+	}
+	// Overlay agents win — they carry the reconciled pack-behavior fields.
+	cfg.MergeAgentOverrides(overlay.Agents)
+	for name := range overlay.Agents {
+		cfg.ApplyAgentDefaults(name)
+	}
+	return cfg, nil
+}
+
 // findConfigEnv returns the path to a config.env file, or "" if none found.
 func findConfigEnv(yamlPath string) string {
 	candidates := []string{

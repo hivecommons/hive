@@ -128,7 +128,13 @@ func (w *Watcher) reload() {
 	}
 	w.mu.Unlock()
 
-	cfg, err := Load(w.path)
+	// Load the seed AND re-apply the dashboard overlay, mirroring the
+	// entrypoint's boot merge. A raw Load(w.path) would drop runtime-reconciled
+	// agent fields (kick_template/mode/model persisted to the overlay by
+	// ApplyPack) whenever a ConfigMap remount rewrites the seed and fires this
+	// watcher — silently reverting a hive's agents to their provision-time
+	// (lower-ACMM) behavior.
+	cfg, err := LoadWithDashboardOverlay(w.path)
 	if err != nil {
 		w.logger.Warn("config reload failed", "path", w.path, "error", err)
 		return
