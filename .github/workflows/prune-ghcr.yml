@@ -36,3 +36,68 @@ jobs:
                                   # per-arch children aren't deleted before their
                                   # manifest list is created.
           dry-run: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
+
+  # Prune <branch>-latest tags whose branch no longer exists. The docker
+  # workflow now only pushes images for long-lived branches, but tags from
+  # branches that WERE built before that policy (and merged+deleted) linger as
+  # dead-end targets in the hub's branch switcher. This removes any *-latest
+  # tag with no matching live branch, sparing SHA tags (7 hex chars) and the
+  # long-lived branches themselves.
+  prune-orphan-branch-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete orphaned <branch>-latest tags
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          # Live branch names -> their sanitized tag form (/ -> -), the same
+          # transform the docker workflow applies to build <branch>-latest.
+          mapfile -t BRANCHES < <(
+            gh api --paginate /repos/kubestellar/hive/branches --jq '.[].name'
+          )
+          declare -A LIVE
+          for b in "${BRANCHES[@]}"; do LIVE["${b//\//-}"]=1; done
+          echo "Live branches: ${#LIVE[@]}"
+
+          for image in hive hive-hub hive-contributor; do
+            echo "=== image: $image ==="
+            # A <branch>-latest tag and its <sha> tag share ONE version (the
+            # docker workflow tags the manifest with both). GHCR can only delete
+            # a whole version, not an individual tag — so the co-located SHA tag
+            # must NOT block deletion (the PR-branch SHA is itself orphaned once
+            # the branch is squash-merged). The rule:
+            #   * version has >=1 <branch>-latest tag AND every such tag's branch
+            #     is dead  -> DELETE (spares v2-latest / v3-latest / mk-latest,
+            #     whose branches are live).
+            #   * version has NO -latest tag (pure SHA) -> KEEP (may be pinned;
+            #     small; untagged pruning handles genuine garbage).
+            gh api --paginate \
+              "/orgs/kubestellar/packages/container/$image/versions" \
+              --jq '.[] | {id: .id, tags: .metadata.container.tags}' \
+            | jq -c '.' | while read -r row; do
+                id=$(echo "$row" | jq -r '.id')
+                tags=$(echo "$row" | jq -r '.tags[]?')
+                [ -z "$tags" ] && continue
+                has_latest=false
+                all_latest_dead=true
+                while IFS= read -r t; do
+                  case "$t" in
+                    *-latest)
+                      has_latest=true
+                      base="${t%-latest}"
+                      [ -n "${LIVE[$base]:-}" ] && all_latest_dead=false ;;
+                  esac
+                done <<< "$tags"
+                if [ "$has_latest" = true ] && [ "$all_latest_dead" = true ]; then
+                  echo "orphan version $id tags=[$(echo "$tags" | tr '\n' ',')]"
+                  if [ "$DRY_RUN" != "true" ]; then
+                    gh api -X DELETE \
+                      "/orgs/kubestellar/packages/container/$image/versions/$id" \
+                      && echo "  deleted $id" || echo "  FAILED $id"
+                  fi
+                fi
+              done
+          done
+          [ "$DRY_RUN" = "true" ] && echo "(dry-run: nothing deleted above)" || true
