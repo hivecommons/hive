@@ -15,6 +15,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/policies"
+	"github.com/kubestellar/hive/v2/pkg/resolve"
 )
 
 type Scheduler struct {
@@ -24,6 +25,14 @@ type Scheduler struct {
 	lastActionable *github.ActionableResult
 	logger         *slog.Logger
 	mu             sync.RWMutex
+}
+
+// registry builds the variable-resolution registry from the current config's
+// `variables:` block. It is rebuilt per call (cheap: env/static factories only),
+// so a live config reload that changes variable definitions is picked up on the
+// next kick without extra wiring.
+func (s *Scheduler) registry() *resolve.Registry {
+	return s.cfg.ResolveRegistry(s.logger)
 }
 
 func New(cfg *config.Config, logger *slog.Logger) *Scheduler {
@@ -163,40 +172,49 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	mergeEligibleList := s.buildMergeEligibleList()
 	ciFailingList := s.buildCIFailingList()
 
-	replacer := strings.NewReplacer(
-		"${AGENT_NAME}", agentName,
-		"${AGENT_DISPLAY_NAME}", displayName,
-		"${TIMESTAMP}", now.Format("1/2 3:04 PM MST"),
-		"${QUEUE_ISSUES}", fmt.Sprintf("%d", actionable.Issues.Count),
-		"${QUEUE_PRS}", fmt.Sprintf("%d", actionable.PRs.Count),
-		"${QUEUE_HOLD}", fmt.Sprintf("%d", actionable.Hold.Total),
-		"${SLA_VIOLATIONS}", fmt.Sprintf("%d", actionable.Issues.SLAViolations),
-		"${ISSUE_LIST}", issueList,
-		"${PR_LIST}", prList,
-		"${AUTHORIZED_REPOS}", s.buildReposSection(),
-		"${GH_AUTH}", s.ghAuthInstructions(agentName),
-		"${PROJECT_ORG}", s.cfg.Project.Org,
-		"${PROJECT_NAME}", s.cfg.Project.Name,
-		"${PROJECT_PRIMARY_REPO}", fullPrimaryRepo,
-		"${PROJECT_AI_AUTHOR}", s.cfg.Project.AIAuthor,
-		"${PROJECT_REPOS_LIST}", reposList,
-		"${PROJECT_HOMEBREW_REPO}", fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org),
-		"${HIVE_REPO}", fmt.Sprintf("%s/hive", s.cfg.Project.Org),
-		"${HIVE_ID}", s.cfg.HiveID,
-		"${AGENT_LIST}", agentList,
-		"${AGENT_ROLES}", agentRoles,
-		"${ENABLED_AGENTS}", agentList,
-		"${KNOWLEDGE}", knowledgeSection,
-		"${INCEPTION_IDEA}", inceptionIdea,
-		"${INCEPTION_PHASE}", inceptionPhase,
-		"${INCEPTION_MODE}", inceptionMode,
-		"${INCEPTION_ANSWERS}", inceptionAnswers,
-		"${INCEPTION_SLUG}", inceptionSlug,
-		"${INCEPTION_REPO_URL}", inceptionRepoURL,
-		"${MERGE_ELIGIBLE}", mergeEligibleList,
-		"${CI_FAILING}", ciFailingList,
-	)
-	return replacer.Replace(template)
+	// The built-in per-kick variables. Each value is already computed above, so
+	// the thunks just return it — but wrapping them as resolve.RuntimeContext
+	// producers routes this through the same pluggable engine as config
+	// substitution, letting operators add their own ${VAR}s (via the config
+	// `variables:` block) while these built-ins always win. With no operator
+	// variables configured, Expand reproduces the previous strings.NewReplacer
+	// output exactly (unknown ${VAR} left literal; no env fallback in template
+	// scope).
+	lit := func(v string) func() string { return func() string { return v } }
+	rt := &resolve.RuntimeContext{Vars: map[string]func() string{
+		"AGENT_NAME":            lit(agentName),
+		"AGENT_DISPLAY_NAME":    lit(displayName),
+		"TIMESTAMP":             lit(now.Format("1/2 3:04 PM MST")),
+		"QUEUE_ISSUES":          lit(fmt.Sprintf("%d", actionable.Issues.Count)),
+		"QUEUE_PRS":             lit(fmt.Sprintf("%d", actionable.PRs.Count)),
+		"QUEUE_HOLD":            lit(fmt.Sprintf("%d", actionable.Hold.Total)),
+		"SLA_VIOLATIONS":        lit(fmt.Sprintf("%d", actionable.Issues.SLAViolations)),
+		"ISSUE_LIST":            lit(issueList),
+		"PR_LIST":               lit(prList),
+		"AUTHORIZED_REPOS":      lit(s.buildReposSection()),
+		"GH_AUTH":               lit(s.ghAuthInstructions(agentName)),
+		"PROJECT_ORG":           lit(s.cfg.Project.Org),
+		"PROJECT_NAME":          lit(s.cfg.Project.Name),
+		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),
+		"PROJECT_AI_AUTHOR":     lit(s.cfg.Project.AIAuthor),
+		"PROJECT_REPOS_LIST":    lit(reposList),
+		"PROJECT_HOMEBREW_REPO": lit(fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org)),
+		"HIVE_REPO":             lit(fmt.Sprintf("%s/hive", s.cfg.Project.Org)),
+		"HIVE_ID":               lit(s.cfg.HiveID),
+		"AGENT_LIST":            lit(agentList),
+		"AGENT_ROLES":           lit(agentRoles),
+		"ENABLED_AGENTS":        lit(agentList),
+		"KNOWLEDGE":             lit(knowledgeSection),
+		"INCEPTION_IDEA":        lit(inceptionIdea),
+		"INCEPTION_PHASE":       lit(inceptionPhase),
+		"INCEPTION_MODE":        lit(inceptionMode),
+		"INCEPTION_ANSWERS":     lit(inceptionAnswers),
+		"INCEPTION_SLUG":        lit(inceptionSlug),
+		"INCEPTION_REPO_URL":    lit(inceptionRepoURL),
+		"MERGE_ELIGIBLE":        lit(mergeEligibleList),
+		"CI_FAILING":            lit(ciFailingList),
+	}}
+	return s.registry().Expand(context.Background(), template, resolve.ScopeTemplate, rt)
 }
 
 func (s *Scheduler) formatIssueList(issues []github.Issue) string {

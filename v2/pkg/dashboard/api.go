@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,6 +23,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/policies"
+	"github.com/kubestellar/hive/v2/pkg/resolve"
 )
 
 func (s *Server) RegisterAPI(deps *Dependencies) {
@@ -32,6 +35,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)
+	s.mux.HandleFunc("GET /api/config/variables", s.handleVariablesList)
 	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
 	s.mux.HandleFunc("GET /api/snapshot", s.handleSnapshotAPI)
@@ -1785,6 +1789,66 @@ func (s *Server) loadPromptTemplate(name string) string {
 // substituteTemplateVars replaces ${VAR} placeholders in a prompt template
 // with values from the running config, so the dashboard shows resolved content
 // instead of raw variable names.
+// handleVariablesList returns the operator-defined ${VAR} substitutions from
+// the config `variables:` block, plus whether the exec/http resolver gates are
+// enabled. It is READ-ONLY and never returns any secret value — only the
+// variable name, type, scope, and (for env vars) the source env var NAME. This
+// is the admin-facing view of custom variables; script/http variables and the
+// security gates remain seed-only (GitOps/ConfigMap), so there is intentionally
+// no companion write endpoint for them.
+func (s *Server) handleVariablesList(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonResponse(w, map[string]any{"variables": []any{}, "exec_enabled": false, "http_enabled": false})
+		return
+	}
+	v := s.deps.Config.Variables
+	type varView struct {
+		Name  string `json:"name"`
+		Type  string `json:"type"`
+		Scope string `json:"scope"`
+		// Source is a non-secret provenance hint: for env, the source env var
+		// name; for static, "static"; for script, "script"; for http, the host.
+		Source string `json:"source"`
+	}
+	out := make([]varView, 0, len(v.Defs))
+	for name, def := range v.Defs {
+		typ := def.Type
+		if typ == "" {
+			if def.Value != "" {
+				typ = "static"
+			} else {
+				typ = "env"
+			}
+		}
+		scope := def.Scope
+		if scope == "" {
+			scope = "template"
+		}
+		source := typ
+		switch typ {
+		case "env":
+			if def.Env != "" {
+				source = "env:" + def.Env
+			} else {
+				source = "env:" + name
+			}
+		case "http":
+			if u, err := url.Parse(def.URL); err == nil && u.Host != "" {
+				source = "http:" + u.Host
+			} else {
+				source = "http"
+			}
+		}
+		out = append(out, varView{Name: name, Type: typ, Scope: scope, Source: source})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	jsonResponse(w, map[string]any{
+		"variables":    out,
+		"exec_enabled": v.Security.AllowExec,
+		"http_enabled": v.Security.AllowHTTP,
+	})
+}
+
 func (s *Server) substituteTemplateVars(template, agentName string) string {
 	if s.deps == nil || s.deps.Config == nil {
 		return template
@@ -1806,18 +1870,25 @@ func (s *Server) substituteTemplateVars(template, agentName string) string {
 		displayName = ac.DisplayName
 	}
 
-	replacer := strings.NewReplacer(
-		"${AGENT_NAME}", agentName,
-		"${AGENT_DISPLAY_NAME}", displayName,
-		"${PROJECT_NAME}", cfg.Project.Name,
-		"${PROJECT_ORG}", org,
-		"${PROJECT_PRIMARY_REPO}", fullPrimaryRepo,
-		"${PROJECT_AI_AUTHOR}", cfg.Project.AIAuthor,
-		"${PROJECT_REPOS_LIST}", reposList,
-		"${HIVE_REPO}", fmt.Sprintf("%s/hive", org),
-		"${HIVE_ID}", cfg.HiveID,
-	)
-	return replacer.Replace(template)
+	// The dashboard preview substitutes the config-only subset of kick-template
+	// variables (it has no live GitHub context). Route it through the same
+	// resolve engine as the scheduler so operator-defined ${VAR}s (from the
+	// config `variables:` block) render in previews too, and the two paths can
+	// no longer drift. Built-ins win; with no operator variables the output
+	// matches the previous strings.NewReplacer exactly.
+	lit := func(v string) func() string { return func() string { return v } }
+	rt := &resolve.RuntimeContext{Vars: map[string]func() string{
+		"AGENT_NAME":           lit(agentName),
+		"AGENT_DISPLAY_NAME":   lit(displayName),
+		"PROJECT_NAME":         lit(cfg.Project.Name),
+		"PROJECT_ORG":          lit(org),
+		"PROJECT_PRIMARY_REPO": lit(fullPrimaryRepo),
+		"PROJECT_AI_AUTHOR":    lit(cfg.Project.AIAuthor),
+		"PROJECT_REPOS_LIST":   lit(reposList),
+		"HIVE_REPO":            lit(fmt.Sprintf("%s/hive", org)),
+		"HIVE_ID":              lit(cfg.HiveID),
+	}}
+	return cfg.ResolveRegistry(s.deps.Logger).Expand(context.Background(), template, resolve.ScopeTemplate, rt)
 }
 
 func (s *Server) loadAgentStats(name string) []any {

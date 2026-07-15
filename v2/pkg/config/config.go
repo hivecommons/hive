@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/url"
 	"os"
 	"regexp"
@@ -1175,6 +1176,20 @@ func (v VariablesConfig) toResolveSpecs() ([]resolve.VarSpec, resolve.Policy) {
 		HTTPTimeoutS:  v.Security.HTTPTimeoutS,
 	}
 	return specs, pol
+}
+
+// ResolveRegistry builds a resolve.Registry from this config's `variables:`
+// block, for use at per-kick template substitution sites (scheduler, dashboard
+// preview). With no variables configured it returns an env-only registry whose
+// Expand — in template scope, where the runtime built-ins win and there is no
+// env fallback — reproduces the previous strings.NewReplacer output exactly.
+// Pass a logger to surface disabled/invalid resolver diagnostics; nil is fine.
+func (c *Config) ResolveRegistry(logger *slog.Logger) *resolve.Registry {
+	if len(c.Variables.Defs) == 0 {
+		return resolve.EnvOnly()
+	}
+	specs, pol := c.Variables.toResolveSpecs()
+	return resolve.Build(specs, pol, logger)
 }
 
 const (

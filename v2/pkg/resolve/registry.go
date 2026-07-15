@@ -135,10 +135,17 @@ func (r *Registry) resolveOne(ctx context.Context, name, raw string, want Scope,
 		return raw
 	}
 
-	// 3. Bare environment variable of the same name (legacy default).
-	res, err := bareEnvResolver{}.Resolve(req)
-	if err == nil {
-		return res.Value
+	// 3. Bare environment variable of the same name — but only in config scope.
+	//    Config-load substitution (System A) has always fallen back to
+	//    os.LookupEnv for any ${NAME}; per-kick templating (System B) has not
+	//    (its legacy strings.NewReplacer left unknown ${VAR} literal, never
+	//    consulting the environment). Restricting the fallback to config scope
+	//    keeps both systems byte-identical to their legacy behavior.
+	if want == ScopeConfig {
+		res, err := bareEnvResolver{}.Resolve(req)
+		if err == nil {
+			return res.Value
+		}
 	}
 
 	// 4. Unresolved: leave the literal ${VAR}.
