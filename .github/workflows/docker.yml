@@ -2,11 +2,10 @@ name: Build and Push Docker Image
 
 on:
   push:
-    # Build an image for EVERY branch: any branch can be assigned to a hive
-    # via the hub's branch switcher (v2/v3 releases, plus experimental dev
-    # branches like mk), and each needs a <branch>-latest image to roll out.
-    # Exclude bot branches so dependency PRs don't consume image CI — they
-    # build on the base branch when merged.
+    # Run on every branch so a PR's image still BUILDS as a CI gate (proving it
+    # compiles), but only long-lived branches PUSH to GHCR — see the "Push
+    # policy" step below. Exclude bot branches so dependency PRs don't consume
+    # image CI; they build on the base branch when merged.
     branches:
       - '**'
       - '!dependabot/**'
@@ -23,7 +22,43 @@ permissions:
   packages: write
 
 jobs:
+  # Decide once whether this run pushes images to GHCR, and expose it as an
+  # output every other job consumes (needs.gate.outputs.push). Only long-lived
+  # branches that a hive can be assigned to via the hub's branch switcher push:
+  # the release lines and standing experimental branches. Every OTHER branch
+  # still BUILDS (the image is a per-PR CI gate) but does not push — otherwise a
+  # temporary PR branch leaves an orphaned <branch>-latest tag on GHCR when it
+  # merges and is deleted. workflow_dispatch always pushes so a throwaway branch
+  # can be published for a hive on demand before merge.
+  #
+  # The long-lived branch set is defined ONCE below (LONG_LIVED). To add or
+  # remove one, edit only that list — the whole workflow derives from this job's
+  # output, so nothing else changes.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      push: ${{ steps.decide.outputs.push }}
+    steps:
+      - name: Decide push policy
+        id: decide
+        env:
+          LONG_LIVED: "v2 v3 mk"
+          REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          push=false
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            push=true
+          else
+            for b in $LONG_LIVED; do
+              if [ "$b" = "$REF_NAME" ]; then push=true; break; fi
+            done
+          fi
+          echo "push=$push" >> "$GITHUB_OUTPUT"
+          echo "Push to GHCR: $push (branch=$REF_NAME event=$EVENT)"
+
   build:
+    needs: gate
     strategy:
       matrix:
         include:
@@ -63,17 +98,22 @@ jobs:
             GIT_HASH=${{ github.sha }}
             GIT_BRANCH=${{ github.ref_name }}
           no-cache-filters: builder
-          outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=true
+          # Push the per-arch digest only for long-lived branches; on a PR
+          # branch build without pushing so the image is still validated (CI
+          # gate) but nothing lands on GHCR.
+          outputs: type=image,name=ghcr.io/kubestellar/hive,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }}
           cache-from: type=gha,scope=${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=${{ steps.slug.outputs.slug }},mode=max
 
       - name: Export digest
+        if: needs.gate.outputs.push == 'true'
         run: |
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
 
       - name: Upload digest
+        if: needs.gate.outputs.push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: digests-${{ steps.slug.outputs.slug }}
@@ -81,9 +121,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The merge job exists only to create and push the <branch>-latest / <sha>
+  # manifest tags, which only happens for long-lived branches. On a PR branch
+  # the build job above still runs (validating the image builds) and this job
+  # is skipped entirely.
   merge:
+    if: needs.gate.outputs.push == 'true'
     runs-on: ubuntu-latest
-    needs: build
+    needs: [gate, build]
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
@@ -141,6 +186,7 @@ jobs:
             $(printf 'ghcr.io/kubestellar/hive@sha256:%s ' "${digests[@]}")
 
   build-contributor:
+    needs: gate
     strategy:
       matrix:
         include:
@@ -176,17 +222,19 @@ jobs:
           context: .
           file: v2/Dockerfile.contributor
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=ghcr.io/kubestellar/hive-contributor,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/kubestellar/hive-contributor,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }}
           cache-from: type=gha,scope=contributor-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=contributor-${{ steps.slug.outputs.slug }},mode=max
 
       - name: Export digest
+        if: needs.gate.outputs.push == 'true'
         run: |
           mkdir -p /tmp/contrib-digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/contrib-digests/${digest#sha256:}"
 
       - name: Upload digest
+        if: needs.gate.outputs.push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: contrib-digests-${{ steps.slug.outputs.slug }}
@@ -195,8 +243,9 @@ jobs:
           retention-days: 1
 
   merge-contributor:
+    if: needs.gate.outputs.push == 'true'
     runs-on: ubuntu-latest
-    needs: build-contributor
+    needs: [gate, build-contributor]
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
@@ -255,6 +304,7 @@ jobs:
             $(printf 'ghcr.io/kubestellar/hive-contributor@sha256:%s ' "${digests[@]}")
 
   build-hub:
+    needs: gate
     strategy:
       matrix:
         include:
@@ -292,17 +342,19 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             GIT_HASH=${{ github.sha }}
-          outputs: type=image,name=ghcr.io/kubestellar/hive-hub,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=ghcr.io/kubestellar/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }}
           cache-from: type=gha,scope=hub-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=hub-${{ steps.slug.outputs.slug }},mode=max
 
       - name: Export digest
+        if: needs.gate.outputs.push == 'true'
         run: |
           mkdir -p /tmp/hub-digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/hub-digests/${digest#sha256:}"
 
       - name: Upload digest
+        if: needs.gate.outputs.push == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: hub-digests-${{ steps.slug.outputs.slug }}
@@ -311,8 +363,9 @@ jobs:
           retention-days: 1
 
   merge-hub:
+    if: needs.gate.outputs.push == 'true'
     runs-on: ubuntu-latest
-    needs: build-hub
+    needs: [gate, build-hub]
     steps:
       - name: Download digests
         uses: actions/download-artifact@v4
