@@ -1425,6 +1425,15 @@ func main() {
 		cfg.Hub.ClusterID = envCluster
 	}
 	if cfg.Hub.Enabled && hubURL != "" {
+		// Heartbeat cadence is INDEPENDENT of the governor eval interval. It was
+		// previously tied to cfg.Governor.EvalIntervalS, so a low-ACMM hive
+		// (which evaluates infrequently by design — e.g. ~10 min at L2) beat the
+		// hub only every ~10 min. The hub marks a hive stale after
+		// heartbeatHealthStaleness (5 min), so such hives showed a gray/stale
+		// dot for half of every cycle despite being perfectly healthy. Beat on a
+		// fixed interval comfortably under that 5-min threshold so every hive,
+		// regardless of ACMM level, stays fresh on the hub.
+		const heartbeatSendInterval = 2 * time.Minute
 		go hub.StartHeartbeat(ctx, hubURL, func() *hub.HeartbeatPayload {
 			if !cfg.Hub.Enabled {
 				return nil
@@ -1529,7 +1538,7 @@ func main() {
 					return hub.CollectClusterHealth(logger)
 				}(),
 			}
-		}, time.Duration(cfg.Governor.EvalIntervalS)*time.Second, logger, hub.UpgradeCallback(func(targetSHA string) {
+		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
 
 			// If a previous process already attempted an upgrade and we booted
