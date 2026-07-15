@@ -2,6 +2,7 @@ package config
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"log"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/resolve"
 	"gopkg.in/yaml.v3"
 )
 
@@ -37,8 +39,45 @@ type Config struct {
 	Hub           HubConfig              `yaml:"hub"`
 	HiveID        string                 `yaml:"hive_id"`
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
+	Variables     VariablesConfig        `yaml:"variables,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+}
+
+// VariablesConfig declares operator-defined ${VAR} substitutions and the trust
+// policy for resolvers that execute code or do network I/O. It drives the
+// pluggable resolve engine (pkg/resolve) used by both config-load and per-kick
+// template substitution. Absent (the default) means env-only substitution,
+// byte-identical to hive's legacy behavior.
+type VariablesConfig struct {
+	// Security gates script/http resolvers. Honored ONLY from the trusted config
+	// seed — the dashboard overlay's Security block is discarded on load so a
+	// user-editable overlay can never enable code execution or network access.
+	Security VarSecurityConfig `yaml:"security,omitempty"`
+	// Defs maps a variable name (used as ${name}) to its definition.
+	Defs map[string]VarDef `yaml:"defs,omitempty"`
+}
+
+// VarSecurityConfig is the resolver trust model. Defaults are deny.
+type VarSecurityConfig struct {
+	AllowExec     bool     `yaml:"allow_exec,omitempty"`
+	AllowHTTP     bool     `yaml:"allow_http,omitempty"`
+	HTTPAllowlist []string `yaml:"http_allowlist,omitempty"`
+	ExecTimeoutS  int      `yaml:"exec_timeout_s,omitempty"`
+	HTTPTimeoutS  int      `yaml:"http_timeout_s,omitempty"`
+}
+
+// VarDef is one operator-declared variable. `default` uses a pointer so an
+// explicit empty-string default is distinguishable from "no default".
+type VarDef struct {
+	Type    string            `yaml:"type,omitempty"`  // env|static|script|http
+	Scope   string            `yaml:"scope,omitempty"` // config|template|both (default template)
+	Default *string           `yaml:"default,omitempty"`
+	Value   string            `yaml:"value,omitempty"`   // static
+	Env     string            `yaml:"env,omitempty"`     // env source var name
+	Command []string          `yaml:"command,omitempty"` // script argv
+	URL     string            `yaml:"url,omitempty"`     // http
+	Headers map[string]string `yaml:"headers,omitempty"` // http
 }
 
 // DocSourceConfigYAML describes an external document to import as knowledge.
@@ -825,8 +864,6 @@ type DataConfig struct {
 	AgentsDir          string `yaml:"agents_dir"`
 }
 
-var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
-
 // Load reads hive.yaml, then applies config.env overrides if present.
 // Precedence: hive.yaml < config.env < explicit env vars (via ${} interpolation).
 func Load(path string) (*Config, error) {
@@ -924,6 +961,11 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	for name := range overlay.Agents {
 		cfg.ApplyAgentDefaults(name)
 	}
+	// Security invariant: cfg.Variables (resolver defs + the exec/http trust
+	// policy) comes ONLY from the seed loaded above — the overlay's Variables
+	// block is intentionally NOT merged. The dashboard overlay is user-writable,
+	// so honoring its resolver policy would let a compromised overlay enable
+	// script/http execution. Keep this true if overlay merging is ever expanded.
 	return cfg, nil
 }
 
@@ -1069,14 +1111,70 @@ func parseAuthorizedUsers(v string) []string {
 	return out
 }
 
+// expandEnvVars substitutes ${VAR} references in the raw config text. It runs
+// BEFORE the YAML is parsed, so to honor an operator `variables:` block it
+// first bootstrap-parses just that block from the same text, builds a
+// config-scoped resolve.Registry, and delegates. With no `variables:` block the
+// registry is env-only and the result is byte-identical to the legacy behavior
+// (${NAME} -> os.LookupEnv(NAME), unset left literal).
 func expandEnvVars(s string) string {
-	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
-		varName := strings.TrimSuffix(strings.TrimPrefix(match, "${"), "}")
-		if val, ok := os.LookupEnv(varName); ok {
-			return val
+	reg := configRegistryFromText(s)
+	return reg.Expand(context.Background(), s, resolve.ScopeConfig, nil)
+}
+
+// bootstrapVariables is a minimal view of hive.yaml used to read the
+// `variables:` block before the whole document is expanded/parsed. Unknown keys
+// are ignored by yaml.Unmarshal, so this is cheap and tolerant.
+type bootstrapVariables struct {
+	Variables VariablesConfig `yaml:"variables"`
+}
+
+// configRegistryFromText bootstrap-parses the variables block from raw config
+// text and returns a config-scoped resolve.Registry. On any parse failure it
+// falls back to an env-only registry (legacy behavior), never an error — config
+// expansion must not fail the load.
+func configRegistryFromText(raw string) *resolve.Registry {
+	var bv bootstrapVariables
+	if err := yaml.Unmarshal([]byte(raw), &bv); err != nil {
+		return resolve.EnvOnly()
+	}
+	if len(bv.Variables.Defs) == 0 {
+		// No custom variables — env-only, byte-identical to legacy.
+		return resolve.EnvOnly()
+	}
+	specs, pol := bv.Variables.toResolveSpecs()
+	return resolve.Build(specs, pol, nil)
+}
+
+// toResolveSpecs translates the config-level variables block into the
+// resolve package's VarSpec list and Policy.
+func (v VariablesConfig) toResolveSpecs() ([]resolve.VarSpec, resolve.Policy) {
+	specs := make([]resolve.VarSpec, 0, len(v.Defs))
+	for name, def := range v.Defs {
+		spec := resolve.VarSpec{
+			Name:    name,
+			Type:    def.Type,
+			Scope:   resolve.Scope(def.Scope),
+			Value:   def.Value,
+			Env:     def.Env,
+			Command: def.Command,
+			URL:     def.URL,
+			Headers: def.Headers,
 		}
-		return match
-	})
+		if def.Default != nil {
+			spec.HasDefault = true
+			spec.Default = *def.Default
+		}
+		specs = append(specs, spec)
+	}
+	pol := resolve.Policy{
+		AllowExec:     v.Security.AllowExec,
+		AllowHTTP:     v.Security.AllowHTTP,
+		HTTPAllowlist: v.Security.HTTPAllowlist,
+		ExecTimeoutS:  v.Security.ExecTimeoutS,
+		HTTPTimeoutS:  v.Security.HTTPTimeoutS,
+	}
+	return specs, pol
 }
 
 const (
