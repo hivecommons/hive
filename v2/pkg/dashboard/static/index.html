@@ -83,6 +83,8 @@
        the style block); only placement-specific properties live here. */
     .widget-dl { display: inline-block; text-decoration: none; margin-left: auto; margin-right: auto; }
     .layout-toggle { margin-left: 12px; margin-right: 8px; }
+    /* Icon-only theme toggle: square-ish, centered glyph, larger for tap target. */
+    .layout-toggle { min-width: 34px; padding-left: 8px; padding-right: 8px; font-size: 1rem; line-height: 1; text-align: center; }
 
     /* ── Light mode ── */
     body.light-mode {
@@ -2283,10 +2285,10 @@
       <span id="oc-git-version" class="git-version"></span>
     </div>
     <div class="oc-topbar-center">
-      <span class="oc-tb-link" onclick="openConfigDialog('governor')">⚙️ Config</span>
-      <span class="oc-tb-link" onclick="ocNavigate('debug-section')">🔍 Debug</span>
+      <span class="oc-tb-link" onclick="openConfigDialog('governor')" title="Config — governor, agents, thresholds, and all hive settings" aria-label="Config">⚙️</span>
+      <span class="oc-tb-link" onclick="ocNavigate('debug-section')" title="Debug — system diagnostics and troubleshooting" aria-label="Debug">🐛</span>
       <!-- Agent Logs hidden (redundant with per-agent output) -->
-      <button class="layout-toggle" onclick="toggleLayout()" title="Switch to Dark mode — dark theme with compact agent cards in a grid. Best for quick overview of all agents at once.">☾ Switch to Dark Mode</button>
+      <button class="layout-toggle" onclick="toggleLayout()" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
     </div>
     <div class="oc-topbar-right">
       <span class="oc-health-badge" id="oc-health">● Health OK</span>
@@ -2316,7 +2318,7 @@
     <span class="git-version" id="git-version"></span>
     <span class="git-version" id="hive-id-badge" title="Hive Instance ID" style="cursor:pointer;border:1px solid var(--border);padding:2px 8px;border-radius:4px" onclick="openConfigDialog('governor')"></span>
     <span class="git-version" id="acmm-badge" title="Click to change maturity level" style="cursor:pointer;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);padding:2px 8px;border-radius:999px;background:color-mix(in srgb, var(--amber) 14%, transparent);color:var(--amber);font-weight:600" onclick="openACMMDialog()"></span>
-    <button class="layout-toggle" id="layout-toggle" onclick="toggleLayout()" title="Switch between Light mode (sidebar + detail panel) and Dark mode (dark theme grid). Your preference is saved in the browser.">☾ Switch to Dark Mode</button>
+    <button class="layout-toggle" id="layout-toggle" onclick="toggleLayout()" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
     <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
   </h1>
 
@@ -2632,7 +2634,10 @@
     const LAYOUT_MODES = ['dark', 'light'];
     // State-explicit labels: the button names the ACTION ("Switch to …"),
     // never the current mode, so it cannot be misread as a state indicator.
-    const LAYOUT_LABELS = { dark: '☀ Switch to Light Mode', light: '☾ Switch to Dark Mode' };
+    // Icon-only: sun ☀ when in dark mode (click to go light), moon ☾ when in
+    // light mode (click to go dark). The full meaning stays in the title tooltip.
+    const LAYOUT_LABELS = { dark: '☀', light: '☾' };
+    const LAYOUT_TITLES = { dark: 'Switch to Light Mode', light: 'Switch to Dark Mode' };
     function getLayout() {
       let stored = localStorage.getItem(LAYOUT_KEY) || 'light';
       if (stored === 'openclaw') { stored = 'light'; setLayout(stored); }
@@ -2644,8 +2649,11 @@
       document.body.classList.toggle('light-mode', mode === 'light');
       document.body.classList.add('has-info-sidebar');
       const lbl = LAYOUT_LABELS[mode] || LAYOUT_LABELS.dark;
+      const ttl = LAYOUT_TITLES[mode] || LAYOUT_TITLES.dark;
       document.querySelectorAll('.layout-toggle').forEach(btn => {
         btn.textContent = lbl;
+        btn.title = ttl;
+        btn.setAttribute('aria-label', ttl);
         btn.classList.toggle('active', mode !== 'dark');
       });
       const sidebar = document.getElementById('oc-sidebar');
