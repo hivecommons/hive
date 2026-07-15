@@ -1068,8 +1068,12 @@
     .health-ci.bad { color: var(--red); }
 
     /* GitHub API rate limit alert bar */
+    /* z-index 9500: a global system alert sits above page content/FABs (9000–9001)
+       but BELOW modal overlays (.config-overlay 10000, .hive-dialog-overlay 20000)
+       so an open modal — e.g. the Getting Started checklist — is never punched
+       through by this banner. Do not raise to/above the modal layer. */
     .gh-auth-alert {
-      display: none; position: relative; z-index: 10000;
+      display: none; position: relative; z-index: 9500;
       background: color-mix(in srgb, var(--red) 15%, var(--panel)); border-bottom: 2px solid var(--red); color: var(--text);
       padding: 10px 20px; font-size: 0.85rem; text-align: center;
     }
