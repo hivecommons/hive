@@ -3653,6 +3653,11 @@
     function resolveStatValue(stat, name) {
       const src = stat.source;
       const field = stat.field;
+      // Resolver-backed stats (source: resolver/env/static/script/http) are
+      // computed server-side by the variable-resolution engine and delivered as
+      // a pre-resolved `value`. Prefer it; the client-side sources below stay
+      // exactly as they were for the dashboard-native sources.
+      if (stat.value !== undefined) return stat.value;
       if (src === 'agentMetrics') {
         const m = currentAgentMetrics[name] || {};
         return m[field];

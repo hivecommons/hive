@@ -20,6 +20,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/governor"
+	"github.com/kubestellar/hive/v2/pkg/resolve"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
 )
 
@@ -266,7 +267,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			GovCostWeight: 0,
 			LiveSummary:   liveSummary,
 			DetailSummary: detailSummary,
-			StatsConfig:   loadStatsConfig(name),
+			StatsConfig:   resolveStatsSources(loadStatsConfig(name), cfg),
 			LastError:     proc.LastError,
 			StallNudges:   proc.StallNudges,
 			ActionNudges:  proc.ActionNudges,
@@ -322,6 +323,56 @@ func loadStatsConfig(name string) []any {
 		}
 	}
 	return defaultStatsConfig(name)
+}
+
+// statsResolverSources are the stat `source` values that are fulfilled by the
+// variable-resolution engine (pkg/resolve) rather than by a client-side data
+// blob. "resolver" reads the stat's `field` as a ${VAR} reference / variable
+// name; env/static/script/http name a resolver type directly and read `field`
+// as the variable name. Everything else (agentMetrics, health, tokens, status)
+// stays a dashboard-native, client-resolved source and is passed through
+// untouched — this keeps existing stats byte-for-byte the same.
+var statsResolverSources = map[string]bool{
+	"resolver": true, "env": true, "static": true, "script": true, "http": true,
+}
+
+// resolveStatsSources fills in a server-computed `value` for any stat whose
+// source is resolver-backed, using the config's variable-resolution registry.
+// A resolver-backed stat carries its variable name in `field`; the resolved
+// string is attached as `value`, which the dashboard renders directly (its
+// resolveStatValue prefers a pre-resolved value). Stats with a dashboard-native
+// source are returned unchanged. Unresolvable resolver stats get no value and
+// render blank, exactly like any other missing metric — never an error.
+func resolveStatsSources(stats []any, cfg *config.Config) []any {
+	if cfg == nil || len(stats) == 0 {
+		return stats
+	}
+	var reg *resolve.Registry
+	for _, raw := range stats {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		src, _ := m["source"].(string)
+		if !statsResolverSources[src] {
+			continue
+		}
+		field, _ := m["field"].(string)
+		if field == "" {
+			continue
+		}
+		if reg == nil {
+			reg = cfg.ResolveRegistry(nil)
+		}
+		// Resolve ${field} in template scope, exposing no runtime built-ins —
+		// a stat value comes from operator-defined variables, not kick built-ins.
+		val := reg.Expand(context.Background(), "${"+field+"}", resolve.ScopeTemplate, nil)
+		// Leave value unset if it did not resolve (still the literal ${field}).
+		if val != "${"+field+"}" {
+			m["value"] = val
+		}
+	}
+	return stats
 }
 
 // LoadStatsConfigWithCfg reads stats from disk, then falls back to config StatsDisplay field.
