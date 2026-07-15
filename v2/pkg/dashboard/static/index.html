@@ -11610,8 +11610,9 @@ function burnAreaChart() {
       return `
         <div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
           Define your own <code>\${NAME}</code> substitutions for kick templates and config.
-          <b>static</b> and <b>env</b> variables can be managed here; <b>script</b> and <b>http</b>
-          variables (which run commands or fetch URLs) are configured in the seed config only.
+          Four types are supported: <b>static</b>, <b>env</b>, <b>script</b>, and <b>http</b>.
+          <b>static</b> and <b>env</b> can be managed here; <b>script</b> and <b>http</b> (which run
+          commands or fetch URLs) are seed-only — see <i>Advanced</i> below.
         </div>
         <div id="variables-status" style="font-size:0.72rem;color:var(--muted);margin-bottom:8px"></div>
         <div id="variables-list"><div style="color:var(--muted);font-size:0.75rem;padding:4px 0">Loading variables…</div></div>
@@ -11639,7 +11640,49 @@ function burnAreaChart() {
             <div class="config-field"><label>Default (optional)</label><input id="var-add-default" placeholder="fallback if unset"></div>
           </div>
           <button class="config-btn" onclick="saveNewVariable()" style="margin-top:6px">Add variable</button>
-        </div>`;
+        </div>
+        <details style="margin-top:16px;border-top:1px solid var(--border,#2a2a2a);padding-top:12px">
+          <summary style="cursor:pointer;font-weight:600;font-size:0.78rem">Advanced — script &amp; http variables (seed config only)</summary>
+          <div style="font-size:0.78rem;color:var(--muted);line-height:1.55;margin-top:8px">
+            Two more variable types back a <code>\${NAME}</code> with a live value:
+            <ul style="margin:6px 0 6px 18px;padding:0">
+              <li><b>script</b> — the trimmed stdout of a command (e.g. <code>git rev-parse</code>).</li>
+              <li><b>http</b> — the body of an HTTP GET to an allowlisted web service.</li>
+            </ul>
+            These run commands / reach the network, so they are <b>off by default</b> and
+            can only be enabled and defined in the <b>ConfigMap seed</b> — never the dashboard.
+            <div style="background:color-mix(in srgb, var(--amber) 12%, transparent);border:1px solid color-mix(in srgb, var(--amber) 35%, transparent);border-radius:6px;padding:8px 10px;margin:8px 0">
+              <b>Where this goes:</b> the platform <b>ConfigMap</b> that seeds <code>/etc/hive/hive.yaml</code>
+              (edit it via GitOps / <code>kubectl</code> and roll the pod). It will <b>not</b> take effect if you
+              put it in the dashboard-saved overlay (<code>/data/hive.yaml.dashboard</code> on the PVC) — the
+              loader deliberately ignores <code>variables.security</code> and <code>script</code>/<code>http</code>
+              definitions from the overlay, because that file is writable from the dashboard and enabling
+              code execution there would be a security hole.
+            </div>
+            <b>To enable:</b>
+            <ol style="margin:6px 0 6px 18px;padding:0">
+              <li>In the ConfigMap's <code>hive.yaml</code>, set <code>variables.security.allow_exec</code> and/or
+                <code>allow_http: true</code> (and an <code>http_allowlist</code> for http).</li>
+              <li>Add your <code>script</code>/<code>http</code> entries under <code>variables.defs</code>.</li>
+              <li>Apply the ConfigMap and restart the hive pod. The variables then appear read-only in this
+                tab, and the status line above shows <i>enabled</i>.</li>
+            </ol>
+            <pre style="background:var(--surface,#111);border:1px solid var(--border,#2a2a2a);border-radius:6px;padding:10px;overflow:auto;font-size:0.72rem;margin-top:8px"><code>variables:
+  security:
+    allow_exec: true              # gate; ConfigMap seed only
+    allow_http: true
+    http_allowlist: [vault.internal.example.com]
+  defs:
+    BUILD_SHA:
+      type: script
+      command: [git, rev-parse, --short, HEAD]
+    DB_HOST:
+      type: http
+      url: "https://vault.internal.example.com/v1/config/db-host"
+      headers: { Authorization: "Bearer \${HIVE_VAULT_TOKEN}" }</code></pre>
+            <a href="https://kubestellar.io/docs/hive/configuration/variable-substitution" target="_blank" style="color:var(--accent)">Full documentation →</a>
+          </div>
+        </details>`;
     }
 
     function onVarAddTypeChange() {
