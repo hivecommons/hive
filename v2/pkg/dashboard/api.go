@@ -1372,6 +1372,10 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
 	if err != nil || user == nil || user.Login == "" {
 		s.deviceFlowState = nil
+		// Audit the failed login so the owner can see attempts that never got
+		// far enough to resolve a GitHub identity. Actor is "unknown" because we
+		// could not verify who they are.
+		s.audit.Log("unknown", "login_error", auditDetail("reason", "could not verify GitHub identity"), "")
 		jsonResponse(w, map[string]interface{}{"status": "error", "error": "could not verify GitHub identity"})
 		return
 	}
@@ -1389,7 +1393,9 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 			// Do NOT persist the token, do NOT set a session, do NOT log the
 			// user in. Reject before any state is written.
 			s.deps.Logger.Warn("device-flow login rejected: user not authorized for this hive", "username", username)
-			s.auditFromRequest(r, "gh_auth_denied", auditDetail("username", username), "")
+			// Audit the denied login with the attempted GitHub username as the
+			// actor so the owner can see WHO tried and was rejected.
+			s.audit.Log(username, "login_denied", auditDetail("reason", "not authorized for this hive"), "")
 			jsonError(w, "your GitHub account is not authorized to access this hive. Contact the hive owner to request access.", http.StatusForbidden)
 			return
 		}
@@ -1430,7 +1436,10 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		setSessionCookie(w, r, sid)
 	}
 
-	s.auditFromRequest(r, "gh_auth_complete", auditDetail("username", username), "")
+	// Audit the successful login with the authenticated GitHub username as the
+	// actor (not the request's X-Hive-User, which has no session yet at this
+	// point) so the owner can see WHO logged in.
+	s.audit.Log(username, "login", auditDetail("method", "github device flow", "role", role), "")
 	jsonResponse(w, map[string]interface{}{"status": "complete", "username": username, "avatar_url": avatarURL})
 }
 
