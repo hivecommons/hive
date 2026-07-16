@@ -42,7 +42,7 @@ jobs:
       - name: Decide push policy
         id: decide
         env:
-          LONG_LIVED: "v2 v3 mk"
+          LONG_LIVED: "v2 v3 mk dd"
           REF_NAME: ${{ github.ref_name }}
           EVENT: ${{ github.event_name }}
         run: |
