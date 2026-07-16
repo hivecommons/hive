@@ -1058,6 +1058,18 @@ data:
           git_sync: false
     dashboard:
       port: {{.DashboardPort}}
+      # hub_proxied is true ONLY on the nginx-ingress path (hive-oke), where the
+      # hub's auth-proxy (see the auth-url/auth-signin/auth-response-headers
+      # annotations below) authenticates every request and injects trusted
+      # X-Hive-User/X-Hive-Role headers. That keeps the hive from flipping into
+      # standalone direct-route mode when it carries an authorized_users list
+      # (which would strip those headers and disable the shared token, breaking
+      # the dashboard link and the snapshot preview).
+      #
+      # On the OpenShift-Route path (vllm-d) there is NO nginx auth-proxy — the
+      # hive is reached directly — so it stays hub_proxied:false and correctly
+      # enforces per-user device-flow authz itself from authorized_users.
+      hub_proxied: {{.IsNginxIngress}}
     hub:
       enabled: true
       url: https://hive.kubestellar.io

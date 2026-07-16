@@ -785,9 +785,23 @@ type DashboardConfig struct {
 	// entry is treated as the owner (read-write); the rest are granted viewers
 	// (read-only) unless an explicit "username:role" suffix is given. On the
 	// hub-proxied path, nginx injects X-Hive-User/X-Hive-Role and this list is
-	// not consulted. Empty on hub-proxied hives; populated by provisioning for
-	// hosted hives so direct-route device-flow logins are per-user authorized.
+	// consulted only by the read-only Access tab, NOT for gating logins.
+	// Populated on both hub-proxied hosted hives (for the Access view + hub
+	// Manage Access) and standalone direct-route spokes (for device-flow authz).
 	AuthorizedUsers []string `yaml:"authorized_users"`
+	// HubProxied is true when this hive sits behind the hub's nginx auth-proxy,
+	// which authenticates every request and injects trusted X-Hive-User/X-Hive-Role
+	// headers (hive-oke hosted hives). When true the hive TRUSTS those headers and
+	// keeps the shared-token path enabled even if AuthorizedUsers is non-empty —
+	// nginx is the gate, and the allowlist is informational (Access tab) only.
+	//
+	// When false (the default) a non-empty AuthorizedUsers list means this is a
+	// STANDALONE direct-route spoke with no nginx in front (vllm-d), so it must
+	// strip client-supplied identity headers and enforce per-user device-flow
+	// authz itself. Decoupling these two meanings fixes hub-proxied hives being
+	// wrongly forced into direct-route mode (which broke their dashboard link and
+	// snapshot preview) the moment they were granted an authorized_users list.
+	HubProxied bool `yaml:"hub_proxied"`
 }
 
 // Role strings used for direct-route spoke authorization. These mirror the
@@ -834,11 +848,18 @@ func (d DashboardConfig) AuthorizedRole(username string) (string, bool) {
 	return "", false
 }
 
-// IsDirectRouteAuthzEnabled reports whether this spoke has a per-hive
-// authorized-users allowlist and must therefore enforce per-user authorization
-// on device-flow logins. Hub-proxied hives leave this empty and rely on nginx.
+// IsDirectRouteAuthzEnabled reports whether this hive must enforce per-user
+// authorization on device-flow logins ITSELF because there is no hub nginx in
+// front of it. True only for a STANDALONE spoke: it has an authorized-users
+// allowlist AND is not hub-proxied.
+//
+// A hub-proxied hive (HubProxied=true) can also carry an allowlist — for the
+// read-only Access tab and the hub's Manage Access screen — but nginx is the
+// gate there, so it must NOT flip into direct-route mode (which would strip the
+// trusted X-Hive-User/X-Hive-Role headers nginx injects and disable the shared
+// token, breaking the dashboard link and the snapshot preview).
 func (d DashboardConfig) IsDirectRouteAuthzEnabled() bool {
-	return len(d.AuthorizedUsers) > 0
+	return !d.HubProxied && len(d.AuthorizedUsers) > 0
 }
 
 // splitAuthorizedEntry parses a "username" or "username:role" allowlist entry.
