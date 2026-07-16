@@ -33,7 +33,18 @@ async function fetchJson(endpoint, fallback = '{}') {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     const headers = {};
-    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    if (authToken) {
+      // The snapshot builder is trusted server-to-server automation running
+      // inside the hive pod. Authenticate with X-Hive-Internal, NOT
+      // `Authorization: Bearer`: on a direct-route spoke (one with a per-hive
+      // authorized_users allowlist) the Bearer/shared-token path is disabled by
+      // the dashboard auth middleware, so a Bearer request to /api/status is
+      // rejected 401 and the snapshot bakes `render({"error":"unauthorized"})`
+      // → every stat renders as "--". X-Hive-Internal is honored regardless of
+      // direct-route mode. Bearer is kept as a fallback for older servers.
+      headers['X-Hive-Internal'] = authToken;
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
     const res = await fetch(`${dashboardUrl}${endpoint}`, { signal: controller.signal, headers });
     clearTimeout(timer);
     return await res.text();
