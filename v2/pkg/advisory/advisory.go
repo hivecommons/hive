@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -227,11 +229,133 @@ func beadPriorityToSeverity(p beads.Priority) string {
 	}
 }
 
+var (
+	// ghNumRefPattern matches ExternalRefs of the form "gh-123" — an issue/PR
+	// number without a repo. The repo is resolved from the finding title when
+	// it mentions the same number, falling back to the hive's primary repo.
+	ghNumRefPattern = regexp.MustCompile(`^gh-(\d+)$`)
+	// inlineRefPattern matches "repo#123" or "owner/repo#123" tokens inside
+	// free text. Bare "#123" is intentionally not matched — GitHub already
+	// autolinks it against the repo the digest is posted to.
+	inlineRefPattern = regexp.MustCompile(`([A-Za-z0-9][A-Za-z0-9_.-]*/)?[A-Za-z0-9][A-Za-z0-9_.-]*#[0-9]+\b`)
+)
+
+// issueURL builds the canonical GitHub URL for an issue or PR reference.
+// The /issues/ path also resolves for pull requests (GitHub redirects).
+func issueURL(owner, repo string, num int) string {
+	return fmt.Sprintf("https://github.com/%s/%s/issues/%d", owner, repo, num)
+}
+
+// splitInlineRef parses a "repo#123" or "owner/repo#123" token, defaulting the
+// owner to org when absent. Returns ok=false if the token is malformed.
+func splitInlineRef(ref, org string) (owner, repo string, num int, ok bool) {
+	hash := strings.LastIndex(ref, "#")
+	if hash < 0 {
+		return "", "", 0, false
+	}
+	num, err := strconv.Atoi(ref[hash+1:])
+	if err != nil {
+		return "", "", 0, false
+	}
+	owner = org
+	repo = ref[:hash]
+	if slash := strings.Index(repo, "/"); slash >= 0 {
+		owner = repo[:slash]
+		repo = repo[slash+1:]
+	}
+	if owner == "" || repo == "" {
+		return "", "", 0, false
+	}
+	return owner, repo, num, true
+}
+
+// linkifyRefs rewrites "repo#123" / "owner/repo#123" tokens in free text as
+// explicit markdown links. GitHub only autolinks bare "#123" (same repo) and
+// fully qualified "owner/repo#123" — agent findings usually write "repo#123",
+// which renders as dead text (kubestellar/hive#1914). Tokens preceded by '/',
+// '[' or '`' are left alone: they are part of a URL, an existing markdown
+// link, or a code span.
+func linkifyRefs(text, org string) string {
+	if org == "" || text == "" {
+		return text
+	}
+	matches := inlineRefPattern.FindAllStringIndex(text, -1)
+	if len(matches) == 0 {
+		return text
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range matches {
+		start, end := m[0], m[1]
+		if start > 0 {
+			switch text[start-1] {
+			case '/', '[', '`':
+				continue
+			}
+		}
+		ref := text[start:end]
+		owner, repo, num, ok := splitInlineRef(ref, org)
+		if !ok {
+			continue
+		}
+		b.WriteString(text[last:start])
+		fmt.Fprintf(&b, "[%s](%s)", ref, issueURL(owner, repo, num))
+		last = end
+	}
+	b.WriteString(text[last:])
+	return b.String()
+}
+
+// formatFindingRef renders a finding's ExternalRef as a leading-space suffix
+// for the digest line. GitHub issue/PR refs ("gh-123", "repo#123",
+// "owner/repo#123") become markdown links; file references keep the previous
+// `file:line` code-span rendering. Returns "" when ref is empty.
+func formatFindingRef(ref string, line int, org, primaryRepo, title string) string {
+	if ref == "" {
+		return ""
+	}
+	if org != "" {
+		if m := ghNumRefPattern.FindStringSubmatch(ref); m != nil && primaryRepo != "" {
+			num, _ := strconv.Atoi(m[1])
+			owner, repo := org, primaryRepo
+			// A "gh-123" ref carries no repo; if the title names the same
+			// number ("some-repo#123"), that repo is the better target.
+			if o, r, ok := repoHintFromTitle(title, num, org); ok {
+				owner, repo = o, r
+			}
+			return fmt.Sprintf(" [#%d](%s)", num, issueURL(owner, repo, num))
+		}
+		if inlineRefPattern.FindString(ref) == ref {
+			if owner, repo, num, ok := splitInlineRef(ref, org); ok {
+				return fmt.Sprintf(" [%s](%s)", ref, issueURL(owner, repo, num))
+			}
+		}
+	}
+	if line > 0 {
+		return fmt.Sprintf(" `%s:%d`", ref, line)
+	}
+	return fmt.Sprintf(" `%s`", ref)
+}
+
+// repoHintFromTitle scans a finding title for a "repo#num" token matching num
+// and returns that owner/repo.
+func repoHintFromTitle(title string, num int, org string) (string, string, bool) {
+	for _, ref := range inlineRefPattern.FindAllString(title, -1) {
+		owner, repo, n, ok := splitInlineRef(ref, org)
+		if ok && n == num {
+			return owner, repo, true
+		}
+	}
+	return "", "", false
+}
+
 // FormatDigestMarkdown formats a digest as markdown for posting to GitHub.
 // Findings are grouped by severity (high→low) with a summary table, then
 // listed with their source agent — this gives repo owners a quick "what matters"
-// view without reading per-agent sections.
-func FormatDigestMarkdown(d *Digest) string {
+// view without reading per-agent sections. org and primaryRepo identify where
+// the digest is posted; they are used to turn issue/PR references in findings
+// into working links, and may be empty to skip linkification.
+func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 	if d.TotalCount == 0 {
 		return ""
 	}
@@ -279,16 +403,10 @@ func FormatDigestMarkdown(d *Digest) string {
 		icon := severityIcon(sev)
 		b.WriteString(fmt.Sprintf("### %s %s (%d)\n\n", icon, strings.ToUpper(sev), len(items)))
 		for _, f := range items {
-			loc := ""
-			if f.File != "" {
-				loc = fmt.Sprintf(" `%s`", f.File)
-				if f.Line > 0 {
-					loc = fmt.Sprintf(" `%s:%d`", f.File, f.Line)
-				}
-			}
-			b.WriteString(fmt.Sprintf("- **[%s]** %s%s _%s_\n", f.Type, f.Title, loc, f.Agent))
+			loc := formatFindingRef(f.File, f.Line, org, primaryRepo, f.Title)
+			b.WriteString(fmt.Sprintf("- **[%s]** %s%s _%s_\n", f.Type, linkifyRefs(f.Title, org), loc, f.Agent))
 			if f.Detail != "" {
-				b.WriteString(fmt.Sprintf("  > %s\n", f.Detail))
+				b.WriteString(fmt.Sprintf("  > %s\n", linkifyRefs(f.Detail, org)))
 			}
 		}
 		b.WriteString("\n")
@@ -297,11 +415,8 @@ func FormatDigestMarkdown(d *Digest) string {
 	if len(d.RecentlyResolved) > 0 {
 		b.WriteString(fmt.Sprintf("### ✅ Recently Resolved (%d)\n\n", len(d.RecentlyResolved)))
 		for _, r := range d.RecentlyResolved {
-			loc := ""
-			if r.File != "" {
-				loc = fmt.Sprintf(" `%s`", r.File)
-			}
-			b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", r.Title, loc, r.Agent, r.ClosedAt.Format("Jan 2")))
+			loc := formatFindingRef(r.File, 0, org, primaryRepo, r.Title)
+			b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(r.Title, org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
 		}
 		b.WriteString("\n")
 	}

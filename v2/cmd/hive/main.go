@@ -2103,12 +2103,18 @@ func runEvalCycle(
 				"resolved_count", len(digest.RecentlyResolved),
 			)
 
-			md := advisory.FormatDigestMarkdown(digest)
+			primaryRepo := cfg.Project.PrimaryRepo
+			if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
+				primaryRepo = cfg.Project.Repos[0]
+			}
+			// Repo entries may be org-qualified ("org/repo"); the digest
+			// linkifier needs the bare repo name alongside the org.
+			org, repoName := cfg.Project.Org, primaryRepo
+			if parts := strings.SplitN(primaryRepo, "/", 2); len(parts) == 2 {
+				org, repoName = parts[0], parts[1]
+			}
+			md := advisory.FormatDigestMarkdown(digest, org, repoName)
 			if md != "" {
-				primaryRepo := cfg.Project.PrimaryRepo
-				if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
-					primaryRepo = cfg.Project.Repos[0]
-				}
 				if issueNum, ok := advisoryIssues[primaryRepo]; ok && issueNum > 0 {
 					postClient := ghClient
 					if uc := userGHClient.Load(); uc != nil {
