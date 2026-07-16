@@ -718,7 +718,11 @@ async function poll(interval){
       var d=await r.json();
       if(d.status==='complete'){showStep('step-done');setTimeout(function(){location.href='/api/gh-user-auth/session'},1000);return}
       if(d.status==='error'){showError(d.error||'Authorization failed');return}
-      if(d.status==='slow_down'){ms=Math.min(ms+5000,30000)}
+      if(d.status==='slow_down'){ms=Math.min(ms+5000,30000);setTimeout(check,ms);return}
+      if(d.status==='pending'){setTimeout(check,ms);return}
+      // Any other shape is terminal (e.g. an HTTP error body with no status) —
+      // surface it instead of silently polling forever.
+      if(!r.ok||d.error){showError(d.error||('Login failed ('+r.status+')'));return}
       setTimeout(check,ms);
     }catch(e){setTimeout(check,ms)}
   }

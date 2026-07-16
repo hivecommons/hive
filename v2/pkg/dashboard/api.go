@@ -1396,7 +1396,14 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 			// Audit the denied login with the attempted GitHub username as the
 			// actor so the owner can see WHO tried and was rejected.
 			s.audit.Log(username, "login_denied", auditDetail("reason", "not authorized for this hive"), "")
-			jsonError(w, "your GitHub account is not authorized to access this hive. Contact the hive owner to request access.", http.StatusForbidden)
+			// Return a terminal {status:"error"} the login page understands, not a
+			// bare jsonError — the device-flow poll loop only stops on status
+			// "complete" or "error", so a plain {error} would leave it spinning
+			// "Waiting for authorization…" forever after a denial.
+			jsonResponse(w, map[string]interface{}{
+				"status": "error",
+				"error":  "your GitHub account (" + username + ") is not authorized to access this hive. Contact the hive owner to request access.",
+			})
 			return
 		}
 		role = resolvedRole
@@ -1410,11 +1417,11 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	if role == config.RoleOwner {
 		tmpTokenPath := userTokenPath + ".tmp"
 		if err := os.WriteFile(tmpTokenPath, []byte(token), 0o600); err != nil {
-			jsonError(w, "failed to save token: "+err.Error(), http.StatusInternalServerError)
+			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to save token: " + err.Error()})
 			return
 		}
 		if err := os.Rename(tmpTokenPath, userTokenPath); err != nil {
-			jsonError(w, "failed to persist token: "+err.Error(), http.StatusInternalServerError)
+			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to persist token: " + err.Error()})
 			return
 		}
 		if s.deps.SetUserClient != nil {
@@ -1430,7 +1437,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	if s.authToken != "" {
 		sid := s.createUserSession(username, role)
 		if sid == "" {
-			jsonError(w, "failed to create session", http.StatusInternalServerError)
+			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to create session"})
 			return
 		}
 		setSessionCookie(w, r, sid)
