@@ -1260,6 +1260,11 @@
     .config-info:hover .config-tooltip { display: block; }
 
     .config-list { margin-bottom: 14px; }
+    /* Role pills for the Access tab (read-only authorized-users view). */
+    .role-badge { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-weight: 600; white-space: nowrap; }
+    .role-owner { background: rgba(244,199,95,0.15); color: var(--amber); border: 1px solid rgba(244,199,95,0.3); }
+    .role-read { background: rgba(128,191,255,0.15); color: var(--blue); border: 1px solid rgba(128,191,255,0.3); }
+    .role-read-write { background: rgba(116,223,154,0.15); color: var(--green); border: 1px solid rgba(116,223,154,0.3); }
     .config-list-item {
       display: flex; align-items: center; gap: 8px;
       padding: 6px 10px; background: var(--bg); border: 1px solid var(--border);
@@ -10936,7 +10941,7 @@ function burnAreaChart() {
 
     const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', 'Last Prompt', 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'LiteLLM', 'Variables'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'LiteLLM', 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -11478,6 +11483,7 @@ function burnAreaChart() {
         case 'Hub': return renderGovHub(d.hub || {});
         case 'LiteLLM': return renderGovLiteLLM(d.litellm || {});
         case 'Variables': return renderGovVariables();
+        case 'Access': return renderGovAccess();
         default: return '';
       }
     }
@@ -11618,6 +11624,52 @@ function burnAreaChart() {
     // variables can be added/edited/deleted here; script and http variables are
     // shown read-only because they can execute code or reach the network and are
     // therefore seed-only (GitOps), enforced server-side.
+    // ── Access tab: read-only view of who can log in to this hive ──
+    // Reads GET /api/config/authorized-users. Access is granted on the HUB
+    // (Manage Access) and propagated to the spoke via heartbeat, so this view is
+    // intentionally read-only — it shows the current allowlist, not an editor.
+    function renderGovAccess() {
+      loadAuthorizedUsers();
+      return `
+        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
+          Users permitted to sign in to this hive, and their roles. Access is managed
+          on the hub's <b>Manage Access</b> screen and syncs here automatically — this
+          view is read-only.
+        </div>
+        <div id="access-users-status" style="font-size:0.72rem;color:var(--muted);margin-bottom:8px"></div>
+        <div id="access-users-list"><div style="color:var(--muted);font-size:0.75rem;padding:4px 0">Loading…</div></div>`;
+    }
+
+    async function loadAuthorizedUsers() {
+      const listEl = document.getElementById('access-users-list');
+      const statusEl = document.getElementById('access-users-status');
+      try {
+        const r = await fetch('/api/config/authorized-users');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        if (statusEl) {
+          statusEl.innerHTML = d.enforced
+            ? 'This hive enforces the allowlist below on sign-in.'
+            : 'Sign-in is gated by the hub proxy; the allowlist below is informational.';
+        }
+        const users = d.users || [];
+        if (!users.length) {
+          listEl.innerHTML = '<div style="color:var(--muted);font-size:0.75rem;padding:4px 0">No authorized users.</div>';
+          return;
+        }
+        listEl.innerHTML = users.map(function(u) {
+          var roleCls = u.role === 'owner' ? 'role-owner' : u.role === 'read-write' ? 'role-read-write' : 'role-read';
+          return '<div class="config-list-item" style="align-items:center;gap:8px">' +
+            '<img src="https://github.com/' + esc(u.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle" onerror="this.style.display=\'none\'">' +
+            '<span style="flex:1;font-size:0.85rem">' + esc(u.username) + '</span>' +
+            '<span class="role-badge ' + roleCls + '" style="font-size:0.7rem">' + esc(u.role) + '</span>' +
+            '</div>';
+        }).join('');
+      } catch (e) {
+        if (listEl) listEl.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">Could not load authorized users.</div>';
+      }
+    }
+
     function renderGovVariables() {
       loadVariables();
       return `

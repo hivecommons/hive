@@ -36,6 +36,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)
 	s.mux.HandleFunc("GET /api/config/variables", s.handleVariablesList)
+	s.mux.HandleFunc("GET /api/config/authorized-users", s.handleAuthorizedUsersList)
 	s.mux.HandleFunc("PUT /api/config/variables/{name}", s.handleVariableUpsert)
 	s.mux.HandleFunc("DELETE /api/config/variables/{name}", s.handleVariableDelete)
 	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
@@ -1894,6 +1895,53 @@ func looksLikeApiKeyValue(v string) bool {
 		return true
 	}
 	return false
+}
+
+// handleAuthorizedUsersList returns the spoke's device-flow login allowlist —
+// the users permitted to sign in to this hive and their roles — READ-ONLY. The
+// list is authoritative on the hub (Manage Access) and propagated to the spoke
+// via heartbeat; it is shown here so an operator can see who has access without
+// editing it on the spoke. The first entry defaults to owner, later entries to
+// read, matching AuthorizedRole's resolution.
+func (s *Server) handleAuthorizedUsersList(w http.ResponseWriter, r *http.Request) {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonResponse(w, map[string]any{"users": []any{}, "enforced": false})
+		return
+	}
+	entries := s.deps.Config.Dashboard.AuthorizedUsers
+	type userView struct {
+		Username string `json:"username"`
+		Role     string `json:"role"`
+	}
+	out := make([]userView, 0, len(entries))
+	for i, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		name, role := e, ""
+		if idx := strings.LastIndex(e, ":"); idx >= 0 {
+			name, role = strings.TrimSpace(e[:idx]), strings.TrimSpace(e[idx+1:])
+		}
+		if name == "" {
+			continue
+		}
+		if role == "" {
+			if i == 0 {
+				role = "owner"
+			} else {
+				role = "read"
+			}
+		}
+		out = append(out, userView{Username: name, Role: role})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	jsonResponse(w, map[string]any{
+		// enforced == this is a direct-route spoke that gates logins by this list
+		// (vllm-d); false means hub-proxied (hive-oke), where nginx gates instead.
+		"users":    out,
+		"enforced": len(entries) > 0,
+	})
 }
 
 // handleVariableUpsert creates or updates a single operator variable via the
