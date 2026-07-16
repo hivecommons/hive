@@ -4048,7 +4048,13 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Editable role pill: a <select> styled to match the role badges. Options
        render in the native menu (dark on most platforms); the closed control
        keeps the role color. */
-    .role-select { font-weight: 700; -webkit-appearance: none; appearance: none; outline: none; }
+    /* A down-caret drawn as an SVG background hints that the pill is a dropdown.
+       stroke=%236b7280 is a neutral gray that reads on every role color; the
+       extra right-padding keeps the role text clear of the caret. */
+    .role-select { font-weight: 700; -webkit-appearance: none; appearance: none; outline: none;
+      padding-right: 20px !important;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 7px center; }
     .role-select option { color: initial; background: #fff; }
     .acmm-badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; cursor: help; }
     .acmm-1 { background: rgba(128,191,255,0.15); color: #80bfff; border: 1px solid rgba(128,191,255,0.3); }
