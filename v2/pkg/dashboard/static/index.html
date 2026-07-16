@@ -11094,15 +11094,19 @@ function burnAreaChart() {
       if (el) el.style.display = 'none';
     }
 
+    // Per-level ACMM colors, index = level (0 = unset, 1..6 = L1..L6). Each hue
+    // is deliberately far from its neighbors so adjacent levels never read as the
+    // same pill color: grey → purple → teal → green → orange → red → crimson.
+    const ACMM_LEVEL_COLORS = ['#95a5a6', '#8e44ad', '#16a085', '#27ae60', '#e67e22', '#e74c3c', '#c0392b'];
+    const acmmLevelColor = level => ACMM_LEVEL_COLORS[level] || '#3498db';
+
     function renderACMMPacks() {
       const container = document.getElementById('acmm-packs-list');
       const currentLevel = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
 
-      const levelColors = ['#95a5a6', '#8e44ad', '#2980b9', '#27ae60', '#e67e22', '#e74c3c', '#c0392b'];
-
       container.innerHTML = (_acmmPacks || []).map(p => {
         const isCurrent = p.level === currentLevel;
-        const color = levelColors[p.level] || '#3498db';
+        const color = acmmLevelColor(p.level);
         const agentList = (p.agents || []).map(a =>
           `<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:0.75rem">
             <span style="font-size:1rem">${esc(a.emoji || '🤖')}</span>
@@ -11228,10 +11232,19 @@ function burnAreaChart() {
       // the small badge label, strengthening the "opens a picker" affordance.
       const label = 'ACMM ' + acmmLevelLabel(level) + ' ';
       const html = escapeHtml(label) + '<span class="acmm-caret">▾</span>';
+      // Tint the badge with the level's own color so each level is visually
+      // distinct at a glance; fall back to amber when the level is unset (0).
+      const c = level > 0 ? acmmLevelColor(level) : 'var(--amber)';
+      const tint = el => {
+        if (!el) return;
+        el.style.color = c;
+        el.style.background = 'color-mix(in srgb, ' + c + ' 14%, transparent)';
+        el.style.borderColor = 'color-mix(in srgb, ' + c + ' 45%, transparent)';
+      };
       const badge = document.getElementById('acmm-badge');
-      if (badge) badge.innerHTML = html;
+      if (badge) { badge.innerHTML = html; tint(badge); }
       const sbBadge = document.getElementById('acmm-sidebar-badge');
-      if (sbBadge) sbBadge.innerHTML = html;
+      if (sbBadge) { sbBadge.innerHTML = html; tint(sbBadge); }
       applyACMMVisibility(level, packAgents);
     }
 
