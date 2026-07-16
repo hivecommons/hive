@@ -211,6 +211,9 @@ func loadClusters(logger *slog.Logger) map[string]ClusterConfig {
 type PendingAccessRequest struct {
 	Username    string `json:"username"`
 	RequestedAt string `json:"requested_at"`
+	// Note is the requester's justification for wanting access,
+	// surfaced to owners/approvers. May be empty for legacy records.
+	Note string `json:"note,omitempty"`
 }
 
 type SaaSHive struct {

@@ -753,7 +753,8 @@ func TestHandleRequestAccessWithFilesystem(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/saas/hives/{id}/request-access", srv.handleRequestAccess)
 
-	req := httptest.NewRequest("POST", "/api/saas/hives/req-hive-fs/request-access", nil)
+	req := httptest.NewRequest("POST", "/api/saas/hives/req-hive-fs/request-access", strings.NewReader(`{"note":"need access for CI work"}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_reqacc_fs")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -763,7 +764,8 @@ func TestHandleRequestAccessWithFilesystem(t *testing.T) {
 	}
 
 	// Requesting again should fail (already pending)
-	req2 := httptest.NewRequest("POST", "/api/saas/hives/req-hive-fs/request-access", nil)
+	req2 := httptest.NewRequest("POST", "/api/saas/hives/req-hive-fs/request-access", strings.NewReader(`{"note":"need access for CI work"}`))
+	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("Authorization", "Bearer ghp_reqacc_fs")
 	w2 := httptest.NewRecorder()
 	mux.ServeHTTP(w2, req2)
@@ -789,13 +791,17 @@ func TestHandleRequestAccessAlreadyHasAccess(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/saas/hives/{id}/request-access", srv.handleRequestAccess)
 
-	req := httptest.NewRequest("POST", "/api/saas/hives/has-hive/request-access", nil)
+	req := httptest.NewRequest("POST", "/api/saas/hives/has-hive/request-access", strings.NewReader(`{"note":"please"}`))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_hasacc_fs")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 (already has access), got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "already have access") {
+		t.Errorf("expected 'already have access' error, got: %s", w.Body.String())
 	}
 }
 

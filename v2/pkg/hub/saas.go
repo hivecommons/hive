@@ -1393,6 +1393,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 					pending = append(pending, PendingAccessRequest{
 						Username:    req.Username,
 						RequestedAt: req.RequestedAt,
+						Note:        req.Note,
 					})
 				}
 			}
@@ -3244,6 +3245,11 @@ type AccessRequest struct {
 	Username    string `json:"username"`
 	RequestedAt string `json:"requested_at"`
 	Status      string `json:"status"`
+	// Note is the free-text justification the requester must supply
+	// explaining why they should be granted access. Shown to the
+	// owner/approver when they review the request. May be empty on
+	// legacy records created before this field existed.
+	Note string `json:"note,omitempty"`
 }
 
 func loadAccessRequests(hiveID string) []AccessRequest {
@@ -3283,6 +3289,10 @@ func saveAccessRequests(hiveID string, reqs []AccessRequest) {
 	}
 }
 
+// maxAccessRequestNoteLen bounds the requester's justification note so a
+// single request cannot bloat the stored requests.json.
+const maxAccessRequestNoteLen = 2000
+
 func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
@@ -3291,6 +3301,23 @@ func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) 
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
+	}
+
+	// The requester must supply a justification note explaining why they
+	// need access; it is shown to the owner/approver on review.
+	var body struct {
+		Note string `json:"note"`
+	}
+	// Body is optional to decode (missing/invalid JSON leaves Note empty,
+	// which the validation below rejects with a clear message).
+	json.NewDecoder(r.Body).Decode(&body)
+	note := strings.TrimSpace(body.Note)
+	if note == "" {
+		http.Error(w, `{"error":"a note explaining why you need access is required"}`, http.StatusBadRequest)
+		return
+	}
+	if len(note) > maxAccessRequestNoteLen {
+		note = note[:maxAccessRequestNoteLen]
 	}
 
 	user := loadSaaSUser(username)
@@ -3313,6 +3340,7 @@ func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) 
 		Username:    username,
 		RequestedAt: time.Now().UTC().Format(time.RFC3339),
 		Status:      "pending",
+		Note:        note,
 	})
 	saveAccessRequests(hiveID, reqs)
 
@@ -4573,16 +4601,56 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) {}
     }
 
-    async function dashRequestAccess(hiveId, btn) {
-      btn.disabled = true;
-      btn.textContent = 'Requesting...';
+    var _requestAccessHiveId = null;
+    var _requestAccessBtn = null;
+
+    function dashRequestAccess(hiveId, btn) {
+      // A justification note is required, so collect it via the modal
+      // rather than firing the request immediately.
+      _requestAccessHiveId = hiveId;
+      _requestAccessBtn = btn || null;
+      var label = document.getElementById('request-access-hive-label');
+      if (label) label.textContent = hiveId;
+      var ta = document.getElementById('request-access-note');
+      if (ta) ta.value = '';
+      var submit = document.getElementById('request-access-submit');
+      if (submit) { submit.disabled = false; submit.textContent = 'Send Request'; }
+      document.getElementById('request-access-modal').style.display = 'flex';
+      if (ta) ta.focus();
+    }
+
+    function closeRequestAccessModal() {
+      document.getElementById('request-access-modal').style.display = 'none';
+      _requestAccessHiveId = null;
+      _requestAccessBtn = null;
+    }
+
+    async function submitRequestAccess() {
+      var hiveId = _requestAccessHiveId;
+      if (!hiveId) { closeRequestAccessModal(); return; }
+      var ta = document.getElementById('request-access-note');
+      var note = ta ? ta.value.trim() : '';
+      if (!note) { hiveToast('Please explain why you need access', 'error'); if (ta) ta.focus(); return; }
+      var submit = document.getElementById('request-access-submit');
+      if (submit) { submit.disabled = true; submit.textContent = 'Sending...'; }
+      var btn = _requestAccessBtn;
       try {
-        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/request-access', {method: 'POST'});
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/request-access', {
+          method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({note: note})
+        });
         var data = await resp.json();
-        if (!resp.ok) { hiveToast(data.error || 'Request failed', 'error'); btn.textContent = 'Request Access'; btn.disabled = false; return; }
-        btn.outerHTML = '<span style="padding:3px 10px;background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);border-radius:4px;font-size:0.7rem">Pending</span>';
+        if (!resp.ok) {
+          hiveToast(data.error || 'Request failed', 'error');
+          if (submit) { submit.disabled = false; submit.textContent = 'Send Request'; }
+          return;
+        }
+        if (btn) btn.outerHTML = '<span style="padding:3px 10px;background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);border-radius:4px;font-size:0.7rem">Pending</span>';
         hiveToast('Access request sent!', 'success');
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.textContent = 'Request Access'; btn.disabled = false; }
+        closeRequestAccessModal();
+      } catch(e) {
+        hiveToast('Error: ' + e.message, 'error');
+        if (submit) { submit.disabled = false; submit.textContent = 'Send Request'; }
+      }
     }
 
     function renderHives(hives, force) {
@@ -4722,12 +4790,17 @@ const dashboardHTML = `<!DOCTYPE html>
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
             var avatar = '<img src="https://github.com/' + esc(pr.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">';
-            return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">' +
+            var note = (pr.note || '').trim();
+            var noteHtml = note
+              ? '<div style="margin-top:4px;font-size:0.75rem;color:var(--text);white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.15);border-left:2px solid var(--accent);padding:4px 8px;border-radius:2px">' + esc(note) + '</div>'
+              : '<div style="margin-top:4px;font-size:0.72rem;color:var(--muted);font-style:italic">(no note)</div>';
+            return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+              '<div style="display:flex;align-items:center;justify-content:space-between">' +
               '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(pr.username) + '</span></div>' +
               '<div style="display:flex;gap:4px">' +
               '<button onclick="inlineApproveAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +
               '<button onclick="inlineDenyAccess(\'' + esc(h.id) + '\',\'' + esc(pr.username) + '\',this)" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
-              '</div></div>';
+              '</div></div>' + noteHtml + '</div>';
           }).join('');
           pendingExpandRow = '<tr id="pending-row-' + esc(h.id) + '" style="display:none"><td colspan="' + TOTAL_COLUMNS + '"><div style="padding:8px 16px;background:rgba(59,130,246,0.05);border-radius:6px;margin:4px 0">' + prItems + '</div></td></tr>';
         }
@@ -4987,20 +5060,14 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
-    async function autoRequestAccessFromUrl() {
+    function autoRequestAccessFromUrl() {
       var params = new URLSearchParams(window.location.search);
       var hiveId = params.get('request_hive');
       if (!hiveId) return;
       window.history.replaceState({}, '', '/dashboard');
-      try {
-        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/request-access', {method: 'POST'});
-        var data = await resp.json();
-        if (resp.ok) {
-          hiveToast('Access request sent for ' + hiveId, 'success');
-        } else {
-          hiveToast(data.error || 'Request failed', 'error');
-        }
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+      // A justification note is required, so open the request modal to
+      // collect it instead of firing a note-less request.
+      dashRequestAccess(hiveId, null);
     }
 
     function togglePendingRow(hiveId) {
@@ -5992,6 +6059,21 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </div>
 
+  <div id="request-access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:480px;width:90%;display:flex;flex-direction:column">
+      <h2 style="font-size:1.3rem;padding:32px 32px 8px;margin:0;color:var(--accent)">Request Access</h2>
+      <div style="padding:0 32px 24px">
+        <p style="font-size:0.85rem;color:var(--muted);margin-bottom:12px">Requesting access to <strong id="request-access-hive-label" style="color:var(--text)"></strong>. The owner will review your request.</p>
+        <label for="request-access-note" style="display:block;font-size:0.8rem;color:var(--text);margin-bottom:6px">Why do you need access? <span style="color:var(--red)">*</span></label>
+        <textarea id="request-access-note" rows="4" placeholder="Explain why you should be granted access to this hive..." style="width:100%;padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding:16px 32px;border-top:1px solid var(--border)">
+        <button onclick="closeRequestAccessModal()" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>
+        <button id="request-access-submit" onclick="submitRequestAccess()" class="btn-primary" style="padding:8px 20px">Send Request</button>
+      </div>
+    </div>
+  </div>
+
   <div id="request-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:540px;width:90%;max-height:90vh;display:flex;flex-direction:column">
       <h2 style="font-size:1.3rem;padding:32px 32px 16px;margin:0;color:var(--accent);flex-shrink:0">Request a Hive</h2>
@@ -6051,13 +6133,18 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!reqs.length) { el.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">No pending requests</span>'; return; }
         el.innerHTML = reqs.map(function(r) {
           var avatar = '<img src="https://github.com/' + esc(r.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">';
-          return '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">' +
+          var note = (r.note || '').trim();
+          var noteHtml = note
+            ? '<div style="margin-top:4px;font-size:0.75rem;color:var(--text);white-space:pre-wrap;word-break:break-word;background:var(--bg);border-left:2px solid var(--accent);padding:4px 8px;border-radius:2px">' + esc(note) + '</div>'
+            : '<div style="margin-top:4px;font-size:0.72rem;color:var(--muted);font-style:italic">(no note)</div>';
+          return '<div style="padding:6px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between">' +
             '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(r.username) + '</span> <span style="font-size:0.7rem;color:var(--muted)">' + esc(r.requested_at.substring(0,10)) + '</span></div>' +
             '<div style="display:flex;gap:4px">' +
             '<select id="req-role-' + esc(r.username) + '" style="padding:2px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.7rem"><option value="read">Read</option><option value="read-write">Read-Write</option></select>' +
             '<button onclick="approveRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Approve</button>' +
             '<button onclick="denyRequest(\'' + esc(r.username) + '\')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Deny</button>' +
-            '</div></div>';
+            '</div></div>' + noteHtml + '</div>';
         }).join('');
       } catch(e) {}
     }

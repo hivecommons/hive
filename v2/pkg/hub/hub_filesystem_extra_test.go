@@ -72,6 +72,67 @@ func TestHandleAccessStatusFullWithFilesystem(t *testing.T) {
 	}
 }
 
+// A justification note is required on access requests: empty/whitespace
+// notes are rejected with 400 and no request is stored; a non-empty note
+// is persisted on the AccessRequest record.
+func TestHandleRequestAccessNoteRequired(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	authCleanup := helperSetupAuthUser(t, "ghp_reqnote", "reqnote-user")
+	defer authCleanup()
+
+	saveSaaSHive(&SaaSHive{ID: "note-hive", Owner: "someone-else"})
+
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/saas/hives/{id}/request-access", srv.handleRequestAccess)
+
+	doRequest := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/saas/hives/note-hive/request-access", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer ghp_reqnote")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w
+	}
+
+	// Missing note → 400, nothing stored.
+	if w := doRequest(`{}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing note: expected 400, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if len(loadAccessRequests("note-hive")) != 0 {
+		t.Fatalf("missing note should not persist a request, got %d", len(loadAccessRequests("note-hive")))
+	}
+
+	// Whitespace-only note → 400.
+	if w := doRequest(`{"note":"   \n\t "}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("whitespace note: expected 400, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	if len(loadAccessRequests("note-hive")) != 0 {
+		t.Fatalf("whitespace note should not persist a request, got %d", len(loadAccessRequests("note-hive")))
+	}
+
+	// Valid note → 200, request stored with trimmed note.
+	w := doRequest(`{"note":"  I lead the SRE team and need read access to debug incidents.  "}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("valid note: expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	reqs := loadAccessRequests("note-hive")
+	if len(reqs) != 1 {
+		t.Fatalf("valid note: expected 1 stored request, got %d", len(reqs))
+	}
+	if reqs[0].Username != "reqnote-user" {
+		t.Errorf("stored request username = %q", reqs[0].Username)
+	}
+	if reqs[0].Status != "pending" {
+		t.Errorf("stored request status = %q", reqs[0].Status)
+	}
+	if reqs[0].Note != "I lead the SRE team and need read access to debug incidents." {
+		t.Errorf("stored request note = %q (should be trimmed)", reqs[0].Note)
+	}
+}
+
 func TestHandleToggleAutoUpgradeWithFilesystem(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
