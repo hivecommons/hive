@@ -47,7 +47,7 @@ func TestFormatDigestMarkdown(t *testing.T) {
 		{Agent: "quality", Severity: "low", Title: "typo in docs", Type: "style"},
 	}
 	d := BuildDigest(findings, "busy")
-	md := FormatDigestMarkdown(d)
+	md := FormatDigestMarkdown(d, "", "")
 	if md == "" {
 		t.Fatal("expected non-empty markdown")
 	}
@@ -64,7 +64,7 @@ func TestFormatDigestMarkdown(t *testing.T) {
 
 func TestFormatDigestMarkdownEmpty(t *testing.T) {
 	d := BuildDigest(nil, "idle")
-	md := FormatDigestMarkdown(d)
+	md := FormatDigestMarkdown(d, "", "")
 	if md != "" {
 		t.Errorf("expected empty markdown for 0 findings, got %d chars", len(md))
 	}
@@ -80,12 +80,96 @@ func TestFormatDigestMarkdownWithResolved(t *testing.T) {
 			{Agent: "scanner", Title: "old bug", ClosedAt: time.Now(), File: "old.go"},
 		},
 	}
-	md := FormatDigestMarkdown(d)
+	md := FormatDigestMarkdown(d, "", "")
 	if !contains(md, "Recently Resolved") {
 		t.Error("missing Recently Resolved section")
 	}
 	if !contains(md, "old bug") {
 		t.Error("missing resolved finding")
+	}
+}
+
+func TestFormatDigestMarkdownLinkifiesRefs(t *testing.T) {
+	findings := []Finding{
+		// gh-N ExternalRef with a repo hint in the title (kubestellar/hive#1914)
+		{Agent: "scanner", Severity: "critical", Type: "bug", File: "gh-585",
+			Title: "llm-d-fast-model-actuation#585: launcher-populator holds node slots"},
+		// gh-N ExternalRef with no hint — falls back to the primary repo
+		{Agent: "scanner", Severity: "high", Type: "bug", File: "gh-42", Title: "requester explosion"},
+		// owner-qualified ref in detail text
+		{Agent: "quality", Severity: "low", Type: "style", Title: "typo",
+			Detail: "see other-org/other-repo#7 for context"},
+		// file refs keep the code-span rendering
+		{Agent: "quality", Severity: "medium", Type: "perf", Title: "slow loop", File: "pkg/a.go", Line: 12},
+	}
+	d := BuildDigest(findings, "busy")
+	md := FormatDigestMarkdown(d, "llm-d-incubation", "llm-d-fast-model-actuation")
+
+	wantLinks := []string{
+		"[llm-d-fast-model-actuation#585](https://github.com/llm-d-incubation/llm-d-fast-model-actuation/issues/585)",
+		"[#585](https://github.com/llm-d-incubation/llm-d-fast-model-actuation/issues/585)",
+		"[#42](https://github.com/llm-d-incubation/llm-d-fast-model-actuation/issues/42)",
+		"[other-org/other-repo#7](https://github.com/other-org/other-repo/issues/7)",
+		"`pkg/a.go:12`",
+	}
+	for _, w := range wantLinks {
+		if !contains(md, w) {
+			t.Errorf("digest missing %q\n%s", w, md)
+		}
+	}
+	if contains(md, "`gh-585`") || contains(md, "`gh-42`") {
+		t.Error("gh-N refs should render as links, not code spans")
+	}
+}
+
+func TestLinkifyRefs(t *testing.T) {
+	const org = "kubestellar"
+	tests := []struct {
+		name, in, want string
+	}{
+		{"bare repo ref", "fix console#12 now",
+			"fix [console#12](https://github.com/kubestellar/console/issues/12) now"},
+		{"owner-qualified ref", "see a/b#3",
+			"see [a/b#3](https://github.com/a/b/issues/3)"},
+		{"bare number left for GitHub autolink", "see #635", "see #635"},
+		{"url anchor untouched", "https://github.com/a/b#3", "https://github.com/a/b#3"},
+		{"existing link untouched", "[console#12](https://x)", "[console#12](https://x)"},
+		{"code span untouched", "`console#12`", "`console#12`"},
+		{"no refs", "plain text", "plain text"},
+	}
+	for _, tt := range tests {
+		if got := linkifyRefs(tt.in, org); got != tt.want {
+			t.Errorf("%s: linkifyRefs(%q) = %q, want %q", tt.name, tt.in, got, tt.want)
+		}
+	}
+	if got := linkifyRefs("console#12", ""); got != "console#12" {
+		t.Errorf("empty org should disable linkification, got %q", got)
+	}
+}
+
+func TestFormatFindingRef(t *testing.T) {
+	const org, repo = "kubestellar", "console"
+	tests := []struct {
+		name, ref, title, want string
+		line                   int
+	}{
+		{name: "gh-N falls back to primary repo", ref: "gh-9",
+			want: " [#9](https://github.com/kubestellar/console/issues/9)"},
+		{name: "gh-N uses title repo hint", ref: "gh-9", title: "docs#9: broken link",
+			want: " [#9](https://github.com/kubestellar/docs/issues/9)"},
+		{name: "repo-qualified ref", ref: "docs#4",
+			want: " [docs#4](https://github.com/kubestellar/docs/issues/4)"},
+		{name: "file with line", ref: "a.go", line: 3, want: " `a.go:3`"},
+		{name: "file without line", ref: "a.go", want: " `a.go`"},
+		{name: "empty", ref: "", want: ""},
+	}
+	for _, tt := range tests {
+		if got := formatFindingRef(tt.ref, tt.line, org, repo, tt.title); got != tt.want {
+			t.Errorf("%s: formatFindingRef(%q) = %q, want %q", tt.name, tt.ref, got, tt.want)
+		}
+	}
+	if got := formatFindingRef("gh-9", 0, "", "", ""); got != " `gh-9`" {
+		t.Errorf("empty org should keep code-span rendering, got %q", got)
 	}
 }
 
