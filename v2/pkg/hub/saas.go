@@ -3149,6 +3149,36 @@ func (s *HubServer) handleLatestSHA(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"sha": getLatestSHA()})
 }
 
+// authorizedUsersForHiveID returns the hub's access list for a hive as
+// "username:role" entries, for delivery to the spoke in its heartbeat response.
+// Returns nil (not an empty slice) when the hive has no SaaS record, so a
+// non-hosted spoke's own allowlist is left untouched. The owner is always
+// included as owner even if no explicit access record names them.
+func authorizedUsersForHiveID(hiveID string) []string {
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		return nil
+	}
+	out := make([]string, 0, 4)
+	seen := map[string]bool{}
+	if h.Owner != "" {
+		out = append(out, h.Owner+":owner")
+		seen[strings.ToLower(h.Owner)] = true
+	}
+	for _, u := range listAllSaaSUsers() {
+		role, ok := u.Hives[hiveID]
+		if !ok || u.GitHubUsername == "" {
+			continue
+		}
+		if seen[strings.ToLower(u.GitHubUsername)] {
+			continue // owner already added
+		}
+		out = append(out, u.GitHubUsername+":"+role)
+		seen[strings.ToLower(u.GitHubUsername)] = true
+	}
+	return out
+}
+
 func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)

@@ -147,6 +147,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onHubBanner HubBannerCallback
 	var onVisibility VisibilityCallback
 	var onSwitchBranch SwitchBranchCallback
+	var onAuthorizedUsers AuthorizedUsersCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -159,6 +160,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onVisibility = fn
 		case SwitchBranchCallback:
 			onSwitchBranch = fn
+		case AuthorizedUsersCallback:
+			onAuthorizedUsers = fn
 		}
 	}
 
@@ -185,6 +188,11 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		}
 		if resp.IsPublic != nil && onVisibility != nil {
 			onVisibility(*resp.IsPublic)
+		}
+		// A non-nil slice (even empty) is an authoritative replacement of the
+		// spoke's allowlist; nil means the hub sent nothing, leave it alone.
+		if resp.AuthorizedUsers != nil && onAuthorizedUsers != nil {
+			onAuthorizedUsers(resp.AuthorizedUsers)
 		}
 	}
 
@@ -377,6 +385,15 @@ type HeartbeatResponse struct {
 	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
 	IsPublic        *bool                     `json:"is_public,omitempty"`
+	// AuthorizedUsers is the hub's authoritative per-hive access list, as
+	// "username:role" entries. The hub can't reach heartbeat-only spokes (e.g.
+	// vllm-d) over kubectl, and those spokes authorize their own device-flow
+	// logins against a local allowlist — so a grant made in the hub's Manage
+	// Access UI would never reach them. Delivering the list in the heartbeat
+	// response lets the spoke reconcile its allowlist every beat, so access
+	// changes propagate automatically. nil means "hub sent nothing" (leave the
+	// spoke's list unchanged); a non-nil (possibly empty) slice replaces it.
+	AuthorizedUsers []string `json:"authorized_users,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
@@ -397,6 +414,12 @@ type VisibilityCallback func(isPublic bool)
 // heartbeat) to switch its deployment image to a specific tag — used for
 // branch switches on clusters the hub can't reach over kubectl.
 type SwitchBranchCallback func(tag string)
+
+// AuthorizedUsersCallback is called with the hub's authoritative per-hive
+// access list ("username:role" entries) so the spoke can reconcile its
+// device-flow login allowlist with Manage Access grants. Used for
+// heartbeat-only clusters where the hub cannot push config over kubectl.
+type AuthorizedUsersCallback func(users []string)
 
 // GitHubAppConfigCallback is called when the hub delivers GitHub App config
 // via the heartbeat response (app ID, installation ID, private key).

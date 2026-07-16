@@ -1688,6 +1688,17 @@ func main() {
 				logger.Warn("branch switch via heartbeat failed", "tag", tag, "image", image, "error", err)
 				return
 			}
+		}), hub.AuthorizedUsersCallback(func(users []string) {
+			// The hub delivered its authoritative access list. Reconcile our
+			// login allowlist so Manage Access grants take effect on this
+			// heartbeat-only spoke without any kubectl push. The dashboard reads
+			// cfg.Dashboard.AuthorizedUsers live on each login, so updating it in
+			// place is enough. Only log when it actually changes to avoid noise.
+			if !sameStringSlice(cfg.Dashboard.AuthorizedUsers, users) {
+				logger.Info("authorized users updated from hub heartbeat",
+					"was", len(cfg.Dashboard.AuthorizedUsers), "now", len(users))
+				cfg.Dashboard.AuthorizedUsers = users
+			}
 		}))
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {
@@ -2848,6 +2859,20 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 }
 
 // inferACMMLevel returns the configured ACMM level, defaulting to L1 (advisory-only).
+// sameStringSlice reports whether two string slices have identical contents in
+// the same order. Used to skip no-op authorized-users updates from heartbeats.
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func inferACMMLevel(cfg *config.Config) int {
 	if cfg.ACMMLevel != nil {
 		return *cfg.ACMMLevel

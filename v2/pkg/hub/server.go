@@ -597,6 +597,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.IsPublic = &entry.IsPublic
 	}
 
+	// Deliver the hub's authoritative access list so heartbeat-only spokes
+	// (which authorize their own logins) stay in sync with Manage Access grants.
+	// Only for hives the hub actually has a SaaS record for; a bare non-SaaS
+	// spoke gets nothing and keeps its own configured allowlist.
+	if authUsers := authorizedUsersForHiveID(payload.HiveID); authUsers != nil {
+		resp.AuthorizedUsers = authUsers
+	}
+
 	// Check if the hive should self-upgrade via heartbeat response.
 	//
 	// Three upgrade paths, all controlled by a single toggle:
