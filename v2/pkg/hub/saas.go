@@ -4045,6 +4045,11 @@ const dashboardHTML = `<!DOCTYPE html>
     .role-owner { background: rgba(244,199,95,0.15); color: var(--amber); border: 1px solid rgba(244,199,95,0.3); }
     .role-read { background: rgba(128,191,255,0.15); color: var(--blue); border: 1px solid rgba(128,191,255,0.3); }
     .role-read-write { background: rgba(116,223,154,0.15); color: var(--green); border: 1px solid rgba(116,223,154,0.3); }
+    /* Editable role pill: a <select> styled to match the role badges. Options
+       render in the native menu (dark on most platforms); the closed control
+       keeps the role color. */
+    .role-select { font-weight: 700; -webkit-appearance: none; appearance: none; outline: none; }
+    .role-select option { color: initial; background: #fff; }
     .acmm-badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 0.7rem; font-weight: 700; white-space: nowrap; cursor: help; }
     .acmm-1 { background: rgba(128,191,255,0.15); color: #80bfff; border: 1px solid rgba(128,191,255,0.3); }
     .acmm-2 { background: rgba(116,223,154,0.15); color: #74df9a; border: 1px solid rgba(116,223,154,0.3); }
@@ -6094,14 +6099,26 @@ const dashboardHTML = `<!DOCTYPE html>
         var ownerCount = users.filter(function(u) { return u.role === 'owner'; }).length;
         var rows = users.map(function(u) {
           var avatar = '<img src="https://github.com/' + esc(u.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">';
-          var canRemove = !(u.role === 'owner' && ownerCount <= 1);
+          // The last owner can be neither removed nor demoted — doing so would
+          // orphan the hive with no one able to manage access.
+          var isLastOwner = (u.role === 'owner' && ownerCount <= 1);
+          var canRemove = !isLastOwner;
           var removeBtn = canRemove ?
             '<button onclick="removeAccess(\'' + esc(u.username) + '\')" style="padding:2px 8px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem">Remove</button>' :
             '<span style="font-size:0.6rem;color:var(--muted)">last owner</span>';
+          // The role pill is an editable dropdown: changing it POSTs the new role
+          // (the add endpoint upserts). The last owner's role is locked (shown as
+          // a static pill) so the hive can't be left without an owner.
+          var ROLES = ['read', 'read-write', 'owner'];
+          var roleControl = isLastOwner ?
+            '<span class="role-badge role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem" title="The last owner\'s role cannot be changed">' + esc(u.role) + '</span>' :
+            '<select class="role-select role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem;padding:2px 6px;border-radius:9999px;cursor:pointer" title="Change this user\'s permission" onchange="changeAccessRole(\'' + esc(u.username) + '\', this.value, \'' + esc(u.role) + '\')">' +
+              ROLES.map(function(r) { return '<option value="' + r + '"' + (r === u.role ? ' selected' : '') + '>' + r + '</option>'; }).join('') +
+            '</select>';
           return '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border)">' +
             '<div>' + avatar + '<span style="font-size:0.85rem">' + esc(u.username) + '</span></div>' +
             '<div style="display:flex;align-items:center;gap:8px">' +
-            '<span class="role-badge role-' + u.role.replace(' ','-') + '" style="font-size:0.7rem">' + esc(u.role) + '</span>' +
+            roleControl +
             removeBtn +
             '</div></div>';
         }).join('');
@@ -6125,6 +6142,25 @@ const dashboardHTML = `<!DOCTYPE html>
         document.getElementById('access-username').value = '';
         loadAccessList();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
+    async function changeAccessRole(username, newRole, oldRole) {
+      if (newRole === oldRole) return;
+      // Granting owner is significant — confirm it.
+      if (newRole === 'owner' && !await hiveConfirm('Make ' + username + ' an owner? Owners can manage access and delete the hive.')) {
+        loadAccessList();
+        return;
+      }
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_accessHiveId) + '/access', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({username: username, role: newRole})
+        });
+        if (!resp.ok) { var d = await resp.json().catch(function(){return {};}); hiveToast(d.error || 'Failed to change role', 'error'); loadAccessList(); return; }
+        hiveToast(username + ' is now ' + newRole, 'success');
+        loadAccessList();
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadAccessList(); }
     }
 
     async function removeAccess(username) {
