@@ -110,6 +110,49 @@ func (p *PromptSourceConfig) IsSet() bool {
 	return p != nil && p.Owner != "" && p.Repo != "" && p.Path != ""
 }
 
+// DefinitionSourceConfig describes a GitHub repo location to pull a WHOLE agent
+// definition (the portable AgentDefinition YAML) from, keeping the agent "live"
+// so edits on the repo propagate on the next reload/kick. It is the whole-agent
+// analogue of PromptSourceConfig. Owner/Repo/Path are required; Ref is optional
+// and defaults to the repo's default branch.
+//
+// Security: re-applying a live definition NEVER changes security-sensitive or
+// seed-only fields (the resolver trust policy, token scopes, etc.). Only the
+// operator-safe presentation/behavior fields are merged — see pkg/defsrc for the
+// exact allowed-field boundary. The fetch is gated to the same seed-only repo
+// allowlist as prompt_source (VarSecurityConfig.GitHubPromptAllowlist), so a
+// user-writable dashboard overlay can neither widen the allowlist nor point an
+// agent at an arbitrary repo the App happens to be installed on.
+type DefinitionSourceConfig struct {
+	// Type selects the source kind. Only "github" is currently supported; an
+	// empty type defaults to "github" when a repo is set.
+	Type  string `yaml:"type,omitempty" json:"type,omitempty"`
+	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
+	Repo  string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Path  string `yaml:"path,omitempty" json:"path,omitempty"`
+	Ref   string `yaml:"ref,omitempty" json:"ref,omitempty"`
+	// URL is the human-facing source URL the operator pasted in the import UI
+	// (e.g. the github.com blob URL). Informational only — Owner/Repo/Path/Ref
+	// are authoritative for fetching. Kept so the UI can round-trip it.
+	URL string `yaml:"url,omitempty" json:"url,omitempty"`
+}
+
+// Slug returns the "owner/repo" identifier used for allowlist matching, or ""
+// when owner or repo is unset.
+func (d *DefinitionSourceConfig) Slug() string {
+	if d == nil || d.Owner == "" || d.Repo == "" {
+		return ""
+	}
+	return d.Owner + "/" + d.Repo
+}
+
+// IsSet reports whether this definition source is fully specified (owner, repo,
+// and path all present). A partially-filled source is treated as unset so an
+// agent keeps its baked definition rather than erroring.
+func (d *DefinitionSourceConfig) IsSet() bool {
+	return d != nil && d.Owner != "" && d.Repo != "" && d.Path != ""
+}
+
 // VarDef is one operator-declared variable. `default` uses a pointer so an
 // explicit empty-string default is distinguishable from "no default".
 type VarDef struct {
@@ -297,11 +340,11 @@ type ConnectionConfig struct {
 }
 
 type AgentConfig struct {
-	ID              string `yaml:"id" json:"id,omitempty"`
-	Backend         string `yaml:"backend" json:"backend,omitempty"`
-	Model           string `yaml:"model" json:"model,omitempty"`
-	BeadsDir        string `yaml:"beads_dir" json:"beads_dir,omitempty"`
-	Enabled         bool   `yaml:"enabled" json:"enabled,omitempty"`
+	ID       string `yaml:"id" json:"id,omitempty"`
+	Backend  string `yaml:"backend" json:"backend,omitempty"`
+	Model    string `yaml:"model" json:"model,omitempty"`
+	BeadsDir string `yaml:"beads_dir" json:"beads_dir,omitempty"`
+	Enabled  bool   `yaml:"enabled" json:"enabled,omitempty"`
 	// Paused persists an operator pause across restarts/upgrades. Without
 	// this, every pod restart rebuilt agents un-paused (Go zero value), so
 	// an operator pause was silently undone on the next upgrade.
@@ -315,14 +358,14 @@ type AgentConfig struct {
 	Description     string `yaml:"description" json:"description,omitempty"`
 
 	// Phase 2: config-driven agent behavior fields
-	Role             string              `yaml:"role" json:"role,omitempty"`
-	SortOrder        int                 `yaml:"sort_order" json:"sort_order,omitempty"`
-	Emoji            string              `yaml:"emoji" json:"emoji,omitempty"`
-	Color            string              `yaml:"color" json:"color,omitempty"`
-	Aliases          []string            `yaml:"aliases" json:"aliases,omitempty"`
-	LaneKeywords     []string            `yaml:"lane_keywords" json:"lane_keywords,omitempty"`
-	DetectKeywords   []string            `yaml:"detect_keywords" json:"detect_keywords,omitempty"`
-	KickTemplate     string              `yaml:"kick_template" json:"kick_template,omitempty"`
+	Role           string   `yaml:"role" json:"role,omitempty"`
+	SortOrder      int      `yaml:"sort_order" json:"sort_order,omitempty"`
+	Emoji          string   `yaml:"emoji" json:"emoji,omitempty"`
+	Color          string   `yaml:"color" json:"color,omitempty"`
+	Aliases        []string `yaml:"aliases" json:"aliases,omitempty"`
+	LaneKeywords   []string `yaml:"lane_keywords" json:"lane_keywords,omitempty"`
+	DetectKeywords []string `yaml:"detect_keywords" json:"detect_keywords,omitempty"`
+	KickTemplate   string   `yaml:"kick_template" json:"kick_template,omitempty"`
 	// PromptSource, when set, sources the agent's kick prompt from a GitHub repo
 	// instead of (or in addition to) an inline KickTemplate. It is resolved live
 	// at kick time via the hive's GitHub App token, with graceful fallback to the
@@ -330,15 +373,25 @@ type AgentConfig struct {
 	// dashboard overlay may set this, but the fetch is gated to a seed-only repo
 	// allowlist (see VarSecurityConfig.GitHubPromptAllowlist), so a compromised
 	// overlay cannot read arbitrary repos the App is installed on.
-	PromptSource     *PromptSourceConfig `yaml:"prompt_source,omitempty" json:"prompt_source,omitempty"`
-	IncludeRepos     *bool               `yaml:"include_repos" json:"include_repos,omitempty"`
-	MetricsCollector string              `yaml:"metrics_collector" json:"metrics_collector,omitempty"`
-	BeadRole         string              `yaml:"bead_role" json:"bead_role,omitempty"`
-	StatsDisplay     []StatsDisplayEntry `yaml:"stats_display" json:"stats_display,omitempty"`
-	ACMMLevels       []int               `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
-	Mode             string              `yaml:"mode" json:"mode,omitempty"`
-	OnDemand         bool                `yaml:"on_demand" json:"on_demand,omitempty"`
-	CavemanMode      string              `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
+	PromptSource *PromptSourceConfig `yaml:"prompt_source,omitempty" json:"prompt_source,omitempty"`
+	// DefinitionSource, when set, keeps the WHOLE agent linked to a GitHub repo:
+	// the portable AgentDefinition YAML at owner/repo/path@ref is re-fetched on
+	// reload and its operator-safe fields are merged over the baked agent, so
+	// edits on the repo propagate without a redeploy. It never overrides
+	// security-sensitive/seed-only fields (see pkg/defsrc for the field boundary)
+	// and is gated to the same seed-only repo allowlist as PromptSource, so a
+	// user-writable overlay can neither widen the allowlist nor escalate an
+	// agent's privileges via a live definition. On fetch failure the last-known-good
+	// baked definition is kept — a live agent is never blanked or crashed.
+	DefinitionSource *DefinitionSourceConfig `yaml:"definition_source,omitempty" json:"definition_source,omitempty"`
+	IncludeRepos     *bool                   `yaml:"include_repos" json:"include_repos,omitempty"`
+	MetricsCollector string                  `yaml:"metrics_collector" json:"metrics_collector,omitempty"`
+	BeadRole         string                  `yaml:"bead_role" json:"bead_role,omitempty"`
+	StatsDisplay     []StatsDisplayEntry     `yaml:"stats_display" json:"stats_display,omitempty"`
+	ACMMLevels       []int                   `yaml:"acmm_levels" json:"acmm_levels,omitempty"`
+	Mode             string                  `yaml:"mode" json:"mode,omitempty"`
+	OnDemand         bool                    `yaml:"on_demand" json:"on_demand,omitempty"`
+	CavemanMode      string                  `yaml:"caveman_mode" json:"caveman_mode,omitempty"`
 
 	// Channels declares how this agent gets triggered (kick, webhook, discord, schedule, bead).
 	// When nil/empty, the agent uses governor timer kicks by default (implicit kick channel).
@@ -1280,6 +1333,18 @@ func (c *Config) GitHubPromptAllowed(slug string) bool {
 		}
 	}
 	return false
+}
+
+// GitHubDefinitionAllowed reports whether an agent's definition_source pointing
+// at the given "owner/repo" slug is permitted to be fetched. A live whole-agent
+// definition is at least as trusted as a live prompt (it re-applies more fields),
+// so it reuses the SAME seed-only gate as GitHubPromptAllowed: the feature flag
+// and repo allowlist come only from the trusted config seed, never the
+// user-writable dashboard overlay (LoadWithDashboardOverlay never merges the
+// overlay's Variables block). A compromised overlay therefore can neither widen
+// the set of readable repos nor point a live definition at an arbitrary repo.
+func (c *Config) GitHubDefinitionAllowed(slug string) bool {
+	return c.GitHubPromptAllowed(slug)
 }
 
 const (
