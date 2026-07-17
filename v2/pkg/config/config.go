@@ -66,6 +66,48 @@ type VarSecurityConfig struct {
 	HTTPAllowlist []string `yaml:"http_allowlist,omitempty"`
 	ExecTimeoutS  int      `yaml:"exec_timeout_s,omitempty"`
 	HTTPTimeoutS  int      `yaml:"http_timeout_s,omitempty"`
+
+	// AllowGitHubPrompt gates the GitHub-repo prompt-source feature (agents may
+	// source their kick prompt from a repo). Like AllowExec/AllowHTTP it is honored
+	// ONLY from the trusted config seed — the dashboard overlay's Security block is
+	// discarded on load, so a user-editable overlay can never enable this or widen
+	// the allowlist. Default false (deny).
+	AllowGitHubPrompt bool `yaml:"allow_github_prompt,omitempty"`
+	// GitHubPromptAllowlist is the set of "owner/repo" slugs an agent's
+	// prompt_source may read from. Required (non-empty) for the feature to work:
+	// an empty allowlist denies all repos even when AllowGitHubPrompt is true. This
+	// bounds the blast radius to repos the operator explicitly trusts, so the
+	// feature cannot be used to read every repo the App happens to be installed on.
+	GitHubPromptAllowlist []string `yaml:"github_prompt_allowlist,omitempty"`
+}
+
+// PromptSourceConfig describes a GitHub repo location to pull an agent's kick
+// prompt from. Owner/Repo/Path are required; Ref (branch/tag/SHA) is optional
+// and defaults to the repo's default branch.
+type PromptSourceConfig struct {
+	// Type selects the source kind. Only "github" is currently supported; an
+	// empty type defaults to "github" when a repo is set.
+	Type  string `yaml:"type,omitempty" json:"type,omitempty"`
+	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
+	Repo  string `yaml:"repo,omitempty" json:"repo,omitempty"`
+	Path  string `yaml:"path,omitempty" json:"path,omitempty"`
+	Ref   string `yaml:"ref,omitempty" json:"ref,omitempty"`
+}
+
+// Slug returns the "owner/repo" identifier used for allowlist matching, or ""
+// when owner or repo is unset.
+func (p *PromptSourceConfig) Slug() string {
+	if p == nil || p.Owner == "" || p.Repo == "" {
+		return ""
+	}
+	return p.Owner + "/" + p.Repo
+}
+
+// IsSet reports whether this prompt source is fully specified (owner, repo, and
+// path all present). A partially-filled source is treated as unset so a kick
+// falls back to the inline template rather than erroring.
+func (p *PromptSourceConfig) IsSet() bool {
+	return p != nil && p.Owner != "" && p.Repo != "" && p.Path != ""
 }
 
 // VarDef is one operator-declared variable. `default` uses a pointer so an
@@ -281,6 +323,14 @@ type AgentConfig struct {
 	LaneKeywords     []string            `yaml:"lane_keywords" json:"lane_keywords,omitempty"`
 	DetectKeywords   []string            `yaml:"detect_keywords" json:"detect_keywords,omitempty"`
 	KickTemplate     string              `yaml:"kick_template" json:"kick_template,omitempty"`
+	// PromptSource, when set, sources the agent's kick prompt from a GitHub repo
+	// instead of (or in addition to) an inline KickTemplate. It is resolved live
+	// at kick time via the hive's GitHub App token, with graceful fallback to the
+	// baked/inline template when the repo is unreachable. The user-writable
+	// dashboard overlay may set this, but the fetch is gated to a seed-only repo
+	// allowlist (see VarSecurityConfig.GitHubPromptAllowlist), so a compromised
+	// overlay cannot read arbitrary repos the App is installed on.
+	PromptSource     *PromptSourceConfig `yaml:"prompt_source,omitempty" json:"prompt_source,omitempty"`
 	IncludeRepos     *bool               `yaml:"include_repos" json:"include_repos,omitempty"`
 	MetricsCollector string              `yaml:"metrics_collector" json:"metrics_collector,omitempty"`
 	BeadRole         string              `yaml:"bead_role" json:"bead_role,omitempty"`
@@ -1211,6 +1261,25 @@ func (c *Config) ResolveRegistry(logger *slog.Logger) *resolve.Registry {
 	}
 	specs, pol := c.Variables.toResolveSpecs()
 	return resolve.Build(specs, pol, logger)
+}
+
+// GitHubPromptAllowed reports whether an agent's prompt_source pointing at the
+// given "owner/repo" slug is permitted to be fetched. This mirrors the seed-only
+// gating used for exec/http resolvers: it consults c.Variables.Security, which
+// LoadWithDashboardOverlay guarantees comes ONLY from the trusted config seed
+// (the dashboard overlay's Variables block is never merged). It returns false
+// unless the feature is explicitly enabled AND the slug is on the seed-declared
+// allowlist, so a user-writable overlay can never widen the set of readable repos.
+func (c *Config) GitHubPromptAllowed(slug string) bool {
+	if slug == "" || !c.Variables.Security.AllowGitHubPrompt {
+		return false
+	}
+	for _, allowed := range c.Variables.Security.GitHubPromptAllowlist {
+		if strings.EqualFold(strings.TrimSpace(allowed), slug) {
+			return true
+		}
+	}
+	return false
 }
 
 const (

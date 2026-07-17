@@ -15,6 +15,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/policies"
+	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/resolve"
 )
 
@@ -24,6 +25,7 @@ type Scheduler struct {
 	inception      *knowledge.InceptionEngine
 	lastActionable *github.ActionableResult
 	logger         *slog.Logger
+	promptResolver *promptsrc.Resolver
 	mu             sync.RWMutex
 }
 
@@ -40,6 +42,22 @@ func New(cfg *config.Config, logger *slog.Logger) *Scheduler {
 		cfg:    cfg,
 		logger: logger,
 	}
+}
+
+// SetGitHubPromptResolver attaches a resolver used to fetch an agent's kick
+// prompt from a GitHub repo (agent.prompt_source). When nil, agents with a
+// prompt_source silently fall back to their inline kick template.
+func (s *Scheduler) SetGitHubPromptResolver(r *promptsrc.Resolver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.promptResolver = r
+}
+
+// gitHubPromptResolver returns the attached resolver, or nil if none is set.
+func (s *Scheduler) gitHubPromptResolver() *promptsrc.Resolver {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.promptResolver
 }
 
 // SetPrimer attaches a knowledge primer to the scheduler. When set, kick
@@ -349,6 +367,27 @@ const maxIssuesPerKick = 100
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
 func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+	// 0. GitHub-sourced prompt: if the agent declares a prompt_source, resolve it
+	//    live at kick time (with allowlist gating + graceful fallback). A miss
+	//    (unset, denied, unreachable with no cache) falls through to the inline
+	//    template chain below, so a bad source never blanks or crashes a kick.
+	if agentCfg, ok := s.cfg.Agents[agentName]; ok && agentCfg.PromptSource.IsSet() {
+		if resolver := s.gitHubPromptResolver(); resolver != nil {
+			src := promptsrc.Source{
+				Owner: agentCfg.PromptSource.Owner,
+				Repo:  agentCfg.PromptSource.Repo,
+				Path:  agentCfg.PromptSource.Path,
+				Ref:   agentCfg.PromptSource.Ref,
+			}
+			if res := resolver.Resolve(context.Background(), src); res.Ok && res.Body != "" {
+				s.logger.Info("using GitHub-sourced kick prompt", "agent", agentName, "source", res.Source)
+				msg := fmt.Sprintf("[agent:%s]\n\n", agentName)
+				msg += s.substituteTemplate(res.Body, actionable, agentName, issues)
+				return msg
+			}
+		}
+	}
+
 	// 1. Config-driven: use kick_template field if set
 	if agentCfg, ok := s.cfg.Agents[agentName]; ok && agentCfg.KickTemplate != "" {
 		if template := s.loadNamedTemplate(agentCfg.KickTemplate); template != "" {

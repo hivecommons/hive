@@ -12230,6 +12230,30 @@ function burnAreaChart() {
           </div>
         </div>
         <div class="config-field">
+          <label>Prompt from GitHub repo <span class="config-info">i<span class="config-tooltip">Optionally source this agent's kick prompt from a file in a GitHub repo instead of an inline template. The prompt is fetched live at kick time using the hive's GitHub App, and falls back to the inline/baked template if the repo is unreachable. The repo must be on the operator's seed-only allowlist.</span></span></label>
+          <div style="font-size:0.65rem;color:var(--muted);margin:2px 0 6px">Leave blank to use the inline Kick Template above. All three of owner, repo, and path are required to enable.</div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label style="font-size:0.7rem">Owner</label>
+              <input type="text" id="cfg-agent-ps-owner" value="${esc((g.promptSource && g.promptSource.owner) || '')}" placeholder="e.g. kubestellar" oninput="markPromptSourceDirty()">
+            </div>
+            <div class="config-field">
+              <label style="font-size:0.7rem">Repo</label>
+              <input type="text" id="cfg-agent-ps-repo" value="${esc((g.promptSource && g.promptSource.repo) || '')}" placeholder="e.g. hive" oninput="markPromptSourceDirty()">
+            </div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field">
+              <label style="font-size:0.7rem">File path</label>
+              <input type="text" id="cfg-agent-ps-path" value="${esc((g.promptSource && g.promptSource.path) || '')}" placeholder="e.g. prompts/scanner.md" oninput="markPromptSourceDirty()">
+            </div>
+            <div class="config-field">
+              <label style="font-size:0.7rem">Ref <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+              <input type="text" id="cfg-agent-ps-ref" value="${esc((g.promptSource && g.promptSource.ref) || '')}" placeholder="branch, tag, or SHA (default branch if blank)" oninput="markPromptSourceDirty()">
+            </div>
+          </div>
+        </div>
+        <div class="config-field">
           <label>Operating Mode <span class="config-info">i<span class="config-tooltip">Controls what GitHub actions this agent can take. ADVISORY: beads only. ISSUES_ONLY: open issues, no PRs. ISSUES_AND_PRS: issues + PRs. ISSUES_PRS_MERGE: full auto-merge. Leave blank to use the ACMM level default.</span></span></label>
           ${(() => {
             const allModes = ['ADVISORY','ISSUES_ONLY','ISSUES_AND_PRS','ISSUES_PRS_MERGE'];
@@ -13547,6 +13571,40 @@ function burnAreaChart() {
       markDirty(section, key, isOn);
     }
 
+    // markPromptSourceDirty reads the four GitHub prompt-source inputs and records
+    // them as a nested promptSource object on the general section (or null when
+    // fully blank, which clears the source server-side). Owner+repo+path must all
+    // be present for the source to take effect; a partial fill is sent as-is and
+    // the server treats an incomplete source as cleared.
+    function markPromptSourceDirty() {
+      const owner = (document.getElementById('cfg-agent-ps-owner') || {}).value || '';
+      const repo = (document.getElementById('cfg-agent-ps-repo') || {}).value || '';
+      const path = (document.getElementById('cfg-agent-ps-path') || {}).value || '';
+      const ref = (document.getElementById('cfg-agent-ps-ref') || {}).value || '';
+      if (!owner.trim() && !repo.trim() && !path.trim() && !ref.trim()) {
+        markDirty('general', 'promptSource', null);
+        return;
+      }
+      markDirty('general', 'promptSource', {
+        owner: owner.trim(),
+        repo: repo.trim(),
+        path: path.trim(),
+        ref: ref.trim(),
+      });
+    }
+
+    // collectPromptSource returns the current prompt-source object from the form,
+    // or null when incomplete. Used by the create-agent submit path (which builds
+    // its own agent payload rather than reading _configState.dirty for this field).
+    function collectPromptSource() {
+      const owner = ((document.getElementById('cfg-agent-ps-owner') || {}).value || '').trim();
+      const repo = ((document.getElementById('cfg-agent-ps-repo') || {}).value || '').trim();
+      const path = ((document.getElementById('cfg-agent-ps-path') || {}).value || '').trim();
+      const ref = ((document.getElementById('cfg-agent-ps-ref') || {}).value || '').trim();
+      if (!owner || !repo || !path) return null;
+      return { type: 'github', owner: owner, repo: repo, path: path, ref: ref };
+    }
+
     // onchange handler for the CLI Pin Value select — prompts for the
     // LiteLLM endpoint (and reverts the selection on cancel) before
     // recording the change.
@@ -13756,6 +13814,8 @@ function burnAreaChart() {
           aliases: generalData.aliases || [],
           caveman_mode: generalData.cavemanMode || '',
         };
+        const ps = collectPromptSource();
+        if (ps) agent.prompt_source = ps;
         try {
           const res = await fetch('/api/agents', {
             method: 'POST',

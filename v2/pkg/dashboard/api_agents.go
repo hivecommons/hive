@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
+	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 )
 
 type agentListEntry struct {
@@ -77,6 +79,18 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body.Agent.Managed = true
+
+	// If a GitHub prompt source is declared, validate it against the seed-only
+	// allowlist and bake an initial copy so the very first kick has content even
+	// if GitHub is momentarily unreachable. A bad/denied source is a hard error
+	// here so the operator sees it at create time rather than silently at kick.
+	if body.Agent.PromptSource.IsSet() {
+		if err := s.bakePromptSource(r.Context(), body.Name, &body.Agent); err != nil {
+			jsonError(w, "prompt source: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
 	if err := config.SaveAgentFile(agentsDir, body.Name, body.Agent); err != nil {
 		s.logger.Error("failed to save agent file", "agent", body.Name, "error", err)
 		jsonError(w, "failed to save agent: "+err.Error(), http.StatusInternalServerError)
@@ -338,6 +352,55 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("agent imported via API", "name", name, "source", body.Source)
 	okResponse(w, map[string]string{"status": "imported", "name": name})
+}
+
+// promptSourceFetcher returns the GitHub client as a promptsrc.Fetcher, or nil
+// when no client is wired (typed-nil interface avoidance, same reason as main.go).
+func (s *Server) promptSourceFetcher() promptsrc.Fetcher {
+	if s.deps != nil && s.deps.GHClient != nil {
+		return s.deps.GHClient
+	}
+	return nil
+}
+
+// bakePromptSource validates an agent's GitHub prompt source against the
+// seed-only allowlist, fetches it once, and writes the result to the policies
+// directory as the agent's kick template. This gives the agent a last-known-good
+// prompt on disk so the first kick (and any kick where GitHub is unreachable and
+// the in-memory cache is cold) still has content. On success it repoints the
+// agent's KickTemplate at the baked file. Returns an error (surfaced to the UI)
+// when the source is denied, incomplete, or unreachable.
+func (s *Server) bakePromptSource(ctx context.Context, name string, agent *config.AgentConfig) error {
+	if !agent.PromptSource.IsSet() {
+		return fmt.Errorf("owner, repo, and path are all required")
+	}
+	slug := agent.PromptSource.Slug()
+	allow := func(sl string) bool { return s.deps.Config.GitHubPromptAllowed(sl) }
+	if !allow(slug) {
+		return fmt.Errorf("repo %q is not on the GitHub prompt allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt)", slug)
+	}
+	src := promptsrc.Source{
+		Owner: agent.PromptSource.Owner,
+		Repo:  agent.PromptSource.Repo,
+		Path:  agent.PromptSource.Path,
+		Ref:   agent.PromptSource.Ref,
+	}
+	body, err := promptsrc.FetchOnce(ctx, s.promptSourceFetcher(), allow, src)
+	if err != nil {
+		return fmt.Errorf("failed to fetch from %s: %w", slug, err)
+	}
+
+	templateFileName := name + ".md"
+	if err := os.MkdirAll(promptTemplateSaveDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create policies directory: %w", err)
+	}
+	savePath := filepath.Join(promptTemplateSaveDir, templateFileName)
+	if err := os.WriteFile(savePath, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("failed to write baked prompt: %w", err)
+	}
+	agent.KickTemplate = templateFileName
+	s.logger.Info("baked GitHub prompt source", "agent", name, "repo", slug, "path", src.Path, "bytes", len(body))
+	return nil
 }
 
 func (s *Server) reInitSubsystems() {

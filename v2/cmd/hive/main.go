@@ -39,6 +39,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/notify"
 	"github.com/kubestellar/hive/v2/pkg/policies"
+	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
 	"github.com/kubestellar/hive/v2/pkg/snapshot"
@@ -208,6 +209,22 @@ func main() {
 
 	gov := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
 	sched := scheduler.New(cfg, logger)
+
+	// Wire the GitHub prompt-source resolver so agents may source their kick
+	// prompt from a repo (agent.prompt_source). Fetching reuses the hive's App
+	// token via ghClient and is gated to the seed-only allowlist — the closure
+	// captures cfg so a live config reload updates the allowlist on the next kick.
+	// A nil ghClient must be passed as a nil Fetcher interface (not a typed-nil
+	// *github.Client) so the resolver's nil-fetcher fallback path triggers.
+	var promptFetcher promptsrc.Fetcher
+	if ghClient != nil {
+		promptFetcher = ghClient
+	}
+	sched.SetGitHubPromptResolver(promptsrc.NewResolver(
+		promptFetcher,
+		func(slug string) bool { return cfg.GitHubPromptAllowed(slug) },
+		logger,
+	))
 
 	// Restore sparkline history from disk so it survives container restarts
 	const sparklinePath = "/data/sparkline-history.json"

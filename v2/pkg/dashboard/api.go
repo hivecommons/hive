@@ -358,6 +358,17 @@ func sanitizeString(s string) string {
 	return s
 }
 
+// stringField extracts a string value from a decoded JSON object, returning ""
+// when the key is missing or not a string.
+func stringField(m map[string]interface{}, key string) string {
+	if v, ok := m[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 var envVarEscapePattern = regexp.MustCompile(`\$\{[^}]*\}`)
 
 var tokenRedactor = regexp.MustCompile(`(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]{10,}`)
@@ -1664,6 +1675,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"beadRole":        agentCfg.BeadRole,
 			"role":            agentCfg.Role,
 			"kickTemplate":    agentCfg.KickTemplate,
+			"promptSource":    agentCfg.PromptSource,
 			"mode":            agentCfg.Mode,
 			"includeRepos":    includeRepos,
 			"laneKeywords":    agentCfg.LaneKeywords,
@@ -2256,6 +2268,34 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.CavemanMode = s
 		}
 	}
+	// promptSource: a nested {owner,repo,path,ref} object (or explicit null to
+	// clear). When set, validate against the seed-only allowlist and re-bake so
+	// the agent has a fresh last-known-good prompt on disk.
+	if v, ok := body["promptSource"]; ok {
+		if v == nil {
+			agentCfg.PromptSource = nil
+		} else if m, ok := v.(map[string]interface{}); ok {
+			ps := &config.PromptSourceConfig{
+				Type:  "github",
+				Owner: sanitizeString(stringField(m, "owner")),
+				Repo:  sanitizeString(stringField(m, "repo")),
+				Path:  sanitizeString(stringField(m, "path")),
+				Ref:   sanitizeString(stringField(m, "ref")),
+			}
+			if !ps.IsSet() {
+				// Partially filled → treat as cleared rather than erroring, so an
+				// operator can blank the fields to disable the source.
+				agentCfg.PromptSource = nil
+			} else {
+				agentCfg.PromptSource = ps
+				if err := s.bakePromptSource(r.Context(), name, &agentCfg); err != nil {
+					jsonError(w, "prompt source: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+		}
+	}
+
 	s.deps.Config.Agents[name] = agentCfg
 
 	// Sync the updated config into the agent process so that status builders

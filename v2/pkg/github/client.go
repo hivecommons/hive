@@ -624,7 +624,18 @@ func (c *Client) GetContributorCount(ctx context.Context, owner, repo string) (i
 }
 
 func (c *Client) GetFileContent(ctx context.Context, owner, repo, path string) (string, error) {
-	fc, _, _, err := c.client.Repositories.GetContents(ctx, owner, repo, path, nil)
+	return c.GetFileContentRef(ctx, owner, repo, path, "")
+}
+
+// GetFileContentRef reads a single file's decoded contents from a repo at an
+// optional git ref (branch, tag, or SHA). An empty ref uses the repo's default
+// branch. Errors if the path resolves to a directory rather than a file.
+func (c *Client) GetFileContentRef(ctx context.Context, owner, repo, path, ref string) (string, error) {
+	var opts *gh.RepositoryContentGetOptions
+	if ref != "" {
+		opts = &gh.RepositoryContentGetOptions{Ref: ref}
+	}
+	fc, _, _, err := c.client.Repositories.GetContents(ctx, owner, repo, path, opts)
 	if err != nil {
 		return "", fmt.Errorf("getting file %s/%s/%s: %w", owner, repo, path, err)
 	}
