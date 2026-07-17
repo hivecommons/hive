@@ -11384,6 +11384,10 @@ function burnAreaChart() {
         '<div class="config-field" style="margin-bottom:12px">' +
           '<label>Import from URL</label>' +
           '<div style="display:flex;gap:8px"><input type="text" id="import-url-input" placeholder="' + rawURL + '" style="flex:1"><button onclick="previewImportFromURL()" style="padding:6px 16px;border-radius:6px;cursor:pointer;font-weight:600;border:none;background:var(--cyan);color:var(--bg);white-space:nowrap">Preview</button></div>' +
+          '<label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:0.78rem;cursor:pointer;font-weight:400">' +
+            '<input type="checkbox" id="import-keep-linked" style="width:auto;margin:0">' +
+            '<span>Keep linked to repo (live) <span style="color:var(--muted)">— re-fetch this definition on reload so repo edits propagate. Only its presentation/behavior fields are re-applied; security and privilege fields are never changed. The repo must be on the operator\'s allowlist. (URL import only.)</span></span>' +
+          '</label>' +
         '</div>' +
         '<div class="config-field" style="margin-bottom:12px">' +
           '<label>Or paste agent definition</label>' +
@@ -11406,9 +11410,14 @@ function burnAreaChart() {
     async function previewImportFromURL() {
       var url = (document.getElementById('import-url-input') || {}).value;
       if (!url) { showToast('Enter a URL', 'error'); return; }
+      // Keep-linked persists the ORIGINAL (blob) URL as the source pointer, but
+      // the preview/bake fetch uses the raw URL. The server derives owner/repo/
+      // path/ref from whichever URL it receives, so keep the raw form here and
+      // let the server round-trip it back in _importBody.
+      var keepLinked = !!(document.getElementById('import-keep-linked') || {}).checked;
       url = url.replace('github.com/kubestellar/hive/blob/', 'raw.githubusercontent.com/kubestellar/hive/');
       try {
-        var resp = await fetch('/api/agents/import', {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({source:'url',url:url,preview:true})});
+        var resp = await fetch('/api/agents/import', {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({source:'url',url:url,preview:true,keepLinked:keepLinked})});
         var d = await resp.json();
         if (!resp.ok) { showToast(d.error || 'Import failed', 'error'); return; }
         showImportPreview(d);
@@ -12802,11 +12811,30 @@ function burnAreaChart() {
         + '</button>'
       ).join('');
 
+      const gen = (_configState.data && _configState.data.general) || {};
+      const ps = gen.promptSource || {};
       return `
         <div style="display:flex;flex-direction:column;height:100%">
         <div id="${srcId}" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 14px;margin-bottom:10px;flex-shrink:0">
           <div style="font-size:0.7rem;font-weight:600;color:var(--text);margin-bottom:6px">Source files <span style="font-weight:400;color:var(--muted)">(edit these on your fork)</span></div>
         </div>
+        <details style="margin-bottom:10px;flex-shrink:0;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px"${(ps.owner || ps.repo || ps.path) ? ' open' : ''}>
+          <summary style="font-size:0.72rem;font-weight:600;color:var(--text);cursor:pointer">Import from repo</summary>
+          <p style="font-size:0.65rem;color:var(--muted);margin:6px 0">Pull this agent's kick prompt from a file in a GitHub repo. The repo must be on the operator's allowlist. Owner, repo, and path are all required.</p>
+          <div class="config-field-row">
+            <div class="config-field"><label style="font-size:0.7rem">Owner</label><input type="text" id="pt-ps-owner" value="${esc(ps.owner || '')}" placeholder="e.g. kubestellar"></div>
+            <div class="config-field"><label style="font-size:0.7rem">Repo</label><input type="text" id="pt-ps-repo" value="${esc(ps.repo || '')}" placeholder="e.g. hive"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label style="font-size:0.7rem">File path</label><input type="text" id="pt-ps-path" value="${esc(ps.path || '')}" placeholder="e.g. prompts/scanner.md"></div>
+            <div class="config-field"><label style="font-size:0.7rem">Ref <span style="font-weight:400;color:var(--muted)">(optional)</span></label><input type="text" id="pt-ps-ref" value="${esc(ps.ref || '')}" placeholder="branch, tag, or SHA"></div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin:6px 0;font-size:0.72rem;cursor:pointer;font-weight:400">
+            <input type="checkbox" id="pt-ps-keep-linked" style="width:auto;margin:0"${ps.owner ? ' checked' : ''}>
+            <span>Keep linked to repo (live) <span style="color:var(--muted)">— resolve the prompt at kick time so repo edits propagate. Unchecked: fetch once and bake a static copy.</span></span>
+          </label>
+          <button onclick="importPromptFromRepo()" style="font-size:0.72rem;padding:4px 14px;border-radius:4px;cursor:pointer;font-weight:600;border:none;background:var(--cyan);color:var(--bg)">Import Prompt</button>
+        </details>
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">Kick template with <code>$​{VAR}</code> placeholders. Edit the raw template or preview with variables expanded.</p>
         <div style="display:flex;gap:6px;margin-bottom:8px;flex-shrink:0">
           <button id="prompt-btn-edit" onclick="switchPromptMode('edit')" style="font-size:0.72rem;padding:4px 12px;border-radius:4px;cursor:pointer;font-weight:600;border:1px solid var(--border);background:var(--green);color:var(--bg)">Edit</button>
@@ -12865,6 +12893,42 @@ function burnAreaChart() {
       editor.selectionStart = cursorPos;
       editor.selectionEnd = cursorPos;
       editor.focus();
+    }
+
+    // importPromptFromRepo reads the Prompt Template tab's repo fields and PUTs
+    // them to the prompt endpoint. Keep-linked persists a live prompt_source
+    // (resolved at kick time); unchecked bakes a one-time static copy. The server
+    // validates the repo against the seed-only allowlist and returns a clear error
+    // for a non-allowlisted repo.
+    function importPromptFromRepo() {
+      var agentName = _configState.agent;
+      if (!agentName) { showToast('Save the agent first', 'error'); return; }
+      var owner = ((document.getElementById('pt-ps-owner') || {}).value || '').trim();
+      var repo = ((document.getElementById('pt-ps-repo') || {}).value || '').trim();
+      var path = ((document.getElementById('pt-ps-path') || {}).value || '').trim();
+      var ref = ((document.getElementById('pt-ps-ref') || {}).value || '').trim();
+      var keepLinked = !!(document.getElementById('pt-ps-keep-linked') || {}).checked;
+      if (!owner || !repo || !path) { showToast('Owner, repo, and path are required', 'error'); return; }
+      fetch('/api/config/agent/' + agentName + '/prompt', {
+        method: 'PUT',
+        headers: _inceptionAuthHeaders(),
+        body: JSON.stringify({ promptSource: { owner: owner, repo: repo, path: path, ref: ref }, keepLinked: keepLinked })
+      })
+        .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+        .then(function(result) {
+          if (result.ok) {
+            showToast(keepLinked ? 'Prompt linked to repo (live)' : 'Prompt imported (baked copy)', 'success');
+            // Refresh the editor/preview with the newly fetched content.
+            var editor = document.getElementById('prompt-template-editor');
+            fetch('/api/config/agent/' + agentName + '/prompt?raw=1')
+              .then(function(r) { return r.json(); })
+              .then(function(data) { if (editor) editor.value = data.prompt || ''; })
+              .catch(function() {});
+          } else {
+            showToast(result.data.error || 'Import failed', 'error');
+          }
+        })
+        .catch(function(err) { showToast('Network error: ' + err.message, 'error'); });
     }
 
     function savePromptTemplate() {
