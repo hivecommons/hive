@@ -1660,28 +1660,29 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 
 	jsonResponse(w, map[string]interface{}{
 		"general": map[string]interface{}{
-			"launchCmd":       launchCmd,
-			"displayName":     displayName,
-			"description":     agentCfg.Description,
-			"cliPinned":       agentCfg.CLIPinned || proc.PinnedCLI != "",
-			"cliPinValue":     cli,
-			"staleTimeout":    staleTimeout,
-			"restartStrategy": restartStrategy,
-			"model":           model,
-			"clearOnKick":     agentCfg.ClearOnKick,
-			"emoji":           agentCfg.Emoji,
-			"color":           agentCfg.Color,
-			"sortOrder":       agentCfg.SortOrder,
-			"beadRole":        agentCfg.BeadRole,
-			"role":            agentCfg.Role,
-			"kickTemplate":    agentCfg.KickTemplate,
-			"promptSource":    agentCfg.PromptSource,
-			"mode":            agentCfg.Mode,
-			"includeRepos":    includeRepos,
-			"laneKeywords":    agentCfg.LaneKeywords,
-			"detectKeywords":  agentCfg.DetectKeywords,
-			"aliases":         agentCfg.Aliases,
-			"cavemanMode":     agentCfg.CavemanMode,
+			"launchCmd":        launchCmd,
+			"displayName":      displayName,
+			"description":      agentCfg.Description,
+			"cliPinned":        agentCfg.CLIPinned || proc.PinnedCLI != "",
+			"cliPinValue":      cli,
+			"staleTimeout":     staleTimeout,
+			"restartStrategy":  restartStrategy,
+			"model":            model,
+			"clearOnKick":      agentCfg.ClearOnKick,
+			"emoji":            agentCfg.Emoji,
+			"color":            agentCfg.Color,
+			"sortOrder":        agentCfg.SortOrder,
+			"beadRole":         agentCfg.BeadRole,
+			"role":             agentCfg.Role,
+			"kickTemplate":     agentCfg.KickTemplate,
+			"promptSource":     agentCfg.PromptSource,
+			"definitionSource": agentCfg.DefinitionSource,
+			"mode":             agentCfg.Mode,
+			"includeRepos":     includeRepos,
+			"laneKeywords":     agentCfg.LaneKeywords,
+			"detectKeywords":   agentCfg.DetectKeywords,
+			"aliases":          agentCfg.Aliases,
+			"cavemanMode":      agentCfg.CavemanMode,
 		},
 		"cadences":       cadences,
 		"models":         models,
@@ -2295,6 +2296,33 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			}
 		}
 	}
+	// definitionSource: a nested {owner,repo,path,ref,url} object (or explicit
+	// null to clear) keeping the whole agent linked to a repo. When set, validate
+	// against the seed-only allowlist so a non-allowlisted repo is rejected here
+	// rather than silently ignored at reload. The actual re-apply happens on the
+	// reload path (resolveDefinitionSources); this handler only persists the pointer.
+	if v, ok := body["definitionSource"]; ok {
+		if v == nil {
+			agentCfg.DefinitionSource = nil
+		} else if m, ok := v.(map[string]interface{}); ok {
+			ds := &config.DefinitionSourceConfig{
+				Type:  "github",
+				Owner: sanitizeString(stringField(m, "owner")),
+				Repo:  sanitizeString(stringField(m, "repo")),
+				Path:  sanitizeString(stringField(m, "path")),
+				Ref:   sanitizeString(stringField(m, "ref")),
+				URL:   sanitizeString(stringField(m, "url")),
+			}
+			if !ds.IsSet() {
+				agentCfg.DefinitionSource = nil
+			} else if !s.deps.Config.GitHubDefinitionAllowed(ds.Slug()) {
+				jsonError(w, fmt.Sprintf("definition source: repo %q is not on the GitHub definition allowlist", ds.Slug()), http.StatusBadRequest)
+				return
+			} else {
+				agentCfg.DefinitionSource = ds
+			}
+		}
+	}
 
 	s.deps.Config.Agents[name] = agentCfg
 
@@ -2698,15 +2726,71 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 
 	var body struct {
 		Template string `json:"template"`
+		// PromptSource + KeepLinked let the Prompt Template tab import the kick
+		// prompt from a GitHub repo. When PromptSource is set:
+		//   - KeepLinked=true  → persist prompt_source (live: resolved at kick time)
+		//   - KeepLinked=false → FetchOnce + bake into the template file, and CLEAR
+		//     any existing prompt_source so the prompt is a plain, unlinked copy.
+		// When PromptSource is nil this behaves exactly as before (save inline text).
+		PromptSource *struct {
+			Owner string `json:"owner"`
+			Repo  string `json:"repo"`
+			Path  string `json:"path"`
+			Ref   string `json:"ref"`
+		} `json:"promptSource"`
+		KeepLinked bool `json:"keepLinked"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	agentCfg := s.deps.Config.Agents[name]
+
+	// Repo-sourced prompt import (Prompt Template tab).
+	if body.PromptSource != nil {
+		ps := &config.PromptSourceConfig{
+			Type:  "github",
+			Owner: sanitizeString(body.PromptSource.Owner),
+			Repo:  sanitizeString(body.PromptSource.Repo),
+			Path:  sanitizeString(body.PromptSource.Path),
+			Ref:   sanitizeString(body.PromptSource.Ref),
+		}
+		if !ps.IsSet() {
+			jsonError(w, "prompt source: owner, repo, and path are all required", http.StatusBadRequest)
+			return
+		}
+		agentCfg.PromptSource = ps
+		// bakePromptSource validates against the seed-only allowlist (rejecting a
+		// non-allowlisted repo server-side), fetches once, writes the baked prompt
+		// to the template file, and repoints KickTemplate.
+		if err := s.bakePromptSource(r.Context(), name, &agentCfg); err != nil {
+			jsonError(w, "prompt source: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !body.KeepLinked {
+			// Bake-only: the prompt is now a plain copy on disk; drop the live link.
+			agentCfg.PromptSource = nil
+		}
+		s.deps.Config.Agents[name] = agentCfg
+		if err := s.saveConfig(); err != nil {
+			s.logger.Error("failed to persist config after prompt import", "agent", name, "error", err)
+		}
+		if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+			if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
+				s.logger.Error("failed to persist agent overlay after prompt import", "agent", name, "error", err)
+			}
+		}
+		s.refreshAndPersist()
+		s.auditFromRequest(r, "config_agent_prompt", auditDetail("section", "prompt"), name)
+		s.logger.Info("prompt imported from repo", "agent", name, "linked", body.KeepLinked)
+		okResponse(w, map[string]string{"status": "imported", "agent": name, "kickTemplate": agentCfg.KickTemplate})
+		return
+	}
+
 	templateFileName := name + ".md"
-	if ac, ok := s.deps.Config.Agents[name]; ok && ac.KickTemplate != "" {
-		templateFileName = ac.KickTemplate
+	if agentCfg.KickTemplate != "" {
+		templateFileName = agentCfg.KickTemplate
 	}
 
 	if err := os.MkdirAll(promptTemplateSaveDir, 0o755); err != nil {
@@ -2720,7 +2804,6 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Point the agent's KickTemplate to the saved file
-	agentCfg := s.deps.Config.Agents[name]
 	agentCfg.KickTemplate = templateFileName
 	s.deps.Config.Agents[name] = agentCfg
 

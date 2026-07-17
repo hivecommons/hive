@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/kubestellar/hive/v2/pkg/config"
+	"github.com/kubestellar/hive/v2/pkg/defsrc"
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 )
 
@@ -47,8 +48,8 @@ func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string              `json:"name"`
-		Agent       config.AgentConfig  `json:"agent"`
+		Name  string             `json:"name"`
+		Agent config.AgentConfig `json:"agent"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body: "+err.Error(), http.StatusBadRequest)
@@ -143,42 +144,12 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // agentDefinition is the portable YAML format for importing/exporting agents.
-type agentDefinition struct {
-	APIVersion string                 `yaml:"apiVersion" json:"apiVersion"`
-	Kind       string                 `yaml:"kind" json:"kind"`
-	Metadata   agentDefinitionMeta    `yaml:"metadata" json:"metadata"`
-	Spec       agentDefinitionSpec    `yaml:"spec" json:"spec"`
-}
-
-type agentDefinitionMeta struct {
-	Name        string `yaml:"name" json:"name"`
-	DisplayName string `yaml:"displayName,omitempty" json:"displayName,omitempty"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Emoji       string `yaml:"emoji,omitempty" json:"emoji,omitempty"`
-	Color       string `yaml:"color,omitempty" json:"color,omitempty"`
-	SpecVersion int    `yaml:"specVersion,omitempty" json:"specVersion,omitempty"`
-}
-
-type agentDefinitionSpec struct {
-	Backend         string                    `yaml:"backend,omitempty" json:"backend,omitempty"`
-	Model           string                    `yaml:"model,omitempty" json:"model,omitempty"`
-	Role            string                    `yaml:"role,omitempty" json:"role,omitempty"`
-	Mode            string                    `yaml:"mode,omitempty" json:"mode,omitempty"`
-	SortOrder       int                       `yaml:"sortOrder,omitempty" json:"sortOrder,omitempty"`
-	BeadRole        string                    `yaml:"beadRole,omitempty" json:"beadRole,omitempty"`
-	StaleTimeout    int                       `yaml:"staleTimeout,omitempty" json:"staleTimeout,omitempty"`
-	RestartStrategy string                    `yaml:"restartStrategy,omitempty" json:"restartStrategy,omitempty"`
-	ClearOnKick     bool                      `yaml:"clearOnKick,omitempty" json:"clearOnKick,omitempty"`
-	IncludeRepos    bool                      `yaml:"includeRepos,omitempty" json:"includeRepos,omitempty"`
-	LaneKeywords    []string                  `yaml:"laneKeywords,omitempty" json:"laneKeywords,omitempty"`
-	DetectKeywords  []string                  `yaml:"detectKeywords,omitempty" json:"detectKeywords,omitempty"`
-	Aliases         []string                  `yaml:"aliases,omitempty" json:"aliases,omitempty"`
-	Cadences        map[string]string         `yaml:"cadences,omitempty" json:"cadences,omitempty"`
-	PromptTemplate  string                    `yaml:"promptTemplate,omitempty" json:"promptTemplate,omitempty"`
-	Channels        []config.ChannelConfig    `yaml:"channels,omitempty" json:"channels,omitempty"`
-	Tools           *config.ToolsConfig       `yaml:"tools,omitempty" json:"tools,omitempty"`
-	Connections     []config.ConnectionConfig `yaml:"connections,omitempty" json:"connections,omitempty"`
-}
+// It is defined in pkg/defsrc (shared with the live definition_source resolver)
+// so the whole-agent import and the "keep linked" re-apply path parse and map
+// identically.
+type agentDefinition = defsrc.AgentDefinition
+type agentDefinitionMeta = defsrc.AgentDefinitionMeta
+type agentDefinitionSpec = defsrc.AgentDefinitionSpec
 
 const (
 	importMaxURLLen     = 2048
@@ -186,12 +157,49 @@ const (
 	importHTTPTimeoutS  = 10
 )
 
+// agentConfigFromDefinition maps a parsed AgentDefinition to an AgentConfig with
+// the import defaults applied (backend copilot, immediate restart, worker bead
+// role, enabled). It is the single mapping used by both the whole-agent import
+// handler and any live re-apply path, so the two never drift.
+func agentConfigFromDefinition(def *agentDefinition) config.AgentConfig {
+	includeRepos := def.Spec.IncludeRepos
+	return config.AgentConfig{
+		Backend:         valueOrDefault(def.Spec.Backend, "copilot"),
+		Model:           def.Spec.Model,
+		Enabled:         true,
+		ClearOnKick:     def.Spec.ClearOnKick,
+		StaleTimeout:    def.Spec.StaleTimeout,
+		RestartStrategy: valueOrDefault(def.Spec.RestartStrategy, "immediate"),
+		DisplayName:     def.Metadata.DisplayName,
+		Description:     def.Metadata.Description,
+		Role:            def.Spec.Role,
+		SortOrder:       def.Spec.SortOrder,
+		Emoji:           def.Metadata.Emoji,
+		Color:           def.Metadata.Color,
+		LaneKeywords:    def.Spec.LaneKeywords,
+		DetectKeywords:  def.Spec.DetectKeywords,
+		Aliases:         def.Spec.Aliases,
+		Mode:            def.Spec.Mode,
+		BeadRole:        valueOrDefault(def.Spec.BeadRole, "worker"),
+		IncludeRepos:    &includeRepos,
+		Managed:         true,
+		Channels:        def.Spec.Channels,
+		Tools:           def.Spec.Tools,
+		Connections:     def.Spec.Connections,
+	}
+}
+
 func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Source  string `json:"source"`
 		URL     string `json:"url"`
 		Content string `json:"content"`
 		Preview bool   `json:"preview"`
+		// KeepLinked (source=="url" only) persists a definition_source on the
+		// created agent so the hive re-fetches the definition from the repo on
+		// reload/kick and re-applies its operator-safe fields. Ignored for paste
+		// (there is no repo to link to).
+		KeepLinked bool `json:"keepLinked"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body: "+err.Error(), http.StatusBadRequest)
@@ -239,18 +247,9 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var def agentDefinition
-	if err := yaml.Unmarshal([]byte(yamlContent), &def); err != nil {
-		jsonError(w, "invalid YAML: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	if def.Kind != exportKind {
-		jsonError(w, fmt.Sprintf("expected kind %q, got %q", exportKind, def.Kind), http.StatusBadRequest)
-		return
-	}
-	if def.Metadata.Name == "" {
-		jsonError(w, "metadata.name is required", http.StatusBadRequest)
+	def, err := defsrc.ParseDefinition(yamlContent)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -259,9 +258,10 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 			"ok":     true,
 			"parsed": def,
 			"_importBody": map[string]any{
-				"source":  body.Source,
-				"url":     body.URL,
-				"content": body.Content,
+				"source":     body.Source,
+				"url":        body.URL,
+				"content":    body.Content,
+				"keepLinked": body.KeepLinked,
 			},
 		})
 		return
@@ -289,30 +289,24 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	includeRepos := def.Spec.IncludeRepos
-	agentCfg := config.AgentConfig{
-		Backend:         valueOrDefault(def.Spec.Backend, "copilot"),
-		Model:           def.Spec.Model,
-		Enabled:         true,
-		ClearOnKick:     def.Spec.ClearOnKick,
-		StaleTimeout:    def.Spec.StaleTimeout,
-		RestartStrategy: valueOrDefault(def.Spec.RestartStrategy, "immediate"),
-		DisplayName:     def.Metadata.DisplayName,
-		Description:     def.Metadata.Description,
-		Role:            def.Spec.Role,
-		SortOrder:       def.Spec.SortOrder,
-		Emoji:           def.Metadata.Emoji,
-		Color:           def.Metadata.Color,
-		LaneKeywords:    def.Spec.LaneKeywords,
-		DetectKeywords:  def.Spec.DetectKeywords,
-		Aliases:         def.Spec.Aliases,
-		Mode:            def.Spec.Mode,
-		BeadRole:        valueOrDefault(def.Spec.BeadRole, "worker"),
-		IncludeRepos:    &includeRepos,
-		Managed:         true,
-		Channels:        def.Spec.Channels,
-		Tools:           def.Spec.Tools,
-		Connections:     def.Spec.Connections,
+	agentCfg := agentConfigFromDefinition(def)
+
+	// Keep-linked (source=="url" only): persist a definition_source so the hive
+	// re-fetches and re-applies this definition's operator-safe fields on reload.
+	// Validate the parsed source repo against the seed-only allowlist here so a
+	// non-allowlisted repo is rejected at import time rather than silently ignored
+	// at reload. Paste imports carry no repo, so keep-linked is meaningless there.
+	if body.KeepLinked && body.Source == "url" {
+		defSrc, derr := s.definitionSourceFromURL(body.URL)
+		if derr != nil {
+			jsonError(w, "keep linked: "+derr.Error(), http.StatusBadRequest)
+			return
+		}
+		if !s.deps.Config.GitHubDefinitionAllowed(defSrc.Slug()) {
+			jsonError(w, fmt.Sprintf("keep linked: repo %q is not on the GitHub definition allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt)", defSrc.Slug()), http.StatusBadRequest)
+			return
+		}
+		agentCfg.DefinitionSource = defSrc
 	}
 
 	if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
@@ -401,6 +395,57 @@ func (s *Server) bakePromptSource(ctx context.Context, name string, agent *confi
 	agent.KickTemplate = templateFileName
 	s.logger.Info("baked GitHub prompt source", "agent", name, "repo", slug, "path", src.Path, "bytes", len(body))
 	return nil
+}
+
+// definitionSourceFetcher returns the GitHub client as a defsrc.Fetcher, or nil
+// when no client is wired (typed-nil interface avoidance, same reason as main.go).
+func (s *Server) definitionSourceFetcher() defsrc.Fetcher {
+	if s.deps != nil && s.deps.GHClient != nil {
+		return s.deps.GHClient
+	}
+	return nil
+}
+
+// githubBlobURLPattern matches a GitHub "blob" web URL:
+//
+//	https://<host>/<owner>/<repo>/blob/<ref>/<path...>
+//
+// Captures owner, repo, ref, and path. It intentionally does not anchor to
+// github.com so GitHub Enterprise hosts work too.
+var githubBlobURLPattern = regexp.MustCompile(`^/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$`)
+
+// githubRawURLPattern matches a raw.githubusercontent.com URL:
+//
+//	https://raw.githubusercontent.com/<owner>/<repo>/<ref>/<path...>
+var githubRawURLPattern = regexp.MustCompile(`^/([^/]+)/([^/]+)/([^/]+)/(.+)$`)
+
+// definitionSourceFromURL parses a GitHub blob or raw file URL into a
+// DefinitionSourceConfig (owner/repo/path/ref). It is used when an operator
+// imports an agent with "keep linked" checked, so the pasted human-facing URL
+// becomes a durable, fetchable source pointer. The raw URL host is required for
+// the raw pattern to avoid mis-parsing arbitrary 4-segment paths.
+func (s *Server) definitionSourceFromURL(rawURL string) (*config.DefinitionSourceConfig, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return nil, fmt.Errorf("could not parse URL %q", rawURL)
+	}
+	var m []string
+	if strings.EqualFold(u.Host, "raw.githubusercontent.com") {
+		m = githubRawURLPattern.FindStringSubmatch(u.Path)
+	} else {
+		m = githubBlobURLPattern.FindStringSubmatch(u.Path)
+	}
+	if m == nil {
+		return nil, fmt.Errorf("URL %q is not a recognized GitHub file URL (expected .../<owner>/<repo>/blob/<ref>/<path> or a raw.githubusercontent.com file URL)", rawURL)
+	}
+	return &config.DefinitionSourceConfig{
+		Type:  "github",
+		Owner: m[1],
+		Repo:  m[2],
+		Ref:   m[3],
+		Path:  m[4],
+		URL:   rawURL,
+	}, nil
 }
 
 func (s *Server) reInitSubsystems() {
