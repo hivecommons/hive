@@ -3,3 +3,4 @@
 hive.yaml
 secrets/
 v2/coverage.out
+/bin/

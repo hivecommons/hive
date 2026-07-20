@@ -43,6 +43,27 @@ The default `docker-compose.yaml` uses the pre-built image `ghcr.io/kubestellar/
 - **Gateway won't start**: The gateway depends on the hive health check (120s start period). If it times out, run the hive container directly: `docker run -d --name hive -p 3001:3001 -v ./hive.yaml:/etc/hive/hive.yaml -e HIVE_GITHUB_TOKEN=$HIVE_GITHUB_TOKEN ghcr.io/kubestellar/hive:v2-latest`
 - **Policy clone errors in logs**: The example config has a placeholder policy repo. Comment out the `policies:` section in `hive.yaml` if you don't have a custom policy repo.
 
+## Command-line client
+
+`hivectl` is the non-interactive client for a running Hive dashboard API. Build
+it from this repository:
+
+```bash
+mkdir -p bin
+go build -o bin/hivectl ./cmd/hivectl
+
+bin/hivectl system status
+bin/hivectl agent list
+bin/hivectl knowledge search "user journey"
+```
+
+When dashboard authentication is enabled, `hivectl` reads
+`HIVE_DASHBOARD_TOKEN` by default. It supports JSON, YAML, table, and JSONL
+output, stdin-based imports, and explicit confirmation for destructive
+operations.
+
+See [docs/hivectl.md](docs/hivectl.md) for the full command reference.
+
 ## Kubernetes
 
 ```bash
