@@ -13090,6 +13090,8 @@ function burnAreaChart() {
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
       const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
+      const traj = (_configState.data || {}).trajectory || {};
+      const trajOn = traj.enabled !== false; // default on
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">General hive instance settings.</p>
         <div class="config-field">
@@ -13107,7 +13109,33 @@ function burnAreaChart() {
             <button class="btn" onclick="closeConfigDialog();openACMMDialog()" title="Open the ACMM maturity level selector">Change&hellip;</button>
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
+        </div>
+        <div class="config-field">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${trajOn ? 'on' : ''}" onclick="toggleTrajectoryReview(this)"></div>
+            <span class="config-toggle-label">Trajectory Review <span class="config-info">i<span class="config-tooltip">A safety check that periodically reads each running agent's recent transcript and asks a second model whether the SEQUENCE of actions is still working toward the agent's assigned task. It catches goal drift — individually-harmless steps that add up to something the task never authorized (escaping the sandbox, evading a security scanner, splitting a credential to avoid detection, escalating privileges, or chasing a goal picked up from a repo file instead of the operator's instruction). On divergence it pauses the agent and alerts you. It fails open: if the review model is unreachable it never pauses a working agent. Uses the Governor's LiteLLM endpoint; no reviews run until one is configured. Set the review model/cadence in hive.yaml (governor.trajectory).</span></span></span>
+          </div>
+          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Recommended on. Pauses agents whose action sequence drifts from their assigned task. Change takes effect on next restart.</span>
         </div>`;
+    }
+
+    async function toggleTrajectoryReview(el) {
+      const turningOn = !el.classList.contains('on');
+      el.classList.toggle('on');
+      try {
+        const res = await fetch('/api/config/governor/trajectory', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ enabled: turningOn }),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        if (!_configState.data.trajectory) _configState.data.trajectory = {};
+        _configState.data.trajectory.enabled = turningOn;
+        showToast('Trajectory review ' + (turningOn ? 'enabled' : 'disabled') + ' — effective on next restart');
+      } catch (err) {
+        el.classList.toggle('on'); // revert on failure
+        showToast('Failed to update trajectory review: ' + err.message, 'error');
+      }
     }
 
     async function saveHiveId() {

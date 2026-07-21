@@ -106,6 +106,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
+	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
 	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
@@ -3148,6 +3149,14 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"level":      cfg.Governor.Logging.Level,
 		},
 		"litellm": litellmSectionResponse(&cfg.Governor.LiteLLM),
+		"trajectory": map[string]interface{}{
+			"enabled":         cfg.Governor.Trajectory.IsEnabled(),
+			"intervalS":       cfg.Governor.Trajectory.IntervalS,
+			"model":           cfg.Governor.Trajectory.Model,
+			"transcriptLines": cfg.Governor.Trajectory.TranscriptLines,
+			"onDivergence":    cfg.Governor.Trajectory.OnDivergence,
+			"exemptAgents":    cfg.Governor.Trajectory.ExemptAgents,
+		},
 		"hub": map[string]interface{}{
 			"enabled":                          cfg.Hub.Enabled,
 			"url":                              cfg.Hub.URL,

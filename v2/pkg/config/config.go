@@ -522,11 +522,12 @@ type GovernorConfig struct {
 // assigned intent (its last kick), pausing the agent when it diverges. This
 // is defense against trajectory-level goal drift — individually-innocuous
 // steps that assemble toward an unauthorized outcome — which action-level
-// gating cannot see. Disabled by default; opt in per hive.
+// gating cannot see. On by default; the lane no-ops when no LiteLLM reviewer
+// endpoint is configured, so "on" is safe even without inference set up.
 type TrajectoryConfig struct {
-	// Enabled turns the review lane on. When false, no reviews run and the
-	// feature adds zero cost.
-	Enabled bool `yaml:"enabled"`
+	// Enabled turns the review lane on. Pointer so an omitted key defaults to
+	// enabled (applyDefaults sets it), while an explicit "false" disables it.
+	Enabled *bool `yaml:"enabled"`
 	// IntervalS is how often (seconds) the lane evaluates running agents.
 	// It runs off the governor tick, so the effective floor is the governor
 	// eval interval; a value below that reviews every tick. 0 → default.
@@ -545,6 +546,14 @@ type TrajectoryConfig struct {
 	// ExemptAgents are never reviewed (e.g. advisory-only agents that open no
 	// PRs and touch no infrastructure).
 	ExemptAgents []string `yaml:"exempt_agents"`
+}
+
+// IsEnabled reports whether the trajectory-review lane is on. Default is ON:
+// a nil Enabled (key omitted) counts as enabled, only an explicit false
+// disables it. The lane itself no-ops when no reviewer endpoint resolves, so
+// defaulting on is safe even for hives without inference configured.
+func (t TrajectoryConfig) IsEnabled() bool {
+	return t.Enabled == nil || *t.Enabled
 }
 
 // Discovery-auth defaults for the self-hosted inference backends. Like
@@ -1416,7 +1425,7 @@ func (c *Config) applyDefaults() {
 	if c.Governor.EvalIntervalS == 0 {
 		c.Governor.EvalIntervalS = defaultEvalIntervalS
 	}
-	if c.Governor.Trajectory.Enabled {
+	if c.Governor.Trajectory.IsEnabled() {
 		if c.Governor.Trajectory.OnDivergence == "" {
 			c.Governor.Trajectory.OnDivergence = "pause"
 		}

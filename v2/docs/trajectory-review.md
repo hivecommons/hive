@@ -1,6 +1,6 @@
 # Trajectory-Review Lane
 
-The **trajectory-review lane** is an opt-in safety layer that periodically reads
+The **trajectory-review lane** is a safety layer (on by default) that periodically reads
 each running agent's recent transcript and asks a second model whether the
 *sequence* of actions is still working toward the agent's assigned intent. If
 the trajectory has diverged — individually-innocuous steps assembling toward an
@@ -47,7 +47,12 @@ model is appropriate — this is a divergence classifier, not a coding model.
 
 ## Configuration
 
-Under `governor.trajectory` in `hive.yaml`:
+**Dashboard:** Governor Config → **General** tab has a **Trajectory Review**
+toggle (on by default) with an info tooltip explaining the check. Toggling it
+persists immediately and takes effect on the next hive restart. The review
+model, cadence, and exemptions are set in `hive.yaml` (below).
+
+**hive.yaml** — under `governor.trajectory`:
 
 ```yaml
 governor:
@@ -56,7 +61,7 @@ governor:
     api_key_env: HIVE_LITELLM_API_KEY
     default_model: claude-haiku-4-5
   trajectory:
-    enabled: true                 # off by default
+    enabled: true                 # ON by default; set false to disable
     interval_s: 600               # review cadence (floored by eval_interval_s)
     model: claude-haiku-4-5       # reviewer model; empty → litellm.default_model
     transcript_lines: 120         # trailing lines sent per agent
@@ -67,7 +72,7 @@ governor:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `enabled` | `false` | Turn the lane on. Off = zero cost. |
+| `enabled` | `true` | Turn the lane on/off. Also on the Governor → General tab. No reviews run (zero cost) until a LiteLLM reviewer endpoint is configured. |
 | `interval_s` | `600` | Seconds between reviews; the governor eval interval is the floor. |
 | `model` | `litellm.default_model` | Reviewer model id sent to LiteLLM. |
 | `transcript_lines` | `120` | Trailing transcript lines sent per agent. |

@@ -1774,7 +1774,7 @@ func main() {
 	// cannot be constructed (no LiteLLM endpoint/model), the lane is disabled
 	// with a single warning rather than erroring every tick.
 	var trajLane *trajectory.Lane
-	if cfg.Governor.Trajectory.Enabled {
+	if cfg.Governor.Trajectory.IsEnabled() {
 		reviewModel := cfg.Governor.Trajectory.Model
 		if reviewModel == "" {
 			reviewModel = cfg.Governor.LiteLLM.DefaultModel
