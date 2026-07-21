@@ -364,7 +364,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 </select>
 <label style="font-size:.9rem;color:#8b949e">Mode:</label>
 <select id="mode-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
-<option value="containerized">Containerized (recommended)</option>
+<option value="containerized">Containerized (recommended — docker or podman)</option>
 <option value="host">Host (non-containerized)</option>
 </select>
 </div>
@@ -439,6 +439,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 })();
 </script>
 </div>
+<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; force one with <code>export HIVE_CONTAINER_RUNTIME=podman</code>. Rootless podman (keep-id, SELinux labels) is handled automatically.</p>
 <p style="color:#6e7681;font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=contribute,enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
 <a href="/leaderboard" style="display:inline-block;padding:8px 20px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem">🏆 View Leaderboard</a>
