@@ -351,7 +351,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 </div>
 <div class="steps">
 <h3>How it works</h3>
-<div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+<div style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+<span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
 <label style="font-size:.9rem;color:#8b949e">Choose your CLI:</label>
 <select id="cli-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="claude" data-install="npm i -g @anthropic-ai/claude-code" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="">Claude Code</option>
@@ -362,17 +363,22 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <option value="bob" data-install="" data-host-install="npm i -g bobshell" data-model-flag="" data-default-model="">Bob</option>
 <option value="other" data-install="" data-host-install="# Install your CLI tool" data-model-flag="" data-default-model="">Other (host only)</option>
 </select>
+</span>
+<span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
 <label style="font-size:.9rem;color:#8b949e">Mode:</label>
 <select id="mode-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
-<option value="containerized">Containerized (recommended — docker or podman)</option>
+<option value="containerized">Containerized (recommended)</option>
 <option value="host">Host (non-containerized)</option>
 </select>
-<label id="runtime-label" style="font-size:.9rem;color:#8b949e">Runtime:</label>
+</span>
+<span id="runtime-group" style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
+<label style="font-size:.9rem;color:#8b949e">Runtime:</label>
 <select id="runtime-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
-<option value="">Auto-detect (docker, then podman)</option>
+<option value="">Auto-detect</option>
 <option value="docker">Docker</option>
 <option value="podman">Podman</option>
 </select>
+</span>
 </div>
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
 <label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
@@ -392,7 +398,7 @@ just contribute-hive</pre>
 var sel=document.getElementById('cli-select');
 var modeSel=document.getElementById('mode-select');
 var runtimeSel=document.getElementById('runtime-select');
-var runtimeLabel=document.getElementById('runtime-label');
+var runtimeGroup=document.getElementById('runtime-group');
 var cmds=document.getElementById('copy-cmds');
 var hubURL='%s';
 var containerTpl='brew install just gh\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive';
@@ -419,8 +425,7 @@ if(envLines)envLines+='\n';
 // Runtime selector only applies to containerized mode; the export line is
 // injected into the copy-paste commands so the choice is explicit.
 var showRuntime=(mode==='containerized');
-runtimeSel.style.display=showRuntime?'':'none';
-runtimeLabel.style.display=showRuntime?'':'none';
+runtimeGroup.style.display=showRuntime?'inline-flex':'none';
 var runtimeLine=(showRuntime&&runtimeSel.value)?'export HIVE_CONTAINER_RUNTIME='+runtimeSel.value+'\n':'';
 var preLines=envLines+modelLine+runtimeLine;
 var tpl,install;
