@@ -367,6 +367,12 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <option value="containerized">Containerized (recommended — docker or podman)</option>
 <option value="host">Host (non-containerized)</option>
 </select>
+<label id="runtime-label" style="font-size:.9rem;color:#8b949e">Runtime:</label>
+<select id="runtime-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<option value="">Auto-detect (docker, then podman)</option>
+<option value="docker">Docker</option>
+<option value="podman">Podman</option>
+</select>
 </div>
 <div id="model-row" style="margin-bottom:12px;display:none;align-items:center;gap:8px">
 <label style="font-size:.9rem;color:#8b949e">Model (optional):</label>
@@ -385,6 +391,8 @@ just contribute-hive</pre>
 (function(){
 var sel=document.getElementById('cli-select');
 var modeSel=document.getElementById('mode-select');
+var runtimeSel=document.getElementById('runtime-select');
+var runtimeLabel=document.getElementById('runtime-label');
 var cmds=document.getElementById('copy-cmds');
 var hubURL='%s';
 var containerTpl='brew install just gh\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive';
@@ -408,7 +416,13 @@ else if(modelFlag){modelLine='export AGENT_MODEL='+model+'\n';}
 }
 var envLines=(opt.getAttribute('data-env')||'').replace(/\\n/g,'\n');
 if(envLines)envLines+='\n';
-var preLines=envLines+modelLine;
+// Runtime selector only applies to containerized mode; the export line is
+// injected into the copy-paste commands so the choice is explicit.
+var showRuntime=(mode==='containerized');
+runtimeSel.style.display=showRuntime?'':'none';
+runtimeLabel.style.display=showRuntime?'':'none';
+var runtimeLine=(showRuntime&&runtimeSel.value)?'export HIVE_CONTAINER_RUNTIME='+runtimeSel.value+'\n':'';
+var preLines=envLines+modelLine+runtimeLine;
 var tpl,install;
 if(mode==='host'){
 tpl=hostTpl;
@@ -421,6 +435,7 @@ cmds.textContent=containerTpl.replace(/CLI/g,cli).replace('just contribute-setup
 }
 sel.addEventListener('change',function(){modelInput.value='';update();});
 modeSel.addEventListener('change',update);
+runtimeSel.addEventListener('change',update);
 document.getElementById('copy-btn').addEventListener('click',function(){
 var el=document.getElementById('copy-cmds');
 var btn=document.getElementById('copy-btn');
