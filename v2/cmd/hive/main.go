@@ -45,6 +45,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
 	"github.com/kubestellar/hive/v2/pkg/snapshot"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
+	"github.com/kubestellar/hive/v2/pkg/trajectory"
 )
 
 var (
@@ -1767,6 +1768,40 @@ func main() {
 		}, logger)
 	}
 
+	// Trajectory-review lane (opt-in): a second-model check that reads each
+	// running agent's recent transcript and pauses on goal drift. Built once;
+	// runs off the governor tick, gated by its own cadence. If the reviewer
+	// cannot be constructed (no LiteLLM endpoint/model), the lane is disabled
+	// with a single warning rather than erroring every tick.
+	var trajLane *trajectory.Lane
+	if cfg.Governor.Trajectory.Enabled {
+		reviewModel := cfg.Governor.Trajectory.Model
+		if reviewModel == "" {
+			reviewModel = cfg.Governor.LiteLLM.DefaultModel
+		}
+		reviewer, terr := trajectory.NewReviewer(trajectory.Config{
+			Endpoint:        cfg.Governor.LiteLLM.ResolveEndpoint(),
+			APIKey:          cfg.Governor.LiteLLM.ResolveAPIKey(),
+			Model:           reviewModel,
+			TranscriptLines: cfg.Governor.Trajectory.TranscriptLines,
+		})
+		if terr != nil {
+			logger.Warn("trajectory-review lane disabled", "reason", terr.Error())
+		} else {
+			trajLane = trajectory.NewLane(reviewer, agentMgr,
+				dashboard.NewTrajectorySink(dashSrv, notifier),
+				trajectory.LaneConfig{
+					IntervalS:    cfg.Governor.Trajectory.IntervalS,
+					OnDivergence: cfg.Governor.Trajectory.OnDivergence,
+					ExemptAgents: cfg.Governor.Trajectory.ExemptAgents,
+				}, logger)
+			logger.Info("trajectory-review lane enabled",
+				"model", reviewModel,
+				"interval_s", cfg.Governor.Trajectory.IntervalS,
+				"on_divergence", cfg.Governor.Trajectory.OnDivergence)
+		}
+	}
+
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)
 	lastEvalInterval := cfg.Governor.EvalIntervalS
 	ticker := time.NewTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
@@ -1832,6 +1867,11 @@ func main() {
 				}
 			}
 			runEvalCycle(ctx, cfg, ghClient, gov, sched, agentMgr, dashSrv, notifier, beadStores, tokenCollector, metricsCollector, nousState, &lastActionable, advisoryStore, advisoryIssues, &userGHClient, restarted, logger)
+			// Trajectory review runs after the eval cycle (so kicks/intents are
+			// current) on its own cadence, gated by Due().
+			if trajLane != nil && trajLane.Due(time.Now()) {
+				trajLane.Run(ctx)
+			}
 			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 			if cfg.Governor.EvalIntervalS != lastEvalInterval && cfg.Governor.EvalIntervalS > 0 {
 				logger.Info("eval interval changed, resetting ticker",

@@ -513,6 +513,38 @@ type GovernorConfig struct {
 	LiteLLM       LiteLLMConfig         `yaml:"litellm"`
 	VLLM          InferenceAuthConfig   `yaml:"vllm"`
 	LLMD          InferenceAuthConfig   `yaml:"llm-d"`
+	Trajectory    TrajectoryConfig      `yaml:"trajectory"`
+}
+
+// TrajectoryConfig governs the trajectory-review lane: a periodic,
+// second-model check that reads each running agent's recent transcript and
+// scores whether the sequence of actions is still working toward the agent's
+// assigned intent (its last kick), pausing the agent when it diverges. This
+// is defense against trajectory-level goal drift — individually-innocuous
+// steps that assemble toward an unauthorized outcome — which action-level
+// gating cannot see. Disabled by default; opt in per hive.
+type TrajectoryConfig struct {
+	// Enabled turns the review lane on. When false, no reviews run and the
+	// feature adds zero cost.
+	Enabled bool `yaml:"enabled"`
+	// IntervalS is how often (seconds) the lane evaluates running agents.
+	// It runs off the governor tick, so the effective floor is the governor
+	// eval interval; a value below that reviews every tick. 0 → default.
+	IntervalS int `yaml:"interval_s"`
+	// Model is the reviewer model id (sent to the LiteLLM endpoint). Empty →
+	// the governor LiteLLM default_model. A cheap model is appropriate.
+	Model string `yaml:"model"`
+	// TranscriptLines caps how many trailing transcript lines are sent to the
+	// reviewer. 0 → default. Bounds token cost and keeps the review focused
+	// on recent behavior.
+	TranscriptLines int `yaml:"transcript_lines"`
+	// OnDivergence is the action taken when a trajectory is judged divergent:
+	// "pause" (stop the agent and alert — default) or "alert" (notify only,
+	// leave the agent running). Any other value is treated as "alert".
+	OnDivergence string `yaml:"on_divergence"`
+	// ExemptAgents are never reviewed (e.g. advisory-only agents that open no
+	// PRs and touch no infrastructure).
+	ExemptAgents []string `yaml:"exempt_agents"`
 }
 
 // Discovery-auth defaults for the self-hosted inference backends. Like
@@ -1383,6 +1415,11 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Governor.EvalIntervalS == 0 {
 		c.Governor.EvalIntervalS = defaultEvalIntervalS
+	}
+	if c.Governor.Trajectory.Enabled {
+		if c.Governor.Trajectory.OnDivergence == "" {
+			c.Governor.Trajectory.OnDivergence = "pause"
+		}
 	}
 	if c.Policies.PollInterval == 0 {
 		c.Policies.PollInterval = time.Duration(defaultPollIntervalMins) * time.Minute
