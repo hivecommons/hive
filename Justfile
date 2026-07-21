@@ -8,6 +8,9 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/kubestellar/hive-contributor:latest")
 hive_hub := env("HIVE_HUB", "wss://hive.kubestellar.io/contribute")
 config_dir := env("HOME") + "/.config/hive"
+# Container runtime for containerized mode. Empty = auto-detect (docker, then
+# podman). Set HIVE_CONTAINER_RUNTIME=podman to force podman.
+container_runtime := env("HIVE_CONTAINER_RUNTIME", "")
 
 # Show available commands
 default:
@@ -282,13 +285,11 @@ contribute-setup backend="claude": check-version
     echo ""
     echo "Run 'just contribute-hive' to start contributing."
 
-# Start contributing — Docker (default) or local mode
-# Usage: just contribute-hive        (Docker, reads CLI from contributor.env)
-#        just contribute-hive local   (native, starts relay + CLI directly)
-# Start contributing — Docker (default) or local mode
-# Usage: just contribute-hive              (Docker, default CLI from setup)
-#        just contribute-hive copilot      (Docker, copilot backend)
+# Start contributing — containerized (default; docker or podman) or local mode
+# Usage: just contribute-hive              (container, default CLI from setup)
+#        just contribute-hive copilot      (container, copilot backend)
 #        just contribute-hive claude local  (native mode, claude)
+# Runtime: auto-detects docker then podman; force with HIVE_CONTAINER_RUNTIME=podman
 contribute-hive backend="" mode="docker": check-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -412,35 +413,63 @@ contribute-hive backend="" mode="docker": check-version
       echo "Relay logs:"
       wait "$RELAY_PID"
     else
-      # ── Docker mode: stop existing, start fresh ──
+      # ── Container mode: stop existing, start fresh ──
+      # Resolve the container runtime: HIVE_CONTAINER_RUNTIME wins, else
+      # docker, else podman. Podman gets --userns=keep-id (rootless UID
+      # mapping so the container's dev user can read the mounted configs)
+      # and SELinux-friendly volume labels (,Z).
+      RUNTIME="{{container_runtime}}"
+      if [[ -z "$RUNTIME" ]]; then
+        if command -v docker >/dev/null 2>&1; then RUNTIME=docker
+        elif command -v podman >/dev/null 2>&1; then RUNTIME=podman
+        else
+          echo "ERROR: no container runtime found. Install docker or podman,"
+          echo "set HIVE_CONTAINER_RUNTIME, or run: just contribute-hive <cli> local"
+          exit 1
+        fi
+      fi
+      RUNTIME_FLAGS=""
+      VOLSUF=""      # volume-option suffix for read-write mounts
+      ROSUF=":ro"    # volume-option suffix for read-only mounts
+      NET_FLAGS="--network host"
+      if [[ "$RUNTIME" == "podman" ]]; then
+        RUNTIME_FLAGS="--userns=keep-id"
+        VOLSUF=":Z"
+        ROSUF=":ro,Z"
+        # podman machine on macOS has no host networking (host = the VM,
+        # not the Mac). The relay only dials out, so the default network
+        # works; reach a localhost LiteLLM proxy via host.containers.internal.
+        if [[ "$OSTYPE" == darwin* ]]; then NET_FLAGS=""; fi
+      fi
       if [[ "${HIVE_SKIP_PULL:-}" != "true" ]]; then
-        echo "Pulling {{hive_image}}..."
-        docker pull {{hive_image}} 2>/dev/null || echo "Pull failed — using local image"
+        echo "Pulling {{hive_image}} (${RUNTIME})..."
+        "$RUNTIME" pull {{hive_image}} 2>/dev/null || echo "Pull failed — using local image"
         echo ""
       fi
       # Mount CLI-specific config directories
       CLI_MOUNTS=""
       case "${BACKEND}" in
         claude)
-          CLI_MOUNTS="-v ${HOME}/.claude:/home/dev/.claude -v ${HOME}/.config/claude-code:/home/dev/.config/claude-code"
+          CLI_MOUNTS="-v ${HOME}/.claude:/home/dev/.claude${VOLSUF} -v ${HOME}/.config/claude-code:/home/dev/.config/claude-code${VOLSUF}"
           ;;
         copilot)
-          [ -d "${HOME}/.copilot" ] && CLI_MOUNTS="-v ${HOME}/.copilot:/home/dev/.copilot"
+          [ -d "${HOME}/.copilot" ] && CLI_MOUNTS="-v ${HOME}/.copilot:/home/dev/.copilot${VOLSUF}"
           ;;
         goose)
-          [ -d "${HOME}/.config/goose" ] && CLI_MOUNTS="-v ${HOME}/.config/goose:/home/dev/.config/goose"
+          [ -d "${HOME}/.config/goose" ] && CLI_MOUNTS="-v ${HOME}/.config/goose:/home/dev/.config/goose${VOLSUF}"
           ;;
         codex)
-          [ -d "${HOME}/.codex" ] && CLI_MOUNTS="-v ${HOME}/.codex:/home/dev/.codex"
+          [ -d "${HOME}/.codex" ] && CLI_MOUNTS="-v ${HOME}/.codex:/home/dev/.codex${VOLSUF}"
           ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
-      docker run -d --rm \
+      "$RUNTIME" run -d --rm \
         --name "${CONTAINER_NAME}" \
-        --network host \
-        -v "{{config_dir}}:/home/dev/.config/hive:ro" \
+        ${RUNTIME_FLAGS} \
+        ${NET_FLAGS} \
+        -v "{{config_dir}}:/home/dev/.config/hive${ROSUF}" \
         ${CLI_MOUNTS} \
-        -v "${HOME}/.config/gh:/home/dev/.config/gh:ro" \
+        -v "${HOME}/.config/gh:/home/dev/.config/gh${ROSUF}" \
         -e HIVE_HUB="{{hive_hub}}" \
         -e AGENT_BACKEND="${BACKEND}" \
         -e GH_TOKEN="${GH_TOKEN}" \
@@ -462,7 +491,7 @@ contribute-hive backend="" mode="docker": check-version
       sleep 3
 
       # Open the CLI session in a new terminal window
-      ATTACH_CMD="docker exec -it ${CONTAINER_NAME} tmux attach -t contributor"
+      ATTACH_CMD="${RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t contributor"
       if [[ "$OSTYPE" == "darwin"* ]]; then
         if pgrep -x "iTerm2" > /dev/null 2>&1; then
           osascript -e "tell application \"iTerm2\" to tell current window to create tab with default profile command \"${ATTACH_CMD}\""
@@ -479,7 +508,7 @@ contribute-hive backend="" mode="docker": check-version
 
       echo ""
       echo "Relay logs:"
-      docker logs -f "${CONTAINER_NAME}"
+      "$RUNTIME" logs -f "${CONTAINER_NAME}"
     fi
 
 # Check hub status and your contributor profile
@@ -535,7 +564,16 @@ hive-api-docs:
 # Stop contributing (if running in background)
 contribute-stop:
     #!/usr/bin/env bash
-    docker ps --filter "name=hive-contributor-" --format '{{ "{{" }}.Names{{ "}}" }}' | xargs -r docker stop 2>/dev/null && echo "Stopped." || echo "Not running."
+    # Stop contributor containers under whichever runtimes are installed.
+    STOPPED=false
+    for RT in docker podman; do
+      command -v "$RT" >/dev/null 2>&1 || continue
+      NAMES=$("$RT" ps --filter "name=hive-contributor-" --format '{{ "{{" }}.Names{{ "}}" }}' 2>/dev/null || true)
+      if [[ -n "$NAMES" ]]; then
+        echo "$NAMES" | xargs -r "$RT" stop 2>/dev/null && STOPPED=true
+      fi
+    done
+    $STOPPED && echo "Stopped." || echo "Not running."
 
 # Generate K8s ConfigMap + Secret YAML from contributor.env
 # Usage: just contribute-k8s                          (default namespace: hive-contributor)
