@@ -140,6 +140,17 @@ var copilotStaticModels = []string{
 	"o4-mini",
 }
 
+// copilotAlwaysIncludeModels are ids that must ALWAYS be offered in the
+// copilot dropdown, whether the served list came from live discovery or the
+// static fallback. The Copilot /models endpoint omits rollout-gated ids
+// nondeterministically (see cliModelDropAfterMisses), and an id that never
+// appears in a live sample can neither be selected nor survive the
+// dashboard's model auto-heal. Ids listed here are appended to every served
+// copilot list so agents can be pinned to them safely.
+var copilotAlwaysIncludeModels = []string{
+	"mai-code-1-flash-picker",
+}
+
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
 // discovery fails). Keep CURRENT.
 var geminiStaticModels = []string{
@@ -288,6 +299,12 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		// a model seen recently is kept through transient upstream omissions
 		// so a single bad sample cannot trigger downstream auto-heal churn.
 		r.models = s.cliModels.stabilize(backend, r.models)
+	}
+	// Applied after stabilization/fallback so the pinned ids survive BOTH
+	// paths: a live sample that omits a rollout-gated id and the static
+	// fallback list (see copilotAlwaysIncludeModels).
+	if backend == "copilot" {
+		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)

@@ -116,6 +116,21 @@ func TestQueryCLIModels_CopilotFallbackNoToken(t *testing.T) {
 	}
 }
 
+// TestQueryCLIModels_CopilotAlwaysIncludePinned verifies every id in
+// copilotAlwaysIncludeModels is present in the served copilot list even when
+// it is the static fallback (no token), so rollout-gated ids stay selectable
+// and safe from model auto-heal regardless of what live discovery returns.
+func TestQueryCLIModels_CopilotAlwaysIncludePinned(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("copilot")
+	for _, m := range copilotAlwaysIncludeModels {
+		if !contains(r.models, m) {
+			t.Fatalf("always-include id %q missing from served copilot list: %v", m, r.models)
+		}
+	}
+}
+
 // TestQueryCLIModels_GeminiFallbackNoKey verifies gemini falls back when no
 // API key is configured.
 func TestQueryCLIModels_GeminiFallbackNoKey(t *testing.T) {
