@@ -25,12 +25,12 @@ import (
 var staticFS embed.FS
 
 const (
-	registryPath           = "/data/hub-registry.json"
-	maxHeartbeatAge        = 5 * time.Minute
-	staleRemoveAge         = 24 * time.Hour
-	registrySaveDelay      = 5 * time.Second
-	maxPayloadBytes        = 1 << 20 // 1MB
-	staleUpgradeTimeout    = 10 * time.Minute
+	registryPath        = "/data/hub-registry.json"
+	maxHeartbeatAge     = 5 * time.Minute
+	staleRemoveAge      = 24 * time.Hour
+	registrySaveDelay   = 5 * time.Second
+	maxPayloadBytes     = 1 << 20 // 1MB
+	staleUpgradeTimeout = 10 * time.Minute
 )
 
 type Registry struct {
@@ -39,44 +39,44 @@ type Registry struct {
 }
 
 type RegistryEntry struct {
-	ID                 string         `json:"id"`
-	Name               string         `json:"name"`
-	Org                string         `json:"org"`
-	Repos              []string       `json:"repos"`
-	PrimaryRepo        string         `json:"primaryRepo"`
-	DashboardURL       string         `json:"dashboardUrl"`
-	SnapshotURL        string         `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int            `json:"acmmLevel"`
-	AgentCount         int            `json:"agentCount"`
-	GovernorMode       string         `json:"governorMode"`
-	TotalTokens24h     int64          `json:"totalTokens24h"`
-	ActionableIssues   int            `json:"actionableIssues"`
-	ActionablePRs      int            `json:"actionablePRs"`
-	ContributorCount   int            `json:"contributorCount"`
-	ActiveContributors int            `json:"activeContributors"`
-	Owner              string         `json:"owner,omitempty"`
-	ClusterID          string         `json:"clusterId,omitempty"`
-	ClusterName        string         `json:"clusterName,omitempty"`
-	HiveType           string         `json:"hiveType,omitempty"`
-	IsPublic           bool           `json:"isPublic"`
-	RegisteredAt       string         `json:"registeredAt"`
-	LastHeartbeat      string         `json:"lastHeartbeat"`
-	Health             map[string]any `json:"health"`
-	Version            string         `json:"version"`
-	GitHash            string         `json:"gitHash,omitempty"`
-	GitBranch          string         `json:"gitBranch,omitempty"`
-	Agents             []AgentSummary `json:"agents,omitempty"`
-	Leaderboard        []LeaderboardEntry `json:"leaderboard,omitempty"`
-	Online             bool           `json:"online"`
-	Upgrading          bool           `json:"upgrading,omitempty"`
-	UpgradeTarget      string         `json:"upgradeTarget,omitempty"`
-	UpgradeStartedAt   time.Time      `json:"upgradeStartedAt,omitempty"`
-	IssueHistory       []SparkPoint   `json:"issueHistory,omitempty"`
-	PRHistory          []SparkPoint   `json:"prHistory,omitempty"`
-	GitHubAppRequired       bool           `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue      string         `json:"githubAppPermIssue,omitempty"`
-	PendingGitHubAppInstall bool           `json:"pendingGitHubAppInstall,omitempty"`
-	PendingGitHubAppInstallAt time.Time    `json:"pendingGitHubAppInstallAt,omitempty"`
+	ID                        string             `json:"id"`
+	Name                      string             `json:"name"`
+	Org                       string             `json:"org"`
+	Repos                     []string           `json:"repos"`
+	PrimaryRepo               string             `json:"primaryRepo"`
+	DashboardURL              string             `json:"dashboardUrl"`
+	SnapshotURL               string             `json:"snapshotUrl,omitempty"`
+	ACMMLevel                 int                `json:"acmmLevel"`
+	AgentCount                int                `json:"agentCount"`
+	GovernorMode              string             `json:"governorMode"`
+	TotalTokens24h            int64              `json:"totalTokens24h"`
+	ActionableIssues          int                `json:"actionableIssues"`
+	ActionablePRs             int                `json:"actionablePRs"`
+	ContributorCount          int                `json:"contributorCount"`
+	ActiveContributors        int                `json:"activeContributors"`
+	Owner                     string             `json:"owner,omitempty"`
+	ClusterID                 string             `json:"clusterId,omitempty"`
+	ClusterName               string             `json:"clusterName,omitempty"`
+	HiveType                  string             `json:"hiveType,omitempty"`
+	IsPublic                  bool               `json:"isPublic"`
+	RegisteredAt              string             `json:"registeredAt"`
+	LastHeartbeat             string             `json:"lastHeartbeat"`
+	Health                    map[string]any     `json:"health"`
+	Version                   string             `json:"version"`
+	GitHash                   string             `json:"gitHash,omitempty"`
+	GitBranch                 string             `json:"gitBranch,omitempty"`
+	Agents                    []AgentSummary     `json:"agents,omitempty"`
+	Leaderboard               []LeaderboardEntry `json:"leaderboard,omitempty"`
+	Online                    bool               `json:"online"`
+	Upgrading                 bool               `json:"upgrading,omitempty"`
+	UpgradeTarget             string             `json:"upgradeTarget,omitempty"`
+	UpgradeStartedAt          time.Time          `json:"upgradeStartedAt,omitempty"`
+	IssueHistory              []SparkPoint       `json:"issueHistory,omitempty"`
+	PRHistory                 []SparkPoint       `json:"prHistory,omitempty"`
+	GitHubAppRequired         bool               `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue        string             `json:"githubAppPermIssue,omitempty"`
+	PendingGitHubAppInstall   bool               `json:"pendingGitHubAppInstall,omitempty"`
+	PendingGitHubAppInstallAt time.Time          `json:"pendingGitHubAppInstallAt,omitempty"`
 }
 
 type SparkPoint struct {
@@ -137,17 +137,17 @@ type HeartbeatHealthEntry struct {
 }
 
 type HubServer struct {
-	mux            *http.ServeMux
-	registry       Registry
-	mu             sync.RWMutex
-	logger         *slog.Logger
-	saveCh         chan struct{}
-	hubGitHash     string
-	hubGitBranch   string
-	hubSecret      string
-	httpServer     *http.Server
-	httpMu         sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
-	clusters       map[string]ClusterConfig
+	mux               *http.ServeMux
+	registry          Registry
+	mu                sync.RWMutex
+	logger            *slog.Logger
+	saveCh            chan struct{}
+	hubGitHash        string
+	hubGitBranch      string
+	hubSecret         string
+	httpServer        *http.Server
+	httpMu            sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
+	clusters          map[string]ClusterConfig
 	heartbeatHealth   map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
 	heartbeatHealthMu sync.RWMutex
 
@@ -207,16 +207,16 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		logger.Info("generated hub secret", "path", "/data/saas/hub-secret.key")
 	}
 	s := &HubServer{
-		mux:              http.NewServeMux(),
-		logger:           logger,
-		saveCh:           make(chan struct{}, 1),
-		hubGitHash:       gitHash,
-		hubGitBranch:     gitBranch,
-		hubSecret:        secret,
-		clusters:         loadClusters(logger),
-		heartbeatHealth:  make(map[string]*HeartbeatHealthEntry),
-		heartbeatUpgrade:   make(map[string]string),
-		heartbeatSwitchTag: make(map[string]string),
+		mux:                     http.NewServeMux(),
+		logger:                  logger,
+		saveCh:                  make(chan struct{}, 1),
+		hubGitHash:              gitHash,
+		hubGitBranch:            gitBranch,
+		hubSecret:               secret,
+		clusters:                loadClusters(logger),
+		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
+		heartbeatUpgrade:        make(map[string]string),
+		heartbeatSwitchTag:      make(map[string]string),
 		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
@@ -359,9 +359,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	safePrimary := payload.PrimaryRepo
 
 	entry := RegistryEntry{
-		ID:                 payload.HiveID,
-		Name:               safeOrg + "/" + safePrimary,
-		Org:                safeOrg,
+		ID:   payload.HiveID,
+		Name: safeOrg + "/" + safePrimary,
+		Org:  safeOrg,
 		Repos: func() []string {
 			safe := make([]string, len(payload.Repos))
 			for i, r := range payload.Repos {
@@ -369,10 +369,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return safe
 		}(),
-		PrimaryRepo:        safePrimary,
-		DashboardURL:       payload.DashboardURL,
-		SnapshotURL:        payload.SnapshotURL,
-		ACMMLevel:          clampInt(payload.ACMMLevel, 0, 6),
+		PrimaryRepo:  safePrimary,
+		DashboardURL: payload.DashboardURL,
+		SnapshotURL:  payload.SnapshotURL,
+		ACMMLevel:    clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {
@@ -398,12 +398,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return "local"
 		}(),
-		IsPublic: payload.IsPublic,
-		LastHeartbeat:      time.Now().UTC().Format(time.RFC3339),
-		Health:             payload.Health,
-		Version:            sanitizeHeartbeatField(payload.Version),
-		GitHash:            sanitizeHeartbeatField(payload.GitHash),
-		GitBranch:          sanitizeHeartbeatField(payload.GitBranch),
+		IsPublic:      payload.IsPublic,
+		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+		Health:        payload.Health,
+		Version:       sanitizeHeartbeatField(payload.Version),
+		GitHash:       sanitizeHeartbeatField(payload.GitHash),
+		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
@@ -425,7 +425,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return payload.Leaderboard
 		}(),
-		Online:            true,
+		Online:                  true,
 		GitHubAppRequired:       payload.GitHubAppRequired,
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
 		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
@@ -651,22 +651,25 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				"hive_id", payload.HiveID, "tag", switchTag)
 		}
 	}
-	if hbTarget != "" && (payload.GitHash == hbTarget || (latestSHA != "" && payload.GitHash == latestSHA)) {
+	if hbTarget != "" && (sameCommit(payload.GitHash, hbTarget) || (latestSHA != "" && sameCommit(payload.GitHash, latestSHA))) {
 		// Spoke already at the target or at latest — clear the fallback entry.
+		// sameCommit tolerates short/full SHA length mismatch (hub stores a
+		// 7-char short SHA; a spoke may report a longer one) so a hive already
+		// at HEAD is not told to upgrade forever.
 		s.mu.Lock()
 		delete(s.heartbeatUpgrade, payload.HiveID)
 		s.mu.Unlock()
 		hbTarget = ""
 	}
 
-	if spokeManaged && latestSHA != "" && payload.GitHash != "" && payload.GitHash != latestSHA {
+	if spokeManaged && latestSHA != "" && payload.GitHash != "" && !sameCommit(payload.GitHash, latestSHA) {
 		resp.UpgradeTo = latestSHA
 		s.logger.Info("heartbeat: instructing spoke-managed hive to upgrade",
 			"hive_id", payload.HiveID,
 			"from", payload.GitHash,
 			"to", latestSHA,
 		)
-	} else if hbTarget != "" && payload.GitHash != hbTarget {
+	} else if hbTarget != "" && !sameCommit(payload.GitHash, hbTarget) {
 		resp.UpgradeTo = hbTarget
 		s.logger.Info("heartbeat: instructing hub-managed hive to upgrade (kubectl fallback)",
 			"hive_id", payload.HiveID,
@@ -769,8 +772,8 @@ func (s *HubServer) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		HiveID      string           `json:"hive_id"`
-		Leaderboard []LeaderboardEntry `json:"leaderboard"`
+		HiveID       string             `json:"hive_id"`
+		Leaderboard  []LeaderboardEntry `json:"leaderboard"`
 		Contributors ContributorSummary `json:"contributors"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -888,10 +891,10 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
-		"git_hash":       s.hubGitHash,
-		"git_branch":     s.hubGitBranch,
-		"latest_sha":     getLatestSHA(),
-		"latest_shas":    getLatestSHAs(),
+		"git_hash":    s.hubGitHash,
+		"git_branch":  s.hubGitBranch,
+		"latest_sha":  getLatestSHA(),
+		"latest_shas": getLatestSHAs(),
 	}
 	cookie, _ := r.Cookie("hive_hub_user")
 	if cookie != nil && cookie.Value == hubAdminUsername {
@@ -1129,14 +1132,22 @@ func isPrivateURL(ctx context.Context, rawURL string) bool {
 }
 
 func clampInt(v, min, max int) int {
-	if v < min { return min }
-	if v > max { return max }
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
 	return v
 }
 
 func clampInt64(v, min, max int64) int64 {
-	if v < min { return min }
-	if v > max { return max }
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
 	return v
 }
 

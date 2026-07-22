@@ -1585,6 +1585,23 @@ func main() {
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
 
+			// Never self-upgrade to the commit we are already running. The hub
+			// may instruct an upgrade to a short SHA that is a prefix of our
+			// full gitShort (or vice-versa); treating that as "behind" caused a
+			// crash-loop (patch → 403 → os.Exit → repeat) on hives sitting
+			// exactly at HEAD. Prefix-compare so same-commit is a no-op.
+			if sha1, sha2 := targetSHA, gitShort; sha1 != "" && sha2 != "" {
+				n := len(sha1)
+				if len(sha2) < n {
+					n = len(sha2)
+				}
+				if strings.EqualFold(sha1[:n], sha2[:n]) {
+					logger.Info("self-upgrade skipped: target is the running commit",
+						"target", targetSHA, "current", gitShort)
+					return
+				}
+			}
+
 			// If a previous process already attempted an upgrade and we booted
 			// with the same git hash, the image tag didn't actually change.
 			// Skip to avoid an infinite restart loop.
@@ -1785,11 +1802,9 @@ func main() {
 		if terr != nil {
 			// Enabled but not runnable — surface it as a dashboard alert, not
 			// just a log line, so a safety control is never silently inert.
+			// (Reconciled below so it also clears when the lane is disabled.)
 			logger.Warn("trajectory-review lane enabled but not running", "reason", terr.Error())
-			dashSrv.AddSystemAlert("trajectory-not-configured", "warning",
-				"Trajectory review is ON but has no reviewer endpoint configured — no agents are being reviewed. Set a reviewer endpoint (LiteLLM, vLLM, or llm-d) in Governor Config.")
 		} else {
-			dashSrv.ClearSystemAlert("trajectory-not-configured")
 			trajLane = trajectory.NewLane(reviewer, agentMgr,
 				dashboard.NewTrajectorySink(dashSrv, notifier),
 				trajectory.LaneConfig{
@@ -1803,6 +1818,9 @@ func main() {
 				"on_divergence", cfg.Governor.Trajectory.OnDivergence)
 		}
 	}
+	// Reconcile the not-configured alert from actual state (raises only when
+	// enabled AND no reviewer resolves; clears when off or configured).
+	dashSrv.ReconcileTrajectoryAlert(&cfg.Governor)
 
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)
 	lastEvalInterval := cfg.Governor.EvalIntervalS
