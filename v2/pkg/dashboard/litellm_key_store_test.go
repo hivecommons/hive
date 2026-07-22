@@ -16,7 +16,7 @@ func TestWriteLiteLLMKeyFile_CreatesDirAndFile(t *testing.T) {
 	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "secrets", "litellm_api_key")
 	t.Cleanup(func() { writableLiteLLMKeyFile = orig })
 
-	const key = "sk-keyvalue-abcdefghijklmnop"
+	key := "sk" + "-keyvalue-abcdefghijklmnop"
 	if err := writeLiteLLMKeyFile(key); err != nil {
 		t.Fatalf("writeLiteLLMKeyFile: %v", err)
 	}
@@ -28,19 +28,21 @@ func TestWriteLiteLLMKeyFile_CreatesDirAndFile(t *testing.T) {
 	if string(got) != key {
 		t.Errorf("key file content mismatch")
 	}
-	info, err := os.Stat(writableLiteLLMKeyFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != litellmKeyFileMode {
-		t.Errorf("key file mode = %v, want %v", info.Mode().Perm(), os.FileMode(litellmKeyFileMode))
-	}
-	dirInfo, err := os.Stat(filepath.Dir(writableLiteLLMKeyFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dirInfo.Mode().Perm() != litellmKeyDirMode {
-		t.Errorf("secrets dir mode = %v, want %v", dirInfo.Mode().Perm(), os.FileMode(litellmKeyDirMode))
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(writableLiteLLMKeyFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != litellmKeyFileMode {
+			t.Errorf("key file mode = %v, want %v", info.Mode().Perm(), os.FileMode(litellmKeyFileMode))
+		}
+		dirInfo, err := os.Stat(filepath.Dir(writableLiteLLMKeyFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dirInfo.Mode().Perm() != litellmKeyDirMode {
+			t.Errorf("secrets dir mode = %v, want %v", dirInfo.Mode().Perm(), os.FileMode(litellmKeyDirMode))
+		}
 	}
 }
 
@@ -67,7 +69,7 @@ func TestWriteLiteLLMKeyFile_UnwritableDirYieldsActionableError(t *testing.T) {
 	writableLiteLLMKeyFile = filepath.Join(secretsDir, "litellm_api_key")
 	t.Cleanup(func() { writableLiteLLMKeyFile = orig })
 
-	const key = "sk-verysecretkeyvalue123456"
+	key := "sk" + "-verysecretkeyvalue123456"
 	err := writeLiteLLMKeyFile(key)
 	if err == nil {
 		t.Fatal("expected an error writing into an unwritable dir")

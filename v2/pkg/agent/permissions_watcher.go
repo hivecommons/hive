@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -128,7 +127,7 @@ func fixPermissions(logger *slog.Logger) {
 // fixEntry checks a single file or directory and corrects ownership/mode
 // if needed.
 func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
-	stat, ok := fi.Sys().(*syscall.Stat_t)
+	uid, gid, ok := fileOwnership(fi)
 	if !ok {
 		return
 	}
@@ -136,12 +135,12 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// Fix group ownership if not in the node group — all agents share this group.
 	// Also fix root-owned files (uid 0) to the dev user.
 	needsChown := false
-	newUID := int(stat.Uid)
-	if stat.Uid == 0 {
+	newUID := int(uid)
+	if uid == 0 {
 		newUID = DevUID
 		needsChown = true
 	}
-	if stat.Gid != uint32(NodeGID) {
+	if gid != uint32(NodeGID) {
 		needsChown = true
 	}
 	if needsChown {
@@ -153,8 +152,8 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		} else {
 			logger.Warn("permissions watcher: fixed ownership",
 				"path", path,
-				"was_uid", stat.Uid,
-				"was_gid", stat.Gid,
+				"was_uid", uid,
+				"was_gid", gid,
 				"new_uid", newUID,
 				"new_gid", NodeGID,
 			)
@@ -164,7 +163,7 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// Only fix permissions on files we own or just chowned.
 	// Skipping files owned by other users avoids "operation not permitted"
 	// spam when agents create files as their own users.
-	if newUID != DevUID && stat.Uid != uint32(DevUID) {
+	if newUID != DevUID && uid != uint32(DevUID) {
 		return
 	}
 

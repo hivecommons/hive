@@ -41,16 +41,16 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 type ContributorConnection struct {
-	ws           *websocket.Conn
-	profile      *ContributorProfile
-	cliBackend   string
-	model        string
-	role         string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
-	connectedAt  time.Time
-	currentTask  *WSTaskAssign
-	lastPong     time.Time
-	tmuxOutput   []string
-	mu           sync.Mutex
+	ws          *websocket.Conn
+	profile     *ContributorProfile
+	cliBackend  string
+	model       string
+	role        string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	connectedAt time.Time
+	currentTask *WSTaskAssign
+	lastPong    time.Time
+	tmuxOutput  []string
+	mu          sync.Mutex
 }
 
 type WSMessage struct {
@@ -105,12 +105,12 @@ type ActivityEntry struct {
 }
 
 type ContributeWSHub struct {
-	connections map[string]*ContributorConnection
-	mu          sync.RWMutex
-	logger      *slog.Logger
-	seq         int
-	activityMu  sync.RWMutex
-	activity    []ActivityEntry
+	connections    map[string]*ContributorConnection
+	mu             sync.RWMutex
+	logger         *slog.Logger
+	seq            int
+	activityMu     sync.RWMutex
+	activity       []ActivityEntry
 	server         *Server
 	completedTasks map[string]time.Time
 	completedMu    sync.Mutex
@@ -120,6 +120,9 @@ type ContributeWSHub struct {
 const completedTaskCooldownHours = 168
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	hub := &ContributeWSHub{
 		connections:    make(map[string]*ContributorConnection),
 		completedTasks: make(map[string]time.Time),
@@ -210,9 +213,13 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
 	data, err := os.ReadFile(completedTasksFile)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	var saved map[string]string
-	if json.Unmarshal(data, &saved) != nil { return }
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
 	for k, v := range saved {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			if time.Since(t) < completedTaskCooldownHours*time.Hour {
@@ -226,7 +233,9 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 func (h *ContributeWSHub) saveCompletedTasks() {
 	h.completedMu.Lock()
 	saved := make(map[string]string, len(h.completedTasks))
-	for k, t := range h.completedTasks { saved[k] = t.Format(time.RFC3339) }
+	for k, t := range h.completedTasks {
+		saved[k] = t.Format(time.RFC3339)
+	}
 	h.completedMu.Unlock()
 	data, err := json.Marshal(saved)
 	if err != nil {
@@ -918,4 +927,3 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 func sendJSON(conn *websocket.Conn, msg WSMessage) error {
 	return conn.WriteJSON(msg)
 }
-

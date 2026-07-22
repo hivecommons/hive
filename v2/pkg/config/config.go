@@ -43,6 +43,12 @@ type Config struct {
 	Variables     VariablesConfig        `yaml:"variables,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+
+	// persistenceProvenance is immutable after Load returns. It records which
+	// runtime scalars came from environment templates or dashboard-token
+	// overrides so persistence can restore only proven sources, never values
+	// guessed by equality.
+	persistenceProvenance []persistenceScalarProvenance `yaml:"-" json:"-"`
 }
 
 // VariablesConfig declares operator-defined ${VAR} substitutions and the trust
@@ -627,8 +633,8 @@ func resolveKeyFromFileThenEnv(file, env string) string {
 
 // Discovery-auth defaults for the self-hosted inference backends. Like
 // LiteLLM, hive.yaml stores only the env var NAME and/or key FILE PATH —
-// never the key value itself (Config.Save() writes the expanded config
-// back to disk, so a key value in YAML would be persisted in plaintext).
+// never the key value itself. Config.Save() preserves load-proven env
+// templates, while an explicit key value in YAML remains plaintext.
 const (
 	// DefaultVLLMAPIKeyEnv is the env var consulted for the vLLM model
 	// discovery API key when governor.vllm.api_key_env is not set.
@@ -682,8 +688,8 @@ type LoggingConfig struct {
 
 // LiteLLM key/endpoint resolution defaults. hive.yaml stores only the env
 // var NAME and/or key FILE PATH — never the key value itself. Config.Save()
-// writes the expanded config back to disk, so a key value stored in YAML
-// would be baked into the file in plaintext.
+// preserves load-proven env templates; an explicit key value in YAML remains
+// plaintext and would be written back as such.
 const (
 	// DefaultLiteLLMAPIKeyEnv is the env var consulted for the LiteLLM API
 	// key when api_key_env is not set in hive.yaml.
@@ -1099,6 +1105,214 @@ type DataConfig struct {
 	AgentsDir          string `yaml:"agents_dir"`
 }
 
+var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+type yamlPathSegment struct {
+	key        string
+	index      int
+	sequence   bool
+	mappingKey bool
+}
+
+type yamlScalarSnapshot struct {
+	tag   string
+	value string
+	style yaml.Style
+}
+
+type persistenceScalarProvenance struct {
+	path        []yamlPathSegment
+	loaded      yamlScalarSnapshot
+	loadedSet   bool
+	replacement yamlScalarSnapshot
+}
+
+type yamlNodePair struct {
+	raw      *yaml.Node
+	expanded *yaml.Node
+}
+
+func collectPersistenceProvenance(raw, expanded []byte) ([]persistenceScalarProvenance, error) {
+	var rawDocument, expandedDocument yaml.Node
+	if err := yaml.Unmarshal(raw, &rawDocument); err != nil {
+		return nil, fmt.Errorf("parsing unexpanded config for persistence provenance: %w", err)
+	}
+	if err := yaml.Unmarshal(expanded, &expandedDocument); err != nil {
+		return nil, fmt.Errorf("parsing expanded config for persistence provenance: %w", err)
+	}
+	var provenance []persistenceScalarProvenance
+	if err := collectPersistenceNodeProvenance(&rawDocument, &expandedDocument, nil, &provenance, make(map[yamlNodePair]bool)); err != nil {
+		return nil, err
+	}
+	return provenance, nil
+}
+
+func collectPersistenceNodeProvenance(raw, expanded *yaml.Node, path []yamlPathSegment, provenance *[]persistenceScalarProvenance, visiting map[yamlNodePair]bool) error {
+	if raw == nil || expanded == nil {
+		return fmt.Errorf("config structure changed while expanding environment references")
+	}
+	pair := yamlNodePair{raw: raw, expanded: expanded}
+	if visiting[pair] {
+		return fmt.Errorf("config YAML alias cycle cannot be persisted safely")
+	}
+	visiting[pair] = true
+	defer delete(visiting, pair)
+	if raw.Kind == yaml.AliasNode || expanded.Kind == yaml.AliasNode {
+		if raw.Kind != expanded.Kind || raw.Alias == nil || expanded.Alias == nil {
+			return fmt.Errorf("config alias structure changed while expanding environment references")
+		}
+		return collectPersistenceNodeProvenance(raw.Alias, expanded.Alias, path, provenance, visiting)
+	}
+	if raw.Kind != expanded.Kind {
+		// Environment expansion may legitimately change a scalar's YAML type
+		// (for example ${PORT} to an integer), but it must never reshape the
+		// surrounding document.
+		if raw.Kind != yaml.ScalarNode || expanded.Kind != yaml.ScalarNode {
+			return fmt.Errorf("config structure changed while expanding environment references")
+		}
+	}
+
+	switch raw.Kind {
+	case yaml.DocumentNode:
+		if len(raw.Content) != 1 || len(expanded.Content) != 1 {
+			return fmt.Errorf("config document changed while expanding environment references")
+		}
+		return collectPersistenceNodeProvenance(raw.Content[0], expanded.Content[0], path, provenance, visiting)
+	case yaml.MappingNode:
+		if len(raw.Content) != len(expanded.Content) || len(raw.Content)%2 != 0 {
+			return fmt.Errorf("config mapping changed while expanding environment references")
+		}
+		for index := 0; index < len(raw.Content); index += 2 {
+			rawKey, rawValue := raw.Content[index], raw.Content[index+1]
+			expandedKey, expandedValue := expanded.Content[index], expanded.Content[index+1]
+			if rawKey.Kind != yaml.ScalarNode || expandedKey.Kind != yaml.ScalarNode {
+				return fmt.Errorf("config contains a non-scalar mapping key")
+			}
+			if rawKey.Value == "<<" || expandedKey.Value == "<<" || rawKey.Tag == "!!merge" || expandedKey.Tag == "!!merge" {
+				if envVarPattern.MatchString(rawKey.Value) || yamlNodeContainsEnvironmentReference(rawValue, make(map[*yaml.Node]bool)) {
+					return fmt.Errorf("config YAML merge key or source contains an environment reference that cannot be persisted safely")
+				}
+			}
+			valuePath := appendYAMLPath(path, yamlPathSegment{key: expandedKey.Value})
+			if envVarPattern.MatchString(rawKey.Value) {
+				keyPath := appendYAMLPath(path, yamlPathSegment{key: expandedKey.Value, mappingKey: true})
+				*provenance = append(*provenance, persistenceScalarProvenance{
+					path:        keyPath,
+					replacement: snapshotYAMLScalar(rawKey),
+				})
+			}
+			if err := collectPersistenceNodeProvenance(rawValue, expandedValue, valuePath, provenance, visiting); err != nil {
+				return err
+			}
+		}
+	case yaml.SequenceNode:
+		if len(raw.Content) != len(expanded.Content) {
+			return fmt.Errorf("config sequence changed while expanding environment references")
+		}
+		for index := range raw.Content {
+			itemPath := appendYAMLPath(path, yamlPathSegment{index: index, sequence: true})
+			if err := collectPersistenceNodeProvenance(raw.Content[index], expanded.Content[index], itemPath, provenance, visiting); err != nil {
+				return err
+			}
+		}
+	case yaml.ScalarNode:
+		if expanded.Kind != yaml.ScalarNode {
+			return fmt.Errorf("config scalar changed structure while expanding environment references")
+		}
+		if envVarPattern.MatchString(raw.Value) {
+			*provenance = append(*provenance, persistenceScalarProvenance{
+				path:        appendYAMLPath(nil, path...),
+				replacement: snapshotYAMLScalar(raw),
+			})
+		}
+	}
+	return nil
+}
+
+func yamlNodeContainsEnvironmentReference(node *yaml.Node, visited map[*yaml.Node]bool) bool {
+	if node == nil || visited[node] {
+		return false
+	}
+	visited[node] = true
+	if node.Kind == yaml.ScalarNode && envVarPattern.MatchString(node.Value) {
+		return true
+	}
+	if node.Kind == yaml.AliasNode && yamlNodeContainsEnvironmentReference(node.Alias, visited) {
+		return true
+	}
+	for _, child := range node.Content {
+		if yamlNodeContainsEnvironmentReference(child, visited) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendYAMLPath(path []yamlPathSegment, segments ...yamlPathSegment) []yamlPathSegment {
+	result := make([]yamlPathSegment, len(path), len(path)+len(segments))
+	copy(result, path)
+	return append(result, segments...)
+}
+
+func snapshotYAMLScalar(node *yaml.Node) yamlScalarSnapshot {
+	return yamlScalarSnapshot{tag: node.Tag, value: node.Value, style: node.Style}
+}
+
+func sameYAMLPath(left, right []yamlPathSegment) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func locateYAMLScalar(document *yaml.Node, path []yamlPathSegment) *yaml.Node {
+	node := document
+	if node != nil && node.Kind == yaml.DocumentNode {
+		if len(node.Content) != 1 {
+			return nil
+		}
+		node = node.Content[0]
+	}
+	for _, segment := range path {
+		if segment.sequence {
+			if node == nil || node.Kind != yaml.SequenceNode || segment.index < 0 || segment.index >= len(node.Content) {
+				return nil
+			}
+			node = node.Content[segment.index]
+			continue
+		}
+		if node == nil || node.Kind != yaml.MappingNode {
+			return nil
+		}
+		var found *yaml.Node
+		for index := 0; index+1 < len(node.Content); index += 2 {
+			key := node.Content[index]
+			if key.Kind != yaml.ScalarNode || key.Value != segment.key {
+				continue
+			}
+			if segment.mappingKey {
+				found = key
+			} else {
+				found = node.Content[index+1]
+			}
+			break
+		}
+		if found == nil {
+			return nil
+		}
+		node = found
+	}
+	if node == nil || node.Kind != yaml.ScalarNode {
+		return nil
+	}
+	return node
+}
+
 // Load reads hive.yaml, then applies config.env overrides if present.
 // Precedence: hive.yaml < config.env < explicit env vars (via ${} interpolation).
 func Load(path string) (*Config, error) {
@@ -1114,12 +1328,17 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 		return nil, fmt.Errorf("reading config %s: %w", path, err)
 	}
 
-	expanded := expandEnvVars(string(data))
+	expanded := []byte(expandEnvVars(string(data)))
+	provenance, err := collectPersistenceProvenance(data, expanded)
+	if err != nil {
+		return nil, err
+	}
 
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+	if err := yaml.Unmarshal(expanded, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
+	cfg.persistenceProvenance = provenance
 
 	if envPath != "-" {
 		if envPath == "" {
@@ -1151,6 +1370,9 @@ func LoadWithOverrides(path, envPath string) (*Config, error) {
 
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("validating config: %w", err)
+	}
+	if err := cfg.finalizePersistenceProvenance(); err != nil {
+		return nil, fmt.Errorf("finalizing config persistence provenance: %w", err)
 	}
 
 	return &cfg, nil
@@ -1202,6 +1424,50 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	// so honoring its resolver policy would let a compromised overlay enable
 	// script/http execution. Keep this true if overlay merging is ever expanded.
 	return cfg, nil
+}
+
+func (c *Config) finalizePersistenceProvenance() error {
+	if len(c.persistenceProvenance) == 0 {
+		return nil
+	}
+	data, err := yaml.Marshal(c)
+	if err != nil {
+		return err
+	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return err
+	}
+	finalized := make([]persistenceScalarProvenance, 0, len(c.persistenceProvenance))
+	for _, provenance := range c.persistenceProvenance {
+		node := locateYAMLScalar(&document, provenance.path)
+		if node == nil {
+			continue
+		}
+		provenance.loaded = snapshotYAMLScalar(node)
+		provenance.loadedSet = true
+		finalized = append(finalized, provenance)
+	}
+	c.persistenceProvenance = finalized
+	return nil
+}
+
+func (c *Config) recordDashboardTokenProvenance(previous, loaded string) {
+	path := []yamlPathSegment{{key: "dashboard"}, {key: "auth_token"}}
+	for index := range c.persistenceProvenance {
+		if !sameYAMLPath(c.persistenceProvenance[index].path, path) {
+			continue
+		}
+		c.persistenceProvenance[index].loaded = yamlScalarSnapshot{tag: "!!str", value: loaded}
+		c.persistenceProvenance[index].loadedSet = true
+		return
+	}
+	c.persistenceProvenance = append(c.persistenceProvenance, persistenceScalarProvenance{
+		path:        path,
+		loaded:      yamlScalarSnapshot{tag: "!!str", value: loaded},
+		loadedSet:   true,
+		replacement: yamlScalarSnapshot{tag: "!!str", value: previous},
+	})
 }
 
 // findConfigEnv returns the path to a config.env file, or "" if none found.
@@ -1283,11 +1549,15 @@ func (c *Config) applyConfigEnv(path string) error {
 		}
 	}
 	if v, ok := env["DASHBOARD_AUTH_TOKEN"]; ok {
+		previous := c.Dashboard.AuthToken
 		c.Dashboard.AuthToken = v
+		c.recordDashboardTokenProvenance(previous, v)
 	}
 	if c.Dashboard.AuthToken == "" {
 		if v, ok := env["HIVE_DASHBOARD_TOKEN"]; ok {
+			previous := c.Dashboard.AuthToken
 			c.Dashboard.AuthToken = v
+			c.recordDashboardTokenProvenance(previous, v)
 		}
 	}
 
@@ -1314,12 +1584,16 @@ func (c *Config) applyBootstrapEnv() {
 	// the token is silently ignored and the dashboard is unauthenticated.
 	if c.Dashboard.AuthToken == "" {
 		if v := os.Getenv("DASHBOARD_AUTH_TOKEN"); v != "" {
+			previous := c.Dashboard.AuthToken
 			c.Dashboard.AuthToken = v
+			c.recordDashboardTokenProvenance(previous, v)
 		}
 	}
 	if c.Dashboard.AuthToken == "" {
 		if v := os.Getenv("HIVE_DASHBOARD_TOKEN"); v != "" {
+			previous := c.Dashboard.AuthToken
 			c.Dashboard.AuthToken = v
+			c.recordDashboardTokenProvenance(previous, v)
 		}
 	}
 	// K8s-provisioned spokes receive their per-hive authorized GitHub users as a
@@ -2027,17 +2301,31 @@ func (c *Config) ReconcilePausedAndSave(livePaused map[string]bool) error {
 
 // saveLocked performs the actual marshal-and-write. Callers MUST hold saveMu.
 func (c *Config) saveLocked() error {
+	data, err := c.persistencePayload()
+	if err != nil {
+		return err
+	}
+	return c.savePersistenceBytes(data)
+}
+
+func (c *Config) persistencePayload() ([]byte, error) {
 	if c.SourcePath == "" {
-		return fmt.Errorf("config has no source path")
+		return nil, fmt.Errorf("config has no source path")
 	}
 	if err := c.validateSaveGuard(); err != nil {
-		return fmt.Errorf("refusing to save invalid config: %w", err)
+		return nil, fmt.Errorf("refusing to save invalid config: %w", err)
 	}
-	data, err := yaml.Marshal(c)
+	data, err := c.persistenceBytes()
 	if err != nil {
-		return fmt.Errorf("marshaling config: %w", err)
+		return nil, fmt.Errorf("marshaling config: %w", err)
 	}
+	return data, nil
+}
 
+// savePersistenceBytes writes one already-frozen payload to every durable
+// config location. It must never marshal c: ProgrammaticSave binds watcher
+// suppression to this exact byte slice before entering the write boundary.
+func (c *Config) savePersistenceBytes(data []byte) error {
 	// Open the existing file (preserving its inode) rather than creating a
 	// temp file and renaming. Rename breaks Docker bind mounts because it
 	// replaces the inode — the host file is never updated, so acmm_level
@@ -2067,21 +2355,20 @@ func (c *Config) saveLocked() error {
 	// it exists for disaster recovery (e.g. ConfigMap deleted in K8s, or
 	// Watchtower wiping a bind mount in Docker). The entrypoint determines
 	// which source is authoritative based on the runtime environment.
-	backupPath := "/data/hive.yaml.bak"
-	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+	if err := os.WriteFile(backupFile, data, 0o644); err != nil {
 		// Common cause: init container created .bak as root, runtime user can't overwrite.
 		// Remove and retry so runtime state is not silently lost.
-		os.Remove(backupPath)
-		if retryErr := os.WriteFile(backupPath, data, 0o644); retryErr != nil {
-			log.Printf("[config] warning: failed to write PVC backup to %s (even after remove): %v", backupPath, retryErr)
+		os.Remove(backupFile)
+		if retryErr := os.WriteFile(backupFile, data, 0o644); retryErr != nil {
+			log.Printf("[config] warning: failed to write PVC backup to %s (even after remove): %v", backupFile, retryErr)
 		} else {
-			log.Printf("[config] PVC backup written to %s (recovered from permission error)", backupPath)
+			log.Printf("[config] PVC backup written to %s (recovered from permission error)", backupFile)
 		}
 	} else {
-		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupPath)
+		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupFile)
 	}
 
-	c.saveDashboardOverlay()
+	c.saveDashboardOverlay(data)
 	return nil
 }
 
@@ -2098,6 +2385,11 @@ func (c *Config) saveLocked() error {
 // never changes at runtime in production.
 var DashboardOverlayFile = "/data/hive.yaml.dashboard"
 
+// backupFile is a package variable so tests can verify the exact bytes written
+// to the recovery copy without touching the process-wide /data directory.
+// Production code never changes it.
+var backupFile = "/data/hive.yaml.bak"
+
 // IsKubernetesPod reports whether the process is running inside a
 // Kubernetes pod (mirrors the entrypoint's IS_KUBERNETES detection).
 func IsKubernetesPod() bool {
@@ -2111,16 +2403,11 @@ func IsKubernetesPod() bool {
 // saveDashboardOverlay writes the secret-free PVC overlay in Kubernetes
 // mode. Failures are logged, never fatal: the primary save already
 // succeeded, the overlay only affects persistence across pod restarts.
-func (c *Config) saveDashboardOverlay() {
+func (c *Config) saveDashboardOverlay(data []byte) {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: /data/hive.yaml.bak is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
-		return
-	}
-	data, err := c.dashboardOverlayBytes()
-	if err != nil {
-		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
 		return
 	}
 	if err := os.WriteFile(DashboardOverlayFile, data, 0o644); err != nil {
@@ -2130,25 +2417,43 @@ func (c *Config) saveDashboardOverlay() {
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
 }
 
-// dashboardOverlayBytes marshals the config with env-derived secret VALUES
-// collapsed back to their env-var forms, so the PVC overlay stays
-// secret-free. Load() re-expands ${VAR} references and applyBootstrapEnv
-// re-fills the dashboard auth token from the pod env, so nothing is lost.
-func (c *Config) dashboardOverlayBytes() ([]byte, error) {
-	// Shallow copy: top-level fields are struct values, so mutating the
-	// copy's GitHub/Dashboard sections leaves the live config untouched
-	// (the shared Agents map is not modified).
-	cp := *c
-	if tok := os.Getenv("HIVE_GITHUB_TOKEN"); tok != "" && cp.GitHub.Token == tok {
-		cp.GitHub.Token = "${HIVE_GITHUB_TOKEN}"
+// persistenceBytes restores only load-proven environment templates whose
+// expanded values remain unchanged. Literal values are never inferred from
+// process environment equality, and a runtime mutation away from its loaded
+// value is persisted explicitly. The live Config is never modified.
+func (c *Config) persistenceBytes() ([]byte, error) {
+	data, err := yaml.Marshal(c)
+	if err != nil || len(c.persistenceProvenance) == 0 {
+		return data, err
 	}
-	for _, env := range []string{"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN"} {
-		if v := os.Getenv(env); v != "" && cp.Dashboard.AuthToken == v {
-			cp.Dashboard.AuthToken = ""
-			break
+
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+	type pendingRestoration struct {
+		node        *yaml.Node
+		replacement yamlScalarSnapshot
+	}
+	restorations := make([]pendingRestoration, 0, len(c.persistenceProvenance))
+	for _, provenance := range c.persistenceProvenance {
+		if !provenance.loadedSet {
+			continue
 		}
+		node := locateYAMLScalar(&document, provenance.path)
+		if node == nil || node.Tag != provenance.loaded.tag || node.Value != provenance.loaded.value {
+			continue
+		}
+		restorations = append(restorations, pendingRestoration{node: node, replacement: provenance.replacement})
 	}
-	return yaml.Marshal(&cp)
+	// Locate every node before changing mapping keys so key-template
+	// restoration cannot hide a sibling value from the path resolver.
+	for _, restoration := range restorations {
+		restoration.node.Tag = restoration.replacement.tag
+		restoration.node.Value = restoration.replacement.value
+		restoration.node.Style = restoration.replacement.style
+	}
+	return yaml.Marshal(&document)
 }
 
 // WildcardMatch checks if text matches a pattern supporting:

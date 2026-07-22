@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOCKERFILE="$(cd "$(dirname "$0")/.." && pwd)/Dockerfile"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ATTRIBUTES="$REPO_ROOT/.gitattributes"
+
+grep -Fq 'bash bubblewrap curl' "$DOCKERFILE"
+grep -Fq 'curl procps bzip2' "$DOCKERFILE"
+grep -Fq 'test -x /usr/bin/ps' "$DOCKERFILE"
+grep -Eq '^ARG CODEX_VERSION=[0-9]+\.[0-9]+\.[0-9]+$' "$DOCKERFILE"
+grep -Fq 'npm install -g @openai/codex@${CODEX_VERSION}' "$DOCKERFILE"
+grep -Fq 'test -f /opt/hive/codex/bin/codex' "$DOCKERFILE"
+grep -Fq 'chmod 0555 /opt/hive/codex/bin/codex' "$DOCKERFILE"
+grep -Fq 'ENV PATH="/opt/hive/codex/bin:${PATH}"' "$DOCKERFILE"
+grep -Fq 'find /opt/hive/dashboard /tmp/hive/bin -type f -name '\''*.sh'\'' -print' "$DOCKERFILE"
+grep -Fq 'runtime_shebang_files=' "$DOCKERFILE"
+grep -Fq '/tmp/hive/bin/nous-sync.py /tmp/hive/bin/nous-hive-gate.py' "$DOCKERFILE"
+grep -Fq '/opt/hive/dashboard/agent-activity.py /opt/hive/dashboard/build-snapshot.mjs' "$DOCKERFILE"
+grep -Fq 'runtime_text_files="$runtime_shebang_files /usr/local/etc/hive/backends.conf"' "$DOCKERFILE"
+grep -Fq "sed -i 's/\\r\$//' \"\$runtime_file\"" "$DOCKERFILE"
+grep -Fq 'test "$(head -c 2 "$script")" = '\''#!'\''' "$DOCKERFILE"
+grep -Fq 'chmod 0555 $runtime_shebang_files' "$DOCKERFILE"
+grep -Fq 'carriage return remains in runtime text file' "$DOCKERFILE"
+grep -Fqx '*.sh text eol=lf' "$ATTRIBUTES"
+grep -Fqx '*.py text eol=lf' "$ATTRIBUTES"
+grep -Fqx '*.mjs text eol=lf' "$ATTRIBUTES"
+grep -Fqx 'config/backends.conf text eol=lf' "$ATTRIBUTES"
+
+echo "Dockerfile contains the contained Visual Hive runtime and LF text prerequisites."

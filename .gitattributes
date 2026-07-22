@@ -1,0 +1,5 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.mjs text eol=lf
+config/backends.conf text eol=lf
+v2/pkg/visualhive/testdata/v3-unicode/** -text

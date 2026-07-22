@@ -1,11 +1,17 @@
 package dashboard
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,15 +19,16 @@ import (
 )
 
 const (
-	auditLogPath       = "/data/audit.jsonl"
-	auditMaxSizeMB     = 5
-	auditMaxBackups    = 3
-	auditMaxAgeDays    = 90
-	auditMaxEntries    = 200
-	auditRingCap       = 500
+	auditLogPath    = "/data/audit.jsonl"
+	auditMaxSizeMB  = 5
+	auditMaxBackups = 3
+	auditMaxAgeDays = 90
+	auditMaxEntries = 200
+	auditRingCap    = 500
 )
 
 type AuditEntry struct {
+	ID        string `json:"id,omitempty"`
 	Timestamp string `json:"ts"`
 	User      string `json:"user"`
 	Action    string `json:"action"`
@@ -30,14 +37,16 @@ type AuditEntry struct {
 }
 
 type AuditLog struct {
-	mu     sync.Mutex
-	writer *lumberjack.Logger
-	ring   []AuditEntry
+	mu      sync.Mutex
+	writer  *lumberjack.Logger
+	ring    []AuditEntry
+	seenIDs map[string]struct{}
 }
 
 func newAuditLog() *AuditLog {
 	a := &AuditLog{
-		ring: make([]AuditEntry, 0, auditRingCap),
+		ring:    make([]AuditEntry, 0, auditRingCap),
+		seenIDs: make(map[string]struct{}),
 	}
 
 	dir := "/data"
@@ -56,19 +65,11 @@ func newAuditLog() *AuditLog {
 }
 
 func (a *AuditLog) loadFromDisk() {
-	data, err := os.ReadFile(auditLogPath)
-	if err != nil {
-		return
-	}
-	lines := bytes.Split(data, []byte("\n"))
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		var entry AuditEntry
-		if json.Unmarshal(line, &entry) == nil && entry.Timestamp != "" {
-			a.ring = append(a.ring, entry)
+	_ = a.loadAuditFile(auditLogPath, true)
+	matches, _ := filepath.Glob(filepath.Join(filepath.Dir(auditLogPath), "audit*.jsonl*"))
+	for _, path := range matches {
+		if filepath.Clean(path) != filepath.Clean(auditLogPath) {
+			_ = a.loadAuditFile(path, false)
 		}
 	}
 	if len(a.ring) > auditRingCap {
@@ -76,11 +77,62 @@ func (a *AuditLog) loadFromDisk() {
 	}
 }
 
+func (a *AuditLog) loadAuditFile(path string, includeInRing bool) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	var reader io.Reader = file
+	if strings.HasSuffix(strings.ToLower(path), ".gz") {
+		compressed, err := gzip.NewReader(file)
+		if err != nil {
+			return err
+		}
+		defer compressed.Close()
+		reader = compressed
+	}
+	if a.seenIDs == nil {
+		a.seenIDs = make(map[string]struct{})
+	}
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64<<10), 1<<20)
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		var entry AuditEntry
+		if json.Unmarshal(line, &entry) == nil && entry.Timestamp != "" {
+			if entry.ID != "" {
+				a.seenIDs[entry.ID] = struct{}{}
+			}
+			if includeInRing {
+				a.ring = append(a.ring, entry)
+			}
+		}
+	}
+	return scanner.Err()
+}
+
 func (a *AuditLog) Log(user, action, detail, agent string) {
+	_, _ = a.log("", user, action, detail, agent)
+}
+
+// LogOnce records an event with a stable caller-owned identity. The identity
+// index spans the retained audit files rather than the smaller display ring;
+// durable workflow state acknowledges the event after this write succeeds.
+func (a *AuditLog) LogOnce(id, user, action, detail, agent string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, errors.New("audit event identity is required")
+	}
+	return a.log(id, user, action, detail, agent)
+}
+
+func (a *AuditLog) log(id, user, action, detail, agent string) (bool, error) {
 	if user == "" {
 		user = "system"
 	}
 	entry := AuditEntry{
+		ID:        id,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		User:      user,
 		Action:    action,
@@ -90,17 +142,37 @@ func (a *AuditLog) Log(user, action, detail, agent string) {
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.seenIDs == nil {
+		a.seenIDs = make(map[string]struct{})
+	}
+	if id != "" {
+		if _, exists := a.seenIDs[id]; exists {
+			return false, nil
+		}
+		if a.writer == nil {
+			return false, errors.New("durable audit writer is unavailable")
+		}
+	}
+
+	if a.writer != nil {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return false, err
+		}
+		if _, err := a.writer.Write(append(data, '\n')); err != nil {
+			return false, err
+		}
+	}
 
 	if len(a.ring) >= auditRingCap {
 		a.ring = a.ring[1:]
 	}
 	a.ring = append(a.ring, entry)
-
-	if a.writer != nil {
-		if data, err := json.Marshal(entry); err == nil {
-			a.writer.Write(append(data, '\n'))
-		}
+	if id != "" {
+		a.seenIDs[id] = struct{}{}
 	}
+
+	return true, nil
 }
 
 func (a *AuditLog) Recent(n int) []AuditEntry {
@@ -145,6 +217,12 @@ func (s *Server) auditFromRequest(r *http.Request, action, detail, agent string)
 // config watcher, startup, login detector).
 func (s *Server) AuditLog(user, action, detail, agent string) {
 	s.audit.Log(user, action, detail, agent)
+}
+
+// AuditLogOnce records a stable workflow event through the normal dashboard
+// audit sink, returning whether this call appended the event.
+func (s *Server) AuditLogOnce(id, user, action, detail, agent string) (bool, error) {
+	return s.audit.LogOnce(id, user, action, detail, agent)
 }
 
 // GetAudit returns the underlying AuditLog for use by background goroutines.

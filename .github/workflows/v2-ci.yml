@@ -3,10 +3,26 @@ name: v2 CI
 on:
   push:
     branches: [v2]
-    paths: ['v2/**']
+    paths:
+      - 'v2/**'
+      - 'bin/**'
+      - 'config/backends.conf'
+      - 'dashboard/**'
+      - 'examples/**'
+      - '.gitattributes'
+      - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/integrated-release.yml'
   pull_request:
     branches: [v2]
-    paths: ['v2/**']
+    paths:
+      - 'v2/**'
+      - 'bin/**'
+      - 'config/backends.conf'
+      - 'dashboard/**'
+      - 'examples/**'
+      - '.gitattributes'
+      - '.github/workflows/v2-ci.yml'
+      - '.github/workflows/integrated-release.yml'
 
 permissions:
   contents: read
@@ -14,6 +30,7 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: v2
@@ -22,14 +39,32 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache-dependency-path: v2/go.sum
 
+      - name: Validate production workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" | sha256sum --check --strict -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" ../.github/workflows/v2-ci.yml ../.github/workflows/integrated-release.yml
+          HIVE_ACTIONLINT="$RUNNER_TEMP/actionlint" go test ./pkg/integrated -run '^TestGeneratedHostedControllerWorkflowActionlint$' -count=1 -timeout 2m
+
       - name: Build
-        run: go build ./cmd/hive/
+        run: go build ./...
+
+      - name: Test
+        run: go test ./... -count=1 -timeout 25m
 
       - name: Vet
         run: go vet ./...
+
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
       - uses: actions/setup-node@v4
         with:
@@ -86,11 +121,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate Docker runtime prerequisites
+        run: bash v2/deploy/test_dockerfile_visual_runtime.sh
+
       - name: Build Docker image
         run: docker build -f v2/Dockerfile -t hive:test .
 
       - name: Smoke test
-        run: docker run --rm hive:test --help || true
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="hive-v2-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() {
+            docker rm -f -v "$name" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          timeout --signal=TERM --kill-after=10s 60s \
+            docker run --rm --name "$name" --network none hive:test --version
 
   nightly-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/v2'

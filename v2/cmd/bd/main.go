@@ -117,12 +117,24 @@ Environment:
 // openStore creates a Store rooted at the resolved directory.
 func openStore() *beads.Store {
 	dir := resolveDir()
-	store, err := beads.NewStore(dir)
+	opener := beads.NewStore
+	if os.Getenv("HIVE_SHARED_ROLE_BEADS") == "1" && isManagedRoleStore(dir) {
+		opener = beads.NewSharedStore
+	}
+	store, err := opener(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bd: failed to open store at %s: %v\n", dir, err)
 		os.Exit(1)
 	}
 	return store
+}
+
+func isManagedRoleStore(dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean("/data/beads"), filepath.Clean(dir))
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	return !strings.ContainsRune(rel, filepath.Separator)
 }
 
 // ---------- list ----------

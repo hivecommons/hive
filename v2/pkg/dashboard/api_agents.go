@@ -68,12 +68,17 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, exists := s.deps.Config.Agents[body.Name]; exists {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if _, exists := current.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
 	}
 
-	agentsDir := s.deps.Config.Data.AgentsDir
+	agentsDir := current.Data.AgentsDir
 	if agentsDir == "" {
 		jsonError(w, "agents_dir not configured", http.StatusInternalServerError)
 		return
@@ -98,11 +103,19 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.deps.Config.Agents[body.Name] = body.Agent
-	s.deps.Config.ApplyAgentDefaults(body.Name)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[body.Name]; exists {
+			return fmt.Errorf("agent %s already exists", body.Name)
+		}
+		candidate.Agents[body.Name] = body.Agent
+		candidate.ApplyAgentDefaults(body.Name)
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to publish agent: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
-	finalCfg := s.deps.Config.Agents[body.Name]
-	s.deps.AgentMgr.AddAgent(body.Name, finalCfg)
+	finalCfg := s.configSnapshot().Agents[body.Name]
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()
@@ -113,7 +126,12 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	agentCfg, ok := s.deps.Config.Agents[name]
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	agentCfg, ok := current.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -124,7 +142,7 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentsDir := s.deps.Config.Data.AgentsDir
+	agentsDir := current.Data.AgentsDir
 	if agentsDir != "" {
 		if err := config.RemoveAgentFile(agentsDir, name); err != nil {
 			s.logger.Error("failed to remove agent file", "agent", name, "error", err)
@@ -133,8 +151,16 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.deps.AgentMgr.RemoveAgent(name)
-	delete(s.deps.Config.Agents, name)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		delete(candidate.Agents, name)
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to publish agent deletion: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()
@@ -278,12 +304,17 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, exists := s.deps.Config.Agents[name]; exists {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if _, exists := current.Agents[name]; exists {
 		jsonError(w, "agent already exists: "+name, http.StatusConflict)
 		return
 	}
 
-	agentsDir := s.deps.Config.Data.AgentsDir
+	agentsDir := current.Data.AgentsDir
 	if agentsDir == "" {
 		jsonError(w, "agents_dir not configured", http.StatusInternalServerError)
 		return
@@ -335,11 +366,17 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.deps.Config.Agents[name] = agentCfg
-	s.deps.Config.ApplyAgentDefaults(name)
-
-	finalCfg := s.deps.Config.Agents[name]
-	s.deps.AgentMgr.AddAgent(name, finalCfg)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; exists {
+			return fmt.Errorf("agent %s already exists", name)
+		}
+		candidate.Agents[name] = agentCfg
+		candidate.ApplyAgentDefaults(name)
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to publish imported agent: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()

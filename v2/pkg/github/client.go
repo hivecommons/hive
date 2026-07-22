@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/checkpoint"
 )
 
 type Client struct {
@@ -39,6 +41,21 @@ func (c *Client) AppAuth() *AppAuth {
 		return nil
 	}
 	return c.appAuth
+}
+
+func (c *Client) AuthenticatedLogin(ctx context.Context) (string, error) {
+	if c == nil || c.client == nil {
+		return "", fmt.Errorf("GitHub client is required")
+	}
+	user, _, err := c.client.Users.Get(ctx, "")
+	if err != nil {
+		return "", fmt.Errorf("read authenticated GitHub identity: %w", err)
+	}
+	login := strings.TrimSpace(user.GetLogin())
+	if login == "" {
+		return "", fmt.Errorf("authenticated GitHub identity has no login")
+	}
+	return login, nil
 }
 
 type Issue struct {
@@ -72,12 +89,12 @@ type PullRequest struct {
 }
 
 type ActionableResult struct {
-	GeneratedAt   time.Time          `json:"generated_at"`
-	Issues        IssueResult        `json:"issues"`
-	PRs           PRResult           `json:"prs"`
-	Hold          HoldResult         `json:"hold"`
-	Clusters      []IssueCluster     `json:"clusters,omitempty"`
-	TotalByRepo   map[string]RepoCounts `json:"total_by_repo,omitempty"`
+	GeneratedAt time.Time             `json:"generated_at"`
+	Issues      IssueResult           `json:"issues"`
+	PRs         PRResult              `json:"prs"`
+	Hold        HoldResult            `json:"hold"`
+	Clusters    []IssueCluster        `json:"clusters,omitempty"`
+	TotalByRepo map[string]RepoCounts `json:"total_by_repo,omitempty"`
 }
 
 type RepoCounts struct {
@@ -97,10 +114,10 @@ type PRResult struct {
 }
 
 type HoldResult struct {
-	Issues int         `json:"issues"`
-	PRs    int         `json:"prs"`
-	Total  int         `json:"total"`
-	Items  []HoldItem  `json:"items"`
+	Issues int        `json:"issues"`
+	PRs    int        `json:"prs"`
+	Total  int        `json:"total"`
+	Items  []HoldItem `json:"items"`
 }
 
 type HoldItem struct {
@@ -126,7 +143,8 @@ const slaThresholdMinutes = 30
 // from the default (https://api.github.com), the client's BaseURL and
 // UploadURL are overridden for GitHub Enterprise compatibility.
 func NewClient(token string, org string, repos []string, logger *slog.Logger, apiURL string) *Client {
-	client := gh.NewClient(nil).WithAuthToken(token)
+	httpClient := &http.Client{Transport: checkpoint.Transport{Base: http.DefaultTransport}}
+	client := gh.NewClient(httpClient).WithAuthToken(token)
 	setBaseURL(client, apiURL)
 	return &Client{
 		client: client,

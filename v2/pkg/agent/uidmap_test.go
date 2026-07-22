@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -98,6 +99,18 @@ func TestSaveAndLoad(t *testing.T) {
 	if err := u.Save(path); err != nil {
 		t.Fatalf("save: %v", err)
 	}
+	if runtime.GOOS != "windows" {
+		if info, statErr := os.Stat(filepath.Dir(path)); statErr != nil {
+			t.Fatalf("stat uid-map dir: %v", statErr)
+		} else if got := info.Mode().Perm(); got != 0o755 {
+			t.Fatalf("uid-map dir mode = %o, want 755", got)
+		}
+		if info, statErr := os.Stat(path); statErr != nil {
+			t.Fatalf("stat uid-map: %v", statErr)
+		} else if got := info.Mode().Perm(); got != 0o644 {
+			t.Fatalf("uid-map mode = %o, want 644", got)
+		}
+	}
 
 	loaded, err := LoadUIDMap(path)
 	if err != nil {
@@ -115,6 +128,27 @@ func TestSaveAndLoad(t *testing.T) {
 		if got != want {
 			t.Errorf("loaded agent %s: got %d, want %d", name, got, want)
 		}
+	}
+}
+
+func TestSavePreservesExistingPrivateParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX directory mode bits")
+	}
+	dir := filepath.Join(t.TempDir(), "private")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	u := NewUIDMap()
+	if err := u.Save(filepath.Join(dir, "uid-map.json")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("existing private parent mode = %o, want 700", got)
 	}
 }
 

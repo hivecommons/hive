@@ -505,8 +505,8 @@ func TestIsHeld(t *testing.T) {
 		{[]string{"hold"}, true},
 		{[]string{"on-hold"}, true},
 		{[]string{"hold/review"}, true},
-		{[]string{"HOLD"}, true},             // case-insensitive
-		{[]string{"bug", "hold"}, true},      // mixed labels
+		{[]string{"HOLD"}, true},        // case-insensitive
+		{[]string{"bug", "hold"}, true}, // mixed labels
 		{[]string{"bug", "enhancement"}, false},
 		{[]string{}, false},
 		{nil, false},

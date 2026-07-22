@@ -23,7 +23,7 @@ func TestNewCollector(t *testing.T) {
 }
 
 func TestCollector_Summary_Initially(t *testing.T) {
-	c := NewCollector("/tmp/nonexistent-sessions", testLogger())
+	c := NewCollectorWithPersistPath(filepath.Join(t.TempDir(), "missing-sessions"), filepath.Join(t.TempDir(), "missing-summary.json"), testLogger())
 	summary := c.Summary()
 	if summary != nil {
 		t.Errorf("expected nil summary initially, got %v", summary)

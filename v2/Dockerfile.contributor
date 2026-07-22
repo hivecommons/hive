@@ -37,7 +37,7 @@ RUN curl -fsSL https://pi.dev/install.sh | sh \
   || echo "Pi install skipped"
 
 # Install Go (needed for building/testing Go projects)
-ARG GO_VERSION=1.24.4
+ARG GO_VERSION=1.25.12
 RUN ARCH=$(dpkg --print-architecture) \
   && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
     | tar -C /usr/local -xzf - \

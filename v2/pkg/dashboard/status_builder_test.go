@@ -3,6 +3,7 @@ package dashboard
 import (
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -343,19 +344,19 @@ func TestBuildAgents(t *testing.T) {
 
 	statuses := map[string]*agent.AgentProcess{
 		"scanner": {
-			Name:     "scanner",
-			Config:   config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:    agent.StateRunning,
-			LastKick: &now,
+			Name:         "scanner",
+			Config:       config.AgentConfig{Backend: "claude", Model: "sonnet"},
+			State:        agent.StateRunning,
+			LastKick:     &now,
 			OutputBuffer: buf,
 		},
 		"supervisor": {
-			Name:     "supervisor",
-			Config:   config.AgentConfig{Backend: "claude", Model: "opus"},
-			State:    agent.StatePaused,
-			Paused:   true,
-			PinnedCLI:   "claude",
-			PinnedModel: "opus",
+			Name:         "supervisor",
+			Config:       config.AgentConfig{Backend: "claude", Model: "opus"},
+			State:        agent.StatePaused,
+			Paused:       true,
+			PinnedCLI:    "claude",
+			PinnedModel:  "opus",
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -409,9 +410,9 @@ func TestBuildFrontendStatus(t *testing.T) {
 
 	statuses := map[string]*agent.AgentProcess{
 		"scanner": {
-			Name:   "scanner",
-			Config: config.AgentConfig{Backend: "claude", Model: "sonnet"},
-			State:  agent.StateRunning,
+			Name:         "scanner",
+			Config:       config.AgentConfig{Backend: "claude", Model: "sonnet"},
+			State:        agent.StateRunning,
 			OutputBuffer: agent.NewRingBuffer(10),
 		},
 	}
@@ -661,7 +662,7 @@ func TestComputeNextKick_WithDuration(t *testing.T) {
 func TestBuildTokens_NilSummary(t *testing.T) {
 	dir := t.TempDir()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	c := tokens.NewCollector(dir, logger)
+	c := tokens.NewCollectorWithPersistPath(dir, filepath.Join(dir, "token-summary.json"), logger)
 
 	// The collector's Summary() returns nil until scan runs, so this tests the nil branch
 	ft := buildTokens(c)
@@ -679,7 +680,7 @@ func TestBuildTokens_WithSessionData(t *testing.T) {
 	os.WriteFile(dir+"/session1.jsonl", []byte(sessionData), 0o644)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	c := tokens.NewCollector(dir, logger)
+	c := tokens.NewCollectorWithPersistPath(dir, filepath.Join(dir, "token-summary.json"), logger)
 
 	// Trigger a scan by calling Start with an immediate stop
 	stop := make(chan struct{})
@@ -791,7 +792,7 @@ func TestBuildBudget_WithTokenCollectorSummary(t *testing.T) {
 	cfg := config.GovernorConfig{}
 	gov := governor.New(cfg, map[string]config.AgentConfig{}, nil)
 	// No weekly limit — should use totalTokens as used but no percentage calc
-	collector := tokens.NewCollector("/nonexistent", nil)
+	collector := tokens.NewCollectorWithPersistPath("/nonexistent", filepath.Join(t.TempDir(), "token-summary.json"), nil)
 	fb := buildBudget(gov, collector)
 	// With no spend and no limit, used should be 0 or whatever the collector says
 	if fb.PctUsed != 0 {
@@ -924,5 +925,30 @@ func TestCollectSystemResources_DoesNotPanic(t *testing.T) {
 	// CPU percentage should be in [0, 100] range (not 354%)
 	if res.CpuPct < 0 || res.CpuPct > 100 {
 		t.Errorf("CpuPct = %.1f, want [0, 100]", res.CpuPct)
+	}
+}
+
+func TestCPUUsagePercent(t *testing.T) {
+	tests := []struct {
+		name      string
+		deltaUsec int64
+		elapsed   time.Duration
+		cpuCount  int
+		want      float64
+	}{
+		{name: "half of one CPU", deltaUsec: 100_000, elapsed: 200 * time.Millisecond, cpuCount: 1, want: 50},
+		{name: "half of two CPUs", deltaUsec: 200_000, elapsed: 200 * time.Millisecond, cpuCount: 2, want: 50},
+		{name: "uses measured elapsed time", deltaUsec: 201_200, elapsed: 202 * time.Millisecond, cpuCount: 1, want: 99.6},
+		{name: "bounds accounting overshoot", deltaUsec: 201_200, elapsed: 200 * time.Millisecond, cpuCount: 1, want: 100},
+		{name: "invalid CPU count", deltaUsec: 100_000, elapsed: 200 * time.Millisecond, cpuCount: 0, want: 0},
+		{name: "invalid interval", deltaUsec: 100_000, elapsed: 0, cpuCount: 1, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cpuUsagePercent(tt.deltaUsec, tt.elapsed, tt.cpuCount); got != tt.want {
+				t.Fatalf("cpuUsagePercent(%d, %s, %d) = %.1f, want %.1f", tt.deltaUsec, tt.elapsed, tt.cpuCount, got, tt.want)
+			}
+		})
 	}
 }
