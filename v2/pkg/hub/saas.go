@@ -2852,7 +2852,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			continue
 		}
 		latestSHA := getLatestSHAForBranch(branch)
-		if latestSHA == "" || currentSHA == latestSHA {
+		if latestSHA == "" || sameCommit(currentSHA, latestSHA) {
 			continue
 		}
 		hiveCluster := s.clusterForHive(&h)
@@ -2924,12 +2924,11 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		logger.Warn("SHA poll: branch decode failed", "branch", branch, "error", err)
 		return
 	}
-	const shortSHALen = 7
-	if len(branchResult.Commit.SHA) < shortSHALen {
+	if len(branchResult.Commit.SHA) < StandardSHALen {
 		logger.Warn("SHA poll: branch SHA too short", "branch", branch, "sha", branchResult.Commit.SHA)
 		return
 	}
-	candidateSHA := branchResult.Commit.SHA[:shortSHALen]
+	candidateSHA := shortSHA(branchResult.Commit.SHA)
 	// Extract only the first line of the commit message for tooltip display.
 	commitMsg := branchResult.Commit.Commit.Message
 	if idx := strings.Index(commitMsg, "\n"); idx >= 0 {

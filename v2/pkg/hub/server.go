@@ -310,6 +310,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hive_id required", http.StatusBadRequest)
 		return
 	}
+	// Normalize the reported SHA to the canonical short length up front so every
+	// downstream comparison is same-length against the hub's 7-char stored SHAs.
+	// (Spokes now build gitShort with `--short=7`; this covers any that predate
+	// that or report a longer value.)
+	payload.GitHash = shortSHA(payload.GitHash)
 	if !isValidName(payload.HiveID) {
 		http.Error(w, "invalid hive_id", http.StatusBadRequest)
 		return
@@ -402,7 +407,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
 		Health:        payload.Health,
 		Version:       sanitizeHeartbeatField(payload.Version),
-		GitHash:       sanitizeHeartbeatField(payload.GitHash),
+		GitHash:       shortSHA(sanitizeHeartbeatField(payload.GitHash)),
 		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
