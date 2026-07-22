@@ -475,10 +475,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				branchForLatest = "v2"
 			}
 			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
-			if h.Upgrading && !payload.Upgrading && (payload.GitHash == h.UpgradeTarget || (registryLatestSHA != "" && payload.GitHash == registryLatestSHA)) {
+			if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
 				// Non-upgrading heartbeat at the target SHA or at latest —
 				// upgrade completed (image may have advanced past the
-				// original target before the spoke pulled it).
+				// original target before the spoke pulled it). sameCommit
+				// tolerates short/full SHA length mismatch — a raw == left the
+				// Upgrading badge spinning forever when the spoke reported a
+				// full SHA and the target/latest was the 7-char short form.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
 			} else if h.Upgrading && !payload.Upgrading && h.UpgradeTarget == "" {
