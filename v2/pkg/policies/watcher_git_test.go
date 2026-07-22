@@ -34,7 +34,10 @@ func TestStartWithLocalGitRepo(t *testing.T) {
 	w := NewWatcher(repoDir, "master", "agents", localDir, 5*time.Minute, slog.Default())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	defer func() {
+		cancel()
+		w.Wait()
+	}()
 
 	if err := w.Start(ctx); err != nil {
 		branchOut, _ := exec.Command("git", "-C", repoDir, "branch").CombinedOutput()

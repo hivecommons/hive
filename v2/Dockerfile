@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.25.12-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /src
 
@@ -12,8 +12,9 @@ COPY v2/ .
 
 ARG GIT_HASH=unknown
 ARG GIT_BRANCH=unknown
-RUN GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || echo "unknown") && \
-    GIT_SHORT=$(git -C /repo rev-parse --short HEAD 2>/dev/null || echo "unknown") && \
+RUN DETECTED_GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || true) && \
+    if [ "$GIT_HASH" = "unknown" ] || [ -z "$GIT_HASH" ]; then GIT_HASH=${DETECTED_GIT_HASH:-unknown}; fi && \
+    GIT_SHORT=$(printf '%s' "$GIT_HASH" | cut -c1-12) && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH}" -o /hive ./cmd/hive && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd
@@ -32,7 +33,7 @@ FROM node:24-slim
 
 # --- Layer 1: system packages (rarely changes) ---
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git ca-certificates bash curl bzip2 gosu iptables inotify-tools libevent-core-2.1-7 \
+    git ca-certificates bash bubblewrap curl procps bzip2 gosu iptables inotify-tools libevent-core-2.1-7 \
     gcc libc6-dev \
  && rm -rf /var/lib/apt/lists/*
 
@@ -89,6 +90,23 @@ RUN rm -f /usr/local/lib/node_modules/@github/copilot/node_modules/@github/copil
 # --- Layer 7: Claude Code (most frequent updates) ---
 ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
+
+# --- Layer 7b: reviewed native Codex runtime for governed repair children ---
+# Hive rejects npm/npx/script wrappers at the repair boundary. Keep the npm
+# package only as the pinned distribution source, then copy its architecture-
+# specific native vendor directory to a stable path that remains usable when
+# Hive seals the exact executable for a one-shot child.
+ARG CODEX_VERSION=0.144.1
+RUN npm install -g @openai/codex@${CODEX_VERSION} \
+ && CODEX_VENDOR="$(find /usr/local/lib/node_modules/@openai/codex/node_modules -type f -path '*/vendor/*/bin/codex' -printf '%h/..\n' | head -n 1)" \
+ && test -n "$CODEX_VENDOR" \
+ && mkdir -p /opt/hive/codex \
+ && cp -a "$CODEX_VENDOR"/. /opt/hive/codex/ \
+ && test -f /opt/hive/codex/bin/codex \
+ && chmod 0555 /opt/hive/codex/bin/codex \
+ && test "$(/opt/hive/codex/bin/codex --version)" = "codex-cli ${CODEX_VERSION}" \
+ && npm cache clean --force
+ENV PATH="/opt/hive/codex/bin:${PATH}"
 
 # --- Layer 8: Goose CLI (aaif-goose/goose — supports custom providers via env vars) ---
 ARG GOOSE_VERSION=1.37.0
@@ -180,7 +198,26 @@ EXPOSE 3001 3002 7681
 VOLUME ["/data", "/secrets"]
 
 COPY v2/deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+RUN set -eu; \
+    test -x /usr/bin/ps; \
+    runtime_scripts="/usr/local/bin/entrypoint.sh /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes \
+      /usr/local/bin/gh-app-token.sh /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh \
+      /usr/local/bin/git-credential-hive.sh /usr/local/bin/gh \
+      $(find /opt/hive/dashboard /tmp/hive/bin -type f -name '*.sh' -print)"; \
+    runtime_shebang_files="$runtime_scripts /tmp/hive/bin/nous-sync.py /tmp/hive/bin/nous-hive-gate.py \
+      /opt/hive/dashboard/agent-activity.py /opt/hive/dashboard/build-snapshot.mjs"; \
+    runtime_text_files="$runtime_shebang_files /usr/local/etc/hive/backends.conf"; \
+    for runtime_file in $runtime_text_files; do \
+      sed -i 's/\r$//' "$runtime_file"; \
+      if grep -q "$(printf '\r')" "$runtime_file"; then \
+        echo "carriage return remains in runtime text file: $runtime_file" >&2; \
+        exit 1; \
+      fi; \
+    done; \
+    for script in $runtime_shebang_files; do \
+      test "$(head -c 2 "$script")" = '#!'; \
+    done; \
+    chmod 0555 $runtime_shebang_files
 
 # Pre-create /data/home/ subdirectories with correct ownership so the
 # permissions watcher doesn't have to create them at runtime.

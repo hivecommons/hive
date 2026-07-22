@@ -13,6 +13,13 @@ var tokenPattern = regexp.MustCompile(
 
 const redacted = "[REDACTED]"
 
+// Scrub removes credential-shaped values before a diagnostic crosses a
+// structured API boundary such as MCP. Callers should still keep the result
+// bounded and avoid treating arbitrary subprocess output as trusted data.
+func Scrub(value string) string {
+	return scrub(value)
+}
+
 // Handler wraps a slog.Handler and redacts GitHub token patterns from string
 // attribute values before forwarding to the inner handler.
 type Handler struct {

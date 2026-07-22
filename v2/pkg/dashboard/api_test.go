@@ -51,11 +51,11 @@ func testDeps(t *testing.T) *Dependencies {
 	_ = &refreshCalled
 	_ = &persistCalled
 	return &Dependencies{
-		Config:   cfg,
-		AgentMgr: mgr,
-		Governor: gov,
-		Logger:   logger,
-		Ctx:      context.Background(),
+		Config:      cfg,
+		AgentMgr:    mgr,
+		Governor:    gov,
+		Logger:      logger,
+		Ctx:         context.Background(),
 		RefreshFunc: func() { refreshCalled.Store(true) },
 		PersistFunc: func() { persistCalled.Store(true) },
 	}
@@ -1411,6 +1411,46 @@ func TestSanitizeString(t *testing.T) {
 			got := sanitizeString(tt.input)
 			if got != tt.want {
 				t.Errorf("sanitizeString(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDashboardMutationBoundariesPublishAtomicGovernorSnapshot(t *testing.T) {
+	boundaries := map[string]func(*Server) error{
+		"refresh": func(server *Server) error {
+			server.refreshAfterMutation()
+			return nil
+		},
+		"refresh-sync": func(server *Server) error {
+			server.refreshAndPersistSync()
+			return nil
+		},
+		"persist-only": func(server *Server) error {
+			server.persistOnly()
+			return nil
+		},
+		"save-without-source": func(server *Server) error { return server.saveConfig() },
+	}
+	for name, publish := range boundaries {
+		t.Run(name, func(t *testing.T) {
+			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+			initialGovernor := config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "1m"}}}}
+			initialAgents := map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality", Tools: &config.ToolsConfig{Rules: []config.ToolRule{{Pattern: "go test", Action: "allow"}}}}}
+			gov := governor.New(initialGovernor, initialAgents, logger)
+			cfg := &config.Config{Governor: initialGovernor, Agents: initialAgents}
+			server := &Server{deps: &Dependencies{Config: cfg, Governor: gov}}
+
+			cfg.Governor = config.GovernorConfig{Modes: map[string]config.ModeConfig{"idle": {Cadences: map[string]string{"quality": "2m"}}}}
+			cfg.Agents = map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality", Tools: &config.ToolsConfig{Rules: []config.ToolRule{{Pattern: "go test", Action: "deny"}}}}}
+			if err := publish(server); err != nil {
+				t.Fatal(err)
+			}
+			got := gov.BindAdmissionRequest(governor.WorkAdmissionRequest{Role: "quality"})
+			expectedGovernor := governor.New(cfg.Governor, cfg.EnabledAgents(), logger)
+			expected := expectedGovernor.BindAdmissionRequest(governor.WorkAdmissionRequest{Role: "quality"})
+			if got.ConfiguredCadence != "2m" || got.RoleConfigSHA256 == "" || got.RoleConfigSHA256 != expected.RoleConfigSHA256 {
+				t.Fatalf("dashboard boundary published mixed Governor generations: got=%+v expected=%+v", got, expected)
 			}
 		})
 	}

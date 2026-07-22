@@ -1,0 +1,737 @@
+name: Build integrated Hive release
+
+on:
+  workflow_dispatch:
+    inputs:
+      visual_hive_ref:
+        description: Immutable 40-character Visual Hive commit
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*-integrated.*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      security-events: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      release_version: ${{ steps.metadata.outputs.release_version }}
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+      visual_hive_ref: ${{ steps.metadata.outputs.visual_hive_ref }}
+    env:
+      NODE_VERSION: 22.23.1
+      VISUAL_HIVE_REF: ${{ inputs.visual_hive_ref || '73a99d7920e0380b9f57832a5453ef3c9c6748c1' }}
+      RELEASE_TAG: ${{ (github.event_name == 'push' && github.ref_type == 'tag' && github.ref_name) || '' }}
+      RELEASE_VERSION: ${{ (github.event_name == 'push' && github.ref_type == 'tag' && github.ref_name) || github.sha }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate immutable inputs
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REPOSITORY" == "DavidDiaz0317/hive" ]] || {
+            echo "Integrated releases are fork-only and may publish only from DavidDiaz0317/hive (got $GITHUB_REPOSITORY)." >&2
+            exit 1
+          }
+          [[ "$VISUAL_HIVE_REF" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+          if [[ -n "$RELEASE_TAG" ]]; then
+            [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-integrated\.[0-9]+$ ]] || {
+              echo "Invalid integrated release tag: $RELEASE_TAG" >&2
+              exit 1
+            }
+            [[ "$RELEASE_VERSION" == "$RELEASE_TAG" ]]
+            git rev-parse --verify --quiet "refs/tags/$RELEASE_TAG" >/dev/null || {
+              echo "Publishable releases must be triggered by an existing integrated release tag." >&2
+              exit 1
+            }
+            tag_target="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+            [[ "$tag_target" == "$GITHUB_SHA" ]] || {
+              echo "Release tag $RELEASE_TAG targets $tag_target, not $GITHUB_SHA." >&2
+              exit 1
+            }
+          else
+            [[ "$RELEASE_VERSION" =~ ^[a-f0-9]{40}$ ]]
+          fi
+          {
+            printf 'release_version=%s\n' "$RELEASE_VERSION"
+            printf 'release_tag=%s\n' "$RELEASE_TAG"
+            printf 'visual_hive_ref=%s\n' "$VISUAL_HIVE_REF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: DavidDiaz0317/visual-hive
+          ref: ${{ env.VISUAL_HIVE_REF }}
+          path: .release/visual-hive-source
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+          cache: npm
+          cache-dependency-path: .release/visual-hive-source/package-lock.json
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.25.12
+          cache-dependency-path: v2/go.sum
+      - name: Validate production workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$archive"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$archive" | sha256sum --check --strict -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" .github/workflows/integrated-release.yml .github/workflows/v2-ci.yml
+          (cd v2 && HIVE_ACTIONLINT="$RUNNER_TEMP/actionlint" go test ./pkg/integrated -run '^TestGeneratedHostedControllerWorkflowActionlint$' -count=1 -timeout 2m)
+      - name: Build immutable Visual Hive bundle
+        working-directory: .release/visual-hive-source
+        env:
+          VISUAL_HIVE_GIT_COMMIT: ${{ env.VISUAL_HIVE_REF }}
+        run: |
+          npm ci
+          npm audit --audit-level=high
+          npx --no-install playwright install --with-deps chromium
+          npm run build
+          npm run typecheck
+          npm test
+          npm run lint
+          GITHUB_SHA="$VISUAL_HIVE_REF" node scripts/build-release-bundle.mjs --output "$GITHUB_WORKSPACE/.release/visual-hive-bundle"
+          GITHUB_ACTIONS=false GITHUB_EVENT_NAME=local GITHUB_RUN_ID='' GITHUB_RUN_ATTEMPT='' VISUAL_HIVE_WORKFLOW_ARTIFACT_ID='' npm run demo:all
+
+      - name: Verify Hive source gates
+        working-directory: v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build ./...
+          go test ./pkg/integrated -run '^TestSealIsolatedVisualEvidenceCrossPrincipal$' -count=1 -timeout 3m
+          go test ./... -count=1 -timeout 25m
+          go vet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      - name: Require zero open repository secret alerts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          alerts="$(gh api --paginate "repos/$GITHUB_REPOSITORY/secret-scanning/alerts?state=open&per_page=100" --jq '.[].number')"
+          test -z "$alerts" || {
+            echo "Open repository secret-scanning alerts must be resolved before an integrated release." >&2
+            exit 1
+          }
+      - name: Download and verify Node 22 runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .release/node .release/dist
+          base="https://nodejs.org/dist/v${NODE_VERSION}"
+          declare -A expected=(
+            ["node-v${NODE_VERSION}-linux-x64.tar.xz"]="9749e988f437343b7fa832c69ded82a312e41a03116d766797ac14f6f9eee578"
+            ["node-v${NODE_VERSION}-win-x64.zip"]="7df0bc9375723f4a86b3aa1b7cc73342423d9677a8df4538aca31a049e309c29"
+          )
+          for archive in "${!expected[@]}"; do
+            curl --fail --location --silent --show-error --connect-timeout 15 --max-time 300 --retry 3 --retry-all-errors "$base/$archive" -o ".release/node/$archive"
+            printf '%s  %s\n' "${expected[$archive]}" "$archive" | (cd .release/node && sha256sum --check --strict -)
+          done
+          tar -xJf ".release/node/node-v${NODE_VERSION}-linux-x64.tar.xz" -C .release/node
+          unzip -q ".release/node/node-v${NODE_VERSION}-win-x64.zip" -d .release/node
+      - name: Assemble complete pinned Node runtimes
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux_source=".release/node/node-v${NODE_VERSION}-linux-x64"
+          windows_source=".release/node/node-v${NODE_VERSION}-win-x64"
+          linux_runtime="$GITHUB_WORKSPACE/.release/runtime-linux"
+          windows_runtime="$GITHUB_WORKSPACE/.release/runtime-windows"
+          mkdir -p "$linux_runtime/node_modules" "$windows_runtime/node_modules"
+          cp "$linux_source/bin/node" "$linux_runtime/node"
+          cp "$linux_source/LICENSE" "$linux_runtime/LICENSE.node.txt"
+          cp -RL "$linux_source/lib/node_modules/npm" "$linux_runtime/node_modules/npm"
+          cp -RL "$linux_source/lib/node_modules/corepack" "$linux_runtime/node_modules/corepack"
+          cp v2/runtime-launchers/linux/npm v2/runtime-launchers/linux/npx v2/runtime-launchers/linux/corepack \
+            v2/runtime-launchers/linux/pnpm v2/runtime-launchers/linux/pnpx v2/runtime-launchers/linux/yarn v2/runtime-launchers/linux/yarnpkg "$linux_runtime/"
+          chmod 0755 "$linux_runtime/node" "$linux_runtime/npm" "$linux_runtime/npx" "$linux_runtime/corepack" \
+            "$linux_runtime/pnpm" "$linux_runtime/pnpx" "$linux_runtime/yarn" "$linux_runtime/yarnpkg"
+
+          cp "$windows_source/node.exe" "$windows_runtime/node.exe"
+          cp "$windows_source/LICENSE" "$windows_runtime/LICENSE.node.txt"
+          cp "$windows_source/npm.cmd" "$windows_source/npx.cmd" "$windows_source/corepack.cmd" "$windows_runtime/"
+          cp -RL "$windows_source/node_modules/npm" "$windows_runtime/node_modules/npm"
+          cp -RL "$windows_source/node_modules/corepack" "$windows_runtime/node_modules/corepack"
+          cp v2/runtime-launchers/windows/pnpm.cmd v2/runtime-launchers/windows/pnpx.cmd \
+            v2/runtime-launchers/windows/yarn.cmd v2/runtime-launchers/windows/yarnpkg.cmd "$windows_runtime/"
+          if find "$linux_runtime" "$windows_runtime" -type l -print -quit | grep -q .; then
+            echo "Complete Node runtime contains a symbolic link" >&2
+            exit 1
+          fi
+          "$linux_runtime/node" "$linux_runtime/node_modules/npm/bin/npm-cli.js" --version
+          "$linux_runtime/node" "$linux_runtime/node_modules/corepack/dist/corepack.js" --version
+          runtime_digest_before="$(find "$linux_runtime" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)"
+          export COREPACK_HOME="$RUNNER_TEMP/hive-release-corepack"
+          case "$COREPACK_HOME" in "$linux_runtime"/*) exit 1 ;; esac
+          "$linux_runtime/corepack" install --global pnpm@9.15.9
+          "$linux_runtime/corepack" install --global yarn@1.22.22
+          test "$("$linux_runtime/pnpm" --version)" = "9.15.9"
+          test "$("$linux_runtime/yarn" --version)" = "1.22.22"
+          pnpm_fixture="$RUNNER_TEMP/hive-pnpm-frozen"
+          yarn_fixture="$RUNNER_TEMP/hive-yarn-frozen"
+          mkdir -p "$pnpm_fixture" "$yarn_fixture"
+          printf '%s\n' '{"name":"hive-pnpm-smoke","private":true,"packageManager":"pnpm@9.15.9"}' > "$pnpm_fixture/package.json"
+          (cd "$pnpm_fixture" && "$linux_runtime/pnpm" install --lockfile-only --ignore-scripts && "$linux_runtime/pnpm" install --frozen-lockfile --ignore-scripts)
+          printf '%s\n' '{"name":"hive-yarn-smoke","private":true,"packageManager":"yarn@1.22.22"}' > "$yarn_fixture/package.json"
+          (cd "$yarn_fixture" && "$linux_runtime/yarn" install --ignore-scripts --non-interactive && "$linux_runtime/yarn" install --frozen-lockfile --ignore-scripts --non-interactive)
+          runtime_digest_after="$(find "$linux_runtime" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d ' ' -f 1)"
+          test "$runtime_digest_after" = "$runtime_digest_before"
+      - name: Build Hive fork binaries
+        working-directory: v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/.release/bin"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.gitHash=$GITHUB_SHA -X main.gitShort=${GITHUB_SHA::12} -X main.integratedVersion=$RELEASE_VERSION" -o "$GITHUB_WORKSPACE/.release/bin/hive-linux-amd64" ./cmd/hive
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.gitHash=$GITHUB_SHA -X main.gitShort=${GITHUB_SHA::12} -X main.integratedVersion=$RELEASE_VERSION" -o "$GITHUB_WORKSPACE/.release/bin/hive-windows-amd64.exe" ./cmd/hive
+
+          "$GITHUB_WORKSPACE/.release/bin/hive-linux-amd64" --version | tee "$GITHUB_WORKSPACE/.release/hive-version.txt"
+          grep -Fx "Hive $RELEASE_VERSION" "$GITHUB_WORKSPACE/.release/hive-version.txt"
+          grep -Fx "commit: $GITHUB_SHA" "$GITHUB_WORKSPACE/.release/hive-version.txt"
+      - name: Assemble clean-install distributions
+        working-directory: v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          linux_root="$GITHUB_WORKSPACE/.release/dist/hive-integrated-${{ env.RELEASE_VERSION }}-linux-amd64"
+          windows_root="$GITHUB_WORKSPACE/.release/dist/hive-integrated-${{ env.RELEASE_VERSION }}-windows-amd64"
+          go run ./cmd/hive-dist \
+            --hive "$GITHUB_WORKSPACE/.release/bin/hive-linux-amd64" --hive-commit "$GITHUB_SHA" --hive-version "$RELEASE_VERSION" \
+            --visual-hive "$GITHUB_WORKSPACE/.release/visual-hive-bundle" --visual-hive-commit "$VISUAL_HIVE_REF" \
+            --node "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-linux-x64/bin/node" \
+            --node-runtime "$GITHUB_WORKSPACE/.release/runtime-linux" \
+            --node-license "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-linux-x64/LICENSE" \
+            --node-version "v${NODE_VERSION}" --skill "$GITHUB_WORKSPACE/v2/skills/hive" \
+            --target-os linux --target-arch amd64 --output "$linux_root"
+          go run ./cmd/hive-dist \
+            --hive "$GITHUB_WORKSPACE/.release/bin/hive-windows-amd64.exe" --hive-commit "$GITHUB_SHA" --hive-version "$RELEASE_VERSION" \
+            --visual-hive "$GITHUB_WORKSPACE/.release/visual-hive-bundle" --visual-hive-commit "$VISUAL_HIVE_REF" \
+            --node "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-win-x64/node.exe" \
+            --node-runtime "$GITHUB_WORKSPACE/.release/runtime-windows" \
+            --node-license "$GITHUB_WORKSPACE/.release/node/node-v${NODE_VERSION}-win-x64/LICENSE" \
+            --node-version "v${NODE_VERSION}" --skill "$GITHUB_WORKSPACE/v2/skills/hive" \
+            --target-os windows --target-arch amd64 --output "$windows_root"
+          launcher_path="$RUNNER_TEMP/hive-visual-launcher-path"
+          mkdir -p "$launcher_path"
+          ln -s "$(command -v dirname)" "$launcher_path/dirname"
+          PATH="$launcher_path" "$linux_root/bin/visual-hive" --version
+      - name: Archive and checksum distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd .release/dist
+          linux_dir="hive-integrated-${{ env.RELEASE_VERSION }}-linux-amd64"
+          windows_dir="hive-integrated-${{ env.RELEASE_VERSION }}-windows-amd64"
+          tar -czf "${linux_dir}.tar.gz" "$linux_dir"
+          zip -qr "${windows_dir}.zip" "$windows_dir"
+          sha256sum "${linux_dir}.tar.gz" > "${linux_dir}.tar.gz.sha256"
+          sha256sum "${windows_dir}.zip" > "${windows_dir}.zip.sha256"
+          cp "$GITHUB_WORKSPACE/v2/install-integrated.sh" "$GITHUB_WORKSPACE/v2/install-integrated.ps1" .
+          sha256sum install-integrated.sh > install-integrated.sh.sha256
+          sha256sum install-integrated.ps1 > install-integrated.ps1.sha256
+      - name: Smoke the actual Linux release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          proof="$RUNNER_TEMP/hive-linux-release-smoke"
+          HIVE_RELEASE_DIR="$GITHUB_WORKSPACE/.release/dist" HIVE_SOURCE_ROOT="$GITHUB_WORKSPACE/v2" HIVE_SKIP_ATTESTATION=1 \
+            sh v2/test/integrated-installer-linux-release-smoke.sh .release/dist/install-integrated.sh "$RELEASE_VERSION" "$proof"
+      - name: Prove Linux persistent scheduler and installer transition harness
+        working-directory: v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./cmd/hive -run '^(TestSystemdServiceManagerInstallStartInspectAndUninstall|TestDaemonServiceLifecycleRecoversForcedKillAndUninstalls|TestInstallerTransitionDurablyStopsAndRestartsExactOwnedSchedulers)$' -count=1 -timeout 4m
+      - name: Retain installer artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hive-integrated-${{ github.sha }}
+          path: |
+            .release/dist/hive-integrated-*.tar.gz
+            .release/dist/hive-integrated-*.tar.gz.sha256
+            .release/dist/hive-integrated-*.zip
+            .release/dist/hive-integrated-*.zip.sha256
+            .release/dist/install-integrated.sh
+            .release/dist/install-integrated.sh.sha256
+            .release/dist/install-integrated.ps1
+            .release/dist/install-integrated.ps1.sha256
+
+  windows-smoke:
+    permissions:
+      contents: read
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.25.12
+          cache-dependency-path: v2/go.sum
+      - name: Prove persistent Windows scheduler recovery
+        working-directory: v2
+        shell: pwsh
+        env:
+          HIVE_TEST_WINDOWS_TASK_SCHEDULER: "1"
+          HIVE_TEST_WINDOWS_TASK_RESTART: "1"
+        run: go test ./cmd/hive -run '^TestWindowsPersistentDaemonStartsAndStopsThroughTaskScheduler$' -count=1 -timeout 4m
+      - name: Prove Windows hosted and JSON controller surfaces
+        working-directory: v2
+        shell: pwsh
+        run: |
+          go test ./pkg/hostedbootstrap ./pkg/hostedstate ./pkg/hostedcontrol ./pkg/hostedstatus -count=1 -timeout 8m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./pkg/integrated -run '^(TestPrepareHostedRuntime|TestGenerateHostedControllerWorkflow|TestBoundedManagedCheckoutClonesLongRepositoryAndIsIdempotent)' -count=1 -timeout 8m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test ./cmd/hive -run '^(TestCLIJSONRequested|TestRunCLICommandWithJSONContract|TestMutatingCommandRejectsTrailingPositionalBeforeJSON|TestSetupJSONMissingInputsNeverPrompts|TestVisualStatusAcceptsExplicitJSONContract|TestHosted)' -count=1 -timeout 8m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hive-integrated-${{ github.sha }}
+          path: .release/dist
+      - name: Smoke the actual Windows release archive
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.build.outputs.release_version }}
+        run: |
+          $work = Join-Path $env:RUNNER_TEMP "hive-windows-release-smoke"
+          $install = Join-Path $work "Hive-Clean Install"
+          New-Item -ItemType Directory -Path $work -Force | Out-Null
+          $originalPath = $env:PATH
+          $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          $originalCodexHome = $env:CODEX_HOME
+          try {
+            $env:CODEX_HOME = Join-Path $work "codex-home"
+            $installOutput = (& ./.release/dist/install-integrated.ps1 -Version $env:RELEASE_VERSION -ReleaseDir .release/dist -SkipAttestation -InstallDir $install 6>&1 | Out-String)
+            $expectedHive = [IO.Path]::GetFullPath((Join-Path $install "hive.exe"))
+            $resolvedHive = (@(Get-Command hive -CommandType Application -ErrorAction Stop)[0]).Source
+            if ([IO.Path]::GetFullPath($resolvedHive) -ne $expectedHive) { throw "Default installer PATH did not resolve the activated Hive." }
+            if (-not (Test-Path -LiteralPath (Join-Path $env:CODEX_HOME "skills/hive/SKILL.md") -PathType Leaf)) { throw "Default installer did not install the Hive Codex skill." }
+            if ($installOutput -notmatch [regex]::Escape("& `"$expectedHive`" setup")) { throw "Installer did not print its exact absolute setup command." }
+            $manifest = Get-Content -LiteralPath (Join-Path $install "distribution-manifest.json") -Raw | ConvertFrom-Json
+            if ($manifest.hosted_controller_protocol -ne 1) { throw "Packaged hosted controller protocol mismatch." }
+            $savedPath = $env:PATH
+            $env:PATH = "$install;$(Join-Path $env:SystemRoot 'System32');$env:SystemRoot"
+            try {
+              if (Get-Command node -CommandType Application -ErrorAction SilentlyContinue) { throw "Clean Visual Hive smoke unexpectedly retained global Node." }
+              $expectedVisualHive = [IO.Path]::GetFullPath((Join-Path $install "visual-hive.cmd"))
+              $resolvedVisualHive = (@(Get-Command visual-hive -CommandType Application -ErrorAction Stop)[0]).Source
+              if ([IO.Path]::GetFullPath($resolvedVisualHive) -ne $expectedVisualHive) { throw "Visual Hive launcher escaped the installed distribution: $resolvedVisualHive" }
+              $arbitraryCwd = Join-Path $work "arbitrary working directory"
+              New-Item -ItemType Directory -Path $arbitraryCwd -Force | Out-Null
+              Push-Location $arbitraryCwd
+              try {
+                $visualHiveVersion = (& $resolvedVisualHive --version | Out-String).Trim()
+                $visualHiveExit = $LASTEXITCODE
+              } finally { Pop-Location }
+              if ($visualHiveExit -ne 0 -or $visualHiveVersion -ne [string]$manifest.visual_hive_version) { throw "Packaged Visual Hive identity mismatch without global Node: exit=$visualHiveExit output=$visualHiveVersion" }
+            } finally {
+              $env:PATH = $savedPath
+            }
+            $hiveVersion = @(& (Join-Path $install "hive.exe") --version)
+            if ($LASTEXITCODE -ne 0 -or $hiveVersion[0] -ne "Hive $env:RELEASE_VERSION" -or $hiveVersion[1] -ne "commit: $env:GITHUB_SHA") { throw "Packaged Hive release identity mismatch: $($hiveVersion -join '; ')" }
+            $savedPath = $env:PATH
+            $env:PATH = (Join-Path $install "runtime") + ";" + (Join-Path $env:SystemRoot "System32") + ";" + $env:SystemRoot
+            foreach ($launcher in @("node.exe", "npm.cmd", "npx.cmd", "corepack.cmd", "pnpm.cmd", "pnpx.cmd", "yarn.cmd", "yarnpkg.cmd")) {
+              $resolved = (Get-Command $launcher -ErrorAction Stop).Source
+              if ([IO.Path]::GetFullPath($resolved) -ne [IO.Path]::GetFullPath((Join-Path $install "runtime/$launcher"))) { throw "Launcher escaped the installed runtime: $launcher -> $resolved" }
+            }
+            & (Join-Path $install "runtime/npm.cmd") --version
+            & (Join-Path $install "runtime/corepack.cmd") --version
+            $env:COREPACK_HOME = Join-Path $work "corepack-cache"
+            if ([IO.Path]::GetFullPath($env:COREPACK_HOME).StartsWith([IO.Path]::GetFullPath($install), [StringComparison]::OrdinalIgnoreCase)) { throw "Corepack cache must stay outside the immutable install." }
+            & (Join-Path $install "runtime/corepack.cmd") install --global pnpm@9.15.9
+            & (Join-Path $install "runtime/corepack.cmd") install --global yarn@1.22.22
+            if ((& (Join-Path $install "runtime/pnpm.cmd") --version).Trim() -ne "9.15.9") { throw "Bundled pnpm launcher failed." }
+            if ((& (Join-Path $install "runtime/yarn.cmd") --version).Trim() -ne "1.22.22") { throw "Bundled Yarn launcher failed." }
+            $env:PATH = $savedPath
+            $savedUserProfile = $env:USERPROFILE
+            $env:USERPROFILE = Join-Path $work "fresh-user-home"
+            New-Item -ItemType Directory -Path $env:USERPROFILE -Force | Out-Null
+            try {
+              $setupArgs = @("setup", "--repo", "DavidDiaz0317/hive-visual-hive-install-proof-20260713-234243", "--coverage", "comprehensive", "--automation", "advisory", "--provider", "codex", "--visual-hive", "--plan", "--json")
+              if ($env:RELEASE_VERSION -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+-integrated\.[0-9]+$') { $setupArgs += @("--runtime", "local") }
+              $plan = & (Join-Path $install "hive.exe") @setupArgs | ConvertFrom-Json
+            } finally {
+              $env:USERPROFILE = $savedUserProfile
+            }
+            if ($plan.plan.schema_version -ne "hive.setup-plan.v2" -or -not $plan.plan.read_only -or -not $plan.plan.state_dir) { throw "Release Hive did not produce a valid v2 setup plan with an automatic state path." }
+            if ($env:RELEASE_VERSION -match '^v[0-9]+\.[0-9]+\.[0-9]+-integrated\.[0-9]+$') {
+              if ($plan.plan.execution_mode -ne "hosted" -or -not $plan.plan.hosted_state_branch -or $plan.plan.hive_release_version -ne $env:RELEASE_VERSION -or $plan.plan.hive_commit -ne $env:GITHUB_SHA -or -not $plan.plan.distribution_manifest_sha256) { throw "Published tag smoke did not bind the complete hosted release identity." }
+            } elseif ($plan.plan.execution_mode -ne "local") { throw "Commit-SHA rehearsal must use explicit local compatibility mode." }
+            if ($plan.plan.state_dir -match 'daviddiaz0317--hive-visual-hive-install-proof') { throw "Release Hive repeated the long repository slug in its default state path: $($plan.plan.state_dir)" }
+            & ./v2/test/integrated-json-contract-smoke.ps1 -Hive (Join-Path $install "hive.exe") -WorkRoot (Join-Path $work "json-contract")
+          } finally {
+            $env:PATH = $originalPath
+            [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
+            $env:CODEX_HOME = $originalCodexHome
+          }
+          & ./v2/test/integrated-installer-windows-failure-smoke.ps1 -Installer ./.release/dist/install-integrated.ps1 -ReleaseDir .release/dist -Version $env:RELEASE_VERSION -WorkRoot (Join-Path $work "failure-smoke")
+
+  provider-containment:
+    permissions:
+      contents: read
+    needs: build
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.25.12
+          cache-dependency-path: v2/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.23.1
+      - name: Install Linux containment prerequisite
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends apparmor-profiles bubblewrap
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          test -r "$profile"
+          sudo apparmor_parser -r "$profile"
+          test -x "$(command -v bwrap)"
+      - name: Install exact reviewed native Codex artifact (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hive-codex-gate"
+          cd "$RUNNER_TEMP/hive-codex-gate"
+          native_tarball="$(npm pack @openai/codex@0.144.1-linux-x64 --ignore-scripts --silent)"
+          test "$(openssl dgst -sha512 -binary "$native_tarball" | openssl base64 -A)" = "HNGVI+BulrOaC/0IzBvd6EL62j7LrlbFKibrhw6hZjjCjAeUYzRB2jB4qDzXN1NfqDi6Xrvniof3kwbwab24lg=="
+          mkdir -m 0700 native
+          tar -xzf "$native_tarball" --strip-components=1 -C native
+          codex_path="$(find native -type f -name codex -path '*/vendor/*' -print -quit)"
+          test -n "$codex_path"
+          chmod 500 "$codex_path"
+          printf '%s' "$codex_path" > "$RUNNER_TEMP/hive-real-codex-path"
+      - name: Install exact reviewed native Codex artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "hive-codex-gate"
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          Push-Location $root
+          try {
+            $tarball = [string]::Join("`n", @(npm pack @openai/codex@0.144.1-win32-x64 --ignore-scripts --silent)).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $tarball) { throw "Exact native Codex package download failed." }
+            $digest = [Convert]::ToBase64String([Security.Cryptography.SHA512]::HashData([IO.File]::ReadAllBytes((Join-Path $root $tarball))))
+            if ($digest -ne "qv2HOp6v/nVP31p5I5GxYyL0wa79PMzim1+W9CKSV0UldjFV9AMbualA8PeXcYhbvvh9Y1UASXxwjuQdlyfAvw==") { throw "Exact native Codex package integrity mismatch." }
+            $native = Join-Path $root "native"
+            New-Item -ItemType Directory -Path $native -Force | Out-Null
+            tar -xzf (Join-Path $root $tarball) --strip-components=1 -C $native
+            if ($LASTEXITCODE -ne 0) { throw "Exact native Codex package extraction failed." }
+          } finally { Pop-Location }
+          $codex = Get-ChildItem -LiteralPath $native -Recurse -File -Filter codex.exe |
+            Where-Object { $_.FullName -match '[\\/]vendor[\\/]' } | Select-Object -First 1
+          if (-not $codex) { throw "Exact native Codex artifact was not installed." }
+          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "hive-real-codex-path") -Value $codex.FullName -NoNewline
+      - name: Prove credential-free native Health and no-model containment (Linux)
+        if: runner.os == 'Linux'
+        working-directory: v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CODEX_HOME="$RUNNER_TEMP/hive-release-codex-empty-home"
+          mkdir -m 700 "$CODEX_HOME"
+          HIVE_REAL_CODEX="$(cat "$RUNNER_TEMP/hive-real-codex-path")"
+          export HIVE_REAL_CODEX
+          test "$($HIVE_REAL_CODEX --version)" = "codex-cli 0.144.1"
+          go test ./pkg/repair -run '^TestCodexProviderRealNoModelHealthPreflightWithoutAuthorization$' -count=1 -timeout 2m
+      - name: Prove credential-free native Health and no-model containment (Windows)
+        if: runner.os == 'Windows'
+        working-directory: v2
+        shell: pwsh
+        run: |
+          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "hive-release-codex-empty-home"
+          New-Item -ItemType Directory -Path $env:CODEX_HOME -Force | Out-Null
+          $env:HIVE_REAL_CODEX = Get-Content -Raw (Join-Path $env:RUNNER_TEMP "hive-real-codex-path")
+          if ((& $env:HIVE_REAL_CODEX --version).Trim() -ne "codex-cli 0.144.1") { throw "Reviewed Codex version mismatch." }
+          go test ./pkg/repair -run '^TestCodexProviderRealNoModelHealthPreflightWithoutAuthorization$' -count=1 -timeout 2m
+
+  provider-authenticated-supplemental:
+    permissions:
+      contents: read
+    needs: build
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Detect optional authenticated gate
+        id: auth-config
+        shell: bash
+        env:
+          HIVE_RELEASE_CODEX_AUTH_JSON_B64: ${{ secrets.HIVE_RELEASE_CODEX_AUTH_JSON_B64 }}
+        run: |
+          set -euo pipefail
+          if test -n "$HIVE_RELEASE_CODEX_AUTH_JSON_B64"; then
+            echo 'configured=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Record optional authenticated gate is not configured
+        if: steps.auth-config.outputs.configured != 'true'
+        shell: bash
+        run: echo "Optional authenticated Codex release coverage is not configured; credential-free containment remains mandatory."
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: steps.auth-config.outputs.configured == 'true'
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: steps.auth-config.outputs.configured == 'true'
+        with:
+          go-version: 1.25.12
+          cache-dependency-path: v2/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: steps.auth-config.outputs.configured == 'true'
+        with:
+          node-version: 22.23.1
+      - name: Install Linux containment prerequisite (supplemental)
+        if: runner.os == 'Linux' && steps.auth-config.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends apparmor-profiles bubblewrap
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          test -r "$profile"
+          sudo apparmor_parser -r "$profile"
+          test -x "$(command -v bwrap)"
+      - name: Install exact reviewed native Codex artifact (Linux supplemental)
+        if: runner.os == 'Linux' && steps.auth-config.outputs.configured == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/hive-codex-gate"
+          cd "$RUNNER_TEMP/hive-codex-gate"
+          native_tarball="$(npm pack @openai/codex@0.144.1-linux-x64 --ignore-scripts --silent)"
+          test "$(openssl dgst -sha512 -binary "$native_tarball" | openssl base64 -A)" = "HNGVI+BulrOaC/0IzBvd6EL62j7LrlbFKibrhw6hZjjCjAeUYzRB2jB4qDzXN1NfqDi6Xrvniof3kwbwab24lg=="
+          mkdir -m 0700 native
+          tar -xzf "$native_tarball" --strip-components=1 -C native
+          codex_path="$(find native -type f -name codex -path '*/vendor/*' -print -quit)"
+          test -n "$codex_path"
+          chmod 500 "$codex_path"
+          printf '%s' "$codex_path" > "$RUNNER_TEMP/hive-real-codex-path"
+      - name: Install exact reviewed native Codex artifact (Windows supplemental)
+        if: runner.os == 'Windows' && steps.auth-config.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "hive-codex-gate"
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          Push-Location $root
+          try {
+            $tarball = [string]::Join("`n", @(npm pack @openai/codex@0.144.1-win32-x64 --ignore-scripts --silent)).Trim()
+            if ($LASTEXITCODE -ne 0 -or -not $tarball) { throw "Exact native Codex package download failed." }
+            $digest = [Convert]::ToBase64String([Security.Cryptography.SHA512]::HashData([IO.File]::ReadAllBytes((Join-Path $root $tarball))))
+            if ($digest -ne "qv2HOp6v/nVP31p5I5GxYyL0wa79PMzim1+W9CKSV0UldjFV9AMbualA8PeXcYhbvvh9Y1UASXxwjuQdlyfAvw==") { throw "Exact native Codex package integrity mismatch." }
+            $native = Join-Path $root "native"
+            New-Item -ItemType Directory -Path $native -Force | Out-Null
+            tar -xzf (Join-Path $root $tarball) --strip-components=1 -C $native
+            if ($LASTEXITCODE -ne 0) { throw "Exact native Codex package extraction failed." }
+          } finally { Pop-Location }
+          $codex = Get-ChildItem -LiteralPath $native -Recurse -File -Filter codex.exe |
+            Where-Object { $_.FullName -match '[\\/]vendor[\\/]' } | Select-Object -First 1
+          if (-not $codex) { throw "Exact native Codex artifact was not installed." }
+          Set-Content -LiteralPath (Join-Path $env:RUNNER_TEMP "hive-real-codex-path") -Value $codex.FullName -NoNewline
+      - name: Install optional Codex authorization (Linux)
+        if: runner.os == 'Linux' && steps.auth-config.outputs.configured == 'true'
+        shell: bash
+        env:
+          HIVE_RELEASE_CODEX_AUTH_JSON_B64: ${{ secrets.HIVE_RELEASE_CODEX_AUTH_JSON_B64 }}
+        run: |
+          set -euo pipefail
+          export CODEX_HOME="$RUNNER_TEMP/hive-release-codex-home"
+          mkdir -m 700 "$CODEX_HOME"
+          printf '%s' "$HIVE_RELEASE_CODEX_AUTH_JSON_B64" | base64 --decode > "$CODEX_HOME/auth.json"
+          chmod 600 "$CODEX_HOME/auth.json"
+      - name: Install optional Codex authorization (Windows)
+        if: runner.os == 'Windows' && steps.auth-config.outputs.configured == 'true'
+        shell: pwsh
+        env:
+          HIVE_RELEASE_CODEX_AUTH_JSON_B64: ${{ secrets.HIVE_RELEASE_CODEX_AUTH_JSON_B64 }}
+        run: |
+          $home = Join-Path $env:RUNNER_TEMP "hive-release-codex-home"
+          New-Item -ItemType Directory -Path $home -Force | Out-Null
+          [IO.File]::WriteAllBytes((Join-Path $home "auth.json"), [Convert]::FromBase64String($env:HIVE_RELEASE_CODEX_AUTH_JSON_B64))
+      - name: Prove authenticated structured containment (Linux supplemental)
+        if: runner.os == 'Linux' && steps.auth-config.outputs.configured == 'true'
+        working-directory: v2
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CODEX_HOME="$RUNNER_TEMP/hive-release-codex-home"
+          HIVE_REAL_CODEX="$(cat "$RUNNER_TEMP/hive-real-codex-path")"
+          export HIVE_REAL_CODEX
+          go test ./pkg/repair -run '^(TestCodexProviderRealWorktreeInstructionsAndToolsAreIsolated|TestCodexProviderRealStructuredContainmentDeniesReadWriteAndNetwork)$' -count=1 -timeout 8m
+      - name: Prove authenticated structured containment (Windows supplemental)
+        if: runner.os == 'Windows' && steps.auth-config.outputs.configured == 'true'
+        working-directory: v2
+        shell: pwsh
+        run: |
+          $env:CODEX_HOME = Join-Path $env:RUNNER_TEMP "hive-release-codex-home"
+          $env:HIVE_REAL_CODEX = Get-Content -Raw (Join-Path $env:RUNNER_TEMP "hive-real-codex-path")
+          go test ./pkg/repair -run '^(TestCodexProviderRealWorktreeInstructionsAndToolsAreIsolated|TestCodexProviderRealStructuredContainmentDeniesReadWriteAndNetwork)$' -count=1 -timeout 8m
+
+  publish:
+    needs: [build, windows-smoke, provider-containment]
+    if: github.event_name == 'push' && needs.build.outputs.release_tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: hive-integrated-${{ github.sha }}
+          path: .release/dist
+      - name: Sign build provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: |
+            .release/dist/hive-integrated-*.tar.gz
+            .release/dist/hive-integrated-*.tar.gz.sha256
+            .release/dist/hive-integrated-*.zip
+            .release/dist/hive-integrated-*.zip.sha256
+            .release/dist/install-integrated.sh
+            .release/dist/install-integrated.sh.sha256
+            .release/dist/install-integrated.ps1
+            .release/dist/install-integrated.ps1.sha256
+      - name: Publish fork release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
+          VISUAL_HIVE_REF: ${{ needs.build.outputs.visual_hive_ref }}
+        run: |
+          set -euo pipefail
+          resolve_tag_target() {
+            local object_type="$1"
+            local object_sha="$2"
+            local depth=0
+            while [[ "$object_type" == "tag" ]]; do
+              depth=$((depth + 1))
+              [[ "$depth" -le 8 ]] || { echo "Annotated tag chain is too deep." >&2; return 1; }
+              tag_object="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha")"
+              object_type="$(jq -r '.object.type' <<<"$tag_object")"
+              object_sha="$(jq -r '.object.sha' <<<"$tag_object")"
+            done
+            [[ "$object_type" == "commit" ]] || { echo "Release tag resolves to unsupported object type: $object_type" >&2; return 1; }
+            printf '%s\n' "$object_sha"
+          }
+          # This exact helper is failure-smoked under transient query, deletion,
+          # and still-present release conditions before publication.
+          source v2/integrated-release-immutability.sh
+          # cleanup_on_exit reads this global from the sourced helper.
+          export release_verified=false
+
+          # The tag push is the release authorization and the attestation's
+          # immutable source ref. Never create a release tag from a branch-run
+          # workflow, because consumers require refs/tags/$RELEASE_TAG.
+          tag_ref="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          tag_target="$(resolve_tag_target "$(jq -r '.object.type' <<<"$tag_ref")" "$(jq -r '.object.sha' <<<"$tag_ref")")"
+          [[ "$tag_target" == "$GITHUB_SHA" ]] || {
+            echo "Refusing to publish: $RELEASE_TAG no longer targets $GITHUB_SHA." >&2
+            exit 1
+          }
+          trap cleanup_on_exit EXIT
+          gh release create "$RELEASE_TAG" \
+            .release/dist/hive-integrated-*.tar.gz \
+            .release/dist/hive-integrated-*.tar.gz.sha256 \
+            .release/dist/hive-integrated-*.zip \
+            .release/dist/hive-integrated-*.zip.sha256 \
+            .release/dist/install-integrated.sh \
+            .release/dist/install-integrated.sh.sha256 \
+            .release/dist/install-integrated.ps1 \
+            .release/dist/install-integrated.ps1.sha256 \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Hive integrated $RELEASE_TAG" --generate-notes
+
+          if ! verify_published_release_immutable; then
+            echo "Refusing to retain a release that GitHub did not mark immutable." >&2
+            exit 1
+          fi
+
+          verify_dir="$RUNNER_TEMP/hive-published-release-verification"
+          install_home="$RUNNER_TEMP/hive-published-release-home"
+          install_dir="$RUNNER_TEMP/hive-published-release-install"
+          codex_home="$RUNNER_TEMP/hive-published-release-codex"
+          mkdir -m 0700 -- "$verify_dir" "$install_home" "$codex_home"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir "$verify_dir"
+          expected_assets=(
+            "hive-integrated-${RELEASE_TAG}-linux-amd64.tar.gz"
+            "hive-integrated-${RELEASE_TAG}-linux-amd64.tar.gz.sha256"
+            "hive-integrated-${RELEASE_TAG}-windows-amd64.zip"
+            "hive-integrated-${RELEASE_TAG}-windows-amd64.zip.sha256"
+            "install-integrated.sh"
+            "install-integrated.sh.sha256"
+            "install-integrated.ps1"
+            "install-integrated.ps1.sha256"
+          )
+          mapfile -t actual_assets < <(find "$verify_dir" -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
+          mapfile -t sorted_expected < <(printf '%s\n' "${expected_assets[@]}" | LC_ALL=C sort)
+          diff -u <(printf '%s\n' "${sorted_expected[@]}") <(printf '%s\n' "${actual_assets[@]}")
+          (cd "$verify_dir" && sha256sum --check --strict "hive-integrated-${RELEASE_TAG}-linux-amd64.tar.gz.sha256")
+          (cd "$verify_dir" && sha256sum --check --strict "hive-integrated-${RELEASE_TAG}-windows-amd64.zip.sha256")
+          (cd "$verify_dir" && sha256sum --check --strict install-integrated.sh.sha256)
+          (cd "$verify_dir" && sha256sum --check --strict install-integrated.ps1.sha256)
+          for subject in "${expected_assets[@]}"; do
+            gh attestation verify "$verify_dir/$subject" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/integrated-release.yml" \
+              --source-ref "refs/tags/$RELEASE_TAG" \
+              --source-digest "$GITHUB_SHA" \
+              --signer-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners >/dev/null
+          done
+          HOME="$install_home" CODEX_HOME="$codex_home" \
+            sh "$verify_dir/install-integrated.sh" --repo "$GITHUB_REPOSITORY" --version "$RELEASE_TAG" --install-dir "$install_dir"
+          "$install_dir/hive" --version | grep -Fx "Hive $RELEASE_TAG"
+          "$install_dir/hive" --version | grep -Fx "commit: $GITHUB_SHA"
+          "$install_dir/bin/visual-hive" --version >/dev/null
+          jq -e --arg version "$RELEASE_TAG" --arg hive "$GITHUB_SHA" --arg visual "$VISUAL_HIVE_REF" \
+            '.schema_version == "hive.integrated-distribution.v1" and .hive_version == $version and .hive_commit == $hive and .visual_hive_commit == $visual and .hosted_controller_protocol == 1 and .node_version == "v22.23.1"' \
+            "$install_dir/distribution-manifest.json" >/dev/null
+          HOME="$install_home" CODEX_HOME="$codex_home" "$install_dir/hive" setup \
+            --repo DavidDiaz0317/hive-visual-hive-install-proof-20260713-234243 \
+            --coverage comprehensive --automation advisory --provider codex --visual-hive --plan --json > "$verify_dir/setup-plan.json"
+          jq -e --arg version "$RELEASE_TAG" --arg hive "$GITHUB_SHA" \
+            '.plan.schema_version == "hive.setup-plan.v2" and .plan.execution_mode == "hosted" and .plan.read_only == true and .plan.hive_release_version == $version and .plan.hive_commit == $hive and .plan.hosted_controller_protocol == 1 and (.plan.distribution_manifest_sha256 | test("^[a-f0-9]{64}$")) and (.plan.hosted_workflow_sha256 | test("^[a-f0-9]{64}$")) and (.plan.hosted_state_branch | startswith("hive/state-"))' \
+            "$verify_dir/setup-plan.json" >/dev/null
+          export release_verified=true
+          trap - EXIT

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/classify"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
@@ -20,13 +21,14 @@ import (
 )
 
 type Scheduler struct {
-	cfg            *config.Config
-	primer         *knowledge.Primer
-	inception      *knowledge.InceptionEngine
-	lastActionable *github.ActionableResult
-	logger         *slog.Logger
-	promptResolver *promptsrc.Resolver
-	mu             sync.RWMutex
+	cfg              *config.Config
+	primer           *knowledge.Primer
+	inception        *knowledge.InceptionEngine
+	lastActionable   *github.ActionableResult
+	governedExecutor *agent.SpecialistExecutorProfile
+	logger           *slog.Logger
+	promptResolver   *promptsrc.Resolver
+	mu               sync.RWMutex
 }
 
 // registry builds the variable-resolution registry from the current config's
@@ -367,6 +369,10 @@ const maxIssuesPerKick = 100
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
 func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+	if actionable == nil {
+		actionable = &github.ActionableResult{}
+	}
+
 	// 0. GitHub-sourced prompt: if the agent declares a prompt_source, resolve it
 	//    live at kick time (with allowlist gating + graceful fallback). A miss
 	//    (unset, denied, unreachable with no cache) falls through to the inline
@@ -823,10 +829,7 @@ const maxIssuesToPrime = 5
 // primeKnowledge queries the wiki layers for facts relevant to the given issues
 // and returns a formatted section for injection into the kick message.
 func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
-	s.mu.RLock()
-	primer := s.primer
-	s.mu.RUnlock()
-	if primer == nil || len(issues) == 0 {
+	if len(issues) == 0 {
 		return ""
 	}
 
@@ -838,6 +841,16 @@ func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
 	keywords := extractKeywords(issues[:limit])
 	if len(keywords) == 0 {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
+		return ""
+	}
+	return s.primeKnowledgeKeywords(keywords)
+}
+
+func (s *Scheduler) primeKnowledgeKeywords(keywords []string) string {
+	s.mu.RLock()
+	primer := s.primer
+	s.mu.RUnlock()
+	if primer == nil || len(keywords) == 0 {
 		return ""
 	}
 
@@ -927,14 +940,14 @@ func keywordSample(keywords []string) string {
 }
 
 var noiseLabels = map[string]bool{
-	"triage/accepted":   true,
-	"ai-fix-requested":  true,
-	"kind/bug":          true,
-	"kind/feature":      true,
-	"kind/task":         true,
-	"good first issue":  true,
-	"help wanted":       true,
-	"hold":              true,
+	"triage/accepted":  true,
+	"ai-fix-requested": true,
+	"kind/bug":         true,
+	"kind/feature":     true,
+	"kind/task":        true,
+	"good first issue": true,
+	"help wanted":      true,
+	"hold":             true,
 }
 
 func isNoiseLabel(label string) bool {

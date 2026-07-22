@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -500,6 +501,9 @@ func TestBuild_ErrorWhenOutputDirIsFile(t *testing.T) {
 }
 
 func TestBuild_ErrorWhenStatusFileNotWritable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix directory mode bits")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("root can write to read-only dirs; skipping")
 	}
@@ -546,6 +550,9 @@ func TestBuild_ErrorWhenIndexHTMLIsDir(t *testing.T) {
 }
 
 func TestCleanup_ErrorOnUnreadableDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix directory mode bits")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("root can read any dir; skipping")
 	}

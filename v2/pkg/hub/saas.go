@@ -151,9 +151,13 @@ func (s *HubServer) registerSaaSRoutes() {
 	// race detector rightly flags. Production behavior is unchanged; tests
 	// that need poller logic call the functions directly.
 	if !testing.Testing() {
-		go s.startProvisionWatcher()
-		go s.StartLatestSHAPoller()
+		startHubBackgroundWorkers(s)
 	}
+}
+
+var startHubBackgroundWorkers = func(s *HubServer) {
+	go s.startProvisionWatcher()
+	go s.StartLatestSHAPoller()
 }
 
 func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -1636,9 +1640,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	user.Hives[hiveID] = "owner"
 	saveSaaSUser(user)
 
-	provisionWG.Add(1)
-	go func() {
-		defer provisionWG.Done()
+	dispatchHiveProvision(func() {
 		cluster := s.clusterForHive(h)
 		if cluster == nil {
 			h.Status = "error"
@@ -1656,7 +1658,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		}
 		h.Status = "provisioning"
 		saveSaaSHive(h)
-	}()
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -1664,6 +1666,14 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		"status":    "provisioning",
 		"subdomain": h.Subdomain,
 	})
+}
+
+var dispatchHiveProvision = func(work func()) {
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
+		work()
+	}()
 }
 
 func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {

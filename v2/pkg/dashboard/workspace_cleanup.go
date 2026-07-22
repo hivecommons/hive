@@ -6,9 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -161,23 +159,6 @@ func removeTree(path string) error {
 			err, ownerName, lookupErr, shellErr)
 	}
 	return nil
-}
-
-// fileOwnerName returns the username that owns the given path.
-func fileOwnerName(path string) (string, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "", err
-	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return "", fmt.Errorf("not a unix stat")
-	}
-	u, err := user.LookupId(strconv.FormatUint(uint64(stat.Uid), 10))
-	if err != nil {
-		return "", err
-	}
-	return u.Username, nil
 }
 
 func isPermError(err error) bool {

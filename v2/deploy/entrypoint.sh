@@ -149,7 +149,8 @@ if [ "$(id -u)" = "0" ]; then
     chown -R dev:node /data 2>/dev/null || true
   fi
   chown dev:node /home/dev 2>/dev/null || true
-  chown dev:node /etc/hive/hive.yaml 2>/dev/null || true
+  chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
+  chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
 
   # Ensure the PVC secrets dir the dashboard writes API keys into
   # (/data/secrets/litellm_api_key) exists and is owned by the dev user.
@@ -184,32 +185,40 @@ if [ "$(id -u)" = "0" ]; then
     cp -rn /opt/hive/seed-data/* /data/ 2>/dev/null || true
   fi
 
+  # Create the shared root before role discovery. Config-only installations
+  # have no /etc/hive/agents and no pre-existing /data/beads, so deferring the
+  # mkdir to UID provisioning would inherit the caller's owner-only umask and
+  # prevent ordinary Hive from traversing every role store on first boot.
+  mkdir -p /home/dev /data/beads
+  chown dev:node /data/beads 2>/dev/null || true
+  chmod 0750 /data/beads 2>/dev/null || true
+
   # Create beads symlinks: /home/dev/<agent>-beads -> /data/beads/<agent>
-  if [ -d /etc/hive/agents ] || [ -d /data/beads ]; then
-    mkdir -p /home/dev /data/beads
-    if [ -d /etc/hive/agents ]; then
-      for envfile in /etc/hive/agents/*.env; do
-        [ -f "$envfile" ] || continue
-        agent="$(basename "$envfile" .env)"
-        mkdir -p "/data/beads/${agent}"
-        ln -sfn "/data/beads/${agent}" "/home/dev/${agent}-beads"
-        echo "[entrypoint] Beads symlink: /home/dev/${agent}-beads -> /data/beads/${agent}"
-      done
-    fi
-    for beaddir in /data/beads/*/; do
-      [ -d "$beaddir" ] || continue
-      agent="$(basename "$beaddir")"
-      if [ ! -L "/home/dev/${agent}-beads" ]; then
-        ln -sfn "/data/beads/${agent}" "/home/dev/${agent}-beads"
-        echo "[entrypoint] Beads symlink: /home/dev/${agent}-beads -> /data/beads/${agent}"
-      fi
+  if [ -d /etc/hive/agents ]; then
+    for envfile in /etc/hive/agents/*.env; do
+      [ -f "$envfile" ] || continue
+      agent="$(basename "$envfile" .env)"
+      mkdir -p "/data/beads/${agent}"
+      ln -sfn "/data/beads/${agent}" "/home/dev/${agent}-beads"
+      echo "[entrypoint] Beads symlink: /home/dev/${agent}-beads -> /data/beads/${agent}"
     done
-    chown dev:node /home/dev 2>/dev/null || true
-    if [ "$DATA_OWNER" != "1001" ]; then
-      chown -R dev:node /data/beads 2>/dev/null || true
-      chmod -R g+rwX /data/beads 2>/dev/null || true
-    fi
   fi
+  # Include first-level hidden role stores while excluding . and .. themselves.
+  for beaddir in /data/beads/*/ /data/beads/.[!.]*/ /data/beads/..?*/; do
+    beaddir="${beaddir%/}"
+    [ -d "$beaddir" ] && [ ! -L "$beaddir" ] || continue
+    agent="$(basename "$beaddir")"
+    if [ ! -L "/home/dev/${agent}-beads" ]; then
+      ln -sfn "/data/beads/${agent}" "/home/dev/${agent}-beads"
+      echo "[entrypoint] Beads symlink: /home/dev/${agent}-beads -> /data/beads/${agent}"
+    fi
+    # Retired/disabled role stores are reopened only by ordinary Hive. Make
+    # legacy owner-only stores readable by dev without following any link;
+    # active roles are reassigned to their scoped group below.
+    find -P "$beaddir" -xdev -type d -exec chown dev:node {} + -exec chmod 0700 {} + 2>/dev/null || true
+    find -P "$beaddir" -xdev -type f -exec chown dev:node {} + -exec chmod 0600 {} + 2>/dev/null || true
+  done
+  chown dev:node /home/dev 2>/dev/null || true
 
   # Shared CLI auth/cache lives in /data/home (persistent volume).
   # Make it group-writable so all agent UIDs (node group) can use it.
@@ -313,21 +322,29 @@ BASHRC
   AGENT_NAMES=""
   if [ -f "$HIVE_CONFIG" ]; then
     AGENT_NAMES=$(python3 -c "
-import yaml, sys, os
-names = set()
+import glob, yaml, sys, os
+effective_agents = {}
 with open('$HIVE_CONFIG') as f:
     cfg = yaml.safe_load(f) or {}
 agents = cfg.get('agents', {})
 if isinstance(agents, dict):
-    names.update(agents.keys())
+    effective_agents.update(agents)
 elif isinstance(agents, list):
     for a in agents:
         if isinstance(a, dict) and 'name' in a:
-            names.add(a['name'])
+            effective_agents[a['name']] = a
+# Per-agent files replace the base entry, matching config.LoadWithOverrides.
+data_cfg = cfg.get('data', {})
+agents_dir = '/data/agent-configs'
+if isinstance(data_cfg, dict) and data_cfg.get('agents_dir'):
+    agents_dir = os.path.expandvars(str(data_cfg['agents_dir']))
+for path in sorted(glob.glob(os.path.join(agents_dir, '*.yaml'))):
+    with open(path) as af:
+        agent = yaml.safe_load(af) or {}
+    effective_agents[os.path.basename(path)[:-5]] = agent
 # Also check pack YAML if HIVE_LEVEL is set
 level = os.environ.get('HIVE_LEVEL', '')
 if level:
-    import glob
     for p in glob.glob('/opt/hive/packs/level-*.yaml') + glob.glob('/data/packs/level-*.yaml'):
         try:
             with open(p) as pf:
@@ -335,12 +352,18 @@ if level:
             pack_agents = pack.get('agents', [])
             if isinstance(pack_agents, list):
                 for a in pack_agents:
-                    if isinstance(a, dict) and 'name' in a:
-                        names.add(a['name'])
+                    if isinstance(a, dict) and 'name' in a and a.get('enabled', True) is not False:
+                        effective_agents.setdefault(a['name'], a)
             elif isinstance(pack_agents, dict):
-                names.update(pack_agents.keys())
+                for name, agent in pack_agents.items():
+                    if not isinstance(agent, dict) or agent.get('enabled', True) is not False:
+                        effective_agents.setdefault(name, agent)
         except Exception:
             pass
+names = {
+    name for name, agent in effective_agents.items()
+    if not isinstance(agent, dict) or agent.get('enabled', True) is not False
+}
 print('\n'.join(sorted(names)))
 " 2>/dev/null) || true
   fi
@@ -384,15 +407,24 @@ print('\n'.join(sorted(names)))
   if [ -n "$AGENT_NAMES" ]; then
     echo "[entrypoint] Creating per-agent users for UID isolation..."
     mkdir -p /var/run/hive
+    chown dev:node /var/run/hive
+    chmod 0755 /var/run/hive
     UID_OFFSET=0
     UID_JSON='{"agents":{'
     FIRST=true
     echo "$AGENT_NAMES" | while read -r agent_name; do
       [ -z "$agent_name" ] && continue
       AGENT_UID=$((HIVE_UID_BASE + UID_OFFSET))
-      if ! id "hive-${agent_name}" >/dev/null 2>&1; then
-        useradd --system -u "$AGENT_UID" -g node -d /data/home -M -s /bin/bash "hive-${agent_name}" 2>/dev/null || true
+      ROLE_GROUP="hive-${agent_name}"
+      if ! getent group "$ROLE_GROUP" >/dev/null 2>&1; then
+        groupadd --gid "$AGENT_UID" "$ROLE_GROUP" 2>/dev/null || true
       fi
+      if ! id "hive-${agent_name}" >/dev/null 2>&1; then
+        useradd --system -u "$AGENT_UID" -g "$ROLE_GROUP" -G node -d /data/home -M -s /bin/bash "hive-${agent_name}" 2>/dev/null || true
+      else
+        usermod -g "$ROLE_GROUP" -a -G node "hive-${agent_name}" 2>/dev/null || true
+      fi
+      usermod -a -G "$ROLE_GROUP" dev 2>/dev/null || true
       mkdir -p "/data/agents/${agent_name}"
       # Skip recursive chown if already owned by this agent — avoids NFS
       # contention during rolling updates when the old pod is still writing.
@@ -403,12 +435,12 @@ print('\n'.join(sorted(names)))
       # Ensure agent dirs are group-writable so the dev user (same node group)
       # can clean up stale workspaces at runtime without root privileges.
       chmod g+rwX "/data/agents/${agent_name}" 2>/dev/null || true
-      if [ -d "/data/beads/${agent_name}" ]; then
-        BEAD_DIR_OWNER=$(stat -c '%u' "/data/beads/${agent_name}" 2>/dev/null || echo "0")
-        if [ "$BEAD_DIR_OWNER" != "$AGENT_UID" ]; then
-          chown -R "hive-${agent_name}:node" "/data/beads/${agent_name}" 2>/dev/null || true
-        fi
-      fi
+      mkdir -p "/data/beads/${agent_name}"
+      ln -sfn "/data/beads/${agent_name}" "/home/dev/${agent_name}-beads"
+      # Only dev and this role join ROLE_GROUP. Setgid preserves that group on
+      # files atomically replaced by either principal; links are never followed.
+      find -P "/data/beads/${agent_name}" -xdev -type d -exec chown "hive-${agent_name}:${ROLE_GROUP}" {} + -exec chmod 2770 {} + 2>/dev/null || true
+      find -P "/data/beads/${agent_name}" -xdev -type f -exec chown "hive-${agent_name}:${ROLE_GROUP}" {} + -exec chmod 0660 {} + 2>/dev/null || true
       echo "[entrypoint] Agent user: hive-${agent_name} (UID ${AGENT_UID})"
       UID_OFFSET=$((UID_OFFSET + 1))
     done
@@ -432,6 +464,8 @@ with open('/var/run/hive/uid-map.json', 'w') as f:
     json.dump(uid_map, f, indent=2)
 print('[entrypoint] UID map written to /var/run/hive/uid-map.json')
 " 2>/dev/null || echo "[entrypoint] WARN: Failed to write UID map"
+    chown dev:node /var/run/hive/uid-map.json 2>/dev/null || true
+    chmod 0644 /var/run/hive/uid-map.json 2>/dev/null || true
 
     # Set up iptables: redirect all outbound :443 to the MITM proxy port,
     # except traffic from the proxy itself (UID 1001 / dev user).

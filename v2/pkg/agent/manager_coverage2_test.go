@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1387,16 +1388,60 @@ func TestFilteredEnv_AdvisoryStripsTokens(t *testing.T) {
 	m.mu.RLock()
 	agent := m.agents["scanner"]
 	m.mu.RUnlock()
+	agent.UID = 4242
 
 	// Set tokens in env
 	t.Setenv("GH_TOKEN", "ghp_test123")
 	t.Setenv("GITHUB_TOKEN", "ghp_test456")
+	t.Setenv("HIVE_GITHUB_TOKEN", "ghp_hive_control_plane")
+	t.Setenv("GH_APP_PRIVATE_KEY", "app-private-key")
+	t.Setenv("GITHUB_APP_FUTURE_SECRET", "future-app-secret")
+	t.Setenv("HIVE_AGENT_TOKEN_CACHE", "/tmp/ambient-wrong-cache")
 
 	env := m.filteredEnv(agent)
 	for _, e := range env {
-		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") {
+		if strings.HasPrefix(e, "GH_TOKEN=") || strings.HasPrefix(e, "GITHUB_TOKEN=") ||
+			strings.HasPrefix(e, "HIVE_GITHUB_TOKEN=") || strings.HasPrefix(e, "GH_APP_PRIVATE_KEY=") ||
+			strings.HasPrefix(e, "GITHUB_APP_FUTURE_SECRET=") {
 			t.Errorf("advisory agent should have %q filtered out", e)
 		}
+	}
+	prefix := m.buildEnvPrefix(agent)
+	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN", "HIVE_GITHUB_TOKEN", "GH_APP_PRIVATE_KEY", "GITHUB_APP_FUTURE_SECRET"} {
+		if !strings.Contains(prefix, "-u "+name) {
+			t.Errorf("actual advisory launch prefix does not unset %s: %s", name, prefix)
+		}
+	}
+	if strings.Contains(prefix, "ghp_") || strings.Contains(prefix, "app-private-key") || strings.Contains(prefix, "future-app-secret") {
+		t.Fatalf("actual advisory launch prefix leaked a control-plane credential value: %s", prefix)
+	}
+	if !strings.Contains(prefix, "HIVE_AGENT_TOKEN_CACHE=") || strings.Contains(prefix, "ambient-wrong-cache") {
+		t.Fatalf("actual advisory launch did not retain only its scoped agent token cache: %s", prefix)
+	}
+}
+
+func TestOrdinaryNonPushLaunchPrefixStripsControlPlaneCredentials(t *testing.T) {
+	t.Setenv("HIVE_GITHUB_TOKEN", "hive-control-plane-token")
+	t.Setenv("GH_APP_PRIVATE_KEY", "app-control-plane-key")
+	for _, mode := range []string{"ADVISORY", "ISSUES_ONLY"} {
+		t.Run(mode, func(t *testing.T) {
+			m := NewManager(map[string]config.AgentConfig{
+				"quality": {Backend: "claude", Mode: mode},
+			}, discardLogger(), ProjectContext{ACMMLevel: 6})
+			m.mu.RLock()
+			agent := m.agents["quality"]
+			m.mu.RUnlock()
+			if m.agentMode(agent).CanPush() {
+				t.Fatalf("test mode %s unexpectedly grants push authority", mode)
+			}
+			prefix := m.buildEnvPrefix(agent)
+			if !strings.HasPrefix(prefix, "env -u ") || !strings.Contains(prefix, "-u HIVE_GITHUB_TOKEN") || !strings.Contains(prefix, "-u GH_APP_PRIVATE_KEY") {
+				t.Fatalf("%s launch prefix is not a control-plane credential boundary: %s", mode, prefix)
+			}
+			if strings.Contains(prefix, "hive-control-plane-token") || strings.Contains(prefix, "app-control-plane-key") {
+				t.Fatalf("%s launch prefix leaked credential bytes: %s", mode, prefix)
+			}
+		})
 	}
 }
 
@@ -1539,8 +1584,8 @@ func TestConfigHasTokens_MissingField(t *testing.T) {
 func TestClearExpiredTokens_Logic(t *testing.T) {
 	// Test the JSON manipulation clearExpiredTokens does
 	input := map[string]interface{}{
-		"copilotTokens":  map[string]interface{}{"user1": "token"},
-		"loggedInUsers":  []interface{}{"user1"},
+		"copilotTokens":    map[string]interface{}{"user1": "token"},
+		"loggedInUsers":    []interface{}{"user1"},
 		"lastLoggedInUser": "user1",
 		"otherSetting":     "keep",
 	}
@@ -1571,6 +1616,9 @@ func TestClearExpiredTokens_Logic(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFixSharedConfigPerms_Logic(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix group mode bits")
+	}
 	// Test the permission fixing logic by creating a temp file and checking
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.json")

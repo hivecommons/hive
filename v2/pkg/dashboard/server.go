@@ -1,12 +1,15 @@
 package dashboard
 
 import (
+	"context"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -114,6 +117,14 @@ type Server struct {
 	hubBanner   *HubBannerState
 
 	githubAppRecheckFn func() bool
+
+	listenerMu      sync.RWMutex
+	listener        net.Listener
+	listenerAddr    string
+	listenerReady   chan struct{}
+	listenerStopped chan struct{}
+	listenerErr     error
+	listenerServing bool
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
@@ -357,15 +368,17 @@ const sseRetryMs = 3000
 
 func NewServer(port int, logger *slog.Logger) *Server {
 	s := &Server{
-		port:           port,
-		sseClients:     make(map[chan []byte]struct{}),
-		logger:         logger,
-		mux:            http.NewServeMux(),
-		agentPipelines: make(map[string]map[string]bool),
-		agentHooks:     make(map[string]map[string][]any),
-		audit:          newAuditLog(),
-		userSessions:   make(map[string]*userSession),
-		cliModels:      newCLIModelCache(),
+		port:            port,
+		sseClients:      make(map[chan []byte]struct{}),
+		logger:          logger,
+		mux:             http.NewServeMux(),
+		agentPipelines:  make(map[string]map[string]bool),
+		agentHooks:      make(map[string]map[string][]any),
+		audit:           newAuditLog(),
+		userSessions:    make(map[string]*userSession),
+		cliModels:       newCLIModelCache(),
+		listenerReady:   make(chan struct{}),
+		listenerStopped: make(chan struct{}),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -373,16 +386,18 @@ func NewServer(port int, logger *slog.Logger) *Server {
 
 func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server {
 	s := &Server{
-		port:           port,
-		authToken:      authToken,
-		sseClients:     make(map[chan []byte]struct{}),
-		logger:         logger,
-		mux:            http.NewServeMux(),
-		agentPipelines: make(map[string]map[string]bool),
-		agentHooks:     make(map[string]map[string][]any),
-		audit:          newAuditLog(),
-		userSessions:   make(map[string]*userSession),
-		cliModels:      newCLIModelCache(),
+		port:            port,
+		authToken:       authToken,
+		sseClients:      make(map[chan []byte]struct{}),
+		logger:          logger,
+		mux:             http.NewServeMux(),
+		agentPipelines:  make(map[string]map[string]bool),
+		agentHooks:      make(map[string]map[string][]any),
+		audit:           newAuditLog(),
+		userSessions:    make(map[string]*userSession),
+		cliModels:       newCLIModelCache(),
+		listenerReady:   make(chan struct{}),
+		listenerStopped: make(chan struct{}),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -442,12 +457,19 @@ func (s *Server) buildInferenceBackends() []InferenceBackend {
 	return backends
 }
 
-// SetSkipReloadFunc sets the callback used by saveConfig to skip the
-// config watcher's next reload after a programmatic save. Call after
-// the watcher is created but before it starts.
+// SetSkipReloadFunc is retained for embedded callers that still use the
+// legacy callback. Production config persistence uses SetConfigSaveFunc.
 func (s *Server) SetSkipReloadFunc(fn func()) {
 	if s.deps != nil {
 		s.deps.SkipReloadFunc = fn
+	}
+}
+
+// SetConfigSaveFunc installs the digest-aware persistence wrapper used by the
+// runtime config coordinator. Call after constructing the config watcher.
+func (s *Server) SetConfigSaveFunc(fn ConfigSaveFunc) {
+	if s.deps != nil && s.deps.ConfigCoordinator != nil {
+		s.deps.ConfigCoordinator.SetSaveFunc(fn)
 	}
 }
 
@@ -463,6 +485,7 @@ func (s *Server) registerCoreRoutes() {
 func (s *Server) Start() error {
 	staticContent, err := fs.Sub(staticFS, "static")
 	if err != nil {
+		s.markListenerStopped(err)
 		return fmt.Errorf("loading embedded static files: %w", err)
 	}
 	s.mux.Handle("GET /", http.FileServer(http.FS(staticContent)))
@@ -474,14 +497,181 @@ func (s *Server) Start() error {
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
 	addr := fmt.Sprintf(":%d", s.port)
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		s.markListenerStopped(err)
+		return fmt.Errorf("bind dashboard listener %s: %w", addr, err)
+	}
+	if err := s.markListenerStarted(listener); err != nil {
+		_ = listener.Close()
+		s.markListenerStopped(err)
+		return err
+	}
 	s.logger.Info("dashboard starting", "addr", addr)
 	srv := &http.Server{
-		Addr:        addr,
+		Addr:        listener.Addr().String(),
 		Handler:     handler,
 		ReadTimeout: dashboardReadTimeout,
 		IdleTimeout: dashboardIdleTimeout,
 	}
-	return srv.ListenAndServe()
+	err = srv.Serve(listener)
+	s.markListenerStopped(err)
+	return err
+}
+
+func (s *Server) ensureListenerLifecycleLocked() {
+	if s.listenerReady == nil {
+		s.listenerReady = make(chan struct{})
+	}
+	if s.listenerStopped == nil {
+		s.listenerStopped = make(chan struct{})
+	}
+}
+
+func (s *Server) markListenerStarted(listener net.Listener) error {
+	if listener == nil {
+		return errors.New("dashboard listener is nil")
+	}
+	s.listenerMu.Lock()
+	defer s.listenerMu.Unlock()
+	s.ensureListenerLifecycleLocked()
+	if s.listener != nil || s.listenerServing || s.listenerAddr != "" {
+		return errors.New("dashboard listener was already started")
+	}
+	s.listener = listener
+	s.listenerAddr = listener.Addr().String()
+	s.listenerServing = true
+	close(s.listenerReady)
+	return nil
+}
+
+func (s *Server) markListenerStopped(err error) {
+	s.listenerMu.Lock()
+	s.ensureListenerLifecycleLocked()
+	s.listenerServing = false
+	s.listenerErr = err
+	select {
+	case <-s.listenerStopped:
+	default:
+		close(s.listenerStopped)
+	}
+	s.listenerMu.Unlock()
+
+	s.statusMu.Lock()
+	s.ready = false
+	s.statusMu.Unlock()
+}
+
+// WaitForListener waits for the real socket bind, not merely process startup.
+func (s *Server) WaitForListener(ctx context.Context) error {
+	s.listenerMu.Lock()
+	s.ensureListenerLifecycleLocked()
+	ready, stopped := s.listenerReady, s.listenerStopped
+	serving, listenerErr := s.listenerServing, s.listenerErr
+	s.listenerMu.Unlock()
+	if serving {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-ready:
+		if s.ListenerServing() {
+			return nil
+		}
+		return s.listenerFailure()
+	case <-stopped:
+		if listenerErr != nil {
+			return listenerErr
+		}
+		return s.listenerFailure()
+	}
+}
+
+// WaitForHTTP proves that the bound listener is serving the dashboard handler.
+// Any HTTP response is sufficient before MarkReady; /api/health intentionally
+// returns 503 during this startup phase.
+func (s *Server) WaitForHTTP(ctx context.Context) error {
+	if err := s.WaitForListener(ctx); err != nil {
+		return err
+	}
+	client := &http.Client{
+		Timeout: 500 * time.Millisecond,
+		Transport: &http.Transport{
+			Proxy: nil,
+		},
+	}
+	defer client.CloseIdleConnections()
+	for {
+		if !s.ListenerServing() {
+			return s.listenerFailure()
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, s.ListenerURL()+"/api/health", nil)
+		if err != nil {
+			return err
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			return nil
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *Server) ListenerServing() bool {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	return s.listenerServing
+}
+
+func (s *Server) ListenerPort() int {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	if s.listener == nil {
+		return 0
+	}
+	if address, ok := s.listener.Addr().(*net.TCPAddr); ok {
+		return address.Port
+	}
+	return 0
+}
+
+func (s *Server) ListenerURL() string {
+	port := s.ListenerPort()
+	if port <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("http://127.0.0.1:%d", port)
+}
+
+func (s *Server) listenerFailure() error {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	if s.listenerErr != nil {
+		return s.listenerErr
+	}
+	return errors.New("dashboard listener is not serving HTTP")
+}
+
+// Stop closes the active listener. Runtime shutdown normally happens through
+// process cancellation; this method also keeps focused listener tests bounded.
+func (s *Server) Stop() error {
+	s.listenerMu.RLock()
+	listener := s.listener
+	s.listenerMu.RUnlock()
+	if listener == nil {
+		return nil
+	}
+	return listener.Close()
 }
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
@@ -1183,6 +1373,22 @@ func (s *Server) MarkReady() {
 	s.readyAt = time.Now()
 	s.statusMu.Unlock()
 	s.logger.Info("dashboard marked ready")
+}
+
+// MarkReadyIfListening closes the probe/ready race: either the listener is
+// still serving while readiness is committed, or readiness remains false.
+func (s *Server) MarkReadyIfListening() bool {
+	s.listenerMu.RLock()
+	defer s.listenerMu.RUnlock()
+	if !s.listenerServing {
+		return false
+	}
+	s.statusMu.Lock()
+	s.ready = true
+	s.readyAt = time.Now()
+	s.statusMu.Unlock()
+	s.logger.Info("dashboard marked ready")
+	return true
 }
 
 const healthGracePeriod = 90 * time.Second

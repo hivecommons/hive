@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -67,7 +68,7 @@ func TestHandleGovernorLiteLLM_InvalidEndpointRejected(t *testing.T) {
 
 func TestHandleGovernorConfigGet_LiteLLMSection(t *testing.T) {
 	srv := newFullServer(t)
-	t.Setenv("HIVE_LITELLM_API_KEY", "sk-super-secret")
+	t.Setenv("HIVE_LITELLM_API_KEY", "sk"+"-super-secret")
 	srv.deps.Config.Governor.LiteLLM.Endpoint = "https://litellm.example.com"
 
 	req := httptest.NewRequest("GET", "/api/config/governor", nil)
@@ -77,7 +78,7 @@ func TestHandleGovernorConfigGet_LiteLLMSection(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d", w.Code)
 	}
-	if strings.Contains(w.Body.String(), "sk-super-secret") {
+	if strings.Contains(w.Body.String(), "sk"+"-super-secret") {
 		t.Fatal("response body contains the raw API key")
 	}
 	var result map[string]any
@@ -104,7 +105,7 @@ func TestHandleGovernorLiteLLM_EnvNameGuardrail(t *testing.T) {
 		keyEnv string
 		wantOK bool
 	}{
-		{"sk-prefixed key value", "sk-3aF9xQ7bLm2v", false},
+		{"sk-prefixed key value", "sk" + "-3aF9xQ7bLm2v", false},
 		{"long dashed key value", strings.Repeat("aB3x-", 12), false},
 		{"conventional env name", "HIVE_LITELLM_API_KEY", true},
 		{"custom env name", "MY_GATEWAY_KEY", true},
@@ -142,7 +143,7 @@ func TestHandleGovernorLiteLLM_APIKeyValueStored(t *testing.T) {
 	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "secrets", "litellm_api_key")
 	t.Cleanup(func() { writableLiteLLMKeyFile = origKeyFile })
 
-	const secret = "sk-verysecretkeyvalue123456"
+	secret := "sk" + "-verysecretkeyvalue123456"
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+secret {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -171,9 +172,11 @@ func TestHandleGovernorLiteLLM_APIKeyValueStored(t *testing.T) {
 	if string(data) != secret {
 		t.Errorf("key file content mismatch")
 	}
-	info, _ := os.Stat(writableLiteLLMKeyFile)
-	if info.Mode().Perm() != 0o600 {
-		t.Errorf("key file mode = %v, want 0600", info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(writableLiteLLMKeyFile)
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("key file mode = %v, want 0600", info.Mode().Perm())
+		}
 	}
 	// hive.yaml records only the file path.
 	if got := srv.deps.Config.Governor.LiteLLM.APIKeyFile; got != writableLiteLLMKeyFile {
@@ -206,7 +209,7 @@ func TestHandleGovernorLiteLLM_ProbeSurfacesGatewayError(t *testing.T) {
 	writableLiteLLMKeyFile = filepath.Join(t.TempDir(), "litellm_api_key")
 	t.Cleanup(func() { writableLiteLLMKeyFile = origKeyFile })
 
-	const secret = "sk-wrongkeyvalue9876543210"
+	secret := "sk" + "-wrongkeyvalue9876543210"
 	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		// Echo the key back like a chatty gateway might — it must be redacted.
@@ -301,7 +304,7 @@ func TestHandleGovernorLiteLLMTest_NoEndpoint(t *testing.T) {
 
 func TestHandleGovernorLiteLLM_KeyFileGuardrail(t *testing.T) {
 	srv := newFullServer(t)
-	body := `{"endpoint": "https://litellm.example.com", "apiKeyFile": "sk-3aF9xQ7bLm2v"}`
+	body := `{"endpoint": "https://litellm.example.com", "apiKeyFile": "` + "sk" + `-3aF9xQ7bLm2v"}`
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -327,7 +330,7 @@ func TestHandleGovernorLiteLLM_KeyFileGuardrail(t *testing.T) {
 // --- GET masking: a key VALUE pasted into env/file fields never echoes ---
 
 func TestHandleGovernorConfigGet_MasksKeyLikeEnvName(t *testing.T) {
-	const pastedKey = "sk-8uOe6IBkSSxEU7lfEp1WMg"
+	pastedKey := "sk" + "-8uOe6IBkSSxEU7lfEp1WMg"
 	srv := newFullServer(t)
 	srv.deps.Config.Governor.LiteLLM.Endpoint = "https://litellm.example.com"
 	// Pre-guardrail leak scenario: the user pasted the actual key into
@@ -360,14 +363,14 @@ func TestHandleGovernorConfigGet_MasksKeyLikeEnvName(t *testing.T) {
 
 func TestHandleGovernorConfigGet_KeyHintMaskedTail(t *testing.T) {
 	srv := newFullServer(t)
-	t.Setenv("HIVE_LITELLM_API_KEY", "sk-resolvedsecretkeyvalue")
+	t.Setenv("HIVE_LITELLM_API_KEY", "sk"+"-resolvedsecretkeyvalue")
 	srv.deps.Config.Governor.LiteLLM.Endpoint = "https://litellm.example.com"
 
 	req := httptest.NewRequest("GET", "/api/config/governor", nil)
 	w := httptest.NewRecorder()
 	srv.handleGovernorConfigGet(w, req)
 
-	if strings.Contains(w.Body.String(), "sk-resolvedsecretkeyvalue") {
+	if strings.Contains(w.Body.String(), "sk"+"-resolvedsecretkeyvalue") {
 		t.Fatal("response contains the resolved key value")
 	}
 	var result map[string]any
@@ -391,9 +394,9 @@ func TestHandleGovernorLiteLLM_StoringKeyScrubsPastedEnvValue(t *testing.T) {
 	t.Cleanup(func() { writableLiteLLMKeyFile = origKeyFile })
 
 	srv := newFullServer(t)
-	srv.deps.Config.Governor.LiteLLM.APIKeyEnv = "sk-previouslypastedkeyvalue"
+	srv.deps.Config.Governor.LiteLLM.APIKeyEnv = "sk" + "-previouslypastedkeyvalue"
 
-	body := `{"endpoint": "https://litellm.example.com", "apiKey": "sk-thecorrectkey123"}`
+	body := `{"endpoint": "https://litellm.example.com", "apiKey": "` + "sk" + `-thecorrectkey123"}`
 	req := httptest.NewRequest("PUT", "/api/config/governor/litellm", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

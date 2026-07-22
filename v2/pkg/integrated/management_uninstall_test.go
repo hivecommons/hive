@@ -1,0 +1,779 @@
+package integrated
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/repair"
+	"github.com/kubestellar/hive/v2/pkg/visualhive"
+)
+
+func TestUninstallDeleteStateFirstCallOnlyPreparesExactCleanup(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StateDeleted || !result.FinalizationPending || result.PRNumber != 17 || result.CommitSHA == "" || result.NextCommand == "" || result.CancelCommand == "" {
+		t.Fatalf("first uninstall result = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.stateDir, "integrated", "config.json")); err != nil {
+		t.Fatalf("first --delete-state removed durable state: %v", err)
+	}
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, exists, err := store.LoadUninstallIntent()
+	if err != nil || !exists || intent.Phase != uninstallPROpen || intent.PRNumber != 17 || !strings.EqualFold(intent.CleanupCommitSHA, result.CommitSHA) || intent.DiffDigest == "" {
+		t.Fatalf("durable uninstall intent = %+v, exists=%t, err=%v", intent, exists, err)
+	}
+}
+
+func TestPreparedUninstallResumeCreatesAuthorizationBeforeAdvancingPhase(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	fixture.mu.Lock()
+	fixture.statusFailures = 1
+	fixture.mu.Unlock()
+
+	first, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "authorize exact setup pull request status") || first.StateDeleted {
+		t.Fatalf("first interrupted uninstall result=%+v err=%v", first, err)
+	}
+	store, storeErr := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if storeErr != nil {
+		t.Fatal(storeErr)
+	}
+	intent, exists, loadErr := store.LoadUninstallIntent()
+	if loadErr != nil || !exists || intent.Phase != uninstallPrepared || intent.PRNumber != 0 {
+		t.Fatalf("failed authorization advanced durable uninstall intent: %+v exists=%t err=%v", intent, exists, loadErr)
+	}
+
+	resumed, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resumed.FinalizationPending || resumed.PRNumber != 17 || resumed.SetupAuthorizationStatusID != 901 || resumed.SetupAuthorizationCreatorID != 55 || resumed.SetupAuthorizationContext == "" {
+		t.Fatalf("resumed uninstall lacks exact authorization proof: %+v", resumed)
+	}
+	intent, exists, loadErr = store.LoadUninstallIntent()
+	if loadErr != nil || !exists || intent.Phase != uninstallPROpen || intent.PRNumber != 17 {
+		t.Fatalf("authorized resume did not bind durable pull: %+v exists=%t err=%v", intent, exists, loadErr)
+	}
+}
+
+func TestUninstallFinalizationRequiresUntamperedMergedEvidence(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	prepared, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.merge(t, prepared.CommitSHA)
+	fixture.mu.Lock()
+	fixture.diff = "tampered diff\n"
+	fixture.mu.Unlock()
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "diff") || result.StateDeleted {
+		t.Fatalf("tampered finalization result=%+v err=%v", result, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(fixture.stateDir, "integrated", "config.json")); statErr != nil {
+		t.Fatalf("tampered evidence deleted state: %v", statErr)
+	}
+}
+
+func TestUninstallFinalizationDeletesOnlyAfterMergedCleanQuiescentTarget(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	prepared, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.merge(t, prepared.CommitSHA)
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.StateDeleted || result.FinalizationPending || !result.CleanupVerified || !result.ProtectionReconciled {
+		t.Fatalf("final uninstall result = %+v", result)
+	}
+	if _, err := os.Stat(fixture.stateDir); !os.IsNotExist(err) {
+		t.Fatalf("finalized state root still exists: %v", err)
+	}
+}
+
+func TestUninstallFinalizationPreservesStateForManagedPathOrPendingOutbox(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(*testing.T, *uninstallFixture)
+		want    string
+	}{
+		{name: "managed path restored", want: "still exists", prepare: func(_ *testing.T, fixture *uninstallFixture) {
+			fixture.mu.Lock()
+			fixture.managedPathPresent = true
+			fixture.mu.Unlock()
+		}},
+		{name: "pending issue mutation", want: "outbox", prepare: func(t *testing.T, fixture *uninstallFixture) {
+			dir := filepath.Join(fixture.stateDir, "visual-hive")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			state := visualhive.LifecycleState{
+				SchemaVersion: visualhive.LifecycleSchema, UpdatedAt: time.Now().UTC(), Findings: map[string]*visualhive.FindingLifecycle{}, ReplayKeys: map[string]string{},
+				Outbox: []*visualhive.OutboxEntry{{ID: "pending-close", Action: visualhive.OutboxCloseIssue, Repository: "owner/repo", RepositoryFingerprint: "finding", CreatedAt: time.Now().UTC()}},
+			}
+			data, err := json.Marshal(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "visual-hive-lifecycle.json"), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newUninstallFixture(t)
+			defer fixture.server.Close()
+			prepared, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fixture.merge(t, prepared.CommitSHA)
+			test.prepare(t, fixture)
+			result, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client})
+			if err == nil || !strings.Contains(err.Error(), test.want) || result.StateDeleted {
+				t.Fatalf("unsafe finalization result=%+v err=%v", result, err)
+			}
+			if _, statErr := os.Stat(filepath.Join(fixture.stateDir, "integrated", "config.json")); statErr != nil {
+				t.Fatalf("unsafe finalization deleted state: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestUninstallPreparationDrainsActiveIssueOpenRepairAndExactBranch(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	fingerprint := strings.Repeat("e", 64)
+	fixture.mu.Lock()
+	fixture.issueOpen, fixture.repairOpen, fixture.repairBranchExists = true, true, true
+	fixture.repairFingerprint, fixture.repairHead = fingerprint, fixture.baseSHA
+	fixture.mu.Unlock()
+	runIntegratedGit(t, fixture.remote, "update-ref", "refs/heads/hive/repair-proof-a1", fixture.baseSHA)
+	finding := visualhive.FindingLifecycle{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Fingerprint: fingerprint, Status: visualhive.StatusPROpen,
+		IssueNumber: 7, IssueURL: "https://example.test/issues/7", Branch: "hive/repair-proof-a1", RepairCommitSHA: fixture.baseSHA,
+		PRNumber: 23, PRURL: "https://example.test/pull/23", FirstSeenAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}
+	pending := []*visualhive.OutboxEntry{{ID: "pending-update", Action: visualhive.OutboxUpdateIssue, Repository: "owner/repo", RepositoryFingerprint: fingerprint, CreatedAt: time.Now().UTC()}}
+	writeUninstallLifecycle(t, fixture.stateDir, map[string]*visualhive.FindingLifecycle{fingerprint: &finding}, pending)
+	repairStore, err := repair.NewStore(filepath.Join(fixture.stateDir, "repair"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := repair.Attempt{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Attempt: 1, AttemptCounted: true, LifecycleStarted: true,
+		Branch: finding.Branch, Worktree: "managed-worktree", Stage: repair.StagePROpen, Provider: "test", CommitSHA: finding.RepairCommitSHA,
+		PRNumber: finding.PRNumber, PRURL: finding.PRURL, LifecyclePROpen: true, ChangedFiles: []string{"src/proof.test.ts"}, StartedAt: time.Now().UTC(),
+	}
+	if err := repairStore.Put(attempt); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client})
+	if err != nil || !result.FinalizationPending || result.PRNumber != 17 {
+		t.Fatalf("active drain uninstall result=%+v err=%v", result, err)
+	}
+	lifecycle, err := visualhive.NewLifecycleStore(filepath.Join(fixture.stateDir, "visual-hive"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	drained, exists := lifecycle.Finding(fingerprint)
+	if !exists || drained.Status != visualhive.StatusCancelled || drained.ClosedAt == nil || len(lifecycle.PendingOutbox()) != 0 {
+		t.Fatalf("drained lifecycle=%+v exists=%t pending=%+v", drained, exists, lifecycle.PendingOutbox())
+	}
+	repairStore, err = repair.NewStore(filepath.Join(fixture.stateDir, "repair"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedAttempt, exists := repairStore.Get(fingerprint)
+	if !exists || storedAttempt.Stage != repair.StageCancelled {
+		t.Fatalf("drained repair=%+v exists=%t", storedAttempt, exists)
+	}
+	fixture.mu.Lock()
+	issueOpen, repairOpen, branchExists := fixture.issueOpen, fixture.repairOpen, fixture.repairBranchExists
+	fixture.mu.Unlock()
+	if issueOpen || repairOpen || branchExists {
+		t.Fatalf("remote drain incomplete: issue_open=%t repair_open=%t branch_exists=%t", issueOpen, repairOpen, branchExists)
+	}
+	audit, err := os.ReadFile(filepath.Join(fixture.stateDir, "integrated", "audit.jsonl"))
+	if err != nil || !strings.Contains(string(audit), "authorize_uninstall_close_issue") || !strings.Contains(string(audit), "authorize_uninstall_close_repair_pr") || !strings.Contains(string(audit), "authorize_uninstall_delete_repair_branch") {
+		t.Fatalf("exact drain audit missing: err=%v\n%s", err, audit)
+	}
+}
+
+func TestAlreadyCleanUninstallAcceptsLaterStillCleanDefaultHead(t *testing.T) {
+	fixture := newUninstallFixtureWithManagedSetup(t, false)
+	defer fixture.server.Close()
+	prepared, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client})
+	if err != nil || !prepared.FinalizationPending || prepared.PRNumber != 0 {
+		t.Fatalf("already-clean preparation=%+v err=%v", prepared, err)
+	}
+	advance := filepath.Join(filepath.Dir(fixture.remote), "advance")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, advance)
+	writeFixture(t, advance, "README.md", "unrelated clean descendant\n")
+	runIntegratedGit(t, advance, "add", "README.md")
+	runIntegratedGit(t, advance, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "unrelated")
+	runIntegratedGit(t, advance, "push", "origin", "main")
+
+	finalized, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client})
+	if err != nil || !finalized.StateDeleted {
+		t.Fatalf("still-clean descendant finalization=%+v err=%v", finalized, err)
+	}
+}
+
+func TestUninstallCancelRecoversStrictBaseAndDescendantHeadDriftThenRestarts(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	prepared, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	firstIntent, exists, err := store.LoadUninstallIntent()
+	if err != nil || !exists {
+		t.Fatalf("first uninstall intent missing: exists=%t err=%v", exists, err)
+	}
+	fixture.advanceUninstallBase(t)
+	driftedHead := fixture.advanceUninstallHead(t, prepared.Branch)
+	if _, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client}); err == nil || !strings.Contains(err.Error(), "--cancel") {
+		t.Fatalf("strict uninstall drift did not return the supported recovery command: %v", err)
+	}
+	cancelled, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, Cancel: true, GitHub: fixture.client})
+	if err != nil || !cancelled.Cancelled || cancelled.FinalizationPending {
+		t.Fatalf("drifted uninstall cancellation=%+v err=%v", cancelled, err)
+	}
+	if _, err := integratedGitOutputError(fixture.remote, "rev-parse", "refs/heads/"+prepared.Branch); err == nil {
+		t.Fatalf("descendant cleanup ref %s was not retired", driftedHead)
+	}
+	config, err := store.Load()
+	if err != nil || !config.Paused || config.SetupBranch != "hive/setup-123" || config.SetupPRNumber != 9 || config.SetupPRURL != "https://example.test/owner/repo/pull/9" {
+		t.Fatalf("cancelled uninstall did not restore prior setup identity while remaining paused: config=%+v err=%v", config, err)
+	}
+	restarted, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client})
+	if err != nil || !restarted.FinalizationPending || restarted.PRNumber != 17 {
+		t.Fatalf("cancelled uninstall could not restart: result=%+v err=%v", restarted, err)
+	}
+	secondIntent, exists, err := store.LoadUninstallIntent()
+	if err != nil || !exists || secondIntent.Marker == firstIntent.Marker {
+		t.Fatalf("restarted uninstall did not receive fresh exact PR identity: first=%q second=%q exists=%t err=%v", firstIntent.Marker, secondIntent.Marker, exists, err)
+	}
+}
+
+func TestUninstallCancelRetriesAfterPRCloseBranchDeleteFailure(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	if _, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client}); err != nil {
+		t.Fatal(err)
+	}
+	fixture.mu.Lock()
+	fixture.deleteFailures = 1
+	fixture.mu.Unlock()
+	if _, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, Cancel: true, GitHub: fixture.client}); err == nil || !strings.Contains(err.Error(), "retire exact") {
+		t.Fatalf("injected uninstall branch retirement failure was not preserved: %v", err)
+	}
+	fixture.mu.Lock()
+	closed := fixture.cleanupClosed
+	fixture.mu.Unlock()
+	store, _ := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if _, exists, err := store.LoadUninstallIntent(); !closed || err != nil || !exists {
+		t.Fatalf("partial uninstall cancellation was not resumable: pr_closed=%t intent_exists=%t err=%v", closed, exists, err)
+	}
+	result, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, Cancel: true, GitHub: fixture.client})
+	if err != nil || !result.Cancelled {
+		t.Fatalf("partial uninstall cancellation retry=%+v err=%v", result, err)
+	}
+}
+
+func TestUninstallCancelRejectsWrongMarkerBranchPRAndMergedState(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*testing.T, *uninstallFixture)
+	}{
+		{name: "marker", mutate: func(_ *testing.T, fixture *uninstallFixture) { fixture.body = "marker removed" }},
+		{name: "branch", mutate: func(_ *testing.T, fixture *uninstallFixture) { fixture.cleanupBranch = "hive/not-the-owned-uninstall" }},
+		{name: "recorded pr", mutate: func(t *testing.T, fixture *uninstallFixture) {
+			store, _ := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+			intent, _, _ := store.LoadUninstallIntent()
+			intent.PRNumber, intent.PRURL = 99, "https://example.test/owner/repo/pull/99"
+			if err := store.SaveUninstallIntent(intent); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "merged", mutate: func(t *testing.T, fixture *uninstallFixture) {
+			store, _ := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+			intent, _, _ := store.LoadUninstallIntent()
+			fixture.merge(t, intent.CleanupCommitSHA)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newUninstallFixture(t)
+			defer fixture.server.Close()
+			if _, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client}); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(t, fixture)
+			if _, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, Cancel: true, GitHub: fixture.client}); err == nil {
+				t.Fatal("mismatched or merged uninstall identity was cancellable")
+			}
+			store, _ := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+			if _, exists, err := store.LoadUninstallIntent(); err != nil || !exists {
+				t.Fatalf("failed cancellation discarded evidence: exists=%t err=%v", exists, err)
+			}
+		})
+	}
+}
+
+func TestUninstallProtectionDriftCanBeReconciledByExactContextRemoval(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(filepath.Join(dir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", Coverage: CoverageComprehensive,
+		Automation: AutomationAutoMerge, Provider: "codex", ACMMLevel: 6, VisualHive: true,
+		VisualHiveRepo: "owner/visual-hive", VisualHiveRef: strings.Repeat("a", 40), VisualHiveConfigDigest: strings.Repeat("c", 64),
+	}
+	binding, err := activationBindingDigest(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation := ProtectionActivationState{
+		SchemaVersion: ProtectionActivationSchema, Repository: config.Repository, RepositoryID: config.RepositoryID, DefaultBranch: config.DefaultBranch,
+		BindingDigest: binding, CheckContext: visualHiveProductionCheckContext, RequiredContext: visualHivePRCheckContext, CheckAppID: 42,
+		WorkflowRunID: 11, WorkflowName: visualHiveProductionWorkflowName, WorkflowPath: visualHiveProductionWorkflowPath,
+		WorkflowEvent: visualHiveProductionWorkflowEvent, WorkflowHeadSHA: strings.Repeat("d", 40), CheckRunID: 12, SeedCheckRunID: 13,
+		ProtectionCreated: true, ActivatedAt: time.Now().UTC(),
+	}
+	if err := store.SaveProtectionActivation(activation); err != nil {
+		t.Fatal(err)
+	}
+	visualRequired, deletes := true, 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/branches/main/protection":
+			writeUninstallJSON(t, writer, driftProtectionJSON(visualRequired))
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/rules/branches/main":
+			http.Error(writer, `{"message":"Not Found"}`, http.StatusNotFound)
+		case request.Method == http.MethodDelete:
+			deletes++
+			writer.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(writer, "unexpected", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := hivegithub.NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+	if err := reconcileUninstallProtection(context.Background(), client, store, config); err == nil || !strings.Contains(err.Error(), "remove only the exact") {
+		t.Fatalf("drifted protection was not actionable: %v", err)
+	}
+	visualRequired = false
+	if err := reconcileUninstallProtection(context.Background(), client, store, config); err != nil {
+		t.Fatalf("exact context removal did not reconcile: %v", err)
+	}
+	if deletes != 0 {
+		t.Fatalf("repository-owned drift was deleted as a whole: deletes=%d", deletes)
+	}
+}
+
+func TestCancelledRepairIsTerminalOnlyAfterOwnedRefAuthorityIsCleared(t *testing.T) {
+	attempt := repair.Attempt{Stage: repair.StageCancelled}
+	if repairAttemptPending(attempt) {
+		t.Fatal("fully retired cancelled repair remained pending")
+	}
+	attempt.CandidateGuardRef = "refs/hive/repair-sealed-trees/candidate/owned"
+	if !repairAttemptPending(attempt) {
+		t.Fatal("cancelled repair with lingering owned ref was treated as terminal")
+	}
+}
+
+type uninstallFixture struct {
+	stateDir string
+	remote   string
+	server   *httptest.Server
+	client   *hivegithub.Client
+	files    []string
+
+	mu                 sync.Mutex
+	title              string
+	body               string
+	created            bool
+	merged             bool
+	mergeSHA           string
+	diff               string
+	baseSHA            string
+	managedPathPresent bool
+	issueOpen          bool
+	repairOpen         bool
+	repairBranchExists bool
+	repairFingerprint  string
+	repairHead         string
+	statusContext      string
+	statusTarget       string
+	statusFailures     int
+	cleanupClosed      bool
+	cleanupBranch      string
+	cleanupHead        string
+	deleteFailures     int
+}
+
+func newUninstallFixture(t *testing.T) *uninstallFixture {
+	return newUninstallFixtureWithManagedSetup(t, true)
+}
+
+func newUninstallFixtureWithManagedSetup(t *testing.T, seedManagedSetup bool) *uninstallFixture {
+	t.Helper()
+	root := t.TempDir()
+	fixture := &uninstallFixture{stateDir: filepath.Join(root, "state"), remote: filepath.Join(root, "remote.git"), files: sortedUniquePaths(managedSetupFiles(true)), diff: "exact cleanup diff\n"}
+	bindTestRepositoryCloneURL(t, fixture.remote)
+	runIntegratedGit(t, root, "init", "--bare", fixture.remote)
+	seed := filepath.Join(root, "seed")
+	runIntegratedGit(t, root, "init", "-b", "main", seed)
+	writeFixture(t, seed, "README.md", "fixture\n")
+	if seedManagedSetup {
+		for _, relative := range fixture.files {
+			writeFixture(t, seed, relative, "managed "+relative+"\n")
+		}
+	}
+	runIntegratedGit(t, seed, "add", ".")
+	runIntegratedGit(t, seed, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "seed")
+	runIntegratedGit(t, seed, "remote", "add", "origin", fixture.remote)
+	runIntegratedGit(t, seed, "push", "-u", "origin", "main")
+	runIntegratedGit(t, fixture.remote, "symbolic-ref", "HEAD", "refs/heads/main")
+	fixture.baseSHA = strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+	checkout := filepath.Join(fixture.stateDir, "integrated", "checkouts", "owner--repo")
+	if err := os.MkdirAll(filepath.Dir(checkout), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runIntegratedGit(t, root, "clone", fixture.remote, checkout)
+	if err := writeManagedCheckoutOwner(checkout, "owner/repo"); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", Coverage: CoverageComprehensive,
+		Automation: AutomationRepairPR, Provider: "codex", ACMMLevel: 5, MaxActiveIssues: 5, MaxRepairAttempts: 3,
+		VisualHive: true, VisualHiveRepo: "owner/visual-hive", VisualHiveRef: strings.Repeat("a", 40), CheckoutDir: checkout, StateDir: fixture.stateDir,
+		SetupAuthorizationActorID: 55, SetupBranch: "hive/setup-123", SetupPRNumber: 9, SetupPRURL: "https://example.test/owner/repo/pull/9",
+	}
+	if err := store.Save(config); err != nil {
+		t.Fatal(err)
+	}
+	fixture.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		fixture.serve(t, writer, request)
+	}))
+	fixture.client = hivegithub.NewClientForTest(fixture.server.URL, "owner", []string{"repo"}, slog.Default())
+	return fixture
+}
+
+func (fixture *uninstallFixture) merge(t *testing.T, cleanupSHA string) {
+	t.Helper()
+	runIntegratedGit(t, fixture.remote, "update-ref", "refs/heads/main", cleanupSHA)
+	fixture.mu.Lock()
+	fixture.merged, fixture.mergeSHA = true, cleanupSHA
+	fixture.mu.Unlock()
+}
+
+func (fixture *uninstallFixture) advanceUninstallBase(t *testing.T) {
+	t.Helper()
+	clone := filepath.Join(filepath.Dir(fixture.remote), "uninstall-base-advance")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, clone)
+	writeFixture(t, clone, "uninstall-base-drift.txt", "base advanced\n")
+	runIntegratedGit(t, clone, "add", "uninstall-base-drift.txt")
+	runIntegratedGit(t, clone, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "advance uninstall base")
+	runIntegratedGit(t, clone, "push", "origin", "main")
+	fixture.mu.Lock()
+	fixture.baseSHA = strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+	fixture.mu.Unlock()
+}
+
+func (fixture *uninstallFixture) advanceUninstallHead(t *testing.T, branch string) string {
+	t.Helper()
+	clone := filepath.Join(filepath.Dir(fixture.remote), "uninstall-head-advance")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, clone)
+	runIntegratedGit(t, clone, "switch", "-c", branch, "origin/"+branch)
+	writeFixture(t, clone, "uninstall-head-drift.txt", "updated cleanup branch\n")
+	runIntegratedGit(t, clone, "add", "uninstall-head-drift.txt")
+	runIntegratedGit(t, clone, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "update uninstall branch")
+	runIntegratedGit(t, clone, "push", "origin", branch)
+	head := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/"+branch))
+	fixture.mu.Lock()
+	fixture.cleanupHead = head
+	fixture.mu.Unlock()
+	return head
+}
+
+func (fixture *uninstallFixture) serve(t *testing.T, writer http.ResponseWriter, request *http.Request) {
+	t.Helper()
+	fixture.mu.Lock()
+	defer fixture.mu.Unlock()
+	path := request.URL.Path
+	writer.Header().Set("Content-Type", "application/json")
+	switch {
+	case request.Method == http.MethodGet && path == "/repos/owner/repo":
+		writeUninstallJSON(t, writer, map[string]any{"id": 123, "full_name": "owner/repo", "default_branch": "main"})
+	case request.Method == http.MethodGet && path == "/user":
+		writeUninstallJSON(t, writer, map[string]any{"id": 55, "login": "hive-bot", "type": "User"})
+	case request.Method == http.MethodGet && strings.HasPrefix(path, "/repos/owner/repo/commits/") && strings.HasSuffix(path, "/statuses"):
+		if fixture.statusContext == "" {
+			writeUninstallJSON(t, writer, []any{})
+			return
+		}
+		writeUninstallJSON(t, writer, []any{fixture.setupStatusJSON()})
+	case request.Method == http.MethodPost && strings.HasPrefix(path, "/repos/owner/repo/statuses/"):
+		if fixture.statusFailures > 0 {
+			fixture.statusFailures--
+			http.Error(writer, `{"message":"injected status failure"}`, http.StatusInternalServerError)
+			return
+		}
+		var input struct {
+			Context   string `json:"context"`
+			TargetURL string `json:"target_url"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		fixture.statusContext, fixture.statusTarget = input.Context, input.TargetURL
+		writer.WriteHeader(http.StatusCreated)
+		writeUninstallJSON(t, writer, fixture.setupStatusJSON())
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/issues/7":
+		writeUninstallJSON(t, writer, fixture.issueJSON())
+	case request.Method == http.MethodPatch && path == "/repos/owner/repo/issues/7":
+		fixture.issueOpen = false
+		writeUninstallJSON(t, writer, fixture.issueJSON())
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/pulls":
+		if fixture.repairOpen && request.URL.Query().Get("state") == "open" {
+			writeUninstallJSON(t, writer, []any{fixture.repairPullJSON()})
+			return
+		}
+		if fixture.created && request.URL.Query().Get("state") == "all" {
+			writeUninstallJSON(t, writer, []any{fixture.pullJSON(t)})
+			return
+		}
+		writeUninstallJSON(t, writer, []any{})
+	case request.Method == http.MethodPost && path == "/repos/owner/repo/pulls":
+		var input struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
+			Head  string `json:"head"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Fatal(err)
+		}
+		fixture.title, fixture.body, fixture.created, fixture.cleanupClosed, fixture.cleanupBranch = input.Title, input.Body, true, false, input.Head
+		writer.WriteHeader(http.StatusCreated)
+		writeUninstallJSON(t, writer, fixture.pullJSON(t))
+	case request.Method == http.MethodPatch && path == "/repos/owner/repo/pulls/17":
+		fixture.cleanupClosed = true
+		writeUninstallJSON(t, writer, fixture.pullJSON(t))
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/pulls/17/files":
+		files := make([]map[string]any, 0, len(fixture.files))
+		for _, relative := range fixture.files {
+			files = append(files, map[string]any{"filename": relative, "status": "removed"})
+		}
+		writeUninstallJSON(t, writer, files)
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/pulls/17" && strings.Contains(request.Header.Get("Accept"), "diff"):
+		writer.Header().Set("Content-Type", "text/plain")
+		_, _ = io.WriteString(writer, fixture.diff)
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/pulls/17":
+		writeUninstallJSON(t, writer, fixture.pullJSON(t))
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/pulls/23":
+		writeUninstallJSON(t, writer, fixture.repairPullJSON())
+	case request.Method == http.MethodPatch && path == "/repos/owner/repo/pulls/23":
+		fixture.repairOpen = false
+		writeUninstallJSON(t, writer, fixture.repairPullJSON())
+	case request.Method == http.MethodGet && strings.HasPrefix(path, "/repos/owner/repo/git/ref/heads/hive/uninstall-"):
+		branch := strings.TrimPrefix(path, "/repos/owner/repo/git/ref/heads/")
+		head, err := integratedGitOutputError(fixture.remote, "rev-parse", "refs/heads/"+branch)
+		if err != nil {
+			http.Error(writer, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		writeUninstallJSON(t, writer, map[string]any{"ref": "refs/heads/" + branch, "object": map[string]any{"sha": strings.TrimSpace(head), "type": "commit"}})
+	case request.Method == http.MethodDelete && strings.HasPrefix(path, "/repos/owner/repo/git/refs/heads/hive/uninstall-"):
+		if fixture.deleteFailures > 0 {
+			fixture.deleteFailures--
+			http.Error(writer, `{"message":"injected delete failure"}`, http.StatusInternalServerError)
+			return
+		}
+		branch := strings.TrimPrefix(path, "/repos/owner/repo/git/refs/heads/")
+		runIntegratedGit(t, fixture.remote, "update-ref", "-d", "refs/heads/"+branch)
+		writer.WriteHeader(http.StatusNoContent)
+	case request.Method == http.MethodGet && strings.HasPrefix(path, "/repos/owner/repo/compare/"):
+		pair := strings.TrimPrefix(path, "/repos/owner/repo/compare/")
+		base, head, ok := strings.Cut(pair, "...")
+		if !ok {
+			http.Error(writer, `{"message":"bad comparison"}`, http.StatusBadRequest)
+			return
+		}
+		status, behind := "diverged", 1
+		if strings.EqualFold(base, head) {
+			status, behind = "identical", 0
+		} else if _, err := integratedGitOutputError(fixture.remote, "merge-base", "--is-ancestor", base, head); err == nil {
+			status, behind = "ahead", 0
+		}
+		writeUninstallJSON(t, writer, map[string]any{"status": status, "behind_by": behind})
+	case request.Method == http.MethodGet && strings.Contains(path, "heads/hive/repair-proof-a1"):
+		if !fixture.repairBranchExists {
+			http.Error(writer, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		writeUninstallJSON(t, writer, map[string]any{"ref": "refs/heads/hive/repair-proof-a1", "object": map[string]any{"sha": fixture.repairHead, "type": "commit"}})
+	case request.Method == http.MethodDelete && strings.Contains(path, "heads/hive/repair-proof-a1"):
+		if fixture.repairBranchExists {
+			fixture.repairBranchExists = false
+			runIntegratedGit(t, fixture.remote, "update-ref", "-d", "refs/heads/hive/repair-proof-a1")
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/branches/main":
+		head := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+		writeUninstallJSON(t, writer, map[string]any{"name": "main", "commit": map[string]any{"sha": head}})
+	case request.Method == http.MethodGet && strings.HasPrefix(path, "/repos/owner/repo/contents/"):
+		if fixture.managedPathPresent {
+			writeUninstallJSON(t, writer, map[string]any{"type": "file", "path": fixture.files[0], "content": "bWFuYWdlZA==", "encoding": "base64"})
+			return
+		}
+		http.Error(writer, `{"message":"Not Found"}`, http.StatusNotFound)
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/branches/main/protection":
+		http.Error(writer, `{"message":"Not Found"}`, http.StatusNotFound)
+	case request.Method == http.MethodGet && path == "/repos/owner/repo/rules/branches/main":
+		http.Error(writer, `{"message":"Not Found"}`, http.StatusNotFound)
+	default:
+		http.Error(writer, fmt.Sprintf(`{"message":"unexpected %s %s"}`, request.Method, path), http.StatusNotFound)
+	}
+}
+
+func (fixture *uninstallFixture) setupStatusJSON() map[string]any {
+	return map[string]any{
+		"id": 901, "state": "success", "context": fixture.statusContext, "target_url": fixture.statusTarget,
+		"creator": map[string]any{"id": 55, "login": "hive-bot", "type": "User"},
+	}
+}
+
+func (fixture *uninstallFixture) issueJSON() map[string]any {
+	state := "closed"
+	if fixture.issueOpen {
+		state = "open"
+	}
+	marker := fmt.Sprintf("<!-- hive-visual-fingerprint: %s -->", fixture.repairFingerprint)
+	return map[string]any{
+		"number": 7, "html_url": "https://example.test/issues/7", "state": state, "title": "Hive finding", "body": marker + "\nactive finding",
+		"user": map[string]any{"id": 55, "login": "hive-bot"},
+	}
+}
+
+func (fixture *uninstallFixture) repairPullJSON() map[string]any {
+	state := "closed"
+	if fixture.repairOpen {
+		state = "open"
+	}
+	repository := map[string]any{"id": 123, "full_name": "owner/repo"}
+	return map[string]any{
+		"number": 23, "html_url": "https://example.test/pull/23", "state": state, "merged": false,
+		"title": "Hive repair", "body": fmt.Sprintf("<!-- hive-repair: %s -->\nrepair", fixture.repairFingerprint),
+		"head": map[string]any{"ref": "hive/repair-proof-a1", "sha": fixture.repairHead, "repo": repository},
+		"base": map[string]any{"ref": "main", "sha": fixture.baseSHA, "repo": repository},
+	}
+}
+
+func (fixture *uninstallFixture) pullJSON(t *testing.T) map[string]any {
+	t.Helper()
+	branch := fixture.cleanupBranch
+	if branch == "" {
+		branch = "hive/uninstall-123"
+	}
+	head := fixture.cleanupHead
+	if current, err := integratedGitOutputError(fixture.remote, "rev-parse", "refs/heads/"+branch); err == nil {
+		head = strings.TrimSpace(current)
+		fixture.cleanupHead = head
+	}
+	state := "open"
+	if fixture.merged || fixture.cleanupClosed {
+		state = "closed"
+	}
+	repository := map[string]any{"id": 123, "full_name": "owner/repo"}
+	return map[string]any{
+		"number": 17, "html_url": "https://example.test/owner/repo/pull/17", "state": state, "merged": fixture.merged,
+		"merge_commit_sha": fixture.mergeSHA, "title": fixture.title, "body": fixture.body, "changed_files": len(fixture.files),
+		"head": map[string]any{"ref": branch, "sha": head, "repo": repository},
+		"base": map[string]any{"ref": "main", "sha": fixture.baseSHA, "repo": repository},
+	}
+}
+
+func writeUninstallJSON(t *testing.T, writer http.ResponseWriter, value any) {
+	t.Helper()
+	if err := json.NewEncoder(writer).Encode(value); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeUninstallLifecycle(t *testing.T, stateDir string, findings map[string]*visualhive.FindingLifecycle, outbox []*visualhive.OutboxEntry) {
+	t.Helper()
+	dir := filepath.Join(stateDir, "visual-hive")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	state := visualhive.LifecycleState{SchemaVersion: visualhive.LifecycleSchema, UpdatedAt: time.Now().UTC(), Findings: findings, ReplayKeys: map[string]string{}, Outbox: outbox}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "visual-hive-lifecycle.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func driftProtectionJSON(visualRequired bool) map[string]any {
+	checks := []any{map[string]any{"context": "repository-owned", "app_id": 99}}
+	if visualRequired {
+		checks = append(checks, map[string]any{"context": "visual-hive", "app_id": 42})
+	}
+	return map[string]any{
+		"required_status_checks":        map[string]any{"strict": true, "checks": checks},
+		"required_pull_request_reviews": nil, "enforce_admins": map[string]any{"enabled": true}, "restrictions": nil,
+		"required_linear_history": map[string]any{"enabled": true}, "allow_force_pushes": map[string]any{"enabled": false},
+		"allow_deletions": map[string]any{"enabled": false}, "required_conversation_resolution": map[string]any{"enabled": true},
+	}
+}

@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
@@ -127,20 +126,20 @@ func BuildFrontendStatus(
 	issueToMerge := buildIssueToMerge(metricsCollector)
 
 	payload := &StatusPayload{
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-		HiveID:       cfg.HiveID,
-		Agents:       buildAgents(agentStatuses, cfg, govState),
-		Governor:     buildGovernor(govState, cfg),
-		Tokens:       buildTokens(tokenCollector),
-		Repos:        buildRepos(cfg, actionable),
-		Beads:        BuildBeadsFromConfig(beadStores, cfg),
-		Health:       buildHealth(ghClient, ctx),
-		Budget:       buildBudget(gov, tokenCollector),
-		CadenceMatrix: buildCadenceMatrix(cfg, agentStatuses),
-		GHRateLimits: buildGHRateLimits(ghClient, ctx, cfg),
-		AgentMetrics: agentMetrics,
-		Hold:         buildHold(actionable),
-		IssueToMerge: issueToMerge,
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		HiveID:          cfg.HiveID,
+		Agents:          buildAgents(agentStatuses, cfg, govState),
+		Governor:        buildGovernor(govState, cfg),
+		Tokens:          buildTokens(tokenCollector),
+		Repos:           buildRepos(cfg, actionable),
+		Beads:           BuildBeadsFromConfig(beadStores, cfg),
+		Health:          buildHealth(ghClient, ctx),
+		Budget:          buildBudget(gov, tokenCollector),
+		CadenceMatrix:   buildCadenceMatrix(cfg, agentStatuses),
+		GHRateLimits:    buildGHRateLimits(ghClient, ctx, cfg),
+		AgentMetrics:    agentMetrics,
+		Hold:            buildHold(actionable),
+		IssueToMerge:    issueToMerge,
 		ACMMLevel:       detectACMMLevel(cfg),
 		ACMMPackAgents:  buildACMMPackAgents(cfg),
 		SystemResources: collectSystemResources(),
@@ -696,12 +695,12 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 	// Per-agent breakdown with full detail
 	for agentName, detail := range summary.ByAgentDetail {
 		bucket := FrontendTokenBucket{
-			Input:     detail.Input,
-			Output:    detail.Output,
-			CacheRead: detail.CacheRead,
+			Input:       detail.Input,
+			Output:      detail.Output,
+			CacheRead:   detail.CacheRead,
 			CacheCreate: detail.CacheCreate,
-			Messages:  detail.Messages,
-			Sessions:  detail.Sessions,
+			Messages:    detail.Messages,
+			Sessions:    detail.Sessions,
 		}
 		if detail.Sessions > 0 {
 			totalForAgent := detail.Input + detail.Output + detail.CacheRead + detail.CacheCreate
@@ -713,12 +712,12 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 	// Per-model breakdown with full detail
 	for modelName, detail := range summary.ByModelDetail {
 		bucket := FrontendTokenBucket{
-			Input:     detail.Input,
-			Output:    detail.Output,
-			CacheRead: detail.CacheRead,
+			Input:       detail.Input,
+			Output:      detail.Output,
+			CacheRead:   detail.CacheRead,
 			CacheCreate: detail.CacheCreate,
-			Messages:  detail.Messages,
-			Sessions:  detail.Sessions,
+			Messages:    detail.Messages,
+			Sessions:    detail.Sessions,
 		}
 		if detail.Sessions > 0 {
 			totalForModel := detail.Input + detail.Output + detail.CacheRead + detail.CacheCreate
@@ -1135,24 +1134,20 @@ const (
 )
 
 // collectSystemResources gathers disk, memory, and CPU usage.
-// Disk comes from syscall.Statfs on /data.
+// Disk comes from the platform filesystem-usage adapter.
 // Memory comes from cgroup v2 files.
 // CPU comes from cgroup v2 cpu.stat (usage_usec sampled twice).
 func collectSystemResources() *SystemResources {
 	res := &SystemResources{}
 
 	// --- Disk ---
-	var stat syscall.Statfs_t
 	diskPath := dataVolumePath
-	if err := syscall.Statfs(diskPath, &stat); err == nil {
-		totalBytes := stat.Blocks * uint64(stat.Bsize)
+	if totalBytes, freeBytes, err := filesystemUsage(diskPath); err == nil {
 		// OCI NFS can report ~8 EiB; fall back to root filesystem.
 		if totalBytes > maxReasonableDiskBytes {
 			diskPath = rootFSPath
-			_ = syscall.Statfs(diskPath, &stat)
-			totalBytes = stat.Blocks * uint64(stat.Bsize)
+			totalBytes, freeBytes, _ = filesystemUsage(diskPath)
 		}
-		freeBytes := stat.Bavail * uint64(stat.Bsize)
 		usedBytes := totalBytes - freeBytes
 		res.DiskTotalGB = roundTo(float64(totalBytes)/bytesPerGB, 1)
 		res.DiskUsedGB = roundTo(float64(usedBytes)/bytesPerGB, 1)
@@ -1180,6 +1175,7 @@ func collectSystemResources() *SystemResources {
 	}
 
 	// --- CPU (cgroup v2, with v1 fallback, sampled) ---
+	cpuSampleStarted := time.Now()
 	usec1 := readCgroupCPUUsageUsec(cgroupCPUStat)
 	if usec1 < 0 {
 		usec1 = readCgroupV1CPUUsageUsec(cgroupV1CPUUsage)
@@ -1191,20 +1187,26 @@ func collectSystemResources() *SystemResources {
 			usec2 = readCgroupV1CPUUsageUsec(cgroupV1CPUUsage)
 		}
 		if usec2 > usec1 {
-			deltaUsec := float64(usec2 - usec1)
-			deltaSec := float64(cpuSampleDelayMs) / 1000.0
-			numCPUs := float64(runtime.NumCPU())
-			if numCPUs < 1 {
-				numCPUs = 1
-			}
-			cpuFraction := deltaUsec / (deltaSec * microsecondsPerSec * numCPUs)
-			res.CpuPct = roundTo(cpuFraction*pctMultiplierSysRes, 1)
+			res.CpuPct = cpuUsagePercent(usec2-usec1, time.Since(cpuSampleStarted), runtime.NumCPU())
 		}
 	}
 
 	res.CpuCores = runtime.NumCPU()
 
 	return res
+}
+
+// cpuUsagePercent converts accumulated cgroup CPU time into a host-capacity
+// percentage. Sampling uses the measured monotonic interval because Sleep only
+// guarantees a minimum delay. Cgroup accounting and timer precision can still
+// introduce small boundary overshoots, so keep the public percentage bounded.
+func cpuUsagePercent(deltaUsec int64, elapsed time.Duration, numCPUs int) float64 {
+	if deltaUsec <= 0 || elapsed <= 0 || numCPUs <= 0 {
+		return 0
+	}
+	capacityUsec := elapsed.Seconds() * microsecondsPerSec * float64(numCPUs)
+	percent := float64(deltaUsec) / capacityUsec * pctMultiplierSysRes
+	return roundTo(math.Min(percent, pctMultiplierSysRes), 1)
 }
 
 // readCgroupInt64 reads a single int64 from a cgroup file. Returns -1 on error

@@ -32,22 +32,22 @@ type ModeChange struct {
 }
 
 type EvalSnapshot struct {
-	Timestamp     int64             `json:"t"`
-	Mode          Mode              `json:"govMode"`
-	QueueIssues   int               `json:"govIssues"`
-	QueuePRs      int               `json:"govPrs"`
-	QueueTotal    int               `json:"govTotal"`
-	QueueHold     int               `json:"govHold"`
-	QueueActive   int               `json:"govActive"`
-	SLAViolations int               `json:"sla_violations,omitempty"`
-	AgentsKicked  []string          `json:"agents_kicked,omitempty"`
-	Actionable    int               `json:"actionableCount"`
-	OpenPRs       int               `json:"openPrCount"`
-	Mergeable     int               `json:"mergeableCount"`
-	BeadsWorkers  int               `json:"beadsWorkers"`
-	BeadsSupervisor int             `json:"beadsSupervisor"`
-	Repos         map[string]RepoSnapshot `json:"repos,omitempty"`
-	AgentStats    map[string]map[string]any `json:"agentStats,omitempty"`
+	Timestamp       int64                     `json:"t"`
+	Mode            Mode                      `json:"govMode"`
+	QueueIssues     int                       `json:"govIssues"`
+	QueuePRs        int                       `json:"govPrs"`
+	QueueTotal      int                       `json:"govTotal"`
+	QueueHold       int                       `json:"govHold"`
+	QueueActive     int                       `json:"govActive"`
+	SLAViolations   int                       `json:"sla_violations,omitempty"`
+	AgentsKicked    []string                  `json:"agents_kicked,omitempty"`
+	Actionable      int                       `json:"actionableCount"`
+	OpenPRs         int                       `json:"openPrCount"`
+	Mergeable       int                       `json:"mergeableCount"`
+	BeadsWorkers    int                       `json:"beadsWorkers"`
+	BeadsSupervisor int                       `json:"beadsSupervisor"`
+	Repos           map[string]RepoSnapshot   `json:"repos,omitempty"`
+	AgentStats      map[string]map[string]any `json:"agentStats,omitempty"`
 }
 
 type RepoSnapshot struct {
@@ -130,10 +130,11 @@ type Governor struct {
 	mu     sync.RWMutex
 	logger *slog.Logger
 
-	modeHistory []ModeChange
-	evalHistory []EvalSnapshot
-	kickHistory []KickRecord
-	budget      BudgetInfo
+	modeHistory      []ModeChange
+	evalHistory      []EvalSnapshot
+	kickHistory      []KickRecord
+	admissionHistory []WorkAdmissionDecision
+	budget           BudgetInfo
 
 	// One-shot alert flags for the current budget window; reset when the
 	// window rolls so each window alerts at most once per threshold.
@@ -151,8 +152,8 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 	}
 
 	return &Governor{
-		cfg:    cfg,
-		agents: agents,
+		cfg:    config.CloneGovernorConfig(cfg),
+		agents: config.CloneAgentConfigs(agents),
 		state: State{
 			Mode:     ModeIdle,
 			Cadences: make(map[string]AgentCadence),
@@ -172,7 +173,30 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 func (g *Governor) UpdateConfig(cfg config.GovernorConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.cfg = cfg
+	g.cfg = config.CloneGovernorConfig(cfg)
+	g.updateCadences()
+}
+
+// UpdateConfigAndAgents replaces the Governor configuration and its enabled
+// agent snapshot under the same lock. Config reloaders should use this method
+// so admission and cadence decisions never combine a new Governor policy with
+// the agent set captured at startup.
+func (g *Governor) UpdateConfigAndAgents(cfg config.GovernorConfig, agents map[string]config.AgentConfig) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.cfg = config.CloneGovernorConfig(cfg)
+	g.agents = config.CloneAgentConfigs(agents)
+	g.updateCadences()
+}
+
+// UpdateAgents atomically replaces the normal role configuration snapshot
+// used by both cadence evaluation and explicit work admission.
+func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.agents = config.CloneAgentConfigs(agents)
+	g.updateCadences()
 }
 
 func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int) []string {
@@ -287,6 +311,7 @@ func (g *Governor) thresholdFor(modeName string) int {
 }
 
 func (g *Governor) updateCadences() {
+	g.state.Cadences = make(map[string]AgentCadence, len(g.agents))
 	modeName := modeToConfigKey(g.state.Mode)
 	modeConfig, ok := g.cfg.Modes[modeName]
 	if !ok {
@@ -346,6 +371,9 @@ func (g *Governor) agentsDueForKick() []string {
 	suppressed := 0
 
 	for agentName, cadence := range g.state.Cadences {
+		if _, enabled := g.agents[agentName]; !enabled {
+			continue
+		}
 		if cadence.Paused {
 			continue
 		}
