@@ -87,7 +87,7 @@ type Config struct {
 func NewReviewer(c Config) (*Reviewer, error) {
 	endpoint := strings.TrimRight(strings.TrimSpace(c.Endpoint), "/")
 	if endpoint == "" {
-		return nil, fmt.Errorf("trajectory review: no LiteLLM endpoint resolved")
+		return nil, fmt.Errorf("trajectory review: no reviewer endpoint resolved (set governor.trajectory.endpoint or governor.litellm.endpoint)")
 	}
 	if strings.TrimSpace(c.Model) == "" {
 		return nil, fmt.Errorf("trajectory review: no reviewer model resolved")

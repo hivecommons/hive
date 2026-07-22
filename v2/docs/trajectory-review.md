@@ -47,10 +47,13 @@ model is appropriate — this is a divergence classifier, not a coding model.
 
 ## Configuration
 
-**Dashboard:** Governor Config → **General** tab has a **Trajectory Review**
-toggle (on by default) with an info tooltip explaining the check. Toggling it
-persists immediately and takes effect on the next hive restart. The review
-model, cadence, and exemptions are set in `hive.yaml` (below).
+**Dashboard:** Governor Config → **General** tab has a full **Trajectory Review**
+panel: an on/off toggle (on by default), a status chip that distinguishes
+*On — active* from *On — no reviewer endpoint (not running)* so the control is
+never silently inert, an explanation of why it exists and what it requires, and
+inline fields for the reviewer model, review interval, reviewer endpoint, and
+the pause/alert-only choice. Changes persist immediately and take effect on the
+next restart. Exemptions remain in `hive.yaml`.
 
 **hive.yaml** — under `governor.trajectory`:
 
@@ -62,6 +65,8 @@ governor:
     default_model: claude-haiku-4-5
   trajectory:
     enabled: true                 # ON by default; set false to disable
+    endpoint: ""                  # reviewer /v1 base URL (LiteLLM/vLLM/llm-d); empty → inherit litellm.endpoint
+    api_key_env: ""               # env var NAME for the reviewer key; empty → inherit litellm key
     interval_s: 600               # review cadence (floored by eval_interval_s)
     model: claude-haiku-4-5       # reviewer model; empty → litellm.default_model
     transcript_lines: 120         # trailing lines sent per agent
@@ -79,8 +84,19 @@ governor:
 | `on_divergence` | `pause` | `pause` stops the agent + alerts; `alert` only notifies. |
 | `exempt_agents` | `[]` | Agents never reviewed. |
 
-The reviewer uses the hive's existing `governor.litellm` endpoint and key
-(same resolution as inference), so no new secret is introduced.
+### Reviewer endpoint
+
+The reviewer needs any **OpenAI-compatible `/v1/chat/completions`** endpoint —
+a **LiteLLM** gateway, a **vLLM** server, or an **llm-d** front. Set
+`governor.trajectory.endpoint` (with `api_key_env`/`api_key_file` if the
+endpoint needs a key; a bare vLLM server needs none). When left empty, the
+reviewer inherits the `governor.litellm` endpoint and key, so no new secret is
+introduced for hives that already run LiteLLM. Pointing the reviewer at a cheap
+local vLLM model is a good way to run oversight without spending gateway tokens.
+
+Protocol compatibility is all that's required — but model *capability* still
+matters: a tiny local model emits weaker verdicts. Because the lane fails open,
+a weak reviewer degrades toward "catches less," not "false-pauses everything."
 
 ## Backend and model coverage
 

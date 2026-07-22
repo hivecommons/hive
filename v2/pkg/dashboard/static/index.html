@@ -13092,6 +13092,16 @@ function burnAreaChart() {
       const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
       const traj = (_configState.data || {}).trajectory || {};
       const trajOn = traj.enabled !== false; // default on
+      const trajReady = traj.reviewerReady === true;
+      const trajEndpoint = traj.effectiveEndpoint || '';
+      const trajModel = traj.effectiveModel || '';
+      const trajInterval = traj.intervalS || 0;
+      const trajDiv = traj.onDivergence || 'pause';
+      // Status line: distinguish ON+running from ON+not-configured from OFF.
+      let trajStatus, trajStatusColor;
+      if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
+      else if (trajReady) { trajStatus = 'On — active'; trajStatusColor = 'var(--green)'; }
+      else { trajStatus = 'On — no reviewer endpoint (not running)'; trajStatusColor = 'var(--amber)'; }
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">General hive instance settings.</p>
         <div class="config-field">
@@ -13110,12 +13120,45 @@ function burnAreaChart() {
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
         </div>
-        <div class="config-field">
-          <div class="config-toggle">
-            <div class="config-toggle-switch ${trajOn ? 'on' : ''}" onclick="toggleTrajectoryReview(this)"></div>
-            <span class="config-toggle-label">Trajectory Review <span class="config-info">i<span class="config-tooltip">A safety check that periodically reads each running agent's recent transcript and asks a second model whether the SEQUENCE of actions is still working toward the agent's assigned task. It catches goal drift — individually-harmless steps that add up to something the task never authorized (escaping the sandbox, evading a security scanner, splitting a credential to avoid detection, escalating privileges, or chasing a goal picked up from a repo file instead of the operator's instruction). On divergence it pauses the agent and alerts you. It fails open: if the review model is unreachable it never pauses a working agent. Uses the Governor's LiteLLM endpoint; no reviews run until one is configured. Set the review model/cadence in hive.yaml (governor.trajectory).</span></span></span>
+        <div class="config-field" style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div class="config-toggle" style="margin:0">
+              <div class="config-toggle-switch ${trajOn ? 'on' : ''}" onclick="toggleTrajectoryReview(this)"></div>
+              <span class="config-toggle-label" style="font-weight:600">Trajectory Review</span>
+            </div>
+            <span style="font-family:monospace;font-size:0.72rem;padding:2px 10px;border-radius:999px;background:color-mix(in srgb, ${trajStatusColor} 14%, transparent);border:1px solid color-mix(in srgb, ${trajStatusColor} 45%, transparent);color:${trajStatusColor}">${esc(trajStatus)}</span>
           </div>
-          <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Recommended on. Pauses agents whose action sequence drifts from their assigned task. Change takes effect on next restart.</span>
+
+          <div style="font-size:0.75rem;color:var(--muted);line-height:1.6;margin-top:10px">
+            <p style="margin:0 0 8px"><strong style="color:var(--text)">Why it exists.</strong> An agent running for a long time can take a series of individually-harmless steps that add up to something its task never authorized — escaping the sandbox, evading a security scanner, splitting a credential so a scanner won't see it, escalating privileges, or chasing a goal it picked up from a repo file instead of your instruction. A per-action allow/deny check can't catch this, because no single step breaks a rule; only the <em>direction</em> of the sequence does.</p>
+            <p style="margin:0 0 8px"><strong style="color:var(--text)">What it does.</strong> On a fixed cadence it reads each running agent's recent transcript, compares it against the task the agent was actually assigned (its last kick), and judges whether the agent is still working toward that task. If the sequence has drifted, it <strong>pauses the agent and alerts you</strong> (or, in alert-only mode, just alerts). Alerts appear in the dashboard banner, the audit log, and ntfy.</p>
+            <p style="margin:0 0 8px"><strong style="color:var(--text)">How it works.</strong> A second, cheap model gets the assigned task plus a bounded tail of the transcript and returns a one-line JSON verdict (<code>divergent / confidence / reason</code>). It judges direction, not any single line, and defaults to "not divergent" when unsure, so ordinary work never trips it. It reads the transcript every CLI writes to, so it covers Claude, Copilot, Gemini, Goose, and inference backends alike. It <strong>fails open</strong>: if the reviewer is unreachable it returns "not divergent," so a broken reviewer never pauses a working agent.</p>
+            <p style="margin:0"><strong style="color:var(--text)">What it requires.</strong> One OpenAI-compatible <code>/v1/chat/completions</code> endpoint for the reviewer model — a LiteLLM gateway, a vLLM server, or an llm-d front. It uses the Governor's LiteLLM endpoint by default; set a different one below to point at a cheap local model. <strong>Until an endpoint resolves, the lane is inert even when this is on</strong> — the status chip above tells you which state you're in.</p>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px">
+            <div>
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer model <span class="config-info">i<span class="config-tooltip">Model id sent to the reviewer endpoint. Empty = the Governor's LiteLLM default model. A cheap-but-capable model is right; a tiny model gives weaker verdicts (fails open, so it catches less rather than false-pausing).</span></span></label>
+              <input type="text" value="${esc(traj.model || '')}" placeholder="${esc(trajModel || 'litellm default')}" onchange="saveTrajectoryField('model', this.value)" style="width:100%">
+            </div>
+            <div>
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Review interval (sec) <span class="config-info">i<span class="config-tooltip">How often the lane reviews running agents. Floored by the Governor eval interval. Empty/0 = default (600s).</span></span></label>
+              <input type="number" min="0" value="${trajInterval || ''}" placeholder="600" onchange="saveTrajectoryField('intervalS', this.value === '' ? 0 : parseInt(this.value,10))" style="width:100%">
+            </div>
+            <div style="grid-column:1 / -1">
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer endpoint <span class="config-info">i<span class="config-tooltip">OpenAI-compatible base URL for the reviewer (LiteLLM / vLLM / llm-d). Empty = inherit the Governor's LiteLLM endpoint. The API key is inherited from LiteLLM or set in hive.yaml (governor.trajectory.api_key_env/api_key_file); a bare vLLM server needs none.</span></span></label>
+              <input type="text" value="${esc(traj.endpoint || '')}" placeholder="${trajEndpoint ? esc(trajEndpoint) + '  (inherited from LiteLLM)' : 'https://litellm-or-vllm-or-llmd:port'}" onchange="saveTrajectoryField('endpoint', this.value)" style="width:100%">
+              <span style="font-size:0.62rem;color:var(--muted);margin-top:3px;display:block">Resolved: ${trajEndpoint ? esc(trajEndpoint) + ' (' + esc(traj.endpointSource || '') + (traj.hasKey ? ', key set' : ', no key') + ')' : 'none — reviewer will not run'}</span>
+            </div>
+            <div style="grid-column:1 / -1">
+              <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">On divergence</label>
+              <div style="display:flex;gap:14px;font-size:0.8rem">
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="traj-div" ${trajDiv === 'pause' ? 'checked' : ''} onchange="saveTrajectoryField('onDivergence','pause')"> Pause the agent &amp; alert</label>
+                <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="traj-div" ${trajDiv === 'alert' ? 'checked' : ''} onchange="saveTrajectoryField('onDivergence','alert')"> Alert only (don't pause)</label>
+              </div>
+              <span style="font-size:0.62rem;color:var(--muted);margin-top:3px;display:block">Start in alert-only to calibrate on your agents, then switch to pause. Changes take effect on next restart.</span>
+            </div>
+          </div>
         </div>`;
     }
 
@@ -13134,6 +13177,25 @@ function burnAreaChart() {
         showToast('Trajectory review ' + (turningOn ? 'enabled' : 'disabled') + ' — effective on next restart');
       } catch (err) {
         el.classList.toggle('on'); // revert on failure
+        showToast('Failed to update trajectory review: ' + err.message, 'error');
+      }
+    }
+
+    async function saveTrajectoryField(field, value) {
+      try {
+        const body = {}; body[field] = value;
+        const res = await fetch('/api/config/governor/trajectory', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        if (!_configState.data.trajectory) _configState.data.trajectory = {};
+        _configState.data.trajectory[field] = value;
+        // Re-render so the status chip / resolved-endpoint line reflect the change.
+        renderConfigTab('General');
+        showToast('Trajectory review updated — effective on next restart');
+      } catch (err) {
         showToast('Failed to update trajectory review: ' + err.message, 'error');
       }
     }

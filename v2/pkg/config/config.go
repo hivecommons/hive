@@ -522,18 +522,36 @@ type GovernorConfig struct {
 // assigned intent (its last kick), pausing the agent when it diverges. This
 // is defense against trajectory-level goal drift — individually-innocuous
 // steps that assemble toward an unauthorized outcome — which action-level
-// gating cannot see. On by default; the lane no-ops when no LiteLLM reviewer
-// endpoint is configured, so "on" is safe even without inference set up.
+// gating cannot see. On by default; the lane no-ops when no reviewer endpoint
+// resolves, so "on" is safe even without inference set up.
+//
+// The reviewer needs any OpenAI-compatible /v1/chat/completions endpoint — a
+// LiteLLM gateway, a vLLM server, or an llm-d front. It does NOT drive an
+// interactive CLI: it makes one stateless request per agent per cycle and
+// reads back a strict-JSON verdict, which the CLIs (stateful tmux sessions)
+// cannot provide.
 type TrajectoryConfig struct {
 	// Enabled turns the review lane on. Pointer so an omitted key defaults to
 	// enabled (applyDefaults sets it), while an explicit "false" disables it.
 	Enabled *bool `yaml:"enabled"`
+	// Endpoint is the reviewer's OpenAI-compatible base URL (LiteLLM, vLLM, or
+	// llm-d — anything serving /v1/chat/completions). Empty → fall back to the
+	// governor LiteLLM endpoint. Storing it here lets the reviewer target a
+	// cheap local model independent of the agents' inference config.
+	Endpoint string `yaml:"endpoint"`
+	// APIKeyEnv / APIKeyFile resolve the reviewer endpoint's key (env var NAME
+	// or file PATH; never the value). Empty → fall back to the LiteLLM key.
+	// A bare vLLM server needs no key; a gateway usually does.
+	APIKeyEnv  string `yaml:"api_key_env"`
+	APIKeyFile string `yaml:"api_key_file"`
 	// IntervalS is how often (seconds) the lane evaluates running agents.
 	// It runs off the governor tick, so the effective floor is the governor
 	// eval interval; a value below that reviews every tick. 0 → default.
 	IntervalS int `yaml:"interval_s"`
-	// Model is the reviewer model id (sent to the LiteLLM endpoint). Empty →
-	// the governor LiteLLM default_model. A cheap model is appropriate.
+	// Model is the reviewer model id. Empty → the governor LiteLLM
+	// default_model. A cheap-but-capable model is appropriate; a tiny model
+	// will emit weaker verdicts (the lane fails open, so it degrades toward
+	// "catches less," not "false-pauses").
 	Model string `yaml:"model"`
 	// TranscriptLines caps how many trailing transcript lines are sent to the
 	// reviewer. 0 → default. Bounds token cost and keeps the review focused
@@ -554,6 +572,57 @@ type TrajectoryConfig struct {
 // defaulting on is safe even for hives without inference configured.
 func (t TrajectoryConfig) IsEnabled() bool {
 	return t.Enabled == nil || *t.Enabled
+}
+
+// ResolveReviewer returns the reviewer endpoint, API key, and model, falling
+// back to the governor LiteLLM block for any field the trajectory block leaves
+// empty. This is what lets the reviewer target a LiteLLM gateway, a vLLM
+// server, or an llm-d front interchangeably: it only needs an
+// OpenAI-compatible /v1/chat/completions URL. The key value is resolved from
+// a file or env var and is never stored in hive.yaml.
+func (g *GovernorConfig) ResolveReviewer() (endpoint, apiKey, model string) {
+	t := g.Trajectory
+	endpoint = strings.TrimRight(strings.TrimSpace(t.Endpoint), "/")
+	if endpoint == "" {
+		endpoint = g.LiteLLM.ResolveEndpoint()
+	}
+	apiKey = resolveKeyFromFileThenEnv(t.APIKeyFile, t.APIKeyEnv)
+	if apiKey == "" {
+		apiKey = g.LiteLLM.ResolveAPIKey()
+	}
+	model = strings.TrimSpace(t.Model)
+	if model == "" {
+		model = g.LiteLLM.DefaultModel
+	}
+	return endpoint, apiKey, model
+}
+
+// ReviewerReady reports whether the reviewer has both an endpoint and a model
+// resolved — i.e. whether enabling the lane will actually run reviews. The UI
+// uses this to distinguish "on and running" from "on but not configured", so
+// a safety control never silently no-ops while showing as enabled.
+func (g *GovernorConfig) ReviewerReady() bool {
+	endpoint, _, model := g.ResolveReviewer()
+	return endpoint != "" && model != ""
+}
+
+// resolveKeyFromFileThenEnv reads a secret from a file path, then an env var
+// NAME, returning "" if neither yields a value. Mirrors the LiteLLM/inference
+// resolution order without pulling in defaults.
+func resolveKeyFromFileThenEnv(file, env string) string {
+	if file != "" {
+		if data, err := os.ReadFile(file); err == nil {
+			if k := strings.TrimSpace(string(data)); k != "" {
+				return k
+			}
+		}
+	}
+	if env != "" {
+		if k := os.Getenv(env); k != "" {
+			return k
+		}
+	}
+	return ""
 }
 
 // Discovery-auth defaults for the self-hosted inference backends. Like

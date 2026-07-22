@@ -3148,15 +3148,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"compress":   cfg.Governor.Logging.Compress,
 			"level":      cfg.Governor.Logging.Level,
 		},
-		"litellm": litellmSectionResponse(&cfg.Governor.LiteLLM),
-		"trajectory": map[string]interface{}{
-			"enabled":         cfg.Governor.Trajectory.IsEnabled(),
-			"intervalS":       cfg.Governor.Trajectory.IntervalS,
-			"model":           cfg.Governor.Trajectory.Model,
-			"transcriptLines": cfg.Governor.Trajectory.TranscriptLines,
-			"onDivergence":    cfg.Governor.Trajectory.OnDivergence,
-			"exemptAgents":    cfg.Governor.Trajectory.ExemptAgents,
-		},
+		"litellm":    litellmSectionResponse(&cfg.Governor.LiteLLM),
+		"trajectory": trajectorySectionResponse(&cfg.Governor),
 		"hub": map[string]interface{}{
 			"enabled":                          cfg.Hub.Enabled,
 			"url":                              cfg.Hub.URL,

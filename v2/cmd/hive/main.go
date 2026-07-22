@@ -1775,19 +1775,21 @@ func main() {
 	// with a single warning rather than erroring every tick.
 	var trajLane *trajectory.Lane
 	if cfg.Governor.Trajectory.IsEnabled() {
-		reviewModel := cfg.Governor.Trajectory.Model
-		if reviewModel == "" {
-			reviewModel = cfg.Governor.LiteLLM.DefaultModel
-		}
+		reviewEndpoint, reviewKey, reviewModel := cfg.Governor.ResolveReviewer()
 		reviewer, terr := trajectory.NewReviewer(trajectory.Config{
-			Endpoint:        cfg.Governor.LiteLLM.ResolveEndpoint(),
-			APIKey:          cfg.Governor.LiteLLM.ResolveAPIKey(),
+			Endpoint:        reviewEndpoint,
+			APIKey:          reviewKey,
 			Model:           reviewModel,
 			TranscriptLines: cfg.Governor.Trajectory.TranscriptLines,
 		})
 		if terr != nil {
-			logger.Warn("trajectory-review lane disabled", "reason", terr.Error())
+			// Enabled but not runnable — surface it as a dashboard alert, not
+			// just a log line, so a safety control is never silently inert.
+			logger.Warn("trajectory-review lane enabled but not running", "reason", terr.Error())
+			dashSrv.AddSystemAlert("trajectory-not-configured", "warning",
+				"Trajectory review is ON but has no reviewer endpoint configured — no agents are being reviewed. Set a reviewer endpoint (LiteLLM, vLLM, or llm-d) in Governor Config.")
 		} else {
+			dashSrv.ClearSystemAlert("trajectory-not-configured")
 			trajLane = trajectory.NewLane(reviewer, agentMgr,
 				dashboard.NewTrajectorySink(dashSrv, notifier),
 				trajectory.LaneConfig{
