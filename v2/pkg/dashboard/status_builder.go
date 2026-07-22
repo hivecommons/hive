@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
@@ -362,7 +361,15 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 
 	names := make([]string, 0, len(statuses))
 	for name := range statuses {
-		if packAllowed != nil && !packAllowed[name] {
+		// The ACMM pack filter hides agents that aren't part of the current
+		// level's pack. But an agent EXPLICITLY configured in cfg.Agents was
+		// added by the user (e.g. a custom "ux-scout") and must stay visible in
+		// the sidebar and cards regardless of the ACMM level — otherwise adding
+		// an agent, then changing level, silently hides it even though it's still
+		// enabled and running. Only pack-provided agents are subject to the
+		// level filter; user-configured agents always pass.
+		_, userConfigured := cfg.Agents[name]
+		if packAllowed != nil && !packAllowed[name] && !userConfigured {
 			continue
 		}
 		names = append(names, name)
@@ -1491,10 +1498,22 @@ func buildACMMPackAgents(cfg *config.Config) []string {
 	if err != nil {
 		return nil
 	}
-	names := make([]string, 0, len(pack.Agents))
+	seen := make(map[string]bool)
+	names := make([]string, 0, len(pack.Agents)+len(cfg.Agents))
 	for _, a := range pack.Agents {
 		if !a.Hidden {
 			names = append(names, a.Name)
+			seen[a.Name] = true
+		}
+	}
+	// Include every user-configured agent so the sidebar keeps showing a
+	// manually-added agent (e.g. "ux-scout") after the ACMM level changes. The
+	// frontend's applyACMMVisibility hides sidebar items NOT in this list, so an
+	// added agent must be present here regardless of the level's pack.
+	for name := range cfg.Agents {
+		if !seen[name] {
+			names = append(names, name)
+			seen[name] = true
 		}
 	}
 	return names
@@ -1564,24 +1583,20 @@ const (
 )
 
 // collectSystemResources gathers disk, memory, and CPU usage.
-// Disk comes from syscall.Statfs on /data.
+// Disk comes from the platform filesystem-usage adapter.
 // Memory comes from cgroup v2 files.
 // CPU comes from cgroup v2 cpu.stat (usage_usec sampled twice).
 func collectSystemResources() *SystemResources {
 	res := &SystemResources{}
 
 	// --- Disk ---
-	var stat syscall.Statfs_t
 	diskPath := dataVolumePath
-	if err := syscall.Statfs(diskPath, &stat); err == nil {
-		totalBytes := stat.Blocks * uint64(stat.Bsize)
+	if totalBytes, freeBytes, err := filesystemUsage(diskPath); err == nil {
 		// OCI NFS can report ~8 EiB; fall back to root filesystem.
 		if totalBytes > maxReasonableDiskBytes {
 			diskPath = rootFSPath
-			_ = syscall.Statfs(diskPath, &stat)
-			totalBytes = stat.Blocks * uint64(stat.Bsize)
+			totalBytes, freeBytes, _ = filesystemUsage(diskPath)
 		}
-		freeBytes := stat.Bavail * uint64(stat.Bsize)
 		usedBytes := totalBytes - freeBytes
 		res.DiskTotalGB = roundTo(float64(totalBytes)/bytesPerGB, 1)
 		res.DiskUsedGB = roundTo(float64(usedBytes)/bytesPerGB, 1)
@@ -1609,6 +1624,7 @@ func collectSystemResources() *SystemResources {
 	}
 
 	// --- CPU (cgroup v2, with v1 fallback, sampled) ---
+	cpuSampleStarted := time.Now()
 	usec1 := readCgroupCPUUsageUsec(cgroupCPUStat)
 	if usec1 < 0 {
 		usec1 = readCgroupV1CPUUsageUsec(cgroupV1CPUUsage)
@@ -1620,31 +1636,26 @@ func collectSystemResources() *SystemResources {
 			usec2 = readCgroupV1CPUUsageUsec(cgroupV1CPUUsage)
 		}
 		if usec2 > usec1 {
-			deltaUsec := float64(usec2 - usec1)
-			deltaSec := float64(cpuSampleDelayMs) / 1000.0
-			numCPUs := float64(runtime.NumCPU())
-			if numCPUs < 1 {
-				numCPUs = 1
-			}
-			cpuFraction := deltaUsec / (deltaSec * microsecondsPerSec * numCPUs)
-			res.CpuPct = roundTo(cpuFraction*pctMultiplierSysRes, 1)
-			// Clamp: on a noisy/oversubscribed host (e.g. a shared CI
-			// runner), scheduler bursts within the short cpuSampleDelayMs
-			// window can push the measured delta a hair past the
-			// theoretical 100% ceiling (observed: 100.1). CpuPct is a
-			// display/reporting value, so clamp rather than let a
-			// momentary sampling artifact read as over-100% or negative.
-			if res.CpuPct > pctMultiplierSysRes {
-				res.CpuPct = pctMultiplierSysRes
-			} else if res.CpuPct < 0 {
-				res.CpuPct = 0
-			}
+			res.CpuPct = cpuUsagePercent(usec2-usec1, time.Since(cpuSampleStarted), runtime.NumCPU())
 		}
 	}
 
 	res.CpuCores = runtime.NumCPU()
 
 	return res
+}
+
+// cpuUsagePercent converts accumulated cgroup CPU time into a host-capacity
+// percentage. Sampling uses the measured monotonic interval because Sleep only
+// guarantees a minimum delay. Cgroup accounting and timer precision can still
+// introduce small boundary overshoots, so keep the public percentage bounded.
+func cpuUsagePercent(deltaUsec int64, elapsed time.Duration, numCPUs int) float64 {
+	if deltaUsec <= 0 || elapsed <= 0 || numCPUs <= 0 {
+		return 0
+	}
+	capacityUsec := elapsed.Seconds() * microsecondsPerSec * float64(numCPUs)
+	percent := float64(deltaUsec) / capacityUsec * pctMultiplierSysRes
+	return roundTo(math.Min(percent, pctMultiplierSysRes), 1)
 }
 
 // readCgroupInt64 reads a single int64 from a cgroup file. Returns -1 on error

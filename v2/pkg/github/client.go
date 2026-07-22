@@ -14,6 +14,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/kubestellar/hive/v2/pkg/checkpoint"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/ioscan"
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
@@ -113,6 +114,21 @@ func (c *Client) AppAuth() *AppAuth {
 		return nil
 	}
 	return c.appAuth
+}
+
+func (c *Client) AuthenticatedLogin(ctx context.Context) (string, error) {
+	if c == nil || c.client == nil {
+		return "", fmt.Errorf("GitHub client is required")
+	}
+	user, _, err := c.client.Users.Get(ctx, "")
+	if err != nil {
+		return "", fmt.Errorf("read authenticated GitHub identity: %w", err)
+	}
+	login := strings.TrimSpace(user.GetLogin())
+	if login == "" {
+		return "", fmt.Errorf("authenticated GitHub identity has no login")
+	}
+	return login, nil
 }
 
 // SetAppBotLogin records the GitHub App bot account that authors App-created
@@ -287,8 +303,12 @@ const slaThresholdMinutes = 30
 func NewClient(token string, org string, repos []string, logger *slog.Logger, apiURL string) *Client {
 	// Proxy-trusting transport: ordinary API traffic is also MITM'd by the
 	// in-process proxy under forced egress, so it must trust the proxy CA
-	// (see proxytrust.go).
-	client := newTokenClient(token, apiURL)
+	// (see proxytrust.go). Wrap it in checkpoint.Transport so mutating API
+	// calls still flow through the durable checkpoint gate (dd).
+	httpClient := proxyTrustingHTTPClient(mintClientTimeout)
+	httpClient.Transport = checkpoint.Transport{Base: httpClient.Transport}
+	client := gh.NewClient(httpClient).WithAuthToken(token)
+	setBaseURL(client, apiURL)
 	return &Client{
 		client: client,
 		org:    org,

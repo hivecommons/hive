@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -59,10 +60,14 @@ func TestMain(m *testing.M) {
 
 	stubBinDir = dir
 
-	const stubScript = "#!/bin/sh\nexec cat\n"
-
-	for _, name := range []string{"claude", "copilot", "gemini", "goose", "bob"} {
-		path := fmt.Sprintf("%s/%s", dir, name)
+	stubName := func(name string) string { return name }
+	stubScript := "#!/bin/sh\nexec cat\n"
+	if runtime.GOOS == "windows" {
+		stubName = func(name string) string { return name + ".cmd" }
+		stubScript = "@echo off\r\nmore\r\n"
+	}
+	for _, name := range []string{"claude", "copilot", "gemini", "goose", "bob", "codex"} {
+		path := filepath.Join(dir, stubName(name))
 		if err := os.WriteFile(path, []byte(stubScript), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "TestMain: writing stub %s: %v\n", name, err)
 			os.Exit(1)
@@ -72,7 +77,7 @@ func TestMain(m *testing.M) {
 	originalPath := os.Getenv("PATH")
 	originalTMUX := os.Getenv("TMUX")
 	originalTMUXTmpDir := os.Getenv("TMUX_TMPDIR")
-	os.Setenv("PATH", dir+":"+originalPath)
+	os.Setenv("PATH", dir+string(os.PathListSeparator)+originalPath)
 	os.Unsetenv("TMUX")
 	os.Setenv("TMUX_TMPDIR", tmuxDir)
 
@@ -307,7 +312,7 @@ func TestBackendBinary_KnownBackendsResolveToStubs(t *testing.T) {
 				t.Errorf("backendBinary(%q) unexpected error: %v", backend, err)
 				return
 			}
-			if !strings.HasPrefix(path, "/") {
+			if !filepath.IsAbs(path) {
 				t.Errorf("backendBinary(%q) returned non-absolute path %q", backend, path)
 			}
 			if path == "" {
@@ -322,7 +327,7 @@ func TestBackendBinary_ReturnsAbsolutePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backendBinary(claude) error: %v", err)
 	}
-	if !strings.HasPrefix(path, "/") {
+	if !filepath.IsAbs(path) {
 		t.Errorf("expected absolute path, got %q", path)
 	}
 }
@@ -406,6 +411,7 @@ func TestAgentEnvPairs_BDDirFromBeadsDir(t *testing.T) {
 	pairs := testEnvPairs(ap)
 
 	found := false
+	shared := false
 	for _, p := range pairs {
 		if p.Key == "BD_DIR" {
 			found = true
@@ -413,13 +419,19 @@ func TestAgentEnvPairs_BDDirFromBeadsDir(t *testing.T) {
 				t.Errorf("BD_DIR = %q, want %q", p.Value, "/data/beads/scanner")
 			}
 		}
+		if p.Key == "HIVE_SHARED_ROLE_BEADS" {
+			shared = p.Value == "1"
+		}
 	}
 	if !found {
 		t.Error("BD_DIR should be present when BeadsDir is configured")
 	}
+	if !shared {
+		t.Error("HIVE_SHARED_ROLE_BEADS=1 should accompany a configured role store")
+	}
 
-	// Count should be baseEnvVarCount + 1 for BD_DIR
-	const expectedWithBDDir = baseEnvVarCount + 1
+	// Count should be baseEnvVarCount + 2 for BD_DIR and its scoped sharing opt-in.
+	const expectedWithBDDir = baseEnvVarCount + 2
 	if len(pairs) != expectedWithBDDir {
 		t.Errorf("testEnvPairs() returned %d vars, want %d (base + BD_DIR)", len(pairs), expectedWithBDDir)
 	}
@@ -502,12 +514,54 @@ func TestPause_SetsPausedFlag(t *testing.T) {
 	}
 }
 
+func TestPause_PersistenceCallbackCanReenterManager(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"worker": makeAgentConfig("claude", "sonnet"),
+	}, discardLogger(), ProjectContext{})
+
+	callbackCalled := make(chan struct{}, 1)
+	m.SetPersistPauseCallback(func(name string, paused bool) {
+		if name != "worker" || !paused {
+			t.Errorf("persist callback = (%q, %v), want (worker, true)", name, paused)
+		}
+		_ = m.AllStatuses()
+		callbackCalled <- struct{}{}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Pause("worker", "test", "test pause")
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Pause() error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Pause() deadlocked while persistence callback re-entered manager")
+	}
+
+	select {
+	case <-callbackCalled:
+	default:
+		t.Fatal("pause persistence callback was not called")
+	}
+}
+
 func TestResume_ClearsPausedFlag(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy tmux/su-exec agent runtime is Linux-only")
+	}
+	installPassingTmuxStub(t)
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())
 	cfgs := map[string]config.AgentConfig{
 		"worker": makeAgentConfig("claude", "sonnet"),
 	}
 	m := NewManager(cfgs, discardLogger(), ProjectContext{})
+	// Resume state is the subject here; exercise it without depending on the
+	// production per-agent UID/su-exec boundary on an ordinary CI runner.
+	m.agents["worker"].UID = 0
 
 	_ = m.Pause("worker", "test", "test pause")
 	if err := m.Resume(context.Background(), "worker", "test", "test resume"); err != nil {
@@ -517,6 +571,43 @@ func TestResume_ClearsPausedFlag(t *testing.T) {
 	ap, _ := m.GetStatus("worker")
 	if ap.Paused {
 		t.Error("expected agent to not be paused after Resume()")
+	}
+}
+
+func TestResume_PersistenceCallbackCanReenterManager(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"worker": makeAgentConfig("claude", "sonnet"),
+	}, discardLogger(), ProjectContext{})
+	m.agents["worker"].Paused = true
+	m.agents["worker"].Config.Paused = true
+
+	callbackCalled := make(chan struct{}, 1)
+	m.SetPersistPauseCallback(func(name string, paused bool) {
+		if name != "worker" || paused {
+			t.Errorf("persist callback = (%q, %v), want (worker, false)", name, paused)
+		}
+		_ = m.AllStatuses()
+		callbackCalled <- struct{}{}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Resume(context.Background(), "worker", "test", "test resume")
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Resume() error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Resume() deadlocked while persistence callback re-entered manager")
+	}
+
+	select {
+	case <-callbackCalled:
+	default:
+		t.Fatal("resume persistence callback was not called")
 	}
 }
 
@@ -681,6 +772,9 @@ func TestStart_UnknownAgentReturnsError(t *testing.T) {
 }
 
 func TestStart_UnknownBackendSetsFailed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("legacy tmux/su-exec agent runtime is Linux-only")
+	}
 	t.Setenv("HIVE_WORK_DIR", t.TempDir())
 	cfgs := map[string]config.AgentConfig{
 		"bad": makeAgentConfig("not-a-real-backend", ""),

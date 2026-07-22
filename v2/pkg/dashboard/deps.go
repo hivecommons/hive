@@ -20,29 +20,35 @@ import (
 )
 
 type Dependencies struct {
-	Config            *config.Config
-	AgentMgr          *agent.Manager
-	Governor          *governor.Governor
-	GHClient          *ghpkg.Client
-	GHAppAuth         *ghpkg.AppAuth
-	Tokens            *tokens.Collector
-	Knowledge         *knowledge.KnowledgeAPI
-	Inception         *knowledge.InceptionEngine
-	Nous              *NousState
-	Scheduler         *scheduler.Scheduler
-	MetricsCollector  *MetricsCollector
-	BeadSynthesizer   *knowledge.BeadSynthesizer
-	BeadStores        map[string]*beads.Store
-	Logger            *slog.Logger
-	Ctx               context.Context
-	RefreshFunc       func()
-	PersistFunc       func()
-	SkipReloadFunc    func()
-	ReInitFunc        func()
-	SetUserClient     func(token string)
-	EnumerateFunc     func()
-	AdvisoryResetFunc func(newPrimaryRepo string)
-	ReinitGitHubFunc  func(appID, installationID int64, keyFile string) error
+	Config                        *config.Config
+	AgentMgr                      *agent.Manager
+	Governor                      *governor.Governor
+	GHClient                      *ghpkg.Client
+	GHAppAuth                     *ghpkg.AppAuth
+	Tokens                        *tokens.Collector
+	Knowledge                     *knowledge.KnowledgeAPI
+	Inception                     *knowledge.InceptionEngine
+	Nous                          *NousState
+	Scheduler                     *scheduler.Scheduler
+	MetricsCollector              *MetricsCollector
+	BeadSynthesizer               *knowledge.BeadSynthesizer
+	BeadStores                    map[string]*beads.Store
+	ConfigCoordinator             *ConfigCoordinator
+	Logger                        *slog.Logger
+	Ctx                           context.Context
+	RefreshFunc                   func()
+	PersistFunc                   func()
+	SkipReloadFunc                func()
+	ReInitFunc                    func()
+	SetUserClient                 func(token string)
+	EnumerateFunc                 func()
+	AdvisoryResetFunc             func(newPrimaryRepo string)
+	ReinitGitHubFunc              func(appID, installationID int64, keyFile string) error
+	IntegratedSetupFunc           func(context.Context, IntegratedSetupRequest, string) (map[string]any, error)
+	IntegratedPreflightFunc       func(context.Context, IntegratedPreflightRequest, string) (map[string]any, error)
+	IntegratedLifecycleFunc       func(context.Context, IntegratedLifecycleRequest, string) (map[string]any, error)
+	IntegratedSetupTokenFunc      func() (string, error)
+	IntegratedSetupAuthorizerFunc func(string) (string, error)
 	// ResolveAppKeyFileFunc resolves which App private key the process would
 	// actually sign with, given the configured key_file and app_id — the SAME
 	// resolution the boot and heartbeat-apply paths use (config value, then

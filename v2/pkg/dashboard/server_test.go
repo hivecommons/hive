@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -706,6 +708,35 @@ func freePort(t *testing.T) int {
 	return port
 }
 
+func TestStartSignalsBindFailureWithoutReadiness(t *testing.T) {
+	occupied, err := net.Listen("tcp", ":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Close()
+	port := occupied.Addr().(*net.TCPAddr).Port
+	server := NewServer(port, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result := make(chan error, 1)
+	go func() { result <- server.Start() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := server.WaitForHTTP(ctx); err == nil {
+		t.Fatal("occupied dashboard port reported HTTP readiness")
+	}
+	if server.ListenerServing() || server.MarkReadyIfListening() {
+		t.Fatal("failed dashboard bind retained listener readiness")
+	}
+	select {
+	case err := <-result:
+		if err == nil || !strings.Contains(err.Error(), "bind dashboard listener") {
+			t.Fatalf("dashboard bind error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("dashboard bind failure did not return")
+	}
+}
+
 func TestStart_ServesEndpoints(t *testing.T) {
 	port := freePort(t)
 	s := NewServer(port, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
@@ -772,7 +803,7 @@ func TestSecurityHeaders_Present(t *testing.T) {
 	headers := map[string]string{
 		"X-Frame-Options":        "DENY",
 		"X-Content-Type-Options": "nosniff",
-		"X-Xss-Protection":      "1; mode=block",
+		"X-Xss-Protection":       "1; mode=block",
 		"Referrer-Policy":        "strict-origin-when-cross-origin",
 	}
 	for name, want := range headers {

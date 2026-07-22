@@ -2,6 +2,10 @@
 
 The Hive Agent Definition is the declarative interface for configuring autonomous agents. Every agent is defined by a set of fields in `hive.yaml` (or an overlay file in `/data/agent-configs/`), and can be imported/exported as a portable YAML document.
 
+> For Hive/Visual Hive work, the normative
+> [integration contract](docs/visual-hive-integration-contract.md) is required reading.
+> In particular, configured channels and backend tool/MCP rules are not proof of runtime enforcement.
+
 ## Portable Format
 
 Agents can be shared as standalone YAML files using the `AgentDefinition` kind:

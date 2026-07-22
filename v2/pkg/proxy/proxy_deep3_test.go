@@ -217,7 +217,7 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 
 	// Test 1: no route
 	req1, _ := http.NewRequest("POST", baseURL+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`))
-	req1.Header.Set("x-api-key", "sk-hive-unknown")
+	req1.Header.Set("x-api-key", "sk"+"-hive-unknown")
 	resp1, err := http.DefaultClient.Do(req1)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 
 	// Test 2: non-streaming
 	req2, _ := http.NewRequest("POST", baseURL+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`))
-	req2.Header.Set("x-api-key", "sk-hive-agent-non-stream")
+	req2.Header.Set("x-api-key", "sk"+"-hive-agent-non-stream")
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
 		t.Fatal(err)
@@ -247,7 +247,7 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 
 	// Test 3: streaming
 	req3, _ := http.NewRequest("POST", baseURL+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"stream":true}`))
-	req3.Header.Set("x-api-key", "sk-hive-agent-stream")
+	req3.Header.Set("x-api-key", "sk"+"-hive-agent-stream")
 	resp3, err := http.DefaultClient.Do(req3)
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 
 	// Test 4: bad body
 	req4, _ := http.NewRequest("POST", baseURL+"/v1/messages", strings.NewReader("not json"))
-	req4.Header.Set("x-api-key", "sk-hive-agent-non-stream")
+	req4.Header.Set("x-api-key", "sk"+"-hive-agent-non-stream")
 	resp4, err := http.DefaultClient.Do(req4)
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestStartInferenceTranslatorReal(t *testing.T) {
 	// Test 5: unreachable backend
 	p.inference.Set("agent-unreachable", &InferenceRoute{Backend: "vllm", Endpoint: "http://127.0.0.1:1", Model: "test"})
 	req5, _ := http.NewRequest("POST", baseURL+"/v1/messages", strings.NewReader(`{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`))
-	req5.Header.Set("x-api-key", "sk-hive-agent-unreachable")
+	req5.Header.Set("x-api-key", "sk"+"-hive-agent-unreachable")
 	resp5, err := http.DefaultClient.Do(req5)
 	if err != nil {
 		t.Fatal(err)

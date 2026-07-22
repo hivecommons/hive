@@ -1,0 +1,143 @@
+{
+  "schemaVersion": "visual-hive.bundle.v3",
+  "digestAlgorithm": "visual-hive.bundle.content-addressed-digest.v1",
+  "bundleId": "unicode-vector",
+  "generatedAt": "2026-07-09T12:00:00.000Z",
+  "expiresAt": "2026-07-16T12:00:00.000Z",
+  "producer": {
+    "name": "visual-hive",
+    "version": "0.3.0",
+    "gitCommit": "unicode"
+  },
+  "source": {
+    "repository": "owner/repo",
+    "ref": "refs/heads/main",
+    "commitSha": "abc123",
+    "event": "workflow_dispatch",
+    "workflowRunId": "1001",
+    "workflowRunAttempt": "2",
+    "workflowArtifactId": "9001",
+    "conclusion": "success",
+    "trusted": true
+  },
+  "project": "unicode",
+  "mode": "full",
+  "verdict": "ready",
+  "acmmRequest": 4,
+  "externalCallsMade": 0,
+  "scan": {
+    "scope": "full",
+    "authoritativeForResolution": true,
+    "evaluatedContracts": [
+      "",
+      "𐀀"
+    ],
+    "evaluatedFiles": [
+      "src/.ts",
+      "src/𐀀.ts"
+    ],
+    "testPlanVersion": "unicode-plan",
+    "toolRegistryVersion": "unicode-tools"
+  },
+  "observations": [
+    {
+      "fingerprint": "unicode-observation",
+      "repositoryFingerprint": "58541d3572f87f73e2e9d7ced3f1cdd6ee3db034da1229772acdaeb665dc04e6",
+      "publicationRole": "canonical",
+      "rootCauseKey": "finding/visual_regression/unicode",
+      "blockedByRootKeys": [],
+      "state": "present",
+      "issueKind": "visual_regression",
+      "severity": "high",
+      "owningAgentHint": "hive/quality",
+      "title": "Evidence observation",
+      "body": "Evidence-backed observation",
+      "labels": [
+        "",
+        "𐀀"
+      ],
+      "sourceArtifacts": [
+        "evidence/.json",
+        "evidence/𐀀.json"
+      ],
+      "affectedContracts": [
+        "",
+        "𐀀"
+      ],
+      "validationCommand": "npm test",
+      "observedAt": "2026-07-09T12:00:00.000Z",
+      "firstSeenAt": "2026-07-09T12:00:00.000Z",
+      "sourceArtifact": ".visual-hive/issues.json"
+    }
+  ],
+  "files": [
+    {
+      "path": "files/.visual-hive/artifacts-index.json",
+      "sourcePath": ".visual-hive/artifacts-index.json",
+      "sha256": "c9959dc609c97b5109e25298136bbdbf9f0a1f62d521d20f212bf8efb67dc441",
+      "size": 3887,
+      "mediaType": "application/json"
+    },
+    {
+      "path": "files/.visual-hive/capability-parity.json",
+      "sourcePath": ".visual-hive/capability-parity.json",
+      "sha256": "a4921c95011a3cd8c335bbf8ec0ff9c77f94ce942c4ae084f299b71c1275ce33",
+      "size": 1708,
+      "mediaType": "application/json",
+      "schemaVersion": "visual-hive.capability-parity.v1"
+    },
+    {
+      "path": "files/.visual-hive/hive/beads.json",
+      "sourcePath": ".visual-hive/hive/beads.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "size": 3,
+      "mediaType": "application/json"
+    }
+  ],
+  "artifactIndex": {
+    "path": "files/.visual-hive/artifacts-index.json",
+    "sourcePath": ".visual-hive/artifacts-index.json",
+    "sha256": "c9959dc609c97b5109e25298136bbdbf9f0a1f62d521d20f212bf8efb67dc441",
+    "schemaVersion": 1,
+    "contentAddressed": true,
+    "complete": true,
+    "artifactCount": 2,
+    "totalBytes": 1711
+  },
+  "capabilityParity": {
+    "path": "files/.visual-hive/capability-parity.json",
+    "sourcePath": ".visual-hive/capability-parity.json",
+    "sha256": "a4921c95011a3cd8c335bbf8ec0ff9c77f94ce942c4ae084f299b71c1275ce33",
+    "schemaVersion": "visual-hive.capability-parity.v1",
+    "baselineVersion": "visual-hive.capability-baseline.v1",
+    "status": "passed",
+    "runtimeStatus": "ready",
+    "summary": {
+      "expected": 1,
+      "actual": 1,
+      "present": 1,
+      "blocked": 0,
+      "missing": 0,
+      "unexpected": 0,
+      "mismatched": 0
+    }
+  },
+  "overallDigest": "78434b490e7c50f03550c1d9a5bf2eb1a5042a4bbd56b73d070d2b97b4943f38",
+  "replayProtection": {
+    "nonce": "unicode-vector",
+    "key": "8c9afd3ca3ed11768f08ef450d6e4ee18af9e23e1817c13e5810c1f7a0d18759"
+  },
+  "provenance": {
+    "kind": "local",
+    "subjectDigest": "78434b490e7c50f03550c1d9a5bf2eb1a5042a4bbd56b73d070d2b97b4943f38",
+    "attestationRequired": false
+  },
+  "safety": {
+    "atomicWrite": true,
+    "pathsAreRelative": true,
+    "digestsRequired": true,
+    "producerCountersAreAdvisory": true,
+    "producerTrustClaimIsAdvisory": true,
+    "absenceRequiresAuthoritativeScan": true
+  }
+}

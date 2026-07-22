@@ -55,9 +55,11 @@ func IsGitHubHost(host string) bool {
 // enforcement. Hosts like github.com are registered for awareness but only need
 // opaque tunneling — their traffic (OAuth device flow, git smart HTTP) either
 // doesn't require ACMM enforcement or is already gated by CLI --deny-tool flags.
-// Only api.github.com needs MITM for GraphQL/REST mutation inspection.
+// API hosts, including registered GitHub Enterprise hosts, need MITM for
+// GraphQL/REST mutation inspection. github.com itself remains the sole opaque
+// tunnel because it carries OAuth and Git smart-HTTP traffic.
 func NeedsMITM(host string) bool {
-	return host == "api.github.com"
+	return host != "github.com" && IsGitHubHost(host)
 }
 
 // copilotAPIHostSuffix matches the GitHub Copilot completion API hosts. The

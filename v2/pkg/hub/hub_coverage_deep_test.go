@@ -165,6 +165,8 @@ func TestHandleToggleVisibilityForbidden(t *testing.T) {
 // ============================================================
 
 func TestHandleDeleteHiveWithAuth(t *testing.T) {
+	cleanupDirs := helperSetupTempDirs(t)
+	defer cleanupDirs()
 	cleanup := helperSetupAuthUser(t, "ghp_del_user", "del-user")
 	defer cleanup()
 
@@ -597,6 +599,8 @@ func TestHandleUserTokenAdminRequestOther(t *testing.T) {
 // ============================================================
 
 func TestHandleRequestProvisionValidBody(t *testing.T) {
+	cleanupDirs := helperSetupTempDirs(t)
+	defer cleanupDirs()
 	cleanup := helperSetupAuthUser(t, "ghp_prov_valid", "prov-valid-user")
 	defer cleanup()
 

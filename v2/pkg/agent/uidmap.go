@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 )
 
 const (
-	UIDMapPath = "/var/run/hive/uid-map.json"
+	UIDMapPath   = "/var/run/hive/uid-map.json"
 	baseAgentUID = 2001
 	proxyUserUID = 1001
 )
@@ -95,8 +96,19 @@ func (u *UIDMap) Save(path string) error {
 	u.mu.RLock()
 	defer u.mu.RUnlock()
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	_, statErr := os.Stat(dir)
+	dirMissing := errors.Is(statErr, os.ErrNotExist)
+	if statErr != nil && !dirMissing {
+		return fmt.Errorf("stat uid-map dir: %w", statErr)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create uid-map dir: %w", err)
+	}
+	if dirMissing {
+		if err := os.Chmod(dir, 0o755); err != nil {
+			return fmt.Errorf("protect uid-map dir: %w", err)
+		}
 	}
 	data, err := json.MarshalIndent(u, "", "  ")
 	if err != nil {
@@ -105,6 +117,9 @@ func (u *UIDMap) Save(path string) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return fmt.Errorf("write uid-map: %w", err)
+	}
+	if err := os.Chmod(tmp, 0o644); err != nil {
+		return fmt.Errorf("protect uid-map: %w", err)
 	}
 	return os.Rename(tmp, path)
 }

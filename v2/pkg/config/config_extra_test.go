@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -124,7 +125,7 @@ func TestLoadAgentOverridesEmptyDir(t *testing.T) {
 }
 
 func TestLoadAgentOverridesNonExistent(t *testing.T) {
-	overrides, err := LoadAgentOverrides("/nonexistent/dir")
+	overrides, err := LoadAgentOverrides(filepath.Join(t.TempDir(), "missing"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +321,11 @@ func TestMatchesAny(t *testing.T) {
 }
 
 func TestSaveAgentFileErrorPath(t *testing.T) {
-	err := SaveAgentFile("/nonexistent/dir/agents", "test", AgentConfig{})
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := SaveAgentFile(filepath.Join(parentFile, "agents"), "test", AgentConfig{})
 	if err == nil {
 		t.Error("expected error for bad dir")
 	}
@@ -749,6 +754,9 @@ func TestSaveAgentFile_PathTraversal(t *testing.T) {
 }
 
 func TestSaveAgentFile_WriteFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not enforce Unix directory mode bits")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("root can write anywhere")
 	}

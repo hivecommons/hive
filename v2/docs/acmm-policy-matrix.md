@@ -1,5 +1,19 @@
 # ACMM Policy Matrix
 
+> This matrix documents the legacy multi-agent service. The integrated Hive + Visual Hive product exposes the simpler `advisory`, `issues`, `repair-pr`, and `auto-merge` authority levels documented in the [integrated quickstart](integrated-quickstart.md). `repair-pr` is open-PRs-only; only `auto-merge` permits Hive to merge.
+
+This matrix is enforced by central action policy and the GitHub proxy. Agent templates describe intent but do not grant authority. Coverage depth is configured separately and never escalates GitHub writes.
+
+| Level | Issues | Repair branches/PRs | Merge |
+|---|---|---|---|
+| L1-L2 | denied | denied | denied |
+| L3 | quality/testing findings only | selected quality/testing agents, hold-gated | denied |
+| L4 | all applicable agents | selected quality/security/CI agents, hold-gated | denied |
+| L5 | allowed agents | allowed agents, human-controlled | denied |
+| L6 | allowed agents | allowed agents | only exact-SHA, all-green, protected, allowlisted low-risk changes |
+
+Every allowed and denied lifecycle action is appended to the audit log. Pause, kill switch, WIP, rate, retry, time, token, and cost budgets apply at every level. A denied action is an error, not advisory fallback.
+
 ## Policy Modes
 
 Each agent runs in one of four modes, controlling what actions it can take on GitHub.

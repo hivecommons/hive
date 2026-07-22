@@ -584,6 +584,9 @@ const defaultYankReason = "yanked by operator (released + reassigned)"
 const yankSelfExcludeSeconds = 60
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	hub := &ContributeWSHub{
 		connections:           make(map[string]*ContributorConnection),
 		completedTasks:        make(map[string]time.Time),

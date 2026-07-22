@@ -826,7 +826,14 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 				}
 			}
 			cancel()
-			time.Sleep(pollInterval)
+			select {
+			case <-ctx.Done():
+				return
+			case <-deadline:
+				logger.Warn("heartbeat readiness wait timed out, starting anyway")
+				return
+			case <-time.After(pollInterval):
+			}
 		}
 	}
 }

@@ -33,6 +33,9 @@ import (
 
 func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.deps = deps
+	if deps != nil && deps.ConfigCoordinator == nil && deps.Config != nil {
+		deps.ConfigCoordinator = NewConfigCoordinator(deps.Config, deps.Governor, deps.AgentMgr)
+	}
 	s.loadSidebarFromDisk()
 	s.restoreGHUserSession()
 	s.registerContributeRoutes()
@@ -99,6 +102,15 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/gh-user-auth/poll", s.handleGHUserAuthPoll)
 	s.mux.HandleFunc("POST /api/gh-user-auth/logout", s.handleGHUserAuthLogout)
 	s.mux.HandleFunc("GET /api/gh-user-auth/session", s.handleGHUserAuthSession)
+	s.mux.HandleFunc("POST /api/integrated/setup/plan", s.handleIntegratedSetupPlan)
+	s.mux.HandleFunc("POST /api/integrated/setup/apply", s.handleIntegratedSetupApply)
+	s.mux.HandleFunc("POST /api/integrated/preflight", s.handleIntegratedPreflight)
+	s.mux.HandleFunc("GET /api/integrated/status", s.handleIntegratedStatus)
+	s.mux.HandleFunc("GET /api/integrated/doctor", s.handleIntegratedDoctor)
+	s.mux.HandleFunc("POST /api/integrated/baseline/plan", s.handleIntegratedBaselinePlan)
+	s.mux.HandleFunc("POST /api/integrated/baseline/approve", s.handleIntegratedBaselineApprove)
+	s.mux.HandleFunc("POST /api/integrated/control/plan", s.handleIntegratedControlPlan)
+	s.mux.HandleFunc("POST /api/integrated/control/apply", s.handleIntegratedControlApply)
 
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()
@@ -344,6 +356,7 @@ func (s *Server) resolveAgentParam(nameOrID string) string {
 }
 
 func (s *Server) refreshAfterMutation() {
+	s.syncGovernorSnapshot()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		go s.deps.RefreshFunc()
 	}
@@ -361,6 +374,7 @@ func (s *Server) refreshAndPersist() {
 }
 
 func (s *Server) refreshAndPersistSync() {
+	s.syncGovernorSnapshot()
 	if s.deps != nil && s.deps.RefreshFunc != nil {
 		s.deps.RefreshFunc()
 	}
@@ -369,29 +383,53 @@ func (s *Server) refreshAndPersistSync() {
 	}
 }
 
-// saveConfig persists the in-memory config to disk, skipping the next
-// watcher reload to prevent the watcher from overwriting concurrent
-// in-memory mutations with a stale file read.
+// saveConfig is retained for embedded callers. Production handlers stage
+// changes through mutateConfig; this compatibility boundary still publishes
+// through the same coordinator and never uses the lossy SkipNext watcher path.
 func (s *Server) saveConfig() error {
-	if s.deps == nil || s.deps.Config == nil || s.deps.Config.SourcePath == "" {
+	if s.deps == nil || s.deps.Config == nil {
 		return nil
 	}
-	if s.deps.SkipReloadFunc != nil {
-		s.deps.SkipReloadFunc()
+	if s.deps.ConfigCoordinator == nil {
+		s.deps.ConfigCoordinator = NewConfigCoordinator(s.deps.Config, s.deps.Governor, s.deps.AgentMgr)
 	}
-	if err := s.deps.Config.Save(); err != nil {
-		return err
-	}
-	if s.deps.Governor != nil {
-		s.deps.Governor.UpdateConfig(s.deps.Config.Governor)
-	}
-	return nil
+	return s.deps.ConfigCoordinator.Mutate(nil)
 }
 
 func (s *Server) persistOnly() {
+	s.syncGovernorSnapshot()
 	if s.deps != nil && s.deps.PersistFunc != nil {
 		s.deps.PersistFunc()
 	}
+}
+
+func (s *Server) mutateConfig(mutate func(*config.Config) error) error {
+	if s.deps == nil || s.deps.ConfigCoordinator == nil {
+		return fmt.Errorf("runtime config coordinator is not configured")
+	}
+	return s.deps.ConfigCoordinator.Mutate(mutate)
+}
+
+func (s *Server) configSnapshot() *config.Config {
+	if s.deps == nil {
+		return nil
+	}
+	if s.deps.ConfigCoordinator != nil {
+		return s.deps.ConfigCoordinator.Snapshot()
+	}
+	return s.deps.Config.Clone()
+}
+
+// syncGovernorSnapshot retains legacy refresh/persist boundaries while routing
+// their publication through the coordinator's Manager-before-Governor order.
+func (s *Server) syncGovernorSnapshot() {
+	if s.deps == nil || s.deps.Config == nil {
+		return
+	}
+	if s.deps.ConfigCoordinator == nil {
+		s.deps.ConfigCoordinator = NewConfigCoordinator(s.deps.Config, s.deps.Governor, s.deps.AgentMgr)
+	}
+	s.deps.ConfigCoordinator.PublishCurrent()
 }
 
 func (s *Server) refreshAsync() {
@@ -618,7 +656,7 @@ func ghcrTagExists(tag string) bool {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	cfg := s.deps.Config
+	cfg := s.configSnapshot()
 	primaryRepo := cfg.Project.PrimaryRepo
 	if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 		primaryRepo = cfg.Project.Repos[0]
@@ -1724,6 +1762,13 @@ func (s *Server) handleGHAuth(w http.ResponseWriter, r *http.Request) {
 
 const userTokenPath = "/data/gh-user-token"
 
+func (s *Server) resolvedUserTokenPath() string {
+	if strings.TrimSpace(s.userTokenPath) != "" {
+		return s.userTokenPath
+	}
+	return userTokenPath
+}
+
 func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) {
 	// The login status must reflect THIS request's user, not the single
 	// persisted token. On a direct-route spoke, resolving from the per-user
@@ -1746,7 +1791,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
 		return
 	}
-	tokenData, err := os.ReadFile(userTokenPath)
+	tokenData, err := os.ReadFile(s.resolvedUserTokenPath())
 	if err != nil || len(strings.TrimSpace(string(tokenData))) == 0 {
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
 		return
@@ -2118,7 +2163,7 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 	// logging-out owner's own token stranded on disk. Viewer logouts leave the
 	// hive's user client intact.
 	if !s.directRouteAuthzEnabled() || loggedOutRole == config.RoleOwner {
-		os.Remove(userTokenPath)
+		os.Remove(s.resolvedUserTokenPath())
 	}
 	clearSessionCookie(w)
 	s.auditFromRequest(r, "gh_auth_logout", "", "")
@@ -2841,7 +2886,12 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	}
 
 	name := r.PathValue("name")
-	if _, ok := s.deps.Config.Agents[name]; !ok {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if _, ok := current.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -2857,7 +2907,7 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	agentCfg := s.deps.Config.Agents[name]
+	agentCfg := current.Agents[name]
 	if v, ok := body["enabled"]; ok {
 		if b, ok := v.(bool); ok {
 			agentCfg.Enabled = b
@@ -3090,43 +3140,70 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	prevAgents := make(map[string]config.AgentConfig, len(s.deps.Config.Agents))
-	for k, v := range s.deps.Config.Agents {
-		prevAgents[k] = v
+	previousAgents := map[string]struct{}{}
+	if s.deps.AgentMgr != nil {
+		for existing := range s.deps.AgentMgr.AllStatuses() {
+			previousAgents[existing] = struct{}{}
+		}
 	}
-	s.deps.Config.Agents[name] = agentCfg
-	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
-		s.deps.Config.Agents = prevAgents
-		jsonError(w, err.Error(), http.StatusBadRequest)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		candidate.Agents[name] = agentCfg
+		if err := candidate.ExpandAgentReplicas(); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist agent config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	agentCfg = s.deps.Config.Agents[name]
-	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
-	for _, added := range addedAgents {
-		if ac, ok := s.deps.Config.Agents[added]; ok && !ac.OnDemand {
+	committed := s.configSnapshot()
+	if committed == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if s.deps.AgentMgr != nil {
+		for added, ac := range committed.Agents {
+			if _, existed := previousAgents[added]; existed || !ac.Enabled || ac.OnDemand {
+				continue
+			}
 			if err := s.deps.AgentMgr.Start(s.deps.Ctx, added); err != nil {
 				s.logger.Warn("failed to start reconciled agent", "agent", added, "error", err)
 			}
 		}
 	}
-	if s.deps.Governor != nil {
-		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
+	if baseCfg, ok := committed.Agents[name]; ok {
+		agentCfg = baseCfg
 	}
 
 	// Sync the updated config into the agent process so that status builders
 	// (which read from AgentProcess.Config, not the global config map) reflect
-	// changes like display_name immediately.
-	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
-		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
-	}
-
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after agent update", "agent", name, "error", err)
+	// changes like display_name immediately. Replicas materialized by the
+	// coordinator are already present in the manager before this point.
+	if s.deps.AgentMgr != nil {
+		if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
+			s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
+		}
+		for replica, replicaCfg := range committed.Agents {
+			if replicaCfg.ReplicaOf != name {
+				continue
+			}
+			if err := s.deps.AgentMgr.UpdateConfig(replica, replicaCfg); err != nil {
+				s.logger.Warn("failed to sync replica config to process", "agent", replica, "error", err)
+			}
+		}
 	}
 
 	s.deps.AgentMgr.SyncModeFiles(s.deps.AgentMgr.GetACMMLevel())
-	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
-		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
+	// Sync the committed config into the agent process so status builders reflect
+	// fields such as display_name and repository-backed prompt metadata immediately.
+	if err := s.deps.AgentMgr.UpdateConfig(name, committed.Agents[name]); err != nil {
+		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
+	}
+	if agentsDir := committed.Data.AgentsDir; agentsDir != "" {
+		if err := config.SaveAgentFile(agentsDir, name, committed.Agents[name]); err != nil {
 			s.logger.Error("failed to persist agent overlay after update", "agent", name, "error", err)
 		}
 	}
@@ -3161,7 +3238,12 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 	}
 
 	name := r.PathValue("name")
-	if _, ok := s.deps.Config.Agents[name]; !ok {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if _, ok := current.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -3172,14 +3254,11 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Parse and validate all cadences up front (v2 Cadence type: seconds,
+	// interval string, or schedule object) so bad input gets a 400 before
+	// the transactional mutateConfig apply (dd's config coordinator).
+	parsed := make(map[string]config.Cadence, len(body))
 	for modeName, raw := range body {
-		mode, ok := s.deps.Config.Governor.Modes[modeName]
-		if !ok {
-			continue
-		}
-		if mode.Cadences == nil {
-			mode.Cadences = make(map[string]config.Cadence)
-		}
 		var seconds int64
 		var cadence config.Cadence
 		if err := json.Unmarshal(raw, &seconds); err == nil {
@@ -3197,15 +3276,30 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if cadence.Mode() == config.CadenceModeInterval && cadence.IsPaused() {
-			mode.Cadences[name] = "pause"
-		} else {
-			mode.Cadences[name] = cadence
+			cadence = "pause"
 		}
-		s.deps.Config.Governor.Modes[modeName] = mode
+		parsed[modeName] = cadence
 	}
 
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after cadence update", "agent", name, "error", err)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		for modeName, cadence := range parsed {
+			mode, ok := candidate.Governor.Modes[modeName]
+			if !ok {
+				continue
+			}
+			if mode.Cadences == nil {
+				mode.Cadences = make(map[string]config.Cadence)
+			}
+			mode.Cadences[name] = cadence
+			candidate.Governor.Modes[modeName] = mode
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist cadence config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.auditFromRequest(r, "config_agent_cadences", auditDetail("section", "cadences"), name)
 	s.refreshAndPersist()
@@ -3227,7 +3321,12 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	agentCfg, ok := s.deps.Config.Agents[name]
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	agentCfg, ok := current.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3252,19 +3351,19 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 	}
-	s.deps.Config.Agents[name] = agentCfg
-
-	// Sync updated backend/model into the agent process so status builders
-	// reflect the change without requiring a restart.
-	if err := s.deps.AgentMgr.UpdateConfig(name, agentCfg); err != nil {
-		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		candidate.Agents[name] = agentCfg
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist model config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after model update", "agent", name, "error", err)
-	}
-	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
-		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
+	committed := s.configSnapshot()
+	if agentsDir := committed.Data.AgentsDir; agentsDir != "" {
+		if err := config.SaveAgentFile(agentsDir, name, committed.Agents[name]); err != nil {
 			s.logger.Error("failed to persist agent overlay after model update", "agent", name, "error", err)
 		}
 	}
@@ -3414,7 +3513,12 @@ func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Reques
 	}
 
 	name := r.PathValue("name")
-	agentCfg, ok := s.deps.Config.Agents[name]
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	agentCfg, ok := current.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3429,7 +3533,16 @@ func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Reques
 	}
 
 	agentCfg.Channels = body.Channels
-	s.deps.Config.Agents[name] = agentCfg
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		candidate.Agents[name] = agentCfg
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist channel config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.auditFromRequest(r, "config_agent_channels", auditDetail("section", "channels"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
@@ -3441,7 +3554,12 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	name := r.PathValue("name")
-	agentCfg, ok := s.deps.Config.Agents[name]
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	agentCfg, ok := current.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3454,7 +3572,16 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 	}
 
 	agentCfg.Tools = &body
-	s.deps.Config.Agents[name] = agentCfg
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		candidate.Agents[name] = agentCfg
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist tool config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.auditFromRequest(r, "config_agent_tools", auditDetail("section", "tools"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
@@ -3466,7 +3593,12 @@ func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Req
 	}
 
 	name := r.PathValue("name")
-	agentCfg, ok := s.deps.Config.Agents[name]
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	agentCfg, ok := current.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -3481,7 +3613,16 @@ func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Req
 	}
 
 	agentCfg.Connections = body.Connections
-	s.deps.Config.Agents[name] = agentCfg
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		candidate.Agents[name] = agentCfg
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist connection config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.auditFromRequest(r, "config_agent_connections", auditDetail("section", "connections"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
@@ -3595,7 +3736,12 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.PathValue("name")
-	if _, ok := s.deps.Config.Agents[name]; !ok {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if _, ok := current.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -3621,7 +3767,7 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentCfg := s.deps.Config.Agents[name]
+	agentCfg := current.Agents[name]
 
 	// Repo-sourced prompt import (Prompt Template tab).
 	if body.PromptSource != nil {
@@ -3648,12 +3794,19 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 			// Bake-only: the prompt is now a plain copy on disk; drop the live link.
 			agentCfg.PromptSource = nil
 		}
-		s.deps.Config.Agents[name] = agentCfg
-		if err := s.saveConfig(); err != nil {
-			s.logger.Error("failed to persist config after prompt import", "agent", name, "error", err)
+		if err := s.mutateConfig(func(candidate *config.Config) error {
+			if _, exists := candidate.Agents[name]; !exists {
+				return fmt.Errorf("agent %s no longer exists", name)
+			}
+			candidate.Agents[name] = agentCfg
+			return nil
+		}); err != nil {
+			jsonError(w, "failed to persist prompt source: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
-		if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
-			if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
+		committed := s.configSnapshot()
+		if agentsDir := committed.Data.AgentsDir; agentsDir != "" {
+			if err := config.SaveAgentFile(agentsDir, name, committed.Agents[name]); err != nil {
 				s.logger.Error("failed to persist agent overlay after prompt import", "agent", name, "error", err)
 			}
 		}
@@ -3679,12 +3832,17 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Point the agent's KickTemplate to the saved file
-	agentCfg.KickTemplate = templateFileName
-	s.deps.Config.Agents[name] = agentCfg
-
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after template save", "agent", name, "error", err)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		agentConfig, exists := candidate.Agents[name]
+		if !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		agentConfig.KickTemplate = templateFileName
+		candidate.Agents[name] = agentConfig
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist prompt config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.refreshAndPersist()
 
@@ -4145,7 +4303,6 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("eval_interval_s must be between %d and %d", minEvalIntervalS, maxEvalIntervalS), http.StatusBadRequest)
 			return
 		}
-		s.deps.Config.Governor.EvalIntervalS = body.EvalIntervalS
 	}
 	if body.GHRatePatterns != nil {
 		for _, p := range body.GHRatePatterns {
@@ -4154,7 +4311,6 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.deps.Config.Governor.Sensing.GHRatePatterns = body.GHRatePatterns
 	}
 	if body.CLIExcludePatterns != nil {
 		for _, p := range body.CLIExcludePatterns {
@@ -4163,10 +4319,9 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.deps.Config.Governor.Sensing.CLIExcludePatterns = body.CLIExcludePatterns
 	}
 	if body.LoginPatterns != nil {
-		var filtered []string
+		filtered := make([]string, 0, len(body.LoginPatterns))
 		for _, p := range body.LoginPatterns {
 			p = strings.TrimSpace(p)
 			if p == "" {
@@ -4178,7 +4333,7 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			}
 			filtered = append(filtered, p)
 		}
-		s.deps.Config.Governor.Sensing.LoginPatterns = filtered
+		body.LoginPatterns = filtered
 	}
 	const maxTTLSeconds = 86400 // 24 hours
 	if body.TTLSeconds != 0 {
@@ -4186,7 +4341,6 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("ttlSeconds must be between 1 and %d", maxTTLSeconds), http.StatusBadRequest)
 			return
 		}
-		s.deps.Config.Governor.Sensing.TTLSeconds = body.TTLSeconds
 	}
 	const maxPullbackSeconds = 86400 // 24 hours
 	if body.PullbackSeconds != 0 {
@@ -4194,11 +4348,31 @@ func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, fmt.Sprintf("pullbackSeconds must be between 1 and %d", maxPullbackSeconds), http.StatusBadRequest)
 			return
 		}
-		s.deps.Config.Governor.Sensing.PullbackSeconds = body.PullbackSeconds
 	}
 
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config", "error", err)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if body.EvalIntervalS != 0 {
+			candidate.Governor.EvalIntervalS = body.EvalIntervalS
+		}
+		if body.GHRatePatterns != nil {
+			candidate.Governor.Sensing.GHRatePatterns = body.GHRatePatterns
+		}
+		if body.CLIExcludePatterns != nil {
+			candidate.Governor.Sensing.CLIExcludePatterns = body.CLIExcludePatterns
+		}
+		if body.LoginPatterns != nil {
+			candidate.Governor.Sensing.LoginPatterns = body.LoginPatterns
+		}
+		if body.TTLSeconds != 0 {
+			candidate.Governor.Sensing.TTLSeconds = body.TTLSeconds
+		}
+		if body.PullbackSeconds != 0 {
+			candidate.Governor.Sensing.PullbackSeconds = body.PullbackSeconds
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist governor sensing config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.auditFromRequest(r, "config_governor_sensing", auditDetail("section", "sensing"), "")
 	s.refreshAndPersist()
@@ -4221,15 +4395,17 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	for modeName, threshold := range body {
-		if mode, ok := s.deps.Config.Governor.Modes[modeName]; ok {
-			mode.Threshold = threshold
-			s.deps.Config.Governor.Modes[modeName] = mode
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		for modeName, threshold := range body {
+			if mode, ok := candidate.Governor.Modes[modeName]; ok {
+				mode.Threshold = threshold
+				candidate.Governor.Modes[modeName] = mode
+			}
 		}
-	}
-
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after threshold update", "error", err)
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist governor thresholds: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Trigger immediate governor re-evaluation so mode change is visible
@@ -4279,12 +4455,15 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, l)
 		}
 	}
-	s.deps.Config.Governor.Labels.Exempt = filtered
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		candidate.Governor.Labels.Exempt = filtered
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist governor labels: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if s.deps.GHClient != nil {
 		s.deps.GHClient.SetExemptLabels(filtered)
-	}
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after label update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_labels", auditDetail("section", "labels"), "")
 	s.refreshAndPersist()
@@ -4333,19 +4512,27 @@ func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist through the config coordinator (dd) rather than mutating
+	// s.deps.Config in place. The values applied are the effective ones
+	// computed above: a nil pointer means "leave the stored value alone",
+	// so only fields the client actually sent are written.
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if body.TotalTokens != nil {
+			candidate.Governor.Budget.TotalTokens = totalTokens
+		}
+		if body.PeriodDays != nil {
+			candidate.Governor.Budget.PeriodDays = periodDays
+		}
+		if body.CriticalPct != nil {
+			candidate.Governor.Budget.CriticalPct = criticalPct
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist governor budget: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	if body.TotalTokens != nil {
-		s.deps.Config.Governor.Budget.TotalTokens = totalTokens
 		s.deps.Governor.SetBudgetLimit(totalTokens)
-	}
-	if body.PeriodDays != nil {
-		s.deps.Config.Governor.Budget.PeriodDays = periodDays
-	}
-	if body.CriticalPct != nil {
-		s.deps.Config.Governor.Budget.CriticalPct = criticalPct
-	}
-
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after budget update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_budget", auditDetail("section", "budget"), "")
 	s.refreshAndPersist()
@@ -4392,25 +4579,28 @@ func (s *Server) handleGovernorNotifications(w http.ResponseWriter, r *http.Requ
 	}
 
 	isMasked := func(v string) bool { return strings.HasPrefix(v, "•") }
-	if (body.NtfyServer != "" && !isMasked(body.NtfyServer)) || (body.NtfyTopic != "" && !isMasked(body.NtfyTopic)) {
-		if s.deps.Config.Notifications.Ntfy == nil {
-			s.deps.Config.Notifications.Ntfy = &config.NtfyConfig{}
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if (body.NtfyServer != "" && !isMasked(body.NtfyServer)) || (body.NtfyTopic != "" && !isMasked(body.NtfyTopic)) {
+			if candidate.Notifications.Ntfy == nil {
+				candidate.Notifications.Ntfy = &config.NtfyConfig{}
+			}
+			if body.NtfyServer != "" && !isMasked(body.NtfyServer) {
+				candidate.Notifications.Ntfy.Server = body.NtfyServer
+			}
+			if body.NtfyTopic != "" && !isMasked(body.NtfyTopic) {
+				candidate.Notifications.Ntfy.Topic = body.NtfyTopic
+			}
 		}
-		if body.NtfyServer != "" && !isMasked(body.NtfyServer) {
-			s.deps.Config.Notifications.Ntfy.Server = body.NtfyServer
+		if body.DiscordWebhook != "" && !isMasked(body.DiscordWebhook) {
+			if candidate.Notifications.Discord == nil {
+				candidate.Notifications.Discord = &config.DiscordConfig{}
+			}
+			candidate.Notifications.Discord.Webhook = body.DiscordWebhook
 		}
-		if body.NtfyTopic != "" && !isMasked(body.NtfyTopic) {
-			s.deps.Config.Notifications.Ntfy.Topic = body.NtfyTopic
-		}
-	}
-	if body.DiscordWebhook != "" && !isMasked(body.DiscordWebhook) {
-		if s.deps.Config.Notifications.Discord == nil {
-			s.deps.Config.Notifications.Discord = &config.DiscordConfig{}
-		}
-		s.deps.Config.Notifications.Discord.Webhook = body.DiscordWebhook
-	}
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after notification update", "error", err)
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist notification config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.auditFromRequest(r, "config_governor_notifications", auditDetail("section", "notifications"), "")
 	s.refreshAndPersist()
@@ -4436,17 +4626,20 @@ func (s *Server) handleGovernorHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.HealthcheckInterval > 0 {
-		s.deps.Config.Governor.Health.HealthcheckInterval = body.HealthcheckInterval
-	}
-	if body.RestartCooldown > 0 {
-		s.deps.Config.Governor.Health.RestartCooldown = body.RestartCooldown
-	}
-	if body.ModelLock != nil {
-		s.deps.Config.Governor.Health.ModelLock = *body.ModelLock
-	}
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after health update", "error", err)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if body.HealthcheckInterval > 0 {
+			candidate.Governor.Health.HealthcheckInterval = body.HealthcheckInterval
+		}
+		if body.RestartCooldown > 0 {
+			candidate.Governor.Health.RestartCooldown = body.RestartCooldown
+		}
+		if body.ModelLock != nil {
+			candidate.Governor.Health.ModelLock = *body.ModelLock
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist governor health config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.auditFromRequest(r, "config_governor_health", auditDetail("section", "health"), "")
 	s.refreshAndPersist()
@@ -4469,34 +4662,44 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if err := validateGovernorLogging(s.deps.Config.Governor.Logging.Dir, body.MaxSizeMB, body.MaxAgeDays); err != nil {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if err := validateGovernorLogging(current.Governor.Logging.Dir, body.MaxSizeMB, body.MaxAgeDays); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if body.MaxSizeMB > 0 {
-		s.deps.Config.Governor.Logging.MaxSizeMB = body.MaxSizeMB
-	}
-	if body.MaxAgeDays > 0 {
-		s.deps.Config.Governor.Logging.MaxAgeDays = body.MaxAgeDays
-	}
-	if body.MaxBackups > 0 {
-		s.deps.Config.Governor.Logging.MaxBackups = body.MaxBackups
-	}
-	if body.Compress != nil {
-		s.deps.Config.Governor.Logging.Compress = *body.Compress
-	}
 	if body.Level != "" {
 		switch body.Level {
 		case "debug", "info", "warn", "error":
-			s.deps.Config.Governor.Logging.Level = body.Level
 		default:
 			jsonError(w, "level must be one of: debug, info, warn, error", http.StatusBadRequest)
 			return
 		}
 	}
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after logging update", "error", err)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if body.MaxSizeMB > 0 {
+			candidate.Governor.Logging.MaxSizeMB = body.MaxSizeMB
+		}
+		if body.MaxAgeDays > 0 {
+			candidate.Governor.Logging.MaxAgeDays = body.MaxAgeDays
+		}
+		if body.MaxBackups > 0 {
+			candidate.Governor.Logging.MaxBackups = body.MaxBackups
+		}
+		if body.Compress != nil {
+			candidate.Governor.Logging.Compress = *body.Compress
+		}
+		if body.Level != "" {
+			candidate.Governor.Logging.Level = body.Level
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist governor logging config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.auditFromRequest(r, "config_governor_logging", auditDetail("section", "logging"), "")
 	s.refreshAndPersist()
@@ -4587,99 +4790,111 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	cfg := s.deps.Config
-	if body.Enabled != nil {
-		cfg.Hub.Enabled = *body.Enabled
-	}
-	if body.URL != "" {
-		cfg.Hub.URL = body.URL
-	}
-	if body.DashboardURL != "" {
-		cfg.Hub.DashboardURL = body.DashboardURL
-	}
-	cfg.Hub.SnapshotURL = body.SnapshotURL
-	if body.IsPublic != nil {
-		cfg.Hub.IsPublic = *body.IsPublic
-	}
-	if body.AutoSnapshot != nil {
-		cfg.Hub.AutoSnapshot = *body.AutoSnapshot
-	}
+	// Validate snapshot frame ancestors before opening the config
+	// transaction so a bad payload yields a 400 (not a 500 from
+	// mutateConfig). normalized is applied to Dashboard inside the closure.
+	var normalizedFrameAncestors []string
 	if body.SnapshotFrameAncestors != nil {
 		normalized, err := config.ValidateSnapshotFrameAncestors(body.SnapshotFrameAncestors)
 		if err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		cfg.Dashboard.SnapshotFrameAncestors = normalized
+		normalizedFrameAncestors = normalized
 	}
-	if body.AutoUpgrade != nil {
-		cfg.Hub.AutoUpgrade = *body.AutoUpgrade
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if body.Enabled != nil {
+			candidate.Hub.Enabled = *body.Enabled
+		}
+		if body.URL != "" {
+			candidate.Hub.URL = body.URL
+		}
+		if body.DashboardURL != "" {
+			candidate.Hub.DashboardURL = body.DashboardURL
+		}
+		candidate.Hub.SnapshotURL = body.SnapshotURL
+		if body.IsPublic != nil {
+			candidate.Hub.IsPublic = *body.IsPublic
+		}
+		if body.AutoSnapshot != nil {
+			candidate.Hub.AutoSnapshot = *body.AutoSnapshot
+		}
+		if body.SnapshotFrameAncestors != nil {
+			candidate.Dashboard.SnapshotFrameAncestors = normalizedFrameAncestors
+		}
+		if body.AutoUpgrade != nil {
+			candidate.Hub.AutoUpgrade = *body.AutoUpgrade
+		}
+		if body.ContributeSuspended != nil {
+			candidate.Hub.ContributeSuspended = *body.ContributeSuspended
+		}
+		if body.ContributeTitlesMode != nil {
+			candidate.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
+		}
+		if body.ContributeAuthorsMode != nil {
+			candidate.Hub.ContributeAuthorsMode = *body.ContributeAuthorsMode
+		}
+		if body.ContributeLabelsMode != nil {
+			candidate.Hub.ContributeLabelsMode = *body.ContributeLabelsMode
+		}
+		if body.ContributeAllowLabels != nil {
+			candidate.Hub.ContributeAllowLabels = body.ContributeAllowLabels
+		}
+		if body.ContributeDenyLabels != nil {
+			candidate.Hub.ContributeDenyLabels = body.ContributeDenyLabels
+		}
+		if body.ContributeDenyTitles != nil {
+			candidate.Hub.ContributeDenyTitles = body.ContributeDenyTitles
+		}
+		if body.ContributeDenyAuthors != nil {
+			candidate.Hub.ContributeDenyAuthors = body.ContributeDenyAuthors
+		}
+		if body.ContributeAllowModels != nil {
+			candidate.Hub.ContributeAllowModels = body.ContributeAllowModels
+		}
+		if body.ContributeRejectUnknownModels != nil {
+			candidate.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
+		}
+		if body.ContributeSkipAssignedToOthers != nil {
+			candidate.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
+		}
+		// Cooldown toggle: store the client's on/off intent as a non-nil pointer so it
+		// is round-tripped exactly (nil would default back to enabled). A client that
+		// omits the field leaves the current value untouched.
+		if body.ContributeCooldownEnabled != nil {
+			v := *body.ContributeCooldownEnabled
+			candidate.Hub.ContributeCooldownEnabled = &v
+		}
+		// Cooldown period (hours): stored as-is; the config resolver
+		// (ContributeCooldownHoursOrDefault) clamps to the valid range at read time and
+		// applyDefaults clamps any persisted value, so a stray input can never park an
+		// issue forever. A client sending 0 means "use the default".
+		if body.ContributeCooldownHours != nil {
+			candidate.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
+		}
+		if body.ContributeDelegatableRoles != nil {
+			candidate.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
+		}
+		if body.DisabledRepos != nil {
+			candidate.Hub.DisabledRepos = body.DisabledRepos
+		}
+		if body.DisabledTiers != nil {
+			candidate.Hub.DisabledTiers = body.DisabledTiers
+		}
+		if body.TierLimits != nil {
+			candidate.Hub.TierLimits = body.TierLimits
+		}
+		// Normalize any client-supplied filter mode to a valid value (unknown/empty
+		// -> deny), so a bad payload can't leave a mode that silently changes
+		// enforcement in an unexpected way.
+		candidate.Hub.ContributeTitlesMode = config.NormalizeFilterMode(candidate.Hub.ContributeTitlesMode)
+		candidate.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(candidate.Hub.ContributeAuthorsMode)
+		candidate.Hub.ContributeLabelsMode = config.NormalizeFilterMode(candidate.Hub.ContributeLabelsMode)
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist hub config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	if body.ContributeSuspended != nil {
-		cfg.Hub.ContributeSuspended = *body.ContributeSuspended
-	}
-	if body.ContributeTitlesMode != nil {
-		cfg.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
-	}
-	if body.ContributeAuthorsMode != nil {
-		cfg.Hub.ContributeAuthorsMode = *body.ContributeAuthorsMode
-	}
-	if body.ContributeLabelsMode != nil {
-		cfg.Hub.ContributeLabelsMode = *body.ContributeLabelsMode
-	}
-	if body.ContributeAllowLabels != nil {
-		cfg.Hub.ContributeAllowLabels = body.ContributeAllowLabels
-	}
-	if body.ContributeDenyLabels != nil {
-		cfg.Hub.ContributeDenyLabels = body.ContributeDenyLabels
-	}
-	if body.ContributeDenyTitles != nil {
-		cfg.Hub.ContributeDenyTitles = body.ContributeDenyTitles
-	}
-	if body.ContributeDenyAuthors != nil {
-		cfg.Hub.ContributeDenyAuthors = body.ContributeDenyAuthors
-	}
-	if body.ContributeAllowModels != nil {
-		cfg.Hub.ContributeAllowModels = body.ContributeAllowModels
-	}
-	if body.ContributeRejectUnknownModels != nil {
-		cfg.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
-	}
-	if body.ContributeSkipAssignedToOthers != nil {
-		cfg.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
-	}
-	// Cooldown toggle: store the client's on/off intent as a non-nil pointer so it
-	// is round-tripped exactly (nil would default back to enabled). A client that
-	// omits the field leaves the current value untouched.
-	if body.ContributeCooldownEnabled != nil {
-		v := *body.ContributeCooldownEnabled
-		cfg.Hub.ContributeCooldownEnabled = &v
-	}
-	// Cooldown period (hours): stored as-is; the config resolver
-	// (ContributeCooldownHoursOrDefault) clamps to the valid range at read time and
-	// applyDefaults clamps any persisted value, so a stray input can never park an
-	// issue forever. A client sending 0 means "use the default".
-	if body.ContributeCooldownHours != nil {
-		cfg.Hub.ContributeCooldownHours = *body.ContributeCooldownHours
-	}
-	if body.ContributeDelegatableRoles != nil {
-		cfg.Hub.ContributeDelegatableRoles = normalizeContributeDelegatableRoles(body.ContributeDelegatableRoles)
-	}
-	if body.DisabledRepos != nil {
-		cfg.Hub.DisabledRepos = body.DisabledRepos
-	}
-	if body.DisabledTiers != nil {
-		cfg.Hub.DisabledTiers = body.DisabledTiers
-	}
-	if body.TierLimits != nil {
-		cfg.Hub.TierLimits = body.TierLimits
-	}
-	// Normalize any client-supplied filter mode to a valid value (unknown/empty
-	// -> deny), so a bad payload can't leave a mode that silently changes
-	// enforcement in an unexpected way.
-	cfg.Hub.ContributeTitlesMode = config.NormalizeFilterMode(cfg.Hub.ContributeTitlesMode)
-	cfg.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(cfg.Hub.ContributeAuthorsMode)
-	cfg.Hub.ContributeLabelsMode = config.NormalizeFilterMode(cfg.Hub.ContributeLabelsMode)
 	s.auditFromRequest(r, "config_governor_hub", auditDetail("section", "hub"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
@@ -4966,7 +5181,7 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	cfg := s.deps.Config
+	cfg := s.configSnapshot()
 	// Apply to a copy first so validation failure leaves config untouched.
 	lc := cfg.Governor.LiteLLM
 	if body.Endpoint != nil {
@@ -5040,10 +5255,13 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 			s.logger.Info("cleared key-like value from litellm api_key_env (replaced by stored API key)")
 		}
 	}
-	cfg.Governor.LiteLLM = lc
-
-	if err := s.saveConfig(); err != nil {
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		candidate.Governor.LiteLLM = lc
+		return nil
+	}); err != nil {
 		s.logger.Error("failed to persist config after litellm update", "error", err)
+		jsonError(w, "failed to persist LiteLLM config", http.StatusInternalServerError)
+		return
 	}
 	s.auditFromRequest(r, "config_governor_litellm", auditDetail("section", "litellm"), "")
 
@@ -5312,7 +5530,7 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if _, exists := s.deps.Config.Agents[body.Name]; exists {
+	if _, exists := s.configSnapshot().Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
 	}
@@ -5355,7 +5573,7 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 	}
 
 	name := r.PathValue("name")
-	if _, ok := s.deps.Config.Agents[name]; !ok {
+	if _, ok := s.configSnapshot().Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
 	}
@@ -6613,19 +6831,27 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.deps.Config.Knowledge.Enabled = body.Enabled
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		candidate.Knowledge.Enabled = body.Enabled
+		return nil
+	}); err != nil {
+		s.logger.Error("failed to persist config after knowledge toggle", "error", err)
+		jsonError(w, "failed to persist knowledge config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	committed := s.configSnapshot()
 
 	if body.Enabled && s.deps.Knowledge == nil {
-		layers := make([]knowledge.LayerConfig, len(s.deps.Config.Knowledge.Layers))
-		for i, l := range s.deps.Config.Knowledge.Layers {
+		layers := make([]knowledge.LayerConfig, len(committed.Knowledge.Layers))
+		for i, l := range committed.Knowledge.Layers {
 			layers[i] = knowledge.LayerConfig{Type: knowledge.LayerType(l.Type), Path: l.Path, URL: l.URL, Shared: l.Shared}
 		}
 		kcfg := knowledge.KnowledgeConfig{
 			Enabled: true,
 			Layers:  layers,
 			Primer: knowledge.PrimerConfig{
-				MaxFacts:      s.deps.Config.Knowledge.Primer.MaxFacts,
-				MergeStrategy: s.deps.Config.Knowledge.Primer.MergeStrategy,
+				MaxFacts:      committed.Knowledge.Primer.MaxFacts,
+				MergeStrategy: committed.Knowledge.Primer.MergeStrategy,
 			},
 		}
 		api := knowledge.NewKnowledgeAPI(layers, kcfg, s.deps.Logger)
@@ -6635,7 +6861,7 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.deps.BeadSynthesizer != nil {
-		if body.Enabled && s.deps.Config.Knowledge.BeadSynthesizer.IsEnabled() {
+		if body.Enabled && committed.Knowledge.BeadSynthesizer.IsEnabled() {
 			s.deps.BeadSynthesizer.StartBackground(s.deps.Ctx)
 			s.logger.Info("bead synthesizer started via knowledge toggle")
 		} else if !body.Enabled {
@@ -6644,16 +6870,13 @@ func (s *Server) handleKnowledgeToggle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after knowledge toggle", "error", err)
-	}
 	s.auditFromRequest(r, "knowledge_toggle", auditDetail("enabled", fmt.Sprintf("%v", body.Enabled)), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "enabled": fmt.Sprintf("%v", body.Enabled)})
 }
 
 func (s *Server) handleBeadSynthStatus(w http.ResponseWriter, r *http.Request) {
-	cfg := s.deps.Config.Knowledge.BeadSynthesizer
+	cfg := s.configSnapshot().Knowledge.BeadSynthesizer
 	running := false
 	if s.deps.BeadSynthesizer != nil {
 		running = s.deps.BeadSynthesizer.IsRunning()
@@ -6683,7 +6906,14 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	enabled := body.Enabled
-	s.deps.Config.Knowledge.BeadSynthesizer.Enabled = &enabled
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		candidate.Knowledge.BeadSynthesizer.Enabled = &enabled
+		return nil
+	}); err != nil {
+		s.logger.Error("failed to persist config after bead-synth toggle", "error", err)
+		jsonError(w, "failed to persist bead synthesizer config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	if s.deps.BeadSynthesizer != nil {
 		if enabled {
@@ -6695,9 +6925,6 @@ func (s *Server) handleBeadSynthToggle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after bead-synth toggle", "error", err)
-	}
 	s.auditFromRequest(r, "bead_synth_toggle", auditDetail("enabled", fmt.Sprintf("%v", enabled)), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "bead_synthesizer_enabled": fmt.Sprintf("%v", enabled)})
@@ -7492,23 +7719,27 @@ func (s *Server) handleGitSourcesConnect(w http.ResponseWriter, r *http.Request)
 	}
 
 	alreadyInConfig := false
-	for _, gs := range s.deps.Config.Knowledge.GitSources {
+	for _, gs := range s.configSnapshot().Knowledge.GitSources {
 		if gs.URL == req.URL && gs.Subpath == req.Subpath {
 			alreadyInConfig = true
 			break
 		}
 	}
 	if !alreadyInConfig {
-		s.deps.Config.Knowledge.GitSources = append(s.deps.Config.Knowledge.GitSources, config.GitSourceConfigYAML{
-			Name:    req.Name,
-			URL:     req.URL,
-			Branch:  req.Branch,
-			Subpath: req.Subpath,
-			Layer:   req.Layer,
-		})
-	}
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after git source connect", "error", err)
+		if err := s.mutateConfig(func(candidate *config.Config) error {
+			candidate.Knowledge.GitSources = append(candidate.Knowledge.GitSources, config.GitSourceConfigYAML{
+				Name:    req.Name,
+				URL:     req.URL,
+				Branch:  req.Branch,
+				Subpath: req.Subpath,
+				Layer:   req.Layer,
+			})
+			return nil
+		}); err != nil {
+			s.logger.Error("failed to persist config after git source connect", "error", err)
+			jsonError(w, "failed to persist git source config: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	s.auditFromRequest(r, "git_source_connect", auditDetail("name", req.Name, "url", req.URL), "")
@@ -7543,16 +7774,20 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	filtered := make([]config.GitSourceConfigYAML, 0, len(s.deps.Config.Knowledge.GitSources))
-	for _, gs := range s.deps.Config.Knowledge.GitSources {
-		if gs.URL == req.URL && gs.Subpath == req.Subpath {
-			continue
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		filtered := make([]config.GitSourceConfigYAML, 0, len(candidate.Knowledge.GitSources))
+		for _, gs := range candidate.Knowledge.GitSources {
+			if gs.URL == req.URL && gs.Subpath == req.Subpath {
+				continue
+			}
+			filtered = append(filtered, gs)
 		}
-		filtered = append(filtered, gs)
-	}
-	s.deps.Config.Knowledge.GitSources = filtered
-	if err := s.saveConfig(); err != nil {
+		candidate.Knowledge.GitSources = filtered
+		return nil
+	}); err != nil {
 		s.logger.Error("failed to persist config after git source disconnect", "error", err)
+		jsonError(w, "failed to persist git source config: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	s.auditFromRequest(r, "git_source_disconnect", auditDetail("url", req.URL), "")
@@ -7796,8 +8031,12 @@ func (s *Server) handleHiveIDSet(w http.ResponseWriter, r *http.Request) {
 	}
 	body.ID = sanitizeString(body.ID)
 
-	if s.deps != nil && s.deps.Config != nil {
-		s.deps.Config.HiveID = body.ID
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		candidate.HiveID = body.ID
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to persist hive ID: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Persist the new ID to disk so it survives restarts

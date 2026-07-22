@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
 	"github.com/kubestellar/hive/v2/pkg/pushbroker"
+	"github.com/kubestellar/hive/v2/pkg/repair"
 	"github.com/kubestellar/hive/v2/pkg/retro"
 	"github.com/kubestellar/hive/v2/pkg/review"
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
@@ -65,9 +67,10 @@ import (
 )
 
 var (
-	gitHash   = "unknown"
-	gitShort  = "unknown"
-	gitBranch = "unknown"
+	gitHash           = "unknown"
+	gitShort          = "unknown"
+	gitBranch         = "unknown"
+	integratedVersion = "development"
 )
 
 // GitHub App private-key locations on a spoke, and how the two differ.
@@ -818,6 +821,12 @@ func singletonLockPath() string {
 const spokeRestartMinUptime = 10 * time.Minute
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == repair.ContainmentProbeCommand {
+		os.Exit(repair.RunContainmentProbeChild())
+	}
+	if handled, code := runEarlyCLI(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
 	if envCfg := os.Getenv("HIVE_CONFIG"); envCfg != "" {
@@ -1017,6 +1026,23 @@ func main() {
 	// nudges can tell an operator-side fault (no key was ever delivered) from a
 	// user-actionable one (the App is not installed).
 	appAuthState := ghAuth.State
+	// normalGitTransportToken supplies the git-transport credential to the
+	// Visual Hive runtime manager (dd branch feature). It follows the resolved
+	// auth: the App installation token when App auth is in use, else the static
+	// token/HIVE_GITHUB_TOKEN. Nil when no credential resolved — the Visual Hive
+	// runtime treats that as "GitHub unavailable" rather than fatal.
+	var normalGitTransportToken func(context.Context) (string, error)
+	if appAuth != nil {
+		normalGitTransportToken = appAuth.Token
+	} else {
+		staticGitToken := cfg.GitHub.Token
+		if staticGitToken == "" {
+			staticGitToken = os.Getenv("HIVE_GITHUB_TOKEN")
+		}
+		if staticGitToken != "" {
+			normalGitTransportToken = func(context.Context) (string, error) { return staticGitToken, nil }
+		}
+	}
 	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 		ghClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
@@ -1272,6 +1298,7 @@ func main() {
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 	agentMgr.SetSandboxConfig(cfg.AgentSandbox)
+	configCoordinator := dashboard.NewConfigCoordinator(cfg, gov, agentMgr)
 	// Resolve the bob API key at LAUNCH time, not here: cfg is the live config
 	// pointer (the config watcher swaps its contents in place on reload), so a
 	// key added via the Secret mount, the PVC file, or a config edit takes
@@ -1557,8 +1584,9 @@ func main() {
 			logger.Info("migrated config overrides from state to hive.yaml",
 				"repos", cfg.Project.Repos)
 
-			// Write merged config to hive.yaml so overrides become the base config
-			if err := cfg.Save(); err != nil {
+			// Write and publish the complete merged candidate so startup never
+			// leaves Governor or Manager on the pre-migration snapshot.
+			if err := configCoordinator.Mutate(nil); err != nil {
 				logger.Error("failed to save migrated config", "error", err)
 			}
 
@@ -1568,7 +1596,9 @@ func main() {
 				logger.Error("failed to re-save state after migration", "error", err)
 			}
 		}
+		gov.UpdateConfigAndAgents(cfg.Governor, cfg.EnabledAgents())
 	}
+	configCoordinator.PublishCurrent()
 
 	if gov.GetBudget().WeeklyLimit == 0 && cfg.Governor.Budget.TotalTokens > 0 {
 		gov.SetBudgetLimit(cfg.Governor.Budget.TotalTokens)
@@ -1680,14 +1710,16 @@ func main() {
 	}
 
 	beadStores = make(map[string]*beads.Store)
+	lifecycleBeadsDirs := make(map[string]string)
 	for name, agentCfg := range cfg.EnabledAgents() {
-		store, err := beads.NewStore(agentCfg.BeadsDir)
+		store, err := openConfiguredRoleBeadStore(name, agentCfg.BeadsDir)
 		if err != nil {
 			logger.Warn("failed to init beads store", "agent", name, "error", err)
 			continue
 		}
 		store.SetHiveID(cfg.HiveID)
 		beadStores[name] = store
+		lifecycleBeadsDirs[name] = agentCfg.BeadsDir
 		logger.Info("beads store initialized", "agent", name, "count", store.Count())
 	}
 
@@ -1710,20 +1742,57 @@ func main() {
 			if _, statErr := os.Stat(beadsFile); statErr != nil {
 				continue // no beads.json in this directory
 			}
-			store, err := beads.NewStore(agentBeadsDir)
+			// Retired or currently disabled managed roles still share their
+			// durable store with the ordinary Hive process. Reopening one as a
+			// private store would chmod the role directory from 2770 to 0700,
+			// so a later supported ACMM transition could not persist lifecycle
+			// beads through the same in-process controller.
+			store, err := openConfiguredRoleBeadStore(name, agentBeadsDir)
 			if err != nil {
 				logger.Warn("failed to load orphan beads store", "agent", name, "error", err)
 				continue
 			}
 			store.SetHiveID(cfg.HiveID)
 			beadStores[name] = store
+			lifecycleBeadsDirs[name] = agentBeadsDir
 			logger.Info("orphan beads store loaded from disk", "agent", name, "count", store.Count())
 		}
+	}
+	lifecycleBeadRoles := make([]string, 0, len(lifecycleBeadsDirs))
+	for role := range lifecycleBeadsDirs {
+		lifecycleBeadRoles = append(lifecycleBeadRoles, role)
+	}
+	sort.Strings(lifecycleBeadRoles)
+	dashboardLifecycleNormalBeadsDirs = dashboardLifecycleNormalBeadsDirs[:0]
+	for _, role := range lifecycleBeadRoles {
+		dashboardLifecycleNormalBeadsDirs = append(dashboardLifecycleNormalBeadsDirs, strings.TrimSpace(lifecycleBeadsDirs[role]))
+	}
+
+	normalVisualRuntime, runtimeManagerErr := newNormalVisualRuntimeManager(normalVisualRuntimeDependencies{
+		ProcessContext: ctx, NormalConfig: cfg, Governor: gov,
+		BeadStores: beadStores, LifecycleBeadDirs: lifecycleBeadsDirs,
+		BeadsRoot: beadsRootDir, HiveID: cfg.HiveID,
+		AgentManager: agentMgr, GitHub: ghClient, Scheduler: sched,
+		GitTransportToken: normalGitTransportToken, Dashboard: dashSrv, Logger: logger,
+	})
+	if runtimeManagerErr != nil {
+		logger.Error("normal Visual Hive runtime manager unavailable", "error", runtimeManagerErr)
+	} else {
+		dashboardNormalVisualRuntime.Store(normalVisualRuntime)
+		dashboardLifecycleStopNormalVisual = normalVisualRuntime.Stop
+		defer func() {
+			dashboardLifecycleStopNormalVisual = nil
+			dashboardNormalVisualRuntime.Store(nil)
+		}()
+		defer shutdownOrdinaryVisualRuntime(cancel, agentMgr, normalVisualRuntime.ReleaseOnProcessExit, logger)
 	}
 
 	if cfg.Retro.Enabled {
 		if _, exists := beadStores[retro.Actor]; !exists {
-			retroStore, err := beads.NewStore(filepath.Join(beadsRootDir, retro.Actor))
+			// Shared, not private: retro's store lives under /data/beads like
+			// every role store, so it needs the group-writable setgid model
+			// (dev-owned dir writable by agent UIDs in the node group).
+			retroStore, err := beads.NewSharedStore(filepath.Join(beadsRootDir, retro.Actor))
 			if err != nil {
 				logger.Warn("failed to init retro beads store", "error", err)
 			} else {
@@ -2141,22 +2210,23 @@ func main() {
 	}
 
 	dashSrv.RegisterAPI(&dashboard.Dependencies{
-		Config:           cfg,
-		AgentMgr:         agentMgr,
-		Governor:         gov,
-		GHClient:         ghClient,
-		GHAppAuth:        appAuth,
-		Tokens:           tokenCollector,
-		Knowledge:        knowledgeAPI,
-		Inception:        inceptionEngine,
-		Nous:             nousState,
-		Scheduler:        sched,
-		MetricsCollector: metricsCollector,
-		BeadSynthesizer:  beadSynth,
-		BeadStores:       beadStores,
-		Logger:           logger,
-		Ctx:              ctx,
-		RefreshFunc:      refreshDashboard,
+		Config:            cfg,
+		AgentMgr:          agentMgr,
+		Governor:          gov,
+		GHClient:          ghClient,
+		GHAppAuth:         appAuth,
+		Tokens:            tokenCollector,
+		Knowledge:         knowledgeAPI,
+		Inception:         inceptionEngine,
+		Nous:              nousState,
+		Scheduler:         sched,
+		MetricsCollector:  metricsCollector,
+		BeadSynthesizer:   beadSynth,
+		BeadStores:        beadStores,
+		ConfigCoordinator: configCoordinator,
+		Logger:            logger,
+		Ctx:               ctx,
+		RefreshFunc:       refreshDashboard,
 		PersistFunc: func() {
 			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 		},
@@ -2239,6 +2309,9 @@ func main() {
 			}
 			return nil
 		},
+		IntegratedSetupFunc:     runDashboardIntegratedSetup,
+		IntegratedPreflightFunc: runDashboardIntegratedPreflight,
+		IntegratedLifecycleFunc: runDashboardIntegratedLifecycle,
 		// Same key resolution as boot (initGitHubAuth) and the heartbeat apply
 		// path: without it, the dashboard Set ID handler gated reinit on the
 		// raw key_file, which is deliberately empty on hub-delivered per-app-id
@@ -2531,46 +2604,40 @@ func main() {
 	}
 
 	// Watch hive.yaml for external changes and reload config when modified
-	configWatcher := config.NewWatcher(*configPath, func(newCfg *config.Config) {
-		// Preserve runtime-only fields that are not in the YAML
-		newCfg.HiveID = cfg.HiveID
-
-		// Preserve ACMM level from the agent manager — it is the
-		// authoritative source. The file may have a stale value if
-		// a watcher reload races with a level-switch saveConfig().
-		if cfg.ACMMLevel != nil {
-			newCfg.ACMMLevel = cfg.ACMMLevel
-		}
-
-		// Preserve removed-agent tombstones across the swap as a union of the
-		// live cfg and the incoming reload. LoadWithDashboardOverlay now carries
-		// the overlay's tombstones into newCfg, but a removal that landed in the
-		// live cfg after this reload's snapshot (or an overlay too short/stale to
-		// echo it back yet) must not be lost — otherwise the next persistState
-		// saver rewrites every layer tombstone-free and the deleted agents
-		// reappear (#2439). Union keeps any tombstone present in either side.
-		for _, name := range cfg.RemovedAgents {
-			newCfg.MarkAgentRemoved(name)
-		}
-		newCfg.PruneRemovedAgents()
-
-		// Observability (#2439): this is the ~2-min interval reload path, so keep it
-		// at DEBUG to avoid spamming a healthy hive. When a removal is not sticking,
-		// enabling DEBUG shows the tombstone surviving each swap — an empty count here
-		// while the agent keeps reappearing localizes the leak to this union-preserve.
-		logger.Debug("reload: preserved removed-agents",
-			"hive_id", cfg.HiveID,
-			"count", len(newCfg.RemovedAgents),
-			"agents", newCfg.RemovedAgents,
-		)
-
-		// Capture the outgoing GitHub App identity before the swap so we can
-		// tell whether the reload changed it.
+	var configWatcher *config.Watcher
+	configWatcher = config.NewDigestWatcher(*configPath, func(newCfg *config.Config, sourceDigest string) {
+		// Capture the outgoing GitHub App identity before the coordinator
+		// publishes the replacement so auth can be rebuilt when it changes.
 		prevGitHub := cfg.GitHub
 
-		// Swap the in-memory config pointer contents
-		*cfg = *newCfg
+		// Preserve runtime-only fields that are not authoritative in YAML.
+		if err := configCoordinator.Replace(newCfg, func(current, candidate *config.Config) error {
+			if err := configWatcher.AcceptExternalDigest(sourceDigest); err != nil {
+				return err
+			}
+			candidate.HiveID = current.HiveID
 
+			if current.ACMMLevel != nil {
+				level := *current.ACMMLevel
+				candidate.ACMMLevel = &level
+			}
+
+			// Preserve removed-agent tombstones across the swap as a union of
+			// the live cfg and the incoming reload. A removal that landed in
+			// the live cfg after this reload's snapshot (or an overlay too
+			// short/stale to echo it back yet) must not be lost — otherwise
+			// the next persistState saver rewrites every layer tombstone-free
+			// and the deleted agents reappear (#2439). Union keeps any
+			// tombstone present in either side.
+			for _, name := range current.RemovedAgents {
+				candidate.MarkAgentRemoved(name)
+			}
+			candidate.PruneRemovedAgents()
+			return nil
+		}); err != nil {
+			logger.Error("failed to publish config reload", "error", err)
+			return
+		}
 		// Re-sync subsystems that cache config values
 		ghClient.SetRepos(cfg.Project.Repos)
 		if uc := userGHClient.Load(); uc != nil {
@@ -2636,7 +2703,15 @@ func main() {
 
 		refreshDashboard()
 	}, logger)
-	dashSrv.SetSkipReloadFunc(configWatcher.SkipNext)
+	dashSrv.SetConfigSaveFunc(func(candidate *config.Config) error {
+		if err := configWatcher.ProgrammaticSave(candidate); err != nil {
+			dashSrv.AddSystemAlert("config-save-failed", "error",
+				"Config save failed — runtime changes were not published: "+err.Error())
+			return err
+		}
+		dashSrv.ClearSystemAlert("config-save-failed")
+		return nil
+	})
 	go configWatcher.Start(ctx)
 
 	// Persist operator pause/resume into the on-disk config so it survives
@@ -2650,12 +2725,17 @@ func main() {
 	// read-modify-save under a dedicated mutex so every pause transition is
 	// durably persisted.
 	agentMgr.SetPersistPauseCallback(func(name string, paused bool) {
-		configWatcher.SkipNext() // don't let our own write trigger a reload
-		changed, err := cfg.SetAgentPausedAndSave(name, paused)
-		if err != nil {
+		if err := configCoordinator.Mutate(func(candidate *config.Config) error {
+			agentConfig, ok := candidate.Agents[name]
+			if !ok {
+				return fmt.Errorf("agent %q is not configured", name)
+			}
+			agentConfig.Paused = paused
+			candidate.Agents[name] = agentConfig
+			return nil
+		}); err != nil {
 			logger.Warn("failed to persist agent pause state", "agent", name, "paused", paused, "error", err)
 		}
-		_ = changed
 	})
 
 	// Persist the fully-expanded prompt text of every kick so owners can review
@@ -2933,7 +3013,13 @@ func main() {
 	}
 
 	go func() {
-		if err := dashSrv.Start(); err != nil {
+		err := dashSrv.Start()
+		if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); normalVisualRuntime != nil {
+			if stopErr := normalVisualRuntime.ClearDashboardReadiness(); stopErr != nil {
+				logger.Warn("remove stopped normal Visual Hive dashboard readiness", "error", stopErr)
+			}
+		}
+		if err != nil {
 			logger.Error("dashboard server failed", "error", err)
 		}
 	}()
@@ -3037,15 +3123,27 @@ func main() {
 
 	// Start hub heartbeat push if configured (env var or config)
 	hubURL := cfg.Hub.URL
-	if envHub := os.Getenv("HIVE_HUB_URL"); envHub != "" {
+	envHub := os.Getenv("HIVE_HUB_URL")
+	envCluster := os.Getenv("HIVE_CLUSTER_ID")
+	if envHub != "" || envCluster != "" {
+		if err := configCoordinator.Mutate(func(candidate *config.Config) error {
+			if envHub != "" {
+				candidate.Hub.Enabled = true
+				candidate.Hub.URL = envHub
+			}
+			if envCluster != "" {
+				candidate.Hub.ClusterID = envCluster
+			}
+			return nil
+		}); err != nil {
+			logger.Error("failed to persist hub environment config", "error", err)
+		}
+	}
+	if envHub != "" {
 		hubURL = envHub
-		cfg.Hub.Enabled = true
-		cfg.Hub.URL = envHub
 	}
-	if envCluster := os.Getenv("HIVE_CLUSTER_ID"); envCluster != "" {
-		cfg.Hub.ClusterID = envCluster
-	}
-	if cfg.Hub.Enabled && hubURL != "" {
+	hubEnabled := cfg.Hub.Enabled || envHub != ""
+	if hubEnabled && hubURL != "" {
 		// Heartbeat cadence is INDEPENDENT of the governor eval interval. It was
 		// previously tied to cfg.Governor.EvalIntervalS, so a low-ACMM hive
 		// (which evaluates infrequently by design — e.g. ~10 min at L2) beat the
@@ -3056,7 +3154,7 @@ func main() {
 		// regardless of ACMM level, stays fresh on the hub.
 		const heartbeatSendInterval = 2 * time.Minute
 		go hub.StartHeartbeat(ctx, hubURL, func() *hub.HeartbeatPayload {
-			if !cfg.Hub.Enabled {
+			if !cfg.Hub.Enabled && envHub == "" {
 				return nil
 			}
 			statuses := agentMgr.AllStatuses()
@@ -3580,12 +3678,13 @@ func main() {
 			// configured as even when that is NOT its cluster's default. This is
 			// the both-keys fix: a github.com hive on a GHE cluster now receives
 			// and stores the github.com key here, and resolveAppKeyFile selects it
-			// by matching cfg.GitHub.AppID.
+			// by matching the current app_id.
 			//
 			// Written to distinct /data/gh-app-key-<appid>.pem files, so they never
 			// collide with the primary /data/gh-app-key.pem above. Writing one that
 			// matches our OWN app_id must take effect immediately: flip keyChanged
 			// so the client is rebuilt below, exactly as a primary-key change does.
+			preAdditional := configCoordinator.Snapshot()
 			for _, ak := range ghCfg.AdditionalKeys {
 				if ak.PrivateKey == "" || ak.AppID <= 0 {
 					continue
@@ -3609,7 +3708,7 @@ func main() {
 				// If this additional key is for the App we ourselves authenticate
 				// as, it is now the key resolveAppKeyFile will pick — treat it like
 				// a primary-key rotation so the client rebuild below uses it.
-				if changed && ak.AppID == cfg.GitHub.AppID {
+				if changed && ak.AppID == preAdditional.GitHub.AppID {
 					keyChanged = true
 					appAuth.DropCachedToken()
 				}
@@ -3700,14 +3799,16 @@ func main() {
 				logger.Error("failed to persist github app config from heartbeat", "error", err)
 			}
 
+			committed := configCoordinator.Snapshot()
 			// Resolve the key file the same way startup does, so a hive whose
 			// only correct key arrived as an ADDITIONAL per-app-id key (no
 			// primary key_file configured — the exact vllm-d state) still finds
 			// it: resolveAppKeyFile prefers /data/gh-app-key-<appid>.pem for the
-			// app_id we now claim. An explicit key_file still wins outright.
-			rebuildKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
-			if cfg.GitHub.HasUsableApp() && rebuildKeyFile != "" {
-				newAppAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, rebuildKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
+			// app_id we now claim, and honours a hive's public-github.com pin.
+			// An explicit key_file still wins outright.
+			rebuildKeyFile := resolveAppKeyFile(committed.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), committed.GitHub.AppID)
+			if committed.GitHub.HasUsableApp() && rebuildKeyFile != "" {
+				newAppAuth, err := github.NewAppAuth(committed.GitHub.AppID, committed.GitHub.InstallationID, rebuildKeyFile, logger, committed.GitHub.ResolvedAPIURL())
 				if err != nil {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
 					return
@@ -3720,12 +3821,14 @@ func main() {
 				// every use costs a stat and cannot go stale.
 				// Hub-delivered creds can carry a wrong installation_id just as
 				// easily as a hand-edited config; correct (and persist) it
-				// before building a client that would 403 on every write.
-				healGitHubAppInstallation(ctx, newAppAuth, cfg, logger)
-				newClient := github.NewClientFromAppWithBotLogin(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.BotLogin())
-				if len(cfg.Governor.Labels.Exempt) > 0 {
-					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
-					newClient.SetAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+				// before building a client that would 403 on every write. heal
+				// updates the live cfg (which the coordinator keeps in sync) and
+				// persists via cfg.Save().
+				healGitHubAppInstallation(ctx, newAppAuth, committed, logger)
+				newClient := github.NewClientFromAppWithBotLogin(newAppAuth, committed.Project.Org, committed.Project.Repos, logger, committed.GitHub.BotLogin())
+				if len(committed.Governor.Labels.Exempt) > 0 {
+					newClient.SetExemptLabels(committed.Governor.Labels.Exempt)
+					newClient.SetAutoMergeLabel(committed.Governor.Labels.AutoMerge)
 				}
 				ghClient = newClient
 				appAuth = newAppAuth
@@ -3734,8 +3837,8 @@ func main() {
 				dashSrv.SetGitHubAppRequired(false)
 				dashSrv.ClearPendingGitHubAppInstall()
 				logger.Info("github app configured via heartbeat delivery",
-					"app_id", cfg.GitHub.AppID,
-					"installation_id", cfg.GitHub.InstallationID,
+					"app_id", committed.GitHub.AppID,
+					"installation_id", committed.GitHub.InstallationID,
 				)
 			}
 		}), hub.HubBannerCallback(func(banner *hub.HubBanner) {
@@ -3745,10 +3848,16 @@ func main() {
 			}
 			dashSrv.SetHubBanner(banner.ID, banner.Message, banner.Color)
 		}), hub.VisibilityCallback(func(isPublic bool) {
-			if cfg.Hub.IsPublic != isPublic {
+			current := configCoordinator.Snapshot()
+			if current.Hub.IsPublic != isPublic {
 				logger.Info("hub overrode visibility via heartbeat",
-					"was", cfg.Hub.IsPublic, "now", isPublic)
-				cfg.Hub.IsPublic = isPublic
+					"was", current.Hub.IsPublic, "now", isPublic)
+				if err := configCoordinator.Mutate(func(candidate *config.Config) error {
+					candidate.Hub.IsPublic = isPublic
+					return nil
+				}); err != nil {
+					logger.Error("failed to persist hub visibility override", "error", err)
+				}
 			}
 		}), hub.SwitchBranchCallback(func(tag string) {
 			// Branch switch delivered via heartbeat (the hub couldn't reach
@@ -4040,6 +4149,31 @@ func main() {
 	// so the pod becomes Ready in seconds instead of minutes. See the MarkReady
 	// call and comment above the agent-launch goroutine.
 
+	// Readiness is already committed above; here we only confirm the listener is
+	// actually serving HTTP before activating the normal Visual Hive runtime,
+	// which depends on the existing dashboard HTTP listener.
+	dashboardHTTPReady := true
+	dashboardReadyContext, cancelDashboardReady := context.WithTimeout(ctx, 5*time.Second)
+	if err := dashSrv.WaitForHTTP(dashboardReadyContext); err != nil {
+		logger.Error("dashboard listener did not become HTTP-ready; ordinary Hive continues without dashboard readiness", "error", err)
+		dashboardHTTPReady = false
+	}
+	cancelDashboardReady()
+	if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); normalVisualRuntime != nil {
+		if !dashboardHTTPReady {
+			logger.Error("normal Visual Hive service will not start without the existing dashboard HTTP listener")
+		} else {
+			if _, err := normalVisualRuntime.Ensure(ctx); err != nil {
+				if errors.Is(err, errDaemonLeaseHeld) {
+					logger.Warn("normal Visual Hive governed repair service held because another runtime owns this repository", "error", err)
+				} else {
+					logger.Warn("normal Visual Hive runtime activation is pending", "error", err)
+				}
+			}
+			go normalVisualRuntime.Observe(ctx, normalVisualRuntimeReconcileInterval)
+		}
+	}
+
 	const cliStartupDelay = 10 * time.Second
 	logger.Info("waiting for CLI startup before first eval", "delay", cliStartupDelay)
 	select {
@@ -4123,6 +4257,99 @@ func main() {
 			dashSrv.BroadcastAgentStatus(payload)
 		}
 	}
+}
+
+func openConfiguredRoleBeadStore(role, dir string) (*beads.Store, error) {
+	return openRoleBeadStoreUnderRoot(role, dir, "/data/beads")
+}
+
+func openRoleBeadStoreUnderRoot(role, dir, root string) (*beads.Store, error) {
+	if isRoleBeadStoreUnderRoot(role, dir, root) {
+		return beads.NewSharedStore(dir)
+	}
+	return beads.NewStore(dir)
+}
+
+func isManagedRoleBeadStore(role, dir string) bool {
+	return isRoleBeadStoreUnderRoot(role, dir, "/data/beads")
+}
+
+func isRoleBeadStoreUnderRoot(role, dir, root string) bool {
+	role = strings.TrimSpace(role)
+	return role != "" && role != "." && role != ".." && !strings.ContainsAny(role, `/\\`) &&
+		sameSpecialistRuntimePath(dir, filepath.Join(root, role))
+}
+
+func runEarlyCLI(args []string) (bool, int) {
+	if len(args) == 0 {
+		return false, 0
+	}
+	command := args[0]
+	switch command {
+	case "--version", "version":
+		return true, runCLICommandWithJSONContract("version", args, func() int {
+			return runVersionCommand(args, os.Stdout, os.Stderr)
+		})
+	case "visual":
+		return true, runCLICommandWithJSONContract("visual", args[1:], func() int {
+			return runVisualCommand(args[1:])
+		})
+	case "mcp-server":
+		return true, runCLICommandWithJSONContract("mcp-server", args[1:], func() int {
+			return runMCPServerCommand(args[1:])
+		})
+	case "setup", "status", "doctor", "start", "stop", "daemon", "installer-transition", "pause", "resume", "run", "hosted-cycle", "approve-merge", "approve-baseline", "revoke-merge-approval", "retry-repair", "recover-dispatch", "transfer-setup-authorizer", "set-coverage", "set-automation", "set-issue-limit", "set-retry-limit", "upgrade", "rollback", "uninstall":
+		return true, runCLICommandWithJSONContract(command, args[1:], func() int {
+			return runIntegratedCommand(command, args[1:])
+		})
+	default:
+		if cliJSONRequested(args) {
+			return true, runCLICommandWithJSONContract(command, args, func() int {
+				fmt.Fprintf(os.Stderr, "unknown Hive command %q\n", command)
+				return 2
+			})
+		}
+	}
+	return false, 0
+}
+
+func runMCPServerCommand(args []string) int {
+	if len(args) != 0 {
+		fmt.Fprintln(os.Stderr, "usage: hive mcp-server")
+		return 2
+	}
+	return runMCPServer()
+}
+
+func runVersionCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || (args[0] != "--version" && args[0] != "version") {
+		fmt.Fprintln(stderr, "usage: hive --version")
+		return 2
+	}
+	flags := flag.NewFlagSet("hive version", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	jsonOutput := flags.Bool("json", false, "emit machine-readable JSON")
+	if err := parseExactFlags(flags, args[1:]); err != nil {
+		fmt.Fprintln(stderr, "usage: hive --version")
+		return 2
+	}
+	version := strings.TrimSpace(integratedVersion)
+	commit := strings.ToLower(strings.TrimSpace(gitHash))
+	if version == "" {
+		version = "development"
+	}
+	if commit == "" {
+		commit = "unknown"
+	}
+	if *jsonOutput {
+		if err := json.NewEncoder(stdout).Encode(map[string]any{"schema_version": "hive.version.v1", "version": version, "commit": commit}); err != nil {
+			fmt.Fprintln(stderr, "encode Hive version:", err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Fprintf(stdout, "Hive %s\ncommit: %s\n", version, commit)
+	return 0
 }
 
 // Dashboard system-alert IDs for the budget thresholds.
@@ -5445,27 +5672,6 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	if err := snapshot.SaveState(path, state, logger); err != nil {
 		logger.Error("failed to persist state", "error", err)
 	}
-
-	// Reconcile the persisted pause field from the authoritative live manager
-	// state and save, atomically under the config save mutex. persistState runs
-	// async (go PersistFunc()) on every pause/resume; doing the c.Agents update
-	// and Save under saveMu (via ReconcilePausedAndSave) means it can neither
-	// race the pause callback's map write nor clobber its file write with a
-	// stale paused=false. livePaused is built from AllStatuses(), read above.
-	livePaused := make(map[string]bool, len(agents))
-	for name, as := range agents {
-		livePaused[name] = as.Paused
-	}
-	if err := cfg.ReconcilePausedAndSave(livePaused); err != nil {
-		logger.Error("failed to persist config to yaml", "error", err)
-		if dashSrv != nil {
-			dashSrv.AddSystemAlert("config-save-failed", "error",
-				"Config save failed — runtime state (ACMM level, agent config) will be lost on restart: "+err.Error())
-		}
-	} else if dashSrv != nil {
-		dashSrv.ClearSystemAlert("config-save-failed")
-	}
-
 	history := gov.EvalHistory()
 	if len(history) > 0 {
 		historyData, err := json.Marshal(history)

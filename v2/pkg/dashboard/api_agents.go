@@ -68,12 +68,17 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, exists := s.deps.Config.Agents[body.Name]; exists {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if _, exists := current.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
 	}
 
-	agentsDir := s.deps.Config.Data.AgentsDir
+	agentsDir := current.Data.AgentsDir
 	if agentsDir == "" {
 		jsonError(w, "agents_dir not configured", http.StatusInternalServerError)
 		return
@@ -136,7 +141,12 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	name := r.PathValue("name")
-	agentCfg, ok := s.deps.Config.Agents[name]
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	agentCfg, ok := current.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)
 		return
@@ -151,7 +161,7 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentsDir := s.deps.Config.Data.AgentsDir
+	agentsDir := current.Data.AgentsDir
 	if agentsDir != "" {
 		if err := config.RemoveAgentFile(agentsDir, name); err != nil {
 			s.logger.Error("failed to remove agent file", "agent", name, "error", err)
@@ -160,14 +170,18 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	delete(s.deps.Config.Agents, name)
-	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if _, exists := candidate.Agents[name]; !exists {
+			return fmt.Errorf("agent %s no longer exists", name)
+		}
+		delete(candidate.Agents, name)
+		if err := candidate.ExpandAgentReplicas(); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
+		jsonError(w, "failed to publish agent deletion: "+err.Error(), http.StatusInternalServerError)
 		return
-	}
-	s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
-	if s.deps.Governor != nil {
-		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
 	}
 
 	// Record the deletion durably. Removing the overlay file above is not
@@ -352,12 +366,17 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, exists := s.deps.Config.Agents[name]; exists {
+	current := s.configSnapshot()
+	if current == nil {
+		jsonError(w, "runtime config not available", http.StatusServiceUnavailable)
+		return
+	}
+	if _, exists := current.Agents[name]; exists {
 		jsonError(w, "agent already exists: "+name, http.StatusConflict)
 		return
 	}
 
-	agentsDir := s.deps.Config.Data.AgentsDir
+	agentsDir := current.Data.AgentsDir
 	if agentsDir == "" {
 		jsonError(w, "agents_dir not configured", http.StatusInternalServerError)
 		return

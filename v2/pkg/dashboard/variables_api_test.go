@@ -61,7 +61,8 @@ func TestVariableUpsert_RejectsScriptAndHTTP(t *testing.T) {
 
 func TestVariableUpsert_RejectsSecretInStatic(t *testing.T) {
 	srv := newVarServer(t)
-	if code := putVar(t, srv, "TOK", `{"type":"static","value":"sk-abcdef1234567890abcdef"}`); code != 400 {
+	secret := "sk-" + strings.Repeat("a", 24)
+	if code := putVar(t, srv, "TOK", `{"type":"static","value":"`+secret+`"}`); code != 400 {
 		t.Errorf("secret-looking static value should be 400, got %d", code)
 	}
 }

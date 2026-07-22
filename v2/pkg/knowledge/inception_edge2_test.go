@@ -211,15 +211,15 @@ func TestInferLanguageFromTextEdgeCases(t *testing.T) {
 		text string
 		want string
 	}{
-		{"A Django REST API", ""},                // django not checked in inferLanguageFromText (only inferLanguage)
-		{"Build with Cargo", ""},                 // cargo not in inferLanguageFromText
-		{"A tool using Golang", "go"},            // golang keyword
-		{"Use Go for this project", "go"},        // "go" as whole word
-		{"Logo design tool", ""},                 // "logo" contains "go" but not as word boundary
+		{"A Django REST API", ""},                   // django not checked in inferLanguageFromText (only inferLanguage)
+		{"Build with Cargo", ""},                    // cargo not in inferLanguageFromText
+		{"A tool using Golang", "go"},               // golang keyword
+		{"Use Go for this project", "go"},           // "go" as whole word
+		{"Logo design tool", ""},                    // "logo" contains "go" but not as word boundary
 		{"A JavaScript AND Java app", "javascript"}, // javascript matched first
-		{"", ""},                                 // empty
-		{"Cargo is a Go tool", "go"},             // "go" as word, "cargo" doesn't match
-		{"Let's go build something", "go"},       // "go" preceded by space
+		{"", ""},                           // empty
+		{"Cargo is a Go tool", "go"},       // "go" as word, "cargo" doesn't match
+		{"Let's go build something", "go"}, // "go" preceded by space
 	}
 	for _, tt := range tests {
 		got := inferLanguageFromText(tt.text)
@@ -271,12 +271,12 @@ func TestContainsWord(t *testing.T) {
 		{"logo design", "go", false},
 		{"cargo build", "go", false},
 		{"ergo sum", "go", false},
-		{"golang tools", "go", false},  // "go" in "golang" is not word-bounded
-		{"let's go!", "go", true},       // punctuation after
-		{"a go-tool", "go", true},       // hyphen after (not alpha)
+		{"golang tools", "go", false}, // "go" in "golang" is not word-bounded
+		{"let's go!", "go", true},     // punctuation after
+		{"a go-tool", "go", true},     // hyphen after (not alpha)
 		{"", "go", false},
-		{"go", "go", true},             // exact match
-		{"GO", "go", false},            // case sensitive
+		{"go", "go", true},  // exact match
+		{"GO", "go", false}, // case sensitive
 		{"trust me", "rust", false},
 		{"rust lang", "rust", true},
 		{"in rust we trust", "rust", true},
@@ -299,7 +299,7 @@ func TestInferProjectTypeEdgeCases(t *testing.T) {
 		{"Build a web frontend with React", "ui"},
 		{"Create a reusable library", "library"},
 		{"Kubernetes operator for deployments", "kubernetes"},
-		{"A simple script", "cli"},                     // default
+		{"A simple script", "cli"},                      // default
 		{"Deploy a containerized service", "container"}, // "container" keyword
 		{"Manage Docker containers", "container"},       // "docker" keyword
 	}
@@ -536,8 +536,8 @@ func TestContainsWordBoundaries(t *testing.T) {
 		{"go!", "go", true},
 		{"go?", "go", true},
 		// Numbers adjacent
-		{"go2", "go", true},        // digit after = word boundary (digits aren't alpha)
-		{"2go", "go", true},        // digit before = word boundary
+		{"go2", "go", true}, // digit after = word boundary (digits aren't alpha)
+		{"2go", "go", true}, // digit before = word boundary
 	}
 	for _, tt := range tests {
 		got := containsWord(tt.text, tt.word)
@@ -651,7 +651,11 @@ func TestWriteFactsToVaultInvalidDir(t *testing.T) {
 }
 
 func TestSaveStateInvalidDir(t *testing.T) {
-	e := NewInceptionEngine("/dev/null/impossible", nil, nil)
+	parentFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e := NewInceptionEngine(filepath.Join(parentFile, "impossible"), nil, nil)
 	e.mu.Lock()
 	e.state = &InceptionState{
 		Phase:    PhaseCapture,

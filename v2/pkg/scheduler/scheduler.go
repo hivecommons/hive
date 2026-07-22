@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/agentsmd"
 	"github.com/kubestellar/hive/v2/pkg/classify"
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -26,6 +27,7 @@ type Scheduler struct {
 	primer               *knowledge.Primer
 	inception            *knowledge.InceptionEngine
 	lastActionable       *github.ActionableResult
+	governedExecutor     *agent.SpecialistExecutorProfile
 	logger               *slog.Logger
 	promptResolver       *promptsrc.Resolver
 	auditFunc            AuditFunc
@@ -481,6 +483,10 @@ const maxIssuesPerKick = 100
 // BuildAgentMessage constructs a kick prompt for the named agent using the
 // template resolution chain (config kick_template → convention → embedded → hardcoded).
 func (s *Scheduler) BuildAgentMessage(agentName string, issues []github.Issue, actionable *github.ActionableResult) string {
+	if actionable == nil {
+		actionable = &github.ActionableResult{}
+	}
+
 	baseName := s.cfg.BaseAgentName(agentName)
 	// 0. GitHub-sourced prompt: if the agent declares a prompt_source, resolve it
 	//    live at kick time (with allowlist gating + graceful fallback). A miss
@@ -1012,10 +1018,7 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 // primeKnowledge queries the wiki layers for facts relevant to the given issues
 // and returns a formatted section for injection into the kick message.
 func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
-	s.mu.RLock()
-	primer := s.primer
-	s.mu.RUnlock()
-	if primer == nil || len(issues) == 0 {
+	if len(issues) == 0 {
 		return ""
 	}
 
@@ -1027,6 +1030,16 @@ func (s *Scheduler) primeKnowledge(issues []github.Issue) string {
 	keywords := extractKeywords(issues[:limit])
 	if len(keywords) == 0 {
 		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
+		return ""
+	}
+	return s.primeKnowledgeKeywords(keywords)
+}
+
+func (s *Scheduler) primeKnowledgeKeywords(keywords []string) string {
+	s.mu.RLock()
+	primer := s.primer
+	s.mu.RUnlock()
+	if primer == nil || len(keywords) == 0 {
 		return ""
 	}
 

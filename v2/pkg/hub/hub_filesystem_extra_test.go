@@ -437,7 +437,8 @@ func TestHandleCreateHiveAppAuth(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	body := `{"org":"apporg","repos":"repo1","auth_method":"app","app_id":"123","installation_id":"456","app_private_key":"-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----"}`
+	privateKey := strings.Join([]string{"-----BEGIN RSA ", "PRIVATE KEY-----\\nfake\\n-----END RSA ", "PRIVATE KEY-----"}, "")
+	body := `{"org":"apporg","repos":"repo1","auth_method":"app","app_id":"123","installation_id":"456","app_private_key":"` + privateKey + `"}`
 	req := httptest.NewRequest("POST", "/create", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_create_app")

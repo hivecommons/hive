@@ -25,11 +25,11 @@ func (c *Client) FetchWorkflowHealth(ctx context.Context) map[string]any {
 	health["helm"] = c.helmCheck(ctx, primaryRepo)
 
 	nightlyWorkflows := map[string]string{
-		"nightly":            "Nightly Test Suite",
-		"nightlyCompliance":  "Nightly Compliance & Perf",
-		"nightlyDashboard":   "Nightly Dashboard Health",
-		"nightlyGhaw":        "Nightly gh-aw Version Check",
-		"nightlyPlaywright":  "Playwright Cross-Browser (Nightly)",
+		"nightly":           "Nightly Test Suite",
+		"nightlyCompliance": "Nightly Compliance & Perf",
+		"nightlyDashboard":  "Nightly Dashboard Health",
+		"nightlyGhaw":       "Nightly gh-aw Version Check",
+		"nightlyPlaywright": "Playwright Cross-Browser (Nightly)",
 	}
 	for key, wfName := range nightlyWorkflows {
 		health[key] = c.checkWorkflow(ctx, primaryRepo, wfName)
@@ -153,7 +153,11 @@ func (c *Client) brewCheck(ctx context.Context, primaryRepo string) int {
 	releases, _, err := c.client.Repositories.ListReleases(ctx, c.org, primaryRepo,
 		&gh.ListOptions{PerPage: brewReleaseWindow})
 	if err != nil || len(releases) == 0 {
-		return healthStatusNotFound
+		latest, _, latestErr := c.client.Repositories.GetLatestRelease(ctx, c.org, primaryRepo)
+		if latestErr != nil || latest == nil {
+			return healthStatusNotFound
+		}
+		releases = []*gh.RepositoryRelease{latest}
 	}
 
 	for _, release := range releases {
@@ -274,8 +278,8 @@ func (c *Client) deployChecks(ctx context.Context, repo string, health map[strin
 	})
 
 	deployJobs := map[string]string{
-		"deploy_vllm_d":    "deploy-vllm-d",
-		"deploy_pok_prod":  "deploy-pok-prod",
+		"deploy_vllm_d":   "deploy-vllm-d",
+		"deploy_pok_prod": "deploy-pok-prod",
 	}
 
 	for key := range deployJobs {

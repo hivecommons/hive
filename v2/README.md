@@ -2,6 +2,12 @@
 
 AI agent orchestrator for GitHub repositories. A single Go binary that enumerates issues and PRs, classifies them by complexity, and dispatches work to AI agents (Claude, Copilot, Gemini, Goose) on adaptive cadences.
 
+For architecture or implementation work spanning Hive and Visual Hive, read the
+normative [Visual Hive integration contract](docs/visual-hive-integration-contract.md) first.
+It overrides historical goals and parallel integration designs.
+
+For the production Hive + Visual Hive product, start with [the integrated quickstart](docs/integrated-quickstart.md). The signed integrated installer needs no Go, Node, Docker, npm, or sibling Visual Hive checkout and supports CLI, MCP, and `/hive` setup through a real hosted issue/repair/PR lifecycle.
+
 ## Quick Start (Docker)
 
 ### Option A: Pre-built image (recommended)
@@ -85,6 +91,19 @@ kubectl apply -f deploy/k8s/dashboard-route-rbac.yaml
 `dashboard-route-rbac.yaml` lets the spoke report `route_exists` in heartbeats.
 See [docs/health-checks.md](docs/health-checks.md) for listener probes,
 hub-fronted URL probing, and alert hysteresis.
+
+## Visual Hive evidence import
+
+Hive can consume Visual Hive's deterministic evidence without giving the producer direct access to the bead store. The importer validates bundle lifetime, source provenance, ACMM ceiling, safe relative paths, regular-file status, file sizes, SHA-256 digests, secret/path leaks, and the aggregate digest before parsing any work item.
+
+```bash
+hive visual import validate --bundle /artifacts/manifest.json --max-acmm 3
+hive visual import apply --bundle /artifacts/manifest.json --max-acmm 3 --beads-dir /data/beads/quality
+```
+
+`apply` persists the entire batch with one atomic store write and skips existing `external_ref` values, so workflow retries are idempotent. Trusted imports require a successful non-PR GitHub Actions bundle. `--allow-local` exists only for an explicit local/fork proof and must not be used for untrusted artifacts.
+
+Visual Hive remains the deterministic verdict authority. Imported beads may route investigation or repair work, but Hive must rerun the supplied Visual Hive validation before resolving the work.
 
 ## Configuration
 

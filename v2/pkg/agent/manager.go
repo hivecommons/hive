@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -19,12 +20,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/claude"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
+	"syscall"
+
 	"github.com/kubestellar/hive/v2/pkg/pushbroker"
 	"github.com/kubestellar/hive/v2/pkg/sandbox"
 	"github.com/kubestellar/hive/v2/pkg/tracing"
@@ -134,6 +136,13 @@ type AgentProcess struct {
 	// save would restart agents whose problem the key does not fix.
 	// Set only on the missing-key branch, cleared on every launch attempt.
 	awaitingBobKey bool
+	// specialistReady / specialistProviderSHA256 are dd-branch fields, restored
+	// after a v2 sync took v2's version of this struct wholesale and dropped
+	// them — leaving ~10 call sites in this file referring to a field that no
+	// longer existed. They are additive: v2 has no equivalent and no behaviour
+	// here changes for it.
+	specialistReady          bool
+	specialistProviderSHA256 string
 
 	// lastLaunchFailureBanner is the exact in-pane shell line typed by the most
 	// recent aborted launch (see announceLaunchFailureInPane), "" after a
@@ -181,9 +190,19 @@ func (p ProjectContext) PrimaryRepo() string {
 }
 
 type Manager struct {
-	agents   map[string]*AgentProcess
-	idToName map[string]string
-	mu       sync.RWMutex
+	agents           map[string]*AgentProcess
+	idToName         map[string]string
+	specialistLeases map[string]string
+	// specialistChildren is the ordinary Manager's proposal-only, ephemeral
+	// child-dispatch state. It is deliberately separate from agents and from
+	// the legacy persistent-specialist lease map: a child can never inherit a
+	// parent's pane, cancel function, reaper identity, or launch generation.
+	specialistChildren      map[SpecialistRole]*specialistChildSession
+	specialistChildExecutor SpecialistChildExecutor
+	specialistChildRoot     string
+	specialistsDown         bool
+	specialistsClosed       bool
+	mu                      sync.RWMutex
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks the startup
 	// re-entrancy deadlock class (see the 2026-07 provisionWG incident).
@@ -197,6 +216,11 @@ type Manager struct {
 	uidMap           *UIDMap
 	appAuth          AppTokenMinter
 	agentMint        AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
+	// specialistProvider is set only by NewSpecialistManager. The ordinary
+	// Manager never consults this sealed executable identity.
+	specialistProvider  *specialistProviderIdentity
+	specialistNamespace string
+	specialistCodexHome string
 
 	// bobAPIKeyResolver resolves the IBM bobshell API key at LAUNCH time (not
 	// boot), so a key an operator adds via a Secret/PVC file or the config UI
@@ -715,6 +739,10 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	if workDir == "" {
 		workDir = "/data/agents"
 	}
+	return newManager(agents, logger, project, workDir)
+}
+
+func newManager(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext, workDir string) *Manager {
 
 	// Save COPILOT_GITHUB_TOKEN for explicit injection via tmux set-environment.
 	// The token stays in the process env so all agents can authenticate for AI
@@ -735,16 +763,21 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 	} else {
 		logger.Info("no UID map found, agents will share dev UID", "path", UIDMapPath)
 	}
+	return newManagerWithUIDMap(agents, logger, project, workDir, copilotToken, claudeToken, uidMap)
+}
 
+func newManagerWithUIDMap(agents map[string]config.AgentConfig, logger *slog.Logger, project ProjectContext, workDir, copilotToken, claudeToken string, uidMap *UIDMap) *Manager {
 	m := &Manager{
-		agents:           make(map[string]*AgentProcess),
-		idToName:         make(map[string]string),
-		logger:           logger,
-		workDir:          workDir,
-		project:          project,
-		copilotAuthToken: copilotToken,
-		claudeAuthToken:  claudeToken,
-		uidMap:           uidMap,
+		agents:             make(map[string]*AgentProcess),
+		idToName:           make(map[string]string),
+		specialistLeases:   make(map[string]string),
+		specialistChildren: make(map[SpecialistRole]*specialistChildSession),
+		logger:             logger,
+		workDir:            workDir,
+		project:            project,
+		copilotAuthToken:   copilotToken,
+		claudeAuthToken:    claudeToken,
+		uidMap:             uidMap,
 	}
 
 	for name, cfg := range agents {
@@ -822,6 +855,16 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		return nil
 	}
 
+	backend := agent.Config.Backend
+	if agent.BackendOverride != "" {
+		backend = agent.BackendOverride
+	}
+	if _, known := backendCommand(backend); !known {
+		agent.State = StateFailed
+		m.logger.Warn("backend binary not found", "name", agent.Name, "backend", backend, "error", "unknown backend")
+		return nil
+	}
+
 	m.sanitizeGitRemotes(agent)
 
 	if err := m.ensureTmuxSession(agent); err != nil {
@@ -838,10 +881,6 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		return err
 	}
 
-	backend := agent.Config.Backend
-	if agent.BackendOverride != "" {
-		backend = agent.BackendOverride
-	}
 	if agent.Paused {
 		// Auto-unpause inference agents that were only transiently paused —
 		// but NEVER override a persisted operator pause (Config.Paused set via
@@ -869,7 +908,7 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		}
 	}
 
-	if m.appAuth != nil && agent.UID > 0 {
+	if m.appAuth != nil && agent.UID > 0 && !agent.specialistReady {
 		tier := m.agentMode(agent).TokenTier()
 		if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
 			// Be precise about the blast radius. Since audit H3 the shared-cache
@@ -995,6 +1034,7 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		tmuxArgs := append(base[1:], "new-session", "-d", "-s", agent.tmuxSession, "-c", agentDir)
 		cmd = exec.Command(base[0], tmuxArgs...)
 	}
+	cmd.Env = m.filteredEnv(agent)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return outputErr(fmt.Sprintf("creating tmux session for %s", agent.Name), err, output)
 	}
@@ -1024,6 +1064,11 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	for _, p := range m.agentEnvPairs(agent) {
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, p.Key, p.Value).Run()
 	}
+	if agent.specialistReady {
+		if err := m.configureSpecialistSession(agent); err != nil {
+			return err
+		}
+	}
 	// Strip the shared FULL installation token (HIVE_GITHUB_TOKEN) from EVERY
 	// agent session (audit H3 follow-up, CWE-522). The hive process env carries
 	// HIVE_GITHUB_TOKEN (exported by entrypoint.sh from the full-token cache, and
@@ -1035,10 +1080,18 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	// so unset the full-token env in the session for all agents regardless of
 	// push capability. This does not touch the hive process env.
 	_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "HIVE_GITHUB_TOKEN").Run()
-	// Strip gh/git tokens from advisory agent sessions.
+	// Strip control-plane credentials from both the tmux session environment
+	// and its already-started shell. The launch prefix repeats this boundary so
+	// an existing tmux server or later environment refresh cannot reintroduce
+	// repository-wide Hive/App credentials into non-push agents.
 	if !m.agentMode(agent).CanPush() {
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GH_TOKEN").Run()
-		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GITHUB_TOKEN").Run()
+		denied := ordinaryAgentControlPlaneCredentialNames()
+		for _, name := range denied {
+			_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", name).Run()
+		}
+		if len(denied) > 0 {
+			m.tmuxSendKeysForAgent(agent, "unset "+strings.Join(denied, " "), "Enter")
+		}
 	}
 
 	// Every set-environment above updated the SESSION environment, which tmux
@@ -1130,10 +1183,12 @@ func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {
 // name doesn't match the CLI binary.
 var cliPaneMarkers = []string{
 	"❯",
+	"\u203a",
 	"esc cancel",
 	"/ commands",
 	"? help",
 	"Claude",
+	"Codex",
 	"Copilot",
 	"Gemini",
 	"goose",
@@ -1255,6 +1310,12 @@ const (
 	// cliWorkingMarker is shown while Claude Code is actively processing a
 	// request; a pane in this state is never a consent screen.
 	cliWorkingMarker = "esc to interrupt"
+	// Codex asks for explicit trust before opening an interactive session in a
+	// fresh private CODEX_HOME. Specialists may accept only this exact prompt
+	// while its affirmative first option is selected.
+	codexTrustPromptTitle       = "Do you trust the contents of this directory?"
+	codexTrustPromptFooter      = "Press enter to continue"
+	codexTrustAffirmativeOption = "1. Yes, continue"
 )
 
 // paneShowsConsentScreen reports whether the pane is showing an interactive
@@ -1268,6 +1329,9 @@ func paneShowsConsentScreen(pane string) bool {
 	if pane == "" || strings.Contains(pane, cliWorkingMarker) {
 		return false
 	}
+	if paneShowsCodexTrustPrompt(pane) {
+		return true
+	}
 	if strings.Contains(pane, bypassConsentTitle) && strings.Contains(pane, bypassConsentDefaultOption) {
 		return true
 	}
@@ -1276,6 +1340,25 @@ func paneShowsConsentScreen(pane string) bool {
 	}
 	for _, line := range strings.Split(pane, "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), "❯") {
+			return true
+		}
+	}
+	return false
+}
+
+func paneShowsCodexTrustPrompt(pane string) bool {
+	return strings.Contains(pane, codexTrustPromptTitle) &&
+		strings.Contains(pane, codexTrustPromptFooter)
+}
+
+func paneSelectsCodexTrustAffirmative(pane string) bool {
+	if !paneShowsCodexTrustPrompt(pane) {
+		return false
+	}
+	for _, line := range strings.Split(pane, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "\u203a") &&
+			strings.Contains(trimmed, codexTrustAffirmativeOption) {
 			return true
 		}
 	}
@@ -1328,7 +1411,24 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		backend = agent.BackendOverride
 	}
 
-	binary, err := backendBinary(backend)
+	var binary string
+	var err error
+	if agent.specialistReady {
+		binary, err = m.specialistBackendBinary(agent)
+	} else {
+		// A configured model-gateway NAME (e.g. "watsonx-supervisor") is a valid
+		// backend that config.ValidateBackend accepts, but backendBinary only knows
+		// the static CLIBackends/InferenceBackends lists — so a named gateway would
+		// fail here with "unknown backend" even though the test passed (#3302). Every
+		// gateway is OpenAI-compatible and launches the SAME claude CLI pointed at
+		// hive's translator via ANTHROPIC_BASE_URL (identical to InferenceBackends),
+		// so resolve a routable gateway backend to the claude binary directly.
+		resolveBackend := backend
+		if m.routableBackend(backend) {
+			resolveBackend = "claude"
+		}
+		binary, err = backendBinary(resolveBackend)
+	}
 	if err != nil {
 		agent.State = StateFailed
 		agent.LastError = err.Error()
@@ -1405,7 +1505,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	model = normalizeModelName(model, backend)
 
 	bootstrapPrompt := agent.BootstrapOverride
-	if bootstrapPrompt != "" {
+	if agent.specialistReady {
+		// Specialist readiness never spends model budget or races the task kick.
+		agent.BootstrapOverride = ""
+		bootstrapPrompt = ""
+	} else if bootstrapPrompt != "" {
 		m.logger.Info("using bootstrap override", "agent", agent.Name, "len", len(bootstrapPrompt))
 		agent.BootstrapOverride = ""
 	} else {
@@ -1441,11 +1545,14 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.installCavemanForAgent(agent, backend)
 	}
 
-	if agent.Config.Tools != nil {
+	if agent.Config.Tools != nil && agent.Config.Mode != "" {
+		m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
+	}
+	// Codex tool rules do not add a separate CLI permission surface. Route all
+	// Codex agents through the same launch builders so ordinary agents always
+	// receive their exact beads directory and specialists retain containment.
+	if agent.Config.Tools != nil && backend != "codex" {
 		launchCmd = toolRulesToLaunchCmd(binary, model, backend, agent.Config.Tools, isInference)
-		if agent.Config.Tools != nil && agent.Config.Mode != "" {
-			m.logger.Warn("agent has both tools and mode set; tools takes precedence", "agent", agent.Name)
-		}
 	} else {
 		switch backend {
 		case "claude":
@@ -1479,6 +1586,12 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			// gh-wrapper/proxy layer that still reads Mode for the App-gated writes.
 			launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all%s",
 				binary, model, copilotGitHubWriteDenyFlags)
+		case "codex":
+			if agent.specialistReady {
+				launchCmd = codexSpecialistLaunchCmd(binary, model, filepath.Join(m.workDir, agent.Name))
+			} else {
+				launchCmd = codexAgentLaunchCmd(binary, model, agent.Config.BeadsDir)
+			}
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
 		case "pi":
@@ -1566,7 +1679,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		agent.cancel = cancel
 		go m.pollTmuxOutputForAgent(agent, agentCtx)
 
-		if backend == "copilot" {
+		if backend == "copilot" || (backend == "codex" && agent.specialistReady) {
 			go m.watchForTrustPromptForAgent(agent, agentCtx)
 		}
 		if isInference {
@@ -1611,6 +1724,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	envCmd := m.buildEnvPrefix(agent)
 	fullCmd := envCmd + launchCmd
+	if agent.specialistReady {
+		// Every mailbox output must be private even if the model uses a simple
+		// shell redirect before following the explicit chmod instruction.
+		fullCmd = "umask 077 && " + fullCmd
+	}
 
 	// A previously spilled kick can leave bash in PS2 quote-continuation
 	// (an unbalanced quote): anything typed next is appended to the open
@@ -1657,7 +1775,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	agent.cancel = cancel
 	go m.pollTmuxOutputForAgent(agent, agentCtx)
 
-	if backend == "copilot" {
+	if backend == "copilot" || (backend == "codex" && agent.specialistReady) {
 		go m.watchForTrustPromptForAgent(agent, agentCtx)
 	}
 
@@ -1913,8 +2031,10 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	}
 }
 
-// watchForTrustPromptForAgent monitors a tmux session for Copilot's "Confirm folder trust"
-// prompt using the agent's tmux socket.
+// watchForTrustPromptForAgent monitors a tmux session for a supported backend's
+// exact folder-trust prompt using the agent's tmux socket. Codex specialists
+// accept only the affirmative selection for their Hive-owned mailbox directory;
+// an unknown or negatively selected prompt remains blocked.
 func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.Context) {
 	const (
 		trustPollInterval = 2 * time.Second
@@ -1932,7 +2052,19 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 		case <-deadline:
 			return
 		case <-ticker.C:
-			output := m.captureTmuxPaneForAgent(agent)
+			output := m.captureVisiblePaneForAgent(agent)
+			if effectiveBackend(agent) == "codex" && agent.specialistReady {
+				if !paneShowsCodexTrustPrompt(output) {
+					continue
+				}
+				if !paneSelectsCodexTrustAffirmative(output) {
+					m.logger.Warn("refusing unexpected Codex trust selection", "agent", agent.Name)
+					return
+				}
+				m.tmuxSendKeysForAgent(agent, "Enter")
+				m.logger.Info("accepted exact Codex specialist mailbox trust prompt", "agent", agent.Name)
+				return
+			}
 			if strings.Contains(output, "Confirm folder trust") || strings.Contains(output, "Do you trust the files") {
 				time.Sleep(paneCaptureSleep)
 				m.tmuxSendKeysForAgent(agent, "2")
@@ -2166,6 +2298,17 @@ func (m *Manager) applySecretEnv(agent *AgentProcess) {
 func (m *Manager) buildEnvPrefix(agent *AgentProcess) string {
 	pairs := m.agentEnvPairs(agent)
 	var parts []string
+	if agent.specialistReady {
+		// The clean child environment, rather than tmux's already-running pane
+		// shell, is the specialist boundary. Only the explicit pairs below reach
+		// Codex; ambient GitHub, provider, proxy, and shell credentials do not.
+		parts = append(parts, "env", "-i")
+	} else if !m.agentMode(agent).CanPush() {
+		parts = append(parts, "env")
+		for _, name := range ordinaryAgentControlPlaneCredentialNames() {
+			parts = append(parts, "-u", name)
+		}
+	}
 	for _, p := range pairs {
 		if p.Secret {
 			continue
@@ -2176,6 +2319,16 @@ func (m *Manager) buildEnvPrefix(agent *AgentProcess) string {
 		return ""
 	}
 	return strings.Join(parts, " ") + " "
+}
+
+func (m *Manager) agentModeFile(agent *AgentProcess) string {
+	if agent == nil {
+		return ""
+	}
+	if agent.specialistReady {
+		return filepath.Join(m.workDir, agent.Name, ".hive-mode")
+	}
+	return fmt.Sprintf("/tmp/.hive-mode-%s", agent.Name)
 }
 
 // outputSignalPatterns are substrings in agent output that indicate meaningful
@@ -2449,6 +2602,7 @@ func paneShowsInputPrompt(output string) bool {
 		return false
 	}
 	return strings.Contains(output, "❯") ||
+		paneHasInputPrompt(output) ||
 		strings.Contains(output, "goose is ready") ||
 		strings.Contains(output, "> Enter to send") ||
 		strings.Contains(output, "\n>\n") ||
@@ -2533,6 +2687,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"has_goose_ready", strings.Contains(output, "goose is ready"),
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
+				"has_codex_arrow", strings.Contains(output, "\u203a"),
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
@@ -2572,6 +2727,36 @@ func (m *Manager) waitForInputPrompt(session string) bool {
 			}
 		}
 	}
+}
+
+func paneHasInputPrompt(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch trimmed {
+		case "\u276f", "\u203a", ">":
+			return true
+		}
+		if (strings.HasPrefix(trimmed, "\u276f ") || strings.HasPrefix(trimmed, "\u203a ")) &&
+			!paneLineIsNumberedSelection(trimmed) {
+			return true
+		}
+	}
+	return strings.Contains(output, "goose is ready") ||
+		strings.Contains(output, "> Enter to send")
+}
+
+func paneLineIsNumberedSelection(line string) bool {
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "\u276f"), "\u203a"))
+	dot := strings.IndexByte(rest, '.')
+	if dot <= 0 {
+		return false
+	}
+	for _, r := range rest[:dot] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *Manager) captureTmuxPane(session string) string {
@@ -3081,13 +3266,19 @@ func notRunningReason(agent *AgentProcess) string {
 }
 
 func (m *Manager) SendKick(name string, message string) error {
+	return m.sendKick(name, message, "")
+}
+
+func (m *Manager) sendKick(name string, message string, specialistTaskID string) error {
 	// Agent-kick span. No-op with zero export cost when tracing is disabled
-	// (the default). SendKick has no context parameter, so this span roots at
+	// (the default). sendKick has no context parameter, so this span roots at
 	// Background; it still captures the kick leg of the governor→agent
-	// lifecycle. Ended before delivery bookkeeping via defer.
+	// lifecycle (both ordinary and specialist kicks route through here).
+	// Ended before delivery bookkeeping via defer.
 	_, span := tracing.StartSpan(context.Background(), "agent.send_kick",
 		attribute.String("agent.name", name))
 	defer span.End()
+
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -3095,6 +3286,11 @@ func (m *Manager) SendKick(name string, message string) error {
 	agent, ok := m.agents[name]
 	if !ok {
 		return fmt.Errorf("agent %s not found", name)
+	}
+	if leasedTaskID := m.specialistLeases[name]; specialistTaskID != "" && leasedTaskID != specialistTaskID {
+		return fmt.Errorf("agent %s is not leased to specialist task %s", name, specialistTaskID)
+	} else if specialistTaskID == "" && leasedTaskID != "" {
+		return fmt.Errorf("agent %s is leased to specialist task %s", name, leasedTaskID)
 	}
 
 	if m.agentSandboxEnabledLocked(agent) {
@@ -3147,8 +3343,19 @@ func (m *Manager) SendKick(name string, message string) error {
 	if !ok {
 		return fmt.Errorf("agent %s disappeared while waiting for input prompt", name)
 	}
+	if leasedTaskID := m.specialistLeases[name]; specialistTaskID != "" && leasedTaskID != specialistTaskID {
+		return fmt.Errorf("agent %s specialist task lease changed while waiting for input prompt", name)
+	} else if specialistTaskID == "" && leasedTaskID != "" {
+		return fmt.Errorf("agent %s acquired specialist task %s while waiting for input prompt", name, leasedTaskID)
+	}
 
-	m.deliverKickLocked(agent, message, "send-kick")
+	if specialistTaskID != "" {
+		if err := m.deliverSpecialistKickLocked(agent, message, specialistTaskID); err != nil {
+			return err
+		}
+	} else {
+		m.deliverKickLocked(agent, message, "send-kick")
+	}
 
 	return nil
 }
@@ -3159,11 +3366,14 @@ func (m *Manager) SendKick(name string, message string) error {
 // (crash detect + waitForCLIReadyForAgent + waitForInputPromptForAgent) —
 // this function does no readiness checking of its own.
 func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string) {
-	// Clear stale input before kick (Ctrl+C then Ctrl+U).
-	// Goose 1.37 exits on ^C — skip clear for goose backend.
-	if agent.Config.Backend != "goose" && agent.BackendOverride != "goose" {
-		m.tmuxSendKeysForAgent(agent, "C-c")
-		time.Sleep(staleCheckDelay)
+	// Clear stale input before kick. Goose 1.37 and Codex 0.144 exit an idle
+	// interactive session on ^C, so only line-clear is safe for those backends.
+	backend := effectiveBackend(agent)
+	if backend != "goose" {
+		if backendAllowsInterruptBeforeKick(backend) {
+			m.tmuxSendKeysForAgent(agent, "C-c")
+			time.Sleep(staleCheckDelay)
+		}
 		m.tmuxSendKeysForAgent(agent, "C-u")
 		time.Sleep(staleCheckDelay)
 	}
@@ -3205,6 +3415,99 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
 
+	m.recordKickLocked(agent, message, trigger)
+}
+
+// deliverSpecialistKickLocked submits one complete inline work order through a
+// checked tmux buffer. This avoids command-line limits and the old one-second
+// delay per 400-rune chunk. The paste is explicitly bracketed so Codex does
+// not classify the rapid input stream as a paste burst and turn the following
+// Enter into a newline. A successful paste is the delivery boundary: any later
+// submit-key failure is ambiguous and retains the durable lease.
+func (m *Manager) deliverSpecialistKickLocked(agent *AgentProcess, message, taskID string) error {
+	if effectiveBackend(agent) != "codex" || !agent.specialistReady {
+		return errors.New("checked specialist delivery requires an isolated Codex session")
+	}
+	readyMarker := SpecialistDispatchReadyMarker(taskID)
+	if readyMarker == "" || !strings.HasSuffix(strings.TrimSpace(message), readyMarker) {
+		return errors.New("specialist work order is missing its task-specific dispatch marker")
+	}
+	bracketedPaste, err := m.tmuxCmd(agent, "display-message", "-p", "-t", agent.tmuxSession, "#{bracket_paste_flag}").Output()
+	if err != nil {
+		return fmt.Errorf("inspect specialist bracketed-paste readiness: %w", err)
+	}
+	readinessKnown, bracketedPasteReady := specialistBracketedPasteStatus(bracketedPaste)
+	if readinessKnown && !bracketedPasteReady {
+		return errors.New("specialist Codex session has not enabled bracketed paste")
+	}
+	if err := m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "C-u").Run(); err != nil {
+		return fmt.Errorf("clear specialist input before delivery: %w", err)
+	}
+	time.Sleep(staleCheckDelay)
+	if agent.Config.ClearOnKick {
+		if err := m.tmuxPasteBufferForAgent(agent, taskID+"-clear", "/clear"); err != nil {
+			return fmt.Errorf("prepare specialist context clear: %w", err)
+		}
+		for i := 0; i < enterCount; i++ {
+			if err := m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "Enter").Run(); err != nil {
+				return fmt.Errorf("submit specialist context clear: %w", err)
+			}
+			if i < enterCount-1 {
+				time.Sleep(enterDelay)
+			}
+		}
+		time.Sleep(clearBeforeKickDelay)
+	}
+	if err := m.tmuxPasteBufferForAgent(agent, taskID, message); err != nil {
+		return fmt.Errorf("paste specialist work order: %w", err)
+	}
+	// paste-buffer -p writes the complete bracketed-paste sequence before it
+	// returns. The checked Enter is therefore ordered after the bracket terminator
+	// without relying on a timing heuristic or pane rendering.
+	if err := m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "Enter").Run(); err != nil {
+		return fmt.Errorf("%w: submit specialist work order: %v", ErrSpecialistTaskDeliveryAmbiguous, err)
+	}
+	m.recordKickLocked(agent, message, "send-kick")
+	return nil
+}
+func (m *Manager) tmuxPasteBufferForAgent(agent *AgentProcess, bufferName, text string) error {
+	if agent == nil || bufferName == "" || strings.IndexByte(bufferName, 0) >= 0 || strings.IndexByte(text, 0) >= 0 {
+		return errors.New("invalid specialist tmux buffer input")
+	}
+	load := m.tmuxCmd(agent, "load-buffer", "-b", bufferName, "-")
+	load.Stdin = strings.NewReader(text)
+	if err := load.Run(); err != nil {
+		return err
+	}
+	if err := m.tmuxCmd(agent, specialistTmuxPasteBufferArgs(bufferName, agent.tmuxSession)...).Run(); err != nil {
+		_ = m.tmuxCmd(agent, "delete-buffer", "-b", bufferName).Run()
+		return err
+	}
+	return nil
+}
+
+func specialistTmuxPasteBufferArgs(bufferName, session string) []string {
+	return []string{"paste-buffer", "-p", "-r", "-b", bufferName, "-d", "-t", session}
+}
+
+// specialistBracketedPasteStatus interprets tmux's optional
+// #{bracket_paste_flag} format. tmux 3.3 supports paste-buffer -p and tracks
+// the pane mode internally but does not expose this format, returning an empty
+// string. In that compatibility case the checked -p paste plus exact Codex
+// rollout observation remains the delivery proof. An explicit disabled or
+// malformed value still fails closed before any task bytes are delivered.
+func specialistBracketedPasteStatus(output []byte) (known, ready bool) {
+	switch strings.TrimSpace(string(output)) {
+	case "":
+		return false, false
+	case "1":
+		return true, true
+	default:
+		return true, false
+	}
+}
+
+func (m *Manager) recordKickLocked(agent *AgentProcess, message, trigger string) {
 	now := time.Now()
 	agent.LastKick = &now
 	agent.LastKickMessage = message
@@ -3412,6 +3715,13 @@ func (m *Manager) auditSandbox(agent, action, detail string) {
 	if fn := m.sandboxAuditCallback.Load(); fn != nil && *fn != nil {
 		(*fn)(agent, action, detail)
 	}
+}
+
+// backendAllowsInterruptBeforeKick reports whether a ^C may be sent to clear
+// stale input before a kick. Goose and Codex exit an idle interactive session
+// on ^C, so they are excluded — for those backends only a line-clear is safe.
+func backendAllowsInterruptBeforeKick(backend string) bool {
+	return backend != "goose" && backend != "codex"
 }
 
 // deliverStartupKick delivers a bootstrap prompt to a freshly launched agent
@@ -4366,6 +4676,18 @@ func backendBinaryName(backend string) (string, error) {
 		return "", fmt.Errorf("unknown backend: %s", backend)
 	}
 	return binary, nil
+}
+
+// backendCommand reports the CLI binary NAME for a backend and whether the
+// backend is known, in the (name, ok) shape the dd specialist path expects. It
+// delegates to backendBinaryName so both paths share one derived source of
+// truth (no second hand-maintained map to drift out of sync).
+func backendCommand(backend string) (string, bool) {
+	binary, err := backendBinaryName(backend)
+	if err != nil {
+		return "", false
+	}
+	return binary, true
 }
 
 // backendBinary resolves an agent backend to the absolute path of the CLI
@@ -5488,17 +5810,26 @@ func (m *Manager) SyncModeFiles(level int) {
 				mode = parsed
 			}
 		}
-		modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", name)
+		// Per-agent path (specialists keep theirs under the agent workdir) but
+		// ALWAYS written via the symlink-refusing O_NOFOLLOW state-file writer.
+		modeFile := m.agentModeFile(agent)
 		if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 			m.logger.Warn("SyncModeFiles: write failed", "file", modeFile, "error", err)
 		}
 	}
 }
 
-// agentMode returns the GitHub interaction mode for a given agent at the current ACMM level.
-// If the agent has an explicit Mode in its config (hive.yaml or pack YAML), that takes precedence.
-// Otherwise, the default table by ACMM level is used.
+// agentMode returns the effective GitHub interaction mode for an agent. A
+// Tools preset/rule set takes precedence because it is also what constructs
+// the launched CLI's tool surface; Mode is the legacy fallback.
 func (m *Manager) agentMode(agent *AgentProcess) AgentMode {
+	if agent.Config.Tools != nil {
+		if effective := agent.Config.Tools.EffectiveMode(); effective != "" {
+			if parsed, ok := ParseAgentMode(effective); ok {
+				return parsed
+			}
+		}
+	}
 	if modeStr := agent.Config.Mode; modeStr != "" {
 		if parsed, ok := ParseAgentMode(modeStr); ok {
 			return parsed
@@ -5652,22 +5983,47 @@ func (m *Manager) InvocationMetadata(agentName string) (backend, model string, o
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.
 // COPILOT_GITHUB_TOKEN is kept for all agents (needed for AI auth); write access is
-// gated by --enable-all-github-mcp-tools flag. GH_TOKEN and GITHUB_TOKEN are stripped
-// from non-quality agents to enforce gh-wrapper and credential helper policies.
+// gated by --enable-all-github-mcp-tools flag. HIVE_AGENT_TOKEN_CACHE is also
+// retained because agentEnvPairs replaces it with the agent's scoped cache.
 func (m *Manager) filteredEnv(agent *AgentProcess) []string {
 	env := os.Environ()
 	if m.agentMode(agent).CanPush() {
 		return env
 	}
+	denied := make(map[string]bool)
+	for _, name := range ordinaryAgentControlPlaneCredentialNames() {
+		denied[name] = true
+	}
 	filtered := make([]string, 0, len(env))
 	for _, e := range env {
-		if strings.HasPrefix(e, "GH_TOKEN=") ||
-			strings.HasPrefix(e, "GITHUB_TOKEN=") {
+		name, _, _ := strings.Cut(e, "=")
+		if denied[name] {
 			continue
 		}
 		filtered = append(filtered, e)
 	}
 	return filtered
+}
+
+func ordinaryAgentControlPlaneCredentialNames() []string {
+	names := make(map[string]bool, len(specialistGitHubCredentialNames))
+	for _, name := range specialistGitHubCredentialNames {
+		if name != "HIVE_AGENT_TOKEN_CACHE" {
+			names[name] = true
+		}
+	}
+	for _, value := range os.Environ() {
+		name, _, _ := strings.Cut(value, "=")
+		if strings.HasPrefix(name, "GH_APP_") || strings.HasPrefix(name, "GITHUB_APP_") || strings.HasPrefix(name, "HIVE_GITHUB_APP_") {
+			names[name] = true
+		}
+	}
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // embeddedTokenRe matches git remote URLs with embedded credentials:
@@ -5724,6 +6080,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if displayName == "" {
 		displayName = agent.Name
 	}
+	if agent.specialistReady {
+		return m.specialistAgentEnvironmentPairs(agent, backend, model, displayName)
+	}
 	vars := []agentEnvPair{
 		{"HIVE_AGENT", agent.Name, false},
 		{"HIVE_AGENT_DISPLAY_NAME", displayName, false},
@@ -5745,7 +6104,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	} else {
 		vars = append(vars, agentEnvPair{"HIVE_AGENT_MODE", mode.String(), false})
 	}
-	modeFile := fmt.Sprintf("/tmp/.hive-mode-%s", agent.Name)
+	// Per-agent path (specialists keep theirs under the agent workdir) but
+	// ALWAYS written via the symlink-refusing O_NOFOLLOW state-file writer.
+	modeFile := m.agentModeFile(agent)
 	if err := writeAgentStateFile(modeFile, []byte(mode.String())); err != nil {
 		m.logger.Warn("agentBootstrapEnv: mode file write failed", "file", modeFile, "error", err)
 	}
@@ -5838,6 +6199,7 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// dashboard and advisory digest.
 	if agent.Config.BeadsDir != "" {
 		vars = append(vars, agentEnvPair{"BD_DIR", agent.Config.BeadsDir, false})
+		vars = append(vars, agentEnvPair{"HIVE_SHARED_ROLE_BEADS", "1", false})
 	}
 	if agent.Config.CavemanMode != "" {
 		vars = append(vars, agentEnvPair{"HIVE_CAVEMAN_MODE", agent.Config.CavemanMode, false})
@@ -5845,7 +6207,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	// GIT_SSL_CAINFO only — NOT SSL_CERT_FILE (that breaks Copilot API TLS)
 	vars = append(vars, agentEnvPair{"GIT_SSL_CAINFO", proxyCACertPath, false})
 	if agent.UID > 0 {
-		vars = append(vars, agentEnvPair{"HIVE_AGENT_TOKEN_CACHE", ghpkg.AgentTokenCachePath(agent.Name), false})
+		if !agent.specialistReady {
+			vars = append(vars, agentEnvPair{"HIVE_AGENT_TOKEN_CACHE", ghpkg.AgentTokenCachePath(agent.Name), false})
+		}
 	}
 	if agent.UID > 0 {
 		home := "/data/home"
@@ -5894,8 +6258,36 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			}
 		}
 	}
-
 	return vars
+}
+
+func (m *Manager) specialistAgentEnvironmentPairs(agent *AgentProcess, backend, model, displayName string) []agentEnvPair {
+	mode := m.agentMode(agent)
+	modeFile := m.agentModeFile(agent)
+	if err := os.WriteFile(modeFile, []byte(mode.String()), 0o600); err != nil {
+		m.logger.Warn("specialist mode file write failed", "file", modeFile, "error", err)
+	}
+	isolationRoot := filepath.Join(m.workDir, ".hive-specialist-isolation", agent.Name)
+	home := filepath.Join(isolationRoot, "home")
+	vars := []agentEnvPair{
+		{Key: "PATH", Value: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/homebrew/bin:/opt/homebrew/sbin"},
+		{Key: "HOME", Value: home},
+		{Key: "CODEX_HOME", Value: m.specialistCodexHome},
+		{Key: "XDG_CONFIG_HOME", Value: filepath.Join(home, ".config")},
+		{Key: "XDG_CACHE_HOME", Value: filepath.Join(home, ".cache")},
+		{Key: "XDG_DATA_HOME", Value: filepath.Join(home, ".local", "share")},
+		{Key: "TMPDIR", Value: filepath.Join(home, "tmp")},
+		{Key: "TERM", Value: "xterm-256color"},
+		{Key: "LANG", Value: "C.UTF-8"},
+		{Key: "HIVE_AGENT", Value: agent.Name},
+		{Key: "HIVE_AGENT_DISPLAY_NAME", Value: displayName},
+		{Key: "HIVE_SPECIALIST_NAMESPACE", Value: m.specialistNamespace},
+		{Key: "HIVE_BACKEND", Value: backend},
+		{Key: "HIVE_MODEL", Value: model},
+		{Key: "HIVE_ACMM_LEVEL", Value: fmt.Sprintf("%d", m.project.ACMMLevel)},
+		{Key: "HIVE_AGENT_MODE", Value: mode.String()},
+	}
+	return append(vars, m.specialistEnvironmentPairs(agent)...)
 }
 
 func (m *Manager) KillSession(name string) error {
@@ -5914,10 +6306,10 @@ func (m *Manager) KillSession(name string) error {
 
 func (m *Manager) Pause(name, trigger, reason string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	agent, ok := m.agents[name]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s not found", name)
 	}
 
@@ -5936,8 +6328,13 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	}
 	agent.State = StatePaused
 	agent.Config.Paused = true
-	if m.persistPauseCallback != nil {
-		m.persistPauseCallback(name, true)
+	persistPause := m.persistPauseCallback
+	m.mu.Unlock()
+
+	// Persistence republishes the complete runtime config and re-enters the
+	// manager to update agent snapshots. Never invoke it while holding m.mu.
+	if persistPause != nil {
+		persistPause(name, true)
 	}
 	m.logger.Info("audit: agent paused",
 		"name", name,
@@ -6298,6 +6695,7 @@ func (m *Manager) RestartThenSendKick(ctx context.Context, name, message string)
 // of the interpreter the process reports as its comm name.
 var cliProcessMarkers = []string{
 	"claude",
+	"codex",
 	"copilot",
 	"gemini",
 	"goose",
@@ -6324,6 +6722,14 @@ var procRoot = "/proc"
 func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 	procPath := procRoot
 	marker := "HIVE_AGENT=" + agent.Name
+	// Specialist managers deliberately reuse Hive's existing role names. The
+	// manager-specific namespace is therefore part of the process identity:
+	// an ordinary quality/scanner reaper must never kill its specialist peer,
+	// and one specialist manager must never kill another manager's process.
+	specialistNamespace := ""
+	if agent.specialistProviderSHA256 != "" && m.specialistNamespace != "" {
+		specialistNamespace = m.specialistNamespace
+	}
 
 	entries, err := os.ReadDir(procPath)
 	if err != nil {
@@ -6360,11 +6766,19 @@ func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
 		if err != nil {
 			continue
 		}
-		if !environHasMarker(string(environRaw), marker) {
+		environ := string(environRaw)
+		if !environHasMarker(environ, marker) {
+			continue
+		}
+		if specialistNamespace != "" {
+			if !environHasMarker(environ, "HIVE_SPECIALIST_NAMESPACE="+specialistNamespace) {
+				continue
+			}
+		} else if environHasName(environ, "HIVE_SPECIALIST_NAMESPACE") {
 			continue
 		}
 
-		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
+		if err := killProcessPID(pid); err == nil {
 			killed++
 			m.logger.Info("reaped agent CLI process",
 				"agent", agent.Name, "pid", pid, "cmdline", truncateStr(cmdline, 120))
@@ -6405,6 +6819,20 @@ func environHasMarker(environ, marker string) bool {
 // when UID isolation is off or an agent is missing from the UID map — can never
 // SIGKILL root-owned processes (hive itself, PID 1, the shared tmux server).
 const minAgentUID = baseAgentUID
+
+// environHasName reports whether a raw NUL-separated /proc environ blob has
+// any value for an exact variable name. It is used by ordinary managers to
+// leave every namespaced specialist process alone without needing to know its
+// manager-specific value.
+func environHasName(environ, name string) bool {
+	prefix := name + "="
+	for _, pair := range strings.Split(environ, "\x00") {
+		if strings.HasPrefix(pair, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 // killAgentProcesses finds all processes owned by the given UID via /proc and
 // sends SIGKILL to each. Hung copilot binaries ignore SIGINT, so brute-force
@@ -6475,7 +6903,7 @@ func killAgentProcesses(uid int, logger *slog.Logger) int {
 			continue
 		}
 
-		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {
+		if err := killProcessPID(pid); err == nil {
 			killed++
 		}
 	}
@@ -6871,6 +7299,8 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 			cmd += fmt.Sprintf(" --deny-tool='%s'", copilotPattern)
 		}
 		return cmd
+	case "codex":
+		return codexAgentLaunchCmd(binary, model, "")
 	default:
 		cmd := binary
 		if model != "" {
@@ -6878,6 +7308,27 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		}
 		return cmd
 	}
+}
+
+// codexAgentLaunchCmd keeps ordinary long-lived Codex agents unattended while
+// preserving a workspace-write sandbox. Ordinary agents use gh and the shared
+// beads checkout directly, so they need network access and an explicit grant
+// for the configured beads directory. Built-in MCP apps stay disabled: their
+// separate approval surface can otherwise stop an unattended agent even when
+// the command approval policy is never. This intentionally does not use the
+// dangerous sandbox bypass flag.
+func codexAgentLaunchCmd(binary, model, beadsDir string) string {
+	cmd := binary
+	if model != "" {
+		cmd = fmt.Sprintf("%s --model %s", binary, model)
+	}
+	cmd += " --sandbox workspace-write"
+	cmd += " -c sandbox_workspace_write.network_access=true"
+	cmd += " --disable enable_mcp_apps"
+	if beadsDir != "" {
+		cmd += " --add-dir " + specialistShellArgument(beadsDir)
+	}
+	return cmd + " --ask-for-approval never"
 }
 
 // connectionMCPFlags builds MCP-related launch flags from connection configs.

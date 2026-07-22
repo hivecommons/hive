@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hive"
+  short_description: "Set up and operate production repository automation"
+  default_prompt: "Use $hive to inspect this repository, choose coverage and automation authority, and take setup through a verified production run."

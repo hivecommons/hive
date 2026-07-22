@@ -1451,6 +1451,8 @@ func TestSaveAccessRequestsPathTraversal(t *testing.T) {
 // ============================================================
 
 func TestIsHubAutoUpgrade(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
 	// File doesn't exist → false
 	got := isHubAutoUpgrade()
 	if got {

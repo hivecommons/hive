@@ -19,6 +19,18 @@ assert_contains() {
   fi
 }
 
+assert_not_contains_literal() {
+  local file="$1" pattern="$2" label="$3"
+  if grep -Fq "$pattern" "$file"; then
+    echo "  FAIL: $label"
+    echo "        unexpected literal '$pattern' found in $file"
+    FAIL=$((FAIL + 1))
+  else
+    echo "  PASS: $label"
+    PASS=$((PASS + 1))
+  fi
+}
+
 ENTRYPOINT="$(cd "$(dirname "$0")" && pwd)/entrypoint.sh"
 
 echo "=== Entrypoint symlink regression tests ==="
@@ -63,6 +75,66 @@ LAUNCH_SCRIPT="$(cd "$(dirname "$0")/../../bin" && pwd)/agent-launch.sh"
 assert_contains "$LAUNCH_SCRIPT" \
   'COPILOT_GITHUB_TOKEN' \
   "agent-launch.sh exports COPILOT_GITHUB_TOKEN"
+
+# 9. Role bead stores remain shared only with their scoped group after UID chown.
+assert_contains "$ENTRYPOINT" \
+  'mkdir -p /home/dev /data/beads' \
+  "fresh config-only installs create the shared beads root before role provisioning"
+assert_not_contains_literal "$ENTRYPOINT" \
+  'if [ -d /etc/hive/agents ] || [ -d /data/beads ]; then' \
+  "shared beads root initialization is not gated on pre-existing role state"
+assert_contains "$ENTRYPOINT" \
+  'chmod 0750 /data/beads' \
+  "/data/beads parent is traversable but not writable by roles"
+assert_contains "$ENTRYPOINT" \
+  'chmod 2770 {} +' \
+  "role bead directories preserve their scoped group"
+assert_contains "$ENTRYPOINT" \
+  'chmod 0660 {} +' \
+  "role bead files survive cross-principal replacement"
+assert_contains "$ENTRYPOINT" \
+  'usermod -a -G "$ROLE_GROUP" dev' \
+  "ordinary Hive joins each role-scoped bead group"
+assert_contains "$ENTRYPOINT" \
+  'ln -sfn "/data/beads/${agent_name}" "/home/dev/${agent_name}-beads"' \
+  "freshly provisioned config roles receive their normal beads symlink"
+assert_contains "$ENTRYPOINT" \
+  'find -P "$beaddir" -xdev -type d' \
+  "retired stores are normalized without following links"
+assert_contains "$ENTRYPOINT" \
+  'Include first-level hidden role stores' \
+  "hidden retired role stores are normalized"
+assert_contains "$ENTRYPOINT" \
+  "agent.get('enabled', True) is not False" \
+  "explicitly disabled role stores remain private to ordinary Hive"
+assert_contains "$ENTRYPOINT" \
+  'Per-agent files replace the base entry' \
+  "per-agent overlays replace base role provisioning"
+assert_contains "$ENTRYPOINT" \
+  "effective_agents.setdefault" \
+  "pack roles cannot re-enable an explicitly configured disabled role"
+
+# 10. Restrictive caller umasks cannot hide the root-written UID map from Hive.
+assert_contains "$ENTRYPOINT" \
+  'chmod 0755 /var/run/hive' \
+  "UID map parent is traversable by the dev process"
+assert_contains "$ENTRYPOINT" \
+  'chown dev:node /var/run/hive' \
+  "UID map parent remains writable by the dev process"
+assert_contains "$ENTRYPOINT" \
+  'chmod 0644 /var/run/hive/uid-map.json' \
+  "UID map is readable by the dev process"
+assert_contains "$ENTRYPOINT" \
+  'chown dev:node /var/run/hive/uid-map.json' \
+  "dynamic UID map updates remain owned by the dev process"
+
+# 11. An explicit writable HIVE_CONFIG remains writable after root setup.
+assert_contains "$ENTRYPOINT" \
+  'chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"' \
+  "custom config and backup ownership are normalized"
+assert_contains "$ENTRYPOINT" \
+  'chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"' \
+  "custom config is writable only by ordinary Hive"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

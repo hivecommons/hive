@@ -471,6 +471,8 @@ func TestHandleHiveStatusPathTraversal(t *testing.T) {
 // ============================================================
 
 func TestHandleDeleteHiveNotOwner(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	mux := http.NewServeMux()
@@ -989,6 +991,8 @@ func TestHandleUserTokenInvalidJSON(t *testing.T) {
 // ============================================================
 
 func TestHandleRequestProvisionDefaultPrimaryRepo(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	ghTokenCacheMu.Lock()

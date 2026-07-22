@@ -42,7 +42,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.12'
           cache-dependency-path: v2/go.sum
 
       # The coverage run must NOT abort this job on a test failure: the

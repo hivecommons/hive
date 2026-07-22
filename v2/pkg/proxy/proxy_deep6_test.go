@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -189,14 +190,30 @@ func TestHandleConnectDirectUpstreamDialFail(t *testing.T) {
 		proxyClient.Close()
 	}()
 
-	// The proxy dials upstream BEFORE answering CONNECT, so the
-	// unresolvable host fails the dial and the client gets 502 — no tunnel,
-	// no TLS handshake.
+	// Registered GitHub Enterprise hosts use the inspected TLS path. CONNECT
+	// succeeds first, then the upstream dial failure closes the TLS stream.
 	reader := bufio.NewReader(clientConn)
 	statusLine, _ := reader.ReadString('\n')
-	if !strings.Contains(statusLine, "502") {
-		t.Fatalf("expected 502 on upstream dial failure, got %q", statusLine)
+	if !strings.Contains(statusLine, "200") {
+		t.Fatalf("expected 200, got %q", statusLine)
 	}
+	for {
+		line, _ := reader.ReadString('\n')
+		if line == "\r\n" || line == "\n" {
+			break
+		}
+	}
+
+	tlsConn := tls.Client(&prefixConn{Conn: clientConn}, &tls.Config{
+		ServerName: "fake-github-for-test.invalid",
+		RootCAs:    newCertPool(p),
+	})
+	defer tlsConn.Close()
+	if err := tlsConn.Handshake(); err != nil {
+		t.Fatalf("TLS handshake failed: %v", err)
+	}
+	_ = tlsConn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	_, _ = tlsConn.Read(make([]byte, 1024))
 }
 
 func newCertPool(p *GitHubProxy) *x509.CertPool {

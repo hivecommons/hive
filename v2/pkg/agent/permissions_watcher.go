@@ -4,7 +4,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -246,24 +245,37 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	// repair loop onto a file outside the tree. filepath.Walk reports
 	// entries via Lstat, so the link is visible as a link here; the ownership
 	// check below reads the LINK's metadata, not the target's, and so cannot
-	// be relied on to catch this. Mirrors ensureWorldWritable's symlink skip.
+	// be relied on to catch this. Entry-point-managed links already point at
+	// explicitly prepared persistent directories; never follow them here.
+	// Mirrors ensureWorldWritable's symlink skip.
 	if fi.Mode()&os.ModeSymlink != 0 {
 		return
 	}
-	stat, ok := fi.Sys().(*syscall.Stat_t)
+	uid, gid, ok := fileOwnership(fi)
 	if !ok {
+		return
+	}
+	// Bob state directories are the one intentional cross-agent permission
+	// repair. Widen only their shared-group bits before the ownership guard.
+	if fi.IsDir() && filepath.Base(path) == bobStateDirBase {
+		fixBobStateDirGroupWrite(path, fi.Mode(), logger)
+	}
+	if !permissionsWatcherManagesOwner(uid) {
+		// Dedicated hive-<agent> worktrees are not owned by the unprivileged
+		// dashboard process. Traversing them is safe, but chown attempts are not:
+		// they create unbounded EPERM log and filesystem churn on every tick.
 		return
 	}
 
 	// Fix group ownership if not in the node group — all agents share this group.
 	// Also fix root-owned files (uid 0) to the dev user.
 	needsChown := false
-	newUID := int(stat.Uid)
-	if stat.Uid == 0 {
+	newUID := int(uid)
+	if uid == 0 {
 		newUID = DevUID
 		needsChown = true
 	}
-	if stat.Gid != uint32(NodeGID) {
+	if gid != uint32(NodeGID) {
 		needsChown = true
 	}
 	if needsChown {
@@ -275,34 +287,12 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		} else {
 			logger.Warn("permissions watcher: fixed ownership",
 				"path", path,
-				"was_uid", stat.Uid,
-				"was_gid", stat.Gid,
+				"was_uid", uid,
+				"was_gid", gid,
 				"new_uid", newUID,
 				"new_gid", NodeGID,
 			)
 		}
-	}
-
-	// bob state dirs (.bob) are the one class of directory the watcher must
-	// widen even though they are owned by a hive-<agent> UID rather than
-	// DevUID: bob runs as that agent's UID through the shared `node` group, so
-	// a 0755 dir leaves the group without write and bob logs "error saving your
-	// latest settings changes" / "Failed to initialize logger" and runs
-	// degraded. verifyBobStateDirsWritable only DETECTS this; here we actually
-	// fix it, on every tick and at startup, so the fleet self-heals instead of
-	// staying degraded until an operator hand-chmods the pod. Handled before
-	// the general owner guard below precisely because that guard would skip
-	// these non-DevUID dirs. Only the group r/w/x bits are added — owner and
-	// other bits are preserved — so an already-770 dir is left untouched.
-	if fi.IsDir() && filepath.Base(path) == bobStateDirBase {
-		fixBobStateDirGroupWrite(path, fi.Mode(), logger)
-	}
-
-	// Only fix permissions on files we own or just chowned.
-	// Skipping files owned by other users avoids "operation not permitted"
-	// spam when agents create files as their own users.
-	if newUID != DevUID && stat.Uid != uint32(DevUID) {
-		return
 	}
 
 	mode := fi.Mode()
@@ -382,4 +372,8 @@ func fixBobStateDirGroupWrite(path string, mode os.FileMode, logger *slog.Logger
 		"old_mode", perm.String(),
 		"new_mode", newPerm.String(),
 	)
+}
+
+func permissionsWatcherManagesOwner(uid uint32) bool {
+	return uid == 0 || uid == uint32(DevUID)
 }

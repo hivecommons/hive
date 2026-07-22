@@ -90,9 +90,19 @@ type Collector struct {
 }
 
 func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
+	return NewCollectorWithPersistPath(sessionsDir, defaultPersistPath, logger)
+}
+
+// NewCollectorWithPersistPath constructs a collector whose snapshot location
+// is known before restoration. It keeps tests, multiple local hives, and other
+// isolated runtimes from sharing the process-wide default snapshot.
+func NewCollectorWithPersistPath(sessionsDir, persistPath string, logger *slog.Logger) *Collector {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	c := &Collector{
 		sessionsDir:  sessionsDir,
-		persistPath:  defaultPersistPath,
+		persistPath:  persistPath,
 		detector:     DefaultAgentDetector,
 		logger:       logger,
 		issueCosts:   make(map[string]int64),

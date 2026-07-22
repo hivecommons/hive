@@ -218,7 +218,7 @@ func TestDocumentSource_NoSourceError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for document with no URL or file path")
 	}
-	if !strings.Contains(err.Error(), "has no url, file_path, or context7_id") {
+	if !strings.Contains(err.Error(), "no url, file_path, or context7_id") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -3444,7 +3445,8 @@ func TestHandleVaultsDisconnect_NilKnowledge(t *testing.T) {
 func TestHandleVaultsDisconnect_NotFound(t *testing.T) {
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
-	req := httptest.NewRequest("DELETE", "/api/knowledge/vaults", strings.NewReader(`{"path":"/nonexistent"}`))
+	missing := filepath.Join(t.TempDir(), "missing")
+	req := httptest.NewRequest("DELETE", "/api/knowledge/vaults", strings.NewReader(fmt.Sprintf(`{"path":%q}`, missing)))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -3486,7 +3488,7 @@ func TestHandleVaultsReindex_NilKnowledge(t *testing.T) {
 func TestHandleVaultsReindex_NotFound(t *testing.T) {
 	s, _, wiki := apiServerWithKnowledge(t)
 	defer wiki.Close()
-	body := map[string]string{"path": "/nonexistent"}
+	body := map[string]string{"path": filepath.Join(t.TempDir(), "missing")}
 	rec := doPost(s, "/api/knowledge/vaults/reindex", body)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", rec.Code)

@@ -78,238 +78,217 @@ func (s *Server) ApplyPackForce(level int) (*ApplyPackResult, error) {
 	return s.applyPack(level, true)
 }
 
-func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, error) {
+func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error) {
 	pack, err := config.ACMMPackByLevel(level)
 	if err != nil {
 		return nil, err
 	}
 
-	agentsDir := s.deps.Config.Data.AgentsDir
+	current := s.configSnapshot()
+	if current == nil {
+		return nil, fmt.Errorf("runtime config is not configured")
+	}
+	agentsDir := current.Data.AgentsDir
 	if agentsDir == "" {
 		return nil, fmt.Errorf("agents_dir not configured")
 	}
 
 	var created []string
 	var skipped []string
-
-	var updated []string
-	// Collect per-agent create failures instead of aborting the whole apply on
-	// the first one. Aborting mid-loop leaves a partially reconciled roster
-	// (some of the level's agents added, the rest missing) that no longer
-	// matches acmm_level — the exact "level says N, roster says fewer" drift we
-	// are fixing. We reconcile every agent we can, then surface a combined
-	// error so the caller does NOT record the level as cleanly applied.
-	var createErrs []string
 	// tombstoned collects pack agents skipped because the operator deleted
-	// them. Reported back so the caller (and the apply-pack response) can say
-	// so out loud instead of silently under-delivering the level's roster.
+	// them. Reported back so the caller can say so out loud instead of
+	// silently under-delivering the level's roster.
 	var tombstoned []string
-	for _, pa := range pack.Agents {
-		// A deliberately deleted agent is NOT re-created, at any level. The
-		// pack listing it is exactly why deletion did not stick: ApplyPack
-		// runs on every restart, so the pack re-added `brainstorm`/`guide` to
-		// a hive whose operator had removed them, four times over.
-		if s.deps.Config.IsAgentRemoved(pa.Name) {
-			tombstoned = append(tombstoned, pa.Name)
-			continue
-		}
-		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
-			changed := false
-
-			// Pack-behavior fields define what an agent DOES at a given ACMM
-			// level (which kick template it runs, its issue/PR mode, which model,
-			// its role/description). These MUST be reconciled to the current pack
-			// on every level change — otherwise a value written by a PREVIOUS
-			// level's pack is indistinguishable from a user override and sticks
-			// forever, so the agent keeps behaving at its old level. That is the
-			// exact drift observed in the field: hives that climbed levels kept
-			// scanner/ci-maintainer/quality on their lower-level advisory
-			// templates and models even though acmm_level had moved up. Reconcile
-			// these replace-on-diff (kick_template and mode already did; model,
-			// description, role, bead_role, display_name did NOT — that gap is the
-			// bug).
-			//
-			// Model/Backend are the exception: an operator sets them from the
-			// Governor grid, so they carry an ownership marker and are reconciled
-			// only while still pack-owned (see below). The in-memory
-			// ModelOverride/BackendOverride on the agent process are NOT a
-			// durable home for that choice — they are replayed from
-			// /data/hive-state.json, while hive.yaml (which this writes) is what
-			// the pack re-reads on the next restart.
-			if pa.KickTemplate != "" && existing.KickTemplate != pa.KickTemplate {
-				existing.KickTemplate = pa.KickTemplate
-				changed = true
-			}
-			if pa.Mode != "" && existing.Mode != pa.Mode {
-				existing.Mode = pa.Mode
-				changed = true
-			}
-			// Model is reconciled to the pack ONLY while the pack still owns
-			// it. Once an operator picks a model in the Governor grid the
-			// field becomes operator-owned and the pack must leave it alone:
-			// ApplyPack runs on every restart ("merging pack updates"), so an
-			// unconditional replace-on-diff here silently reverted the
-			// operator's choice on the next pod restart — repeatedly, which is
-			// exactly the reported "they always come back".
-			if pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
-				existing.Model = pa.Model
-				existing.ModelOwner = config.FieldOwnerPack
-				changed = true
-			}
-			if pa.Description != "" && existing.Description != pa.Description {
-				existing.Description = pa.Description
-				changed = true
-			}
-			if pa.Role != "" && existing.Role != pa.Role {
-				existing.Role = pa.Role
-				changed = true
-			}
-			if pa.BeadRole != "" && existing.BeadRole != pa.BeadRole {
-				existing.BeadRole = pa.BeadRole
-				changed = true
-			}
-			if pa.DisplayName != "" && existing.DisplayName != pa.DisplayName {
-				existing.DisplayName = pa.DisplayName
-				changed = true
-			}
-
-			// Backend is fill-if-empty: it never varies by level (always the same
-			// per agent across all packs), and users legitimately pin it, so the
-			// pack must not stomp a user's choice.
-			if existing.Backend == "" && pa.Backend != "" && !existing.BackendIsOperatorOwned() {
-				existing.Backend = pa.Backend
-				existing.BackendOwner = config.FieldOwnerPack
-				changed = true
-			}
-
-			// Respect user's enabled: false — don't override it.
-			if changed {
-				s.deps.Config.Agents[pa.Name] = existing
-				_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
-				updated = append(updated, pa.Name)
-			} else {
-				skipped = append(skipped, pa.Name)
-			}
-			continue
-		}
-
-		includeRepos := pa.IncludeRepos
-		agentCfg := config.AgentConfig{
-			Backend: pa.Backend,
-			Model:   pa.Model,
-			// A freshly created agent's model/backend come from the pack, so
-			// the pack owns them until an operator overrides in the grid.
-			ModelOwner:   config.FieldOwnerPack,
-			BackendOwner: config.FieldOwnerPack,
-			Enabled:      true,
-			DisplayName:  pa.DisplayName,
-			Description:  pa.Description,
-			Role:         pa.Role,
-			SortOrder:    pa.SortOrder,
-			Emoji:        pa.Emoji,
-			Color:        pa.Color,
-			BeadRole:     pa.BeadRole,
-			KickTemplate: pa.KickTemplate,
-			IncludeRepos: &includeRepos,
-			LaneKeywords: pa.LaneKeywords,
-			Mode:         pa.Mode,
-			OnDemand:     pa.OnDemand,
-			Managed:      true,
-		}
-
-		if err := config.SaveAgentFile(agentsDir, pa.Name, agentCfg); err != nil {
-			// Do not abort: keep reconciling the rest of the roster. The agent
-			// is still added to the in-memory config below so it appears in
-			// /api/status and is retried on the next apply; the combined error
-			// returned at the end prevents the level from being recorded as
-			// cleanly applied.
-			s.logger.Error("failed to save agent overlay file from pack (continuing)", "agent", pa.Name, "error", err)
-			createErrs = append(createErrs, fmt.Sprintf("%s: %v", pa.Name, err))
-		}
-
-		s.deps.Config.Agents[pa.Name] = agentCfg
-		s.deps.Config.ApplyAgentDefaults(pa.Name)
-
-		finalCfg := s.deps.Config.Agents[pa.Name]
-		s.deps.AgentMgr.AddAgent(pa.Name, finalCfg)
-		// On-demand agents are only triggered explicitly (e.g. by inception).
-		// Also skip starting agents the user explicitly disabled.
-		if !pa.OnDemand && finalCfg.Enabled {
-			if err := s.deps.AgentMgr.Start(s.deps.Ctx, pa.Name); err != nil {
-				s.logger.Warn("failed to start agent after pack create", "agent", pa.Name, "error", err)
+	var updated []string
+	var createErrs []string
+	if err := s.mutateConfig(func(candidate *config.Config) error {
+		if forceLevel {
+			for name, agentConfig := range candidate.Agents {
+				agentConfig.Mode = ""
+				candidate.Agents[name] = agentConfig
 			}
 		}
 
-		created = append(created, pa.Name)
-	}
+		for _, pa := range pack.Agents {
+			// A deliberately deleted agent is NOT re-created, at any level.
+			// ApplyPack runs on every restart, so without this the pack re-added
+			// agents whose operator had removed them — four times over on one
+			// hive.
+			if s.deps.Config.IsAgentRemoved(pa.Name) {
+				tombstoned = append(tombstoned, pa.Name)
+				continue
+			}
+			if existing, exists := candidate.Agents[pa.Name]; exists {
+				changed := false
+				// Pack-behavior fields define what an agent DOES at a given ACMM
+				// level (which kick template it runs, its issue/PR mode, which model,
+				// its role/description). These MUST be reconciled to the current pack
+				// on every level change — otherwise a value written by a PREVIOUS
+				// level's pack is indistinguishable from a user override and sticks
+				// forever, so the agent keeps behaving at its old level. That is the
+				// exact drift observed in the field: hives that climbed levels kept
+				// scanner/ci-maintainer/quality on their lower-level advisory
+				// templates and models even though acmm_level had moved up.
+				//
+				// Model/Backend are the exception: reconcile them as a complete
+				// runtime pair only while the pack still owns them. Explicit operator
+				// ownership and the legacy CLI pin remain authoritative.
+				//
+				// Pack reconciliation selects a complete runtime pair for an
+				// unpinned agent. Keeping a backend from the previous level while
+				// replacing only its model can produce an impossible launch (for
+				// example, Codex with a Copilot-only Claude model). Preserve an
+				// explicitly pinned CLI, but otherwise reconcile backend and
+				// model together.
+				reconcileBackend := !existing.CLIPinned && !existing.BackendIsOperatorOwned()
+				if reconcileBackend && pa.Backend != "" && existing.Backend != pa.Backend {
+					existing.Backend = pa.Backend
+					existing.BackendOwner = config.FieldOwnerPack
+					changed = true
+				}
+				modelMatchesBackend := pa.Backend == "" || existing.Backend == "" || existing.Backend == pa.Backend
+				if !existing.CLIPinned && modelMatchesBackend && pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
+					existing.Model = pa.Model
+					existing.ModelOwner = config.FieldOwnerPack
+					changed = true
+				}
+				if pa.KickTemplate != "" && existing.KickTemplate != pa.KickTemplate {
+					existing.KickTemplate = pa.KickTemplate
+					changed = true
+				}
+				if pa.Mode != "" && existing.Mode != pa.Mode {
+					existing.Mode = pa.Mode
+					changed = true
+				}
+				if pa.Description != "" && existing.Description != pa.Description {
+					existing.Description = pa.Description
+					changed = true
+				}
+				if pa.Role != "" && existing.Role != pa.Role {
+					existing.Role = pa.Role
+					changed = true
+				}
+				if pa.BeadRole != "" && existing.BeadRole != pa.BeadRole {
+					existing.BeadRole = pa.BeadRole
+					changed = true
+				}
+				if pa.DisplayName != "" && existing.DisplayName != pa.DisplayName {
+					existing.DisplayName = pa.DisplayName
+					changed = true
+				}
 
-	s.deps.Config.ACMMLevel = &level
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to save ACMM level to hive.yaml", "error", err)
-	}
+				if pa.StaleTimeout > 0 && existing.StaleTimeout != pa.StaleTimeout {
+					existing.StaleTimeout = pa.StaleTimeout
+					changed = true
+				}
 
-	// Apply governor config (thresholds, cadences, eval interval) when new agents
-	// are being created OR when this is an explicit operator level change / pack
-	// apply (forceGovernor). On a plain startup merge with no roster growth,
-	// preserve the operator's governor customizations. Without the forceGovernor
-	// path, switching between levels whose packs differ only in cadences (no new
-	// agent) kept the previous level's cadences — including a stale SURGE=pause —
-	// so the hive stopped kicking agents after a level switch.
-	isFirstApplyOrExpansion := len(created) > 0 || forceGovernor
+				// Respect user's enabled: false — don't override it.
+				if changed {
+					candidate.Agents[pa.Name] = existing
+					_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
+					updated = append(updated, pa.Name)
+				} else {
+					skipped = append(skipped, pa.Name)
+				}
+				continue
+			}
 
-	if pack.Governor.EvalIntervalS > 0 && isFirstApplyOrExpansion {
-		s.deps.Config.Governor.EvalIntervalS = pack.Governor.EvalIntervalS
-	}
+			includeRepos := pa.IncludeRepos
+			agentConfig := config.AgentConfig{
+				Backend: pa.Backend,
+				Model:   pa.Model,
+				// A freshly created agent's model/backend come from the pack, so
+				// the pack owns them until an operator overrides in the grid.
+				ModelOwner:   config.FieldOwnerPack,
+				BackendOwner: config.FieldOwnerPack,
+				Enabled:      true,
+				DisplayName:  pa.DisplayName,
+				Description:  pa.Description,
+				Role:         pa.Role,
+				SortOrder:    pa.SortOrder,
+				Emoji:        pa.Emoji,
+				Color:        pa.Color,
+				BeadRole:     pa.BeadRole,
+				KickTemplate: pa.KickTemplate,
+				IncludeRepos: &includeRepos,
+				LaneKeywords: pa.LaneKeywords,
+				Mode:         pa.Mode,
+				OnDemand:     pa.OnDemand,
+				StaleTimeout: pa.StaleTimeout,
+				Managed:      true,
+			}
+			if err := config.SaveAgentFile(agentsDir, pa.Name, agentConfig); err != nil {
+				// Do not abort: keep reconciling the rest of the roster. The agent
+				// is still added to the in-memory config below so it appears in
+				// /api/status and is retried on the next apply; the combined error
+				// returned at the end prevents the level from being recorded as
+				// cleanly applied.
+				s.logger.Error("failed to save agent overlay file from pack (continuing)", "agent", pa.Name, "error", err)
+				createErrs = append(createErrs, fmt.Sprintf("%s: %v", pa.Name, err))
+			}
+			candidate.Agents[pa.Name] = agentConfig
+			candidate.ApplyAgentDefaults(pa.Name)
+			created = append(created, pa.Name)
+		}
 
-	if len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 {
-		if s.deps.Config.Governor.Modes == nil {
-			s.deps.Config.Governor.Modes = make(map[string]config.ModeConfig)
+		candidate.ACMMLevel = &level
+		isFirstApplyOrExpansion := len(created) > 0
+		if pack.Governor.EvalIntervalS > 0 && (forceLevel || isFirstApplyOrExpansion) {
+			candidate.Governor.EvalIntervalS = pack.Governor.EvalIntervalS
+		}
+		if candidate.Governor.Modes == nil {
+			candidate.Governor.Modes = make(map[string]config.ModeConfig)
 		}
 		for modeName, agentCadences := range pack.Governor.Cadences {
-			mode := s.deps.Config.Governor.Modes[modeName]
-			if mode.Cadences == nil {
+			mode := candidate.Governor.Modes[modeName]
+			if forceLevel {
+				mode.Cadences = make(map[string]config.Cadence, len(agentCadences))
+			} else if mode.Cadences == nil {
 				mode.Cadences = make(map[string]config.Cadence)
 			}
-			for agent, interval := range agentCadences {
-				if isFirstApplyOrExpansion {
-					mode.Cadences[agent] = config.Cadence(interval)
-				} else if _, exists := mode.Cadences[agent]; !exists {
-					mode.Cadences[agent] = config.Cadence(interval)
+			for agentName, interval := range agentCadences {
+				if forceLevel || isFirstApplyOrExpansion {
+					mode.Cadences[agentName] = config.Cadence(interval)
+				} else if _, exists := mode.Cadences[agentName]; !exists {
+					mode.Cadences[agentName] = config.Cadence(interval)
 				}
 			}
-			s.deps.Config.Governor.Modes[modeName] = mode
+			candidate.Governor.Modes[modeName] = mode
 		}
 		for modeName, threshold := range pack.Governor.Thresholds {
-			// On first apply / level expansion, seed the pack's threshold. On a
-			// pure merge, only fill a mode that has NO existing entry — never
-			// overwrite an operator-set value. The old `|| mode.Threshold == 0`
-			// clause broke this: threshold 0 is a legitimate operator setting
-			// (e.g. a low QUIET bound), not "unset", so re-applying a pack —
-			// including the apply triggered by an ACMM level bounce — reset the
-			// operator's tuning.
-			mode, present := s.deps.Config.Governor.Modes[modeName]
-			if isFirstApplyOrExpansion || !present {
+			// On first apply / level expansion (or a forced level set), seed the
+			// pack's threshold. On a pure merge, only fill a mode that has NO
+			// existing entry — never overwrite an operator-set value. The old
+			// `|| mode.Threshold == 0` clause broke this: threshold 0 is a
+			// legitimate operator setting (e.g. a low QUIET bound), not "unset",
+			// so re-applying a pack — including the apply triggered by an ACMM
+			// level bounce — reset the operator's tuning.
+			mode, present := candidate.Governor.Modes[modeName]
+			if forceLevel || isFirstApplyOrExpansion || !present {
 				mode.Threshold = threshold
-				s.deps.Config.Governor.Modes[modeName] = mode
+				candidate.Governor.Modes[modeName] = mode
 			}
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
-	for _, pa := range pack.Agents {
-		if pa.StaleTimeout > 0 {
-			if ac, ok := s.deps.Config.Agents[pa.Name]; ok {
-				ac.StaleTimeout = pa.StaleTimeout
-				s.deps.Config.Agents[pa.Name] = ac
-			}
-		}
-	}
-
-	if len(created) > 0 {
+	if len(created) > 0 || len(updated) > 0 {
 		s.reInitSubsystems()
 	}
 
 	s.deps.AgentMgr.SetACMMLevel(level)
 	s.deps.AgentMgr.ClearAllModeOverrides()
+	committed := s.configSnapshot()
+	for _, name := range created {
+		agentConfig := committed.Agents[name]
+		if agentConfig.Enabled && !agentConfig.OnDemand {
+			if err := s.deps.AgentMgr.Start(s.deps.Ctx, name); err != nil {
+				s.logger.Warn("failed to start agent after pack create", "agent", name, "error", err)
+			}
+		}
+	}
 	paused, resumed := s.syncAgentVisibility(level)
 	s.deps.AgentMgr.SyncModeFiles(level)
 
@@ -338,9 +317,6 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		Tombstoned: tombstoned,
 	}
 	if len(createErrs) > 0 {
-		// Return the result alongside the error so callers can still see what
-		// was reconciled, but the non-nil error signals the roster is not
-		// fully persisted and the level must not be reported as cleanly set.
 		return result, fmt.Errorf("failed to persist %d pack agent(s): %s", len(createErrs), strings.Join(createErrs, "; "))
 	}
 	return result, nil
@@ -381,8 +357,6 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		"skipped": result.Skipped,
 		"paused":  result.Paused,
 		"resumed": result.Resumed,
-		// Empty unless the operator deleted one of this level's agents.
-		"tombstoned": result.Tombstoned,
 	})
 }
 
@@ -443,12 +417,6 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	paused, resumed := s.syncAgentVisibility(level)
-	s.deps.AgentMgr.SyncModeFiles(level)
-
-	s.persistOnly()
-	s.refreshAsync()
-
 	pack, packLookupErr := config.ACMMPackByLevel(level)
 	var packAgentNames []string
 	if packLookupErr == nil {
@@ -457,33 +425,6 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 				packAgentNames = append(packAgentNames, a.Name)
 			}
 		}
-		if len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 {
-			if s.deps.Config.Governor.Modes == nil {
-				s.deps.Config.Governor.Modes = make(map[string]config.ModeConfig)
-			}
-			for modeName, agentCadences := range pack.Governor.Cadences {
-				mode := s.deps.Config.Governor.Modes[modeName]
-				mode.Cadences = make(map[string]config.Cadence)
-				for agent, interval := range agentCadences {
-					mode.Cadences[agent] = config.Cadence(interval)
-				}
-				s.deps.Config.Governor.Modes[modeName] = mode
-			}
-			for modeName, threshold := range pack.Governor.Thresholds {
-				mode := s.deps.Config.Governor.Modes[modeName]
-				mode.Threshold = threshold
-				s.deps.Config.Governor.Modes[modeName] = mode
-			}
-			if pack.Governor.EvalIntervalS > 0 {
-				s.deps.Config.Governor.EvalIntervalS = pack.Governor.EvalIntervalS
-			}
-		}
-	}
-
-	if packLookupErr == nil && (len(pack.Governor.Cadences) > 0 || len(pack.Governor.Thresholds) > 0 || pack.Governor.EvalIntervalS > 0) {
-		if err := s.saveConfig(); err != nil {
-			s.logger.Error("failed to persist config after pack cadence update", "error", err)
-		}
 	}
 
 	var packUpdated []string
@@ -491,14 +432,14 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 		packUpdated = packResult.Updated
 	}
 	s.auditFromRequest(r, "set_acmm_level", auditDetail("level", strconv.Itoa(body.Level)), "")
-	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(paused), "resumed", len(resumed), "packUpdated", packUpdated)
+	s.logger.Info("ACMM level set", "level", body.Level, "paused", len(packResult.Paused), "resumed", len(packResult.Resumed), "packUpdated", packUpdated)
 	jsonResponse(w, map[string]interface{}{
 		"ok":          true,
 		"level":       body.Level,
 		"packAgents":  packAgentNames,
 		"packUpdated": packUpdated,
-		"paused":      paused,
-		"resumed":     resumed,
+		"paused":      packResult.Paused,
+		"resumed":     packResult.Resumed,
 	})
 }
 
@@ -521,7 +462,8 @@ func (s *Server) syncAgentVisibility(level int) (paused, resumed []string) {
 
 	// Collect agents to resume and agents to pause.
 	var toResume []string
-	for name := range s.deps.Config.Agents {
+	current := s.configSnapshot()
+	for name := range current.Agents {
 		if packAgents[name] {
 			// On-demand agents (e.g. brainstorm) should never auto-resume;
 			// they are triggered explicitly by workflows like inception.

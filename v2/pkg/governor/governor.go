@@ -200,12 +200,13 @@ type Governor struct {
 	mu     sync.RWMutex
 	logger *slog.Logger
 
-	modeHistory  []ModeChange
-	evalHistory  []EvalSnapshot
-	kickHistory  []KickRecord
-	agentReports map[string]AgentReportRecord
-	budget       BudgetInfo
-	now          func() time.Time
+	modeHistory      []ModeChange
+	evalHistory      []EvalSnapshot
+	kickHistory      []KickRecord
+	admissionHistory []WorkAdmissionDecision
+	agentReports     map[string]AgentReportRecord
+	budget           BudgetInfo
+	now              func() time.Time
 
 	// resumeKicks records the last crash-recovery resume kick granted per
 	// agent (see AllowResumeKick). In-memory only: after a process restart
@@ -229,8 +230,8 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 	}
 
 	return &Governor{
-		cfg:    cfg,
-		agents: agents,
+		cfg:    config.CloneGovernorConfig(cfg),
+		agents: config.CloneAgentConfigs(agents),
 		state: State{
 			Mode:     ModeIdle,
 			Cadences: make(map[string]AgentCadence),
@@ -253,13 +254,30 @@ func New(cfg config.GovernorConfig, agents map[string]config.AgentConfig, logger
 func (g *Governor) UpdateConfig(cfg config.GovernorConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.cfg = cfg
+	g.cfg = config.CloneGovernorConfig(cfg)
+	g.updateCadences()
 }
 
+// UpdateConfigAndAgents replaces the Governor configuration and its enabled
+// agent snapshot under the same lock. Config reloaders should use this method
+// so admission and cadence decisions never combine a new Governor policy with
+// the agent set captured at startup.
+func (g *Governor) UpdateConfigAndAgents(cfg config.GovernorConfig, agents map[string]config.AgentConfig) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	g.cfg = config.CloneGovernorConfig(cfg)
+	g.agents = config.CloneAgentConfigs(agents)
+	g.updateCadences()
+}
+
+// UpdateAgents atomically replaces the normal role configuration snapshot
+// used by both cadence evaluation and explicit work admission.
 func (g *Governor) UpdateAgents(agents map[string]config.AgentConfig) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.agents = agents
+	g.agents = config.CloneAgentConfigs(agents)
+	g.updateCadences()
 }
 
 func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int) []string {
@@ -396,6 +414,7 @@ func (g *Governor) thresholdFor(modeName string) int {
 // configured (longer) one — burning backend tokens faster than any cadence
 // the operator could see or set.
 func (g *Governor) updateCadences() {
+	g.state.Cadences = make(map[string]AgentCadence, len(g.agents))
 	modeName := modeToConfigKey(g.state.Mode)
 	cadences := make(map[string]AgentCadence, len(g.agents))
 
@@ -504,6 +523,9 @@ func (g *Governor) agentsDueForKick() []string {
 	suppressed := 0
 
 	for agentName, cadence := range g.state.Cadences {
+		if _, enabled := g.agents[agentName]; !enabled {
+			continue
+		}
 		if cadence.Paused {
 			continue
 		}
