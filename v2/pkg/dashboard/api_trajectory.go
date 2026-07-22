@@ -49,9 +49,30 @@ func (s *Server) handleGovernorTrajectory(w http.ResponseWriter, r *http.Request
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after trajectory update", "error", err)
 	}
+	// Reconcile the "enabled but no reviewer endpoint" alert against the new
+	// state: it must clear when the lane is turned off or an endpoint is set,
+	// not linger from a stale startup evaluation.
+	s.ReconcileTrajectoryAlert(&s.deps.Config.Governor)
 	s.auditFromRequest(r, "config_governor_trajectory", auditDetail("section", "trajectory"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// TrajectoryNotConfiguredAlertID is the dashboard system-alert id for
+// "trajectory review is enabled but has no reviewer endpoint."
+const TrajectoryNotConfiguredAlertID = "trajectory-not-configured"
+
+// ReconcileTrajectoryAlert raises the "enabled but no reviewer endpoint" alert
+// only when the lane is BOTH enabled AND not runnable, and clears it in every
+// other case (disabled, or an endpoint now resolves). Safe to call from
+// startup and from the config PUT handler.
+func (s *Server) ReconcileTrajectoryAlert(g *config.GovernorConfig) {
+	if g.Trajectory.IsEnabled() && !g.ReviewerReady() {
+		s.AddSystemAlert(TrajectoryNotConfiguredAlertID, "warning",
+			"Trajectory review is ON but has no reviewer endpoint configured — no agents are being reviewed. Set a reviewer endpoint (LiteLLM, vLLM, or llm-d) in Governor Config.")
+		return
+	}
+	s.ClearSystemAlert(TrajectoryNotConfiguredAlertID)
 }
 
 // trajectorySectionResponse builds the trajectory config payload for the

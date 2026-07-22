@@ -2233,7 +2233,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			branch = "v2"
 		}
 		latestSHA := getLatestSHAForBranch(branch)
-		if latestSHA != "" && currentSHA != "" && currentSHA != latestSHA {
+		if latestSHA != "" && currentSHA != "" && !sameCommit(currentSHA, latestSHA) {
 			s.logger.Info("audit: auto-upgrade initial trigger", "hive_id", id, "from", currentSHA, "to", latestSHA)
 			s.mu.Lock()
 			for i := range s.registry.Hives {

@@ -1216,15 +1216,26 @@
       display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
     }
     .config-toggle-switch {
-      position: relative; width: 36px; height: 20px;
-      background: var(--border); border-radius: 10px; cursor: pointer;
-      transition: background 0.2s;
+      position: relative; width: 38px; height: 22px;
+      /* Off state: a visible muted track with a border, so the control reads
+         as a switch in both themes (previously var(--border), a near-invisible
+         hairline that made the thumb look like a lone dot). */
+      background: color-mix(in srgb, var(--muted) 45%, transparent);
+      border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent);
+      border-radius: 999px; cursor: pointer;
+      transition: background 0.2s, border-color 0.2s;
     }
-    .config-toggle-switch.on { background: var(--green); }
+    .config-toggle-switch.on {
+      background: var(--green);
+      border-color: var(--green);
+    }
     .config-toggle-switch::before {
       content: ''; position: absolute; top: 2px; left: 2px;
       width: 16px; height: 16px; border-radius: 50%;
-      background: var(--text); transition: transform 0.2s;
+      /* Thumb is a white knob with a soft shadow — a physical-switch cue that
+         stays visible whether the track is muted-gray or green, in both themes. */
+      background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.35);
+      transition: transform 0.2s;
     }
     .config-toggle-switch.on::before { transform: translateX(16px); }
     .config-toggle-label { font-size: 0.8rem; color: var(--text); }
