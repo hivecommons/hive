@@ -198,6 +198,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onVisibility VisibilityCallback
 	var onSwitchBranch SwitchBranchCallback
 	var onAuthorizedUsers AuthorizedUsersCallback
+	var onProjectConfig ProjectConfigCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -212,6 +213,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onSwitchBranch = fn
 		case AuthorizedUsersCallback:
 			onAuthorizedUsers = fn
+		case ProjectConfigCallback:
+			onProjectConfig = fn
 		}
 	}
 
@@ -243,6 +246,11 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		// spoke's allowlist; nil means the hub sent nothing, leave it alone.
 		if resp.AuthorizedUsers != nil && onAuthorizedUsers != nil {
 			onAuthorizedUsers(resp.AuthorizedUsers)
+		}
+		// A non-nil ProjectConfig means the hub wants the spoke to adopt a newly
+		// claimed project (placeholder assignment); nil means leave it alone.
+		if resp.ProjectConfig != nil && onProjectConfig != nil {
+			onProjectConfig(resp.ProjectConfig)
 		}
 	}
 
@@ -429,6 +437,22 @@ type HeartbeatGitHubAppConfig struct {
 	PrivateKey     string `json:"private_key,omitempty"`
 }
 
+// HeartbeatProjectConfig carries a claimed project's real org/repos/ACMM from
+// the hub to a spoke via the heartbeat response. It mirrors the AuthorizedUsers
+// mechanism: when an admin assigns a pre-provisioned "placeholder" hive to a
+// requesting user, the hub cannot push the new project config to a
+// heartbeat-only spoke (e.g. vllm-d) over kubectl. Delivering it in the
+// heartbeat response lets the spoke reconcile its running config
+// (cfg.Project.Org/Repos/PrimaryRepo and ACMM level) every beat until it
+// matches what the hub recorded — the only channel that works uniformly for
+// both reachable (hive-oke) and heartbeat-only (vllm-d) clusters.
+type HeartbeatProjectConfig struct {
+	Org         string   `json:"org"`
+	Repos       []string `json:"repos"`
+	PrimaryRepo string   `json:"primary_repo,omitempty"`
+	ACMMLevel   int      `json:"acmm_level"`
+}
+
 // HeartbeatResponse is the JSON body returned by the hub's heartbeat endpoint.
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
@@ -455,6 +479,14 @@ type HeartbeatResponse struct {
 	// changes propagate automatically. nil means "hub sent nothing" (leave the
 	// spoke's list unchanged); a non-nil (possibly empty) slice replaces it.
 	AuthorizedUsers []string `json:"authorized_users,omitempty"`
+	// ProjectConfig is the claimed project's real org/repos/ACMM. The hub sets
+	// it (mirroring AuthorizedUsers) when a placeholder hive has been assigned
+	// to a user and the spoke is still reporting its old (placeholder) project.
+	// The hub keeps sending it every beat until the spoke reconciles and reports
+	// the matching project. nil means "no reconcile needed" — leave the spoke's
+	// project config alone. This is the ONLY delivery channel for heartbeat-only
+	// clusters (vllm-d) the hub cannot reach over kubectl.
+	ProjectConfig *HeartbeatProjectConfig `json:"project_config,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
@@ -485,6 +517,12 @@ type AuthorizedUsersCallback func(users []string)
 // GitHubAppConfigCallback is called when the hub delivers GitHub App config
 // via the heartbeat response (app ID, installation ID, private key).
 type GitHubAppConfigCallback func(cfg *HeartbeatGitHubAppConfig)
+
+// ProjectConfigCallback is called when the hub delivers a claimed project's
+// real org/repos/ACMM via the heartbeat response so the spoke can reconcile
+// its running project config. Used for heartbeat-only clusters where the hub
+// cannot push config over kubectl (mirrors AuthorizedUsersCallback).
+type ProjectConfigCallback func(cfg *HeartbeatProjectConfig)
 
 const taskPushInterval = 30 * time.Second
 

@@ -613,6 +613,23 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.AuthorizedUsers = authUsers
 	}
 
+	// Deliver the claimed project's real org/repos/ACMM so a spoke that was
+	// assigned a pre-provisioned placeholder reconciles its running project
+	// config. Mirrors AuthorizedUsers: the hub keeps sending it every beat
+	// until the spoke reports the matching project. This is the ONLY channel
+	// that reaches heartbeat-only clusters (vllm-d) — the hub cannot push
+	// config there over kubectl. A nil return means "spoke already matches, or
+	// no SaaS record / still a placeholder" — send nothing.
+	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel); projCfg != nil {
+		resp.ProjectConfig = projCfg
+		s.logger.Info("heartbeat: delivering claimed project config to spoke",
+			"hive_id", payload.HiveID,
+			"org", projCfg.Org,
+			"primary_repo", projCfg.PrimaryRepo,
+			"acmm_level", projCfg.ACMMLevel,
+		)
+	}
+
 	// Check if the hive should self-upgrade via heartbeat response.
 	//
 	// Three upgrade paths, all controlled by a single toggle:

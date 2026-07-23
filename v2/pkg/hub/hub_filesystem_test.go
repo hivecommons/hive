@@ -1009,6 +1009,18 @@ func TestHandleApproveProvisionWithFilesystem(t *testing.T) {
 		Status:   provisionStatusPending,
 	})
 
+	// Approving now ASSIGNS an available placeholder from the correct pool. Seed
+	// an available placeholder owned by the admin on the public (hive-oke) pool.
+	if err := saveSaaSHive(&SaaSHive{
+		ID:        "hosted-placeholder-fs",
+		Owner:     hubAdminUsername,
+		Status:    statusAvailable,
+		ACMMLevel: defaultAssignACMMLevel,
+		ClusterID: defaultClusterID,
+	}); err != nil {
+		t.Fatalf("seed placeholder: %v", err)
+	}
+
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /api/saas/approve-provision/{username}", srv.handleApproveProvision)
@@ -1026,6 +1038,112 @@ func TestHandleApproveProvisionWithFilesystem(t *testing.T) {
 	u := loadSaaSUser("prov-target")
 	if u.SaaSQuota != 1 {
 		t.Errorf("quota = %d, want 1", u.SaaSQuota)
+	}
+
+	// Verify the placeholder was assigned to the requesting user with the
+	// request's project, and its "available" status was cleared.
+	h := loadSaaSHive("hosted-placeholder-fs")
+	if h == nil {
+		t.Fatal("placeholder hive missing after assignment")
+	}
+	if h.Owner != "prov-target" {
+		t.Errorf("owner = %q, want prov-target", h.Owner)
+	}
+	if h.Org != "org" {
+		t.Errorf("org = %q, want org", h.Org)
+	}
+	if h.Status != "" {
+		t.Errorf("status = %q, want empty (cleared)", h.Status)
+	}
+}
+
+func TestHandleApproveProvisionNoPlaceholderWithFilesystem(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	authCleanup := helperSetupAuthUser(t, "ghp_appprov_none_fs", hubAdminUsername)
+	defer authCleanup()
+
+	ensureSaaSUser("prov-target-none")
+	saveProvisionRequest(&ProvisionRequest{
+		Username: "prov-target-none",
+		Org:      "org",
+		Repos:    "repo",
+		Status:   provisionStatusPending,
+	})
+
+	// No available placeholder seeded -> the admin must be told to provision more.
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /api/saas/approve-provision/{username}", srv.handleApproveProvision)
+
+	req := httptest.NewRequest("PUT", "/api/saas/approve-provision/prov-target-none", nil)
+	req.Header.Set("Authorization", "Bearer ghp_appprov_none_fs")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("expected 409 (no placeholder), got %d (body: %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleAssignHiveWithFilesystem(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	authCleanup := helperSetupAuthUser(t, "ghp_assign_fs", hubAdminUsername)
+	defer authCleanup()
+
+	if err := saveSaaSHive(&SaaSHive{
+		ID:        "hosted-assign-fs",
+		Owner:     hubAdminUsername,
+		Status:    statusAvailable,
+		ACMMLevel: defaultAssignACMMLevel,
+		ClusterID: gpuClusterID,
+	}); err != nil {
+		t.Fatalf("seed placeholder: %v", err)
+	}
+
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/saas/hives/{id}/assign", srv.handleAssignHive)
+
+	bodyJSON := `{"owner":"newowner","org":"neworg","repos":"repoa,repob","primary_repo":"repoa","acmm_level":3}`
+	req := httptest.NewRequest("POST", "/api/saas/hives/hosted-assign-fs/assign", strings.NewReader(bodyJSON))
+	req.Header.Set("Authorization", "Bearer ghp_assign_fs")
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+
+	h := loadSaaSHive("hosted-assign-fs")
+	if h == nil {
+		t.Fatal("hive missing after assign")
+	}
+	if h.Owner != "newowner" || h.Org != "neworg" || h.PrimaryRepo != "repoa" || h.ACMMLevel != 3 || h.Status != "" {
+		t.Errorf("assign wrote wrong meta: %+v", h)
+	}
+
+	// projectConfigForHiveID keeps returning the real project until the spoke
+	// reports it back, then goes quiet.
+	if pc := projectConfigForHiveID("hosted-assign-fs", "oldorg", []string{"old"}, "old", 2); pc == nil {
+		t.Error("expected non-nil project config while spoke reports stale project")
+	}
+	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3); pc != nil {
+		t.Errorf("expected nil project config once spoke matches, got %+v", pc)
+	}
+
+	// Assigning an already-claimed (non-available) hive is rejected.
+	req2 := httptest.NewRequest("POST", "/api/saas/hives/hosted-assign-fs/assign", strings.NewReader(bodyJSON))
+	req2.Header.Set("Authorization", "Bearer ghp_assign_fs")
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	mux.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusConflict {
+		t.Errorf("expected 409 assigning a non-placeholder, got %d", w2.Code)
 	}
 }
 
