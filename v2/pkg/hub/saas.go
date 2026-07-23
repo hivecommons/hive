@@ -3895,20 +3895,28 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	if h == nil {
 		return nil
 	}
-	// An unclaimed placeholder has nothing real to reconcile yet.
-	if h.Status == statusAvailable {
-		return nil
-	}
-	// A record with no org recorded (never assigned a real project) is left
-	// alone — reconciling to an empty project would break the spoke.
-	if h.Org == "" {
+	// This reconcile exists ONLY to push a freshly-CLAIMED placeholder's project
+	// down to its spoke. It must NEVER touch a pre-existing hive, whose meta.json
+	// predates the claim feature and carries stale/empty fields (empty
+	// primary_repo, acmm_level: 0) even though the spoke runs a real project at a
+	// real ACMM. Reconciling from that stale record silently wiped org/repos and
+	// DOWNGRADED live hives to L0. So we only reconcile a record that looks like a
+	// genuine claim — a complete project (org + repos + primary_repo) AND a real
+	// non-zero ACMM — and even then we never send a value that would blank/lower
+	// what the spoke already has.
+	if h.Status == statusAvailable { // still an unclaimed placeholder
 		return nil
 	}
 	primary := h.PrimaryRepo
 	if primary == "" && len(h.Repos) > 0 {
 		primary = h.Repos[0]
 	}
-	// Already matching — stop sending (mirrors the AuthorizedUsers "leave alone"
+	claimComplete := h.Org != "" && len(h.Repos) > 0 && primary != "" && h.ACMMLevel > 0
+	if !claimComplete {
+		// Incomplete/stale record (a pre-claim hive) — leave the spoke alone.
+		return nil
+	}
+	// Already matching — stop sending (mirrors AuthorizedUsers "leave alone"
 	// semantics once the spoke has caught up).
 	if strings.EqualFold(curOrg, h.Org) &&
 		sameStringSliceFold(curRepos, h.Repos) &&
