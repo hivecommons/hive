@@ -2862,7 +2862,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			continue
 		}
 		latestSHA := getLatestSHAForBranch(branch)
-		if latestSHA == "" || currentSHA == latestSHA {
+		if latestSHA == "" || sameCommit(currentSHA, latestSHA) {
 			continue
 		}
 		hiveCluster := s.clusterForHive(&h)
@@ -2934,12 +2934,11 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		logger.Warn("SHA poll: branch decode failed", "branch", branch, "error", err)
 		return
 	}
-	const shortSHALen = 7
-	if len(branchResult.Commit.SHA) < shortSHALen {
+	if len(branchResult.Commit.SHA) < StandardSHALen {
 		logger.Warn("SHA poll: branch SHA too short", "branch", branch, "sha", branchResult.Commit.SHA)
 		return
 	}
-	candidateSHA := branchResult.Commit.SHA[:shortSHALen]
+	candidateSHA := shortSHA(branchResult.Commit.SHA)
 	// Extract only the first line of the commit message for tooltip display.
 	commitMsg := branchResult.Commit.Commit.Message
 	if idx := strings.Index(commitMsg, "\n"); idx >= 0 {
@@ -4285,6 +4284,16 @@ const dashboardHTML = `<!DOCTYPE html>
   <script>
     function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 
+    // sameShaJS: two git SHAs are the same commit even if one is a short
+    // prefix of the other. The hub stores 7-char short SHAs while a spoke may
+    // report a longer one; a raw === left the "Upgrading" badge spinning
+    // forever on a hive already at the target. Mirrors hub sameCommit().
+    function sameShaJS(a, b) {
+      if (!a || !b) return false;
+      var n = Math.min(a.length, b.length);
+      return a.slice(0, n).toLowerCase() === b.slice(0, n).toLowerCase();
+    }
+
     function dismissBanner(key, btn) {
       var dismissed = JSON.parse(localStorage.getItem('hive-dismissed-banners') || '{}');
       dismissed[key] = Date.now();
@@ -4557,7 +4566,7 @@ const dashboardHTML = `<!DOCTYPE html>
           if (el) {
             var hubBranchLatest = _latestSHAs[hubBranch] || _latestSHA;
             var hubLatestUnknown = !hubBranchLatest;
-            var isCurrent = hubBranchLatest && hubHash === hubBranchLatest;
+            var isCurrent = hubBranchLatest && sameShaJS(hubHash, hubBranchLatest);
             var hubUpgradeBtn = '';
             var hubIsUpgrading = _hubUpgrading || (!isCurrent && hubBranchLatest && _hubAutoUpgrade);
             if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading) {
@@ -4775,7 +4784,7 @@ const dashboardHTML = `<!DOCTYPE html>
             ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px;cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
             : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(branchName) + '</span>';
           var latestUnknown = !branchLatest;
-          var isCurrent = branchLatest && sha === branchLatest;
+          var isCurrent = branchLatest && sameShaJS(sha, branchLatest);
           /* Branch switch in flight: the hive still reports the OLD branch
              (often current on it) until the new pod heartbeats — without
              this, isCurrent suppresses every progress indicator. */

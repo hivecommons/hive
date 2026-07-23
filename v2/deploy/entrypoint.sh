@@ -223,11 +223,17 @@ if [ "$(id -u)" = "0" ]; then
   # Shared CLI auth/cache lives in /data/home (persistent volume).
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
-  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/config/github-copilot /home/dev/.config
+  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/config/github-copilot /home/dev/.config
   chmod 2770 /data/home/.copilot 2>/dev/null || true
   chown dev:node /data/home/.copilot 2>/dev/null || true
   chmod 2775 /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true
   chown -R dev:node /data/home/.claude 2>/dev/null || true
+  # Codex (newer method) writes a local sqlite state db under $HOME/.codex —
+  # pre-create it group-writable + setgid so every agent UID (node group) can
+  # init it, matching .claude/.copilot. Without this, switching an agent to the
+  # codex backend fails with "Permission denied" initializing state_N.sqlite.
+  chmod 2775 /data/home/.codex 2>/dev/null || true
+  chown -R dev:node /data/home/.codex 2>/dev/null || true
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot
@@ -281,7 +287,14 @@ if [ "$(id -u)" = "0" ]; then
         chown -R dev:node /data/home/.claude 2>/dev/null
       done
     ) &
-    echo "[entrypoint] inotify perm guard active (copilot + claude)"
+    (
+      while inotifywait -qq -e close_write,moved_to,create /data/home/.codex/ 2>/dev/null; do
+        chmod -R g+rwX /data/home/.codex 2>/dev/null
+        find /data/home/.codex -type d -exec chmod g+s {} + 2>/dev/null
+        chown -R dev:node /data/home/.codex 2>/dev/null
+      done
+    ) &
+    echo "[entrypoint] inotify perm guard active (copilot + claude + codex)"
   fi
   (
     CYCLE=0
@@ -292,8 +305,8 @@ if [ "$(id -u)" = "0" ]; then
       # Slow cycle: fix entire /data/home tree every 5 min (new dirs from agents)
       CYCLE=$((CYCLE + 1))
       if [ "$CYCLE" -ge 60 ]; then
-        chmod -R g+rwX /data/home/.cache /data/home/.copilot /data/home/.claude 2>/dev/null
-        find /data/home/.cache /data/home/.claude -type d -exec chmod g+s {} + 2>/dev/null
+        chmod -R g+rwX /data/home/.cache /data/home/.copilot /data/home/.claude /data/home/.codex 2>/dev/null
+        find /data/home/.cache /data/home/.claude /data/home/.codex -type d -exec chmod g+s {} + 2>/dev/null
         CYCLE=0
       fi
       sleep 5

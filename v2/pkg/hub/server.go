@@ -310,6 +310,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hive_id required", http.StatusBadRequest)
 		return
 	}
+	// Normalize the reported SHA to the canonical short length up front so every
+	// downstream comparison is same-length against the hub's 7-char stored SHAs.
+	// (Spokes now build gitShort with `--short=7`; this covers any that predate
+	// that or report a longer value.)
+	payload.GitHash = shortSHA(payload.GitHash)
 	if !isValidName(payload.HiveID) {
 		http.Error(w, "invalid hive_id", http.StatusBadRequest)
 		return
@@ -402,7 +407,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
 		Health:        payload.Health,
 		Version:       sanitizeHeartbeatField(payload.Version),
-		GitHash:       sanitizeHeartbeatField(payload.GitHash),
+		GitHash:       shortSHA(sanitizeHeartbeatField(payload.GitHash)),
 		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
@@ -475,10 +480,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				branchForLatest = "v2"
 			}
 			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
-			if h.Upgrading && !payload.Upgrading && (payload.GitHash == h.UpgradeTarget || (registryLatestSHA != "" && payload.GitHash == registryLatestSHA)) {
+			if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
 				// Non-upgrading heartbeat at the target SHA or at latest —
 				// upgrade completed (image may have advanced past the
-				// original target before the spoke pulled it).
+				// original target before the spoke pulled it). sameCommit
+				// tolerates short/full SHA length mismatch — a raw == left the
+				// Upgrading badge spinning forever when the spoke reported a
+				// full SHA and the target/latest was the 7-char short form.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
 			} else if h.Upgrading && !payload.Upgrading && h.UpgradeTarget == "" {

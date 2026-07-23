@@ -73,6 +73,13 @@ func main() {
 	}
 	configPath := flag.String("config", defaultConfig, "path to hive.yaml config file")
 	flag.Parse()
+	// Canonicalize gitShort to the standard 7-char short SHA the hub stores and
+	// compares against. The Dockerfile builds it with `--short=7`, but git can
+	// still return more chars when 7 isn't unique; trim so what we report to the
+	// hub is always the same length it stores (no short-vs-full mismatch).
+	if len(gitShort) > 7 {
+		gitShort = gitShort[:7]
+	}
 	dashboard.SetGitVersion(gitHash, gitShort)
 	dashboard.SetGitBranch(gitBranch)
 

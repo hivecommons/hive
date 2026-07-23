@@ -23,3 +23,19 @@ func TestSameCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestShortSHA(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"03c0fc4b671a", "03c0fc4b"[:7]}, // 12 → 7
+		{"03c0fc4b671a", "03c0fc4"},      // explicit
+		{"39a095b", "39a095b"},           // already 7
+		{"abc", "abc"},                   // shorter, unchanged
+		{"", ""},                         // empty
+		{"  03c0fc4b671a  ", "03c0fc4"},  // trimmed then truncated
+	}
+	for _, c := range cases {
+		if got := shortSHA(c.in); got != c.want {
+			t.Errorf("shortSHA(%q)=%q want %q", c.in, got, c.want)
+		}
+	}
+}
