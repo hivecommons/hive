@@ -225,6 +225,18 @@
     /* ── Section heading ── */
     .section-heading { max-width: 54rem; margin-bottom: 2.5rem; }
 
+    /* ── Video / demo section ── */
+    .video-section { text-align: center; }
+    .video-frame {
+      max-width: 62rem; margin: 2.5rem auto 0; border-radius: 14px; overflow: hidden;
+      border: 1px solid var(--line); box-shadow: 0 24px 60px -30px rgba(0,0,0,.55);
+      background: #000;
+    }
+    .video-frame .aspect { position: relative; width: 100%; padding-top: 56.25%; }
+    .video-frame iframe {
+      position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+    }
+
     /* ── Proof grid ── */
     .proof-grid {
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -439,6 +451,25 @@
           <div><span>Managed repos</span><strong id="stat-repos">—</strong></div>
           <div><span>Contributors</span><strong id="stat-contributors">—</strong></div>
           <div><span>Active hives</span><strong id="stat-total">—</strong></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Watch: latest presentation ── -->
+    <section class="section-pad video-section" id="watch">
+      <div class="section-heading" style="margin-left:auto;margin-right:auto">
+        <p class="section-label">Watch</p>
+        <h2>How Hive works &mdash; and why not to build your own</h2>
+        <p>A walkthrough of the agents, the governor, and the guardrails that make Hive safe to leave running &mdash; and why standing up your own agent loop means re-solving problems Hive already handles.</p>
+      </div>
+      <div class="video-frame">
+        <div class="aspect">
+          <iframe src="https://www.youtube-nocookie.com/embed/_5zt6m4qQnI"
+            title="How Hive works — and why to use it instead of building your own"
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allowfullscreen></iframe>
         </div>
       </div>
     </section>
