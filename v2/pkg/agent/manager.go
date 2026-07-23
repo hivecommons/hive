@@ -3098,12 +3098,25 @@ func codexHomePath(agentName string) string {
 	return codexHomePrefix + agentName
 }
 
+// codexSharedAuthFile is the login credential that a `codex login` (ChatGPT
+// sign-in) or an OPENAI_API_KEY setup writes: a user running codex without
+// CODEX_HOME set lands in $HOME/.codex, i.e. /data/home/.codex (group-writable
+// so any agent UID can refresh the token). Because each agent has its OWN
+// CODEX_HOME (for the app-server owner check), that per-agent dir would start
+// with no auth — so a single sign-in would not reach the agents, and they would
+// prompt for sign-in again. setupCodexHome bridges this by symlinking each
+// agent's auth.json to this shared file, so ONE login propagates to every agent
+// and token refreshes are shared.
+const codexSharedAuthFile = "/data/home/.codex/auth.json"
+
 // setupCodexHome pre-creates the agent's CODEX_HOME directory AS the agent, so
 // it is owned by the agent UID. Codex 0.144.1 refuses to create CODEX_HOME
 // itself ("CODEX_HOME ... does not exist") and its app-server requires the
 // current UID to own the dir. The manager runs as dev and cannot chown, so —
 // mirroring the tmux-dir setup — it runs mkdir via su-exec as the agent user.
-// No-op for root agents (UID 0), which own /data/home already.
+// It also symlinks the agent's auth.json to the shared login file so a single
+// `codex login` reaches every agent. No-op for root agents (UID 0), which own
+// /data/home already.
 func (m *Manager) setupCodexHome(agent *AgentProcess) {
 	if agent.UID <= 0 {
 		return
@@ -3112,6 +3125,14 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 	agentUser := fmt.Sprintf("hive-%s", agent.Name)
 	if err := exec.Command("su-exec", agentUser, "mkdir", "-p", dir).Run(); err != nil {
 		m.logger.Warn("failed to pre-create codex home", "agent", agent.Name, "dir", dir, "error", err)
+	}
+	// Bridge auth: symlink the per-agent auth.json to the shared login file so a
+	// single sign-in propagates to all agents. `ln -sfn` is idempotent and
+	// overwrites a stale regular-file auth.json left by an earlier codex version.
+	// The symlink target need not exist yet (a later `codex login` creates it).
+	authLink := filepath.Join(dir, "auth.json")
+	if err := exec.Command("su-exec", agentUser, "ln", "-sfn", codexSharedAuthFile, authLink).Run(); err != nil {
+		m.logger.Warn("failed to link codex auth", "agent", agent.Name, "link", authLink, "error", err)
 	}
 }
 
