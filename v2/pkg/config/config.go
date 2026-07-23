@@ -2368,7 +2368,7 @@ func (c *Config) savePersistenceBytes(data []byte) error {
 		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupFile)
 	}
 
-	c.saveDashboardOverlay(data)
+	c.saveDashboardOverlay()
 	return nil
 }
 
@@ -2400,18 +2400,79 @@ func IsKubernetesPod() bool {
 	return err == nil
 }
 
+// dashboardOverlayBytes marshals a secret-free copy of the config for the PVC
+// overlay: env-substituted secrets are re-templated / cleared so the persisted
+// overlay never contains real credentials.
+func (c *Config) dashboardOverlayBytes() ([]byte, error) {
+	// Shallow copy: top-level fields are struct values, so mutating the
+	// copy's GitHub/Dashboard sections leaves the live config untouched
+	// (the shared Agents map is not modified).
+	cp := *c
+	if tok := os.Getenv("HIVE_GITHUB_TOKEN"); tok != "" && cp.GitHub.Token == tok {
+		cp.GitHub.Token = "${HIVE_GITHUB_TOKEN}"
+	}
+	for _, env := range []string{"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN"} {
+		if v := os.Getenv(env); v != "" && cp.Dashboard.AuthToken == v {
+			cp.Dashboard.AuthToken = ""
+			break
+		}
+	}
+	return yaml.Marshal(&cp)
+}
+
 // saveDashboardOverlay writes the secret-free PVC overlay in Kubernetes
 // mode. Failures are logged, never fatal: the primary save already
 // succeeded, the overlay only affects persistence across pod restarts.
-func (c *Config) saveDashboardOverlay(data []byte) {
+//
+// The write MUST be atomic (temp file + rename), unlike saveLocked()'s
+// inode-preserving write to the bind-mounted primary config. DashboardOverlayFile
+// lives on the PVC (not a bind mount), so rename is safe here, and it is the
+// only way to avoid a truncated/partial overlay if the pod is killed mid-write
+// (a redeploy sends SIGTERM/SIGKILL at an arbitrary instant). A truncate-in-place
+// write (os.WriteFile) can leave the file cut off partway through — GitHubConfig
+// marshals AFTER Agents/Project in the Config struct field order (see the
+// struct tags above), so a truncated overlay can silently keep valid
+// project/agents blocks while losing app_id/installation_id/key_file entirely.
+// The entrypoint's merge script only sanity-checks project.org and agents
+// before trusting the overlay wholesale, so that truncated-but-plausible file
+// would pass the guard and revert a dashboard-installed GitHub App to the
+// placeholder ConfigMap seed on the next restart — exactly the durability bug
+// this atomic write prevents.
+func (c *Config) saveDashboardOverlay() {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: /data/hive.yaml.bak is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
 		return
 	}
-	if err := os.WriteFile(DashboardOverlayFile, data, 0o644); err != nil {
-		log.Printf("[config] warning: failed to write dashboard overlay %s (dashboard saves will not survive pod restarts): %v", DashboardOverlayFile, err)
+	data, err := c.dashboardOverlayBytes()
+	if err != nil {
+		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
+		return
+	}
+	tmpPath := DashboardOverlayFile + ".tmp"
+	const overlayFileMode = 0o644
+	f, err := os.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, overlayFileMode)
+	if err != nil {
+		log.Printf("[config] warning: failed to open dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
+		return
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		log.Printf("[config] warning: failed to write dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
+		return
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		log.Printf("[config] warning: failed to fsync dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
+		return
+	}
+	if err := f.Close(); err != nil {
+		log.Printf("[config] warning: failed to close dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
+		return
+	}
+	if err := os.Rename(tmpPath, DashboardOverlayFile); err != nil {
+		log.Printf("[config] warning: failed to rename dashboard overlay into place %s (dashboard saves will not survive pod restarts): %v", DashboardOverlayFile, err)
 		return
 	}
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)

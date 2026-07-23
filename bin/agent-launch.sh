@@ -92,6 +92,26 @@ if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
   FULL_CMD+=("${EXTRA_ARGS[@]}")
 fi
 
+# Codex CLI: give each agent its OWN CODEX_HOME rather than the shared
+# $HOME/.codex. Codex 0.144.1's "in-process app-server client" performs
+# owner-gated operations on files/dirs under CODEX_HOME (helper-binary "PATH
+# alias" symlinks under tmp/arg0, sqlite state). A shared CODEX_HOME owned by
+# a DIFFERENT uid (the entrypoint chowns /data/home/.codex to dev:node) makes
+# every non-owner agent uid fail with:
+#   Error: failed to initialize in-process app-server client:
+#          Operation not permitted (os error 1)
+# even though the dir is group-writable and the agent is in the node group —
+# group-write is NOT sufficient, the app-server needs ownership. Claude/Copilot
+# tolerate group-write; Codex does not. Verified live: a per-agent CODEX_HOME
+# the agent owns launches Codex cleanly. The dir lives on the persistent
+# /data/home volume (group-writable, setgid node) so the agent uid can create
+# it and owns everything it writes inside.
+if [[ "$BACKEND" == "codex" ]]; then
+  CODEX_HOME="${CODEX_HOME:-/data/home/.codex-${HIVE_AGENT_ID}}"
+  export CODEX_HOME
+  mkdir -p "$CODEX_HOME" 2>/dev/null || true
+fi
+
 # Copilot CLI: use a fine-grained PAT via env var to bypass /login entirely.
 # The PAT file lives on the persistent /data volume, never in source control.
 if [[ "$BACKEND" == "copilot" ]]; then

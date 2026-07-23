@@ -42,6 +42,13 @@ if [ "$IS_KUBERNETES" = "true" ]; then
     #   - hub.is_public  (hub-managed visibility)
     # A missing, empty, unparsable, or implausible overlay (no
     # project.org / agents) leaves the ConfigMap seed untouched.
+    #
+    # github.{app_id,installation_id,key_file}: a dashboard-installed (or
+    # hub-pushed, post App-install-webhook) GitHub App is PVC-overlay-only
+    # state — the ConfigMap seed is never updated after install and keeps
+    # whatever placeholder it was provisioned with. The overlay must win
+    # here too, and a seed that already shows a real installed App must
+    # never be silently downgraded by a missing/placeholder overlay.
     HIVE_DASHBOARD_OVERLAY="/data/hive.yaml.dashboard"
     if [ -f "$HIVE_DASHBOARD_OVERLAY" ] && [ -s "$HIVE_DASHBOARD_OVERLAY" ]; then
       if python3 - "$HIVE_CONFIG_PATH" "$HIVE_DASHBOARD_OVERLAY" <<'PYEOF'
@@ -59,6 +66,56 @@ if not isinstance(overlay, dict):
     sys.exit(1)
 if not (overlay.get('project') or {}).get('org') or not overlay.get('agents'):
     sys.exit(1)
+
+# GitHub App credentials installed at runtime via the dashboard (or pushed
+# by the hub after the App install webhook fires — see
+# pkg/dashboard/api.go handleConfigGitHub) are persisted ONLY to this
+# overlay, never back to the ConfigMap. The ConfigMap seed for a freshly
+# claimed/placeholder hive still carries the placeholder app_id/
+# installation_id/key_file, so if the overlay is missing, truncated, or
+# otherwise reverted to a placeholder-looking github block, letting the
+# seed win here would silently wipe a live App installation on every
+# restart (observed: a hive's installed App reverted to placeholder
+# creds after a pod restart, 401-looping on every GitHub call). Treat a
+# seed that already has a real (non-placeholder) app_id/installation_id
+# as a signal this hive has an installed App — refuse to let a
+# github-less or placeholder-looking overlay silently downgrade it.
+seed_gh = seed.get('github') or {}
+overlay_gh = overlay.get('github') or {}
+
+
+def _looks_placeholder(gh):
+    key_file = gh.get('key_file') or ''
+    app_id = gh.get('app_id')
+    installation_id = gh.get('installation_id')
+    if not app_id or not installation_id:
+        return True
+    if isinstance(key_file, str) and 'PLACEHOLDER' in key_file.upper():
+        return True
+    return False
+
+
+seed_has_real_app = isinstance(seed_gh, dict) and not _looks_placeholder(seed_gh)
+overlay_has_real_app = isinstance(overlay_gh, dict) and not _looks_placeholder(overlay_gh)
+if seed_has_real_app and not overlay_has_real_app:
+    sys.stderr.write(
+        "[entrypoint] github: overlay missing/placeholder app credentials but "
+        "ConfigMap seed has a real app_id/installation_id — keeping the seed's "
+        "github block to avoid wiping an installed GitHub App\n"
+    )
+    overlay['github'] = seed_gh
+elif overlay_has_real_app:
+    # The overlay's installed-App credentials win over the seed, per the
+    # standard overlay-wins precedence — but only trust key_file if the
+    # PEM it names actually exists on this PVC. A dangling reference
+    # (e.g. an interrupted key write) must not silently authenticate with
+    # a missing/placeholder file; fail loud instead of 401-looping quietly.
+    key_file = overlay_gh.get('key_file') or ''
+    if isinstance(key_file, str) and key_file.startswith('/data/') and not os.path.isfile(key_file):
+        sys.stderr.write(
+            "[entrypoint] WARNING: overlay github.key_file=%s does not exist on "
+            "the PVC — GitHub App auth will fail until it is re-installed\n" % key_file
+        )
 
 # The dashboard OVERLAY wins for acmm_level: the ConfigMap seed only ever
 # carries the provision-time level and is NOT updated when the level is
@@ -83,7 +140,7 @@ with open(tmp_path, 'w') as f:
 os.replace(tmp_path, seed_path)
 PYEOF
       then
-        echo "[entrypoint] K8s mode — dashboard overlay merged over ConfigMap seed (overlay wins for acmm_level; ConfigMap wins for hub.is_public)"
+        echo "[entrypoint] K8s mode — dashboard overlay merged over ConfigMap seed (overlay wins for acmm_level and github app creds; ConfigMap wins for hub.is_public)"
       else
         echo "[entrypoint] K8s mode — dashboard overlay invalid, using ConfigMap seed as-is"
       fi

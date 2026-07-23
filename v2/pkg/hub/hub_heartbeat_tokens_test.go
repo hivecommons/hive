@@ -76,8 +76,10 @@ func TestHeartbeatTokenTotalClamped(t *testing.T) {
 	}
 	srv.mu.RUnlock()
 
-	// clampInt64(payload.Tokens24h, 0, 100_000_000)
-	const maxTokens = int64(100_000_000)
+	// clampInt64(payload.Tokens24h, 0, 100_000_000_000) — 100B ceiling is a
+	// sanity guard against a corrupt/hostile spoke; real hives legitimately
+	// exceed 100M/day so the cap must be far above realistic usage.
+	const maxTokens = int64(100_000_000_000)
 	if got != maxTokens {
 		t.Fatalf("clamped TotalTokens24h = %d, want %d", got, maxTokens)
 	}
