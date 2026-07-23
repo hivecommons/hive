@@ -66,8 +66,14 @@ spec:
             - name: data
               mountPath: /data
           livenessProbe:
+            # /api/livez includes a heartbeat-staleness check (in addition to
+            # everything /api/health checks) so a heartbeat goroutine that
+            # dies silently while the HTTP server stays up gets caught and
+            # the pod restarted, instead of staying 1/1 Running forever with
+            # the hub showing it offline. See pkg/dashboard/server.go
+            # handleLivez. Hives with no hub configured are unaffected.
             httpGet:
-              path: /api/health
+              path: /api/livez
               port: api
             initialDelaySeconds: 30
             periodSeconds: 30

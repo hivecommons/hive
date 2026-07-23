@@ -511,6 +511,18 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		_ = exec.Command("su-exec", agentUser, "chmod", "710", tmuxDir).Run()
 	}
 
+	// Pre-create the agent-owned CODEX_HOME before launch (codex won't create
+	// it and needs to own it). Only for the codex backend.
+	{
+		launchBackend := agent.Config.Backend
+		if agent.BackendOverride != "" {
+			launchBackend = agent.BackendOverride
+		}
+		if launchBackend == codexBackend {
+			m.setupCodexHome(agent)
+		}
+	}
+
 	// Set per-session env vars via tmux set-environment (raw values, no shell quoting).
 	for _, p := range m.agentEnvPairs(agent) {
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, p.Key, p.Value).Run()
@@ -3351,6 +3363,37 @@ func inferenceHomePath(agentName string) string {
 	return claudeInferenceHomePrefix + agentName
 }
 
+// codexBackend is the backend name for the OpenAI Codex CLI.
+const codexBackend = "codex"
+
+// codexHomePrefix is the per-agent CODEX_HOME directory prefix. Each agent gets
+// its own dir so Codex's owner-gated app-server sees a directory the agent UID
+// actually owns (a shared, merely group-writable dir is not sufficient for
+// Codex, unlike claude/copilot). Lives on the persistent /data volume.
+const codexHomePrefix = "/data/home/.codex-"
+
+// codexHomePath returns the per-agent CODEX_HOME directory.
+func codexHomePath(agentName string) string {
+	return codexHomePrefix + agentName
+}
+
+// setupCodexHome pre-creates the agent's CODEX_HOME directory AS the agent, so
+// it is owned by the agent UID. Codex 0.144.1 refuses to create CODEX_HOME
+// itself ("CODEX_HOME ... does not exist") and its app-server requires the
+// current UID to own the dir. The manager runs as dev and cannot chown, so —
+// mirroring the tmux-dir setup — it runs mkdir via su-exec as the agent user.
+// No-op for root agents (UID 0), which own /data/home already.
+func (m *Manager) setupCodexHome(agent *AgentProcess) {
+	if agent.UID <= 0 {
+		return
+	}
+	dir := codexHomePath(agent.Name)
+	agentUser := fmt.Sprintf("hive-%s", agent.Name)
+	if err := exec.Command("su-exec", agentUser, "mkdir", "-p", dir).Run(); err != nil {
+		m.logger.Warn("failed to pre-create codex home", "agent", agent.Name, "dir", dir, "error", err)
+	}
+}
+
 // inferenceConfigMigrationVersion matches the Claude CLI internal config
 // migration version so the CLI skips first-run migration prompts.
 const inferenceConfigMigrationVersion = 13
@@ -3890,6 +3933,20 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			home = inferenceHomePath(agent.Name)
 		}
 		vars = append(vars, agentEnvPair{"HOME", home, false})
+	}
+
+	// Codex CLI 0.144.1's in-process app-server performs OWNER-gated operations
+	// on files under CODEX_HOME (helper-binary "PATH alias" symlinks under
+	// tmp/arg0, sqlite state). The shared /data/home/.codex is owned by dev
+	// (the entrypoint chowns it group-writable + setgid), which claude/copilot
+	// tolerate but Codex does not — every non-owner agent UID fails with
+	// "failed to start embedded app server: Operation not permitted (os error 1)".
+	// The manager launches the codex binary DIRECTLY (not via agent-launch.sh),
+	// so CODEX_HOME must be set here. Give each agent its own dir; codex will
+	// NOT create it (it errors "CODEX_HOME ... does not exist"), so it is
+	// pre-created AS the agent below in setupCodexHome.
+	if backend == codexBackend {
+		vars = append(vars, agentEnvPair{"CODEX_HOME", codexHomePath(agent.Name), false})
 	}
 
 	for _, conn := range agent.Config.Connections {

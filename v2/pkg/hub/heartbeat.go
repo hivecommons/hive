@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sync/atomic"
 	"time"
 )
 
@@ -16,6 +17,51 @@ const (
 	heartbeatTimeout = 10 * time.Second
 	staleThreshold   = 15 * time.Minute
 )
+
+// lastHeartbeatSuccessUnix holds the unix-seconds timestamp of the most
+// recent heartbeat the hub accepted (HTTP < 300 from either the regular
+// StartHeartbeat loop or SendUpgradingHeartbeat). It is process-global
+// because a hive runs at most one heartbeat loop, and it needs to be read
+// from the dashboard's HTTP handler goroutine (the liveness endpoint) while
+// being written from the heartbeat goroutine — hence atomic rather than a
+// mutex-guarded field, so the health handler never blocks on the sender.
+//
+// Zero means "no successful heartbeat yet" (process just started, or the
+// hive doesn't run a heartbeat loop at all). Callers distinguish those two
+// cases via HeartbeatEnabled, not via this timestamp alone.
+var lastHeartbeatSuccessUnix atomic.Int64
+
+// heartbeatLoopStarted records whether StartHeartbeat actually launched a
+// loop for this process (i.e. hubURL was non-empty). A hive with no hub
+// configured never sends heartbeats, so its liveness check must not gate on
+// heartbeat freshness at all — otherwise every hub-less hive would fail
+// liveness forever. Set once at startup; read from the HTTP handler.
+var heartbeatLoopStarted atomic.Bool
+
+func recordHeartbeatSuccess() {
+	lastHeartbeatSuccessUnix.Store(time.Now().Unix())
+}
+
+// LastHeartbeatSuccess returns the time of the last heartbeat the hub
+// accepted, and whether one has ever succeeded. A zero ok means either no
+// heartbeat has succeeded yet (e.g. still within startup grace, or the hub
+// has been down since boot) or this process never runs a heartbeat loop —
+// callers should check HeartbeatEnabled() to tell those apart.
+func LastHeartbeatSuccess() (t time.Time, ok bool) {
+	sec := lastHeartbeatSuccessUnix.Load()
+	if sec == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
+}
+
+// HeartbeatEnabled reports whether this process launched a hub heartbeat
+// loop (StartHeartbeat was called with a non-empty hubURL). Hives with no
+// hub configured never send heartbeats, so liveness checks must skip the
+// staleness gate entirely for them.
+func HeartbeatEnabled() bool {
+	return heartbeatLoopStarted.Load()
+}
 
 type AgentSummary struct {
 	Name  string `json:"name"`
@@ -142,6 +188,10 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		logger.Info("hub heartbeat disabled (no HIVE_HUB_URL)")
 		return
 	}
+	// Mark the loop as active before the first send so /api/livez can tell
+	// "hub-connected, awaiting first beat" (healthy during startup grace)
+	// apart from "no hub configured" (never gated on heartbeat freshness).
+	heartbeatLoopStarted.Store(true)
 	var onUpgrade UpgradeCallback
 	var onGitHubAppConfig GitHubAppConfigCallback
 	var onHubBanner HubBannerCallback
@@ -309,6 +359,11 @@ func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, 
 		return nil
 	}
 
+	// The hub accepted the beat (status < 300) — this is what /api/livez
+	// treats as "the heartbeat goroutine is alive and doing its job", so
+	// record it even if the response body below fails to decode.
+	recordHeartbeatSuccess()
+
 	var hbResp HeartbeatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&hbResp); err == nil {
 		if hbResp.HubGitHash != "" {
@@ -362,7 +417,13 @@ func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA st
 		logger.Debug("upgrading heartbeat failed", "error", err)
 		return
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	if resp.StatusCode < 300 {
+		// Counts as a successful beat for liveness purposes: the process is
+		// seconds from a self-initiated restart anyway, so this mainly keeps
+		// LastHeartbeatSuccess fresh in case the upgrade is aborted/delayed.
+		recordHeartbeatSuccess()
+	}
 	logger.Info("upgrading heartbeat sent to hub", "target", targetSHA)
 }
 

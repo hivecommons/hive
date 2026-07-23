@@ -17,6 +17,7 @@ import (
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/hub"
 )
 
 //go:embed static
@@ -43,6 +44,10 @@ type Server struct {
 	deps       *Dependencies
 	sidebar    interface{}
 	sidebarMu  sync.RWMutex
+
+	// startedAt marks process start, used by /api/livez to bound the
+	// startup-grace window before the first heartbeat has to have succeeded.
+	startedAt time.Time
 
 	agentPipelines map[string]map[string]bool
 	agentHooks     map[string]map[string][]any
@@ -379,6 +384,7 @@ func NewServer(port int, logger *slog.Logger) *Server {
 		cliModels:       newCLIModelCache(),
 		listenerReady:   make(chan struct{}),
 		listenerStopped: make(chan struct{}),
+		startedAt:       time.Now(),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -398,6 +404,7 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		cliModels:       newCLIModelCache(),
 		listenerReady:   make(chan struct{}),
 		listenerStopped: make(chan struct{}),
+		startedAt:       time.Now(),
 	}
 	s.registerCoreRoutes()
 	return s
@@ -476,6 +483,7 @@ func (s *Server) SetConfigSaveFunc(fn ConfigSaveFunc) {
 func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/health/deep", s.handleHealthDeep)
+	s.mux.HandleFunc("GET /api/livez", s.handleLivez)
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
@@ -1160,6 +1168,92 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]string{"status": "starting"})
 		return
 	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+const (
+	// heartbeatSendInterval mirrors the fixed 2-minute cadence StartHeartbeat
+	// is launched with in cmd/hive/main.go (see the comment there — it's
+	// deliberately independent of the governor eval interval so every hive,
+	// regardless of ACMM level, beats comfortably under the hub's 5-minute
+	// staleness window). Duplicated as a constant here rather than plumbed
+	// through from main.go because the value is a cross-package contract
+	// (hub-side staleness marking, spoke-side send cadence, and now this
+	// liveness threshold all need to agree on it) and hub.heartbeatSendInterval
+	// isn't exported. If that interval ever changes, update both.
+	heartbeatSendInterval = 2 * time.Minute
+
+	// livezHeartbeatStaleMax is how old the last successful heartbeat may be
+	// before /api/livez reports unhealthy. Set to 3x the send interval (6
+	// minutes): generous enough to absorb one or two transient hub-side
+	// failures (network blip, hub restart, rate limit) without flapping the
+	// pod, but tight enough that a genuinely dead heartbeat goroutine gets
+	// caught and the pod restarted well within a single human-observable
+	// "gray dot" investigation window.
+	livezHeartbeatStaleMax = 3 * heartbeatSendInterval
+
+	// livezStartupGrace bounds how long a freshly started process is treated
+	// as healthy before it has sent its first successful heartbeat. Covers
+	// waitForReady's own up-to-3-minute wait for the dashboard to come up
+	// plus one heartbeat send attempt and hub round trip. Without this, a
+	// pod would fail liveness during normal startup, before the heartbeat
+	// loop ever got a chance to succeed.
+	livezStartupGrace = 4 * time.Minute
+)
+
+// handleLivez is the liveness-only counterpart to /api/health. It includes
+// everything /api/health checks (the HTTP server itself is responsive) PLUS,
+// for hub-connected hives, a check that the heartbeat goroutine is actually
+// still beating. The heartbeat goroutine can silently die (panic recovered
+// upstream, deadlock, stuck HTTP call) while this HTTP server keeps serving
+// fine — that's the bug this endpoint exists to catch: before this endpoint
+// existed, /api/health stayed green in that case and kubelet had no reason
+// to ever restart the pod, so the hub kept showing the hive as offline
+// (gray dot) indefinitely even though the pod was 1/1 Running.
+//
+// Only the livenessProbe should point here. Readiness stays on /api/health:
+// a transient hub outage would otherwise pull a perfectly-serving pod out of
+// the Service's endpoints for no benefit (restarting won't fix a hub that's
+// down). Liveness failing here IS the intended remedy for a dead heartbeat
+// goroutine, since a restart revives it.
+func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
+	s.statusMu.RLock()
+	ready := s.ready
+	s.statusMu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if !ready {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "starting"})
+		return
+	}
+
+	// Hives with no hub configured never run a heartbeat loop at all, so
+	// there is nothing to go stale — never gate their liveness on this.
+	if hub.HeartbeatEnabled() {
+		lastSuccess, hasSucceededOnce := hub.LastHeartbeatSuccess()
+		switch {
+		case !hasSucceededOnce:
+			if age := time.Since(s.startedAt); age > livezStartupGrace {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				json.NewEncoder(w).Encode(map[string]string{
+					"status": "unhealthy",
+					"detail": "no successful heartbeat since startup",
+				})
+				return
+			}
+		case time.Since(lastSuccess) > livezHeartbeatStaleMax:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"status":            "unhealthy",
+				"detail":            "heartbeat stale",
+				"last_heartbeat_at": lastSuccess.UTC().Format(time.RFC3339),
+			})
+			return
+		}
+	}
+
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
