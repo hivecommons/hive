@@ -14929,8 +14929,15 @@ function burnAreaChart() {
         id: 'cadences',
         title: 'Tune cadences',
         auto: null,
-        body: 'Governor Config → <strong>Agents</strong>: per-mode kick intervals (idle / quiet / busy / surge), on-demand vs scheduled agents, and pausing. The intensity bar on the Governor panel shows the current mode.',
-        actions: [{ label: 'Show me', onclick: "welcomeShowConfigTab('Agents')" }]
+        body: 'Each agent’s ⚙️ config has a <strong>Cadences</strong> tab: per-mode kick intervals (idle / quiet / busy / surge), on-demand vs scheduled, and pausing. Set them per agent — the intensity bar on the Governor panel shows which mode is active right now.',
+        actions: [{ label: 'Show me', onclick: 'welcomeShowCadences()' }]
+      },
+      {
+        id: 'add-agent',
+        title: 'Add a custom agent',
+        auto: null,
+        body: 'The built-in agents are a starting point, not a limit. The <strong>+ agent</strong> control (in the agents bar) opens a create dialog where you name your own agent, pick its method and model, and give it a prompt template and cadences — or <strong>Import</strong> one from the community registry. Build a specialist for whatever your repo needs: a docs writer, a dependency bumper, a release-notes drafter.',
+        actions: [{ label: '+ Add an agent', onclick: 'welcomeAddAgent()' }]
       },
       {
         id: 'acmm',
@@ -15090,6 +15097,20 @@ function burnAreaChart() {
     function welcomeShowConfigTab(tab) {
       closeWelcomeDialog();
       openConfigDialog('governor', null, tab);
+    }
+    /** Open the per-agent config dialog on the Cadences tab for an available
+        agent — per-mode kick intervals are a per-agent setting, so this lands
+        the user where they actually edit them (not the Governor → Agents list). */
+    function welcomeShowCadences() {
+      closeWelcomeDialog();
+      const name = _welcomeFirstAgentName();
+      if (!name) { showToast('No agents yet — cadences are set from each agent’s ⚙️ config', 'info'); return; }
+      openConfigDialog('agent', name, 'Cadences');
+    }
+    /** Open the Create Agent dialog (config dialog in create mode). */
+    function welcomeAddAgent() {
+      closeWelcomeDialog();
+      openAddAgentDialog();
     }
     /** Open the ACMM maturity-level dialog. */
     function welcomeShowACMM() {
