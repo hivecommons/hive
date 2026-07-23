@@ -2048,6 +2048,58 @@
       .welcome-modal.welcome-genie, #welcome-overlay.welcome-genie-overlay { transition: none; }
       #welcome-topbar-btn.welcome-target-pulse { animation: none; }
     }
+
+    /* ── Getting-Started header banner: a bee buzzes to an SVG skep hive and
+       back. All selectors are .wb-* scoped so nothing leaks into the dialog.
+       Flight bounds are percentage-based so it adapts to the header width. ── */
+    .wb-stage{ position:relative; width:100%; height:64px; margin:2px 0 10px;
+      border-radius:10px; overflow:hidden;
+      background:linear-gradient(180deg, color-mix(in srgb, var(--amber) 6%, transparent), transparent 70%); }
+    .wb-stage::before{ content:""; position:absolute; inset:0; opacity:.06; pointer-events:none;
+      background-image:radial-gradient(circle at 50% 50%, transparent 0, transparent 8px, var(--amber) 8px, var(--amber) 9px, transparent 9px);
+      background-size:30px 26px; }
+    .wb-hive{ position:absolute; right:18px; top:50%;
+      filter:drop-shadow(0 3px 4px rgba(0,0,0,.4)); animation:wb-sway 3.4s ease-in-out infinite; transform-origin:50% 3px; }
+    .wb-hive .wb-coils rect{ fill:#e0a52a; stroke:#b9791f; stroke-width:1.1; }
+    .wb-hive .wb-coils rect:nth-child(even){ fill:#f0b429; }
+    @keyframes wb-sway{ 0%,100%{ transform:translateY(-50%) rotate(-3deg); } 50%{ transform:translateY(-50%) rotate(3deg); } }
+    /* full-width so translateX(100%) in wb-fly spans the STAGE, not the bee's
+       own box; the bee sits at this element's left edge and is moved across. */
+    .wb-flyer{ position:absolute; top:50%; left:0; width:100%; will-change:transform; animation:wb-fly 9s ease-in-out infinite; }
+    .wb-facing{ display:inline-block; animation:wb-bank 9s ease-in-out infinite; }
+    .wb-bob{ display:inline-block; animation:wb-bob 1.9s ease-in-out infinite; }
+    .wb-bee{ display:inline-block; font-size:26px; line-height:1; filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));
+      animation:wb-flutter .09s ease-in-out infinite alternate; transform-origin:50% 65%; }
+    /* left edge = a little in; right edge = just short of the hive */
+    @keyframes wb-fly{
+      0%,6%    { transform:translateX(14px); }
+      46%,54%  { transform:translateX(calc(100% - 72px)); }
+      94%,100% { transform:translateX(14px); }
+    }
+    @keyframes wb-bob{ 0%,100%{ transform:translateY(-8px); } 50%{ transform:translateY(8px); } }
+    @keyframes wb-flutter{ 0%{ transform:rotate(-5deg) scaleY(1); } 100%{ transform:rotate(5deg) scaleY(.94); } }
+    /* 🐝 faces left by default; one edge-on pivot per end (seam-safe) */
+    @keyframes wb-bank{
+      0%      { transform:scaleX(0); }
+      6%,46%  { transform:scaleX(-1); }
+      50%     { transform:scaleX(0); }
+      54%,94% { transform:scaleX(1); }
+      100%    { transform:scaleX(0); }
+    }
+    .wb-trail{ position:absolute; top:0; left:0; pointer-events:none;
+      animation:wb-bob 1.9s ease-in-out infinite; animation-delay:-0.22s; }
+    .wb-trail i{ position:absolute; top:10px; width:4px; height:2px; border-radius:2px; background:var(--amber);
+      opacity:0; animation:wb-puff 1.9s ease-out infinite; }
+    /* trail sits behind the bee's tail (positive offset = right = rear when unflipped) */
+    .wb-trail i:nth-child(1){ left:32px; animation-delay:0s; }
+    .wb-trail i:nth-child(2){ left:40px; animation-delay:.18s; }
+    .wb-trail i:nth-child(3){ left:48px; animation-delay:.36s; }
+    @keyframes wb-puff{ 0%{ opacity:.4; transform:translateY(0) scale(1);} 100%{ opacity:0; transform:translateY(5px) scale(.4);} }
+    @media (prefers-reduced-motion: reduce){
+      .wb-flyer,.wb-facing,.wb-bob,.wb-bee,.wb-trail,.wb-trail i,.wb-hive{ animation:none !important; }
+      .wb-flyer{ transform:translateX(calc(50% - 30px)); }
+      .wb-hive{ transform:translateY(-50%); }
+    }
   </style>
 </head>
 <body>
@@ -2211,6 +2263,24 @@
     <div class="config-header">
       <h2 class="config-title">🐝 Getting Started<span id="welcome-progress" class="welcome-progress"></span></h2>
       <button class="config-close" onclick="closeWelcomeDialog()">&times;</button>
+    </div>
+    <div class="wb-stage" aria-hidden="true">
+      <svg class="wb-hive" viewBox="0 0 80 92" width="42" height="48">
+        <path d="M40 2 v8" stroke="#8a5a30" stroke-width="3" fill="none"/>
+        <g class="wb-coils">
+          <rect x="30" y="10" width="20" height="9"  rx="4.5"/>
+          <rect x="24" y="18" width="32" height="10" rx="5"/>
+          <rect x="18" y="27" width="44" height="11" rx="5.5"/>
+          <rect x="13" y="37" width="54" height="12" rx="6"/>
+          <rect x="11" y="48" width="58" height="12" rx="6"/>
+          <rect x="13" y="59" width="54" height="12" rx="6"/>
+          <rect x="18" y="70" width="44" height="11" rx="5.5"/>
+          <rect x="26" y="80" width="28" height="10" rx="5"/>
+        </g>
+        <ellipse cx="40" cy="64" rx="7.5" ry="9" fill="#2a1a06"/>
+        <ellipse cx="40" cy="62" rx="7.5" ry="7" fill="#120c04"/>
+      </svg>
+      <div class="wb-flyer"><div class="wb-facing"><div class="wb-trail"><i></i><i></i><i></i></div><div class="wb-bob"><span class="wb-bee">&#x1F41D;</span></div></div></div>
     </div>
     <div class="config-body welcome-body" id="welcome-body"></div>
     <div class="config-footer welcome-footer">
