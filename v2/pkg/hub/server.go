@@ -388,7 +388,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return count
 		}(),
 		GovernorMode:       sanitizeHeartbeatField(payload.Governor.Mode),
-		TotalTokens24h:     clampInt64(payload.Tokens24h, 0, 100_000_000),
+		TotalTokens24h:     clampInt64(payload.Tokens24h, 0, 100_000_000_000),
 		ActionableIssues:   clampInt(payload.Governor.Issues, 0, 10_000),
 		ActionablePRs:      clampInt(payload.Governor.PRs, 0, 10_000),
 		ContributorCount:   clampInt(payload.Contributors.Registered, 0, 10_000),
