@@ -77,6 +77,29 @@ const (
 // multi-cluster support.
 const defaultClusterID = "hive-oke"
 
+// gpuClusterID is the cluster ID of the GPU pool. It is heartbeat-only: the
+// hub cannot reach it over kubectl, so all config for its hives (access lists,
+// GitHub App creds, claimed project config) is delivered via the heartbeat
+// response rather than pushed.
+const gpuClusterID = "vllm-d"
+
+// Placeholder-hive lifecycle status values. A pre-provisioned placeholder sits
+// at statusAvailable until an admin assigns it to a requesting user, at which
+// point its status is cleared (empty) and it behaves like any owned hive.
+const (
+	// statusAvailable marks a pre-provisioned placeholder hive that is idle and
+	// waiting to be claimed. Only such a hive may be assigned.
+	statusAvailable = "available"
+)
+
+// ACMM level bounds for a claimed/assigned hive. The maturity model spans
+// levels 0-6; a placeholder assignment defaults to level 2 when unspecified.
+const (
+	minAssignACMMLevel     = 0
+	maxAssignACMMLevel     = 6
+	defaultAssignACMMLevel = 2
+)
+
 // clustersConfigPath is the on-disk location where the hub reads cluster
 // definitions. It is a JSON array of ClusterConfig objects.
 const clustersConfigPath = "/data/saas/clusters.json"

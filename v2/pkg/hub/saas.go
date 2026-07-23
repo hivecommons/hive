@@ -138,6 +138,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
 	s.mux.HandleFunc("DELETE /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminDeleteUser))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/assign", s.requireAuth(s.handleAssignHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
 	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAuth(s.handleListClusters))
@@ -3753,27 +3754,83 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Increment user quota so they can have a hive provisioned
+	// Approving now ASSIGNS an available placeholder instead of just bumping
+	// quota for a manual provision. Pick the pool from the request's auth_method
+	// (private → vllm-d/GPU pool, otherwise → hive-oke/public pool). If no
+	// placeholder is available in that pool, tell the admin to provision more.
+	pool := poolClusterForAuthMethod(pr.AuthMethod)
+	hiveID := findAvailablePlaceholder(pool)
+	if hiveID == "" {
+		http.Error(w, fmt.Sprintf(`{"error":"no available placeholder hive in pool %q — provision more placeholders"}`, pool), http.StatusConflict)
+		return
+	}
+
+	h := loadSaaSHive(hiveID)
+	if h == nil || h.Status != statusAvailable {
+		// Raced with another assignment between selection and load.
+		http.Error(w, `{"error":"selected placeholder became unavailable — retry"}`, http.StatusConflict)
+		return
+	}
+
+	// Reuse the request's org/repos/primary_repo/acmm as the assignment inputs.
+	var repos []string
+	for _, repo := range strings.Split(pr.Repos, ",") {
+		if repo = strings.TrimSpace(repo); repo != "" {
+			repos = append(repos, repo)
+		}
+	}
+	primaryRepo := pr.PrimaryRepo
+	if primaryRepo == "" && len(repos) > 0 {
+		primaryRepo = repos[0]
+	}
+	acmm := pr.ACMMLevel
+	if acmm == 0 {
+		acmm = defaultAssignACMMLevel
+	}
+	if acmm < minAssignACMMLevel || acmm > maxAssignACMMLevel {
+		acmm = defaultAssignACMMLevel
+	}
+
+	// Rewrite the placeholder's meta.json to the requesting user's real project.
+	// Clearing status makes it show under the new owner in My Hives; the project
+	// config reaches the spoke via the heartbeat channel (projectConfigForHiveID).
+	h.Owner = targetUsername
+	h.Org = pr.Org
+	h.Repos = repos
+	h.PrimaryRepo = primaryRepo
+	h.ACMMLevel = acmm
+	h.Status = ""
+	h.Error = ""
+	if err := saveSaaSHive(h); err != nil {
+		http.Error(w, `{"error":"failed to assign placeholder hive"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Ensure the user record exists and count this owned hive against a quota.
 	user := loadSaaSUser(targetUsername)
 	if user == nil {
 		user = ensureSaaSUser(targetUsername)
 	}
 	user.SaaSQuota++
 	if err := saveSaaSUser(user); err != nil {
-		http.Error(w, `{"error":"failed to update user quota"}`, http.StatusInternalServerError)
-		return
+		s.logger.Warn("assigned placeholder but failed to update user quota", "user", targetUsername, "error", err)
 	}
 
-	// Mark the request as approved — admin provisions separately via "+ Add Hosted Hive"
+	// Mark the request fulfilled.
 	pr.Status = provisionStatusApproved
 	if err := saveProvisionRequest(pr); err != nil {
-		http.Error(w, `{"error":"failed to update provision request"}`, http.StatusInternalServerError)
-		return
+		s.logger.Warn("assigned placeholder but failed to update provision request", "user", targetUsername, "error", err)
 	}
 
-	s.logger.Info("audit: provision request approved", "target", targetUsername, "by", approver, "org", pr.Org, "repos", pr.Repos)
+	s.logger.Info("audit: provision request approved via placeholder assignment",
+		"target", targetUsername, "by", approver, "org", pr.Org, "repos", pr.Repos,
+		"hive_id", hiveID, "cluster", clusterIDForHive(h))
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": provisionStatusApproved})
+	json.NewEncoder(w).Encode(map[string]any{
+		"ok":      true,
+		"status":  provisionStatusApproved,
+		"hive_id": hiveID,
+	})
 }
 
 func (s *HubServer) handleDenyProvision(w http.ResponseWriter, r *http.Request) {
@@ -3791,6 +3848,278 @@ func (s *HubServer) handleDenyProvision(w http.ResponseWriter, r *http.Request) 
 	s.logger.Info("audit: provision request denied", "target", targetUsername, "by", denier)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// authMethodPrivate is the request auth_method value that routes a provision
+// request to the private/GPU placeholder pool (vllm-d). Any other value (the
+// default) routes to the public pool (hive-oke).
+const authMethodPrivate = "private"
+
+// poolClusterForAuthMethod maps a provision request's auth_method to the
+// placeholder pool it should draw from: private methods → the GPU pool
+// (vllm-d, heartbeat-only); everything else → the public pool (hive-oke).
+func poolClusterForAuthMethod(authMethod string) string {
+	if strings.EqualFold(authMethod, authMethodPrivate) || strings.EqualFold(authMethod, gpuClusterID) {
+		return gpuClusterID
+	}
+	return defaultClusterID
+}
+
+// clusterIDForHive returns the effective cluster ID of a SaaS hive, treating an
+// empty cluster_id as the default (hive-oke) — matching clusterForHive's own
+// fallback so pool matching agrees with cluster resolution.
+func clusterIDForHive(h *SaaSHive) string {
+	if h.ClusterID == "" {
+		return defaultClusterID
+	}
+	return h.ClusterID
+}
+
+// findAvailablePlaceholder returns the ID of an available placeholder hive in
+// the given pool (cluster), or "" if none exists. A placeholder is a SaaS hive
+// owned by the hub admin, sitting at statusAvailable, on the target cluster.
+func findAvailablePlaceholder(clusterID string) string {
+	for _, h := range listSaaSHives() {
+		if h.Status != statusAvailable {
+			continue
+		}
+		if h.Owner != hubAdminUsername {
+			continue
+		}
+		if clusterIDForHive(&h) != clusterID {
+			continue
+		}
+		return h.ID
+	}
+	return ""
+}
+
+// projectConfigForHiveID returns the claimed project's real org/repos/ACMM for
+// delivery to the spoke in its heartbeat response, or nil when no reconcile is
+// needed. It mirrors authorizedUsersForHiveID: nil when the hive has no SaaS
+// record, is still an unclaimed placeholder (statusAvailable), or the spoke
+// already reports the recorded project. The spoke's currently-reported values
+// (curOrg/curRepos/curPrimary/curACMM) let the hub stop sending once matched.
+func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int) *HeartbeatProjectConfig {
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		return nil
+	}
+	// This reconcile exists ONLY to push a freshly-CLAIMED placeholder's project
+	// down to its spoke. It must NEVER touch a pre-existing hive, whose meta.json
+	// predates the claim feature and carries stale/empty fields (empty
+	// primary_repo, acmm_level: 0) even though the spoke runs a real project at a
+	// real ACMM. Reconciling from that stale record silently wiped org/repos and
+	// DOWNGRADED live hives to L0. So we only reconcile a record that looks like a
+	// genuine claim — a complete project (org + repos + primary_repo) AND a real
+	// non-zero ACMM — and even then we never send a value that would blank/lower
+	// what the spoke already has.
+	if h.Status == statusAvailable { // still an unclaimed placeholder
+		return nil
+	}
+	primary := h.PrimaryRepo
+	if primary == "" && len(h.Repos) > 0 {
+		primary = h.Repos[0]
+	}
+	claimComplete := h.Org != "" && len(h.Repos) > 0 && primary != "" && h.ACMMLevel > 0
+	if !claimComplete {
+		// Incomplete/stale record (a pre-claim hive) — leave the spoke alone.
+		return nil
+	}
+	// Already matching — stop sending (mirrors AuthorizedUsers "leave alone"
+	// semantics once the spoke has caught up).
+	if strings.EqualFold(curOrg, h.Org) &&
+		sameStringSliceFold(curRepos, h.Repos) &&
+		strings.EqualFold(curPrimary, primary) &&
+		curACMM == h.ACMMLevel {
+		return nil
+	}
+	return &HeartbeatProjectConfig{
+		Org:         h.Org,
+		Repos:       h.Repos,
+		PrimaryRepo: primary,
+		ACMMLevel:   h.ACMMLevel,
+	}
+}
+
+// sameStringSliceFold reports whether two string slices contain the same
+// entries in the same order, case-insensitively (org/repo names are compared
+// case-insensitively throughout the hub).
+func sameStringSliceFold(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !strings.EqualFold(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// AssignHiveRequest is the body of POST /api/saas/hives/{id}/assign. It carries
+// the real project the placeholder is being claimed for, plus optional GitHub
+// App credentials to deliver to the spoke via the heartbeat channel.
+type AssignHiveRequest struct {
+	Owner         string `json:"owner"`
+	Org           string `json:"org"`
+	Repos         string `json:"repos"`
+	PrimaryRepo   string `json:"primary_repo"`
+	ProjectName   string `json:"project_name"`
+	ACMMLevel     int    `json:"acmm_level"`
+	IsPublic      bool   `json:"is_public"`
+	AppID         string `json:"app_id"`
+	InstallationID string `json:"installation_id"`
+	AppPrivateKey string `json:"app_private_key"`
+}
+
+// handleAssignHive assigns an available placeholder hive to a real owner/project
+// (admin-only). It rewrites the hive's meta.json to the real project and clears
+// its "available" status, then delivers the new project config — and any GitHub
+// App creds — to the spoke via the heartbeat response. This works uniformly for
+// both reachable (hive-oke) and heartbeat-only (vllm-d) clusters: NO hub→spoke
+// push or kubectl is used, so a vllm-d claim is delivered entirely by heartbeat.
+func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
+	if s.getAuthUser(r) != hubAdminUsername {
+		http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
+		return
+	}
+	hiveID := r.PathValue("id")
+
+	// A GitHub App private key PEM can be a few KB, so allow more headroom than
+	// the provision-request body limit.
+	const maxAssignRequestBodyBytes = 16 * 1024
+	r.Body = http.MaxBytesReader(w, r.Body, maxAssignRequestBodyBytes)
+	var body AssignHiveRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	if h.Status != statusAvailable {
+		http.Error(w, `{"error":"hive is not an available placeholder"}`, http.StatusConflict)
+		return
+	}
+
+	// Validate the claimed project inputs (reuse the shared validators).
+	if body.Owner == "" || !isValidName(body.Owner) {
+		http.Error(w, `{"error":"invalid owner"}`, http.StatusBadRequest)
+		return
+	}
+	if body.Org == "" || !isValidName(body.Org) {
+		http.Error(w, `{"error":"invalid org name"}`, http.StatusBadRequest)
+		return
+	}
+	if body.Repos == "" {
+		http.Error(w, `{"error":"repos are required"}`, http.StatusBadRequest)
+		return
+	}
+	var repos []string
+	for _, repo := range strings.Split(body.Repos, ",") {
+		repo = strings.TrimSpace(repo)
+		if repo == "" {
+			continue
+		}
+		if !isValidRepoRef(repo) {
+			http.Error(w, `{"error":"invalid repo name"}`, http.StatusBadRequest)
+			return
+		}
+		repos = append(repos, repo)
+	}
+	if len(repos) == 0 {
+		http.Error(w, `{"error":"repos are required"}`, http.StatusBadRequest)
+		return
+	}
+	primaryRepo := strings.TrimSpace(body.PrimaryRepo)
+	if primaryRepo == "" {
+		primaryRepo = repos[0]
+	} else if !isValidRepoRef(primaryRepo) {
+		http.Error(w, `{"error":"invalid primary repo"}`, http.StatusBadRequest)
+		return
+	}
+
+	acmm := body.ACMMLevel
+	if acmm == 0 {
+		acmm = defaultAssignACMMLevel
+	}
+	if acmm < minAssignACMMLevel || acmm > maxAssignACMMLevel {
+		http.Error(w, `{"error":"acmm_level must be between 0 and 6"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Rewrite the placeholder's meta.json to the real project. Clearing status
+	// (and any stale error) alone makes it show under the new owner in My Hives.
+	h.Owner = body.Owner
+	h.Org = body.Org
+	h.Repos = repos
+	h.PrimaryRepo = primaryRepo
+	if body.ProjectName != "" {
+		h.ProjectName = body.ProjectName
+	}
+	h.ACMMLevel = acmm
+	h.IsPublic = body.IsPublic
+	h.Status = ""
+	h.Error = ""
+	if err := saveSaaSHive(h); err != nil {
+		http.Error(w, `{"error":"failed to save hive assignment"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Deliver GitHub App creds (if supplied) via the SAME heartbeat channel the
+	// webhook path uses — storePendingGitHubAppConfig queues them for the next
+	// heartbeat response (consumePendingGitHubAppConfig in handleHeartbeat). We
+	// deliberately do NOT call pushGitHubConfigToSpoke here: it requires a
+	// reachable dashboardURL and would fail for vllm-d. The heartbeat path
+	// covers both clusters uniformly.
+	appDelivered := false
+	if body.AppID != "" && body.InstallationID != "" && strings.TrimSpace(body.AppPrivateKey) != "" {
+		appID, err1 := strconv.ParseInt(strings.TrimSpace(body.AppID), 10, 64)
+		installID, err2 := strconv.ParseInt(strings.TrimSpace(body.InstallationID), 10, 64)
+		if err1 != nil || err2 != nil {
+			http.Error(w, `{"error":"app_id and installation_id must be numeric"}`, http.StatusBadRequest)
+			return
+		}
+		if !strings.HasPrefix(strings.TrimSpace(body.AppPrivateKey), "-----BEGIN") {
+			http.Error(w, `{"error":"app_private_key must be a PEM private key"}`, http.StatusBadRequest)
+			return
+		}
+		s.storePendingGitHubAppConfig(hiveID, &HeartbeatGitHubAppConfig{
+			AppID:          appID,
+			InstallationID: installID,
+			PrivateKey:     strings.TrimSpace(body.AppPrivateKey),
+		})
+		appDelivered = true
+	}
+
+	// The project config itself is delivered by handleHeartbeat via
+	// projectConfigForHiveID on the next beat — it keeps sending until the spoke
+	// reports the matching project. No hub→spoke push or kubectl is needed, so
+	// this works for the heartbeat-only vllm-d pool as well as hive-oke.
+
+	s.logger.Info("audit: placeholder hive assigned",
+		"hive_id", hiveID,
+		"owner", h.Owner,
+		"org", h.Org,
+		"primary_repo", h.PrimaryRepo,
+		"acmm_level", h.ACMMLevel,
+		"cluster", clusterIDForHive(h),
+		"app_creds_delivered", appDelivered,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":       "assigned",
+		"id":           hiveID,
+		"owner":        h.Owner,
+		"org":          h.Org,
+		"primary_repo": h.PrimaryRepo,
+		"acmm_level":   h.ACMMLevel,
+	})
 }
 
 func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
@@ -5266,12 +5595,15 @@ const dashboardHTML = `<!DOCTYPE html>
 
     async function approveProvision(username, btn) {
       btn.disabled = true;
-      btn.textContent = 'Approving...';
+      btn.textContent = 'Assigning...';
       try {
+        // Approving assigns an available placeholder hive from the correct pool
+        // (public request -> hive-oke, private -> vllm-d) and marks the request
+        // fulfilled. The assigned hive id comes back in the response.
         var resp = await fetch('/api/saas/approve-provision/' + encodeURIComponent(username), {method: 'PUT'});
         var data = await resp.json();
-        if (!resp.ok) { hiveToast(data.error || 'Approve failed', 'error'); btn.disabled = false; btn.textContent = 'Approve'; return; }
-        hiveToast('Provision approved for ' + username, 'success');
+        if (!resp.ok) { hiveToast(data.error || 'Assign failed', 'error'); btn.disabled = false; btn.textContent = 'Approve'; return; }
+        hiveToast('Assigned ' + (data.hive_id || 'a hive') + ' to ' + username, 'success');
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Approve'; }
     }

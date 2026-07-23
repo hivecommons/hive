@@ -1898,6 +1898,49 @@ func main() {
 					"was", len(cfg.Dashboard.AuthorizedUsers), "now", len(users))
 				cfg.Dashboard.AuthorizedUsers = users
 			}
+		}), hub.ProjectConfigCallback(func(pc *hub.HeartbeatProjectConfig) {
+			// The hub assigned this (previously placeholder) hive a real project.
+			// Reconcile our running project config so agents work the claimed
+			// org/repos at the claimed maturity level. This is the ONLY delivery
+			// channel on heartbeat-only clusters (vllm-d) — no kubectl push is
+			// possible. The hub keeps sending this every beat until we report the
+			// matching project back, so an idempotent no-op when already matched
+			// is expected and cheap.
+			if pc == nil || pc.Org == "" {
+				return
+			}
+			curACMM := 0
+			if cfg.ACMMLevel != nil {
+				curACMM = *cfg.ACMMLevel
+			}
+			if cfg.Project.Org == pc.Org &&
+				sameStringSlice(cfg.Project.Repos, pc.Repos) &&
+				cfg.Project.PrimaryRepo == pc.PrimaryRepo &&
+				curACMM == pc.ACMMLevel {
+				return // already reconciled
+			}
+			logger.Info("project config updated from hub heartbeat (placeholder claimed)",
+				"was_org", cfg.Project.Org, "now_org", pc.Org,
+				"repos", pc.Repos, "primary_repo", pc.PrimaryRepo,
+				"acmm_level", pc.ACMMLevel)
+			cfg.Project.Org = pc.Org
+			cfg.Project.Repos = pc.Repos
+			cfg.Project.PrimaryRepo = pc.PrimaryRepo
+			level := pc.ACMMLevel
+			cfg.ACMMLevel = &level
+
+			// Re-sync the GitHub clients that cache the repo list (mirrors the
+			// config-watcher reload path).
+			ghClient.SetRepos(cfg.Project.Repos)
+			if uc := userGHClient.Load(); uc != nil {
+				uc.SetRepos(cfg.Project.Repos)
+			}
+
+			// Persist to the PVC overlay so the claim survives a pod restart
+			// (config save writes the overlay hive.yaml, same as level switches).
+			if err := cfg.Save(); err != nil {
+				logger.Error("failed to save claimed project config", "error", err)
+			}
 		}))
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {
