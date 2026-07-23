@@ -596,6 +596,9 @@ func TestSaveWritesDashboardOverlayInK8sMode(t *testing.T) {
 	if !strings.Contains(content, "testorg") {
 		t.Error("overlay missing project org")
 	}
+	if _, err := os.Stat(DashboardOverlayFile + ".tmp"); !os.IsNotExist(err) {
+		t.Fatalf("temporary overlay should be removed after atomic rename (stat err: %v)", err)
+	}
 	// The live config is untouched by the scrub.
 	if cfg.GitHub.Token != "ghp_secrettoken12345" {
 		t.Errorf("Save mutated the live config token: %q", cfg.GitHub.Token)

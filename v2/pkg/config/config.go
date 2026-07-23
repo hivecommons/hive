@@ -2368,7 +2368,7 @@ func (c *Config) savePersistenceBytes(data []byte) error {
 		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupFile)
 	}
 
-	c.saveDashboardOverlay()
+	c.saveDashboardOverlay(data)
 	return nil
 }
 
@@ -2400,26 +2400,6 @@ func IsKubernetesPod() bool {
 	return err == nil
 }
 
-// dashboardOverlayBytes marshals a secret-free copy of the config for the PVC
-// overlay: env-substituted secrets are re-templated / cleared so the persisted
-// overlay never contains real credentials.
-func (c *Config) dashboardOverlayBytes() ([]byte, error) {
-	// Shallow copy: top-level fields are struct values, so mutating the
-	// copy's GitHub/Dashboard sections leaves the live config untouched
-	// (the shared Agents map is not modified).
-	cp := *c
-	if tok := os.Getenv("HIVE_GITHUB_TOKEN"); tok != "" && cp.GitHub.Token == tok {
-		cp.GitHub.Token = "${HIVE_GITHUB_TOKEN}"
-	}
-	for _, env := range []string{"DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN"} {
-		if v := os.Getenv(env); v != "" && cp.Dashboard.AuthToken == v {
-			cp.Dashboard.AuthToken = ""
-			break
-		}
-	}
-	return yaml.Marshal(&cp)
-}
-
 // saveDashboardOverlay writes the secret-free PVC overlay in Kubernetes
 // mode. Failures are logged, never fatal: the primary save already
 // succeeded, the overlay only affects persistence across pod restarts.
@@ -2438,16 +2418,11 @@ func (c *Config) dashboardOverlayBytes() ([]byte, error) {
 // would pass the guard and revert a dashboard-installed GitHub App to the
 // placeholder ConfigMap seed on the next restart — exactly the durability bug
 // this atomic write prevents.
-func (c *Config) saveDashboardOverlay() {
+func (c *Config) saveDashboardOverlay(data []byte) {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: /data/hive.yaml.bak is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
-		return
-	}
-	data, err := c.dashboardOverlayBytes()
-	if err != nil {
-		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
 		return
 	}
 	tmpPath := DashboardOverlayFile + ".tmp"
