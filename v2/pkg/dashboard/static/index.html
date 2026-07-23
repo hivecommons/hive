@@ -2059,17 +2059,17 @@
       background-image:radial-gradient(circle at 50% 50%, transparent 0, transparent 8px, var(--amber) 8px, var(--amber) 9px, transparent 9px);
       background-size:30px 26px; }
     .wb-hive{ position:absolute; right:18px; top:50%;
-      filter:drop-shadow(0 3px 4px rgba(0,0,0,.4)); animation:wb-sway 3.4s ease-in-out infinite; transform-origin:50% 3px; }
+      filter:drop-shadow(0 3px 4px rgba(0,0,0,.4)); animation:wb-sway 6s ease-in-out infinite; transform-origin:50% 3px; }
     .wb-hive .wb-coils rect{ fill:#e0a52a; stroke:#b9791f; stroke-width:1.1; }
     .wb-hive .wb-coils rect:nth-child(even){ fill:#f0b429; }
     @keyframes wb-sway{ 0%,100%{ transform:translateY(-50%) rotate(-3deg); } 50%{ transform:translateY(-50%) rotate(3deg); } }
     /* full-width so translateX(100%) in wb-fly spans the STAGE, not the bee's
        own box; the bee sits at this element's left edge and is moved across. */
-    .wb-flyer{ position:absolute; top:50%; left:0; width:100%; will-change:transform; animation:wb-fly 9s ease-in-out infinite; }
-    .wb-facing{ display:inline-block; animation:wb-bank 9s ease-in-out infinite; }
-    .wb-bob{ display:inline-block; animation:wb-bob 1.9s ease-in-out infinite; }
+    .wb-flyer{ position:absolute; top:50%; left:0; width:100%; will-change:transform; animation:wb-fly 20s ease-in-out infinite; }
+    .wb-facing{ display:inline-block; animation:wb-bank 20s ease-in-out infinite; }
+    .wb-bob{ display:inline-block; animation:wb-bob 3.6s ease-in-out infinite; }
     .wb-bee{ display:inline-block; font-size:26px; line-height:1; filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));
-      animation:wb-flutter .09s ease-in-out infinite alternate; transform-origin:50% 65%; }
+      animation:wb-flutter .13s ease-in-out infinite alternate; transform-origin:50% 65%; }
     /* left edge = a little in; right edge = just short of the hive */
     @keyframes wb-fly{
       0%,6%    { transform:translateX(14px); }
@@ -2087,9 +2087,9 @@
       100%    { transform:scaleX(0); }
     }
     .wb-trail{ position:absolute; top:0; left:0; pointer-events:none;
-      animation:wb-bob 1.9s ease-in-out infinite; animation-delay:-0.22s; }
+      animation:wb-bob 3.6s ease-in-out infinite; animation-delay:-0.22s; }
     .wb-trail i{ position:absolute; top:10px; width:4px; height:2px; border-radius:2px; background:var(--amber);
-      opacity:0; animation:wb-puff 1.9s ease-out infinite; }
+      opacity:0; animation:wb-puff 3.6s ease-out infinite; }
     /* trail sits behind the bee's tail (positive offset = right = rear when unflipped) */
     .wb-trail i:nth-child(1){ left:32px; animation-delay:0s; }
     .wb-trail i:nth-child(2){ left:40px; animation-delay:.18s; }
