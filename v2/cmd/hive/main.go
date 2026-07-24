@@ -2299,12 +2299,26 @@ func runEvalCycle(
 			md := advisory.FormatDigestMarkdown(digest, org, repoName)
 			if md != "" {
 				if issueNum, ok := advisoryIssues[primaryRepo]; ok && issueNum > 0 {
-					postClient := ghClient
-					if uc := userGHClient.Load(); uc != nil {
-						postClient = uc
-					}
-					if err := postClient.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); err != nil {
-						logger.Warn("failed to post advisory digest", "repo", primaryRepo, "issue", issueNum, "error", err)
+					// Prefer the App client as the PRIMARY poster. The App
+					// authored the advisory-digest comment and always holds
+					// issues:write, so it is the correct identity to edit it.
+					// The App banner must be driven ONLY by the App's own
+					// error — never by a user-token failure. Otherwise a
+					// user-token problem (kellyaa: expired token → 401;
+					// kalantar: valid token but not repo-admin → 403 editing
+					// the bot's own comment) would false-flag the App as "Not
+					// Installed" even though the App itself works fine.
+					if err := ghClient.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); err != nil {
+						// App failed. Try the user client as a FALLBACK ONLY so
+						// the digest still gets posted. A user-fallback success
+						// does NOT clear the App banner — the App error below is
+						// what decides the banner state.
+						if uc := userGHClient.Load(); uc != nil {
+							if uerr := uc.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); uerr == nil {
+								logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "user-fallback")
+							}
+						}
+						logger.Warn("failed to post advisory digest via app", "repo", primaryRepo, "issue", issueNum, "error", err)
 						if strings.Contains(err.Error(), "403") && strings.Contains(err.Error(), "Resource not accessible by integration") {
 							// App is installed (we found the issue) but can't write.
 							// Resolve the actual cause — pending permission approval
@@ -2323,7 +2337,7 @@ func runEvalCycle(
 							dashSrv.SetGitHubAppRequired(true)
 						}
 					} else {
-						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount)
+						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
 						// A successful write proves the app is installed AND has
 						// write access — clear BOTH the perm issue and the
 						// app-required banner flag. Previously only the perm
