@@ -15,6 +15,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/hub"
+	"github.com/kubestellar/hive/v2/pkg/openrouter"
 )
 
 //go:embed static
@@ -84,6 +85,12 @@ type Server struct {
 	claudeOAuthFlow claudeOAuthFlow
 
 	copilotAuthFlow copilotAuthFlow
+
+	// openRouterStateStore holds in-progress OpenRouter "scan-to-fund" PKCE
+	// flows (single-use state → verifier/hive/model). Lazily initialized via
+	// openRouterState() so the zero-value Server needs no constructor change.
+	openRouterStateOnce  sync.Once
+	openRouterStateStore *openrouter.StateStore
 
 	audit *AuditLog
 
@@ -649,6 +656,12 @@ func isPublicPath(path string) bool {
 	case strings.HasPrefix(path, "/api/leaderboard"):
 		return true
 	case strings.HasPrefix(path, "/api/gh-user-auth/"):
+		return true
+	case path == openRouterCallbackPath:
+		// OpenRouter OAuth PKCE return: the sponsor's browser comes back with no
+		// session, so the path must be public. The single-use state token in the
+		// query IS the credential — the handler verifies it (unknown/expired/
+		// replayed states are rejected) before storing anything.
 		return true
 	case path == "/sso":
 		// SSO handoff exchange: the caller has no session yet, the signed hub

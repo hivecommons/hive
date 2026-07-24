@@ -1871,6 +1871,19 @@ func main() {
 			if err := cfg.Save(); err != nil {
 				logger.Error("failed to save claimed project config", "error", err)
 			}
+		}), hub.GatewayConfigCallback(func(gw *hub.HeartbeatGatewayConfig) {
+			// The hub funded an OpenRouter gateway on this hive's behalf (scan-to-
+			// fund from My Hives) and delivered it over the heartbeat channel — the
+			// only path that reaches a firewalled/heartbeat-only spoke (vllm-d). We
+			// store the key in our OWN per-gateway secret-file store and create the
+			// "openrouter" gateway. The hub drains the delivery after sending, so
+			// this fires once per fund; the key value is never logged.
+			if gw == nil || gw.Key == "" {
+				return
+			}
+			if err := dashSrv.ApplyDeliveredGateway(gw.Name, gw.Kind, gw.Endpoint, gw.DefaultModel, gw.Key); err != nil {
+				logger.Error("failed to apply hub-delivered gateway", "gateway", gw.Name, "error", err)
+			}
 		}))
 
 		go hub.StartTaskStatusPush(ctx, hubURL, func() *hub.TaskStatusPayload {

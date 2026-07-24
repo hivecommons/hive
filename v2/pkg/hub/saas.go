@@ -5338,6 +5338,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
         if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\')" style="' + mi + '">Permissions</div>');
+        if (h.role === 'owner' || h.role === 'read-write' || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
         if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
@@ -6154,6 +6155,22 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) { /* cluster dropdown stays at default */ }
     }
 
+    // OpenRouter scan-to-fund return: toast the result and clear the query flag
+    // so a reload doesn't re-toast.
+    function handleOpenRouterReturn() {
+      try {
+        var p = new URLSearchParams(window.location.search);
+        var or = p.get('openrouter');
+        if (or === 'connected') hiveToast('OpenRouter funded — the key is being delivered to the hive', 'success');
+        else if (or === 'error') hiveToast('OpenRouter funding failed — please try again', 'error');
+        if (or) {
+          p.delete('openrouter');
+          var qs = p.toString();
+          history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+      } catch (e) { /* non-fatal */ }
+    }
+
     async function init() {
       await loadUser();
       await autoRequestAccessFromUrl();
@@ -6162,6 +6179,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!_adminLoaded) setTimeout(loadAdminUsers, 2000);
       loadClusterHealth();
       loadClusters();
+      handleOpenRouterReturn();
     }
     init();
     var POLL_INTERVAL_MS = 30000;
@@ -6504,6 +6522,100 @@ const dashboardHTML = `<!DOCTYPE html>
         hiveToast('Error: ' + e.message, 'error');
         if (submit) { submit.disabled = false; submit.textContent = 'Assign'; }
       }
+    }
+
+    // ---- OpenRouter scan-to-fund (hub side) ---------------------------------
+    // Fund a SPECIFIC hive: pick a default model, scan a QR (or open the link)
+    // to authorize on OpenRouter. The hub exchanges the code for a scoped key and
+    // delivers it to the hive as the "openrouter" gateway over the next heartbeat.
+    var _orFundPoll = null;
+    async function openOpenRouterFundModal(hiveId, hiveName) {
+      var models = { suggested: [], models: [], default: '' };
+      try {
+        var r = await fetch('/api/openrouter/models');
+        if (r.ok) models = await r.json();
+      } catch (e) { /* fall back to manual entry */ }
+      var opts = (models.suggested || []).map(function(m) {
+        return '<option value="' + esc(m.id) + '">' + esc(m.label) + '</option>';
+      }).join('') + '<option value="__manual__">Enter a model id manually…</option>';
+      var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
+      var content =
+        '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px">Fund <strong style="color:var(--fg)">' + esc(hiveName) + '</strong> with an OpenRouter key. Scan the QR (or open the link) to authorize on OpenRouter — the scoped key is delivered to the hive as its <code>openrouter</code> gateway.</div>' +
+        '<label style="display:block;font-size:0.75rem;color:var(--muted);margin-bottom:4px">Default model</label>' +
+        '<select id="orf-model" onchange="orfModelChange()" style="' + fld + ';margin-bottom:8px">' + opts + '</select>' +
+        '<input id="orf-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;' + fld + ';margin-bottom:8px">' +
+        '<div style="display:flex;gap:8px;margin-top:4px">' +
+        '<button onclick="orfStart(\'' + esc(hiveId) + '\')" style="padding:7px 16px;background:var(--accent,#58a6ff);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Generate QR</button>' +
+        '<button onclick="closeOrFundModal()" style="padding:7px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Close</button>' +
+        '</div>' +
+        '<div id="orf-qr" style="margin-top:12px"></div>' +
+        '<div id="orf-status" style="margin-top:8px;font-size:0.78rem"></div>';
+      var overlay = document.createElement('div');
+      overlay.id = 'orf-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
+      overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:460px;width:90%;max-height:88vh;overflow-y:auto">' +
+        '<h3 style="margin:0 0 12px 0;font-size:1rem">⚡ Fund with OpenRouter</h3>' + content + '</div>';
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeOrFundModal(); });
+      document.body.appendChild(overlay);
+    }
+    function orfModelChange() {
+      var sel = document.getElementById('orf-model');
+      var man = document.getElementById('orf-model-manual');
+      if (sel && man) man.style.display = sel.value === '__manual__' ? 'block' : 'none';
+    }
+    function orfChosenModel() {
+      var sel = document.getElementById('orf-model');
+      if (!sel) return '';
+      if (sel.value === '__manual__') {
+        var man = document.getElementById('orf-model-manual');
+        return (man && man.value.trim()) || '';
+      }
+      return sel.value;
+    }
+    async function orfStart(hiveId) {
+      var model = orfChosenModel();
+      var qr = document.getElementById('orf-qr');
+      var status = document.getElementById('orf-status');
+      if (qr) qr.innerHTML = '<span style="color:var(--muted);font-size:0.78rem">Preparing…</span>';
+      try {
+        var res = await fetch('/api/openrouter/connect/start?hive_id=' + encodeURIComponent(hiveId) + '&model=' + encodeURIComponent(model));
+        if (!res.ok) { var e = await res.json().catch(function(){return{};}); throw new Error(e.error || ('HTTP ' + res.status)); }
+        var data = await res.json();
+        var authURL = data.authorize_url;
+        var qrSrc = '/api/openrouter/qr?data=' + encodeURIComponent(authURL);
+        if (qr) qr.innerHTML =
+          '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
+          '<img src="' + esc(qrSrc) + '" alt="OpenRouter QR" width="180" height="180" style="border:6px solid #fff;border-radius:8px;background:#fff">' +
+          '<div style="font-size:0.78rem"><div style="margin-bottom:6px">Scan with your phone, or on this device:</div>' +
+          '<a href="' + esc(authURL) + '" target="_blank" rel="noopener" style="color:var(--accent,#58a6ff);font-weight:600">Open OpenRouter authorization ↗</a></div></div>';
+        if (status) status.innerHTML = '<span style="color:var(--muted)">Waiting for authorization…</span>';
+        orfStartPolling(hiveId);
+      } catch (e) {
+        if (qr) qr.innerHTML = '<span style="color:#f85149;font-size:0.78rem">Failed: ' + esc(e.message) + '</span>';
+      }
+    }
+    function orfStartPolling(hiveId) {
+      if (_orFundPoll) clearInterval(_orFundPoll);
+      var ORF_POLL_MS = 4000;
+      _orFundPoll = setInterval(function() { orfCheck(hiveId); }, ORF_POLL_MS);
+    }
+    async function orfCheck(hiveId) {
+      var status = document.getElementById('orf-status');
+      try {
+        var res = await fetch('/api/openrouter/credit?hive_id=' + encodeURIComponent(hiveId));
+        if (!res.ok) return;
+        var d = await res.json();
+        // pending_delivery flips true the moment the fund completes on the hub;
+        // it then flips back to false once the hive drains it on a heartbeat.
+        if (d.pending_delivery) {
+          if (status) status.innerHTML = '<span style="color:var(--green,#3fb950);font-weight:600">✓ Funded — delivering to the hive on its next heartbeat…</span>';
+        }
+      } catch (e) { /* keep polling */ }
+    }
+    function closeOrFundModal() {
+      if (_orFundPoll) { clearInterval(_orFundPoll); _orFundPoll = null; }
+      var ov = document.getElementById('orf-overlay');
+      if (ov) ov.remove();
     }
 
     async function removeLocalHive(id) {

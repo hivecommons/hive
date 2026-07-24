@@ -9567,6 +9567,22 @@ function burnAreaChart() {
         const chevron = document.getElementById('advisory-digest-main-chevron');
         if (chevron) chevron.classList.add('collapsed');
       }
+      /* OpenRouter scan-to-fund return: show the result and clear the flag so a
+         reload doesn't re-toast. */
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const or = p.get('openrouter');
+        if (or === 'connected') {
+          showToast('OpenRouter connected — the "openrouter" gateway is now configured', 'success');
+        } else if (or === 'error') {
+          showToast('OpenRouter connection failed — please try funding again', 'error');
+        }
+        if (or) {
+          p.delete('openrouter');
+          const qs = p.toString();
+          history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+      } catch (e) { /* non-fatal */ }
     });
 
     // ── Debug section ──
@@ -11996,11 +12012,120 @@ function burnAreaChart() {
           uses a gateway by naming it as its backend. Keys are stored privately on this
           hive — never in hive.yaml, logs, or config downloads.
         </div>
-        <div style="margin-bottom:12px">
+        <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="openGatewayForm()" style="padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.8rem">+ Add gateway</button>
+          <button onclick="openOpenRouterFund()" style="padding:7px 16px;border:1px solid var(--cyan);border-radius:6px;background:transparent;color:var(--cyan);cursor:pointer;font-weight:600;font-size:0.8rem">⚡ Fund this hive with OpenRouter</button>
         </div>
+        <div id="openrouter-fund-host"></div>
         <div id="gateways-form-host"></div>
         <div id="gateways-list-host"><div style="color:var(--muted);font-size:0.8rem">Loading gateways…</div></div>`;
+    }
+
+    // ---- OpenRouter scan-to-fund -------------------------------------------
+    // Fund THIS hive: pick a default model, then scan a QR (or click the link)
+    // to authorize on openrouter.ai via OAuth PKCE. On return the hive stores a
+    // scoped OpenRouter key as the "openrouter" gateway. The QR image is a
+    // same-origin Go-generated PNG (CSP-clean). We poll /api/openrouter/credit
+    // to detect the connected key and show remaining credit.
+    let _openrouterPoll = null;
+
+    async function openOpenRouterFund() {
+      const host = document.getElementById('openrouter-fund-host');
+      if (!host) return;
+      // Curated + live model options for the picker.
+      let models = { suggested: [], models: [], default: '' };
+      try {
+        const r = await fetch('/api/openrouter/models');
+        if (r.ok) models = await r.json();
+      } catch (e) { /* fall back to manual entry */ }
+      const sug = (models.suggested || []);
+      const opts = sug.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
+        + `<option value="__manual__">Enter a model id manually…</option>`;
+      host.innerHTML = `
+        <div style="border:1px solid var(--cyan);border-radius:8px;padding:14px;margin-bottom:12px;background:var(--surface)">
+          <div style="font-weight:600;font-size:0.9rem;margin-bottom:4px">⚡ Fund this hive with OpenRouter</div>
+          <div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px">Scan the QR (or open the link) to authorize on OpenRouter. A scoped key funded from your OpenRouter credits is stored as the <code>openrouter</code> gateway — the key never leaves this hive.</div>
+          <label style="display:block;font-size:0.74rem;color:var(--muted);margin-bottom:4px">Default model for the new gateway</label>
+          <select id="or-model-select" onchange="orModelSelectChange()" style="width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">${opts}</select>
+          <input id="or-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;margin-bottom:8px;box-sizing:border-box">
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button onclick="orStartFlow()" style="padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.8rem">Generate QR</button>
+            <button onclick="closeOpenRouterFund()" style="padding:7px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:0.8rem">Cancel</button>
+          </div>
+          <div id="or-qr-area" style="margin-top:12px"></div>
+          <div id="or-status" style="margin-top:8px;font-size:0.78rem"></div>
+        </div>`;
+    }
+
+    function orModelSelectChange() {
+      const sel = document.getElementById('or-model-select');
+      const man = document.getElementById('or-model-manual');
+      if (!sel || !man) return;
+      man.style.display = sel.value === '__manual__' ? 'block' : 'none';
+    }
+
+    function orChosenModel() {
+      const sel = document.getElementById('or-model-select');
+      if (!sel) return '';
+      if (sel.value === '__manual__') {
+        const man = document.getElementById('or-model-manual');
+        return (man && man.value.trim()) || '';
+      }
+      return sel.value;
+    }
+
+    async function orStartFlow() {
+      const model = orChosenModel();
+      const qrArea = document.getElementById('or-qr-area');
+      const status = document.getElementById('or-status');
+      if (qrArea) qrArea.innerHTML = '<span style="color:var(--muted);font-size:0.78rem">Preparing…</span>';
+      try {
+        const res = await fetch('/api/openrouter/connect/start?model=' + encodeURIComponent(model));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const authURL = data.authorize_url;
+        const qrSrc = '/api/openrouter/qr?data=' + encodeURIComponent(authURL);
+        if (qrArea) qrArea.innerHTML = `
+          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+            <img src="${esc(qrSrc)}" alt="OpenRouter QR" width="180" height="180" style="border:6px solid #fff;border-radius:8px;background:#fff">
+            <div style="font-size:0.78rem">
+              <div style="margin-bottom:6px">Scan with your phone, or on this device:</div>
+              <a href="${esc(authURL)}" target="_blank" rel="noopener" style="color:var(--cyan);font-weight:600">Open OpenRouter authorization ↗</a>
+            </div>
+          </div>`;
+        if (status) status.innerHTML = '<span style="color:var(--muted)">Waiting for authorization… this panel updates when the key is connected.</span>';
+        orStartCreditPolling();
+      } catch (e) {
+        if (qrArea) qrArea.innerHTML = `<span style="color:var(--red);font-size:0.78rem">Failed to start: ${esc(e.message)}</span>`;
+      }
+    }
+
+    function orStartCreditPolling() {
+      if (_openrouterPoll) clearInterval(_openrouterPoll);
+      const OR_POLL_MS = 4000;
+      _openrouterPoll = setInterval(orCheckCredit, OR_POLL_MS);
+    }
+
+    async function orCheckCredit() {
+      const status = document.getElementById('or-status');
+      try {
+        const res = await fetch('/api/openrouter/credit');
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!d.connected) return;
+        if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+        let creditLine = '';
+        if (d.limit_remaining != null) creditLine = ' — $' + Number(d.limit_remaining).toFixed(2) + ' remaining';
+        else if (d.limit == null) creditLine = ' — unlimited';
+        if (status) status.innerHTML = '<span style="color:var(--green);font-weight:600">✓ Connected' + esc(creditLine) + '</span>';
+        loadGateways();
+      } catch (e) { /* keep polling */ }
+    }
+
+    function closeOpenRouterFund() {
+      if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+      const host = document.getElementById('openrouter-fund-host');
+      if (host) host.innerHTML = '';
     }
 
     async function loadGateways() {

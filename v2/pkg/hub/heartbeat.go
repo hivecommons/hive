@@ -199,6 +199,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onSwitchBranch SwitchBranchCallback
 	var onAuthorizedUsers AuthorizedUsersCallback
 	var onProjectConfig ProjectConfigCallback
+	var onGatewayConfig GatewayConfigCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -215,6 +216,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onAuthorizedUsers = fn
 		case ProjectConfigCallback:
 			onProjectConfig = fn
+		case GatewayConfigCallback:
+			onGatewayConfig = fn
 		}
 	}
 
@@ -251,6 +254,12 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		// claimed project (placeholder assignment); nil means leave it alone.
 		if resp.ProjectConfig != nil && onProjectConfig != nil {
 			onProjectConfig(resp.ProjectConfig)
+		}
+		// A non-nil PendingGateway means the hub funded a gateway on this spoke's
+		// behalf (OpenRouter scan-to-fund). The spoke stores the key locally and
+		// creates/replaces the gateway.
+		if resp.PendingGateway != nil && onGatewayConfig != nil {
+			onGatewayConfig(resp.PendingGateway)
 		}
 	}
 
@@ -453,6 +462,30 @@ type HeartbeatProjectConfig struct {
 	ACMMLevel   int      `json:"acmm_level"`
 }
 
+// HeartbeatGatewayConfig carries an OpenRouter model gateway (funded via the
+// hub's scan-to-fund flow) from the hub to a spoke via the heartbeat response.
+// It mirrors HeartbeatProjectConfig: for a firewalled/heartbeat-only spoke
+// (vllm-d) the hub cannot POST to the spoke's dashboard over the network, so it
+// delivers the gateway in the heartbeat response and the spoke stores the key in
+// its OWN per-gateway secret-file store. The Key is a secret VALUE — it travels
+// only over the TLS heartbeat channel, is never logged, and the spoke writes it
+// to a file (never hive.yaml).
+type HeartbeatGatewayConfig struct {
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	Endpoint     string `json:"endpoint"`
+	DefaultModel string `json:"default_model,omitempty"`
+	// Key is the funded API key VALUE. The spoke stores it via its secret-file
+	// store and records only the file path in hive.yaml.
+	Key string `json:"key"`
+}
+
+// GatewayConfigCallback is called when the hub delivers a funded model gateway
+// (e.g. OpenRouter) via the heartbeat response so the spoke can store the key
+// and create/replace the gateway. Used for heartbeat-only clusters the hub
+// cannot reach over the network (mirrors ProjectConfigCallback).
+type GatewayConfigCallback func(cfg *HeartbeatGatewayConfig)
+
 // HeartbeatResponse is the JSON body returned by the hub's heartbeat endpoint.
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
@@ -487,6 +520,12 @@ type HeartbeatResponse struct {
 	// project config alone. This is the ONLY delivery channel for heartbeat-only
 	// clusters (vllm-d) the hub cannot reach over kubectl.
 	ProjectConfig *HeartbeatProjectConfig `json:"project_config,omitempty"`
+	// PendingGateway carries a funded model gateway (OpenRouter scan-to-fund) the
+	// hub minted on the spoke's behalf. It is the delivery channel for
+	// firewalled/heartbeat-only spokes (vllm-d) the hub cannot POST to directly.
+	// nil means "nothing to deliver". The hub sends it once (drained on delivery)
+	// rather than every beat, since it carries a secret key value.
+	PendingGateway *HeartbeatGatewayConfig `json:"pending_gateway,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.
