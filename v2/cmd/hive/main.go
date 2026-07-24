@@ -1153,39 +1153,58 @@ func main() {
 		}
 	}
 
-	// Retry advisory issue creation until it succeeds. This handles two cases:
+	// Self-heal the "GitHub App not installed" banner. This handles:
 	// 1. GitHub App credentials arrived after startup (via heartbeat/webhook)
 	// 2. ReinitGitHubFunc succeeded but cleared githubAppRequired before
 	//    EnsureAdvisoryIssue could run against the new client
+	// 3. A TRANSIENT startup/runtime 4xx (rate-limit blip, brief token-refresh
+	//    window, momentary permission propagation delay) latched the banner even
+	//    though the app is really installed and can write. Previously the retry
+	//    loop exited permanently after the first advisory-issue READ succeeded,
+	//    so a later transient write failure that re-set the flag was never
+	//    re-evaluated — the banner stuck until the pod was restarted.
+	//
+	// The loop therefore runs for the lifetime of the process (it does NOT
+	// return after the first success) and, whenever the banner is currently
+	// showing, re-runs the SAME read+write verification as the manual "Re-check"
+	// button (githubAppRecheckFn, which calls diagnoseGitHubAppWrite) and clears
+	// the flag on success. When the banner is not showing there is nothing to do,
+	// so the tick is a cheap no-op that makes no GitHub API calls.
 	{
 		primaryRepo := cfg.Project.PrimaryRepo
 		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 			primaryRepo = cfg.Project.Repos[0]
 		}
 		if primaryRepo != "" {
-			const advisoryRetryInterval = 2 * time.Minute
+			// githubAppSelfHealInterval mirrors the heartbeat cadence so a stale
+			// banner clears within one heartbeat window of the app becoming
+			// healthy, without adding meaningful GitHub API load (the check only
+			// runs while the banner is actually showing).
+			const githubAppSelfHealInterval = 2 * time.Minute
 			go func() {
-				ticker := time.NewTicker(advisoryRetryInterval)
+				ticker := time.NewTicker(githubAppSelfHealInterval)
 				defer ticker.Stop()
 				for {
 					select {
 					case <-ctx.Done():
 						return
 					case <-ticker.C:
-						if _, exists := advisoryIssues[primaryRepo]; exists {
-							return
-						}
-						num, err := ghClient.EnsureAdvisoryIssue(ctx, primaryRepo)
-						if err != nil {
-							logger.Debug("advisory issue retry: not yet accessible", "repo", primaryRepo, "error", err)
+						// Nothing to heal unless the banner is showing.
+						if !dashSrv.IsGitHubAppRequired() {
 							continue
 						}
-						advisoryIssues[primaryRepo] = num
-						os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
-						dashSrv.SetGitHubAppRequired(false)
-						dashSrv.ClearPendingGitHubAppInstall()
-						logger.Info("advisory issue retry: created successfully", "repo", primaryRepo, "number", num)
-						return
+						// Re-run the same read+write verification the manual
+						// Re-check button uses. It clears the flag on success
+						// (installed AND write-verified) and leaves it set on a
+						// genuine failure (not installed / insufficient perms).
+						if dashSrv.RecheckGitHubApp() {
+							if num, exists := advisoryIssues[primaryRepo]; exists {
+								os.Setenv("HIVE_ADVISORY_ISSUE", fmt.Sprintf("%d", num))
+							}
+							logger.Info("github app self-heal: banner cleared, app installed and write verified", "repo", primaryRepo)
+						} else {
+							logger.Debug("github app self-heal: still not verified, banner remains", "repo", primaryRepo)
+						}
 					}
 				}
 			}()

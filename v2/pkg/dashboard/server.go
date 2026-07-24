@@ -1118,17 +1118,35 @@ func (s *Server) SetGitHubAppRecheckFn(fn func() bool) {
 	s.githubAppRecheckFn = fn
 }
 
+// RecheckGitHubApp runs the configured GitHub App verification (read + write,
+// the same check the manual "Re-check" button performs) and, on success, clears
+// the "App not installed" banner and its related pending/permission state.
+// Returns true when the app is installed and write-verified. It is safe to call
+// from a background loop as well as the HTTP handler; returns false (a no-op) if
+// no recheck function has been wired up. This is the single place the banner is
+// cleared on a successful recheck, so the periodic self-heal loop and the manual
+// button stay in lockstep.
+func (s *Server) RecheckGitHubApp() bool {
+	if s.githubAppRecheckFn == nil {
+		return false
+	}
+	ok := s.githubAppRecheckFn()
+	if ok {
+		s.SetGitHubAppRequired(false)
+		s.SetGitHubAppPermIssue("")
+		s.ClearPendingGitHubAppInstall()
+	}
+	return ok
+}
+
 func (s *Server) handleGitHubAppRecheck(w http.ResponseWriter, r *http.Request) {
 	if s.githubAppRecheckFn == nil {
 		http.Error(w, "recheck not configured", http.StatusNotImplemented)
 		return
 	}
-	ok := s.githubAppRecheckFn()
+	ok := s.RecheckGitHubApp()
 	w.Header().Set("Content-Type", "application/json")
 	if ok {
-		s.SetGitHubAppRequired(false)
-		s.SetGitHubAppPermIssue("")
-		s.ClearPendingGitHubAppInstall()
 		w.Write([]byte(`{"status":"installed"}`))
 	} else {
 		s.githubAppMu.RLock()
