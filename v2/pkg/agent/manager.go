@@ -6379,9 +6379,7 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	resumeModel := agent.effectiveModel()
 	agent.Paused = false
 	agent.Config.Paused = false
-	if m.persistPauseCallback != nil {
-		m.persistPauseCallback(name, false)
-	}
+	persistPause := m.persistPauseCallback
 	agent.PausedAt = time.Time{}
 	agent.PausedReason = ""
 	agent.PausedTrigger = ""
@@ -6412,6 +6410,11 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 		agent.forceRelaunch = true
 	}
 
+	// Persistence republishes the complete runtime config and re-enters the
+	// manager to update agent snapshots. Never invoke it while holding m.mu.
+	if persistPause != nil {
+		persistPause(name, false)
+	}
 	m.logger.Info("audit: agent resumed",
 		"name", name,
 		"trigger", trigger,
