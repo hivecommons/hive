@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -131,7 +132,15 @@ type Manager struct {
 	// Injected from config so an agent whose backend is a gateway name (e.g.
 	// "openrouter") is treated as inference-routable and its route resolved.
 	// Nil in tests/bare setups → only built-in inference backends route.
-	isGatewayBackend func(backend string) bool
+	//
+	// Stored as an atomic.Pointer, NOT under m.mu: routableBackend() is called
+	// from the agent-launch path (launchInTmux via Start), which ALREADY holds
+	// m.mu.Lock(). Reading this under m.mu.RLock() there would re-lock a
+	// non-reentrant RWMutex on the same goroutine and DEADLOCK the whole startup
+	// — the process never reaches MarkReady, /api/health stays "starting", and
+	// the startup probe kills the pod (a cluster-wide crash-loop we hit live).
+	// An atomic read is lock-free and safe from any lock context.
+	isGatewayBackend atomic.Pointer[func(backend string) bool]
 
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.
@@ -226,22 +235,22 @@ func (m *Manager) SetInferenceCallbacks(
 // a gateway name inference-routable, so its route is resolved via the inference
 // callback exactly like the built-in litellm/vllm/llm-d backends.
 func (m *Manager) SetGatewayBackendChecker(fn func(backend string) bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.isGatewayBackend = fn
+	// Atomic store — no m.mu — so routableBackend can read it lock-free from the
+	// lock-holding launch path without deadlocking (see isGatewayBackend docs).
+	m.isGatewayBackend.Store(&fn)
 }
 
 // routableBackend reports whether a backend should be routed through the
 // inference proxy: either a built-in inference backend, or a configured gateway
-// name. Callers must NOT hold m.mu (isGatewayBackend is read under RLock).
+// name. Safe to call while holding m.mu (isGatewayBackend is read atomically).
 func (m *Manager) routableBackend(backend string) bool {
 	if IsInferenceBackend(backend) {
 		return true
 	}
-	m.mu.RLock()
-	fn := m.isGatewayBackend
-	m.mu.RUnlock()
-	return fn != nil && fn(backend)
+	// Lock-free atomic read: this is invoked from the launch path while m.mu is
+	// already held, so it MUST NOT take m.mu (non-reentrant RWMutex → deadlock).
+	fnp := m.isGatewayBackend.Load()
+	return fnp != nil && *fnp != nil && (*fnp)(backend)
 }
 
 // SetAppAuth injects the GitHub App auth provider for per-agent scoped tokens.
