@@ -2048,6 +2048,10 @@ func mergeVisualHiveRecommendation(checkout, expectedProfile string) error {
 			delete(current, key)
 		}
 	}
+	// Coverage-owned recommendations may replace the visual section wholesale.
+	// Reapply the integration-owned invariants after that replacement so a
+	// merged setup remains byte-for-byte idempotent on the next setup run.
+	enableVisualHiveIntegration(current)
 	if recommendedCost, exists := report.RecommendedConfig["costPolicy"]; exists {
 		current["costPolicy"] = recommendedCost
 	}
