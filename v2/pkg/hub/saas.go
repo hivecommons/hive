@@ -4769,7 +4769,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+        <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
         <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
         <button class="btn-primary" id="btn-request-hive" style="display:none;background:var(--blue)" onclick="document.getElementById('request-modal').style.display='flex'">Request a Hive</button>
       </div>
@@ -5338,6 +5338,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
         if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\')" style="' + mi + '">Permissions</div>');
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
@@ -7060,6 +7061,10 @@ const dashboardHTML = `<!DOCTYPE html>
       amber: {bg: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: 'var(--text)'},
       gray:  {bg: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.3)', color: 'var(--text)'}
     };
+    /* Set by the per-hive "Send Banner" menu item so the banner modal targets a
+       single spoke; sendHubBanner() still reads .banner-hive-cb:checked, so this
+       is only bookkeeping for the open path — the checked cb is the source of truth. */
+    var _bannerTargetHive = null;
 
     (function() {
       var msgEl = document.getElementById('banner-message');
@@ -7105,6 +7110,26 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function toggleAllBannerHives(checked) {
       document.querySelectorAll('.banner-hive-cb').forEach(function(cb) { cb.checked = checked; });
+    }
+
+    /* Per-hive entry point: opens the SAME banner modal but pre-scoped to one
+       spoke. Instead of loadBannerHiveList()'s multi-hive checklist, we render a
+       single non-editable target line plus one hidden checked .banner-hive-cb so
+       the unchanged sendHubBanner() (which reads .banner-hive-cb:checked) posts
+       exactly this hive_id to POST /api/saas/admin/hub-banner. */
+    function openBannerForHive(hiveId, hiveName) {
+      _bannerTargetHive = hiveId;
+      document.getElementById('banner-modal').style.display = 'flex';
+      /* Reset message + color to match the global open path's fresh state. */
+      document.getElementById('banner-message').value = '';
+      document.getElementById('banner-char-count').textContent = '0';
+      document.querySelector('input[name="banner-color"][value="green"]').checked = true;
+      updateBannerPreview();
+      var container = document.getElementById('banner-hive-list');
+      container.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px;color:var(--text);font-size:0.82rem">' +
+        '<span style="color:var(--muted)">Sending to:</span> <strong>' + esc(hiveName) + '</strong>' +
+        '<input type="checkbox" class="banner-hive-cb" value="' + esc(hiveId) + '" checked style="display:none">' +
+        '</div>';
     }
 
     async function sendHubBanner() {
