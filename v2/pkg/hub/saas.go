@@ -117,7 +117,11 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
-	s.mux.HandleFunc("GET /api/saas/hives/{id}/open", s.requireAuth(s.handleOpenHive))
+	// /open is a browser NAVIGATION endpoint (the SSO handoff), not an API call.
+	// It is registered WITHOUT requireAuth so an unauthenticated visit redirects
+	// to the hub login (and back) instead of dumping a raw {"error":...} JSON.
+	// handleOpenHive does its own auth check + login redirect.
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/open", s.handleOpenHive)
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}", s.requireAuth(s.handleDeleteHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuth(s.handleUpgradeHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
@@ -1795,7 +1799,12 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	}
 	username := s.getAuthUser(r)
 	if username == "" {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		// Not logged in — this is a browser navigation, so send the user through
+		// the hub login and return them to THIS /open URL afterward, so the SSO
+		// handoff completes and they land logged-in on the spoke (instead of the
+		// raw {"error":"not authenticated"} JSON dead end).
+		self := "/api/saas/hives/" + url.PathEscape(id) + "/open"
+		http.Redirect(w, r, "/login?redirect="+url.QueryEscape(self), http.StatusSeeOther)
 		return
 	}
 
