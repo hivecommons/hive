@@ -4668,6 +4668,10 @@
       { value: 'claude-fable-5', label: 'Fable 5' },
     ];
     const COPILOT_CLI_MODELS = [
+      // Auto sentinel: `copilot --model auto` lets the Copilot CLI pick/adjust
+      // the optimal model per task. Not a concrete model id — treated as an
+      // always-valid selection that reconcileModelsAfterDiscovery never heals.
+      { value: 'auto', label: 'Auto (Copilot picks)' },
       { value: 'mai-code-1-flash-picker', label: 'MAI Code 1 Flash' },
       { value: 'claude-opus-4.6', label: 'Opus 4.6' },
       { value: 'claude-sonnet-4.6', label: 'Sonnet 4.6' },
@@ -4712,6 +4716,14 @@
     function backendLabel(b) {
       if (INFERENCE_BACKENDS.includes(b)) return b + ' ⚡';
       return b;
+    }
+    // Auto-select sentinels: special --model VALUES that tell a CLI to pick the
+    // model itself rather than pin a concrete id. They flow verbatim through the
+    // launch path's `--model <value>` but are never in a discovered model
+    // catalog, so they must be exempted from model auto-heal. Copilot: `auto`.
+    const AUTO_MODEL_SENTINELS = { copilot: ['auto'] };
+    function isAutoModelSentinel(backend, model) {
+      return (AUTO_MODEL_SENTINELS[backend] || []).includes(model);
     }
     function modelsForBackend(backend) {
       const discovered = BACKEND_MODELS[backend];
@@ -4909,6 +4921,7 @@
       (window._lastAgents || []).forEach(a => {
         if (a.cli !== backend) return;
         if (!a.model) return;                 // no explicit model — nothing to heal
+        if (isAutoModelSentinel(backend, a.model)) return; // auto-select value — never a concrete id, never healed
         const key = `${backend}|${a.name}`;
         if (isAvailable(a.model)) { _markAvailable(key, a.model); return; } // still valid — leave untouched (idempotent)
         if (!_confirmAbsent(key, a.model)) return; // unconfirmed or already healed — no switch

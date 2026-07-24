@@ -750,6 +750,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 					" --disallowed-tools 'mcp__github__merge_pull_request'"
 			}
 		case "copilot":
+			// model is passed verbatim to `copilot --model %s`. It may be a
+			// concrete id OR the auto-selection sentinel "auto" (copilotAutoModel
+			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
+			// per task. Nothing here assumes a concrete id, so the sentinel flows
+			// through unchanged.
 			switch {
 			case mode >= ModeIssuesAndPRs:
 				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools",
