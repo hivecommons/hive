@@ -25,7 +25,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Prune untagged hive images
-        uses: snok/container-retention-policy@v3.0.0
+        # v3.1.0+ AUTOMATICALLY protects per-architecture child manifests that
+        # are referenced by a tagged multi-arch manifest list (fail-closed: if
+        # it can't read a tag's manifest it skips deletion entirely). v3.0.0 did
+        # NOT — with tag-selection: untagged it deleted the arm64/amd64 children
+        # of live tagged images (only the manifest LIST is tagged; its per-arch
+        # children are untagged), which left every -latest / SHA tag dangling and
+        # made fresh multi-arch pulls fail with "manifest unknown" (404) on the
+        # child. Cached images kept running, which masked it, but any new node /
+        # fresh pull broke daily right after this 04:17 UTC prune. Do NOT pin
+        # back below v3.1.0.
+        uses: snok/container-retention-policy@v3.1.0
         with:
           account: kubestellar
           token: ${{ secrets.GHCR_PRUNE_TOKEN }}
@@ -34,7 +44,8 @@ jobs:
           cut-off: 3h              # untagged digests are unreachable by name; only
                                   # spare the last few hours so an in-flight build's
                                   # per-arch children aren't deleted before their
-                                  # manifest list is created.
+                                  # manifest list is created. (Belt-and-suspenders
+                                  # on top of the v3.1.0 multi-arch protection.)
           dry-run: ${{ github.event_name == 'schedule' && 'false' || inputs.dry_run }}
 
   # Prune <branch>-latest tags whose branch no longer exists. The docker
