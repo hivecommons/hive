@@ -1340,11 +1340,21 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 
 		// Assigning transient state: after a placeholder is assigned, the meta
 		// records the real project but the spoke still reports the old placeholder
-		// identity until it reconciles via heartbeat. projectConfigForHiveID
-		// returns non-nil in exactly that window (complete claim, meta != what the
-		// spoke reports) and nil once matched — so it is the authoritative signal.
-		// The RegistryEntry fields here are the live heartbeat-reported values.
-		if projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel) != nil {
+		// identity until it reconciles via heartbeat.
+		//
+		// projectConfigForHiveID returns non-nil whenever meta != what the spoke
+		// reports — but that ALSO happens transiently during an UPGRADE (the spoke
+		// pod restarts and its heartbeat momentarily reports an empty/stale org),
+		// which falsely lit "Assigning to <org>" on already-claimed hives that were
+		// merely upgrading. Guard against that:
+		//   - never show Assigning while the hive is Upgrading (an upgrade is not
+		//     an assignment), and
+		//   - only show it when the spoke is genuinely reporting a DIFFERENT,
+		//     non-empty project (an empty reported org means the spoke just
+		//     restarted / hasn't beaten yet — not a fresh assignment).
+		spokeReportsDifferentProject := entry.Org != "" && !strings.EqualFold(entry.Org, sh.Org)
+		if !entry.Upgrading && spokeReportsDifferentProject &&
+			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel) != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
 		}
