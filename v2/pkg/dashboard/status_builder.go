@@ -155,7 +155,15 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 
 	names := make([]string, 0, len(statuses))
 	for name := range statuses {
-		if packAllowed != nil && !packAllowed[name] {
+		// The ACMM pack filter hides agents that aren't part of the current
+		// level's pack. But an agent EXPLICITLY configured in cfg.Agents was
+		// added by the user (e.g. a custom "ux-scout") and must stay visible in
+		// the sidebar and cards regardless of the ACMM level — otherwise adding
+		// an agent, then changing level, silently hides it even though it's still
+		// enabled and running. Only pack-provided agents are subject to the
+		// level filter; user-configured agents always pass.
+		_, userConfigured := cfg.Agents[name]
+		if packAllowed != nil && !packAllowed[name] && !userConfigured {
 			continue
 		}
 		names = append(names, name)
@@ -1061,10 +1069,22 @@ func buildACMMPackAgents(cfg *config.Config) []string {
 	if err != nil {
 		return nil
 	}
-	names := make([]string, 0, len(pack.Agents))
+	seen := make(map[string]bool)
+	names := make([]string, 0, len(pack.Agents)+len(cfg.Agents))
 	for _, a := range pack.Agents {
 		if !a.Hidden {
 			names = append(names, a.Name)
+			seen[a.Name] = true
+		}
+	}
+	// Include every user-configured agent so the sidebar keeps showing a
+	// manually-added agent (e.g. "ux-scout") after the ACMM level changes. The
+	// frontend's applyACMMVisibility hides sidebar items NOT in this list, so an
+	// added agent must be present here regardless of the level's pack.
+	for name := range cfg.Agents {
+		if !seen[name] {
+			names = append(names, name)
+			seen[name] = true
 		}
 	}
 	return names
