@@ -4077,10 +4077,10 @@ func (m *Manager) KillSession(name string) error {
 
 func (m *Manager) Pause(name, trigger, reason string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	agent, ok := m.agents[name]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("agent %s not found", name)
 	}
 
@@ -4093,8 +4093,13 @@ func (m *Manager) Pause(name, trigger, reason string) error {
 	}
 	agent.State = StatePaused
 	agent.Config.Paused = true
-	if m.persistPauseCallback != nil {
-		m.persistPauseCallback(name, true)
+	persistPause := m.persistPauseCallback
+	m.mu.Unlock()
+
+	// Persistence republishes the complete runtime config and re-enters the
+	// manager to update agent snapshots. Never invoke it while holding m.mu.
+	if persistPause != nil {
+		persistPause(name, true)
 	}
 	m.logger.Info("audit: agent paused",
 		"name", name,
@@ -4131,9 +4136,7 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	prevReason := agent.PausedReason
 	agent.Paused = false
 	agent.Config.Paused = false
-	if m.persistPauseCallback != nil {
-		m.persistPauseCallback(name, false)
-	}
+	persistPause := m.persistPauseCallback
 	agent.PausedAt = time.Time{}
 	agent.PausedReason = ""
 	agent.PausedTrigger = ""
@@ -4147,6 +4150,11 @@ func (m *Manager) Resume(ctx context.Context, name, trigger, reason string) erro
 	// instead of serializing on the mutex.
 	m.mu.Unlock()
 
+	// Persistence republishes the complete runtime config and re-enters the
+	// manager to update agent snapshots. Never invoke it while holding m.mu.
+	if persistPause != nil {
+		persistPause(name, false)
+	}
 	m.logger.Info("audit: agent resumed",
 		"name", name,
 		"trigger", trigger,
