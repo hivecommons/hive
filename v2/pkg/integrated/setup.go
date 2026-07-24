@@ -2096,6 +2096,12 @@ func enableVisualHiveIntegration(config map[string]any) {
 	integrations := ensureStringMap(config, "integrations")
 	hive := ensureStringMap(integrations, "hive")
 	hive["enabled"] = true
+	// Hive's accountable baseline lifecycle accepts only this canonical,
+	// repository-local namespace. Preserve the repository's visual policy,
+	// but route every integrated baseline candidate through the path that the
+	// hosted verifier, approval plan, and merge authority bind exactly.
+	visual := ensureStringMap(config, "visual")
+	visual["snapshotDir"] = ".visual-hive/snapshots"
 }
 
 func anyStringMap(value any) map[string]any {

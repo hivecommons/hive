@@ -33,6 +33,9 @@ integrations:
     enabled: false
     mode: guarded_repair
     defaultActor: repository-quality
+visual:
+  snapshotDir: visual-hive.baselines
+  maxDiffPixelRatio: 0.01
 `
 	writeFixture(t, root, "visual-hive.config.yaml", original)
 	if err := mergeVisualHiveRecommendation(root, "complex-app"); err != nil {
@@ -48,10 +51,12 @@ integrations:
 	}
 	project := anyStringMap(value["project"])
 	hive := anyStringMap(anyStringMap(value["integrations"])["hive"])
+	visual := anyStringMap(value["visual"])
 	if project["name"] != "proof" || project["setupProfile"] != "complex-app" || len(anyStringMap(value["targets"])) != 1 ||
 		fmt.Sprint(anyStringMap(anySlice(value["contracts"])[0])["id"]) != "domain-contract" ||
 		!reflect.DeepEqual(anySlice(anyStringMap(value["mutation"])["operators"]), []any{"api-500"}) ||
-		hive["enabled"] != true || hive["mode"] != "guarded_repair" || hive["defaultActor"] != "repository-quality" {
+		hive["enabled"] != true || hive["mode"] != "guarded_repair" || hive["defaultActor"] != "repository-quality" ||
+		visual["snapshotDir"] != ".visual-hive/snapshots" || visual["maxDiffPixelRatio"] != 0.01 {
 		t.Fatalf("same-profile integration enablement replaced repository-owned configuration: %+v", value)
 	}
 	if err := mergeVisualHiveRecommendation(root, "complex-app"); err != nil {
