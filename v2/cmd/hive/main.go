@@ -1343,8 +1343,40 @@ func main() {
 			inferenceEndpoints["litellm"] = parseEndpointList(litellmEndpoint)
 		}
 		dashSrv.SetInferenceEndpoints(inferenceEndpoints)
+		// Treat any configured gateway name as an inference-routable backend so
+		// an agent with backend: <gateway> routes through it. Resolution is live
+		// (reads cfg on each call) so gateways added from the Model Gateways tab
+		// take effect without a restart.
+		agentMgr.SetGatewayBackendChecker(func(backend string) bool {
+			return cfg.Governor.ResolveGateway(backend) != nil &&
+				!strings.EqualFold(backend, "") // empty is the default, not a named backend
+		})
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
+				// Named model gateway (OpenRouter, a second LiteLLM, etc.): resolve
+				// endpoint/key/model from the gateway and route through it. Built-in
+				// backend names (litellm/vllm/llm-d) are handled below; a gateway
+				// literally named "litellm" resolves here to the same legacy block
+				// via ResolvedGateways, so behavior is identical.
+				if gw := cfg.Governor.ResolveGateway(backend); gw != nil && !config.IsInferenceBackend(backend) {
+					endpoint := gw.Endpoint
+					if endpoint == "" {
+						logger.Warn("gateway backend selected but no endpoint configured",
+							"agent", agentName, "gateway", backend, "model", model)
+						return
+					}
+					if model == "" {
+						model = gw.DefaultModel
+					}
+					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
+						Backend:  backend,
+						Endpoint: endpoint,
+						Model:    model,
+						APIKey:   gw.ResolveAPIKey(),
+						CABundle: gw.CABundle,
+					})
+					return
+				}
 				if backend == "litellm" {
 					// Resolve endpoint/key at call time so a URL saved from
 					// the governor LiteLLM tab (or a rotated key) takes

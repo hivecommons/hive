@@ -126,6 +126,13 @@ type Manager struct {
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 
+	// isGatewayBackend reports whether a backend string names a configured model
+	// gateway (in addition to the built-in inference backends vllm/llm-d/litellm).
+	// Injected from config so an agent whose backend is a gateway name (e.g.
+	// "openrouter") is treated as inference-routable and its route resolved.
+	// Nil in tests/bare setups → only built-in inference backends route.
+	isGatewayBackend func(backend string) bool
+
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.
 	persistPauseCallback func(name string, paused bool)
@@ -212,6 +219,29 @@ func (m *Manager) SetInferenceCallbacks(
 	defer m.mu.Unlock()
 	m.inferenceRouteCallback = setRoute
 	m.clearInferenceRouteCallback = clearRoute
+}
+
+// SetGatewayBackendChecker injects a predicate that reports whether a backend
+// string names a configured model gateway. This makes an agent whose backend is
+// a gateway name inference-routable, so its route is resolved via the inference
+// callback exactly like the built-in litellm/vllm/llm-d backends.
+func (m *Manager) SetGatewayBackendChecker(fn func(backend string) bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.isGatewayBackend = fn
+}
+
+// routableBackend reports whether a backend should be routed through the
+// inference proxy: either a built-in inference backend, or a configured gateway
+// name. Callers must NOT hold m.mu (isGatewayBackend is read under RLock).
+func (m *Manager) routableBackend(backend string) bool {
+	if IsInferenceBackend(backend) {
+		return true
+	}
+	m.mu.RLock()
+	fn := m.isGatewayBackend
+	m.mu.RUnlock()
+	return fn != nil && fn(backend)
 }
 
 // SetAppAuth injects the GitHub App auth provider for per-agent scoped tokens.
@@ -669,7 +699,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	// Inference backends (vllm, llm-d) use Claude Code as the CLI tool
 	// and route API traffic through the proxy to the self-hosted endpoint.
-	isInference := IsInferenceBackend(backend)
+	isInference := m.routableBackend(backend)
 	if isInference {
 		binary = "claude"
 		m.ensureClaudeSettings(agent.Name, agent.UID)
@@ -4182,7 +4212,7 @@ func (m *Manager) SetModelOverride(name, model string) error {
 	if agent.BackendOverride != "" {
 		effectiveBackend = agent.BackendOverride
 	}
-	if IsInferenceBackend(effectiveBackend) && m.inferenceRouteCallback != nil {
+	if m.routableBackend(effectiveBackend) && m.inferenceRouteCallback != nil {
 		m.inferenceRouteCallback(name, effectiveBackend, model)
 	}
 	return nil
@@ -4200,7 +4230,7 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 	agent.BackendOverride = backend
 	m.logger.Info("agent backend override set", "name", name, "backend", backend)
 
-	if IsInferenceBackend(backend) && m.inferenceRouteCallback != nil {
+	if m.routableBackend(backend) && m.inferenceRouteCallback != nil {
 		model := agent.ModelOverride
 		if model == "" {
 			model = agent.Config.Model
@@ -4219,7 +4249,7 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 func (m *Manager) RefreshInferenceRoutes(backend string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.inferenceRouteCallback == nil || !IsInferenceBackend(backend) {
+	if m.inferenceRouteCallback == nil || !m.routableBackend(backend) {
 		return
 	}
 	for name, agent := range m.agents {
