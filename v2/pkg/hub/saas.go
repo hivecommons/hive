@@ -166,6 +166,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	if !testing.Testing() {
 		go s.startProvisionWatcher()
 		go s.StartLatestSHAPoller()
+		// Periodically probe every spoke's unauthenticated /api/status and alert
+		// on any that answer 200 (wide open) — catches auth drift automatically.
+		go s.StartAuthAudit(context.Background())
 	}
 }
 
