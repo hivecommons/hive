@@ -151,6 +151,21 @@ var copilotAlwaysIncludeModels = []string{
 	"mai-code-1-flash-picker",
 }
 
+// codexStaticModels is the maintained list for the OpenAI Codex CLI. Codex only
+// accepts OpenAI models — Claude ids are rejected with a ChatGPT account
+// ("model is not supported when using Codex with a ChatGPT account"), so codex
+// must never fall through to the copilot list. Order mirrors `codex /model`
+// (sol is the default). Keep CURRENT with the Codex CLI's model set.
+var codexStaticModels = []string{
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"gpt-5.5",
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.3-codex-spark",
+}
+
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
 // discovery fails). Keep CURRENT.
 var geminiStaticModels = []string{
@@ -287,6 +302,10 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	case "claude":
 		// No live source exists; the maintained static list is authoritative.
 		r = cliModelResult{models: dedupeModels(claudeStaticModels), fallback: false}
+	case "codex":
+		// No probe wired yet; the maintained static list is authoritative and
+		// OpenAI-only (Claude ids are rejected by Codex with a ChatGPT account).
+		r = cliModelResult{models: dedupeModels(codexStaticModels), fallback: false}
 	default:
 		r = cliModelResult{models: nil, fallback: true}
 	}
@@ -321,6 +340,8 @@ func cliStaticFallback(backend string) []string {
 		return geminiStaticModels
 	case "claude":
 		return claudeStaticModels
+	case "codex":
+		return codexStaticModels
 	case "goose":
 		return []string{"default"}
 	default:

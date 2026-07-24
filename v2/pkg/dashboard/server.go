@@ -794,6 +794,12 @@ func isPublicPath(path string) bool {
 	switch {
 	case strings.HasPrefix(path, "/api/health"):
 		return true
+	case path == "/api/livez":
+		// The kubelet liveness probe hits this UNAUTHENTICATED — it must be
+		// public like /api/health, or every probe 401s, the probe never fails
+		// on a stale heartbeat (it fails on auth instead), and a dead-heartbeat
+		// pod is never restarted (the exact bug this endpoint was added to fix).
+		return true
 	case path == "/api/auth/token":
 		return true
 	case path == "/snapshot" || strings.HasPrefix(path, "/snapshot/"):
