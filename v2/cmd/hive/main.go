@@ -1342,6 +1342,16 @@ func main() {
 		} else if litellmEndpoint := cfg.Governor.LiteLLM.ResolveEndpoint(); litellmEndpoint != "" {
 			inferenceEndpoints["litellm"] = parseEndpointList(litellmEndpoint)
 		}
+		// Register every explicitly-configured named gateway's endpoint by
+		// gateway NAME so the Model Gateways tab's per-gateway model discovery
+		// and per-gateway routing resolve on boot (the legacy "litellm" block
+		// is already registered above; ResolvedGateways only synthesizes it
+		// when no explicit gateways are set, so this loop never double-adds it).
+		for _, gw := range cfg.Governor.Gateways {
+			if ep := strings.TrimSpace(gw.Endpoint); ep != "" {
+				inferenceEndpoints[gw.Name] = parseEndpointList(ep)
+			}
+		}
 		dashSrv.SetInferenceEndpoints(inferenceEndpoints)
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
