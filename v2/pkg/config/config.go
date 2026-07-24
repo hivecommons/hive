@@ -514,6 +514,114 @@ type GovernorConfig struct {
 	VLLM          InferenceAuthConfig   `yaml:"vllm"`
 	LLMD          InferenceAuthConfig   `yaml:"llm-d"`
 	Trajectory    TrajectoryConfig      `yaml:"trajectory"`
+	// Gateways is the list of named model gateways (OpenAI-compatible endpoints
+	// like OpenRouter, a LiteLLM proxy, vLLM, or llm-d). An agent routes through
+	// a gateway by naming it as its backend. When empty, a single implicit
+	// gateway named "litellm" is synthesized from the legacy LiteLLM block above
+	// so existing hives keep working with zero config change. See ResolveGateway.
+	Gateways []GatewayConfig `yaml:"gateways"`
+}
+
+// GatewayConfig is one named, OpenAI-compatible model gateway. A hive may
+// configure several at once (e.g. OpenRouter for public models plus a private
+// LiteLLM proxy for internal ones); each agent picks one by naming it as its
+// backend. Secrets are referenced by env-var NAME or file PATH only — never
+// inlined — matching the LiteLLM/inference key-handling rule elsewhere.
+type GatewayConfig struct {
+	// Name is the unique gateway id an agent names as its backend (e.g.
+	// "openrouter", "corp-litellm"). Must be non-empty and unique per hive.
+	Name string `yaml:"name" json:"name"`
+	// Kind drives preset defaults + labeling: openrouter | litellm | vllm |
+	// llm-d | custom. Purely descriptive at runtime (all are OpenAI-compatible);
+	// the endpoint is what actually routes.
+	Kind string `yaml:"kind" json:"kind,omitempty"`
+	// Endpoint is the OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+	// APIKeyEnv / APIKeyFile resolve this gateway's key (env var NAME and/or file
+	// PATH — never the value). Empty is allowed for keyless endpoints (some vLLM).
+	APIKeyEnv  string `yaml:"api_key_env" json:"api_key_env,omitempty"`
+	APIKeyFile string `yaml:"api_key_file" json:"api_key_file,omitempty"`
+	// DefaultModel is used when an agent routed through this gateway selects none.
+	DefaultModel string `yaml:"default_model" json:"default_model,omitempty"`
+	// CABundle is an optional PEM path for a private CA (never disables verify).
+	CABundle string `yaml:"ca_bundle" json:"ca_bundle,omitempty"`
+}
+
+// gatewayKind values.
+const (
+	GatewayKindOpenRouter = "openrouter"
+	GatewayKindLiteLLM    = "litellm"
+	GatewayKindVLLM       = "vllm"
+	GatewayKindLLMD       = "llm-d"
+	GatewayKindCustom     = "custom"
+
+	// legacyLiteLLMGatewayName is the name of the implicit gateway synthesized
+	// from the legacy Governor.LiteLLM block when no gateways are configured. It
+	// matches the historical "litellm" agent backend so existing agents route
+	// unchanged.
+	legacyLiteLLMGatewayName = "litellm"
+)
+
+// ResolvedGateways returns the effective gateway list: the explicitly-configured
+// Gateways when present, otherwise a single implicit gateway synthesized from the
+// legacy LiteLLM block (only if that block has an endpoint). This is what lets a
+// hive with no `gateways:` and a classic `litellm:` block keep working, while a
+// hive that lists gateways gets exactly those.
+func (g GovernorConfig) ResolvedGateways() []GatewayConfig {
+	if len(g.Gateways) > 0 {
+		return g.Gateways
+	}
+	if g.LiteLLM.Endpoint == "" {
+		return nil
+	}
+	return []GatewayConfig{{
+		Name:         legacyLiteLLMGatewayName,
+		Kind:         GatewayKindLiteLLM,
+		Endpoint:     g.LiteLLM.Endpoint,
+		APIKeyEnv:    g.LiteLLM.APIKeyEnv,
+		APIKeyFile:   g.LiteLLM.APIKeyFile,
+		DefaultModel: g.LiteLLM.DefaultModel,
+		CABundle:     g.LiteLLM.CABundle,
+	}}
+}
+
+// ResolveGateway looks up a gateway by name in the resolved list. An empty name
+// returns the FIRST resolved gateway (the default), so an inference agent that
+// names no specific gateway routes through the default one. Returns nil if no
+// gateway matches (or none are configured).
+func (g GovernorConfig) ResolveGateway(name string) *GatewayConfig {
+	gws := g.ResolvedGateways()
+	if len(gws) == 0 {
+		return nil
+	}
+	if name == "" {
+		gw := gws[0]
+		return &gw
+	}
+	for i := range gws {
+		if strings.EqualFold(gws[i].Name, name) {
+			gw := gws[i]
+			return &gw
+		}
+	}
+	return nil
+}
+
+// ResolveAPIKey returns this gateway's key value, preferring the env var when
+// set and falling back to the file. Returns "" when neither yields a value
+// (a keyless endpoint). Mirrors LiteLLMConfig key resolution.
+func (gw GatewayConfig) ResolveAPIKey() string {
+	if gw.APIKeyEnv != "" {
+		if v := os.Getenv(gw.APIKeyEnv); v != "" {
+			return v
+		}
+	}
+	if gw.APIKeyFile != "" {
+		if b, err := os.ReadFile(gw.APIKeyFile); err == nil {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	return ""
 }
 
 // TrajectoryConfig governs the trajectory-review lane: a periodic,
@@ -1813,6 +1921,15 @@ func (c *Config) validate() error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
+	// A configured gateway name is a valid agent backend: naming a gateway as
+	// the backend routes that agent through it. Names are matched
+	// case-insensitively to mirror ResolveGateway.
+	gatewayNames := map[string]bool{}
+	for _, gw := range c.Governor.ResolvedGateways() {
+		if gw.Name != "" {
+			gatewayNames[strings.ToLower(gw.Name)] = true
+		}
+	}
 	for name, agent := range c.Agents {
 		validBackends := map[string]bool{"claude": true, "copilot": true, "goose": true, "codex": true, "pi": true, "bob": true, "aider": true}
 		// Inference backends (vllm, llm-d, litellm) are valid persisted
@@ -1821,8 +1938,8 @@ func (c *Config) validate() error {
 		for _, b := range InferenceBackends {
 			validBackends[b] = true
 		}
-		if agent.Backend != "" && !validBackends[agent.Backend] {
-			return fmt.Errorf("agent %s: invalid backend %q (must be claude, copilot, goose, codex, pi, bob, aider, or an inference backend: %s)", name, agent.Backend, strings.Join(InferenceBackends, ", "))
+		if agent.Backend != "" && !validBackends[agent.Backend] && !gatewayNames[strings.ToLower(agent.Backend)] {
+			return fmt.Errorf("agent %s: invalid backend %q (must be claude, copilot, goose, codex, pi, bob, aider, an inference backend: %s, or a configured gateway name)", name, agent.Backend, strings.Join(InferenceBackends, ", "))
 		}
 		validCavemanModes := map[string]bool{"": true, "lite": true, "full": true, "ultra": true, "wenyan": true}
 		if !validCavemanModes[agent.CavemanMode] {
