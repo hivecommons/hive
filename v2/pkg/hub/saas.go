@@ -4998,8 +4998,15 @@ const dashboardHTML = `<!DOCTYPE html>
           var actionCell = '';
           var access = accessMap[h.id];
           if (access && access.status === 'accepted') {
-            var cUrl = 'https://' + esc(h.id) + '.hive.kubestellar.io/contribute';
-            actionCell = '<a href="' + cUrl + '" target="_blank" style="padding:3px 10px;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none">Contribute</a>';
+            // Use the hive's heartbeat-reported dashboard URL (resolvedBase),
+            // NOT a hardcoded <id>.hive.kubestellar.io host. Firewalled spokes
+            // (e.g. vllm-d on *.apps.fmaas-vllm-d.fmaas.res.ibm.com) live on a
+            // different domain, so the hardcoded host 503'd/failed to resolve.
+            var cBase = resolvedBase(h);
+            var actionCell2 = cBase
+              ? '<a href="' + cBase + '/contribute" target="_blank" style="padding:3px 10px;background:rgba(34,197,94,0.15);color:#4ade80;border:1px solid rgba(34,197,94,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none">Contribute</a>'
+              : '<span style="padding:3px 10px;color:var(--muted);font-size:0.7rem" title="hive has not reported its dashboard URL yet">Contribute unavailable</span>';
+            actionCell = actionCell2;
           } else if (access && access.status === 'pending') {
             actionCell = '<span style="padding:3px 10px;background:rgba(245,158,11,0.15);color:#fbbf24;border:1px solid rgba(245,158,11,0.3);border-radius:4px;font-size:0.7rem">Pending</span>';
           } else {
@@ -6007,7 +6014,13 @@ const dashboardHTML = `<!DOCTYPE html>
             var isHosted = hid.startsWith('hosted-') || hid.startsWith('saas-');
             var regEntry = (_hiveRegistry || []).find(function(h) { return h.id === hid; });
             var hiveName = regEntry ? (regEntry.name || hid) : hid;
-            var link = isHosted ? '<a href="https://' + esc(hid) + '.hive.kubestellar.io" target="_blank" class="dash-link">' + esc(hid) + '.hive.kubestellar.io</a>' : '<span style="color:var(--muted)">local</span>';
+            // Prefer the hive's heartbeat-reported dashboard URL so firewalled
+            // spokes (vllm-d etc.) link to their real route, not a dead
+            // <id>.hive.kubestellar.io host. Fall back to the hive-oke pattern.
+            var linkBase = (regEntry && regEntry.dashboardUrl && !regEntry.dashboardUrl.includes('localhost'))
+              ? regEntry.dashboardUrl : (isHosted ? 'https://' + esc(hid) + '.hive.kubestellar.io' : '');
+            var linkLabel = linkBase.replace(/^https?:\/\//, '');
+            var link = linkBase ? '<a href="' + esc(linkBase) + '" target="_blank" class="dash-link">' + esc(linkLabel) + '</a>' : '<span style="color:var(--muted)">local</span>';
             var typeBadge = isHosted ? '<span style="color:#60a5fa">hosted</span>' : '<span style="color:#9ca3af">local</span>';
             hiveRows += '<tr><td style="padding:4px 8px">' + esc(hiveName) + '</td><td style="text-align:center">' + esc(role) + '</td><td style="text-align:center">' + typeBadge + '</td><td>' + link + '</td></tr>';
           });
