@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/claude"
@@ -144,6 +145,21 @@ type Manager struct {
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 
+	// isGatewayBackend reports whether a backend string names a configured model
+	// gateway (in addition to the built-in inference backends vllm/llm-d/litellm).
+	// Injected from config so an agent whose backend is a gateway name (e.g.
+	// "openrouter") is treated as inference-routable and its route resolved.
+	// Nil in tests/bare setups → only built-in inference backends route.
+	//
+	// Stored as an atomic.Pointer, NOT under m.mu: routableBackend() is called
+	// from the agent-launch path (launchInTmux via Start), which ALREADY holds
+	// m.mu.Lock(). Reading this under m.mu.RLock() there would re-lock a
+	// non-reentrant RWMutex on the same goroutine and DEADLOCK the whole startup
+	// — the process never reaches MarkReady, /api/health stays "starting", and
+	// the startup probe kills the pod (a cluster-wide crash-loop we hit live).
+	// An atomic read is lock-free and safe from any lock context.
+	isGatewayBackend atomic.Pointer[func(backend string) bool]
+
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.
 	persistPauseCallback func(name string, paused bool)
@@ -230,6 +246,29 @@ func (m *Manager) SetInferenceCallbacks(
 	defer m.mu.Unlock()
 	m.inferenceRouteCallback = setRoute
 	m.clearInferenceRouteCallback = clearRoute
+}
+
+// SetGatewayBackendChecker injects a predicate that reports whether a backend
+// string names a configured model gateway. This makes an agent whose backend is
+// a gateway name inference-routable, so its route is resolved via the inference
+// callback exactly like the built-in litellm/vllm/llm-d backends.
+func (m *Manager) SetGatewayBackendChecker(fn func(backend string) bool) {
+	// Atomic store — no m.mu — so routableBackend can read it lock-free from the
+	// lock-holding launch path without deadlocking (see isGatewayBackend docs).
+	m.isGatewayBackend.Store(&fn)
+}
+
+// routableBackend reports whether a backend should be routed through the
+// inference proxy: either a built-in inference backend, or a configured gateway
+// name. Safe to call while holding m.mu (isGatewayBackend is read atomically).
+func (m *Manager) routableBackend(backend string) bool {
+	if IsInferenceBackend(backend) {
+		return true
+	}
+	// Lock-free atomic read: this is invoked from the launch path while m.mu is
+	// already held, so it MUST NOT take m.mu (non-reentrant RWMutex → deadlock).
+	fnp := m.isGatewayBackend.Load()
+	return fnp != nil && *fnp != nil && (*fnp)(backend)
 }
 
 // SetAppAuth injects the GitHub App auth provider for per-agent scoped tokens.
@@ -749,7 +788,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	// Inference backends (vllm, llm-d) use Claude Code as the CLI tool
 	// and route API traffic through the proxy to the self-hosted endpoint.
-	isInference := IsInferenceBackend(backend)
+	isInference := m.routableBackend(backend)
 	if isInference {
 		binary = "claude"
 		m.ensureClaudeSettings(agent.Name, agent.UID)
@@ -800,6 +839,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 					" --disallowed-tools 'mcp__github__merge_pull_request'"
 			}
 		case "copilot":
+			// model is passed verbatim to `copilot --model %s`. It may be a
+			// concrete id OR the auto-selection sentinel "auto" (copilotAutoModel
+			// in cli_models.go), which lets the Copilot CLI pick/adjust the model
+			// per task. Nothing here assumes a concrete id, so the sentinel flows
+			// through unchanged.
 			switch {
 			case mode >= ModeIssuesAndPRs:
 				launchCmd = fmt.Sprintf("%s --model %s --no-auto-update --allow-all --enable-all-github-mcp-tools",
@@ -4562,7 +4606,7 @@ func (m *Manager) SetModelOverride(name, model string) error {
 	if agent.BackendOverride != "" {
 		effectiveBackend = agent.BackendOverride
 	}
-	if IsInferenceBackend(effectiveBackend) && m.inferenceRouteCallback != nil {
+	if m.routableBackend(effectiveBackend) && m.inferenceRouteCallback != nil {
 		m.inferenceRouteCallback(name, effectiveBackend, model)
 	}
 	return nil
@@ -4580,7 +4624,7 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 	agent.BackendOverride = backend
 	m.logger.Info("agent backend override set", "name", name, "backend", backend)
 
-	if IsInferenceBackend(backend) && m.inferenceRouteCallback != nil {
+	if m.routableBackend(backend) && m.inferenceRouteCallback != nil {
 		model := agent.ModelOverride
 		if model == "" {
 			model = agent.Config.Model
@@ -4599,7 +4643,7 @@ func (m *Manager) SetBackendOverride(name, backend string) error {
 func (m *Manager) RefreshInferenceRoutes(backend string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.inferenceRouteCallback == nil || !IsInferenceBackend(backend) {
+	if m.inferenceRouteCallback == nil || !m.routableBackend(backend) {
 		return
 	}
 	for name, agent := range m.agents {

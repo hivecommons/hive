@@ -1000,6 +1000,32 @@
     .token-session-row .smsgs { color: var(--muted); min-width: 50px; }
     .token-session-row .sproj { color: var(--muted); font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+    /* Cost panel — mirrors token-panel styling */
+    .cost-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .cost-title { font-size: var(--fs-lg); font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .cost-subtitle { font-size: 0.7rem; color: var(--muted); margin-bottom: 12px; }
+    .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .cost-stat { text-align: left; }
+    .cost-stat .cval { font-size: 1.3rem; font-weight: 700; }
+    .cost-stat .clabel { font-size: 0.65rem; color: var(--muted); }
+    .cost-badge { font-size: 0.55rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 6px; margin-left: 6px; vertical-align: middle; }
+    .cost-badge.est { background: rgba(255, 196, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 196, 0, 0.4); }
+    .cost-badge.actual { background: rgba(0, 200, 120, 0.15); color: var(--green); border: 1px solid rgba(0, 200, 120, 0.4); }
+    .cost-gateways { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .cost-gateway { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+    .cost-gateway .cgname { font-weight: 700; }
+    .cost-gateway .cgkind { color: var(--muted); font-size: 0.65rem; margin-left: 6px; text-transform: uppercase; }
+    .cost-gateway .cgspend { font-family: var(--font-mono); font-weight: 700; }
+    .cost-gateway .cgerr { color: var(--muted); font-size: 0.68rem; font-style: italic; }
+    .cost-gateway .cgmeter { height: 5px; border-radius: 3px; background: rgba(128,128,128,0.2); overflow: hidden; margin-top: 5px; }
+    .cost-gateway .cgmeter > span { display: block; height: 100%; background: var(--green); }
+    .cost-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+    .cost-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(128,128,128,0.08); }
+    .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
+    .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
+    .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+
     /* Token burn rate chart */
     .burn-chart-wrap { margin: 8px 0 12px; }
     .burn-chart-title { font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
@@ -2311,6 +2337,7 @@
       <a class="oc-nav-item" data-section="advisory-section" onclick="ocNavigate('advisory-section')"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" onclick="ocNavigate('acmm-eval-section')"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="token-panel" onclick="ocNavigate('token-panel')"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
+      <a class="oc-nav-item" data-section="cost-panel" onclick="ocNavigate('cost-panel')"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-tree-toggle" onclick="ocToggleAgentTree(this)">
@@ -2435,6 +2462,8 @@
   </div>
 
   <div class="token-usage" id="token-panel" style="margin-bottom: 24px;"></div>
+
+  <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
     <h2 class="section-header-toggle" onclick="toggleSection('repos-section')"><span class="section-chevron">▼</span> Repositories <button class="config-gear" onclick="event.stopPropagation();openConfigDialog('governor',null,'Repos')" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
@@ -4668,6 +4697,10 @@
       { value: 'claude-fable-5', label: 'Fable 5' },
     ];
     const COPILOT_CLI_MODELS = [
+      // Auto sentinel: `copilot --model auto` lets the Copilot CLI pick/adjust
+      // the optimal model per task. Not a concrete model id — treated as an
+      // always-valid selection that reconcileModelsAfterDiscovery never heals.
+      { value: 'auto', label: 'Auto (Copilot picks)' },
       { value: 'mai-code-1-flash-picker', label: 'MAI Code 1 Flash' },
       { value: 'claude-opus-4.6', label: 'Opus 4.6' },
       { value: 'claude-sonnet-4.6', label: 'Sonnet 4.6' },
@@ -4712,6 +4745,14 @@
     function backendLabel(b) {
       if (INFERENCE_BACKENDS.includes(b)) return b + ' ⚡';
       return b;
+    }
+    // Auto-select sentinels: special --model VALUES that tell a CLI to pick the
+    // model itself rather than pin a concrete id. They flow verbatim through the
+    // launch path's `--model <value>` but are never in a discovered model
+    // catalog, so they must be exempted from model auto-heal. Copilot: `auto`.
+    const AUTO_MODEL_SENTINELS = { copilot: ['auto'] };
+    function isAutoModelSentinel(backend, model) {
+      return (AUTO_MODEL_SENTINELS[backend] || []).includes(model);
     }
     function modelsForBackend(backend) {
       const discovered = BACKEND_MODELS[backend];
@@ -4909,6 +4950,7 @@
       (window._lastAgents || []).forEach(a => {
         if (a.cli !== backend) return;
         if (!a.model) return;                 // no explicit model — nothing to heal
+        if (isAutoModelSentinel(backend, a.model)) return; // auto-select value — never a concrete id, never healed
         const key = `${backend}|${a.name}`;
         if (isAvailable(a.model)) { _markAvailable(key, a.model); return; } // still valid — leave untouched (idempotent)
         if (!_confirmAbsent(key, a.model)) return; // unconfirmed or already healed — no switch
@@ -5486,6 +5528,104 @@ function burnAreaChart() {
         detailsEl.addEventListener('toggle', () => { localStorage.setItem('hive-sessions-open', detailsEl.open ? '1' : '0'); });
       }
     }
+
+    // ---- Unified cost ($) view ----
+    // Fetches /api/cost on an interval and renders both ESTIMATED $ (token
+    // counts × list prices, for Claude/Copilot/Codex/vLLM) and NATIVE $ (real
+    // spend reported by OpenRouter / LiteLLM gateways). Estimates are always
+    // labeled "est." so they never masquerade as actual billing.
+    const COST_POLL_MS = 60000;
+    function fmtUSD(n) {
+      if (n == null || isNaN(n)) return '—';
+      if (n === 0) return '$0.00';
+      if (n < 0.01) return '<$0.01';
+      if (n < 100) return '$' + n.toFixed(2);
+      if (n < 100000) return '$' + n.toFixed(0);
+      return '$' + (n / 1000).toFixed(1) + 'k';
+    }
+
+    function renderCost(cost) {
+      const el = document.getElementById('cost-panel');
+      if (!el) return;
+      if (!cost || (!cost.estimated && (!cost.gateways || cost.gateways.length === 0))) {
+        el.innerHTML = '';
+        return;
+      }
+
+      const est = cost.estimated || { total_usd: 0, by_model: [], by_agent: [], unpriced_models: [] };
+      const gateways = cost.gateways || [];
+
+      // Native gateway cards (OpenRouter / LiteLLM real spend).
+      const gwCards = gateways.map(g => {
+        const spent = g.spent_usd;
+        const limit = g.limit_usd;
+        const remain = g.remaining_usd;
+        let body;
+        if (g.error) {
+          body = `<div class="cgerr">native spend unavailable (${esc(g.error)}) — using estimate</div>`;
+        } else if (spent != null) {
+          let line = `<span class="cgspend">${fmtUSD(spent)}</span> spent`;
+          if (limit != null) line += ` of ${fmtUSD(limit)}`;
+          if (remain != null) line += ` · ${fmtUSD(remain)} remaining`;
+          let meter = '';
+          if (limit != null && limit > 0) {
+            const pct = Math.min(100, Math.max(0, (spent / limit) * 100));
+            meter = `<div class="cgmeter"><span style="width:${pct.toFixed(1)}%"></span></div>`;
+          }
+          body = `<div>${line}</div>${meter}`;
+        } else {
+          body = `<div class="cgerr">no native figure reported — using estimate</div>`;
+        }
+        return `<div class="cost-gateway">
+          <div><span class="cgname">${esc(g.name)}</span><span class="cgkind">${esc(g.kind)}</span><span class="cost-badge actual">actual</span></div>
+          ${body}
+        </div>`;
+      }).join('');
+
+      // Per-model estimated cost table. Unpriced models render "—".
+      const models = (est.by_model || []).slice().sort((a, b) => b.usd - a.usd);
+      const modelRows = models.map(m => {
+        const usdCell = m.source === 'unpriced'
+          ? `<span title="no list price known for this model">—</span>`
+          : fmtUSD(m.usd);
+        return `<tr>
+          <td class="cmodel">${esc(m.name || 'unknown')}</td>
+          <td class="cnum">${fmtTokens(m.input)}</td>
+          <td class="cnum">${fmtTokens(m.output)}</td>
+          <td class="cnum">${usdCell}</td>
+        </tr>`;
+      }).join('');
+
+      const unpricedNote = (est.unpriced_models && est.unpriced_models.length)
+        ? `<div class="cost-disclaimer">Not priced (excluded from estimated total): ${est.unpriced_models.map(esc).join(', ')}. Estimated total is a lower bound.</div>`
+        : '';
+
+      el.innerHTML = `<div class="cost-panel">
+        <div class="cost-title">Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span></div>
+        <div class="cost-subtitle">List prices as of ${esc(cost.price_table_date || '')}. Metered gateways (OpenRouter, LiteLLM) show ACTUAL spend; everything else is ESTIMATED.</div>
+        <div class="cost-grid">
+          <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total (token × list price)</div></div>
+        </div>
+        ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
+        <table class="cost-table">
+          <thead><tr><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${modelRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
+        </table>
+        ${unpricedNote}
+        <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
+      </div>`;
+    }
+
+    async function fetchCost() {
+      try {
+        const resp = await fetch('/api/cost');
+        if (!resp.ok) return;
+        const cost = await resp.json();
+        renderCost(cost);
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+    fetchCost();
+    setInterval(fetchCost, COST_POLL_MS);
 
     // GitHub auth health — sticky banner when 401
     const GH_AUTH_POLL_MS = 30000;
@@ -9567,6 +9707,22 @@ function burnAreaChart() {
         const chevron = document.getElementById('advisory-digest-main-chevron');
         if (chevron) chevron.classList.add('collapsed');
       }
+      /* OpenRouter scan-to-fund return: show the result and clear the flag so a
+         reload doesn't re-toast. */
+      try {
+        const p = new URLSearchParams(window.location.search);
+        const or = p.get('openrouter');
+        if (or === 'connected') {
+          showToast('OpenRouter connected — the "openrouter" gateway is now configured', 'success');
+        } else if (or === 'error') {
+          showToast('OpenRouter connection failed — please try funding again', 'error');
+        }
+        if (or) {
+          p.delete('openrouter');
+          const qs = p.toString();
+          history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+      } catch (e) { /* non-fatal */ }
     });
 
     // ── Debug section ──
@@ -11037,7 +11193,7 @@ function burnAreaChart() {
 
     const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', 'Last Prompt', 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'LiteLLM', 'Variables', 'Access'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -11463,11 +11619,10 @@ function burnAreaChart() {
       } else {
         body.innerHTML = renderGovernorTab(tabId);
         if (tabId === 'Hub') fetchQueueCount();
-        // Opening the LiteLLM tab triggers a fresh model discovery (bypassing
-        // the TTL cache) so a just-added key's models populate the Default
-        // Model dropdown without a full reload.
-        if (tabId === 'LiteLLM') {
-          fetchInferenceModels('litellm', true).then(refreshLitellmDefaultModelField).catch(() => {});
+        // Opening the Model Gateways tab loads the live gateway list and
+        // renders the manager into its container.
+        if (tabId === 'Model Gateways') {
+          loadGateways();
         }
       }
     }
@@ -11599,7 +11754,7 @@ function burnAreaChart() {
         case 'Sensing': return renderGovSensing(d.sensing || {});
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Hub': return renderGovHub(d.hub || {});
-        case 'LiteLLM': return renderGovLiteLLM(d.litellm || {});
+        case 'Model Gateways': return renderGovGateways();
         case 'Variables': return renderGovVariables();
         case 'Access': return renderGovAccess();
         default: return '';
@@ -11946,6 +12101,473 @@ function burnAreaChart() {
         showToast('Variable ${' + name + '} deleted', 'success');
         loadVariables();
       } catch (e) { showToast('Failed to delete variable', 'error'); }
+    }
+
+    // ---- Model Gateways manager ----------------------------------------
+    // Manages MULTIPLE named, OpenAI-compatible model gateways (OpenRouter,
+    // a LiteLLM proxy, vLLM, llm-d, custom). Self-contained CRUD: it fetches
+    // /api/config/governor/gateways, and List/Test/Delete/Save go straight to
+    // the gateway endpoints (not the generic dirty/saveConfig flow). A
+    // legacy-only hive shows its synthesized "litellm" gateway as one row.
+
+    // Preset endpoint + label per gateway kind. Blank endpoint means the user
+    // fills it (self-hosted / custom). OpenRouter has a well-known base URL.
+    const GATEWAY_PRESETS = [
+      { kind: 'openrouter', label: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1' },
+      { kind: 'litellm',    label: 'LiteLLM',    endpoint: '' },
+      { kind: 'vllm',       label: 'vLLM',       endpoint: '' },
+      { kind: 'llm-d',      label: 'llm-d',      endpoint: '' },
+      { kind: 'custom',     label: 'Custom',     endpoint: '' },
+    ];
+
+    // Human-facing badge label + accent color per kind.
+    const GATEWAY_KIND_META = {
+      openrouter: { label: 'OpenRouter', color: 'var(--cyan)' },
+      litellm:    { label: 'LiteLLM',    color: 'var(--accent)' },
+      vllm:       { label: 'vLLM',       color: 'var(--green)' },
+      'llm-d':    { label: 'llm-d',      color: 'var(--purple, #a78bfa)' },
+      custom:     { label: 'Custom',     color: 'var(--muted)' },
+    };
+
+    // Sentinel for the "type a custom id" option in the gateway Default Model
+    // select — cannot collide with a real model id.
+    const GATEWAY_CUSTOM_MODEL_SENTINEL = '__custom__';
+
+    // In-memory list of gateways currently rendered (from the last fetch), and
+    // the models discovered for the add/edit form's endpoint+key.
+    let _gateways = [];
+    let _gatewayFormModels = [];
+
+    function gatewayKindMeta(kind) {
+      return GATEWAY_KIND_META[kind] || GATEWAY_KIND_META.custom;
+    }
+
+    function renderGovGateways() {
+      // Container the async loadGateways() fills; the initial paint shows a
+      // loading line so the tab is never blank while the fetch is in flight.
+      return `
+        <div style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">
+          Configure the OpenAI-compatible model gateways this hive can route through
+          (OpenRouter, a LiteLLM proxy, vLLM, llm-d, or a custom endpoint). An agent
+          uses a gateway by naming it as its backend. Keys are stored privately on this
+          hive — never in hive.yaml, logs, or config downloads.
+        </div>
+        <div style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap">
+          <button onclick="openGatewayForm()" style="padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.8rem">+ Add gateway</button>
+          <button onclick="openOpenRouterFund()" style="padding:7px 16px;border:1px solid var(--cyan);border-radius:6px;background:transparent;color:var(--cyan);cursor:pointer;font-weight:600;font-size:0.8rem">⚡ Fund this hive with OpenRouter</button>
+        </div>
+        <div id="openrouter-fund-host"></div>
+        <div id="gateways-form-host"></div>
+        <div id="gateways-list-host"><div style="color:var(--muted);font-size:0.8rem">Loading gateways…</div></div>`;
+    }
+
+    // ---- OpenRouter scan-to-fund -------------------------------------------
+    // Fund THIS hive: pick a default model, then scan a QR (or click the link)
+    // to authorize on openrouter.ai via OAuth PKCE. On return the hive stores a
+    // scoped OpenRouter key as the "openrouter" gateway. The QR image is a
+    // same-origin Go-generated PNG (CSP-clean). We poll /api/openrouter/credit
+    // to detect the connected key and show remaining credit.
+    let _openrouterPoll = null;
+
+    async function openOpenRouterFund() {
+      const host = document.getElementById('openrouter-fund-host');
+      if (!host) return;
+      // Curated + live model options for the picker.
+      let models = { suggested: [], models: [], default: '' };
+      try {
+        const r = await fetch('/api/openrouter/models');
+        if (r.ok) models = await r.json();
+      } catch (e) { /* fall back to manual entry */ }
+      const sug = (models.suggested || []);
+      const opts = sug.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
+        + `<option value="__manual__">Enter a model id manually…</option>`;
+      host.innerHTML = `
+        <div style="border:1px solid var(--cyan);border-radius:8px;padding:14px;margin-bottom:12px;background:var(--surface)">
+          <div style="font-weight:600;font-size:0.9rem;margin-bottom:4px">⚡ Fund this hive with OpenRouter</div>
+          <div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px">Scan the QR (or open the link) to authorize on OpenRouter. A scoped key funded from your OpenRouter credits is stored as the <code>openrouter</code> gateway — the key never leaves this hive.</div>
+          <label style="display:block;font-size:0.74rem;color:var(--muted);margin-bottom:4px">Default model for the new gateway</label>
+          <select id="or-model-select" onchange="orModelSelectChange()" style="width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;margin-bottom:8px">${opts}</select>
+          <input id="or-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;margin-bottom:8px;box-sizing:border-box">
+          <div style="display:flex;gap:8px;margin-top:4px">
+            <button onclick="orStartFlow()" style="padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.8rem">Generate QR</button>
+            <button onclick="closeOpenRouterFund()" style="padding:7px 16px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:0.8rem">Cancel</button>
+          </div>
+          <div id="or-qr-area" style="margin-top:12px"></div>
+          <div id="or-status" style="margin-top:8px;font-size:0.78rem"></div>
+        </div>`;
+    }
+
+    function orModelSelectChange() {
+      const sel = document.getElementById('or-model-select');
+      const man = document.getElementById('or-model-manual');
+      if (!sel || !man) return;
+      man.style.display = sel.value === '__manual__' ? 'block' : 'none';
+    }
+
+    function orChosenModel() {
+      const sel = document.getElementById('or-model-select');
+      if (!sel) return '';
+      if (sel.value === '__manual__') {
+        const man = document.getElementById('or-model-manual');
+        return (man && man.value.trim()) || '';
+      }
+      return sel.value;
+    }
+
+    async function orStartFlow() {
+      const model = orChosenModel();
+      const qrArea = document.getElementById('or-qr-area');
+      const status = document.getElementById('or-status');
+      if (qrArea) qrArea.innerHTML = '<span style="color:var(--muted);font-size:0.78rem">Preparing…</span>';
+      try {
+        const res = await fetch('/api/openrouter/connect/start?model=' + encodeURIComponent(model));
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const authURL = data.authorize_url;
+        const qrSrc = '/api/openrouter/qr?data=' + encodeURIComponent(authURL);
+        if (qrArea) qrArea.innerHTML = `
+          <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+            <img src="${esc(qrSrc)}" alt="OpenRouter QR" width="180" height="180" style="border:6px solid #fff;border-radius:8px;background:#fff">
+            <div style="font-size:0.78rem">
+              <div style="margin-bottom:6px">Scan with your phone, or on this device:</div>
+              <a href="${esc(authURL)}" target="_blank" rel="noopener" style="color:var(--cyan);font-weight:600">Open OpenRouter authorization ↗</a>
+            </div>
+          </div>`;
+        if (status) status.innerHTML = '<span style="color:var(--muted)">Waiting for authorization… this panel updates when the key is connected.</span>';
+        orStartCreditPolling();
+      } catch (e) {
+        if (qrArea) qrArea.innerHTML = `<span style="color:var(--red);font-size:0.78rem">Failed to start: ${esc(e.message)}</span>`;
+      }
+    }
+
+    function orStartCreditPolling() {
+      if (_openrouterPoll) clearInterval(_openrouterPoll);
+      const OR_POLL_MS = 4000;
+      _openrouterPoll = setInterval(orCheckCredit, OR_POLL_MS);
+    }
+
+    async function orCheckCredit() {
+      const status = document.getElementById('or-status');
+      try {
+        const res = await fetch('/api/openrouter/credit');
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!d.connected) return;
+        if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+        let creditLine = '';
+        if (d.limit_remaining != null) creditLine = ' — $' + Number(d.limit_remaining).toFixed(2) + ' remaining';
+        else if (d.limit == null) creditLine = ' — unlimited';
+        if (status) status.innerHTML = '<span style="color:var(--green);font-weight:600">✓ Connected' + esc(creditLine) + '</span>';
+        loadGateways();
+      } catch (e) { /* keep polling */ }
+    }
+
+    function closeOpenRouterFund() {
+      if (_openrouterPoll) { clearInterval(_openrouterPoll); _openrouterPoll = null; }
+      const host = document.getElementById('openrouter-fund-host');
+      if (host) host.innerHTML = '';
+    }
+
+    async function loadGateways() {
+      const host = document.getElementById('gateways-list-host');
+      try {
+        const res = await fetch('/api/config/governor/gateways');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        _gateways = data.gateways || [];
+        renderGatewaysList();
+      } catch (e) {
+        if (host) host.innerHTML = `<div style="color:var(--red);font-size:0.8rem">Failed to load gateways: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function renderGatewaysList() {
+      const host = document.getElementById('gateways-list-host');
+      if (!host) return;
+      if (!_gateways.length) {
+        host.innerHTML = '<div style="color:var(--muted);font-size:0.8rem;padding:12px 0">No gateways configured yet. Click "+ Add gateway" to add one.</div>';
+        return;
+      }
+      host.innerHTML = _gateways.map(function(gw) {
+        const meta = gatewayKindMeta(gw.kind);
+        const keyLine = gw.hasKey
+          ? `key set${gw.keyHint ? ' (' + esc(gw.keyHint) + ')' : ''}`
+          : 'no key';
+        return `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:10px;background:var(--surface)">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-weight:600;font-size:0.9rem">${esc(gw.name)}</span>
+            <span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid ${meta.color};color:${meta.color}">${esc(meta.label)}</span>
+            <span style="flex:1"></span>
+            <button onclick="testGateway('${esc(gw.name)}')" style="padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:0.74rem">Test</button>
+            <button onclick="editGateway('${esc(gw.name)}')" style="padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:0.74rem">Edit</button>
+            <button onclick="deleteGateway('${esc(gw.name)}')" style="padding:4px 12px;border:1px solid var(--red);border-radius:6px;background:var(--bg);color:var(--red);cursor:pointer;font-size:0.74rem">Delete</button>
+          </div>
+          <div style="font-size:0.74rem;color:var(--muted);margin-top:8px;word-break:break-all">
+            <div>Endpoint: ${esc(gw.endpoint || '—')}</div>
+            <div>Default model: ${esc(gw.default_model || '—')} · ${keyLine}</div>
+          </div>
+          <div id="gateway-test-result-${esc(gw.name)}" style="display:none;font-size:0.74rem;margin-top:6px;white-space:pre-wrap"></div>
+        </div>`;
+      }).join('');
+    }
+
+    async function testGateway(name) {
+      const el = document.getElementById('gateway-test-result-' + name);
+      if (el) { el.style.display = 'block'; el.style.color = 'var(--muted)'; el.textContent = 'Testing…'; }
+      try {
+        const res = await fetch('/api/config/governor/gateways/' + encodeURIComponent(name) + '/test', {
+          method: 'POST', headers: _inceptionAuthHeaders()
+        });
+        const data = await res.json().catch(() => ({}));
+        const probe = data.probe || (res.ok ? null : { ok: false, error: data.error || ('HTTP ' + res.status) });
+        showGatewayProbe(el, probe);
+      } catch (e) {
+        showGatewayProbe(el, { ok: false, error: e.message });
+      }
+    }
+
+    // showGatewayProbe formats a {ok, model_count} / {ok:false, error} probe.
+    function showGatewayProbe(el, probe) {
+      if (!el) return;
+      el.style.display = 'block';
+      if (probe && probe.ok) {
+        const n = probe.model_count || 0;
+        el.style.color = 'var(--green)';
+        el.textContent = `OK — ${n} model${n === 1 ? '' : 's'} available`;
+      } else {
+        el.style.color = 'var(--red)';
+        el.textContent = 'Connection failed: ' + ((probe && probe.error) || 'unknown error');
+      }
+    }
+
+    async function deleteGateway(name) {
+      if (!confirm('Delete gateway "' + name + '"? Agents that route through it must be repointed first.')) return;
+      try {
+        const res = await fetch('/api/config/governor/gateways/' + encodeURIComponent(name), {
+          method: 'DELETE', headers: _inceptionAuthHeaders()
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          // 409 → in use by agents; surface the server's agent list verbatim.
+          showToast(data.error || ('Failed to delete (HTTP ' + res.status + ')'), 'error');
+          return;
+        }
+        showToast('Gateway "' + name + '" deleted', 'success');
+        loadGateways();
+      } catch (e) {
+        showToast('Failed to delete gateway: ' + e.message, 'error');
+      }
+    }
+
+    function editGateway(name) {
+      const gw = _gateways.find(g => g.name === name);
+      openGatewayForm(gw || null);
+    }
+
+    // openGatewayForm renders the inline add/edit form. When `existing` is set
+    // the form is in edit mode (name is read-only, fields prefilled). The API
+    // Key input always starts empty — typing replaces the stored key, leaving
+    // it blank keeps it.
+    function openGatewayForm(existing) {
+      _gatewayFormModels = [];
+      const host = document.getElementById('gateways-form-host');
+      if (!host) return;
+      const isEdit = !!existing;
+      const gw = existing || { name: '', kind: 'custom', endpoint: '', default_model: '', hasKey: false };
+      const presetButtons = GATEWAY_PRESETS.map(function(p) {
+        const active = gw.kind === p.kind;
+        return `<button type="button" onclick="applyGatewayPreset('${p.kind}')" data-gw-preset="${p.kind}" style="padding:5px 12px;border:1px solid ${active ? 'var(--cyan)' : 'var(--border)'};border-radius:6px;background:${active ? 'var(--cyan)' : 'var(--bg)'};color:${active ? 'var(--bg)' : 'var(--fg)'};cursor:pointer;font-size:0.74rem;font-weight:600">${esc(p.label)}</button>`;
+      }).join('');
+      host.innerHTML = `
+        <div style="border:1px solid var(--cyan);border-radius:8px;padding:16px;margin-bottom:14px;background:var(--surface)">
+          <div style="font-weight:600;margin-bottom:12px">${isEdit ? 'Edit gateway: ' + esc(gw.name) : 'Add gateway'}</div>
+          <div class="config-field" style="margin-bottom:12px">
+            <label>Preset</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">${presetButtons}</div>
+          </div>
+          <div class="config-field" style="margin-bottom:10px">
+            <label>Name</label>
+            <input type="text" id="gw-name" value="${esc(gw.name)}" placeholder="e.g. openrouter, corp-litellm" ${isEdit ? 'readonly style="opacity:0.7"' : ''}>
+          </div>
+          <input type="hidden" id="gw-kind" value="${esc(gw.kind || 'custom')}">
+          <div class="config-field" style="margin-bottom:10px">
+            <label>Endpoint URL</label>
+            <input type="text" id="gw-endpoint" value="${esc(gw.endpoint || '')}" placeholder="https://…/v1" onchange="onGatewayEndpointOrKeyChange()">
+          </div>
+          <div class="config-field" style="margin-bottom:10px">
+            <label>API Key</label>
+            <input type="password" id="gw-apikey" value="" autocomplete="new-password" placeholder="${gw.hasKey ? '(key is set — enter a new key to replace it)' : 'sk-…'}" onchange="onGatewayEndpointOrKeyChange()">
+            <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Stored as a secret on this hive (owner-only file), never in config.</div>
+          </div>
+          <div class="config-field" style="margin-bottom:10px">
+            <label>Default Model</label>
+            <div id="gw-default-model-field">${gatewayDefaultModelFieldHtml(gw.default_model || '')}</div>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+            <button type="button" onclick="closeGatewayForm()" style="padding:7px 16px;border:1px solid var(--border);border-radius:6px;background:none;color:var(--muted);cursor:pointer;font-size:0.78rem">Cancel</button>
+            <button type="button" onclick="saveGateway(${isEdit ? 'true' : 'false'})" style="padding:7px 18px;border:none;border-radius:6px;background:var(--green);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.78rem">Save</button>
+          </div>
+          <div id="gw-form-result" style="display:none;font-size:0.75rem;margin-top:10px;white-space:pre-wrap"></div>
+        </div>`;
+      // Populate the model dropdown if endpoint (and possibly a stored key) are
+      // already present in edit mode.
+      onGatewayEndpointOrKeyChange();
+    }
+
+    function closeGatewayForm() {
+      const host = document.getElementById('gateways-form-host');
+      if (host) host.innerHTML = '';
+    }
+
+    // applyGatewayPreset sets the kind and fills the endpoint for the picked
+    // preset, then focuses the key field. OpenRouter fills its base URL; the
+    // others leave the endpoint for the user (self-hosted / custom).
+    function applyGatewayPreset(kind) {
+      const preset = GATEWAY_PRESETS.find(p => p.kind === kind) || GATEWAY_PRESETS[GATEWAY_PRESETS.length - 1];
+      const kindEl = document.getElementById('gw-kind');
+      const epEl = document.getElementById('gw-endpoint');
+      if (kindEl) kindEl.value = preset.kind;
+      // Only overwrite the endpoint when the preset carries one, so switching
+      // to Custom doesn't wipe a URL the user already typed.
+      if (epEl && preset.endpoint) epEl.value = preset.endpoint;
+      // Re-render the preset button row so the active highlight follows.
+      document.querySelectorAll('[data-gw-preset]').forEach(function(btn) {
+        const active = btn.getAttribute('data-gw-preset') === preset.kind;
+        btn.style.borderColor = active ? 'var(--cyan)' : 'var(--border)';
+        btn.style.background = active ? 'var(--cyan)' : 'var(--bg)';
+        btn.style.color = active ? 'var(--bg)' : 'var(--fg)';
+      });
+      const keyEl = document.getElementById('gw-apikey');
+      if (keyEl) keyEl.focus();
+      onGatewayEndpointOrKeyChange();
+    }
+
+    // gatewayDefaultModelFieldHtml renders the Default Model control: a
+    // <select> of discovered ids (once the endpoint has been probed) plus a
+    // "Custom…" escape hatch, or a plain text input when none are discovered
+    // (so the field is never a dead end).
+    function gatewayDefaultModelFieldHtml(current) {
+      const models = _gatewayFormModels;
+      const cur = current || '';
+      if (!models.length) {
+        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. anthropic/claude-opus-4.8">`;
+      }
+      const inList = cur && models.indexOf(cur) !== -1;
+      const options = models.map(m =>
+        `<option value="${esc(m)}"${m === cur ? ' selected' : ''}>${esc(m)}</option>`).join('');
+      const customOptLabel = inList ? 'Custom…' : (cur ? esc(cur) + ' (custom)' : 'Custom…');
+      const customSelected = cur && !inList;
+      const emptyOpt = cur ? '' : '<option value="" selected disabled>Select a discovered model…</option>';
+      return `
+        <select id="gw-default-model-select" onchange="onGatewayDefaultModelSelect(this)">
+          ${emptyOpt}${options}
+          <option value="${GATEWAY_CUSTOM_MODEL_SENTINEL}"${customSelected ? ' selected' : ''}>${customOptLabel}</option>
+        </select>
+        <input type="text" id="gw-default-model" value="${customSelected ? esc(cur) : (inList ? esc(cur) : '')}" placeholder="e.g. anthropic/claude-opus-4.8" style="margin-top:6px;display:${customSelected ? 'block' : 'none'}" data-gw-custom-model>`;
+    }
+
+    function onGatewayDefaultModelSelect(sel) {
+      const custom = document.querySelector('[data-gw-custom-model]');
+      if (sel.value === GATEWAY_CUSTOM_MODEL_SENTINEL) {
+        if (custom) { custom.style.display = 'block'; custom.focus(); }
+        return;
+      }
+      if (custom) { custom.style.display = 'none'; custom.value = sel.value; }
+    }
+
+    // gatewayCurrentDefaultModel reads whichever control (select vs custom
+    // input) currently holds the chosen default model id.
+    function gatewayCurrentDefaultModel() {
+      const sel = document.getElementById('gw-default-model-select');
+      const custom = document.getElementById('gw-default-model');
+      if (sel && sel.value && sel.value !== GATEWAY_CUSTOM_MODEL_SENTINEL) return sel.value;
+      return custom ? custom.value.trim() : '';
+    }
+
+    const GATEWAY_MODEL_PROBE_DEBOUNCE_MS = 500;
+    let _gatewayModelProbeTimer = null;
+    // onGatewayEndpointOrKeyChange debounces a live /v1/models probe of the
+    // form's endpoint+key (via the discover endpoint, which never stores the
+    // key) so the Default Model dropdown populates before the gateway is saved.
+    // On failure the field stays a plain text input (manual-entry fallback), so
+    // it is never a dead end.
+    function onGatewayEndpointOrKeyChange() {
+      if (_gatewayModelProbeTimer) clearTimeout(_gatewayModelProbeTimer);
+      const epEl = document.getElementById('gw-endpoint');
+      const endpoint = epEl ? epEl.value.trim() : '';
+      if (!endpoint) return;
+      _gatewayModelProbeTimer = setTimeout(function() {
+        probeGatewayFormModels();
+      }, GATEWAY_MODEL_PROBE_DEBOUNCE_MS);
+    }
+
+    async function probeGatewayFormModels() {
+      const nameEl = document.getElementById('gw-name');
+      const epEl = document.getElementById('gw-endpoint');
+      const keyEl = document.getElementById('gw-apikey');
+      const endpoint = epEl ? epEl.value.trim() : '';
+      if (!endpoint) return;
+      // Preserve whatever the user has currently chosen before re-rendering.
+      const current = gatewayCurrentDefaultModel();
+      try {
+        const res = await fetch('/api/config/governor/gateways/discover', {
+          method: 'POST',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({
+            name: nameEl ? nameEl.value.trim() : '',
+            endpoint: endpoint,
+            api_key: keyEl ? keyEl.value.trim() : ''
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        _gatewayFormModels = (res.ok && data.ok && Array.isArray(data.models)) ? data.models : [];
+      } catch (e) {
+        _gatewayFormModels = [];
+      }
+      const host = document.getElementById('gw-default-model-field');
+      if (host) host.innerHTML = gatewayDefaultModelFieldHtml(current);
+    }
+
+    // saveGateway PUTs the form. A typed key is sent as api_key and stored
+    // server-side as a secret file (only the path lands in hive.yaml). On
+    // success the list refreshes and the server's save-time probe result shows.
+    async function saveGateway(isEdit) {
+      const name = (document.getElementById('gw-name') || {}).value || '';
+      const kind = (document.getElementById('gw-kind') || {}).value || 'custom';
+      const endpoint = (document.getElementById('gw-endpoint') || {}).value || '';
+      const apiKey = (document.getElementById('gw-apikey') || {}).value || '';
+      const defaultModel = gatewayCurrentDefaultModel();
+      const resultEl = document.getElementById('gw-form-result');
+      if (!name.trim()) { showToast('Gateway name is required', 'error'); return; }
+      if (!endpoint.trim()) { showToast('Endpoint is required', 'error'); return; }
+      const payload = {
+        name: name.trim(),
+        kind: kind,
+        endpoint: endpoint.trim(),
+        default_model: defaultModel,
+      };
+      // Only send api_key when the user typed one (empty = keep existing key).
+      if (apiKey.trim()) payload.api_key = apiKey.trim();
+      try {
+        const res = await fetch('/api/config/governor/gateways', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          showToast(data.error || ('Failed to save (HTTP ' + res.status + ')'), 'error');
+          return;
+        }
+        // Surface the server's live save-time probe inline.
+        if (data.probe && resultEl) showGatewayProbe(resultEl, data.probe);
+        showToast('Gateway "' + payload.name + '" saved', 'success');
+        closeGatewayForm();
+        loadGateways();
+      } catch (e) {
+        showToast('Failed to save gateway: ' + e.message, 'error');
+      }
     }
 
     function renderGovLiteLLM(litellm) {

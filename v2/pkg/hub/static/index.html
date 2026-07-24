@@ -852,13 +852,31 @@
       renderHives(filtered);
     }
 
+    // contributeBase returns the spoke's real base URL for building /contribute
+    // links. Prefers the heartbeat-reported dashboardUrl (correct for firewalled
+    // spokes like vllm-d, which live on a different domain), and falls back to
+    // the hive-oke host pattern only when no dashboardUrl was reported. Accepts
+    // either a hive object or a hive id (looked up in _allMainHives). Previously
+    // these links hardcoded <id>.hive.kubestellar.io, which was a dead host for
+    // every non-hive-oke spoke.
+    function contributeBase(hiveOrId) {
+      var h = (typeof hiveOrId === 'string')
+        ? (_allMainHives || []).find(function(x) { return x.id === hiveOrId; })
+        : hiveOrId;
+      if (h && h.dashboardUrl && h.dashboardUrl.indexOf('localhost') === -1) {
+        return h.dashboardUrl.replace(/\/+$/, '');
+      }
+      var id = h ? h.id : hiveOrId;
+      return 'https://' + esc(id) + '.hive.kubestellar.io';
+    }
+
     function contributeButton(h) {
       if (h.hiveType !== 'hosted') return '';
       var hid = h.id;
       var access = _userAccessStatus[hid];
       if (_isLoggedIn && access) {
         if (access.status === 'accepted') {
-          var cUrl = 'https://' + esc(hid) + '.hive.kubestellar.io/contribute';
+          var cUrl = contributeBase(h) + '/contribute';
           return '<a href="' + cUrl + '" target="_blank" style="padding:2px 8px;background:rgba(116,223,154,0.15);color:#74df9a;border:1px solid rgba(116,223,154,0.3);border-radius:4px;font-size:0.65rem;text-decoration:none">Contribute Now</a>';
         }
         if (access.status === 'pending') {
@@ -1007,7 +1025,7 @@
 
       var access = _userAccessStatus[id];
       if (access && access.status === 'accepted') {
-        var cUrl = 'https://' + esc(id) + '.hive.kubestellar.io/contribute';
+        var cUrl = contributeBase(id) + '/contribute';
         area.innerHTML = '<p style="font-size:0.75rem;color:var(--green);margin-bottom:8px">You have <strong>' + esc(access.role) + '</strong> access to this hive.</p>' +
           '<a href="' + cUrl + '" target="_blank" style="padding:8px 16px;background:var(--green);color:#fff;border-radius:6px;font-size:0.85rem;font-weight:600;text-decoration:none;display:inline-block">Open Contribute Page</a>';
         return;

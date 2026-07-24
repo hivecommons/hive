@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/openrouter"
 )
 
 //go:embed static/*
@@ -145,6 +147,10 @@ type HubServer struct {
 	hubGitHash        string
 	hubGitBranch      string
 	hubSecret         string
+	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
+	// every-cycle behind-latest check doesn't re-restart while a rollout is still
+	// in flight. See the auto-upgrade block in the SHA-poll loop.
+	lastHubUpgradeTrigger time.Time
 	httpServer        *http.Server
 	httpMu            sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
 	clusters          map[string]ClusterConfig
@@ -175,6 +181,19 @@ type HubServer struct {
 	// heartbeat response. Key: hive ID → banner entry.
 	hubBanners   map[string]*HubBannerEntry
 	hubBannersMu sync.RWMutex
+
+	// pendingGateways stores OpenRouter gateways funded via the hub's
+	// scan-to-fund flow, to deliver to firewalled/heartbeat-only spokes via the
+	// heartbeat response. Key: hive ID → gateway (carries the secret key VALUE,
+	// so it is drained on delivery, never re-sent). In-memory only — an
+	// undelivered fund is retried by the sponsor, not persisted across restarts.
+	pendingGateways   map[string]*HeartbeatGatewayConfig
+	pendingGatewaysMu sync.Mutex
+
+	// openRouterState holds in-progress hub-side OpenRouter PKCE flows
+	// (single-use state → verifier/hive/model). Lazily initialized.
+	openRouterStateOnce  sync.Once
+	openRouterStateStore *openrouter.StateStore
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -219,6 +238,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		heartbeatSwitchTag:      make(map[string]string),
 		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
+		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
 	}
 
@@ -245,6 +265,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 
 	s.registerOAuth()
 	s.registerSaaSRoutes()
+	s.registerOpenRouterRoutes()
 	go s.saveLoop()
 
 	return s
@@ -630,6 +651,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"primary_repo", projCfg.PrimaryRepo,
 			"acmm_level", projCfg.ACMMLevel,
 		)
+	}
+
+	// Deliver a funded OpenRouter gateway to a firewalled/heartbeat-only spoke.
+	// Drained on delivery (carries a secret key value, so it is sent once, not
+	// re-sent every beat). The key value is not logged.
+	if gw := s.takePendingGateway(payload.HiveID); gw != nil {
+		resp.PendingGateway = gw
+		s.logger.Info("heartbeat: delivering funded gateway to spoke",
+			"hive_id", payload.HiveID, "gateway", gw.Name, "default_model", gw.DefaultModel)
 	}
 
 	// Check if the hive should self-upgrade via heartbeat response.

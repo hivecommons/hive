@@ -1442,9 +1442,51 @@ func main() {
 		} else if litellmEndpoint := cfg.Governor.LiteLLM.ResolveEndpoint(); litellmEndpoint != "" {
 			inferenceEndpoints["litellm"] = parseEndpointList(litellmEndpoint)
 		}
+		// Register every explicitly-configured named gateway's endpoint by
+		// gateway NAME so the Model Gateways tab's per-gateway model discovery
+		// and per-gateway routing resolve on boot (the legacy "litellm" block
+		// is already registered above; ResolvedGateways only synthesizes it
+		// when no explicit gateways are set, so this loop never double-adds it).
+		for _, gw := range cfg.Governor.Gateways {
+			if ep := strings.TrimSpace(gw.Endpoint); ep != "" {
+				inferenceEndpoints[gw.Name] = parseEndpointList(ep)
+			}
+		}
 		dashSrv.SetInferenceEndpoints(inferenceEndpoints)
+		// Treat any configured gateway name as an inference-routable backend so
+		// an agent with backend: <gateway> routes through it. Resolution is live
+		// (reads cfg on each call) so gateways added from the Model Gateways tab
+		// take effect without a restart.
+		agentMgr.SetGatewayBackendChecker(func(backend string) bool {
+			return cfg.Governor.ResolveGateway(backend) != nil &&
+				!strings.EqualFold(backend, "") // empty is the default, not a named backend
+		})
 		agentMgr.SetInferenceCallbacks(
 			func(agentName, backend, model string) {
+				// Named model gateway (OpenRouter, a second LiteLLM, etc.): resolve
+				// endpoint/key/model from the gateway and route through it. Built-in
+				// backend names (litellm/vllm/llm-d) are handled below; a gateway
+				// literally named "litellm" resolves here to the same legacy block
+				// via ResolvedGateways, so behavior is identical.
+				if gw := cfg.Governor.ResolveGateway(backend); gw != nil && !config.IsInferenceBackend(backend) {
+					endpoint := gw.Endpoint
+					if endpoint == "" {
+						logger.Warn("gateway backend selected but no endpoint configured",
+							"agent", agentName, "gateway", backend, "model", model)
+						return
+					}
+					if model == "" {
+						model = gw.DefaultModel
+					}
+					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
+						Backend:  backend,
+						Endpoint: endpoint,
+						Model:    model,
+						APIKey:   gw.ResolveAPIKey(),
+						CABundle: gw.CABundle,
+					})
+					return
+				}
 				if backend == "litellm" {
 					// Resolve endpoint/key at call time so a URL saved from
 					// the governor LiteLLM tab (or a rotated key) takes
@@ -1959,6 +2001,19 @@ func main() {
 			// (config save writes the overlay hive.yaml, same as level switches).
 			if err := cfg.Save(); err != nil {
 				logger.Error("failed to save claimed project config", "error", err)
+			}
+		}), hub.GatewayConfigCallback(func(gw *hub.HeartbeatGatewayConfig) {
+			// The hub funded an OpenRouter gateway on this hive's behalf (scan-to-
+			// fund from My Hives) and delivered it over the heartbeat channel — the
+			// only path that reaches a firewalled/heartbeat-only spoke (vllm-d). We
+			// store the key in our OWN per-gateway secret-file store and create the
+			// "openrouter" gateway. The hub drains the delivery after sending, so
+			// this fires once per fund; the key value is never logged.
+			if gw == nil || gw.Key == "" {
+				return
+			}
+			if err := dashSrv.ApplyDeliveredGateway(gw.Name, gw.Kind, gw.Endpoint, gw.DefaultModel, gw.Key); err != nil {
+				logger.Error("failed to apply hub-delivered gateway", "gateway", gw.Name, "error", err)
 			}
 		}))
 

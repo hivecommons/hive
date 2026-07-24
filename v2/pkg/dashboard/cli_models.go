@@ -86,6 +86,13 @@ const (
 	// require a plausible editor identifier.
 	copilotEditorVersion = "vscode/1.99.0"
 
+	// copilotAutoModel is the Copilot auto-selection sentinel: `copilot --model
+	// auto` lets the Copilot CLI pick/adjust the optimal model per task instead
+	// of pinning a concrete id. It is a valid --model VALUE (confirmed against
+	// copilot CLI v1.0.59), not a discoverable catalog id, so it is always
+	// offered (copilotAlwaysIncludeModels) and exempt from model auto-heal.
+	copilotAutoModel = "auto"
+
 	// --- Gemini ---
 
 	// geminiModelsURL lists models available to a Gemini API key.
@@ -149,6 +156,9 @@ var copilotStaticModels = []string{
 // copilot list so agents can be pinned to them safely.
 var copilotAlwaysIncludeModels = []string{
 	"mai-code-1-flash-picker",
+	// Auto-select sentinel — never returned by the /models catalog, but a valid
+	// launch value, so it must always be offered and must survive auto-heal.
+	copilotAutoModel,
 }
 
 // codexStaticModels is the maintained list for the OpenAI Codex CLI. Codex only

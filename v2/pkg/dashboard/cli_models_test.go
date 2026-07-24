@@ -131,6 +131,19 @@ func TestQueryCLIModels_CopilotAlwaysIncludePinned(t *testing.T) {
 	}
 }
 
+// TestQueryCLIModels_CopilotAutoSentinelServed verifies the Copilot auto-select
+// sentinel ("auto") is always offered in the served copilot list, so an agent
+// can be launched with `copilot --model auto` and the selection survives model
+// auto-heal (the sentinel is not in the discovered catalog by design).
+func TestQueryCLIModels_CopilotAutoSentinelServed(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels("copilot")
+	if !contains(r.models, copilotAutoModel) {
+		t.Fatalf("copilot auto sentinel %q missing from served list: %v", copilotAutoModel, r.models)
+	}
+}
+
 // TestQueryCLIModels_GeminiFallbackNoKey verifies gemini falls back when no
 // API key is configured.
 func TestQueryCLIModels_GeminiFallbackNoKey(t *testing.T) {

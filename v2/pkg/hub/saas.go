@@ -27,6 +27,12 @@ var saasUsersDir = "/data/saas/users"
 
 const hubAdminUsername = "clubanderson"
 
+// hubUpgradeDebounce is the minimum gap between hub self-upgrade rollout
+// restarts. The behind-latest check runs every SHA-poll cycle, so without this
+// the hub could re-trigger a restart before the previous rollout's new pod
+// reports the new hash. One cycle plus rollout headroom.
+const hubUpgradeDebounce = 4 * time.Minute
+
 type SaaSUser struct {
 	GitHubUsername string            `json:"github_username"`
 	CreatedAt      string            `json:"created_at"`
@@ -111,7 +117,11 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
-	s.mux.HandleFunc("GET /api/saas/hives/{id}/open", s.requireAuth(s.handleOpenHive))
+	// /open is a browser NAVIGATION endpoint (the SSO handoff), not an API call.
+	// It is registered WITHOUT requireAuth so an unauthenticated visit redirects
+	// to the hub login (and back) instead of dumping a raw {"error":...} JSON.
+	// handleOpenHive does its own auth check + login redirect.
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/open", s.handleOpenHive)
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}", s.requireAuth(s.handleDeleteHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuth(s.handleUpgradeHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
@@ -1344,11 +1354,21 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 
 		// Assigning transient state: after a placeholder is assigned, the meta
 		// records the real project but the spoke still reports the old placeholder
-		// identity until it reconciles via heartbeat. projectConfigForHiveID
-		// returns non-nil in exactly that window (complete claim, meta != what the
-		// spoke reports) and nil once matched — so it is the authoritative signal.
-		// The RegistryEntry fields here are the live heartbeat-reported values.
-		if projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel) != nil {
+		// identity until it reconciles via heartbeat.
+		//
+		// projectConfigForHiveID returns non-nil whenever meta != what the spoke
+		// reports — but that ALSO happens transiently during an UPGRADE (the spoke
+		// pod restarts and its heartbeat momentarily reports an empty/stale org),
+		// which falsely lit "Assigning to <org>" on already-claimed hives that were
+		// merely upgrading. Guard against that:
+		//   - never show Assigning while the hive is Upgrading (an upgrade is not
+		//     an assignment), and
+		//   - only show it when the spoke is genuinely reporting a DIFFERENT,
+		//     non-empty project (an empty reported org means the spoke just
+		//     restarted / hasn't beaten yet — not a fresh assignment).
+		spokeReportsDifferentProject := entry.Org != "" && !strings.EqualFold(entry.Org, sh.Org)
+		if !entry.Upgrading && spokeReportsDifferentProject &&
+			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel) != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
 		}
@@ -1789,7 +1809,12 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	}
 	username := s.getAuthUser(r)
 	if username == "" {
-		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		// Not logged in — this is a browser navigation, so send the user through
+		// the hub login and return them to THIS /open URL afterward, so the SSO
+		// handoff completes and they land logged-in on the spoke (instead of the
+		// raw {"error":"not authenticated"} JSON dead end).
+		self := "/api/saas/hives/" + url.PathEscape(id) + "/open"
+		http.Redirect(w, r, "/login?redirect="+url.QueryEscape(self), http.StatusSeeOther)
 		return
 	}
 
@@ -2885,15 +2910,24 @@ func (s *HubServer) StartLatestSHAPoller() {
 				break
 			}
 		}
-		if changed {
-			// Hub auto-upgrade (hub runs on v2)
-			hubBranchSHA := getLatestSHAForBranch("v2")
-			if isHubAutoUpgrade() && hubBranchSHA != "" && hubBranchSHA != s.hubGitHash {
-				s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
-				cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
-				if out, err := cmd.CombinedOutput(); err != nil {
-					s.logger.Warn("hub auto-upgrade failed", "output", string(out))
-				}
+		_ = changed
+		// Hub auto-upgrade — checked EVERY cycle, not only when the SHA just
+		// changed. Previously this lived inside `if changed {}`, so if the hub
+		// missed the one poll where v2's SHA flipped (busy, mid-restart, or the
+		// SHA moved between polls), it stayed "queued" forever and never retried,
+		// while spokes retry every cycle via triggerAutoUpgrades() above. Mirror
+		// that: whenever auto-upgrade is on and the hub is behind latest v2, trigger
+		// a rollout restart. A debounce prevents re-restarting every 2min while a
+		// restart is already rolling out (the new pod reports the new hash, which
+		// clears the condition, but the poll can fire before the rollout lands).
+		hubBranchSHA := getLatestSHAForBranch("v2")
+		if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) &&
+			time.Since(s.lastHubUpgradeTrigger) > hubUpgradeDebounce {
+			s.lastHubUpgradeTrigger = time.Now()
+			s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
+			cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				s.logger.Warn("hub auto-upgrade failed", "output", string(out))
 			}
 		}
 	}
@@ -4779,7 +4813,7 @@ const dashboardHTML = `<!DOCTYPE html>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:4px"></p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
+        <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
         <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
         <button class="btn-primary" id="btn-request-hive" style="display:none;background:var(--blue)" onclick="document.getElementById('request-modal').style.display='flex'">Request a Hive</button>
       </div>
@@ -5348,6 +5382,8 @@ const dashboardHTML = `<!DOCTYPE html>
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
         if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\')" style="' + mi + '">Permissions</div>');
+        if (h.role === 'owner' || h.role === 'read-write' || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
@@ -5444,7 +5480,7 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         return '<tr>' +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var dh = rb ? esc(rb) : ''; var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + (isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName)) + '</td>' +
           '<td>' + (function() { var pub = !!h.isPublic; var tid = 'vis-' + esc(h.id); if (isHosted && h.role === 'owner') { return '<label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer"><input type="checkbox" id="' + tid + '" ' + (pub ? 'checked' : '') + ' onchange="toggleVisibility(\'' + esc(h.id) + '\',this.checked)" style="opacity:0;width:0;height:0"><span style="position:absolute;inset:0;background:' + (pub ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;transition:background 0.2s"></span><span style="position:absolute;top:2px;left:' + (pub ? '18px' : '2px') + ';width:16px;height:16px;background:#fff;border-radius:50%;transition:left 0.2s"></span></label>'; } if (isLocal) { var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : ''; var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>'; return dh ? '<a href="' + esc(dh) + '#config/governor/Hub" target="_blank" title="Change in Governor Config → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>' : badge; } return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>'; })() + '</td>' +
           '<td style="font-size:0.7rem;white-space:nowrap">' + versionCell + '</td>' +
@@ -6163,6 +6199,22 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) { /* cluster dropdown stays at default */ }
     }
 
+    // OpenRouter scan-to-fund return: toast the result and clear the query flag
+    // so a reload doesn't re-toast.
+    function handleOpenRouterReturn() {
+      try {
+        var p = new URLSearchParams(window.location.search);
+        var or = p.get('openrouter');
+        if (or === 'connected') hiveToast('OpenRouter funded — the key is being delivered to the hive', 'success');
+        else if (or === 'error') hiveToast('OpenRouter funding failed — please try again', 'error');
+        if (or) {
+          p.delete('openrouter');
+          var qs = p.toString();
+          history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+        }
+      } catch (e) { /* non-fatal */ }
+    }
+
     async function init() {
       await loadUser();
       await autoRequestAccessFromUrl();
@@ -6171,6 +6223,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!_adminLoaded) setTimeout(loadAdminUsers, 2000);
       loadClusterHealth();
       loadClusters();
+      handleOpenRouterReturn();
     }
     init();
     var POLL_INTERVAL_MS = 30000;
@@ -6513,6 +6566,100 @@ const dashboardHTML = `<!DOCTYPE html>
         hiveToast('Error: ' + e.message, 'error');
         if (submit) { submit.disabled = false; submit.textContent = 'Assign'; }
       }
+    }
+
+    // ---- OpenRouter scan-to-fund (hub side) ---------------------------------
+    // Fund a SPECIFIC hive: pick a default model, scan a QR (or open the link)
+    // to authorize on OpenRouter. The hub exchanges the code for a scoped key and
+    // delivers it to the hive as the "openrouter" gateway over the next heartbeat.
+    var _orFundPoll = null;
+    async function openOpenRouterFundModal(hiveId, hiveName) {
+      var models = { suggested: [], models: [], default: '' };
+      try {
+        var r = await fetch('/api/openrouter/models');
+        if (r.ok) models = await r.json();
+      } catch (e) { /* fall back to manual entry */ }
+      var opts = (models.suggested || []).map(function(m) {
+        return '<option value="' + esc(m.id) + '">' + esc(m.label) + '</option>';
+      }).join('') + '<option value="__manual__">Enter a model id manually…</option>';
+      var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
+      var content =
+        '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px">Fund <strong style="color:var(--fg)">' + esc(hiveName) + '</strong> with an OpenRouter key. Scan the QR (or open the link) to authorize on OpenRouter — the scoped key is delivered to the hive as its <code>openrouter</code> gateway.</div>' +
+        '<label style="display:block;font-size:0.75rem;color:var(--muted);margin-bottom:4px">Default model</label>' +
+        '<select id="orf-model" onchange="orfModelChange()" style="' + fld + ';margin-bottom:8px">' + opts + '</select>' +
+        '<input id="orf-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;' + fld + ';margin-bottom:8px">' +
+        '<div style="display:flex;gap:8px;margin-top:4px">' +
+        '<button onclick="orfStart(\'' + esc(hiveId) + '\')" style="padding:7px 16px;background:var(--accent,#58a6ff);color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Generate QR</button>' +
+        '<button onclick="closeOrFundModal()" style="padding:7px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Close</button>' +
+        '</div>' +
+        '<div id="orf-qr" style="margin-top:12px"></div>' +
+        '<div id="orf-status" style="margin-top:8px;font-size:0.78rem"></div>';
+      var overlay = document.createElement('div');
+      overlay.id = 'orf-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
+      overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:460px;width:90%;max-height:88vh;overflow-y:auto">' +
+        '<h3 style="margin:0 0 12px 0;font-size:1rem">⚡ Fund with OpenRouter</h3>' + content + '</div>';
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeOrFundModal(); });
+      document.body.appendChild(overlay);
+    }
+    function orfModelChange() {
+      var sel = document.getElementById('orf-model');
+      var man = document.getElementById('orf-model-manual');
+      if (sel && man) man.style.display = sel.value === '__manual__' ? 'block' : 'none';
+    }
+    function orfChosenModel() {
+      var sel = document.getElementById('orf-model');
+      if (!sel) return '';
+      if (sel.value === '__manual__') {
+        var man = document.getElementById('orf-model-manual');
+        return (man && man.value.trim()) || '';
+      }
+      return sel.value;
+    }
+    async function orfStart(hiveId) {
+      var model = orfChosenModel();
+      var qr = document.getElementById('orf-qr');
+      var status = document.getElementById('orf-status');
+      if (qr) qr.innerHTML = '<span style="color:var(--muted);font-size:0.78rem">Preparing…</span>';
+      try {
+        var res = await fetch('/api/openrouter/connect/start?hive_id=' + encodeURIComponent(hiveId) + '&model=' + encodeURIComponent(model));
+        if (!res.ok) { var e = await res.json().catch(function(){return{};}); throw new Error(e.error || ('HTTP ' + res.status)); }
+        var data = await res.json();
+        var authURL = data.authorize_url;
+        var qrSrc = '/api/openrouter/qr?data=' + encodeURIComponent(authURL);
+        if (qr) qr.innerHTML =
+          '<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">' +
+          '<img src="' + esc(qrSrc) + '" alt="OpenRouter QR" width="180" height="180" style="border:6px solid #fff;border-radius:8px;background:#fff">' +
+          '<div style="font-size:0.78rem"><div style="margin-bottom:6px">Scan with your phone, or on this device:</div>' +
+          '<a href="' + esc(authURL) + '" target="_blank" rel="noopener" style="color:var(--accent,#58a6ff);font-weight:600">Open OpenRouter authorization ↗</a></div></div>';
+        if (status) status.innerHTML = '<span style="color:var(--muted)">Waiting for authorization…</span>';
+        orfStartPolling(hiveId);
+      } catch (e) {
+        if (qr) qr.innerHTML = '<span style="color:#f85149;font-size:0.78rem">Failed: ' + esc(e.message) + '</span>';
+      }
+    }
+    function orfStartPolling(hiveId) {
+      if (_orFundPoll) clearInterval(_orFundPoll);
+      var ORF_POLL_MS = 4000;
+      _orFundPoll = setInterval(function() { orfCheck(hiveId); }, ORF_POLL_MS);
+    }
+    async function orfCheck(hiveId) {
+      var status = document.getElementById('orf-status');
+      try {
+        var res = await fetch('/api/openrouter/credit?hive_id=' + encodeURIComponent(hiveId));
+        if (!res.ok) return;
+        var d = await res.json();
+        // pending_delivery flips true the moment the fund completes on the hub;
+        // it then flips back to false once the hive drains it on a heartbeat.
+        if (d.pending_delivery) {
+          if (status) status.innerHTML = '<span style="color:var(--green,#3fb950);font-weight:600">✓ Funded — delivering to the hive on its next heartbeat…</span>';
+        }
+      } catch (e) { /* keep polling */ }
+    }
+    function closeOrFundModal() {
+      if (_orFundPoll) { clearInterval(_orFundPoll); _orFundPoll = null; }
+      var ov = document.getElementById('orf-overlay');
+      if (ov) ov.remove();
     }
 
     async function removeLocalHive(id) {
@@ -7070,6 +7217,10 @@ const dashboardHTML = `<!DOCTYPE html>
       amber: {bg: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: 'var(--text)'},
       gray:  {bg: 'rgba(107,114,128,0.12)', border: '1px solid rgba(107,114,128,0.3)', color: 'var(--text)'}
     };
+    /* Set by the per-hive "Send Banner" menu item so the banner modal targets a
+       single spoke; sendHubBanner() still reads .banner-hive-cb:checked, so this
+       is only bookkeeping for the open path — the checked cb is the source of truth. */
+    var _bannerTargetHive = null;
 
     (function() {
       var msgEl = document.getElementById('banner-message');
@@ -7115,6 +7266,26 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function toggleAllBannerHives(checked) {
       document.querySelectorAll('.banner-hive-cb').forEach(function(cb) { cb.checked = checked; });
+    }
+
+    /* Per-hive entry point: opens the SAME banner modal but pre-scoped to one
+       spoke. Instead of loadBannerHiveList()'s multi-hive checklist, we render a
+       single non-editable target line plus one hidden checked .banner-hive-cb so
+       the unchanged sendHubBanner() (which reads .banner-hive-cb:checked) posts
+       exactly this hive_id to POST /api/saas/admin/hub-banner. */
+    function openBannerForHive(hiveId, hiveName) {
+      _bannerTargetHive = hiveId;
+      document.getElementById('banner-modal').style.display = 'flex';
+      /* Reset message + color to match the global open path's fresh state. */
+      document.getElementById('banner-message').value = '';
+      document.getElementById('banner-char-count').textContent = '0';
+      document.querySelector('input[name="banner-color"][value="green"]').checked = true;
+      updateBannerPreview();
+      var container = document.getElementById('banner-hive-list');
+      container.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:10px;color:var(--text);font-size:0.82rem">' +
+        '<span style="color:var(--muted)">Sending to:</span> <strong>' + esc(hiveName) + '</strong>' +
+        '<input type="checkbox" class="banner-hive-cb" value="' + esc(hiveId) + '" checked style="display:none">' +
+        '</div>';
     }
 
     async function sendHubBanner() {
