@@ -4935,11 +4935,22 @@ const dashboardHTML = `<!DOCTYPE html>
             var hubLatestUnknown = !hubBranchLatest;
             var isCurrent = hubBranchLatest && sameShaJS(hubHash, hubBranchLatest);
             var hubUpgradeBtn = '';
-            var hubIsUpgrading = _hubUpgrading || (!isCurrent && hubBranchLatest && _hubAutoUpgrade);
-            if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading) {
+            // Distinguish two states, matching the per-hive badges:
+            //   - "queued"    = behind latest with auto-upgrade ON, but the
+            //     rollout hasn't started yet (auto-upgrade will apply shortly).
+            //   - "Upgrading" = a rollout is ACTUALLY in progress (admin clicked
+            //     Upgrade, so _hubUpgrading is true).
+            // Previously the auto-pending case was mislabeled "Upgrading", which
+            // was inconsistent with the hive rows that say "queued" for the same
+            // pending state and implied the hub was mid-upgrade when it wasn't.
+            var hubQueued = !_hubUpgrading && !isCurrent && hubBranchLatest && _hubAutoUpgrade;
+            var hubIsUpgrading = _hubUpgrading;
+            if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading && !hubQueued) {
               hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
             } else if (hubIsUpgrading) {
               hubUpgradeBtn = ' <span title="Upgrading to ' + esc(hubBranchLatest || '?') + '" style="display:inline-block;padding:2px 8px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:3px"></span>Upgrading</span>';
+            } else if (hubQueued) {
+              hubUpgradeBtn = ' <span title="Auto-upgrade will apply ' + esc(hubBranchLatest || '?') + ' shortly' + (_isAdmin ? ' — click to upgrade now' : '') + '"' + (_isAdmin ? ' onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="cursor:pointer;' : ' style="') + 'display:inline-block;padding:2px 8px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap">queued</span>';
             } else if (hubLatestUnknown && _isAdmin) {
               hubUpgradeBtn = ' <button disabled title="Waiting for latest version…" style="padding:2px 8px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.65rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
             }
