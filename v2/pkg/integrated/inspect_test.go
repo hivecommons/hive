@@ -279,7 +279,7 @@ func TestInspectCheckoutDetectsPlaywrightAndVisualHiveReviewedBaselines(t *testi
 
 func TestInspectCheckoutKeepsOnlyBoundedNonInteractiveAutomation(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, root, "package.json", `{"scripts":{"vh:test-creation":"node test-creation.js","vh:suite":"node suite.js","vh:mutation-proof":"node proof.js","vh:mutate":"node mutate.js","vh:run":"node run.js","vh:plan":"node plan.js","typecheck":"tsc --noEmit","build":"vite build"}}`)
+	writeFixture(t, root, "package.json", `{"scripts":{"vh:test-creation":"node test-creation.js","vh:suite":"node suite.js","vh:mutation-proof":"node proof.js","vh:mutate":"node mutate.js","vh:run":"node run.js","vh:plan":"node plan.js","vh:build-source":"node build-visual-hive-source.mjs","typecheck":"tsc --noEmit","build":"vite build"}}`)
 	writeFixture(t, root, "package-lock.json", `{}`)
 
 	inspection, err := InspectCheckout(root, "main")

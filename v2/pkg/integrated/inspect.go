@@ -305,7 +305,7 @@ func packageScriptCommands(packagePath, runner string, scripts map[string]string
 
 func safeAutomationScript(name, body string) bool {
 	name, body = strings.ToLower(strings.TrimSpace(name)), strings.ToLower(strings.TrimSpace(body))
-	if name == "" || name == "vh:plan" || name == "vh:run" {
+	if name == "" || name == "vh:plan" || name == "vh:run" || name == "vh:build-source" {
 		return false
 	}
 	// Every selected script runs as an isolated, non-interactive job. Exclude
