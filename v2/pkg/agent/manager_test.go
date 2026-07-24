@@ -469,6 +469,41 @@ func TestPause_SetsPausedFlag(t *testing.T) {
 	}
 }
 
+func TestPause_PersistenceCallbackCanReenterManager(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"worker": makeAgentConfig("claude", "sonnet"),
+	}, discardLogger(), ProjectContext{})
+
+	callbackCalled := make(chan struct{}, 1)
+	m.SetPersistPauseCallback(func(name string, paused bool) {
+		if name != "worker" || !paused {
+			t.Errorf("persist callback = (%q, %v), want (worker, true)", name, paused)
+		}
+		_ = m.AllStatuses()
+		callbackCalled <- struct{}{}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Pause("worker", "test", "test pause")
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Pause() error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Pause() deadlocked while persistence callback re-entered manager")
+	}
+
+	select {
+	case <-callbackCalled:
+	default:
+		t.Fatal("pause persistence callback was not called")
+	}
+}
+
 func TestResume_ClearsPausedFlag(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("legacy tmux/su-exec agent runtime is Linux-only")
@@ -491,6 +526,43 @@ func TestResume_ClearsPausedFlag(t *testing.T) {
 	ap, _ := m.GetStatus("worker")
 	if ap.Paused {
 		t.Error("expected agent to not be paused after Resume()")
+	}
+}
+
+func TestResume_PersistenceCallbackCanReenterManager(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"worker": makeAgentConfig("claude", "sonnet"),
+	}, discardLogger(), ProjectContext{})
+	m.agents["worker"].Paused = true
+	m.agents["worker"].Config.Paused = true
+
+	callbackCalled := make(chan struct{}, 1)
+	m.SetPersistPauseCallback(func(name string, paused bool) {
+		if name != "worker" || paused {
+			t.Errorf("persist callback = (%q, %v), want (worker, false)", name, paused)
+		}
+		_ = m.AllStatuses()
+		callbackCalled <- struct{}{}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.Resume(context.Background(), "worker", "test", "test resume")
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Resume() error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Resume() deadlocked while persistence callback re-entered manager")
+	}
+
+	select {
+	case <-callbackCalled:
+	default:
+		t.Fatal("resume persistence callback was not called")
 	}
 }
 
