@@ -111,6 +111,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/open", s.requireAuth(s.handleOpenHive))
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}", s.requireAuth(s.handleDeleteHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/upgrade", s.requireAuth(s.handleUpgradeHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
@@ -1735,6 +1736,81 @@ func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(h)
+}
+
+// handleOpenHive is the SSO handoff entry point: a hub-authenticated user hits
+// this to open a spoke dashboard without a second GitHub login. It confirms the
+// user may access the hive, mints a short-lived HMAC token bound to {user, role,
+// hiveID} with the shared hub secret, and 302-redirects to the spoke's
+// <dashboardURL>/sso?token=… . The spoke verifies the token and its own
+// authorized_users allowlist before minting a session (see dashboard.handleSSO).
+//
+// If SSO can't be used (no hub secret, or the spoke reported no dashboard URL),
+// it falls back to redirecting straight to the dashboard URL (or the hive-oke
+// host), preserving today's behavior — the spoke will then prompt for login.
+func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if strings.Contains(id, "..") || strings.Contains(id, "/") {
+		http.Error(w, `{"error":"invalid hive id"}`, http.StatusBadRequest)
+		return
+	}
+	username := s.getAuthUser(r)
+	if username == "" {
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// Resolve the spoke's base URL: prefer the heartbeat-reported dashboard URL
+	// (correct for firewalled spokes), fall back to the hive-oke host pattern.
+	base := ""
+	s.mu.RLock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == id {
+			base = s.registry.Hives[i].DashboardURL
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if base == "" && (strings.HasPrefix(id, "hosted-") || strings.HasPrefix(id, "saas-")) {
+		base = "https://" + id + ".hive.kubestellar.io"
+	}
+	if base == "" {
+		http.Error(w, `{"error":"hive has no reachable dashboard URL yet"}`, http.StatusConflict)
+		return
+	}
+	base = strings.TrimRight(base, "/")
+
+	// Access gate: only the owner, an authorized user, or the hub admin may open
+	// the spoke. The role we pass is advisory — the spoke re-checks its own
+	// allowlist and uses that role authoritatively.
+	role := saasRoleRead
+	if username == hubAdminUsername {
+		role = saasRoleOwner
+	} else {
+		user := loadSaaSUser(username)
+		if user == nil {
+			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+			return
+		}
+		if h := loadSaaSHive(id); h != nil && h.Owner == username {
+			role = saasRoleOwner
+		} else if r, ok := user.Hives[id]; ok {
+			role = r
+		} else {
+			http.Error(w, `{"error":"access denied"}`, http.StatusForbidden)
+			return
+		}
+	}
+
+	// Mint the handoff token. Without a hub secret we can't sign one, so fall
+	// back to a plain dashboard redirect (spoke will prompt for login).
+	if s.hubSecret != "" {
+		if tok := MintSSOToken(s.hubSecret, username, role, id, time.Now()); tok != "" {
+			http.Redirect(w, r, base+"/sso?token="+url.QueryEscape(tok), http.StatusSeeOther)
+			return
+		}
+	}
+	http.Redirect(w, r, base+"/", http.StatusSeeOther)
 }
 
 func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
@@ -4814,12 +4890,21 @@ const dashboardHTML = `<!DOCTYPE html>
     }
     function dashboardLink(h) {
       var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
+      // Open hosted spokes via the hub's SSO handoff endpoint so the user's hub
+      // login follows them to the spoke (no second GitHub login), including for
+      // direct-route/firewalled spokes that the hub nginx can't front. The
+      // endpoint mints a signed, single-hive token and 302s to the spoke's /sso;
+      // if SSO can't be used it falls back to the plain dashboard URL. The
+      // visible label still shows the spoke host.
+      if (isHosted && h.id) {
+        var ssoHref = '/api/saas/hives/' + encodeURIComponent(h.id) + '/open';
+        var label = (h.dashboardUrl && !h.dashboardUrl.includes('localhost'))
+          ? h.dashboardUrl.replace(/^https?:\/\//, '').substring(0, 30) + '...'
+          : esc(h.id) + '.hive...';
+        return '<a href="' + ssoHref + '" target="_blank" class="dash-link">' + esc(label) + '</a>';
+      }
       if (h.dashboardUrl && !h.dashboardUrl.includes('localhost'))
         return '<a href="' + esc(h.dashboardUrl) + '" target="_blank" class="dash-link">' + esc(h.dashboardUrl.replace(/^https?:\/\//,'').substring(0,30)) + '...</a>';
-      if (isHosted) {
-        var url = 'https://' + esc(h.id) + '.hive.kubestellar.io';
-        return '<a href="' + url + '" target="_blank" class="dash-link">' + esc(h.id) + '.hive...</a>';
-      }
       return '<span style="color:var(--muted);font-size:0.75rem">—</span>';
     }
     function snapshotLink(h) {

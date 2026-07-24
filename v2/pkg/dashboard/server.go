@@ -466,6 +466,11 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
 	s.mux.HandleFunc("POST /api/github-app/install-clicked", s.handleGitHubAppInstallClicked)
+	// SSO handoff: exchange a hub-minted, HMAC-signed token for a local session
+	// so a hub-authenticated user opens this (direct-route) spoke without a
+	// second GitHub device-flow login. Public path (see isPublicPath) because
+	// the caller has no session yet — the token IS the credential.
+	s.mux.HandleFunc("GET /sso", s.handleSSO)
 }
 
 func (s *Server) Start() error {
@@ -625,6 +630,12 @@ func isPublicPath(path string) bool {
 	case strings.HasPrefix(path, "/api/leaderboard"):
 		return true
 	case strings.HasPrefix(path, "/api/gh-user-auth/"):
+		return true
+	case path == "/sso":
+		// SSO handoff exchange: the caller has no session yet, the signed hub
+		// token IS the credential. The handler itself verifies the token and
+		// the authorized_users allowlist before minting a session, so exposing
+		// the path unauthenticated does not weaken the allowlist gate.
 		return true
 	default:
 		return false

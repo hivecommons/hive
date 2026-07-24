@@ -21,6 +21,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/policies"
 	"github.com/kubestellar/hive/v2/pkg/resolve"
@@ -1461,6 +1462,85 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// point) so the owner can see WHO logged in.
 	s.audit.Log(username, "login", auditDetail("method", "github device flow", "role", role), "")
 	jsonResponse(w, map[string]interface{}{"status": "complete", "username": username, "avatar_url": avatarURL})
+}
+
+// handleSSO exchanges a hub-minted, HMAC-signed handoff token for a local
+// per-user session, so a user already authenticated on the hub can open this
+// direct-route spoke without a second GitHub device-flow login. It fails closed:
+// the token must verify against the shared HIVE_HUB_SECRET, be scoped to THIS
+// hive, be unexpired, AND carry a username that is in this spoke's
+// authorized_users allowlist. On success it mints the same kind of session the
+// device flow does and redirects to the dashboard root.
+func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
+	secret := os.Getenv("HIVE_HUB_SECRET")
+	if secret == "" {
+		// No shared secret → SSO cannot be verified. Send the user to the normal
+		// login rather than silently trusting anything.
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		http.Error(w, "sso: missing token", http.StatusBadRequest)
+		return
+	}
+
+	hiveID := ""
+	if s.deps != nil && s.deps.Config != nil {
+		hiveID = s.deps.Config.HiveID
+	}
+
+	username, tokenRole, err := hub.VerifySSOToken(secret, token, hiveID, time.Now())
+	if err != nil {
+		if s.deps != nil && s.deps.Logger != nil {
+			s.deps.Logger.Warn("sso handoff rejected", "error", err.Error())
+		}
+		// Don't leak which check failed; bounce to the normal login page.
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(loginPage))
+		return
+	}
+
+	// The token proves the hub authenticated this user, but authorization is
+	// still LOCAL to the spoke: the user must be in THIS hive's allowlist. This
+	// keeps the spoke the authority on who may enter, even via SSO — a valid
+	// hub token for a user not on the allowlist is refused. The role comes from
+	// the allowlist (authoritative), not the token, so the hub can never
+	// escalate a user's role on the spoke.
+	role := tokenRole
+	if s.deps != nil && s.deps.Config != nil {
+		if allowRole, ok := s.deps.Config.Dashboard.AuthorizedRole(username); ok {
+			role = allowRole
+		} else if s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled() {
+			// Allowlist is enforced and this user isn't on it → deny.
+			if s.deps.Logger != nil {
+				s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(loginPage))
+			return
+		}
+	}
+	if role == "" {
+		role = config.RoleRead
+	}
+
+	if s.authToken != "" {
+		sid := s.createUserSession(username, role)
+		if sid == "" {
+			http.Error(w, "sso: failed to create session", http.StatusInternalServerError)
+			return
+		}
+		setSessionCookie(w, r, sid)
+	}
+	s.audit.Log(username, "login", auditDetail("method", "hub sso handoff", "role", role), "")
+	if s.deps != nil && s.deps.Logger != nil {
+		s.deps.Logger.Info("user authenticated via hub SSO handoff", "username", username, "role", role)
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) {
