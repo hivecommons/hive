@@ -511,12 +511,27 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // empty role and never block a read-only viewer's writes.)
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.authToken == "" || isPublicPath(r.URL.Path) {
+		directRouteAuthz := s.directRouteAuthzEnabled()
+
+		// FAIL CLOSED: a spoke with an authorized_users allowlist (direct-route)
+		// MUST enforce auth even if authToken is empty. Previously an empty
+		// authToken short-circuited ALL auth here, silently leaving the dashboard
+		// WIDE OPEN despite the allowlist — anyone with the URL got in. That was a
+		// real exposure on direct-route spokes provisioned without an auth_token.
+		// The allowlist is the security boundary on these standalone spokes, so
+		// its mere presence must force authentication; identity then comes only
+		// from a server-side session (device-flow login), never a bypass.
+		//
+		// The authToken=="" bypass remains for spokes that are genuinely open by
+		// design (no allowlist AND no token) — e.g. a local/dev dashboard.
+		if isPublicPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
-
-		directRouteAuthz := s.directRouteAuthzEnabled()
+		if s.authToken == "" && !directRouteAuthz {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// On a direct-route spoke (per-hive allowlist present) we MUST NOT trust
 		// client-supplied X-Hive-User/X-Hive-Role: there is no hub nginx in
@@ -530,7 +545,11 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// Internal automation authenticates with the shared token via the
 		// X-Hive-Internal header; this is a trusted server-to-server path
 		// (the local proxy injects it) and carries no browser user identity.
-		trusted := secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
+		// Guard against an empty authToken: subtle.ConstantTimeCompare("","")
+		// is TRUE, so without this an absent/empty header would authenticate on
+		// a direct-route spoke that has no token. The shared-token paths are only
+		// valid when a real token is configured.
+		trusted := s.authToken != "" && secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
 
 		// Hub-proxied path: nginx injects both headers from the hub's
 		// per-user/per-hive auth-check. Only trust them when this spoke is NOT a
@@ -560,7 +579,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// no per-user identity, so accepting it would let any holder act as an
 		// unscoped owner and defeat the per-hive allowlist. Direct-route callers
 		// must use a per-user session instead.
-		if !trusted && !directRouteAuthz {
+		if !trusted && !directRouteAuthz && s.authToken != "" {
 			token := r.Header.Get("Authorization")
 			if token == "" {
 				token = r.URL.Query().Get("token")
