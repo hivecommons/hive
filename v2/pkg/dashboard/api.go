@@ -64,6 +64,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 
 	s.mux.HandleFunc("GET /api/token-access", s.handleTokenAccess)
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
+	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
 	s.mux.HandleFunc("GET /api/model-advisor", s.handleModelAdvisor)
 	s.mux.HandleFunc("GET /api/budget-ignore", s.handleBudgetIgnoreGet)

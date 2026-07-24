@@ -1000,6 +1000,32 @@
     .token-session-row .smsgs { color: var(--muted); min-width: 50px; }
     .token-session-row .sproj { color: var(--muted); font-size: 0.65rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+    /* Cost panel — mirrors token-panel styling */
+    .cost-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+    .cost-title { font-size: var(--fs-lg); font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+    .cost-subtitle { font-size: 0.7rem; color: var(--muted); margin-bottom: 12px; }
+    .cost-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .cost-stat { text-align: left; }
+    .cost-stat .cval { font-size: 1.3rem; font-weight: 700; }
+    .cost-stat .clabel { font-size: 0.65rem; color: var(--muted); }
+    .cost-badge { font-size: 0.55rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 6px; margin-left: 6px; vertical-align: middle; }
+    .cost-badge.est { background: rgba(255, 196, 0, 0.15); color: var(--yellow); border: 1px solid rgba(255, 196, 0, 0.4); }
+    .cost-badge.actual { background: rgba(0, 200, 120, 0.15); color: var(--green); border: 1px solid rgba(0, 200, 120, 0.4); }
+    .cost-gateways { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .cost-gateway { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+    .cost-gateway .cgname { font-weight: 700; }
+    .cost-gateway .cgkind { color: var(--muted); font-size: 0.65rem; margin-left: 6px; text-transform: uppercase; }
+    .cost-gateway .cgspend { font-family: var(--font-mono); font-weight: 700; }
+    .cost-gateway .cgerr { color: var(--muted); font-size: 0.68rem; font-style: italic; }
+    .cost-gateway .cgmeter { height: 5px; border-radius: 3px; background: rgba(128,128,128,0.2); overflow: hidden; margin-top: 5px; }
+    .cost-gateway .cgmeter > span { display: block; height: 100%; background: var(--green); }
+    .cost-table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+    .cost-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .cost-table td { padding: 4px 8px; border-bottom: 1px solid rgba(128,128,128,0.08); }
+    .cost-table td.cnum { text-align: right; font-family: var(--font-mono); }
+    .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
+    .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+
     /* Token burn rate chart */
     .burn-chart-wrap { margin: 8px 0 12px; }
     .burn-chart-title { font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
@@ -2311,6 +2337,7 @@
       <a class="oc-nav-item" data-section="advisory-section" onclick="ocNavigate('advisory-section')"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" onclick="ocNavigate('acmm-eval-section')"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="token-panel" onclick="ocNavigate('token-panel')"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
+      <a class="oc-nav-item" data-section="cost-panel" onclick="ocNavigate('cost-panel')"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-tree-toggle" onclick="ocToggleAgentTree(this)">
@@ -2435,6 +2462,8 @@
   </div>
 
   <div class="token-usage" id="token-panel" style="margin-bottom: 24px;"></div>
+
+  <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
     <h2 class="section-header-toggle" onclick="toggleSection('repos-section')"><span class="section-chevron">▼</span> Repositories <button class="config-gear" onclick="event.stopPropagation();openConfigDialog('governor',null,'Repos')" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
@@ -5486,6 +5515,104 @@ function burnAreaChart() {
         detailsEl.addEventListener('toggle', () => { localStorage.setItem('hive-sessions-open', detailsEl.open ? '1' : '0'); });
       }
     }
+
+    // ---- Unified cost ($) view ----
+    // Fetches /api/cost on an interval and renders both ESTIMATED $ (token
+    // counts × list prices, for Claude/Copilot/Codex/vLLM) and NATIVE $ (real
+    // spend reported by OpenRouter / LiteLLM gateways). Estimates are always
+    // labeled "est." so they never masquerade as actual billing.
+    const COST_POLL_MS = 60000;
+    function fmtUSD(n) {
+      if (n == null || isNaN(n)) return '—';
+      if (n === 0) return '$0.00';
+      if (n < 0.01) return '<$0.01';
+      if (n < 100) return '$' + n.toFixed(2);
+      if (n < 100000) return '$' + n.toFixed(0);
+      return '$' + (n / 1000).toFixed(1) + 'k';
+    }
+
+    function renderCost(cost) {
+      const el = document.getElementById('cost-panel');
+      if (!el) return;
+      if (!cost || (!cost.estimated && (!cost.gateways || cost.gateways.length === 0))) {
+        el.innerHTML = '';
+        return;
+      }
+
+      const est = cost.estimated || { total_usd: 0, by_model: [], by_agent: [], unpriced_models: [] };
+      const gateways = cost.gateways || [];
+
+      // Native gateway cards (OpenRouter / LiteLLM real spend).
+      const gwCards = gateways.map(g => {
+        const spent = g.spent_usd;
+        const limit = g.limit_usd;
+        const remain = g.remaining_usd;
+        let body;
+        if (g.error) {
+          body = `<div class="cgerr">native spend unavailable (${esc(g.error)}) — using estimate</div>`;
+        } else if (spent != null) {
+          let line = `<span class="cgspend">${fmtUSD(spent)}</span> spent`;
+          if (limit != null) line += ` of ${fmtUSD(limit)}`;
+          if (remain != null) line += ` · ${fmtUSD(remain)} remaining`;
+          let meter = '';
+          if (limit != null && limit > 0) {
+            const pct = Math.min(100, Math.max(0, (spent / limit) * 100));
+            meter = `<div class="cgmeter"><span style="width:${pct.toFixed(1)}%"></span></div>`;
+          }
+          body = `<div>${line}</div>${meter}`;
+        } else {
+          body = `<div class="cgerr">no native figure reported — using estimate</div>`;
+        }
+        return `<div class="cost-gateway">
+          <div><span class="cgname">${esc(g.name)}</span><span class="cgkind">${esc(g.kind)}</span><span class="cost-badge actual">actual</span></div>
+          ${body}
+        </div>`;
+      }).join('');
+
+      // Per-model estimated cost table. Unpriced models render "—".
+      const models = (est.by_model || []).slice().sort((a, b) => b.usd - a.usd);
+      const modelRows = models.map(m => {
+        const usdCell = m.source === 'unpriced'
+          ? `<span title="no list price known for this model">—</span>`
+          : fmtUSD(m.usd);
+        return `<tr>
+          <td class="cmodel">${esc(m.name || 'unknown')}</td>
+          <td class="cnum">${fmtTokens(m.input)}</td>
+          <td class="cnum">${fmtTokens(m.output)}</td>
+          <td class="cnum">${usdCell}</td>
+        </tr>`;
+      }).join('');
+
+      const unpricedNote = (est.unpriced_models && est.unpriced_models.length)
+        ? `<div class="cost-disclaimer">Not priced (excluded from estimated total): ${est.unpriced_models.map(esc).join(', ')}. Estimated total is a lower bound.</div>`
+        : '';
+
+      el.innerHTML = `<div class="cost-panel">
+        <div class="cost-title">Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span></div>
+        <div class="cost-subtitle">List prices as of ${esc(cost.price_table_date || '')}. Metered gateways (OpenRouter, LiteLLM) show ACTUAL spend; everything else is ESTIMATED.</div>
+        <div class="cost-grid">
+          <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total (token × list price)</div></div>
+        </div>
+        ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
+        <table class="cost-table">
+          <thead><tr><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${modelRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
+        </table>
+        ${unpricedNote}
+        <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
+      </div>`;
+    }
+
+    async function fetchCost() {
+      try {
+        const resp = await fetch('/api/cost');
+        if (!resp.ok) return;
+        const cost = await resp.json();
+        renderCost(cost);
+      } catch (e) { /* transient — leave last render in place */ }
+    }
+    fetchCost();
+    setInterval(fetchCost, COST_POLL_MS);
 
     // GitHub auth health — sticky banner when 401
     const GH_AUTH_POLL_MS = 30000;
