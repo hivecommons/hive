@@ -135,6 +135,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/request-provision", s.requireAuth(s.handleRequestProvision))
 	s.mux.HandleFunc("PUT /api/saas/approve-provision/{username}", s.requireAdmin(s.handleApproveProvision))
 	s.mux.HandleFunc("DELETE /api/saas/deny-provision/{username}", s.requireAdmin(s.handleDenyProvision))
+	s.mux.HandleFunc("GET /api/saas/admin/available-placeholders", s.requireAdmin(s.handleAvailablePlaceholders))
 	s.mux.HandleFunc("GET /api/saas/admin/users", s.requireAdmin(s.handleAdminUsers))
 	s.mux.HandleFunc("PUT /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminUpdateUser))
 	s.mux.HandleFunc("DELETE /api/saas/admin/users/{username}", s.requireAdmin(s.handleAdminDeleteUser))
@@ -1257,6 +1258,17 @@ type MyHiveEntry struct {
 	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
 	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
 
+	// Assigning is true while a freshly-assigned placeholder's spoke has not yet
+	// reported the real project via heartbeat: the meta.json already records the
+	// real project (org/repos/ACMM set, status no longer "available") but the live
+	// registry entry still shows the placeholder identity. It flips false — and the
+	// dashboard spinner clears — once the spoke reconciles and the registry reports
+	// the real project. AssigningTo is the target org so the row can say "Assigning
+	// to <org>". This is exactly the condition projectConfigForHiveID keeps sending
+	// its reconcile under.
+	Assigning   bool   `json:"assigning,omitempty"`
+	AssigningTo string `json:"assigningTo,omitempty"`
+
 	// Migration tracking (Phase 7).
 	MigrationStatus string `json:"migrationStatus,omitempty"`
 	MigrationFrom   string `json:"migrationFrom,omitempty"`
@@ -1324,6 +1336,17 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		entry.MigrationStatus = sh.MigrationStatus
 		entry.MigrationFrom = sh.MigrationFrom
 		entry.MigrationTo = sh.MigrationTo
+
+		// Assigning transient state: after a placeholder is assigned, the meta
+		// records the real project but the spoke still reports the old placeholder
+		// identity until it reconciles via heartbeat. projectConfigForHiveID
+		// returns non-nil in exactly that window (complete claim, meta != what the
+		// spoke reports) and nil once matched — so it is the authoritative signal.
+		// The RegistryEntry fields here are the live heartbeat-reported values.
+		if projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel) != nil {
+			entry.Assigning = true
+			entry.AssigningTo = sh.Org
+		}
 	}
 
 	isAdmin := username == hubAdminUsername
@@ -3781,6 +3804,14 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(map[string]any{"ok": true, "status": provisionStatusPending})
 }
 
+// ApproveProvisionRequest is the OPTIONAL body of PUT
+// /api/saas/approve-provision/{username}. HiveID lets the admin pick the exact
+// available placeholder to assign (from the approve-picker modal); an empty or
+// absent HiveID preserves the historical auto-pick behavior.
+type ApproveProvisionRequest struct {
+	HiveID string `json:"hive_id"`
+}
+
 func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Request) {
 	targetUsername := r.PathValue("username")
 	approver := s.getAuthUser(r)
@@ -3791,12 +3822,39 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Optionally the admin picks the EXACT placeholder to assign (from the
+	// approve-picker modal) instead of letting the hub auto-pick. The body is
+	// tolerated as absent/empty — an empty hive_id preserves the historical
+	// auto-pick behavior. The body is tiny (a single id), so cap it small.
+	const maxApproveRequestBodyBytes = 1 * 1024
+	var approveBody ApproveProvisionRequest
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxApproveRequestBodyBytes)
+		// An empty body is valid (auto-pick); ignore EOF/empty decode errors and
+		// fall through to auto-pick. Any non-empty malformed body is rejected.
+		if err := json.NewDecoder(r.Body).Decode(&approveBody); err != nil && err != io.EOF {
+			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Approving now ASSIGNS an available placeholder instead of just bumping
 	// quota for a manual provision. Pick the pool from the request's auth_method
 	// (private → vllm-d/GPU pool, otherwise → hive-oke/public pool). If no
 	// placeholder is available in that pool, tell the admin to provision more.
 	pool := poolClusterForAuthMethod(pr.AuthMethod)
-	hiveID := findAvailablePlaceholder(pool)
+	hiveID := strings.TrimSpace(approveBody.HiveID)
+	if hiveID != "" {
+		// Admin chose a specific placeholder — validate it is an available
+		// placeholder (same check the assign path uses) before using it. The
+		// full status recheck under loadSaaSHive below still guards the race.
+		if sel := loadSaaSHive(hiveID); sel == nil || sel.Status != statusAvailable || sel.Owner != hubAdminUsername {
+			http.Error(w, `{"error":"selected placeholder is not available"}`, http.StatusConflict)
+			return
+		}
+	} else {
+		hiveID = findAvailablePlaceholder(pool)
+	}
 	if hiveID == "" {
 		http.Error(w, fmt.Sprintf(`{"error":"no available placeholder hive in pool %q — provision more placeholders"}`, pool), http.StatusConflict)
 		return
@@ -3929,6 +3987,53 @@ func findAvailablePlaceholder(clusterID string) string {
 		return h.ID
 	}
 	return ""
+}
+
+// AvailablePlaceholder is one row of the approve-picker dropdown: an available
+// placeholder hive the admin can assign a provision request to.
+type AvailablePlaceholder struct {
+	ID          string `json:"id"`
+	ClusterID   string `json:"cluster_id"`
+	ProjectName string `json:"project_name"`
+}
+
+// listAvailablePlaceholders returns every available placeholder (admin-owned,
+// statusAvailable), optionally filtered to a single pool (cluster). An empty
+// pool returns placeholders across all pools. It mirrors findAvailablePlaceholder's
+// availability predicate so the picker and the assign path agree on what's usable.
+func listAvailablePlaceholders(pool string) []AvailablePlaceholder {
+	var result []AvailablePlaceholder
+	for _, h := range listSaaSHives() {
+		if h.Status != statusAvailable {
+			continue
+		}
+		if h.Owner != hubAdminUsername {
+			continue
+		}
+		cluster := clusterIDForHive(&h)
+		if pool != "" && cluster != pool {
+			continue
+		}
+		result = append(result, AvailablePlaceholder{
+			ID:          h.ID,
+			ClusterID:   cluster,
+			ProjectName: h.ProjectName,
+		})
+	}
+	return result
+}
+
+// handleAvailablePlaceholders (admin-only) returns the available placeholders
+// the approve-picker modal populates its dropdown from. An optional ?pool=
+// filters to a single cluster; the default is all available placeholders.
+func (s *HubServer) handleAvailablePlaceholders(w http.ResponseWriter, r *http.Request) {
+	pool := strings.TrimSpace(r.URL.Query().Get("pool"))
+	placeholders := listAvailablePlaceholders(pool)
+	if placeholders == nil {
+		placeholders = []AvailablePlaceholder{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"placeholders": placeholders})
 }
 
 // projectConfigForHiveID returns the claimed project's real org/repos/ACMM for
@@ -5100,6 +5205,8 @@ const dashboardHTML = `<!DOCTYPE html>
         var canConvert = isLocal && h.role === 'owner' && (_userQuota < 0 || _userQuota > _userUsed);
         var modeCell = h.provStatus === 'error'
           ? '<span style="color:var(--red);cursor:help;white-space:nowrap" title="' + esc(h.provError || '') + '">⚠ ERROR</span>'
+          : h.assigning
+          ? '<span style="color:var(--accent);white-space:nowrap" title="Waiting for the spoke to report the new project via heartbeat"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Assigning to ' + esc(h.assigningTo || '?') + '</span>'
           : h.provStatus === 'provisioning'
           ? '<span style="color:var(--accent);white-space:nowrap">⏳ Provisioning</span>'
           : h.migrationStatus === 'migrating'
@@ -5127,7 +5234,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var apiUrl = apiLink(h);
         var menuItems = [];
         var mi = 'display:block;padding:7px 14px;color:#c9d1d9;text-decoration:none;font-size:0.78rem;cursor:pointer';
-        if (_isAdmin && h.provStatus === 'available') menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" style="' + mi + ';color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:4px 0"></div>');
+        if (_isAdmin && h.provStatus === 'available' && !h.assigning) menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" style="' + mi + ';color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (contributeUrl) menuItems.push('<a href="' + contributeUrl + '" target="_blank" style="' + mi + '">Contribute</a>');
         if (h.snapshotUrl) menuItems.push('<a href="' + esc(h.snapshotUrl) + '" target="_blank" style="' + mi + '">Preview</a>');
         var apiBase = rb ? esc(rb) : '';
@@ -5620,6 +5727,10 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!section || !list) return;
       if (!requests || !requests.length) { section.style.display = 'none'; return; }
       section.style.display = '';
+      // Stash by username so the approve-picker modal can read the full request
+      // (org/repos/acmm) without threading every field through an onclick string.
+      _provisionRequestsByUser = {};
+      requests.forEach(function(pr) { _provisionRequestsByUser[pr.username] = pr; });
       var rows = requests.map(function(pr) {
         var avatar = '<img src="https://github.com/' + esc(pr.username) + '.png" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:8px">';
         return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">' +
@@ -5632,26 +5743,82 @@ const dashboardHTML = `<!DOCTYPE html>
           '<div style="font-size:0.7rem;color:var(--muted)">' + esc((pr.requested_at || '').substring(0, 10)) + '</div>' +
           '</div></div>' +
           '<div style="display:flex;gap:6px">' +
-          '<button onclick="approveProvision(\'' + esc(pr.username) + '\',this)" style="padding:5px 14px;background:var(--green);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">Approve</button>' +
+          '<button onclick="openApproveModal(\'' + esc(pr.username) + '\')" style="padding:5px 14px;background:var(--green);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">Approve</button>' +
           '<button onclick="denyProvision(\'' + esc(pr.username) + '\',this)" style="padding:5px 14px;background:var(--red);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:0.78rem;font-weight:600">Deny</button>' +
           '</div></div>';
       }).join('');
       list.innerHTML = rows;
     }
 
-    async function approveProvision(username, btn) {
-      btn.disabled = true;
-      btn.textContent = 'Assigning...';
+    var _provisionRequestsByUser = {};
+    async function openApproveModal(username) {
+      var pr = _provisionRequestsByUser[username] || {username: username};
+      var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
+      var lbl = 'display:block;font-size:0.75rem;color:var(--muted);margin:10px 0 4px';
+      var reposText = pr.primary_repo || pr.repos || '';
+      var summary =
+        '<div style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:0.8rem;margin-bottom:4px">' +
+        '<div><span style="color:var(--muted)">User:</span> <strong>' + esc(username) + '</strong></div>' +
+        '<div><span style="color:var(--muted)">Org:</span> ' + esc(pr.org || '') + '</div>' +
+        '<div><span style="color:var(--muted)">Repos:</span> ' + esc(pr.repos || '') + '</div>' +
+        '<div><span style="color:var(--muted)">Primary:</span> ' + esc(pr.primary_repo || '') + '</div>' +
+        '<div><span style="color:var(--muted)">ACMM:</span> ' + (pr.acmm_level != null ? pr.acmm_level : '—') + '</div>' +
+        '</div>';
+      var content =
+        summary +
+        '<label style="' + lbl + '">Placeholder to assign</label>' +
+        '<select id="approve-hive" style="' + fld + '"><option value="">Loading placeholders…</option></select>' +
+        '<div style="font-size:0.72rem;color:var(--muted);margin-top:6px">Auto-pick chooses an available placeholder from the request&#39;s pool.</div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+        '<button onclick="closeApproveModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
+        '<button id="approve-submit" onclick="confirmApprove(\'' + esc(username) + '\')" style="padding:6px 16px;background:#3fb950;color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Approve</button>' +
+        '</div>';
+      var overlay = document.createElement('div');
+      overlay.id = 'approve-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
+      overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:440px;width:90%;max-height:88vh;overflow-y:auto">' +
+        '<h3 style="margin:0 0 12px 0;font-size:1rem">Approve &amp; assign placeholder</h3>' + content + '</div>';
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeApproveModal(); });
+      document.body.appendChild(overlay);
+      // Populate the dropdown with available placeholders (auto-pick default).
       try {
-        // Approving assigns an available placeholder hive from the correct pool
-        // (public request -> hive-oke, private -> vllm-d) and marks the request
-        // fulfilled. The assigned hive id comes back in the response.
-        var resp = await fetch('/api/saas/approve-provision/' + encodeURIComponent(username), {method: 'PUT'});
+        var resp = await fetch('/api/saas/admin/available-placeholders');
         var data = await resp.json();
-        if (!resp.ok) { hiveToast(data.error || 'Assign failed', 'error'); btn.disabled = false; btn.textContent = 'Approve'; return; }
-        hiveToast('Assigned ' + (data.hive_id || 'a hive') + ' to ' + username, 'success');
+        var sel = document.getElementById('approve-hive');
+        if (!sel) return;
+        var opts = '<option value="">Auto-pick</option>';
+        (data.placeholders || []).forEach(function(p) {
+          opts += '<option value="' + esc(p.id) + '">' + esc(p.id) + '  (' + esc(p.cluster_id || 'default') + ')</option>';
+        });
+        sel.innerHTML = opts;
+      } catch(e) {
+        var sel2 = document.getElementById('approve-hive');
+        if (sel2) sel2.innerHTML = '<option value="">Auto-pick</option>';
+      }
+    }
+    function closeApproveModal() {
+      var ov = document.getElementById('approve-overlay');
+      if (ov) ov.remove();
+    }
+    async function confirmApprove(username) {
+      var sel = document.getElementById('approve-hive');
+      var hiveId = sel ? sel.value : '';
+      var submit = document.getElementById('approve-submit');
+      if (submit) { submit.disabled = true; submit.textContent = 'Assigning...'; }
+      try {
+        // Approving assigns a placeholder (the chosen one, or auto-pick from the
+        // correct pool when hive_id is empty) and marks the request fulfilled.
+        var resp = await fetch('/api/saas/approve-provision/' + encodeURIComponent(username), {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({hive_id: hiveId})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Assign failed', 'error'); if (submit) { submit.disabled = false; submit.textContent = 'Approve'; } return; }
+        closeApproveModal();
+        hiveToast('Approved ' + username + ' → ' + (hiveId || 'auto') + ' (' + (data.hive_id || 'a hive') + ')', 'success');
         loadHives();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Approve'; }
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); if (submit) { submit.disabled = false; submit.textContent = 'Approve'; } }
     }
 
     async function denyProvision(username, btn) {
