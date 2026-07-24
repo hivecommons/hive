@@ -145,6 +145,10 @@ type HubServer struct {
 	hubGitHash        string
 	hubGitBranch      string
 	hubSecret         string
+	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
+	// every-cycle behind-latest check doesn't re-restart while a rollout is still
+	// in flight. See the auto-upgrade block in the SHA-poll loop.
+	lastHubUpgradeTrigger time.Time
 	httpServer        *http.Server
 	httpMu            sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
 	clusters          map[string]ClusterConfig

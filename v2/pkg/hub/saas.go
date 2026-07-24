@@ -27,6 +27,12 @@ var saasUsersDir = "/data/saas/users"
 
 const hubAdminUsername = "clubanderson"
 
+// hubUpgradeDebounce is the minimum gap between hub self-upgrade rollout
+// restarts. The behind-latest check runs every SHA-poll cycle, so without this
+// the hub could re-trigger a restart before the previous rollout's new pod
+// reports the new hash. One cycle plus rollout headroom.
+const hubUpgradeDebounce = 4 * time.Minute
+
 type SaaSUser struct {
 	GitHubUsername string            `json:"github_username"`
 	CreatedAt      string            `json:"created_at"`
@@ -2875,15 +2881,24 @@ func (s *HubServer) StartLatestSHAPoller() {
 				break
 			}
 		}
-		if changed {
-			// Hub auto-upgrade (hub runs on v2)
-			hubBranchSHA := getLatestSHAForBranch("v2")
-			if isHubAutoUpgrade() && hubBranchSHA != "" && hubBranchSHA != s.hubGitHash {
-				s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
-				cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
-				if out, err := cmd.CombinedOutput(); err != nil {
-					s.logger.Warn("hub auto-upgrade failed", "output", string(out))
-				}
+		_ = changed
+		// Hub auto-upgrade — checked EVERY cycle, not only when the SHA just
+		// changed. Previously this lived inside `if changed {}`, so if the hub
+		// missed the one poll where v2's SHA flipped (busy, mid-restart, or the
+		// SHA moved between polls), it stayed "queued" forever and never retried,
+		// while spokes retry every cycle via triggerAutoUpgrades() above. Mirror
+		// that: whenever auto-upgrade is on and the hub is behind latest v2, trigger
+		// a rollout restart. A debounce prevents re-restarting every 2min while a
+		// restart is already rolling out (the new pod reports the new hash, which
+		// clears the condition, but the poll can fire before the rollout lands).
+		hubBranchSHA := getLatestSHAForBranch("v2")
+		if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) &&
+			time.Since(s.lastHubUpgradeTrigger) > hubUpgradeDebounce {
+			s.lastHubUpgradeTrigger = time.Now()
+			s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
+			cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				s.logger.Warn("hub auto-upgrade failed", "output", string(out))
 			}
 		}
 	}
