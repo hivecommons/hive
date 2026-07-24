@@ -1288,24 +1288,32 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		saasByID[sh.ID] = &shCopy
 	}
 
-	// enrichFromSaaSMeta overlays the authoritative SaaS meta.json fields
-	// (ProvStatus, ACMMLevel, provisioning/error/migration state) onto an entry
-	// built from a live registry hive. Registry entries come from spoke
-	// heartbeats and carry the spoke's live-reported ACMM level and NO
-	// provStatus — so a hosted placeholder that is actively heartbeating (e.g. a
-	// firewalled vllm-d spoke) would otherwise render at its live level (L0)
-	// with an empty provStatus, hiding the "Assign" menu and showing the wrong
-	// level. Placeholders that are scaled to zero never heartbeat, so they fall
-	// through to the SaaS-meta loop below and already render correctly; this
-	// closes that asymmetry for heartbeating spokes. meta.json is authoritative
-	// for status/level per the SaaS provisioning model.
+	// enrichFromSaaSMeta overlays SaaS meta.json fields onto an entry built from
+	// a live registry hive (registry entries come from spoke heartbeats and carry
+	// NO provStatus, so provStatus/migration/error must come from meta).
+	//
+	// ACMM level is the subtle case, and getting it wrong caused a regression:
+	//   - For a CLAIMED / running hive, the spoke's LIVE heartbeat level is
+	//     authoritative — it's what the hive is actually running. Many pre-claim
+	//     meta.json records still carry a stale acmm_level: 0 even though the
+	//     spoke runs at a real level, so unconditionally taking the meta level
+	//     downgraded live hives to L0 on the dashboard.
+	//   - For an unclaimed PLACEHOLDER (status: available), there is no
+	//     meaningful live level (the slot reports L0), so the INTENDED level from
+	//     meta ("L2 Instructed") is what should show, and it also gates the
+	//     "Assign" menu (provStatus === 'available').
+	// Rule: take the meta level only for placeholders, or as a fallback when the
+	// live registry level is 0 (unknown) but meta has a real one. Otherwise the
+	// live registry level wins.
 	enrichFromSaaSMeta := func(entry *MyHiveEntry) {
 		sh := saasByID[entry.ID]
 		if sh == nil {
 			return
 		}
 		entry.ProvStatus = sh.Status
-		entry.ACMMLevel = sh.ACMMLevel
+		if sh.Status == statusAvailable || (entry.ACMMLevel == 0 && sh.ACMMLevel > 0) {
+			entry.ACMMLevel = sh.ACMMLevel
+		}
 		switch sh.Status {
 		case "provisioning":
 			entry.GovernorMode = "PROVISIONING"
