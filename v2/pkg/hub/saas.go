@@ -5325,7 +5325,7 @@ const dashboardHTML = `<!DOCTYPE html>
         return;
       }
       var repoPath = function(h) { return h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : h.primaryRepo || ''; };
-      var rows = hives.map(function(h, i) {
+      var buildRow = function(h, i) {
         var dot = h.online ? healthBadge(h) : '<span class="online-dot off"></span>';
         var rp = repoPath(h);
         var repoLink = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '';
@@ -5483,7 +5483,46 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + sparkline(h.prHistory, '#3b82f6', 50, 14) + (h.actionablePRs || 0) + '</td>' +
           '<td>' + (h.activeContributors || 0) + '</td>' +
           '</tr>' + pendingExpandRow;
-      }).join('');
+      };
+      /* Section-header row: a labeled separator spanning all columns, styled to
+         match the table's muted uppercase heading treatment (see .hive-table th). */
+      var TOTAL_COLUMNS_HEADER = 13;
+      var sectionHeader = function(label, count) {
+        return '<tr class="hive-section-head"><td colspan="' + TOTAL_COLUMNS_HEADER + '" ' +
+          'style="padding:14px 12px 6px;color:var(--muted);font-weight:600;font-size:0.75rem;' +
+          'text-transform:uppercase;letter-spacing:0.5px;text-align:left">' +
+          esc(label) + ' (' + count + ')</td></tr>';
+      };
+      var rows;
+      if (_isAdmin) {
+        /* Admin-only organizational aid: split into assigned (real, claimed)
+           hives and unassigned placeholders. A placeholder is signalled by
+           provStatus === 'available' (primary), with an org 'available-*'
+           prefix as a fallback for placeholders that have not yet reported
+           provStatus. Preserve incoming order so each section stays sorted. */
+        var assigned = [], unassigned = [];
+        for (var _hi = 0; _hi < hives.length; _hi++) {
+          var _h = hives[_hi];
+          var _isPlaceholder = _h.provStatus === 'available' ||
+            (_h.org && _h.org.indexOf('available-') === 0);
+          if (_isPlaceholder) unassigned.push(_h); else assigned.push(_h);
+        }
+        /* Global running index across BOTH groups so menu ids (hive-menu-<i>)
+           never collide between sections and the ⋮ dropdowns keep working. */
+        var _idx = 0;
+        rows = '';
+        if (assigned.length > 0) {
+          rows += sectionHeader('Assigned hives', assigned.length);
+          for (var _ai = 0; _ai < assigned.length; _ai++) { rows += buildRow(assigned[_ai], _idx++); }
+        }
+        if (unassigned.length > 0) {
+          rows += sectionHeader('Unassigned hives', unassigned.length);
+          for (var _ui = 0; _ui < unassigned.length; _ui++) { rows += buildRow(unassigned[_ui], _idx++); }
+        }
+      } else {
+        /* Non-admin: single flat list, exactly as before. */
+        rows = hives.map(buildRow).join('');
+      }
       document.getElementById('hives-container').innerHTML =
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
         '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
