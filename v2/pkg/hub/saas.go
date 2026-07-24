@@ -5072,6 +5072,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var apiUrl = apiLink(h);
         var menuItems = [];
         var mi = 'display:block;padding:7px 14px;color:#c9d1d9;text-decoration:none;font-size:0.78rem;cursor:pointer';
+        if (_isAdmin && h.provStatus === 'available') menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" style="' + mi + ';color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (contributeUrl) menuItems.push('<a href="' + contributeUrl + '" target="_blank" style="' + mi + '">Contribute</a>');
         if (h.snapshotUrl) menuItems.push('<a href="' + esc(h.snapshotUrl) + '" target="_blank" style="' + mi + '">Preview</a>');
         var apiBase = rb ? esc(rb) : '';
@@ -6087,6 +6088,97 @@ const dashboardHTML = `<!DOCTYPE html>
         hiveToast('Migration started: ' + hiveId + ' moving to ' + targetId, 'success');
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
+    var ASSIGN_DEFAULT_ACMM = 2;
+    function openAssignModal(hiveId) {
+      var h = (_allDashHives || []).reduce(function(m, x) { return x.id === hiveId ? x : m; }, null) || {};
+      var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
+      var lbl = 'display:block;font-size:0.75rem;color:var(--muted);margin:10px 0 4px';
+      var acmmOpts = '';
+      for (var lv = 0; lv <= 6; lv++) { acmmOpts += '<option value="' + lv + '"' + (lv === ASSIGN_DEFAULT_ACMM ? ' selected' : '') + '>' + lv + '</option>'; }
+      var orgVal = esc(h.org || '');
+      var reposVal = esc((h.repos || []).join(', '));
+      var content =
+        '<div style="margin-bottom:4px;font-size:0.8rem;color:var(--muted)">Claim placeholder <strong style="color:var(--fg)">' + esc(hiveId) + '</strong> for a real project.</div>' +
+        '<label style="' + lbl + '">Owner (GitHub login) *</label>' +
+        '<input id="assign-owner" style="' + fld + '" placeholder="octocat">' +
+        '<label style="' + lbl + '">Org *</label>' +
+        '<input id="assign-org" style="' + fld + '" value="' + orgVal + '" placeholder="my-org">' +
+        '<label style="' + lbl + '">Repos * (comma-separated)</label>' +
+        '<input id="assign-repos" style="' + fld + '" value="' + reposVal + '" placeholder="repo-a, repo-b">' +
+        '<label style="' + lbl + '">Primary repo (optional, defaults to first)</label>' +
+        '<input id="assign-primary" style="' + fld + '" placeholder="repo-a">' +
+        '<label style="' + lbl + '">Project name (optional)</label>' +
+        '<input id="assign-name" style="' + fld + '" placeholder="My Project">' +
+        '<label style="' + lbl + '">ACMM level</label>' +
+        '<select id="assign-acmm" style="' + fld + '">' + acmmOpts + '</select>' +
+        '<label style="display:flex;align-items:center;gap:8px;margin:12px 0 4px;font-size:0.8rem;cursor:pointer"><input type="checkbox" id="assign-public"> Public (visible to everyone)</label>' +
+        '<div onclick="toggleAssignAdvanced()" id="assign-adv-toggle" style="margin-top:12px;font-size:0.78rem;color:var(--accent);cursor:pointer;user-select:none">▸ GitHub App credentials (optional)</div>' +
+        '<div id="assign-adv" style="display:none;margin-top:8px">' +
+        '<div style="font-size:0.72rem;color:var(--muted);margin-bottom:8px">Optional — the owner can install the App from their dashboard after assignment.</div>' +
+        '<label style="' + lbl + '">App ID</label>' +
+        '<input id="assign-app-id" style="' + fld + '" placeholder="123456">' +
+        '<label style="' + lbl + '">Installation ID</label>' +
+        '<input id="assign-install-id" style="' + fld + '" placeholder="654321">' +
+        '<label style="' + lbl + '">App private key (PEM)</label>' +
+        '<textarea id="assign-app-key" rows="4" style="' + fld + ';font-family:monospace;font-size:0.7rem" placeholder="-----BEGIN RSA PRIVATE KEY-----"></textarea>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+        '<button onclick="closeAssignModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
+        '<button id="assign-submit" onclick="confirmAssign(\'' + esc(hiveId) + '\')" style="padding:6px 16px;background:#3fb950;color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Assign</button>' +
+        '</div>';
+      var overlay = document.createElement('div');
+      overlay.id = 'assign-overlay';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:2000;display:flex;align-items:center;justify-content:center';
+      overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:440px;width:90%;max-height:88vh;overflow-y:auto">' +
+        '<h3 style="margin:0 0 12px 0;font-size:1rem">Assign placeholder hive</h3>' + content + '</div>';
+      overlay.addEventListener('click', function(e) { if (e.target === overlay) closeAssignModal(); });
+      document.body.appendChild(overlay);
+    }
+    function toggleAssignAdvanced() {
+      var adv = document.getElementById('assign-adv');
+      var tog = document.getElementById('assign-adv-toggle');
+      if (!adv || !tog) return;
+      var open = adv.style.display === 'none';
+      adv.style.display = open ? 'block' : 'none';
+      tog.textContent = (open ? '▾' : '▸') + ' GitHub App credentials (optional)';
+    }
+    function closeAssignModal() {
+      var ov = document.getElementById('assign-overlay');
+      if (ov) ov.remove();
+    }
+    async function confirmAssign(hiveId) {
+      var owner = document.getElementById('assign-owner').value.trim();
+      var org = document.getElementById('assign-org').value.trim();
+      var repos = document.getElementById('assign-repos').value.trim();
+      var primary = document.getElementById('assign-primary').value.trim();
+      var name = document.getElementById('assign-name').value.trim();
+      var acmm = parseInt(document.getElementById('assign-acmm').value, 10) || 0;
+      var isPublic = document.getElementById('assign-public').checked;
+      var appId = document.getElementById('assign-app-id').value.trim();
+      var installId = document.getElementById('assign-install-id').value.trim();
+      var appKey = document.getElementById('assign-app-key').value.trim();
+      if (!owner) { hiveToast('Owner is required', 'error'); return; }
+      if (!org) { hiveToast('Org is required', 'error'); return; }
+      if (!repos) { hiveToast('Repos are required', 'error'); return; }
+      var submit = document.getElementById('assign-submit');
+      if (submit) { submit.disabled = true; submit.textContent = 'Assigning...'; }
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/assign', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({owner: owner, org: org, repos: repos, primary_repo: primary, project_name: name, acmm_level: acmm, is_public: isPublic, app_id: appId, installation_id: installId, app_private_key: appKey})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast(data.error || 'Assignment failed', 'error'); if (submit) { submit.disabled = false; submit.textContent = 'Assign'; } return; }
+        closeAssignModal();
+        hiveToast('Assigned ' + hiveId + ' to ' + owner, 'success');
+        loadHives();
+      } catch(e) {
+        hiveToast('Error: ' + e.message, 'error');
+        if (submit) { submit.disabled = false; submit.textContent = 'Assign'; }
+      }
     }
 
     async function removeLocalHive(id) {
