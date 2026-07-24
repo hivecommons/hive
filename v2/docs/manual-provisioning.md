@@ -366,6 +366,26 @@ spec:
     metadata: { labels: { app: hive } }
     spec:
       serviceAccountName: hive-sa
+      # ── init containers — REQUIRED. The ConfigMap is mounted read-only at
+      # /etc/hive-seed and copied into a WRITABLE emptyDir at /etc/hive. The hive
+      # process must WRITE /etc/hive/hive.yaml at runtime (the entrypoint seeds
+      # it, then merges the PVC overlay over it, and the dashboard's Save writes
+      # it). Mounting the ConfigMap DIRECTLY at /etc/hive makes it read-only and
+      # every config save fails with "open /etc/hive/hive.yaml: read-only file
+      # system" — and dashboard-installed GitHub App auth / ACMM changes are lost.
+      initContainers:
+      - name: copy-config
+        image: ${IMAGE}
+        command: ["sh","-c","cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi"]
+        volumeMounts:
+        - { name: config,          mountPath: /etc/hive-seed, readOnly: true }
+        - { name: config-writable, mountPath: /etc/hive }
+        - { name: data,            mountPath: /data }
+      - name: init-permissions
+        image: ${IMAGE}
+        command: ["sh","-c","chown -R 1001:1000 /data 2>/dev/null || true; echo permissions-set"]
+        volumeMounts:
+        - { name: data, mountPath: /data }
       containers:
       - name: hive
         image: ${IMAGE}
@@ -394,12 +414,13 @@ spec:
           failureThreshold: 3
           timeoutSeconds: 2
         volumeMounts:
-        - { name: data,    mountPath: /data }
-        - { name: config,  mountPath: /etc/hive }
-        - { name: secrets, mountPath: /secrets }
+        - { name: data,            mountPath: /data }
+        - { name: config-writable, mountPath: /etc/hive }         # WRITABLE (emptyDir), not the ConfigMap
+        - { name: secrets,         mountPath: /secrets, readOnly: true }
       volumes:
-      - { name: data,    persistentVolumeClaim: { claimName: hive-data } }
-      - { name: config,  configMap: { name: hive-config } }
+      - { name: data,            persistentVolumeClaim: { claimName: hive-data } }
+      - { name: config,          configMap: { name: hive-config } }   # seed only → /etc/hive-seed
+      - { name: config-writable, emptyDir: {} }                       # runtime /etc/hive
       - { name: secrets, secret: { secretName: hive-secrets } }
 YAML
 ```
@@ -598,6 +619,7 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `Config save failed ... open /etc/hive/hive.yaml: read-only file system` (ACMM/App-auth lost on restart) | ConfigMap mounted DIRECTLY at `/etc/hive` (read-only) | Mount ConfigMap at `/etc/hive-seed` + a writable emptyDir at `/etc/hive` + the `copy-config` init container (see B.8) |
 | Pod `1/1 Running` but hive shows **offline**; spoke logs `hub heartbeat rejected status=401` | No `HIVE_HUB_SECRET` in the deployment env | Add `HIVE_HUB_SECRET` (+ `HIVE_HUB_URL`) env from a working hive; the pod rolls and heartbeats |
 | Pod `1/1 Running` but hive shows **offline**; no 401, heartbeat just stopped | Heartbeat goroutine died; liveness probe on `/api/health` can't detect it | Point livenessProbe at `/api/livez`; restart to revive now |
 | Pod `CrashLoopBackOff` exit 255, SCC `restricted-v2` | `hive-anyuid` RoleBinding subject points at the wrong namespace | Set `subjects[].namespace` to the hive's own `$NS`, delete the pod |
