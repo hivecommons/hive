@@ -148,6 +148,13 @@ NS=hive-hosted-$ID              # namespace is always hive-hosted-<id>
 ROUTE_HOST=$ID.apps.fmaas-vllm-d.fmaas.res.ibm.com
 IMAGE=ghcr.io/kubestellar/hive:v2-latest
 SC=ocs-storagecluster-cephfs
+
+# The hub heartbeat secret — the SAME for every spoke on a given hub. Copy it
+# from any working hive on the same cluster (see the Deployment gotcha). The
+# spoke's heartbeats 401 without it.
+HUB_SECRET=$(kubectl --context "$CTX" -n hive-hosted-<any-working-hive> \
+  get deploy hive -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+  | grep '^HIVE_HUB_SECRET=' | cut -d= -f2-)
 ```
 
 ### B.1 Namespace + ServiceAccount
@@ -368,6 +375,24 @@ spec:
         - { name: terminal,  containerPort: 3001 }
         env:
         - { name: HIVE_ID, value: "${ID}" }
+        # HIVE_HUB_SECRET authenticates every heartbeat to the hub. WITHOUT it,
+        # the hub rejects the spoke's heartbeats with 401 and the hive shows
+        # OFFLINE forever (see the gotcha below). HIVE_HUB_URL points at the hub.
+        - { name: HIVE_HUB_SECRET, value: "${HUB_SECRET}" }
+        - { name: HIVE_HUB_URL,    value: "https://hive.kubestellar.io" }
+        livenessProbe:
+          # /api/livez (NOT /api/health) — it also fails on a stale heartbeat,
+          # so a wedged/dead heartbeat goroutine gets the pod auto-restarted.
+          httpGet: { path: /api/livez, port: 3002 }
+          periodSeconds: 30
+          failureThreshold: 3
+          timeoutSeconds: 2
+        readinessProbe:
+          httpGet: { path: /api/health, port: 3002 }
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 3
+          timeoutSeconds: 2
         volumeMounts:
         - { name: data,    mountPath: /data }
         - { name: config,  mountPath: /etc/hive }
@@ -381,6 +406,31 @@ YAML
 
 > **`maxUnavailable: 0`** keeps the current pod serving until the new one is
 > ready — uninterrupted upgrades. It only works because the PVC is RWX.
+
+> **Gotcha — `HIVE_HUB_SECRET` is REQUIRED or the hive is permanently offline.**
+> The hub authenticates every heartbeat against a shared secret. A spoke without
+> `HIVE_HUB_SECRET` in its deployment env sends unauthenticated heartbeats, the
+> hub replies **`401 unauthorized`**, and the hive shows **offline** in the
+> fleet even though the pod is `1/1 Running`. Copy the value from any working
+> hive on the same hub — it is the same for all spokes:
+>
+> ```bash
+> HUB_SECRET=$(kubectl --context "$CTX" -n hive-hosted-<any-working-hive> \
+>   get deploy hive -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}={.value}{"\n"}{end}' \
+>   | grep '^HIVE_HUB_SECRET=' | cut -d= -f2-)
+> ```
+>
+> Symptom to look for in the spoke logs: `hub heartbeat rejected status=401`.
+
+> **Gotcha — point the liveness probe at `/api/livez`, not `/api/health`.**
+> `/api/health` only checks the HTTP server is up, so a pod whose heartbeat
+> goroutine has silently died still passes it and is never restarted — the hive
+> shows a persistent "offline" dot while `1/1 Running`. `/api/livez` additionally
+> fails (503) when the last successful heartbeat is stale, so the kubelet
+> restarts the pod and the heartbeat revives. It returns 200 unauthenticated
+> once healthy. Existing deployments provisioned before this note still point at
+> `/api/health` — migrate them:
+> `kubectl -n <ns> patch deploy hive --type json -p '[{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/httpGet/path","value":"/api/livez"}]'`
 
 > **Gotcha — some clusters enforce an `owner` label.** A `ValidatingAdmissionPolicy`
 > on vllm-d requires an `owner` label on `PersistentVolumeClaim`, `ConfigMap`,
@@ -548,6 +598,8 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Pod `1/1 Running` but hive shows **offline**; spoke logs `hub heartbeat rejected status=401` | No `HIVE_HUB_SECRET` in the deployment env | Add `HIVE_HUB_SECRET` (+ `HIVE_HUB_URL`) env from a working hive; the pod rolls and heartbeats |
+| Pod `1/1 Running` but hive shows **offline**; no 401, heartbeat just stopped | Heartbeat goroutine died; liveness probe on `/api/health` can't detect it | Point livenessProbe at `/api/livez`; restart to revive now |
 | Pod `CrashLoopBackOff` exit 255, SCC `restricted-v2` | `hive-anyuid` RoleBinding subject points at the wrong namespace | Set `subjects[].namespace` to the hive's own `$NS`, delete the pod |
 | Pod won't boot: `github.token or github.app_id is required` | `github.app_id` empty in the seed | Set a placeholder `app_id` (e.g. `999999999`) |
 | Dashboard sign-in redirect loop (vllm-d) | `hub_proxied: true` on a cluster with no hub auth proxy | Set `hub_proxied: false` on the PVC overlay |
