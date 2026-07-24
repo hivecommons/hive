@@ -1281,8 +1281,41 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	var result []MyHiveEntry
 
 	autoUpgradeMap := make(map[string]bool)
+	saasByID := make(map[string]*SaaSHive)
 	for _, sh := range listSaaSHives() {
+		shCopy := sh
 		autoUpgradeMap[sh.ID] = sh.AutoUpgrade
+		saasByID[sh.ID] = &shCopy
+	}
+
+	// enrichFromSaaSMeta overlays the authoritative SaaS meta.json fields
+	// (ProvStatus, ACMMLevel, provisioning/error/migration state) onto an entry
+	// built from a live registry hive. Registry entries come from spoke
+	// heartbeats and carry the spoke's live-reported ACMM level and NO
+	// provStatus — so a hosted placeholder that is actively heartbeating (e.g. a
+	// firewalled vllm-d spoke) would otherwise render at its live level (L0)
+	// with an empty provStatus, hiding the "Assign" menu and showing the wrong
+	// level. Placeholders that are scaled to zero never heartbeat, so they fall
+	// through to the SaaS-meta loop below and already render correctly; this
+	// closes that asymmetry for heartbeating spokes. meta.json is authoritative
+	// for status/level per the SaaS provisioning model.
+	enrichFromSaaSMeta := func(entry *MyHiveEntry) {
+		sh := saasByID[entry.ID]
+		if sh == nil {
+			return
+		}
+		entry.ProvStatus = sh.Status
+		entry.ACMMLevel = sh.ACMMLevel
+		switch sh.Status {
+		case "provisioning":
+			entry.GovernorMode = "PROVISIONING"
+		case "error":
+			entry.GovernorMode = "ERROR"
+			entry.ProvError = sh.Error
+		}
+		entry.MigrationStatus = sh.MigrationStatus
+		entry.MigrationFrom = sh.MigrationFrom
+		entry.MigrationTo = sh.MigrationTo
 	}
 
 	isAdmin := username == hubAdminUsername
@@ -1291,16 +1324,22 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			if isAdmin && role != "owner" {
 				role = "owner"
 			}
-			result = append(result, MyHiveEntry{RegistryEntry: h, Role: role, AutoUpgrade: autoUpgradeMap[h.ID]})
+			entry := MyHiveEntry{RegistryEntry: h, Role: role, AutoUpgrade: autoUpgradeMap[h.ID]}
+			enrichFromSaaSMeta(&entry)
+			result = append(result, entry)
 			continue
 		}
 		if strings.EqualFold(h.Owner, username) {
-			result = append(result, MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID]})
+			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID]}
+			enrichFromSaaSMeta(&entry)
+			result = append(result, entry)
 			user.Hives[h.ID] = "owner"
 			continue
 		}
 		if isAdmin {
-			result = append(result, MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID]})
+			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID]}
+			enrichFromSaaSMeta(&entry)
+			result = append(result, entry)
 		}
 	}
 
