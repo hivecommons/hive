@@ -64,7 +64,10 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		Repository: "owner/repository", Coverage: "essential", Automation: "repair-pr",
 		Provider: "codex", VisualHiveRef: strings.Repeat("a", 40),
 	}
-	planDigest := dashboardSetupPlanDigest(request, planBytes)
+	planDigest, err := dashboardSetupPlanDigest(request, planBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	request.ExpectedPlanSHA256 = planDigest
 	result, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
 	if err != nil {
@@ -85,6 +88,59 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 	replay, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
 	if err != nil || replay["idempotent_replay"] != true || len(calls) != 2 {
 		t.Fatalf("replay=%v err=%v calls=%v", replay, err, calls)
+	}
+}
+
+func TestDashboardSetupPlanDigestIgnoresOnlyGeneratedAt(t *testing.T) {
+	request := dashboard.IntegratedSetupRequest{
+		RequestID: "setup-cycle-a-003", Repository: "owner/repository",
+		Coverage: "comprehensive", Automation: "repair-pr", Provider: "codex",
+		VisualHiveRef: strings.Repeat("b", 40),
+	}
+	first := []byte(`{"applied":false,"plan":{"generated_at":"2026-07-25T00:00:00Z","repository":"owner/repository","inspection":{"test_commands":[["npm","test"]]}}}`)
+	second := []byte(`{
+		"plan": {
+			"inspection": {"test_commands": [["npm", "test"]]},
+			"repository": "owner/repository",
+			"generated_at": "2026-07-25T00:00:05Z"
+		},
+		"applied": false
+	}`)
+	firstDigest, err := dashboardSetupPlanDigest(request, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDigest, err := dashboardSetupPlanDigest(request, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstDigest != secondDigest {
+		t.Fatalf("generated_at changed digest: first=%s second=%s", firstDigest, secondDigest)
+	}
+
+	changed := []byte(`{"applied":false,"plan":{"generated_at":"2026-07-25T00:00:05Z","repository":"owner/repository","inspection":{"test_commands":[["npm","run","build"]]}}}`)
+	changedDigest, err := dashboardSetupPlanDigest(request, changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedDigest == firstDigest {
+		t.Fatal("a semantic setup-plan change did not change the digest")
+	}
+}
+
+func TestDashboardSetupPlanDigestRejectsInvalidOrTrailingJSON(t *testing.T) {
+	request := dashboard.IntegratedSetupRequest{
+		RequestID: "setup-cycle-a-004", Repository: "owner/repository",
+		Coverage: "essential", Automation: "repair-pr", Provider: "codex",
+		VisualHiveRef: strings.Repeat("c", 40),
+	}
+	for _, input := range [][]byte{
+		[]byte(`{"plan":`),
+		[]byte(`{"plan":{}} {"extra":true}`),
+	} {
+		if _, err := dashboardSetupPlanDigest(request, input); err == nil {
+			t.Fatalf("expected invalid setup plan to fail: %q", input)
+		}
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +50,10 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	if err != nil {
 		return nil, fmt.Errorf("integrated setup plan failed: %w", err)
 	}
-	planSHA256 := dashboardSetupPlanDigest(request, planBytes)
+	planSHA256, err := dashboardSetupPlanDigest(request, planBytes)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize integrated setup plan: %w", err)
+	}
 	if request.ExpectedPlanSHA256 == "" {
 		return map[string]any{
 			"schema_version": "hive.dashboard-integrated-setup-plan.v1",
@@ -64,9 +68,29 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	return runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
 }
 
-func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, planBytes []byte) string {
+func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, planBytes []byte) (string, error) {
+	var planEnvelope map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(planBytes))
+	decoder.UseNumber()
+	if err := decoder.Decode(&planEnvelope); err != nil {
+		return "", fmt.Errorf("decode setup plan: %w", err)
+	}
+	if err := ensureDashboardSetupJSONEOF(decoder); err != nil {
+		return "", err
+	}
+	if plan, ok := planEnvelope["plan"].(map[string]any); ok {
+		// SetupPlan.GeneratedAt describes when the read-only inspection ran; it
+		// is not a plan decision. Binding the dashboard digest to that timestamp
+		// made every plan impossible to apply because apply intentionally
+		// recomputes a fresh plan before mutating the repository.
+		delete(plan, "generated_at")
+	}
+	canonicalPlan, err := json.Marshal(planEnvelope)
+	if err != nil {
+		return "", fmt.Errorf("encode canonical setup plan: %w", err)
+	}
 	binding := strings.Join([]string{
-		"hive.dashboard-integrated-setup-plan.v2",
+		"hive.dashboard-integrated-setup-plan.v3",
 		request.RequestID,
 		request.Repository,
 		request.Coverage,
@@ -74,8 +98,20 @@ func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, planByte
 		request.Provider,
 		request.VisualHiveRef,
 	}, "\n") + "\n"
-	sum := sha256.Sum256(append([]byte(binding), planBytes...))
-	return hex.EncodeToString(sum[:])
+	sum := sha256.Sum256(append([]byte(binding), canonicalPlan...))
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func ensureDashboardSetupJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	err := decoder.Decode(&extra)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	if err == nil {
+		return errors.New("setup plan contains more than one JSON value")
+	}
+	return fmt.Errorf("decode setup plan trailer: %w", err)
 }
 
 func dashboardSetupStateDir(repository string) (string, error) {
