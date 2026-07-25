@@ -26,15 +26,16 @@ const (
 )
 
 type ManagementOptions struct {
-	Operation         ManagementOperation
-	StateDir          string
-	VisualHiveRef     string
-	VisualHiveCommand string
-	VisualHiveArgs    []string
-	DeleteState       bool
-	Cancel            bool
-	GitHub            *hivegithub.Client
-	GitTransportToken string
+	Operation          ManagementOperation
+	StateDir           string
+	LifecycleBeadsDirs []string
+	VisualHiveRef      string
+	VisualHiveCommand  string
+	VisualHiveArgs     []string
+	DeleteState        bool
+	Cancel             bool
+	GitHub             *hivegithub.Client
+	GitTransportToken  string
 }
 
 type ManagementResult struct {
@@ -154,7 +155,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 		if err := store.AuditStrict(AuditEntry{Action: "uninstall_drain_started", Allowed: true, Repository: config.Repository, Detail: "automation paused before exact issue/PR/branch cancellation"}); err != nil {
 			return result, err
 		}
-		if drainErr := drainUninstallLifecycle(ctx, options.StateDir, store, config, options.GitHub); drainErr != nil {
+		if drainErr := drainUninstallLifecycle(ctx, options.StateDir, options.LifecycleBeadsDirs, store, config, options.GitHub); drainErr != nil {
 			_ = store.AuditStrict(AuditEntry{Action: "uninstall_drain", Allowed: false, Repository: config.Repository, Detail: drainErr.Error()})
 			return result, fmt.Errorf("uninstall drain stopped with automation paused and state preserved: %w; correct the exact ownership mismatch and retry %s", drainErr, result.NextCommand)
 		}

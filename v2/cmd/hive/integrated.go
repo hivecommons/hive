@@ -527,6 +527,8 @@ func runIntegratedManagement(command string, args []string) int {
 	flags := flag.NewFlagSet("hive "+command, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	stateDir := flags.String("state-dir", defaultIntegratedStateDir(), "persistent Hive state directory")
+	var lifecycleBeadsDirs stringListFlag
+	flags.Var(&lifecycleBeadsDirs, "beads-dir", "ordinary Hive role beads directory for normal-runtime uninstall; repeatable")
 	visualRef := ""
 	flags.StringVar(&visualRef, "version", "", "immutable Visual Hive commit SHA")
 	flags.StringVar(&visualRef, "visual-hive-ref", "", "immutable Visual Hive commit SHA")
@@ -536,6 +538,10 @@ func runIntegratedManagement(command string, args []string) int {
 	githubTokenEnv := flags.String("github-token-env", "HIVE_GITHUB_TOKEN", "environment variable containing GitHub token")
 	githubAPIURL := flags.String("github-api-url", "", "optional GitHub Enterprise API URL")
 	if err := parseExactFlags(flags, args); err != nil {
+		return 2
+	}
+	if command != "uninstall" && len(lifecycleBeadsDirs) != 0 {
+		fmt.Fprintln(os.Stderr, "--beads-dir is supported only for uninstall")
 		return 2
 	}
 	if command != "uninstall" && visualRef == "" && command != "rollback" {
@@ -600,7 +606,7 @@ func runIntegratedManagement(command string, args []string) int {
 	result, err := integrated.RunManagement(ctx, integrated.ManagementOptions{
 		Operation: integrated.ManagementOperation(command), StateDir: *stateDir, VisualHiveRef: visualRef,
 		VisualHiveCommand: managementRuntimeCommand, VisualHiveArgs: managementRuntimeArgs,
-		DeleteState: *deleteState, Cancel: *cancelPending, GitHub: client, GitTransportToken: token,
+		LifecycleBeadsDirs: append([]string(nil), lifecycleBeadsDirs...), DeleteState: *deleteState, Cancel: *cancelPending, GitHub: client, GitTransportToken: token,
 	})
 	if err != nil {
 		shouldRestart := shouldRestartManagementScheduler(command, *stateDir)

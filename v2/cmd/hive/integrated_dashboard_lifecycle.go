@@ -27,6 +27,7 @@ var (
 	dashboardLifecycleCLIRunner        = runDashboardLifecycleCLI
 	dashboardLifecycleTrigger          = triggerDashboardVisualCycle
 	dashboardLifecycleStopNormalVisual func(context.Context) error
+	dashboardLifecycleNormalBeadsDirs  []string
 	dashboardLifecycleMu               sync.Mutex
 )
 
@@ -247,6 +248,13 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 				}
 			}
 			args := []string{"uninstall", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN"}
+			if request.Action != "uninstall-cancel" {
+				for _, dir := range dashboardLifecycleNormalBeadsDirs {
+					if strings.TrimSpace(dir) != "" {
+						args = append(args, "--beads-dir", dir)
+					}
+				}
+			}
 			switch request.Action {
 			case "uninstall-finalize":
 				args = append(args, "--delete-state")

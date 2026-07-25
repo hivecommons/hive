@@ -33,6 +33,7 @@ const (
 	uninstallAlreadyClean         = "already_clean"
 	maxUninstallDrainFindings     = 100
 	maxUninstallDrainPullsPerItem = 20
+	maxUninstallLifecycleStores   = 64
 )
 
 // UninstallIntent is the durable authority boundary between preparing a
@@ -551,7 +552,7 @@ func drainWorkflowDispatchForUninstall(ctx context.Context, store *Store, config
 	return nil
 }
 
-func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store, config Config, client *hivegithub.Client) error {
+func drainUninstallLifecycle(ctx context.Context, stateDir string, lifecycleBeadsDirs []string, store *Store, config Config, client *hivegithub.Client) error {
 	lifecycle, err := visualhive.NewLifecycleStore(filepath.Join(stateDir, "visual-hive"))
 	if err != nil {
 		return err
@@ -566,7 +567,7 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store,
 	if err != nil {
 		return err
 	}
-	beadStore, err := beads.NewStore(filepath.Join(stateDir, "beads", "quality"))
+	beadStores, err := openUninstallLifecycleBeadStores(stateDir, lifecycleBeadsDirs)
 	if err != nil {
 		return err
 	}
@@ -653,6 +654,13 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store,
 		if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_cancel_finding", Allowed: true, Repository: config.Repository, Detail: "finding=" + finding.RepositoryFingerprint}); err != nil {
 			return err
 		}
+		var beadStore *beads.Store
+		if strings.TrimSpace(finding.BeadID) != "" {
+			beadStore, err = selectUninstallLifecycleBeadStore(beadStores, finding.BeadID)
+			if err != nil {
+				return err
+			}
+		}
 		if err := lifecycle.CancelForUninstall(finding.RepositoryFingerprint, issueClosed, beadStore); err != nil {
 			return err
 		}
@@ -682,6 +690,61 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store,
 		}
 	}
 	return nil
+}
+
+func openUninstallLifecycleBeadStores(stateDir string, configuredDirs []string) ([]*beads.Store, error) {
+	if len(configuredDirs) == 0 {
+		store, err := beads.NewStore(filepath.Join(stateDir, "beads", "quality"))
+		if err != nil {
+			return nil, err
+		}
+		return []*beads.Store{store}, nil
+	}
+	if len(configuredDirs) > maxUninstallLifecycleStores {
+		return nil, fmt.Errorf("ordinary Hive lifecycle beads directories are bounded to %d", maxUninstallLifecycleStores)
+	}
+	seen := make(map[string]bool, len(configuredDirs))
+	stores := make([]*beads.Store, 0, len(configuredDirs))
+	for _, configuredDir := range configuredDirs {
+		configuredDir = strings.TrimSpace(configuredDir)
+		if configuredDir == "" || !filepath.IsAbs(configuredDir) {
+			return nil, fmt.Errorf("ordinary Hive lifecycle beads directory must be absolute")
+		}
+		configuredDir = filepath.Clean(configuredDir)
+		if seen[configuredDir] {
+			continue
+		}
+		seen[configuredDir] = true
+		store, err := beads.NewSharedStore(configuredDir)
+		if err != nil {
+			return nil, err
+		}
+		stores = append(stores, store)
+	}
+	if len(stores) == 0 {
+		return nil, fmt.Errorf("ordinary Hive lifecycle beads directories are required")
+	}
+	return stores, nil
+}
+
+func selectUninstallLifecycleBeadStore(stores []*beads.Store, beadID string) (*beads.Store, error) {
+	var match *beads.Store
+	for _, store := range stores {
+		if store == nil {
+			continue
+		}
+		if _, err := store.Get(beadID); err != nil {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("bead %s exists in multiple ordinary Hive role stores", beadID)
+		}
+		match = store
+	}
+	if match == nil {
+		return nil, fmt.Errorf("bead %s not found in ordinary Hive role stores", beadID)
+	}
+	return match, nil
 }
 
 func drainFindingRepairResources(ctx context.Context, store *Store, lifecycle *visualhive.LifecycleStore, config Config, client *hivegithub.Client, finding visualhive.FindingLifecycle) error {

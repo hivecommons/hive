@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -588,6 +589,7 @@ func main() {
 	}
 
 	beadStores := make(map[string]*beads.Store)
+	lifecycleBeadsDirs := make(map[string]string)
 	for name, agentCfg := range cfg.EnabledAgents() {
 		store, err := openConfiguredRoleBeadStore(name, agentCfg.BeadsDir)
 		if err != nil {
@@ -596,6 +598,7 @@ func main() {
 		}
 		store.SetHiveID(cfg.HiveID)
 		beadStores[name] = store
+		lifecycleBeadsDirs[name] = agentCfg.BeadsDir
 		logger.Info("beads store initialized", "agent", name, "count", store.Count())
 	}
 
@@ -625,8 +628,18 @@ func main() {
 			}
 			store.SetHiveID(cfg.HiveID)
 			beadStores[name] = store
+			lifecycleBeadsDirs[name] = agentBeadsDir
 			logger.Info("orphan beads store loaded from disk", "agent", name, "count", store.Count())
 		}
+	}
+	lifecycleBeadRoles := make([]string, 0, len(lifecycleBeadsDirs))
+	for role := range lifecycleBeadsDirs {
+		lifecycleBeadRoles = append(lifecycleBeadRoles, role)
+	}
+	sort.Strings(lifecycleBeadRoles)
+	dashboardLifecycleNormalBeadsDirs = dashboardLifecycleNormalBeadsDirs[:0]
+	for _, role := range lifecycleBeadRoles {
+		dashboardLifecycleNormalBeadsDirs = append(dashboardLifecycleNormalBeadsDirs, strings.TrimSpace(lifecycleBeadsDirs[role]))
 	}
 
 	if installed, exists, err := loadCurrentVisualWorkContract(cfg); err != nil {

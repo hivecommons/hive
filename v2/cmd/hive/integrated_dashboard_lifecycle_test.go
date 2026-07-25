@@ -48,10 +48,12 @@ func installDashboardLifecycleFakes(t *testing.T) {
 	originalRunner := dashboardLifecycleCLIRunner
 	originalTrigger := dashboardLifecycleTrigger
 	originalStopNormalVisual := dashboardLifecycleStopNormalVisual
+	originalNormalBeadsDirs := append([]string(nil), dashboardLifecycleNormalBeadsDirs...)
 	t.Cleanup(func() {
 		dashboardLifecycleCLIRunner = originalRunner
 		dashboardLifecycleTrigger = originalTrigger
 		dashboardLifecycleStopNormalVisual = originalStopNormalVisual
+		dashboardLifecycleNormalBeadsDirs = originalNormalBeadsDirs
 	})
 }
 
@@ -156,6 +158,8 @@ func TestDashboardUninstallStopsNormalVisualBeforeCLI(t *testing.T) {
 			writeDashboardLifecycleContract(t)
 			installDashboardLifecycleFakes(t)
 			var order []string
+			var uninstallArgs []string
+			dashboardLifecycleNormalBeadsDirs = []string{"/data/beads/quality", "/data/beads/security"}
 			dashboardLifecycleStopNormalVisual = func(context.Context) error {
 				order = append(order, "stop-normal-visual")
 				return nil
@@ -170,6 +174,7 @@ func TestDashboardUninstallStopsNormalVisualBeforeCLI(t *testing.T) {
 					}, []byte(`{"schema_version":"hive.status.v1","paused":true}`), nil
 				case "uninstall":
 					order = append(order, "uninstall-cli")
+					uninstallArgs = append([]string(nil), args...)
 					return map[string]any{"state_deleted": action == "uninstall-finalize"}, []byte(`{"state_deleted":true}`), nil
 				default:
 					t.Fatalf("unexpected command %v", args)
@@ -189,6 +194,16 @@ func TestDashboardUninstallStopsNormalVisualBeforeCLI(t *testing.T) {
 			result, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
 			if err != nil || result == nil || !reflect.DeepEqual(order, []string{"stop-normal-visual", "uninstall-cli"}) {
 				t.Fatalf("result=%v order=%v err=%v", result, order, err)
+			}
+			wantArgs := []string{
+				"uninstall", "--state-dir", os.Getenv("HIVE_STATE_DIR"), "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
+				"--beads-dir", "/data/beads/quality", "--beads-dir", "/data/beads/security",
+			}
+			if action == "uninstall-finalize" {
+				wantArgs = append(wantArgs, "--delete-state")
+			}
+			if !reflect.DeepEqual(uninstallArgs, wantArgs) {
+				t.Fatalf("ordinary Hive beads directory was not bound to uninstall: %v", uninstallArgs)
 			}
 		})
 	}
