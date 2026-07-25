@@ -26,7 +26,8 @@ func doIntegratedPost(server *Server, path string, body any) *httptest.ResponseR
 func configureIntegratedLifecycleTestOwner(t *testing.T, server *Server, deps *Dependencies) {
 	t.Helper()
 	server.authToken = "dashboard-test-token"
-	deps.Config.Project.PrimaryRepo = "owner/repository"
+	deps.Config.Project.Org = "owner"
+	deps.Config.Project.PrimaryRepo = "repository"
 	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-owner-token", nil }
 	deps.IntegratedSetupAuthorizerFunc = func(token string) (string, error) {
 		if token != "saved-owner-token" {

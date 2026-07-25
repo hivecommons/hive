@@ -138,6 +138,12 @@ func (s *Server) authorizeIntegratedOwner(w http.ResponseWriter, r *http.Request
 	if repository == "" && len(s.deps.Config.Project.Repos) > 0 {
 		repository = strings.TrimSpace(s.deps.Config.Project.Repos[0])
 	}
+	if repository != "" && !strings.Contains(repository, "/") {
+		org := strings.TrimSpace(s.deps.Config.Project.Org)
+		if org != "" {
+			repository = org + "/" + repository
+		}
+	}
 	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repository) {
 		jsonError(w, "the hive has no exact repository configured for the integrated lifecycle", http.StatusConflict)
 		return "", "", false

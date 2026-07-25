@@ -11,7 +11,8 @@ import (
 func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 	server, deps := apiServer(t)
 	server.authToken = "dashboard-test-token"
-	deps.Config.Project.PrimaryRepo = "owner/repository"
+	deps.Config.Project.Org = "owner"
+	deps.Config.Project.PrimaryRepo = "repository"
 	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
 	deps.IntegratedSetupAuthorizerFunc = func(token string) (string, error) {
 		if token != "saved-token" {
