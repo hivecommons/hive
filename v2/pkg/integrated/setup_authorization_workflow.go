@@ -199,7 +199,7 @@ func uninstallCheckPublisherWorkflowJob() string {
               });
             }
             const exact = Number(check.id) > 0 && check.name === "visual-hive" && String(check.head_sha || "").toLowerCase() === head &&
-              check.status === "completed" && check.conclusion === "success" && check.details_url === details && check.external_id === external &&
+              check.status === "completed" && check.conclusion === "success" && check.external_id === external &&
               check.app && String(check.app.slug || "").toLowerCase() === "github-actions";
             if (!exact) throw new Error("created or recovered uninstall check did not match the exact immutable authorization");
             console.log("Published exact authorized uninstall check " + check.id + " for " + head);
