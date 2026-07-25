@@ -5,8 +5,8 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,10 +16,13 @@ import (
 )
 
 const (
-	k8sNamespacePath        = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-	selfUpgradeDeployName   = "hive"
-	selfUpgradeTimeout      = 10 * time.Second
+	selfUpgradeDeployName = "hive"
+	selfUpgradeTimeout    = 10 * time.Second
 )
+
+// k8sNamespacePath is a var (not a const) so tests can redirect the
+// service-account namespace file at a temp path. Production never reassigns it.
+var k8sNamespacePath = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
 
 // RolloutRestartSelf patches this pod's own Deployment to trigger a
 // rolling restart via the in-cluster K8s API.  This avoids os.Exit(0)
@@ -117,8 +120,12 @@ func k8sDeploymentContainerNames(path string) (deploymentContainerNames, error) 
 		Spec struct {
 			Template struct {
 				Spec struct {
-					Containers     []struct{ Name string `json:"name"` } `json:"containers"`
-					InitContainers []struct{ Name string `json:"name"` } `json:"initContainers"`
+					Containers []struct {
+						Name string `json:"name"`
+					} `json:"containers"`
+					InitContainers []struct {
+						Name string `json:"name"`
+					} `json:"initContainers"`
 				} `json:"spec"`
 			} `json:"template"`
 		} `json:"spec"`

@@ -342,7 +342,10 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	return report
 }
 
-const (
+// These are vars (not consts) purely so tests can redirect the in-cluster K8s
+// API endpoint and service-account file paths at an httptest server / temp
+// dir. Production never reassigns them.
+var (
 	k8sAPIServer  = "https://kubernetes.default.svc"
 	k8sTokenPath  = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 	k8sCACertPath = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
