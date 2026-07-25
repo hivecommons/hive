@@ -261,3 +261,53 @@ func TestGeneratePKCE_Success(t *testing.T) {
 		t.Fatal("challenge must equal ChallengeFor(verifier)")
 	}
 }
+
+// badURL contains a control char that makes http.NewRequest fail to parse,
+// exercising the request-build error branches.
+const badURL = "http://\x7f\x00-invalid"
+
+// closedURL points at a port nothing listens on so client.Do fails fast,
+// exercising the network-error branches.
+const closedURL = "http://127.0.0.1:1"
+
+func TestExchangeCode_RequestBuildError(t *testing.T) {
+	withURLs(t, BaseURL, badURL, KeyInfoURL)
+	if _, err := ExchangeCode("c", "v"); err == nil {
+		t.Fatal("unparseable KeyExchangeURL must error")
+	}
+}
+
+func TestExchangeCode_NetworkError(t *testing.T) {
+	withURLs(t, BaseURL, closedURL, KeyInfoURL)
+	if _, err := ExchangeCode("c", "v"); err == nil {
+		t.Fatal("connection failure must error")
+	}
+}
+
+func TestFetchCredit_RequestBuildError(t *testing.T) {
+	withURLs(t, BaseURL, KeyExchangeURL, badURL)
+	if _, err := FetchCredit("k"); err == nil {
+		t.Fatal("unparseable KeyInfoURL must error")
+	}
+}
+
+func TestFetchCredit_NetworkError(t *testing.T) {
+	withURLs(t, BaseURL, KeyExchangeURL, closedURL)
+	if _, err := FetchCredit("k"); err == nil {
+		t.Fatal("connection failure must error")
+	}
+}
+
+func TestPublicModelIDs_RequestBuildErrorReturnsNil(t *testing.T) {
+	withURLs(t, badURL, KeyExchangeURL, KeyInfoURL)
+	if ids := PublicModelIDs(); ids != nil {
+		t.Fatalf("unparseable BaseURL must return nil, got %v", ids)
+	}
+}
+
+func TestPublicModelIDs_NetworkErrorReturnsNil(t *testing.T) {
+	withURLs(t, closedURL, KeyExchangeURL, KeyInfoURL)
+	if ids := PublicModelIDs(); ids != nil {
+		t.Fatalf("connection failure must return nil, got %v", ids)
+	}
+}
