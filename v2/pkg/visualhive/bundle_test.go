@@ -36,6 +36,32 @@ func TestValidateAndImportBundle(t *testing.T) {
 	}
 }
 
+func TestImportByActorRoutesValidatedProjectionsToAgentStores(t *testing.T) {
+	root := t.TempDir()
+	manifestPath := writeTestBundle(t, root, false)
+	bundle, err := ValidateBundle(manifestPath, ValidationOptions{
+		Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC), MaxACMM: 3, AllowLocal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle.Beads[0].Actor = "ux-scout"
+	result, err := bundle.ImportByActor(filepath.Join(root, "beads"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Created != 1 || result.Skipped != 0 {
+		t.Fatalf("unexpected routed import result: %+v", result)
+	}
+	uxStore, err := beads.NewStore(filepath.Join(root, "beads", "ux-scout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uxStore.Count() != 1 {
+		t.Fatalf("expected one projection in the owning agent store, got %d", uxStore.Count())
+	}
+}
+
 func TestValidateBundleRejectsTampering(t *testing.T) {
 	root := t.TempDir()
 	manifestPath := writeTestBundle(t, root, false)
