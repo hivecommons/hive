@@ -4714,9 +4714,12 @@
     }
 
     // ── Centralized backend/model config (mirrors backends.conf) ──────────
-    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm'];
+    // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
+    // preset), so it appears in every backend/method picker even before a matching
+    // Model Gateway is configured — the user picks it, then funds/configures it.
+    const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm', 'openrouter'];
     const FREE_BACKENDS = ['copilot', 'goose'];
-    const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm'];
+    const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm', 'openrouter'];
     // Names of Model Gateways configured under Governor Config → Model Gateways
     // (e.g. 'openrouter'). Agent routing already resolves a gateway name, but
     // the backend pickers only listed KNOWN_BACKENDS — so a configured gateway
