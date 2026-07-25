@@ -104,6 +104,19 @@ func TestDeleteManagedStateRequiresMarkerAndRemovesOnlyNamedRoot(t *testing.T) {
 	}
 }
 
+func TestDeleteManagedStateAcceptsExactSetupBaselineArtifactCache(t *testing.T) {
+	managed := newManagedDeletionFixture(t)
+	writeFixture(t, managed, "setup-baseline/capture-artifacts/setup-baseline-artifact-42/setup-baseline-manifest.json", `{"schema_version":"hive.setup-baseline-artifact.v1"}`)
+	writeFixture(t, managed, "setup-baseline/capture-artifacts/setup-baseline-artifact-42/.hive-extraction-complete", "complete\n")
+	writeFixture(t, managed, "setup-baseline/production-verification/source-artifact-43/.visual-hive/report.json", `{"schemaVersion":"visual-hive.report.v1"}`)
+	if err := deleteManagedState(managed); err != nil {
+		t.Fatalf("exact Hive setup-baseline artifact cache blocked managed deletion: %v", err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatalf("managed state root still exists: %v", err)
+	}
+}
+
 func TestDeleteManagedStateRejectsUnrelatedIntegratedBytes(t *testing.T) {
 	managed := t.TempDir()
 	writeFixture(t, managed, "integrated/config.json", `{"schema_version":"hive.integrated-config.v1","repository":"owner/repo","repository_id":"123"}`)
@@ -363,6 +376,16 @@ func TestDeleteManagedStateRejectsNestedUnownedCheckoutAndLinkedTree(t *testing.
 				t.Fatal(err)
 			}
 			if err := os.Symlink(outside, filepath.Join(root, "runtime", "linked")); err != nil {
+				t.Skipf("filesystem link creation unavailable: %v", err)
+			}
+		}},
+		{name: "linked setup baseline artifact", prepare: func(t *testing.T, root string) {
+			outside := t.TempDir()
+			writeFixture(t, outside, "sentinel.txt", "must survive")
+			if err := os.MkdirAll(filepath.Join(root, "setup-baseline"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(root, "setup-baseline", "linked")); err != nil {
 				t.Skipf("filesystem link creation unavailable: %v", err)
 			}
 		}},

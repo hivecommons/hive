@@ -469,7 +469,10 @@ func deleteManagedState(stateDir string) error {
 	if json.Unmarshal(data, &config) != nil || !supportedDurableConfigSchema(config.SchemaVersion) || strings.TrimSpace(config.Repository) == "" || strings.TrimSpace(config.RepositoryID) == "" {
 		return fmt.Errorf("refusing to delete %s because its managed config identity is invalid", absolute)
 	}
-	allowedDirectories := map[string]bool{"integrated": true, "visual-hive": true, "repair": true, "beads": true, "runtime": true}
+	allowedDirectories := map[string]bool{
+		"integrated": true, "visual-hive": true, "repair": true, "beads": true, "runtime": true,
+		"setup-baseline": true,
+	}
 	entries, err := os.ReadDir(absolute)
 	if err != nil {
 		return err
@@ -656,7 +659,7 @@ func decodeStrictManagedDaemonJSON(data []byte, destination any) error {
 }
 
 func validateManagedStateDeletionTree(root string, config Config) error {
-	allowedDirectories := []string{"integrated", "visual-hive", "repair", "beads", "runtime"}
+	allowedDirectories := []string{"integrated", "visual-hive", "repair", "beads", "runtime", "setup-baseline"}
 	for _, name := range allowedDirectories {
 		path := filepath.Join(root, name)
 		if _, err := os.Lstat(path); os.IsNotExist(err) {
