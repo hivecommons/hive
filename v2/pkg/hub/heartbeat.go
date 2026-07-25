@@ -81,7 +81,7 @@ type ContributorSummary struct {
 }
 
 type LeaderboardEntry struct {
-	GitHubUsername  string `json:"github_username"`
+	GitHubUsername string `json:"github_username"`
 	AvatarURL      string `json:"avatar_url"`
 	TrustTier      string `json:"trust_tier"`
 	TasksCompleted int    `json:"tasks_completed"`
@@ -96,32 +96,32 @@ type LeaderboardEntry struct {
 // This allows the hub to display health data for firewalled clusters
 // that it cannot query directly via kubectl.
 type HeartbeatClusterHealthReport struct {
-	Nodes      []HeartbeatNodeMetric      `json:"nodes"`
-	Summary    HeartbeatClusterSummary    `json:"summary"`
-	GPUSummary *HeartbeatGPUSummary       `json:"gpu_summary,omitempty"`
-	CollectedAt string                    `json:"collected_at"`
+	Nodes       []HeartbeatNodeMetric   `json:"nodes"`
+	Summary     HeartbeatClusterSummary `json:"summary"`
+	GPUSummary  *HeartbeatGPUSummary    `json:"gpu_summary,omitempty"`
+	CollectedAt string                  `json:"collected_at"`
 }
 
 // HeartbeatNodeMetric holds per-node resource usage collected on the spoke.
 type HeartbeatNodeMetric struct {
-	Name           string   `json:"name"`
-	CPUCores       int      `json:"cpu_cores"`
-	CPUUsedMillis  int64    `json:"cpu_used_millicores"`
-	CPUPercent     int      `json:"cpu_percent"`
-	MemTotalMB     int64    `json:"mem_total_mb"`
-	MemUsedMB      int64    `json:"mem_used_mb"`
-	MemPercent     int      `json:"mem_percent"`
-	Pods           int      `json:"pods"`
-	PodCapacity    int      `json:"pod_capacity"`
+	Name          string `json:"name"`
+	CPUCores      int    `json:"cpu_cores"`
+	CPUUsedMillis int64  `json:"cpu_used_millicores"`
+	CPUPercent    int    `json:"cpu_percent"`
+	MemTotalMB    int64  `json:"mem_total_mb"`
+	MemUsedMB     int64  `json:"mem_used_mb"`
+	MemPercent    int    `json:"mem_percent"`
+	Pods          int    `json:"pods"`
+	PodCapacity   int    `json:"pod_capacity"`
 	// HiveCount is the number of distinct hive-hosted-* namespaces with a
 	// running pod on this node (namespaces, not pods, so a hive briefly
 	// running two pods during a rollout is counted once).
-	HiveCount      int      `json:"hive_count,omitempty"`
-	Ready          bool     `json:"ready"`
-	Conditions     []string `json:"conditions"`
-	DiskPressure   bool     `json:"disk_pressure"`
-	GPUs           int      `json:"gpus,omitempty"`
-	GPUType        string   `json:"gpu_type,omitempty"`
+	HiveCount    int      `json:"hive_count,omitempty"`
+	Ready        bool     `json:"ready"`
+	Conditions   []string `json:"conditions"`
+	DiskPressure bool     `json:"disk_pressure"`
+	GPUs         int      `json:"gpus,omitempty"`
+	GPUType      string   `json:"gpu_type,omitempty"`
 }
 
 // HeartbeatClusterSummary aggregates node-level data into cluster totals.
@@ -147,33 +147,33 @@ type HeartbeatGPUSummary struct {
 }
 
 type HeartbeatPayload struct {
-	HiveID       string             `json:"hive_id"`
-	Org          string             `json:"org"`
-	Repos        []string           `json:"repos"`
-	PrimaryRepo  string             `json:"primary_repo"`
-	ACMMLevel    int                `json:"acmm_level"`
-	Agents       []AgentSummary     `json:"agents"`
-	Governor     GovernorSummary    `json:"governor"`
-	Tokens24h    int64              `json:"tokens_24h"`
-	Contributors ContributorSummary `json:"contributors"`
-	Leaderboard  []LeaderboardEntry `json:"leaderboard"`
-	Health       map[string]any     `json:"health"`
-	DashboardURL string             `json:"dashboard_url"`
-	SnapshotURL  string             `json:"snapshot_url"`
-	Owner        string             `json:"owner,omitempty"`
-	HiveType     string             `json:"hive_type,omitempty"`
-	ClusterID    string             `json:"cluster_id,omitempty"`
-	IsPublic     bool               `json:"is_public"`
-	Version      string             `json:"version"`
-	GitHash      string             `json:"git_hash"`
-	GitBranch    string             `json:"git_branch,omitempty"`
-	Timestamp          string         `json:"timestamp"`
-	GitHubAppRequired  bool           `json:"github_app_required,omitempty"`
-	GitHubAppPermIssue string         `json:"github_app_perm_issue,omitempty"`
-	AutoUpgrade        bool           `json:"auto_upgrade,omitempty"`
-	Upgrading          bool           `json:"upgrading,omitempty"`
-	UpgradeTargetSHA        string         `json:"upgrade_target_sha,omitempty"`
-	PendingGitHubAppInstall bool           `json:"pending_github_app_install,omitempty"`
+	HiveID                  string                        `json:"hive_id"`
+	Org                     string                        `json:"org"`
+	Repos                   []string                      `json:"repos"`
+	PrimaryRepo             string                        `json:"primary_repo"`
+	ACMMLevel               int                           `json:"acmm_level"`
+	Agents                  []AgentSummary                `json:"agents"`
+	Governor                GovernorSummary               `json:"governor"`
+	Tokens24h               int64                         `json:"tokens_24h"`
+	Contributors            ContributorSummary            `json:"contributors"`
+	Leaderboard             []LeaderboardEntry            `json:"leaderboard"`
+	Health                  map[string]any                `json:"health"`
+	DashboardURL            string                        `json:"dashboard_url"`
+	SnapshotURL             string                        `json:"snapshot_url"`
+	Owner                   string                        `json:"owner,omitempty"`
+	HiveType                string                        `json:"hive_type,omitempty"`
+	ClusterID               string                        `json:"cluster_id,omitempty"`
+	IsPublic                bool                          `json:"is_public"`
+	Version                 string                        `json:"version"`
+	GitHash                 string                        `json:"git_hash"`
+	GitBranch               string                        `json:"git_branch,omitempty"`
+	Timestamp               string                        `json:"timestamp"`
+	GitHubAppRequired       bool                          `json:"github_app_required,omitempty"`
+	GitHubAppPermIssue      string                        `json:"github_app_perm_issue,omitempty"`
+	AutoUpgrade             bool                          `json:"auto_upgrade,omitempty"`
+	Upgrading               bool                          `json:"upgrading,omitempty"`
+	UpgradeTargetSHA        string                        `json:"upgrade_target_sha,omitempty"`
+	PendingGitHubAppInstall bool                          `json:"pending_github_app_install,omitempty"`
 	ClusterHealth           *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
 }
 
@@ -490,11 +490,11 @@ type GatewayConfigCallback func(cfg *HeartbeatGatewayConfig)
 // It includes version info so the spoke can display hub version on its dashboard
 // and self-upgrade when behind.
 type HeartbeatResponse struct {
-	OK              bool                      `json:"ok"`
-	UpgradeTo       string                    `json:"upgrade_to,omitempty"`
-	HubGitHash      string                    `json:"hub_git_hash,omitempty"`
-	LatestSHA       string                    `json:"latest_sha,omitempty"`
-	LatestTag       string                    `json:"latest_tag,omitempty"`
+	OK         bool   `json:"ok"`
+	UpgradeTo  string `json:"upgrade_to,omitempty"`
+	HubGitHash string `json:"hub_git_hash,omitempty"`
+	LatestSHA  string `json:"latest_sha,omitempty"`
+	LatestTag  string `json:"latest_tag,omitempty"`
 	// SwitchToTag instructs the spoke to change its own deployment image to
 	// ghcr.io/kubestellar/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
@@ -563,7 +563,10 @@ type GitHubAppConfigCallback func(cfg *HeartbeatGitHubAppConfig)
 // cannot push config over kubectl (mirrors AuthorizedUsersCallback).
 type ProjectConfigCallback func(cfg *HeartbeatProjectConfig)
 
-const taskPushInterval = 30 * time.Second
+// taskPushInterval is how often the spoke pushes task status to the hub. A var
+// (not a const) so tests can drive a single push quickly; production keeps the
+// default.
+var taskPushInterval = 30 * time.Second
 
 type TaskStatusPayload struct {
 	HiveID       string             `json:"hive_id"`
