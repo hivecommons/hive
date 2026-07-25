@@ -498,6 +498,17 @@ func (c *Client) DeleteSetupBaselineBranchDescendantExact(ctx context.Context, r
 	return c.deleteHiveBranchDescendantExact(ctx, repository, branch, ownedAncestorSHA, "hive/setup-baseline-")
 }
 
+// DeleteSetupBranchDescendantExact retires only the repository setup ref at
+// an exact Hive-owned commit or proven descendant. Setup-baseline refs are a
+// distinct lifecycle and are deliberately rejected even though they share the
+// "hive/setup-" prefix.
+func (c *Client) DeleteSetupBranchDescendantExact(ctx context.Context, repository, branch, ownedAncestorSHA string) (bool, string, error) {
+	if strings.HasPrefix(strings.TrimSpace(branch), "hive/setup-baseline-") {
+		return false, "", fmt.Errorf("setup baseline branches require their dedicated retirement path")
+	}
+	return c.deleteHiveBranchDescendantExact(ctx, repository, branch, ownedAncestorSHA, "hive/setup-")
+}
+
 func (c *Client) deleteHiveBranchDescendantExact(ctx context.Context, repository, branch, ownedAncestorSHA, requiredPrefix string) (bool, string, error) {
 	owner, repo, err := splitFullRepository(repository)
 	if err != nil {

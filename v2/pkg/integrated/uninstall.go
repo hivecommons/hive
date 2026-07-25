@@ -345,9 +345,73 @@ func finalizeUninstall(ctx context.Context, options ManagementOptions, store *St
 	if err := reconcileUninstallProtection(ctx, options.GitHub, store, config); err != nil {
 		return err
 	}
+	if err := retirePreviousSetupReviewForUninstall(ctx, options.GitHub, store, config, intent); err != nil {
+		return err
+	}
 	result.CleanupVerified = true
 	result.ProtectionReconciled = true
 	return nil
+}
+
+func retirePreviousSetupReviewForUninstall(ctx context.Context, client *hivegithub.Client, store *Store, config Config, intent UninstallIntent) error {
+	if intent.PreviousSetupPRNumber == 0 {
+		return nil
+	}
+	expectedBranch := managedOperationBranch("setup", config.RepositoryID)
+	if client == nil || store == nil ||
+		intent.PreviousSetupBranch != expectedBranch ||
+		strings.TrimSpace(intent.PreviousSetupPRURL) == "" ||
+		!immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(config.SetupHeadSHA))) {
+		return fmt.Errorf("previous setup pull request lacks an exact managed branch, URL, or head binding")
+	}
+	marker := "<!-- hive-setup: " + strings.ToLower(strings.TrimSpace(config.Repository)) + " -->"
+	snapshot, err := client.InspectManagedPullRequestExact(
+		ctx, config.Repository, config.RepositoryID, intent.PreviousSetupPRNumber,
+		marker, intent.PreviousSetupBranch, config.SetupHeadSHA, config.DefaultBranch,
+	)
+	if err != nil {
+		return fmt.Errorf("inspect previous setup pull request before uninstall retirement: %w", err)
+	}
+	if snapshot.URL != intent.PreviousSetupPRURL {
+		return fmt.Errorf("previous setup pull request URL no longer matches its durable uninstall binding")
+	}
+	closed := snapshot.State == "closed"
+	if !snapshot.Merged {
+		if snapshot.State != "open" && snapshot.State != "closed" {
+			return fmt.Errorf("previous setup pull request has unsupported state %q", snapshot.State)
+		}
+		if err := store.AuditStrict(AuditEntry{
+			Action: "authorize_uninstall_close_setup_pr", Allowed: true, Repository: config.Repository,
+			Detail: fmt.Sprintf("pr=%d head=%s branch=%s", snapshot.Number, snapshot.HeadSHA, snapshot.HeadBranch),
+		}); err != nil {
+			return err
+		}
+		closedSnapshot, found, err := client.CloseManagedPullRequestForCancellation(
+			ctx, config.Repository, config.RepositoryID, intent.PreviousSetupPRNumber,
+			intent.PreviousSetupPRURL, marker, intent.PreviousSetupBranch, config.DefaultBranch,
+		)
+		if err != nil {
+			return fmt.Errorf("close previous unmerged setup pull request during uninstall: %w", err)
+		}
+		if !found || closedSnapshot.Number != snapshot.Number || !strings.EqualFold(closedSnapshot.HeadSHA, snapshot.HeadSHA) {
+			return fmt.Errorf("previous setup pull request did not close with its exact managed identity")
+		}
+		closed = true
+	}
+	if err := store.AuditStrict(AuditEntry{
+		Action: "authorize_uninstall_delete_setup_branch", Allowed: true, Repository: config.Repository,
+		Detail: fmt.Sprintf("branch=%s owned_head=%s", intent.PreviousSetupBranch, config.SetupHeadSHA),
+	}); err != nil {
+		return err
+	}
+	deleted, retiredHead, err := client.DeleteSetupBranchDescendantExact(ctx, config.Repository, intent.PreviousSetupBranch, config.SetupHeadSHA)
+	if err != nil {
+		return fmt.Errorf("retire previous setup branch during uninstall: %w", err)
+	}
+	return store.AuditStrict(AuditEntry{
+		Action: "uninstall_setup_review_retired", Allowed: true, Repository: config.Repository,
+		Detail: fmt.Sprintf("pr=%d merged=%t closed=%t branch_deleted=%t retired_head=%s", snapshot.Number, snapshot.Merged, closed, deleted, retiredHead),
+	})
 }
 
 func validateUninstallIntentBinding(intent UninstallIntent, config Config) error {
