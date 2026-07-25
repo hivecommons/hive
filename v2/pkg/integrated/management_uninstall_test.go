@@ -129,6 +129,51 @@ func TestUninstallFinalizationDeletesOnlyAfterMergedCleanQuiescentTarget(t *test
 	}
 }
 
+func TestInterruptedUninstallFinalizationRecoversOnlyExactOwnedIntent(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	if err := RestoreInterruptedUninstallFinalization(missing, "owner/repo"); err == nil {
+		t.Fatal("missing interrupted state unexpectedly recovered")
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatalf("failed recovery created state: %v", err)
+	}
+
+	fixture := newUninstallFixtureWithManagedSetup(t, false)
+	defer fixture.server.Close()
+	prepared, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil || !prepared.FinalizationPending {
+		t.Fatalf("prepare uninstall result=%+v err=%v", prepared, err)
+	}
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := markStateDeletionFinalizing(store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.stateDir, "integrated", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("config was not sealed before recovery: %v", err)
+	}
+	if err := RestoreInterruptedUninstallFinalization(fixture.stateDir, "other/repo"); err == nil || !strings.Contains(err.Error(), "does not match repository") {
+		t.Fatalf("mismatched repository recovery err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.stateDir, "integrated", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected recovery restored config: %v", err)
+	}
+	if err := RestoreInterruptedUninstallFinalization(fixture.stateDir, "owner/repo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Load(); err != nil {
+		t.Fatalf("recovered config cannot be loaded: %v", err)
+	}
+	audit, err := os.ReadFile(filepath.Join(fixture.stateDir, "integrated", "audit.jsonl"))
+	if err != nil || !strings.Contains(string(audit), "uninstall_finalization_recovered") {
+		t.Fatalf("recovery audit missing: err=%v\n%s", err, audit)
+	}
+}
+
 func TestUninstallFinalizationPreservesStateForManagedPathOrPendingOutbox(t *testing.T) {
 	for _, test := range []struct {
 		name    string

@@ -904,6 +904,97 @@ func restoreInterruptedStateDeletion(store *Store) error {
 	return nil
 }
 
+// RestoreInterruptedUninstallFinalization recovers the exact durable config
+// marker left when a final state-deletion attempt stopped after the config was
+// sealed but before the managed state root could be removed. Dashboard
+// callers use this only for an owner-requested uninstall-finalize operation so
+// a new exact plan can be produced without selecting repository state from
+// client input.
+func RestoreInterruptedUninstallFinalization(stateDir, repository string) error {
+	stateDir = strings.TrimSpace(stateDir)
+	repository = strings.TrimSpace(repository)
+	if stateDir == "" || repository == "" {
+		return fmt.Errorf("state directory and repository are required to recover uninstall finalization")
+	}
+	absolute, err := filepath.Abs(stateDir)
+	if err != nil {
+		return err
+	}
+	absolute = filepath.Clean(absolute)
+	rootInfo, err := os.Lstat(absolute)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || deletionPathIsReparsePoint(absolute) {
+		return fmt.Errorf("interrupted uninstall state root is unavailable or non-ordinary")
+	}
+	integratedDir := filepath.Join(absolute, "integrated")
+	integratedInfo, err := os.Lstat(integratedDir)
+	if err != nil || !integratedInfo.IsDir() || integratedInfo.Mode()&os.ModeSymlink != 0 || deletionPathIsReparsePoint(integratedDir) {
+		return fmt.Errorf("interrupted uninstall integrated state is unavailable or non-ordinary")
+	}
+	store := &Store{
+		dir:        integratedDir,
+		configPath: filepath.Join(integratedDir, "config.json"),
+		auditPath:  filepath.Join(integratedDir, "audit.jsonl"),
+	}
+	if _, statErr := os.Lstat(store.configPath); statErr == nil {
+		config, loadErr := store.Load()
+		if loadErr != nil {
+			return loadErr
+		}
+		if !strings.EqualFold(config.Repository, repository) || !sameFilesystemPath(config.StateDir, absolute) {
+			return fmt.Errorf("installed integrated lifecycle does not match repository %s and its exact state directory", repository)
+		}
+		return nil
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	marker := filepath.Join(store.dir, uninstallFinalizingConfigFile)
+	data, err := readOrdinaryStateFile(marker)
+	if err != nil {
+		return fmt.Errorf("read interrupted uninstall finalization marker: %w", err)
+	}
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil || !supportedDurableConfigSchema(config.SchemaVersion) {
+		return fmt.Errorf("interrupted uninstall finalization marker has an invalid managed config identity")
+	}
+	if !strings.EqualFold(config.Repository, repository) || !sameFilesystemPath(config.StateDir, absolute) {
+		return fmt.Errorf("interrupted uninstall finalization does not match repository %s and its exact state directory", repository)
+	}
+	if !config.Paused {
+		return fmt.Errorf("interrupted uninstall finalization is not durably paused")
+	}
+	ownerData, err := readOrdinaryStateFile(filepath.Join(absolute, stateOwnershipMarkerFile))
+	if err != nil {
+		return fmt.Errorf("read interrupted uninstall state ownership: %w", err)
+	}
+	var owner stateOwnershipMarker
+	if json.Unmarshal(ownerData, &owner) != nil ||
+		owner.SchemaVersion != "hive.state-owner.v1" ||
+		!strings.EqualFold(owner.Repository, config.Repository) ||
+		owner.RepositoryID != config.RepositoryID {
+		return fmt.Errorf("interrupted uninstall state ownership does not match the managed config")
+	}
+	intent, exists, err := store.LoadUninstallIntent()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("interrupted uninstall finalization has no durable uninstall intent")
+	}
+	if err := validateUninstallIntentBinding(intent, config); err != nil {
+		return fmt.Errorf("interrupted uninstall finalization intent is invalid: %w", err)
+	}
+	if err := restoreInterruptedStateDeletion(store); err != nil {
+		return err
+	}
+	return store.AuditStrict(AuditEntry{
+		Action:     "uninstall_finalization_recovered",
+		Allowed:    true,
+		Repository: config.Repository,
+		Detail:     fmt.Sprintf("phase=%s request=owner_dashboard_finalize", intent.Phase),
+	})
+}
+
 func digestPaths(paths []string) (string, error) {
 	data, err := json.Marshal(sortedUniquePaths(paths))
 	if err != nil {

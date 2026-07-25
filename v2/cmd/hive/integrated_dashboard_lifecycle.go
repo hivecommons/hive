@@ -63,7 +63,7 @@ func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.Inte
 	}
 	if stateDir == "" {
 		var err error
-		stateDir, err = dashboardIntegratedStateDir(request.Repository)
+		stateDir, err = dashboardIntegratedStateDir(request.Repository, request.Action)
 		if err != nil {
 			return nil, err
 		}
@@ -90,8 +90,18 @@ func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.Inte
 	}
 }
 
-func dashboardIntegratedStateDir(repository string) (string, error) {
+func dashboardIntegratedStateDir(repository, action string) (string, error) {
 	installed, exists, err := loadAuthoritativeVisualWorkContract()
+	if err != nil && action == "uninstall-finalize" {
+		stateDir, stateErr := dashboardSetupStateDir(repository)
+		if stateErr == nil {
+			if recoverErr := integrated.RestoreInterruptedUninstallFinalization(stateDir, repository); recoverErr == nil {
+				installed, exists, err = loadAuthoritativeVisualWorkContract()
+			} else {
+				err = recoverErr
+			}
+		}
+	}
 	if err != nil {
 		return "", fmt.Errorf("load authoritative integrated lifecycle: %w", err)
 	}
