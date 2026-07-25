@@ -141,6 +141,15 @@ assert_contains "$ENTRYPOINT" \
   'chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"' \
   "custom config is writable only by ordinary Hive"
 
+# 12. Image seed files must not recreate root-owned runtime paths after the
+# mounted volume ownership repair.
+assert_contains "$ENTRYPOINT" \
+  'gosu dev:node cp -rn /opt/hive/seed-data/\* /data/' \
+  "fresh-volume seed paths are created by the runtime principal"
+assert_not_contains_literal "$ENTRYPOINT" \
+  '    cp -rn /opt/hive/seed-data/* /data/' \
+  "fresh-volume seed does not run as root"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1

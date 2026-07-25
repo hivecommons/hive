@@ -239,7 +239,11 @@ if [ "$(id -u)" = "0" ]; then
   # Seed data files from image into /data if they don't already exist
   if [ -d /opt/hive/seed-data ]; then
     echo "[entrypoint] Seeding data files..."
-    cp -rn /opt/hive/seed-data/* /data/ 2>/dev/null || true
+    # Seed as the runtime principal. A fresh volume is repaired above and is
+    # writable by dev; copying as root here would recreate /data/agents and
+    # other first-boot paths as root after the ownership repair, preventing
+    # ordinary agents from creating their work directories.
+    gosu dev:node cp -rn /opt/hive/seed-data/* /data/ 2>/dev/null || true
   fi
 
   # Create the shared root before role discovery. Config-only installations
