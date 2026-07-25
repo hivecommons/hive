@@ -137,6 +137,21 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 	if err := validateSetupOptions(options); err != nil {
 		return SetupResult{}, err
 	}
+	requestedStateDir := options.StateDir
+	var readOnlyPlanRoot string
+	if !options.Apply {
+		configPath := filepath.Join(options.StateDir, "integrated", "config.json")
+		if _, statErr := os.Lstat(configPath); os.IsNotExist(statErr) {
+			readOnlyPlanRoot, err = os.MkdirTemp("", "hive-setup-plan-")
+			if err != nil {
+				return SetupResult{}, fmt.Errorf("create ephemeral read-only setup workspace: %w", err)
+			}
+			defer os.RemoveAll(readOnlyPlanRoot)
+			options.StateDir = filepath.Join(readOnlyPlanRoot, "state")
+		} else if statErr != nil {
+			return SetupResult{}, fmt.Errorf("inspect existing setup state before read-only planning: %w", statErr)
+		}
+	}
 	if err := validateSetupStateRoot(options.StateDir, options.Repository); err != nil {
 		return SetupResult{}, err
 	}
@@ -241,7 +256,9 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		}
 	}
 	options = effectiveSetupAutoMergePolicy(options, prior, hasPrior)
-	plan := buildSetupPlan(options, inspection)
+	planOptions := options
+	planOptions.StateDir = requestedStateDir
+	plan := buildSetupPlan(planOptions, inspection)
 	result := SetupResult{Plan: plan, ProtectionActivationPending: options.Automation == AutomationAutoMerge, ActivationMessage: setupActivationMessage(options.Automation, options.Start, true)}
 	if !options.Apply {
 		return result, nil

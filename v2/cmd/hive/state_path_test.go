@@ -95,6 +95,27 @@ func TestDefaultRepositoryStatePathIgnoresUnownedPartialLegacyDirectory(t *testi
 	}
 }
 
+func TestDefaultRepositoryStatePathPreservesReadOnlyPlanResidue(t *testing.T) {
+	useTemporaryHiveHome(t)
+	selected, err := repositoryIntegratedStateDir(longSetupProofRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureTestDirectory(filepath.Join(selected, "integrated", "checkout")); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := repositoryIntegratedStateDir(longSetupProofRepository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered == selected || recovered != selected+"-managed" {
+		t.Fatalf("markerless read-only plan residue was reused: initial=%q recovered=%q", selected, recovered)
+	}
+	if _, err := os.Stat(selected); err != nil {
+		t.Fatalf("read-only plan residue was not preserved: %v", err)
+	}
+}
+
 func ensureTestDirectory(path string) error {
 	return os.MkdirAll(path, 0o700)
 }
