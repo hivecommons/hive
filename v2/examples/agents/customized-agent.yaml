@@ -27,7 +27,7 @@ spec:
     - customized
   aliases:
     - cu
-  # Channels — declare how this agent gets triggered (v3 feature)
+  # Channels — declare how this agent gets triggered
   # Uncomment to use explicit channels instead of governor-only kicks:
   # channels:
   #   - type: kick
@@ -36,7 +36,7 @@ spec:
   #   - type: schedule
   #     schedule: "0 */4 * * *"
 
-  # Tools — declarative tool permissions (v3 feature)
+  # Tools — declarative tool permissions
   # Uncomment to use instead of the mode field above:
   # tools:
   #   preset: advisory
@@ -45,7 +45,7 @@ spec:
   #       action: allow
   #       reason: "allow creating advisory issues"
 
-  # Connections — external service integrations (v3 feature)
+  # Connections — external service integrations
   # connections:
   #   - name: github-mcp
   #     type: mcp
