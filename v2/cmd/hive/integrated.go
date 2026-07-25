@@ -1987,7 +1987,7 @@ func resolveIntegratedProvider(ctx context.Context, provider, command string, ar
 			continue
 		}
 		healthCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		err := (repair.CodexProvider{Command: resolved, Prefix: append([]string(nil), args...)}).Health(healthCtx)
+		err := integratedSetupCodexProvider(resolved, args).Health(healthCtx)
 		cancel()
 		if err == nil {
 			absolute, _ := filepath.Abs(resolved)
@@ -1999,6 +1999,14 @@ func resolveIntegratedProvider(ctx context.Context, provider, command string, ar
 		return "", fmt.Errorf("no usable authenticated Codex provider was found (%s)", strings.Join(errorsSeen, "; "))
 	}
 	return "", fmt.Errorf("Codex provider was not found; install/authenticate Codex or pass --provider-command")
+}
+
+func integratedSetupCodexProvider(command string, args []string) repair.CodexProvider {
+	return repair.CodexProvider{
+		Command:   command,
+		Prefix:    append([]string(nil), args...),
+		CodexHome: resolveIntegratedCodexHome(),
+	}
 }
 
 func validateVisualHiveLauncher(config integrated.Config) (bool, string) {

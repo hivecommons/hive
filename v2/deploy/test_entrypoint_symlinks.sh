@@ -45,38 +45,43 @@ assert_contains "$ENTRYPOINT" \
   '/data/home/.copilot' \
   "/data/home/.copilot directory referenced"
 
-# 3. ~/.config/github-copilot symlink must still exist (pre-existing)
+# 3. Controller-owned Codex health checks use the bounded persistent auth home.
+assert_contains "$ENTRYPOINT" \
+  'export CODEX_HOME="${CODEX_HOME:-/data/home/.codex}"' \
+  "Codex controller health uses persistent bounded auth home"
+
+# 4. ~/.config/github-copilot symlink must still exist (pre-existing)
 assert_contains "$ENTRYPOINT" \
   'ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot' \
   "~/.config/github-copilot -> /data/config/github-copilot symlink"
 
-# 4. /data/home/.config/github-copilot symlink must still exist (pre-existing)
+# 5. /data/home/.config/github-copilot symlink must still exist (pre-existing)
 assert_contains "$ENTRYPOINT" \
   'ln -sfn /data/config/github-copilot /data/home/.config/github-copilot' \
   "/data/home/.config/github-copilot -> /data/config/github-copilot symlink"
 
-# 5. group-writable chmod on /data/home (ensures all agent UIDs can access)
+# 6. group-writable chmod on /data/home (ensures all agent UIDs can access)
 assert_contains "$ENTRYPOINT" \
   'chmod -R g+rwX /data/home' \
   "/data/home is group-writable"
 
-# 6. Entrypoint loads Copilot PAT for Go binary
+# 7. Entrypoint loads Copilot PAT for Go binary
 assert_contains "$ENTRYPOINT" \
   'COPILOT_GITHUB_TOKEN' \
   "Entrypoint exports COPILOT_GITHUB_TOKEN"
 
-# 7. PAT file path references /data volume (not hardcoded secret)
+# 8. PAT file path references /data volume (not hardcoded secret)
 assert_contains "$ENTRYPOINT" \
   '/data/copilot-token-pat' \
   "PAT read from /data volume file"
 
-# 8. agent-launch.sh also loads PAT as fallback
+# 9. agent-launch.sh also loads PAT as fallback
 LAUNCH_SCRIPT="$(cd "$(dirname "$0")/../../bin" && pwd)/agent-launch.sh"
 assert_contains "$LAUNCH_SCRIPT" \
   'COPILOT_GITHUB_TOKEN' \
   "agent-launch.sh exports COPILOT_GITHUB_TOKEN"
 
-# 9. Role bead stores remain shared only with their scoped group after UID chown.
+# 10. Role bead stores remain shared only with their scoped group after UID chown.
 assert_contains "$ENTRYPOINT" \
   'mkdir -p /home/dev /data/beads' \
   "fresh config-only installs create the shared beads root before role provisioning"

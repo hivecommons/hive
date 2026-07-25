@@ -291,6 +291,11 @@ if [ "$(id -u)" = "0" ]; then
   # codex backend fails with "Permission denied" initializing state_N.sqlite.
   chmod 2775 /data/home/.codex 2>/dev/null || true
   chown -R dev:node /data/home/.codex 2>/dev/null || true
+  # The dashboard process keeps HOME=/home/dev, while authenticated CLI state
+  # lives on the persistent volume. Give controller-owned Codex health checks
+  # the explicit bounded home instead of symlinking credential directories or
+  # copying auth.json into the image account.
+  export CODEX_HOME="${CODEX_HOME:-/data/home/.codex}"
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot
