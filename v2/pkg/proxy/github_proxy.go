@@ -32,8 +32,14 @@ const (
 	InferenceTranslatePort = 18444
 	modeFilePrefix         = "/tmp/.hive-mode-"
 	maxViolationLog        = 1000
-	CACertPath             = "/data/proxy-ca.pem"
-	caKeyPath              = "/data/proxy-ca-key.pem"
+)
+
+// CACertPath and caKeyPath are the PVC locations of the persisted MITM CA.
+// They are vars rather than consts solely so tests can redirect the CA
+// read/write to a temporary directory; production never reassigns them.
+var (
+	CACertPath = "/data/proxy-ca.pem"
+	caKeyPath  = "/data/proxy-ca-key.pem"
 )
 
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
