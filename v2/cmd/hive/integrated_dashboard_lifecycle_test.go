@@ -286,6 +286,31 @@ func TestDashboardIntegratedTriggerUsesExistingNormalService(t *testing.T) {
 	}
 }
 
+func TestDashboardIntegratedTriggerTreatsSetupBaselineProgressAsHeld(t *testing.T) {
+	writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	statusBytes := []byte(`{"schema_version":"hive.status.v1"}`)
+	dashboardLifecycleCLIRunner = func(context.Context, []string, string, bool) (map[string]any, []byte, error) {
+		return map[string]any{"schema_version": "hive.status.v1"}, statusBytes, nil
+	}
+	dashboardLifecycleTrigger = func(context.Context) error {
+		return fmt.Errorf("advance baseline: %w", integrated.ErrSetupBaselineLifecycleHold)
+	}
+	request := dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-plan", Action: "trigger", RequestID: "cycle-a-trigger-baseline-001",
+	}
+	plan, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Operation = "control-apply"
+	request.ExpectedPlanSHA256 = plan["plan_sha256"].(string)
+	result, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil || result["outcome"] != "held" || !strings.Contains(result["detail"].(string), "advance baseline") {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+}
+
 func TestDashboardBaselineApprovalBindsExactCLIArgumentsAndReceipt(t *testing.T) {
 	stateDir := writeDashboardLifecycleContract(t)
 	installDashboardLifecycleFakes(t)

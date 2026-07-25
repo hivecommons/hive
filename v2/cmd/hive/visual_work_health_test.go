@@ -175,6 +175,8 @@ func TestNormalVisualServiceExpectedIdleResultsRemainHealthy(t *testing.T) {
 		normalservice.ErrOpenPullRequest,
 		normalservice.ErrFinalVerdictPending,
 		integrated.ErrRunInProgress,
+		integrated.ErrNormalVisualSetupBaselinePending,
+		integrated.ErrSetupBaselineLifecycleHold,
 		fmt.Errorf("wrapped idle: %w", normalservice.ErrNoDispatch),
 	}
 	for index, idle := range idleResults {

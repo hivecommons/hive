@@ -366,7 +366,9 @@ func stopTimer(timer *time.Timer) {
 }
 
 func (service *Service) report(err error) {
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrNoDispatch) && !errors.Is(err, ErrFinalVerdictPending) && !errors.Is(err, ErrOpenPullRequest) && !errors.Is(err, integrated.ErrRunInProgress) {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrNoDispatch) && !errors.Is(err, ErrFinalVerdictPending) &&
+		!errors.Is(err, ErrOpenPullRequest) && !errors.Is(err, integrated.ErrRunInProgress) &&
+		!errors.Is(err, integrated.ErrNormalVisualSetupBaselinePending) && !errors.Is(err, integrated.ErrSetupBaselineLifecycleHold) {
 		service.options.Logger.Warn("normal Visual Hive cycle held", "error", err)
 	}
 }

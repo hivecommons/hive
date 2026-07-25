@@ -300,7 +300,9 @@ func isBoundedDashboardTriggerOutcome(err error) bool {
 	return errors.Is(err, normalservice.ErrNoDispatch) ||
 		errors.Is(err, normalservice.ErrOpenPullRequest) ||
 		errors.Is(err, normalservice.ErrFinalVerdictPending) ||
-		errors.Is(err, integrated.ErrRunInProgress)
+		errors.Is(err, integrated.ErrRunInProgress) ||
+		errors.Is(err, integrated.ErrNormalVisualSetupBaselinePending) ||
+		errors.Is(err, integrated.ErrSetupBaselineLifecycleHold)
 }
 
 func runDashboardLifecycleCLI(parent context.Context, args []string, token string, allowNonzeroJSON bool) (map[string]any, []byte, error) {
