@@ -101,8 +101,9 @@ const (
 )
 
 // clustersConfigPath is the on-disk location where the hub reads cluster
-// definitions. It is a JSON array of ClusterConfig objects.
-const clustersConfigPath = "/data/saas/clusters.json"
+// definitions. It is a JSON array of ClusterConfig objects. A var (not a const)
+// so tests can point it at a temp file; production never reassigns it.
+var clustersConfigPath = "/data/saas/clusters.json"
 
 // ClusterConfig describes a Kubernetes cluster that the hub can provision
 // hive spokes onto. Each cluster has its own kubeconfig, storage backend,
