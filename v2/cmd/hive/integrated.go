@@ -2364,7 +2364,50 @@ func repositoryIntegratedStateDir(repository string) (string, error) {
 		short = "repository"
 	}
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical)))
-	return filepath.Join(integratedStateRoot(), "repos", short+"-"+digest[:16]), nil
+	selected := filepath.Join(integratedStateRoot(), "repos", short+"-"+digest[:16])
+	if prior, exists, err := loadExistingSetupConfig(selected); err != nil {
+		return "", fmt.Errorf("inspect existing repository state at %s: %w", selected, err)
+	} else if exists {
+		if !strings.EqualFold(strings.TrimSpace(prior.Repository), strings.TrimSpace(repository)) {
+			return "", fmt.Errorf("repository state at %s belongs to %s, not %s", selected, prior.Repository, repository)
+		}
+		if prior.StateDir != "" && !strings.EqualFold(filepath.Clean(prior.StateDir), filepath.Clean(selected)) {
+			return "", fmt.Errorf("repository state at %s embeds a different state path %s; use the original exact --state-dir so Hive can verify it", selected, prior.StateDir)
+		}
+		return selected, nil
+	}
+	entries, readErr := os.ReadDir(selected)
+	if os.IsNotExist(readErr) || (readErr == nil && len(entries) == 0) {
+		return selected, nil
+	}
+	if readErr != nil {
+		return "", fmt.Errorf("inspect unowned repository state at %s: %w", selected, readErr)
+	}
+
+	// Older read-only setup plans cloned into the auto-selected durable path
+	// before a repository ID was available, leaving a markerless state root
+	// that a later apply must never adopt. Preserve that directory untouched
+	// and select one deterministic sibling for the real managed installation.
+	recovery := selected + "-managed"
+	if prior, exists, err := loadExistingSetupConfig(recovery); err != nil {
+		return "", fmt.Errorf("inspect recovered repository state at %s: %w", recovery, err)
+	} else if exists {
+		if !strings.EqualFold(strings.TrimSpace(prior.Repository), strings.TrimSpace(repository)) {
+			return "", fmt.Errorf("recovered repository state at %s belongs to %s, not %s", recovery, prior.Repository, repository)
+		}
+		if prior.StateDir != "" && !strings.EqualFold(filepath.Clean(prior.StateDir), filepath.Clean(recovery)) {
+			return "", fmt.Errorf("recovered repository state at %s embeds a different state path %s; use the original exact --state-dir so Hive can verify it", recovery, prior.StateDir)
+		}
+		return recovery, nil
+	}
+	recoveryEntries, recoveryErr := os.ReadDir(recovery)
+	if os.IsNotExist(recoveryErr) || (recoveryErr == nil && len(recoveryEntries) == 0) {
+		return recovery, nil
+	}
+	if recoveryErr != nil {
+		return "", fmt.Errorf("inspect recovered repository state at %s: %w", recovery, recoveryErr)
+	}
+	return "", fmt.Errorf("both auto-selected repository state paths are nonempty and unowned; preserve them and rerun with an explicitly reviewed dedicated --state-dir")
 }
 
 func legacyRepositoryIntegratedStateDir(repository string) string {
