@@ -22,7 +22,6 @@ var saasHivesDir = "/data/saas/hives"
 const (
 	maxHivesPerUser       = 3
 	maxSaaSHivesTotal     = 0 // 0 = unlimited
-	provisionPollInterval = 30 * time.Second
 	provisionTimeout      = 5 * time.Minute
 	cpuRequest            = "500m"
 	cpuLimit              = "2000m"
@@ -72,6 +71,11 @@ const (
 	// sccServiceAccountName is the ServiceAccount name created for SCC-requiring clusters.
 	sccServiceAccountName = "hive-sa"
 )
+
+// provisionPollInterval is how often startProvisionWatcher polls provisioning
+// hives for readiness. A var (not a const) so tests can drive one loop
+// iteration quickly; production keeps the default.
+var provisionPollInterval = 30 * time.Second
 
 // defaultClusterID is the cluster ID assigned to hives that predate
 // multi-cluster support.
