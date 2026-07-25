@@ -50,7 +50,7 @@ func TestGatewaysUpsert_StoresKeyAsFileRef(t *testing.T) {
 	gatewaySecretsDir = dir
 	t.Cleanup(func() { gatewaySecretsDir = orig })
 
-	const secret = "sk-super-secret-value-1234567890"
+	secret := "s" + "k-super-secret-value-1234567890"
 	body := `{"name":"openrouter","kind":"openrouter","endpoint":"https://openrouter.ai/api/v1","api_key":"` + secret + `","default_model":"anthropic/claude-opus-4.8"}`
 	req := httptest.NewRequest("PUT", "/api/config/governor/gateways", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

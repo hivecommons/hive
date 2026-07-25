@@ -41,6 +41,9 @@ func (executor *fakeSpecialistChildExecutor) Start(ctx context.Context, request 
 	process := executor.process
 	started := executor.started
 	executor.mu.Unlock()
+	if process != nil {
+		process.setLaunch(ctx, request.AuthorizationID)
+	}
 	if started != nil {
 		select {
 		case <-started:
@@ -51,8 +54,6 @@ func (executor *fakeSpecialistChildExecutor) Start(ctx context.Context, request 
 	if process == nil {
 		return nil, errors.New("fake child process is unavailable")
 	}
-	process.ctx = ctx
-	process.turnID = request.AuthorizationID
 	return process, nil
 }
 
@@ -71,6 +72,7 @@ type fakeSpecialistChildProcess struct {
 	pid      int
 	provider string
 	done     chan fakeSpecialistChildCompletion
+	mu       sync.RWMutex
 	ctx      context.Context
 	turnID   string
 }
@@ -168,16 +170,25 @@ func newFakeSpecialistChildProcess(pid int, provider string) *fakeSpecialistChil
 func (process *fakeSpecialistChildProcess) PID() int               { return process.pid }
 func (process *fakeSpecialistChildProcess) ProviderSHA256() string { return process.provider }
 func (process *fakeSpecialistChildProcess) Wait() (SpecialistChildExecutionResult, error) {
+	process.mu.RLock()
+	ctx := process.ctx
+	process.mu.RUnlock()
+	if ctx == nil {
+		return SpecialistChildExecutionResult{}, errors.New("fake specialist child has no launch context")
+	}
 	select {
 	case completion := <-process.done:
 		return completion.result, completion.err
-	case <-process.ctx.Done():
-		return SpecialistChildExecutionResult{}, process.ctx.Err()
+	case <-ctx.Done():
+		return SpecialistChildExecutionResult{}, ctx.Err()
 	}
 }
 
 func (process *fakeSpecialistChildProcess) complete(response string) {
-	process.completeWithTurn(response, process.turnID)
+	process.mu.RLock()
+	turnID := process.turnID
+	process.mu.RUnlock()
+	process.completeWithTurn(response, turnID)
 }
 
 func (process *fakeSpecialistChildProcess) completeWithTurn(response, turnID string) {
@@ -191,11 +202,21 @@ func (process *fakeSpecialistChildProcess) fail(err error) {
 }
 
 func (process *fakeSpecialistChildProcess) ForceReap(context.Context) error {
-	if process.ctx == nil {
+	process.mu.RLock()
+	ctx := process.ctx
+	process.mu.RUnlock()
+	if ctx == nil {
 		return errors.New("fake specialist child has no launch context")
 	}
-	<-process.ctx.Done()
+	<-ctx.Done()
 	return nil
+}
+
+func (process *fakeSpecialistChildProcess) setLaunch(ctx context.Context, turnID string) {
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	process.ctx = ctx
+	process.turnID = turnID
 }
 
 func TestSpecialistChildShutdownForceReapsHungExactChildBeforeSuccess(t *testing.T) {

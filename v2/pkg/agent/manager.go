@@ -447,16 +447,22 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 		return fmt.Errorf("agent %s already running", name)
 	}
 
+	backend := agent.Config.Backend
+	if agent.BackendOverride != "" {
+		backend = agent.BackendOverride
+	}
+	if _, known := backendCommand(backend); !known {
+		agent.State = StateFailed
+		m.logger.Warn("backend binary not found", "name", agent.Name, "backend", backend, "error", "unknown backend")
+		return nil
+	}
+
 	m.sanitizeGitRemotes(agent)
 
 	if err := m.ensureTmuxSession(agent); err != nil {
 		return err
 	}
 
-	backend := agent.Config.Backend
-	if agent.BackendOverride != "" {
-		backend = agent.BackendOverride
-	}
 	if agent.Paused {
 		// Auto-unpause inference agents that were only transiently paused —
 		// but NEVER override a persisted operator pause (Config.Paused set via
@@ -3080,6 +3086,18 @@ func (a *AgentProcess) FilteredPaneLines(n int) []string {
 }
 
 func backendBinary(backend string) (string, error) {
+	binary, ok := backendCommand(backend)
+	if !ok {
+		return "", fmt.Errorf("unknown backend: %s", backend)
+	}
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return "", fmt.Errorf("backend %s not found in PATH: %w", backend, err)
+	}
+	return path, nil
+}
+
+func backendCommand(backend string) (string, bool) {
 	binaries := map[string]string{
 		"claude":  "claude",
 		"codex":   "codex",
@@ -3092,18 +3110,8 @@ func backendBinary(backend string) (string, error) {
 		"llm-d":   "claude",
 		"litellm": "claude",
 	}
-
 	binary, ok := binaries[backend]
-	if !ok {
-		return "", fmt.Errorf("unknown backend: %s", backend)
-	}
-
-	path, err := exec.LookPath(binary)
-	if err != nil {
-		return "", fmt.Errorf("backend %s not found in PATH: %w", backend, err)
-	}
-
-	return path, nil
+	return binary, ok
 }
 
 const (
