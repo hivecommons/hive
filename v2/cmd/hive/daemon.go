@@ -19,7 +19,6 @@ import (
 
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
-	"github.com/kubestellar/hive/v2/pkg/repair"
 )
 
 const daemonStatusSchema = "hive.integrated-daemon.v2"
@@ -495,7 +494,7 @@ func runIntegratedDaemonCycle(ctx context.Context, stateDir string, timeout time
 		}
 	} else {
 		providerCtx, providerCancel := context.WithTimeout(ctx, 45*time.Second)
-		providerErr := (repair.CodexProvider{Command: config.ProviderCommand, Prefix: config.ProviderArgs}).Health(providerCtx)
+		providerErr := integratedSetupCodexProvider(config.ProviderCommand, config.ProviderArgs).Health(providerCtx)
 		providerCancel()
 		if providerErr != nil {
 			return integrated.RunResult{}, providerErr

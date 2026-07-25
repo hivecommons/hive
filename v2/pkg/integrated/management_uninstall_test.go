@@ -46,6 +46,71 @@ func TestUninstallDeleteStateFirstCallOnlyPreparesExactCleanup(t *testing.T) {
 	}
 }
 
+func TestUninstallWorkflowDispatchDrainRequiresExactBoundRun(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		bindRun   bool
+		runStatus string
+		wantError bool
+	}{
+		{name: "completed bound run", bindRun: true, runStatus: "completed"},
+		{name: "active bound run", bindRun: true, runStatus: "in_progress", wantError: true},
+		{name: "ambiguous dispatch", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stateDir := t.TempDir()
+			store, err := NewStore(filepath.Join(stateDir, "integrated"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			config := Config{Repository: "owner/repo", RepositoryID: "123"}
+			intent, err := newWorkflowDispatchIntent(config, "hive-visual-hive.yml", "main")
+			if err != nil {
+				t.Fatal(err)
+			}
+			intent.DispatchAttemptedAt = time.Now().UTC()
+			if test.bindRun {
+				intent.DispatchAcknowledgedAt = intent.DispatchAttemptedAt.Add(time.Second)
+				intent.RunID = 42
+				intent.RunURL = "https://github.com/owner/repo/actions/runs/42"
+				intent.MatchedAt = intent.DispatchAttemptedAt.Add(2 * time.Second)
+			}
+			if err := store.SaveWorkflowDispatchIntent(intent); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if request.URL.Path != "/repos/owner/repo/actions/runs/42" {
+					t.Fatalf("unexpected workflow dispatch path %s", request.URL.Path)
+				}
+				conclusion := ""
+				if test.runStatus == "completed" {
+					conclusion = "success"
+				}
+				_, _ = fmt.Fprintf(writer, `{"id":42,"display_title":%q,"event":"workflow_dispatch","head_branch":"main","head_sha":%q,"status":%q,"conclusion":%q,"html_url":"https://github.com/owner/repo/actions/runs/42"}`,
+					intent.ExpectedDisplayTitle, strings.Repeat("a", 40), test.runStatus, conclusion)
+			}))
+			defer server.Close()
+			client := hivegithub.NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+			err = drainWorkflowDispatchForUninstall(context.Background(), store, config, client)
+			if test.wantError {
+				if err == nil {
+					t.Fatal("unsafe dispatch was retired")
+				}
+				if _, exists, loadErr := store.LoadWorkflowDispatchIntent(); loadErr != nil || !exists {
+					t.Fatalf("unsafe dispatch was not preserved: exists=%t err=%v", exists, loadErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, exists, loadErr := store.LoadWorkflowDispatchIntent(); loadErr != nil || exists {
+				t.Fatalf("exact bound dispatch was not retired: exists=%t err=%v", exists, loadErr)
+			}
+		})
+	}
+}
+
 func TestPreparedUninstallResumeCreatesAuthorizationBeforeAdvancingPhase(t *testing.T) {
 	fixture := newUninstallFixture(t)
 	defer fixture.server.Close()

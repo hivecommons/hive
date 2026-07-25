@@ -282,7 +282,7 @@ func configureNormalVisualWorkRunner(
 	if dashboardReady == nil {
 		return nil, nil, errors.New("normal governed repair service requires the existing dashboard listener readiness probe")
 	}
-	executor, err := repair.NewCodexSpecialistChildExecutor(repair.CodexProvider{Command: installed.ProviderCommand, Prefix: installed.ProviderArgs})
+	executor, err := repair.NewCodexSpecialistChildExecutor(integratedSetupCodexProvider(installed.ProviderCommand, installed.ProviderArgs))
 	if err != nil {
 		return nil, nil, err
 	}

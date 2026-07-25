@@ -241,9 +241,9 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			}, token, false)
 			return result, runErr
 		case "uninstall", "uninstall-finalize", "uninstall-cancel":
-			if request.Action == "uninstall-finalize" && dashboardLifecycleStopNormalVisual != nil {
+			if (request.Action == "uninstall" || request.Action == "uninstall-finalize") && dashboardLifecycleStopNormalVisual != nil {
 				if stopErr := dashboardLifecycleStopNormalVisual(ctx); stopErr != nil {
-					return nil, fmt.Errorf("quiesce normal Visual Hive runtime before uninstall finalization: %w", stopErr)
+					return nil, fmt.Errorf("quiesce normal Visual Hive runtime before %s: %w", request.Action, stopErr)
 				}
 			}
 			args := []string{"uninstall", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN"}

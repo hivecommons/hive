@@ -119,6 +119,9 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 		if err := verifyManagedOperationAuthorizer(ctx, options.GitHub, config, options.Operation); err != nil {
 			return result, err
 		}
+		if err := drainWorkflowDispatchForUninstall(ctx, store, config, options.GitHub); err != nil {
+			return result, fmt.Errorf("drain workflow dispatch lifecycle before uninstall: %w", err)
+		}
 		if err := drainSetupBaselineForUninstall(ctx, store, config, options.GitHub); err != nil {
 			return result, fmt.Errorf("drain setup baseline lifecycle before uninstall: %w", err)
 		}

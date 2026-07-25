@@ -1178,7 +1178,7 @@ func runIntegratedStatus(args []string) int {
 	var providerErr error
 	providerMessage := "repair provider is not required for this automation level"
 	if config.Automation == integrated.AutomationRepairPR || config.Automation == integrated.AutomationAutoMerge {
-		provider := repair.CodexProvider{Command: config.ProviderCommand, Prefix: config.ProviderArgs}
+		provider := integratedSetupCodexProvider(config.ProviderCommand, config.ProviderArgs)
 		providerCtx, providerCancel := context.WithTimeout(ctx, 45*time.Second)
 		providerErr = provider.Health(providerCtx)
 		providerCancel()
@@ -1813,7 +1813,7 @@ func collectIntegratedDoctorChecks(stateDir, githubTokenEnv, githubAPIURL string
 		runtimeOK, runtimeMessage := validateVisualHiveLauncher(config)
 		checks = append(checks, doctorCheck{Name: "visual_hive_runtime", OK: runtimeOK, Message: runtimeMessage})
 		if config.Automation == integrated.AutomationRepairPR || config.Automation == integrated.AutomationAutoMerge {
-			provider := repair.CodexProvider{Command: config.ProviderCommand, Prefix: config.ProviderArgs}
+			provider := integratedSetupCodexProvider(config.ProviderCommand, config.ProviderArgs)
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			providerErr := provider.Health(ctx)
 			cancel()

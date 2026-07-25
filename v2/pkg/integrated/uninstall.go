@@ -488,6 +488,46 @@ func verifyUninstallRecoveryState(store *Store) error {
 	return nil
 }
 
+func drainWorkflowDispatchForUninstall(ctx context.Context, store *Store, config Config, client *hivegithub.Client) error {
+	intent, exists, err := store.LoadWorkflowDispatchIntent()
+	if err != nil || !exists {
+		return err
+	}
+	if intent.Repository != config.Repository || intent.RepositoryID != config.RepositoryID {
+		return fmt.Errorf("workflow dispatch state no longer matches installed repository authority")
+	}
+	if intent.RunID <= 0 || strings.TrimSpace(intent.RunURL) == "" || intent.MatchedAt.IsZero() {
+		return fmt.Errorf("workflow dispatch %s is not bound to one exact run; recover it before uninstall", intent.CorrelationID)
+	}
+	owner, repository, ok := strings.Cut(config.Repository, "/")
+	if client == nil || client.GoGitHub() == nil || !ok || owner == "" || repository == "" {
+		return fmt.Errorf("GitHub authentication and an exact repository are required to retire a workflow dispatch")
+	}
+	run, _, err := client.GoGitHub().Actions.GetWorkflowRunByID(ctx, owner, repository, intent.RunID)
+	if err != nil {
+		return fmt.Errorf("read exact workflow dispatch before uninstall: %w", err)
+	}
+	if err := validateExactWorkflowRun(run, intent); err != nil {
+		return fmt.Errorf("verify exact workflow dispatch before uninstall: %w", err)
+	}
+	if run.GetHTMLURL() != intent.RunURL || run.GetStatus() != "completed" || strings.TrimSpace(run.GetConclusion()) == "" {
+		return fmt.Errorf("workflow dispatch %d is not the exact completed run recorded by Hive", intent.RunID)
+	}
+	detail := fmt.Sprintf(
+		"operation=%s correlation=%s run=%d url=%s conclusion=%s head=%s matched_at=%s",
+		intent.Operation, intent.CorrelationID, intent.RunID, intent.RunURL, run.GetConclusion(), run.GetHeadSHA(), intent.MatchedAt.Format(time.RFC3339Nano),
+	)
+	if err := store.AuditStrict(AuditEntry{
+		Action: "authorize_uninstall_workflow_dispatch_retirement", Allowed: true, Repository: config.Repository, Detail: detail,
+	}); err != nil {
+		return err
+	}
+	if err := store.DeleteWorkflowDispatchIntent(); err != nil {
+		return fmt.Errorf("retire exact workflow dispatch before uninstall: %w", err)
+	}
+	return nil
+}
+
 func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store, config Config, client *hivegithub.Client) error {
 	lifecycle, err := visualhive.NewLifecycleStore(filepath.Join(stateDir, "visual-hive"))
 	if err != nil {

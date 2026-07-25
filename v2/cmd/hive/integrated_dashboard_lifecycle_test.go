@@ -150,43 +150,47 @@ func TestDashboardIntegratedControlPlanApplyAndReplay(t *testing.T) {
 	}
 }
 
-func TestDashboardUninstallFinalizationStopsNormalVisualBeforeCLI(t *testing.T) {
-	writeDashboardLifecycleContract(t)
-	installDashboardLifecycleFakes(t)
-	var order []string
-	dashboardLifecycleStopNormalVisual = func(context.Context) error {
-		order = append(order, "stop-normal-visual")
-		return nil
-	}
-	dashboardLifecycleCLIRunner = func(_ context.Context, args []string, _ string, _ bool) (map[string]any, []byte, error) {
-		switch args[0] {
-		case "status":
-			return map[string]any{
-				"schema_version": "hive.status.v1",
-				"paused":         true,
-				"config":         map[string]any{"repository": "owner/repository"},
-			}, []byte(`{"schema_version":"hive.status.v1","paused":true}`), nil
-		case "uninstall":
-			order = append(order, "uninstall-cli")
-			return map[string]any{"state_deleted": true}, []byte(`{"state_deleted":true}`), nil
-		default:
-			t.Fatalf("unexpected command %v", args)
-			return nil, nil, nil
-		}
-	}
-	request := dashboard.IntegratedLifecycleRequest{
-		Repository: "owner/repository", Operation: "control-plan", Action: "uninstall-finalize",
-		RequestID: "cycle-a-finalize-stop-001",
-	}
-	plan, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Operation = "control-apply"
-	request.ExpectedPlanSHA256, _ = plan["plan_sha256"].(string)
-	result, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
-	if err != nil || result["state_deleted"] != true || !reflect.DeepEqual(order, []string{"stop-normal-visual", "uninstall-cli"}) {
-		t.Fatalf("result=%v order=%v err=%v", result, order, err)
+func TestDashboardUninstallStopsNormalVisualBeforeCLI(t *testing.T) {
+	for _, action := range []string{"uninstall", "uninstall-finalize"} {
+		t.Run(action, func(t *testing.T) {
+			writeDashboardLifecycleContract(t)
+			installDashboardLifecycleFakes(t)
+			var order []string
+			dashboardLifecycleStopNormalVisual = func(context.Context) error {
+				order = append(order, "stop-normal-visual")
+				return nil
+			}
+			dashboardLifecycleCLIRunner = func(_ context.Context, args []string, _ string, _ bool) (map[string]any, []byte, error) {
+				switch args[0] {
+				case "status":
+					return map[string]any{
+						"schema_version": "hive.status.v1",
+						"paused":         true,
+						"config":         map[string]any{"repository": "owner/repository"},
+					}, []byte(`{"schema_version":"hive.status.v1","paused":true}`), nil
+				case "uninstall":
+					order = append(order, "uninstall-cli")
+					return map[string]any{"state_deleted": action == "uninstall-finalize"}, []byte(`{"state_deleted":true}`), nil
+				default:
+					t.Fatalf("unexpected command %v", args)
+					return nil, nil, nil
+				}
+			}
+			request := dashboard.IntegratedLifecycleRequest{
+				Repository: "owner/repository", Operation: "control-plan", Action: action,
+				RequestID: "cycle-a-" + action + "-stop-001",
+			}
+			plan, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Operation = "control-apply"
+			request.ExpectedPlanSHA256, _ = plan["plan_sha256"].(string)
+			result, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+			if err != nil || result == nil || !reflect.DeepEqual(order, []string{"stop-normal-visual", "uninstall-cli"}) {
+				t.Fatalf("result=%v order=%v err=%v", result, order, err)
+			}
+		})
 	}
 }
 
