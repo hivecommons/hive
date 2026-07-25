@@ -3673,6 +3673,36 @@
     }
     // fetchFactHistory() — deferred to _deferredInit
 
+    // ── Estimated-cost sparkline (30-day server-side history) ──
+    // Mirrors the fact sparkline: same dimensions, same min/max scaling,
+    // reads /api/cost/history which parallels /api/knowledge/fact-history.
+    let _costHistory = [];
+    const COST_SPARKLINE_W = FACT_SPARKLINE_W, COST_SPARKLINE_H = FACT_SPARKLINE_H;
+    async function fetchCostHistory() {
+      try {
+        const r = await fetch('/api/cost/history');
+        _costHistory = await r.json();
+      } catch { /* non-critical */ }
+    }
+    function costSparkSvg() {
+      if (!_costHistory || _costHistory.length < 2) return '';
+      const values = _costHistory.map(e => e.usd);
+      const max = Math.max(...values);
+      const min = Math.min(...values);
+      const range = (max - min) || max || 1;
+      const pts = values.map((v, i) => {
+        const x = (i / (values.length - 1)) * COST_SPARKLINE_W;
+        const y = COST_SPARKLINE_H - ((v - min) / range) * (COST_SPARKLINE_H - 2) - 1;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      });
+      const lastPt = pts[pts.length - 1].split(',');
+      return `<span class="sparkline" style="margin-left:0;margin-top:4px" title="Estimated cost over time (last 30d)"><svg width="${COST_SPARKLINE_W}" height="${COST_SPARKLINE_H}" viewBox="0 0 ${COST_SPARKLINE_W} ${COST_SPARKLINE_H}">` +
+        `<polyline points="${pts.join(' ')}" fill="none" stroke="var(--green)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+        `<circle cx="${lastPt[0]}" cy="${lastPt[1]}" r="2" fill="var(--green)"/>` +
+        `</svg></span>`;
+    }
+    // fetchCostHistory() is invoked alongside fetchCost() (see below).
+
     async function fetchHistory() {
       try {
         const r = await fetch('/api/history');
@@ -5535,13 +5565,15 @@ function burnAreaChart() {
     // spend reported by OpenRouter / LiteLLM gateways). Estimates are always
     // labeled "est." so they never masquerade as actual billing.
     const COST_POLL_MS = 60000;
+    // Format a dollar amount with thousands separators (commas). Small amounts
+    // keep 2-decimal cents; amounts >= $100 are shown as whole dollars but still
+    // comma-grouped (e.g. $20,849). Sentinels for null / sub-cent are preserved.
     function fmtUSD(n) {
       if (n == null || isNaN(n)) return '—';
       if (n === 0) return '$0.00';
       if (n < 0.01) return '<$0.01';
-      if (n < 100) return '$' + n.toFixed(2);
-      if (n < 100000) return '$' + n.toFixed(0);
-      return '$' + (n / 1000).toFixed(1) + 'k';
+      const frac = n < 100 ? 2 : 0;
+      return '$' + n.toLocaleString('en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
     }
 
     function renderCost(cost) {
@@ -5604,7 +5636,7 @@ function burnAreaChart() {
         <div class="cost-title">Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span></div>
         <div class="cost-subtitle">List prices as of ${esc(cost.price_table_date || '')}. Metered gateways (OpenRouter, LiteLLM) show ACTUAL spend; everything else is ESTIMATED.</div>
         <div class="cost-grid">
-          <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total (token × list price)</div></div>
+          <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
         </div>
         ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
         <table class="cost-table">
@@ -5618,7 +5650,7 @@ function burnAreaChart() {
 
     async function fetchCost() {
       try {
-        const resp = await fetch('/api/cost');
+        const [resp] = await Promise.all([fetch('/api/cost'), fetchCostHistory()]);
         if (!resp.ok) return;
         const cost = await resp.json();
         renderCost(cost);

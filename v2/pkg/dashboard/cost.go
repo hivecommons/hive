@@ -118,21 +118,7 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// --- Estimated cost from token counts ---
-	if s.deps != nil && s.deps.Tokens != nil {
-		if summary := s.deps.Tokens.Summary(); summary != nil {
-			est := tokens.EstimateFromSummary(summary)
-			resp.Estimated = flattenEstimated(est)
-		}
-	}
-	if resp.Estimated.ByModel == nil {
-		resp.Estimated.ByModel = []costModelEntry{}
-	}
-	if resp.Estimated.ByAgent == nil {
-		resp.Estimated.ByAgent = []costModelEntry{}
-	}
-	if resp.Estimated.UnpricedModels == nil {
-		resp.Estimated.UnpricedModels = []string{}
-	}
+	resp.Estimated = s.estimatedCost()
 
 	// --- Native cost per metered gateway ---
 	if s.deps != nil && s.deps.Config != nil {
@@ -148,6 +134,30 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, resp)
+}
+
+// estimatedCost computes the estimated per-model / per-agent breakdown (and the
+// all-time cumulative total) from the current token summary. Factored out so
+// both the /api/cost handler and the cost-history sampler produce the exact same
+// figure. Returns a zero-value costEstimated (with non-nil slices) when no token
+// data is available.
+func (s *Server) estimatedCost() costEstimated {
+	var est costEstimated
+	if s.deps != nil && s.deps.Tokens != nil {
+		if summary := s.deps.Tokens.Summary(); summary != nil {
+			est = flattenEstimated(tokens.EstimateFromSummary(summary))
+		}
+	}
+	if est.ByModel == nil {
+		est.ByModel = []costModelEntry{}
+	}
+	if est.ByAgent == nil {
+		est.ByAgent = []costModelEntry{}
+	}
+	if est.UnpricedModels == nil {
+		est.UnpricedModels = []string{}
+	}
+	return est
 }
 
 // flattenEstimated converts the map-keyed EstimatedCost into sorted-agnostic

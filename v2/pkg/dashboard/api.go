@@ -65,6 +65,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/token-access", s.handleTokenAccess)
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
+	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
 	s.mux.HandleFunc("GET /api/model-advisor", s.handleModelAdvisor)
 	s.mux.HandleFunc("GET /api/budget-ignore", s.handleBudgetIgnoreGet)
@@ -4828,11 +4829,21 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 		s.AppendFactHistory(total)
 	}
 
+	// Sample the estimated cost on the same cadence as the fact history so the
+	// cost sparkline shares the fact sparkline's timer (both throttled to
+	// ~5-min intervals). The figure is the same all-time cumulative estimated
+	// total that GET /api/cost returns.
+	s.AppendCostHistory(s.estimatedCost().TotalUSD)
+
 	jsonResponse(w, stats)
 }
 
 func (s *Server) handleFactHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.FactHistory())
+}
+
+func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.CostHistory())
 }
 
 func (s *Server) handleKnowledgeGraph(w http.ResponseWriter, r *http.Request) {

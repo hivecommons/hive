@@ -291,6 +291,15 @@ func main() {
 		}
 	}
 
+	// Restore estimated-cost history from disk so the cost sparkline survives restarts
+	const costHistoryPath = "/data/cost-history.json"
+	var pendingCostSeed []dashboard.CostHistoryEntry
+	if costData, err := os.ReadFile(costHistoryPath); err == nil {
+		if err := json.Unmarshal(costData, &pendingCostSeed); err == nil && len(pendingCostSeed) > 0 {
+			logger.Info("cost history loaded", "entries", len(pendingCostSeed))
+		}
+	}
+
 	if cfg.Knowledge.Enabled {
 		layers := convertKnowledgeLayers(cfg.Knowledge.Layers)
 		primerCfg := knowledge.PrimerConfig{
@@ -556,6 +565,11 @@ func main() {
 	if len(pendingFactSeed) > 0 {
 		dashSrv.SeedFactHistory(pendingFactSeed)
 		logger.Info("fact history restored", "entries", len(pendingFactSeed))
+	}
+
+	if len(pendingCostSeed) > 0 {
+		dashSrv.SeedCostHistory(pendingCostSeed)
+		logger.Info("cost history restored", "entries", len(pendingCostSeed))
 	}
 
 	beadStores := make(map[string]*beads.Store)
@@ -2740,6 +2754,14 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 			factData, err := json.Marshal(factHist)
 			if err == nil {
 				atomicWrite("/data/fact-history.json", factData)
+			}
+		}
+
+		costHist := dashSrv.CostHistory()
+		if len(costHist) > 0 {
+			costData, err := json.Marshal(costHist)
+			if err == nil {
+				atomicWrite("/data/cost-history.json", costData)
 			}
 		}
 	}

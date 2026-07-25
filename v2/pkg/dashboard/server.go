@@ -66,6 +66,9 @@ type Server struct {
 	factHistoryMu sync.RWMutex
 	factHistory   []FactHistoryEntry
 
+	costHistoryMu sync.RWMutex
+	costHistory   []CostHistoryEntry
+
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
 
@@ -364,6 +367,22 @@ const factHistoryMaxEntries = 8640
 
 // factHistoryMinIntervalMs prevents recording more than once per 5 minutes (ms).
 const factHistoryMinIntervalMs = 300_000
+
+// CostHistoryEntry records an estimated-cost ($) snapshot at a point in time.
+// USD is the all-time cumulative estimated total (token counts × list prices),
+// the same figure GET /api/cost returns.
+type CostHistoryEntry struct {
+	Timestamp int64   `json:"t"`
+	USD       float64 `json:"usd"`
+}
+
+// costHistoryMaxEntries caps the cost sparkline to ~30 days at 5-min intervals,
+// mirroring factHistoryMaxEntries.
+const costHistoryMaxEntries = 8640
+
+// costHistoryMinIntervalMs prevents recording more than once per 5 minutes (ms),
+// mirroring factHistoryMinIntervalMs.
+const costHistoryMinIntervalMs = 300_000
 
 const sseRetryMs = 3000
 
@@ -1524,6 +1543,50 @@ func (s *Server) SeedFactHistory(entries []FactHistoryEntry) {
 		entries = entries[len(entries)-factHistoryMaxEntries:]
 	}
 	s.factHistory = entries
+}
+
+// AppendCostHistory records an estimated-cost ($) snapshot if enough time has
+// passed since the last one. Mirrors AppendFactHistory: same cadence throttle
+// and same ring-buffer cap so the two histories stay aligned.
+func (s *Server) AppendCostHistory(usd float64) {
+	now := time.Now().UnixMilli()
+
+	s.costHistoryMu.Lock()
+	defer s.costHistoryMu.Unlock()
+
+	if len(s.costHistory) > 0 {
+		last := s.costHistory[len(s.costHistory)-1]
+		if now-last.Timestamp < costHistoryMinIntervalMs {
+			return
+		}
+	}
+
+	s.costHistory = append(s.costHistory, CostHistoryEntry{
+		Timestamp: now,
+		USD:       usd,
+	})
+	if len(s.costHistory) > costHistoryMaxEntries {
+		s.costHistory = s.costHistory[len(s.costHistory)-costHistoryMaxEntries:]
+	}
+}
+
+// CostHistory returns a copy of the estimated-cost history.
+func (s *Server) CostHistory() []CostHistoryEntry {
+	s.costHistoryMu.RLock()
+	defer s.costHistoryMu.RUnlock()
+	out := make([]CostHistoryEntry, len(s.costHistory))
+	copy(out, s.costHistory)
+	return out
+}
+
+// SeedCostHistory restores persisted cost history on startup.
+func (s *Server) SeedCostHistory(entries []CostHistoryEntry) {
+	s.costHistoryMu.Lock()
+	defer s.costHistoryMu.Unlock()
+	if len(entries) > costHistoryMaxEntries {
+		entries = entries[len(entries)-costHistoryMaxEntries:]
+	}
+	s.costHistory = entries
 }
 
 // SetAdvisoryDigest stores the latest advisory digest for SSE broadcast.
