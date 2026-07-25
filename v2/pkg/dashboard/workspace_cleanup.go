@@ -17,8 +17,12 @@ import (
 const (
 	workspaceCleanupInterval = 1 * time.Hour
 	workspaceMaxAge          = 2 * time.Hour
-	agentWorkspaceRoot       = "/data/agents"
 )
+
+// agentWorkspaceRoot is the directory swept for stale agent workspace
+// artifacts. A package var (not a const) so tests can point it at a temp
+// dir; the production value never changes at runtime.
+var agentWorkspaceRoot = "/data/agents"
 
 // StartWorkspaceCleanup runs a background loop that periodically sweeps
 // /data/agents/*/ for stale workspace artifacts and removes them.
