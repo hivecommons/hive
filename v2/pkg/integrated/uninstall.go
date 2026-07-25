@@ -348,9 +348,32 @@ func finalizeUninstall(ctx context.Context, options ManagementOptions, store *St
 	if err := retirePreviousSetupReviewForUninstall(ctx, options.GitHub, store, config, intent); err != nil {
 		return err
 	}
+	if err := retireUninstallCleanupBranch(ctx, options.GitHub, store, config, intent); err != nil {
+		return err
+	}
 	result.CleanupVerified = true
 	result.ProtectionReconciled = true
 	return nil
+}
+
+func retireUninstallCleanupBranch(ctx context.Context, client *hivegithub.Client, store *Store, config Config, intent UninstallIntent) error {
+	if client == nil || store == nil {
+		return fmt.Errorf("uninstall cleanup branch retirement requires GitHub and audit stores")
+	}
+	detail := fmt.Sprintf("branch=%s owned_head=%s", intent.Branch, intent.CleanupCommitSHA)
+	if err := store.AuditStrict(AuditEntry{
+		Action: "authorize_uninstall_delete_cleanup_branch", Allowed: true, Repository: config.Repository, Detail: detail,
+	}); err != nil {
+		return err
+	}
+	deleted, retiredHead, err := client.DeleteUninstallBranchDescendantExact(ctx, config.Repository, intent.Branch, intent.CleanupCommitSHA)
+	if err != nil {
+		return fmt.Errorf("retire exact uninstall cleanup branch after verified finalization: %w", err)
+	}
+	return store.AuditStrict(AuditEntry{
+		Action: "uninstall_cleanup_branch_retired", Allowed: true, Repository: config.Repository,
+		Detail: fmt.Sprintf("%s retired_head=%s deleted=%t", detail, retiredHead, deleted),
+	})
 }
 
 func retirePreviousSetupReviewForUninstall(ctx context.Context, client *hivegithub.Client, store *Store, config Config, intent UninstallIntent) error {

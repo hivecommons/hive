@@ -192,6 +192,45 @@ func TestUninstallFinalizationDeletesOnlyAfterMergedCleanQuiescentTarget(t *test
 	if _, err := os.Stat(fixture.stateDir); !os.IsNotExist(err) {
 		t.Fatalf("finalized state root still exists: %v", err)
 	}
+	if _, err := integratedGitOutputError(fixture.remote, "rev-parse", "refs/heads/"+prepared.Branch); err == nil {
+		t.Fatalf("finalized uninstall cleanup branch %s still exists", prepared.Branch)
+	}
+}
+
+func TestUninstallFinalizationPreservesStateUntilCleanupBranchRetires(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	prepared, err := RunManagement(context.Background(), ManagementOptions{Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.merge(t, prepared.CommitSHA)
+	fixture.mu.Lock()
+	fixture.deleteFailures = 1
+	fixture.mu.Unlock()
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "retire exact uninstall cleanup branch") || result.StateDeleted {
+		t.Fatalf("failed cleanup branch retirement result=%+v err=%v", result, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(fixture.stateDir, "integrated", "config.json")); statErr != nil {
+		t.Fatalf("cleanup branch retirement failure deleted state: %v", statErr)
+	}
+	if _, refErr := integratedGitOutputError(fixture.remote, "rev-parse", "refs/heads/"+prepared.Branch); refErr != nil {
+		t.Fatalf("cleanup branch retirement failure did not preserve the managed ref: %v", refErr)
+	}
+
+	finalized, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil || !finalized.StateDeleted {
+		t.Fatalf("cleanup branch retirement retry result=%+v err=%v", finalized, err)
+	}
+	if _, refErr := integratedGitOutputError(fixture.remote, "rev-parse", "refs/heads/"+prepared.Branch); refErr == nil {
+		t.Fatalf("cleanup branch retirement retry left managed ref %s", prepared.Branch)
+	}
 }
 
 func TestInterruptedUninstallFinalizationRecoversOnlyExactOwnedIntent(t *testing.T) {
