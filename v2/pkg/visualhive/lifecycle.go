@@ -1277,6 +1277,9 @@ func repairSignalRank(observation Observation) int {
 	if strings.Contains(title, "failed deterministic validation") || strings.Contains(title, "contract_result") || strings.Contains(title, "contract result") {
 		return 5
 	}
+	if observation.IssueKind == "missing_visual_coverage" && strings.Contains(title, "storybook-discovery:") {
+		return 4
+	}
 	if observation.IssueKind == "missing_visual_coverage" {
 		for _, contract := range observation.AffectedContracts {
 			if strings.TrimSpace(contract) != "" {

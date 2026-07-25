@@ -930,6 +930,27 @@ func TestExplicitRootPublicationCollapsesNineObservationsToTwoIssues(t *testing.
 	}
 }
 
+func TestRepairPublicationPrefersTwoContractRootsAndStorybookDiscovery(t *testing.T) {
+	componentRoot := "contract/componentLibrary/component-lab-storybook"
+	repairRoot := "contract/localPreview/guarded-repair-policy"
+	observations := []Observation{
+		{RepositoryFingerprint: "component", State: "present", Severity: "high", IssueKind: "selector_contract_failure", PublicationRole: "canonical", RootCauseKey: componentRoot, Title: "component-lab-storybook failed deterministic validation"},
+		{RepositoryFingerprint: "repair", State: "present", Severity: "high", IssueKind: "selector_contract_failure", PublicationRole: "canonical", RootCauseKey: repairRoot, Title: "guarded-repair-policy failed deterministic validation"},
+		{RepositoryFingerprint: "component-handoff", State: "present", Severity: "high", IssueKind: "external_repo_onboarding", PublicationRole: "derivative", RootCauseKey: componentRoot, Title: "Repair component-lab-storybook: contract_result"},
+		{RepositoryFingerprint: "provider", State: "present", Severity: "high", IssueKind: "provider_governance", PublicationRole: "aggregate", RootCauseKey: "aggregate/provider/playwright", BlockedByRootKeys: []string{componentRoot, repairRoot}, Title: "Provider governance: playwright failed"},
+		{RepositoryFingerprint: "discovery", State: "present", Severity: "medium", IssueKind: "missing_visual_coverage", PublicationRole: "canonical", RootCauseKey: "finding/missing_visual_coverage/discovery", Title: "Repo map finding: storybook-discovery:.storybook/QualificationMissing.stories.tsx"},
+		{RepositoryFingerprint: "generic", State: "present", Severity: "medium", IssueKind: "missing_visual_coverage", PublicationRole: "canonical", RootCauseKey: "finding/missing_visual_coverage/generic", Title: "Add visual coverage: generic advisory"},
+	}
+
+	selected := selectIssuePublications("", observations, nil, 0, 3, true)
+	if len(selected) != 3 || !selected["component"] || !selected["repair"] || !selected["discovery"] {
+		t.Fatalf("publication set = %v, want two exact contract roots plus Storybook discovery", selected)
+	}
+	if selected["component-handoff"] || selected["provider"] || selected["generic"] {
+		t.Fatalf("publication set included a derivative, aggregate echo, or lower-ranked generic advisory: %v", selected)
+	}
+}
+
 func TestExplicitRootPublicationFailsOpenForUncoveredValidLinkage(t *testing.T) {
 	root := "mutation/api-500/localPreview/dashboard-shell"
 	observations := []Observation{

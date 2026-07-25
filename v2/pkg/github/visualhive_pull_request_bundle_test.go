@@ -784,7 +784,7 @@ func TestVisualHivePullRequestBundleRequestRequiresOnlyIndependentImmutablePins(
 }
 
 func TestVisualHivePullRequestProducerCommitMatchesAuditedRuntime(t *testing.T) {
-	const auditedProducerCommit = "59df58add8027c61e2a643801a6ef0e1b55aa8b0"
+	const auditedProducerCommit = "9f48408f9f090fc43fce0c7c6171771f05660444"
 	if VisualHivePullRequestProducerCommit != auditedProducerCommit {
 		t.Fatalf("Visual Hive PR producer pin %q does not match audited runtime %q", VisualHivePullRequestProducerCommit, auditedProducerCommit)
 	}

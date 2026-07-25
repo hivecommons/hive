@@ -724,7 +724,7 @@ func validatePublicationMetadata(observation Observation, canonicalRoots map[str
 		if !hasBlockedRoots {
 			return fmt.Errorf("aggregate publication observation requires blocked root keys")
 		}
-		if observation.IssueKind != "external_repo_onboarding" {
+		if observation.IssueKind != "external_repo_onboarding" && observation.IssueKind != "provider_governance" {
 			return fmt.Errorf("issue kind %q cannot be an aggregate publication", observation.IssueKind)
 		}
 	default:
