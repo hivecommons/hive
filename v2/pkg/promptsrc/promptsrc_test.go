@@ -199,6 +199,70 @@ func TestFetchOnce_Gating(t *testing.T) {
 	}
 }
 
+// TestResolve_NilFetcherServesCache: when the fetcher is nil but a prior
+// success left a cached body (e.g. the client was swapped out after a
+// successful boot), Resolve should still serve the cache instead of missing.
+func TestResolve_NilFetcherServesCache(t *testing.T) {
+	f := &stubFetcher{body: "cached prompt"}
+	r := NewResolver(f, allowAll, nil)
+	first := r.Resolve(context.Background(), fullSource())
+	if !first.Ok {
+		t.Fatalf("priming fetch should succeed, got %+v", first)
+	}
+
+	// Simulate the client going away (e.g. token-less rewire) while the cache
+	// entry from the earlier successful fetch remains.
+	r.fetcher = nil
+
+	res := r.Resolve(context.Background(), fullSource())
+	if !res.Ok || res.Body != "cached prompt" {
+		t.Fatalf("nil fetcher with warm cache should hit, got %+v", res)
+	}
+	if !strings.HasPrefix(res.Source, "github-cache:") {
+		t.Errorf("source = %q, want github-cache:*", res.Source)
+	}
+}
+
+// TestResolve_DefaultRefProvenance: an empty Ref reports "default" in the
+// provenance string rather than an empty ref segment.
+func TestResolve_DefaultRefProvenance(t *testing.T) {
+	f := &stubFetcher{body: "on default branch"}
+	r := NewResolver(f, allowAll, nil)
+	src := Source{Owner: "kubestellar", Repo: "hive", Path: "prompts/scanner.md"} // Ref unset
+	res := r.Resolve(context.Background(), src)
+	if !res.Ok {
+		t.Fatalf("resolve should succeed, got %+v", res)
+	}
+	if res.Source != "github:kubestellar/hive@default" {
+		t.Errorf("source = %q, want github:kubestellar/hive@default", res.Source)
+	}
+}
+
+// TestFetchOnce_NilContext: a nil context must not panic and should behave
+// like context.Background().
+func TestFetchOnce_NilContext(t *testing.T) {
+	f := &stubFetcher{body: "baked"}
+	//nolint:staticcheck // deliberately passing nil ctx to exercise the guard
+	body, err := FetchOnce(nil, f, allowAll, fullSource())
+	if err != nil || body != "baked" {
+		t.Errorf("nil ctx should be tolerated, got body=%q err=%v", body, err)
+	}
+}
+
+// TestFetchOnce_TruncatesOversizeBody: FetchOnce enforces the same size cap
+// as Resolve, truncating rather than erroring.
+func TestFetchOnce_TruncatesOversizeBody(t *testing.T) {
+	huge := strings.Repeat("b", maxPromptBytes+50)
+	f := &stubFetcher{body: huge}
+	body, err := FetchOnce(context.Background(), f, allowAll, fullSource())
+	if err != nil {
+		t.Fatalf("oversize body should not error, got %v", err)
+	}
+	if len(body) != maxPromptBytes {
+		t.Errorf("body len = %d, want %d (truncated to cap)", len(body), maxPromptBytes)
+	}
+}
+
 // TestSource_Helpers exercises Slug/valid/key edge cases.
 func TestSource_Helpers(t *testing.T) {
 	if (Source{}).Slug() != "" {

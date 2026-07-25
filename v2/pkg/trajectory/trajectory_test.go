@@ -132,6 +132,66 @@ func TestReviewEmptyTranscriptSkips(t *testing.T) {
 	}
 }
 
+// TestReviewNoChoicesErrors: a 200 response with an empty choices array must
+// error rather than panic on index access.
+func TestReviewNoChoicesErrors(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(chatResponse{Choices: nil})
+	}))
+	defer srv.Close()
+	r, err := NewReviewer(Config{Endpoint: srv.URL, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := r.Review(context.Background(), "a", "intent", "some work")
+	if err == nil {
+		t.Error("expected error on empty choices")
+	}
+	if v.Divergent {
+		t.Error("verdict must be non-divergent on error")
+	}
+}
+
+// TestReviewMalformedJSONBody: a 200 response whose body is not valid JSON
+// must surface a decode error, not a panic.
+func TestReviewMalformedJSONBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json at all"))
+	}))
+	defer srv.Close()
+	r, err := NewReviewer(Config{Endpoint: srv.URL, Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Review(context.Background(), "a", "intent", "some work"); err == nil {
+		t.Error("expected decode error on malformed body")
+	}
+}
+
+// TestReviewTransportError: an unreachable endpoint (nothing listening)
+// surfaces a transport error from http.Client.Do.
+func TestReviewTransportError(t *testing.T) {
+	r, err := NewReviewer(Config{Endpoint: "http://127.0.0.1:1", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Review(context.Background(), "a", "intent", "some work"); err == nil {
+		t.Error("expected transport error against unreachable endpoint")
+	}
+}
+
+// TestReviewBuildRequestError: a malformed endpoint URL (control characters
+// in the scheme/host) makes http.NewRequestWithContext itself fail.
+func TestReviewBuildRequestError(t *testing.T) {
+	r, err := NewReviewer(Config{Endpoint: "http://\x7f", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Review(context.Background(), "a", "intent", "some work"); err == nil {
+		t.Error("expected request-build error on malformed endpoint")
+	}
+}
+
 func TestReviewFailsOpenOnServerError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
