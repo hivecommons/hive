@@ -26,8 +26,11 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
+// registryPath is the on-disk hub registry file. A var (not a const) so tests
+// can redirect it at a temp file; production keeps the default.
+var registryPath = "/data/hub-registry.json"
+
 const (
-	registryPath        = "/data/hub-registry.json"
 	maxHeartbeatAge     = 5 * time.Minute
 	staleRemoveAge      = 24 * time.Hour
 	registrySaveDelay   = 5 * time.Second
@@ -139,23 +142,23 @@ type HeartbeatHealthEntry struct {
 }
 
 type HubServer struct {
-	mux               *http.ServeMux
-	registry          Registry
-	mu                sync.RWMutex
-	logger            *slog.Logger
-	saveCh            chan struct{}
-	hubGitHash        string
-	hubGitBranch      string
-	hubSecret         string
+	mux          *http.ServeMux
+	registry     Registry
+	mu           sync.RWMutex
+	logger       *slog.Logger
+	saveCh       chan struct{}
+	hubGitHash   string
+	hubGitBranch string
+	hubSecret    string
 	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
 	// every-cycle behind-latest check doesn't re-restart while a rollout is still
 	// in flight. See the auto-upgrade block in the SHA-poll loop.
 	lastHubUpgradeTrigger time.Time
-	httpServer        *http.Server
-	httpMu            sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
-	clusters          map[string]ClusterConfig
-	heartbeatHealth   map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
-	heartbeatHealthMu sync.RWMutex
+	httpServer            *http.Server
+	httpMu                sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
+	clusters              map[string]ClusterConfig
+	heartbeatHealth       map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
+	heartbeatHealthMu     sync.RWMutex
 
 	// heartbeatUpgrade tracks hives that should be upgraded via heartbeat
 	// UpgradeTo because kubectl rollout restart failed (cluster unreachable).
