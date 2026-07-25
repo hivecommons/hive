@@ -3134,7 +3134,7 @@
           <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" style="margin-left:auto" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
           <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different method (CLI or inference backend)">
             <option value="" disabled selected>${a.cli ? esc(backendLabel(a.cli)) + ' ▾' : 'method ▾'}</option>
-            ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
+            ${backendOptionList().map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>
           <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model">
             <option value="" disabled${a.model ? '' : ' selected'}>model ▾</option>
@@ -4087,7 +4087,7 @@
             <button class="btn" data-action="kickEmpty" data-agent="${esc(a.name)}" title="Kick this agent now with its default prompt, bypassing the governor cadence timer">kick</button>
             <select class="btn backend-select" data-change-action="switchCli" data-agent="${esc(a.name)}" title="Switch this agent to a different method (CLI or inference backend). Free backends (copilot, goose) do not count toward token budget.">
               <option value="" disabled selected>${a.cli ? esc(backendLabel(a.cli)) + ' ▾' : 'method ▾'}</option>
-              ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
+              ${backendOptionList().map(b => `<option value="${b}" ${a.cli === b ? 'disabled' : ''}>${backendLabel(b)}</option>`).join('')}
             </select>
             <select class="btn backend-select" data-change-action="switchModel" data-agent="${esc(a.name)}" title="Switch this agent to a different LLM model. Higher-tier models (Opus) cost more tokens; lower-tier (Haiku) are cheaper but less capable.">
               <option value="" disabled${a.model ? '' : ' selected'}>model ▾</option>
@@ -4687,6 +4687,31 @@
     const KNOWN_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'codex', 'amazonq', 'goose', 'aider', 'vllm', 'llm-d', 'litellm'];
     const FREE_BACKENDS = ['copilot', 'goose'];
     const INFERENCE_BACKENDS = ['vllm', 'llm-d', 'litellm'];
+    // Names of Model Gateways configured under Governor Config → Model Gateways
+    // (e.g. 'openrouter'). Agent routing already resolves a gateway name, but
+    // the backend pickers only listed KNOWN_BACKENDS — so a configured gateway
+    // was never selectable. Populated by fetchConfiguredGateways() at load and
+    // refreshed whenever a gateway is saved/deleted.
+    let _configuredGateways = [];
+    // Combined option list for the backend/method dropdowns: KNOWN_BACKENDS
+    // first (stable order), then any configured gateway names not already in
+    // KNOWN_BACKENDS (dedup — e.g. a gateway literally named 'litellm').
+    function backendOptionList() {
+      return KNOWN_BACKENDS.concat(_configuredGateways.filter(g => !KNOWN_BACKENDS.includes(g)));
+    }
+    // Fetch configured gateway names from the existing governor endpoint. Kept
+    // resilient: any failure leaves _configuredGateways as-is (dropdowns still
+    // render KNOWN_BACKENDS). Excludes names already in KNOWN_BACKENDS.
+    async function fetchConfiguredGateways() {
+      try {
+        const res = await fetch('/api/config/governor/gateways');
+        if (!res.ok) return;
+        const data = await res.json();
+        _configuredGateways = (data.gateways || [])
+          .map(g => g.name)
+          .filter(name => name && !KNOWN_BACKENDS.includes(name));
+      } catch (e) { /* keep prior list; dropdowns fall back to KNOWN_BACKENDS */ }
+    }
     const CLAUDE_CLI_MODELS = [
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
       { value: 'claude-opus-4-7', label: 'Opus 4.7' },
@@ -4743,7 +4768,9 @@
       codex: CODEX_CLI_MODELS,
     };
     function backendLabel(b) {
-      if (INFERENCE_BACKENDS.includes(b)) return b + ' ⚡';
+      // Configured gateways (e.g. openrouter) are inference/gateway backends,
+      // so they carry the same ⚡ marker as vllm/llm-d/litellm.
+      if (INFERENCE_BACKENDS.includes(b) || _configuredGateways.includes(b)) return b + ' ⚡';
       return b;
     }
     // Auto-select sentinels: special --model VALUES that tell a CLI to pick the
@@ -4828,6 +4855,9 @@
       }
     }
     INFERENCE_BACKENDS.forEach(b => fetchInferenceModels(b));
+    // Load configured gateway names so the backend/method pickers list them
+    // (e.g. openrouter) alongside KNOWN_BACKENDS on first paint.
+    fetchConfiguredGateways();
 
     const CLI_MODEL_CACHE_TTL_MS = 30000;
     let _cliModelsFetchedAt = 0;
@@ -12275,6 +12305,10 @@ function burnAreaChart() {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         _gateways = data.gateways || [];
+        // Keep the backend/method pickers' gateway list in sync with the tab.
+        _configuredGateways = _gateways
+          .map(g => g.name)
+          .filter(name => name && !KNOWN_BACKENDS.includes(name));
         renderGatewaysList();
       } catch (e) {
         if (host) host.innerHTML = `<div style="color:var(--red);font-size:0.8rem">Failed to load gateways: ${esc(e.message)}</div>`;
@@ -13012,7 +13046,7 @@ function burnAreaChart() {
         <div class="config-field">
           <label>CLI Pin Value <span class="config-info">i<span class="config-tooltip">Which CLI backend to pin this agent to when CLI Pinned is on. Options: claude, copilot, bob, gemini, codex, amazonq, goose, aider. copilot and goose are free backends (no token cost).</span></span></label>
           <select id="cfg-pin-value" data-prev="${esc(g.cliPinValue || '')}" onchange="onCliPinChange(this)">
-            ${KNOWN_BACKENDS.map(b => `<option value="${b}" ${g.cliPinValue === b ? 'selected' : ''}>${backendLabel(b)}</option>`).join('')}
+            ${backendOptionList().map(b => `<option value="${b}" ${g.cliPinValue === b ? 'selected' : ''}>${backendLabel(b)}</option>`).join('')}
           </select>
         </div>
         <div class="config-field-row">
