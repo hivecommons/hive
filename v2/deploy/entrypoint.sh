@@ -285,6 +285,12 @@ if [ "$(id -u)" = "0" ]; then
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
   mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/config/github-copilot /home/dev/.config
+  # These parents are created after the mounted-volume ownership check above.
+  # On a fresh volume whose root was pre-seeded as dev, mkdir would otherwise
+  # recreate them as root while DATA_OWNER=1001 skips the recursive repair.
+  # Normalize the shared parents unconditionally before any agent can start.
+  chown dev:node /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
+  chmod 2775 /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
   chmod 2770 /data/home/.copilot 2>/dev/null || true
   chown dev:node /data/home/.copilot 2>/dev/null || true
   chmod 2775 /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true

@@ -64,6 +64,12 @@ assert_contains "$ENTRYPOINT" \
 assert_contains "$ENTRYPOINT" \
   'chmod -R g+rwX /data/home' \
   "/data/home is group-writable"
+assert_contains "$ENTRYPOINT" \
+  'chown dev:node /data/home /data/home/.config /data/config /data/config/github-copilot' \
+  "fresh shared CLI parents are owned by the runtime principal"
+assert_contains "$ENTRYPOINT" \
+  'chmod 2775 /data/home /data/home/.config /data/config /data/config/github-copilot' \
+  "fresh shared CLI parents remain traversable and group-writable"
 
 # 7. Entrypoint loads Copilot PAT for Go binary
 assert_contains "$ENTRYPOINT" \
