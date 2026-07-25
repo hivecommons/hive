@@ -1026,6 +1026,22 @@
     .cost-table td.cmodel { color: var(--purple); font-family: var(--font-mono); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
 
+    /* Cost spend-over-time: range pills + bucketed bar chart */
+    .cost-trend { margin: 6px 0 14px; }
+    .cost-trend-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+    .cost-range { display: inline-flex; gap: 2px; background: rgba(128,128,128,0.12); border-radius: 7px; padding: 2px; }
+    .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
+    .cost-range button:hover { color: var(--text); }
+    .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+    .cost-trend-total { font-size: 0.66rem; color: var(--muted); font-family: var(--font-mono); }
+    .cost-trend-total b { color: var(--text); font-size: 0.78rem; }
+    .cost-bars { display: flex; align-items: flex-end; gap: 2px; height: 52px; padding-top: 4px; }
+    .cost-bar { flex: 1 1 0; min-width: 2px; background: var(--green); border-radius: 2px 2px 0 0; opacity: 0.8; transition: opacity 0.1s; align-self: flex-end; }
+    .cost-bar:hover { opacity: 1; }
+    .cost-bar.zero { background: rgba(128,128,128,0.25); }
+    .cost-bars-axis { display: flex; justify-content: space-between; font-size: 0.58rem; color: var(--muted); font-family: var(--font-mono); margin-top: 3px; }
+    .cost-trend-empty { font-size: 0.66rem; color: var(--muted); font-style: italic; padding: 8px 0; }
+
     /* Token burn rate chart */
     .burn-chart-wrap { margin: 8px 0 12px; }
     .burn-chart-title { font-size: 0.7rem; color: var(--muted); margin-bottom: 4px; }
@@ -3703,6 +3719,106 @@
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
 
+    // ── Cost spend-over-time (hourly / daily / weekly / monthly) ──
+    // The server keeps 30 days of CUMULATIVE all-time estimated-$ snapshots at
+    // ~5-min resolution. We derive per-bucket SPEND on the client by taking the
+    // delta of the cumulative value across each bucket boundary — no backend
+    // change needed. Selected range persists across re-renders and page loads.
+    const COST_RANGES = {
+      // key: { label, bucketMs, windowMs, buckets, axisFmt }
+      hourly:  { label: 'hourly',  bucketMs: 3600e3,        windowMs: 24 * 3600e3,      buckets: 24 },
+      daily:   { label: 'daily',   bucketMs: 24 * 3600e3,   windowMs: 30 * 24 * 3600e3, buckets: 30 },
+      weekly:  { label: 'weekly',  bucketMs: 7 * 24 * 3600e3, windowMs: 12 * 7 * 24 * 3600e3, buckets: 12 },
+      monthly: { label: 'monthly', bucketMs: 30 * 24 * 3600e3, windowMs: 12 * 30 * 24 * 3600e3, buckets: 12 },
+    };
+    let _costRange = (() => {
+      try { const s = localStorage.getItem('hiveCostRange'); if (s && COST_RANGES[s]) return s; } catch {}
+      return 'daily';
+    })();
+
+    // costBuckets: returns [{start, end, spend}] for the active range. spend is the
+    // cumulative-$ delta over the bucket; 30d of history means longer ranges are
+    // truncated to whatever the ring buffer holds (labeled in the UI).
+    function costBuckets() {
+      const cfg = COST_RANGES[_costRange];
+      const hist = (_costHistory || []).filter(e => e && typeof e.usd === 'number' && e.timestamp);
+      const now = Date.now();
+      const windowStart = now - cfg.windowMs;
+      // Snap the last bucket edge to now, walk backwards by bucketMs.
+      const buckets = [];
+      for (let i = cfg.buckets - 1; i >= 0; i--) {
+        const end = now - i * cfg.bucketMs;
+        const start = end - cfg.bucketMs;
+        if (end <= windowStart) continue;
+        buckets.push({ start, end, spend: 0, hasData: false });
+      }
+      if (hist.length < 2) return buckets;
+      // For each bucket, spend = usd at last snapshot in bucket − usd at last
+      // snapshot before bucket start (the cumulative baseline entering the bucket).
+      const at = (t) => {
+        // last cumulative value at-or-before time t; null if history starts after t.
+        let v = null;
+        for (const e of hist) { if (e.timestamp <= t) v = e.usd; else break; }
+        return v;
+      };
+      for (const b of buckets) {
+        const before = at(b.start);
+        const end = at(b.end);
+        if (before != null && end != null) {
+          b.spend = Math.max(0, end - before);
+          b.hasData = true;
+        } else if (end != null && before == null && hist[0].timestamp <= b.end) {
+          // History begins inside this bucket — spend since first snapshot.
+          b.spend = Math.max(0, end - hist[0].usd);
+          b.hasData = true;
+        }
+      }
+      return buckets;
+    }
+
+    function costBucketAxisLabel(b) {
+      const d = new Date(b.end);
+      if (_costRange === 'hourly') return String(d.getHours()).padStart(2, '0');
+      if (_costRange === 'daily')  return `${d.getMonth() + 1}/${d.getDate()}`;
+      if (_costRange === 'weekly') return `${d.getMonth() + 1}/${d.getDate()}`;
+      return d.toLocaleString('en-US', { month: 'short' });
+    }
+
+    function costTrendHtml() {
+      const cfg = COST_RANGES[_costRange];
+      const pills = Object.keys(COST_RANGES).map(k =>
+        `<button data-cost-range="${k}" class="${k === _costRange ? 'active' : ''}">${COST_RANGES[k].label}</button>`
+      ).join('');
+      const buckets = costBuckets();
+      const withData = buckets.filter(b => b.hasData);
+      const total = withData.reduce((s, b) => s + b.spend, 0);
+      const max = Math.max(...buckets.map(b => b.spend), 0);
+
+      let body;
+      if (!_costHistory || _costHistory.length < 2 || withData.length === 0) {
+        body = `<div class="cost-trend-empty">No cost history yet for this range — data accrues as agents run.</div>`;
+      } else {
+        const bars = buckets.map(b => {
+          const h = max > 0 ? Math.max(1, (b.spend / max) * 100) : 0;
+          const cls = b.spend > 0 ? 'cost-bar' : 'cost-bar zero';
+          const tip = `${new Date(b.start).toLocaleString()} → ${new Date(b.end).toLocaleString()}: ${fmtUSD(b.spend)}`;
+          return `<div class="${cls}" style="height:${h.toFixed(1)}%" title="${esc(tip)}"></div>`;
+        }).join('');
+        // Show first, middle, and last axis labels to avoid crowding.
+        const first = buckets[0], mid = buckets[Math.floor(buckets.length / 2)], last = buckets[buckets.length - 1];
+        body = `<div class="cost-bars">${bars}</div>
+          <div class="cost-bars-axis"><span>${esc(costBucketAxisLabel(first))}</span><span>${esc(costBucketAxisLabel(mid))}</span><span>${esc(costBucketAxisLabel(last))}</span></div>`;
+      }
+
+      return `<div class="cost-trend">
+        <div class="cost-trend-head">
+          <div class="cost-range">${pills}</div>
+          <div class="cost-trend-total">spend this ${cfg.label.replace('ly','')} window: <b>${fmtUSD(total)}</b></div>
+        </div>
+        ${body}
+      </div>`;
+    }
+
     async function fetchHistory() {
       try {
         const r = await fetch('/api/history');
@@ -5609,9 +5725,13 @@ function burnAreaChart() {
       return '$' + n.toLocaleString('en-US', { minimumFractionDigits: frac, maximumFractionDigits: frac });
     }
 
+    // Last cost payload, so the range pills can re-render the trend chart
+    // instantly (client-only bucketing) without waiting for the next poll.
+    let _lastCost = null;
     function renderCost(cost) {
       const el = document.getElementById('cost-panel');
       if (!el) return;
+      _lastCost = cost;
       if (!cost || (!cost.estimated && (!cost.gateways || cost.gateways.length === 0))) {
         el.innerHTML = '';
         return;
@@ -5671,6 +5791,7 @@ function burnAreaChart() {
         <div class="cost-grid">
           <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
         </div>
+        ${costTrendHtml()}
         ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
         <table class="cost-table">
           <thead><tr><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
@@ -5691,6 +5812,18 @@ function burnAreaChart() {
     }
     fetchCost();
     setInterval(fetchCost, COST_POLL_MS);
+
+    // Cost range pills: switch hourly/daily/weekly/monthly and re-render the
+    // trend chart from the already-fetched history (no network round-trip).
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-cost-range]');
+      if (!btn) return;
+      const r = btn.getAttribute('data-cost-range');
+      if (!COST_RANGES[r] || r === _costRange) return;
+      _costRange = r;
+      try { localStorage.setItem('hiveCostRange', r); } catch {}
+      if (_lastCost) renderCost(_lastCost);
+    });
 
     // GitHub auth health — sticky banner when 401
     const GH_AUTH_POLL_MS = 30000;
