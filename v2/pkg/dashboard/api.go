@@ -80,6 +80,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/gh-user-auth/poll", s.handleGHUserAuthPoll)
 	s.mux.HandleFunc("POST /api/gh-user-auth/logout", s.handleGHUserAuthLogout)
 	s.mux.HandleFunc("GET /api/gh-user-auth/session", s.handleGHUserAuthSession)
+	s.mux.HandleFunc("POST /api/integrated/setup/plan", s.handleIntegratedSetupPlan)
+	s.mux.HandleFunc("POST /api/integrated/setup/apply", s.handleIntegratedSetupApply)
 
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()
