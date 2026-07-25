@@ -30,10 +30,6 @@ const (
 	// ociExportsPath is the REST path for export operations.
 	ociExportsPath = "/" + ociAPIVersion + "/exports"
 
-	// ociFSSEndpointFmt is the endpoint template for the FSS API.
-	// The %s placeholder is the OCI region identifier.
-	ociFSSEndpointFmt = "https://filestorage.%s.oraclecloud.com"
-
 	// ociHTTPTimeoutSec is the HTTP client timeout for OCI API calls.
 	ociHTTPTimeoutSec = 30
 
@@ -55,24 +51,24 @@ const (
 
 // OCI environment variable names
 const (
-	envOCITenancy         = "OCI_TENANCY_OCID"
-	envOCIUser            = "OCI_USER_OCID"
-	envOCIFingerprint     = "OCI_FINGERPRINT"
-	envOCIPrivateKey      = "OCI_PRIVATE_KEY"
-	envOCIRegion          = "OCI_FSS_REGION"
-	envOCICompartmentID   = "OCI_COMPARTMENT_ID"
-	envOCIAvailDomain     = "OCI_AVAILABILITY_DOMAIN"
-	envOCIMountTargetID   = "OCI_MOUNT_TARGET_ID"
-	envOCIExportSetID     = "OCI_EXPORT_SET_ID"
+	envOCITenancy       = "OCI_TENANCY_OCID"
+	envOCIUser          = "OCI_USER_OCID"
+	envOCIFingerprint   = "OCI_FINGERPRINT"
+	envOCIPrivateKey    = "OCI_PRIVATE_KEY"
+	envOCIRegion        = "OCI_FSS_REGION"
+	envOCICompartmentID = "OCI_COMPARTMENT_ID"
+	envOCIAvailDomain   = "OCI_AVAILABILITY_DOMAIN"
+	envOCIMountTargetID = "OCI_MOUNT_TARGET_ID"
+	envOCIExportSetID   = "OCI_EXPORT_SET_ID"
 )
 
 // Default values for OCI configuration (non-secret infrastructure identifiers).
 const (
-	defaultOCICompartmentID   = "ocid1.compartment.oc1..aaaaaaaa6ry2pwgcmatdwrtoll7pjbwomt3zjqs7wy7wa6nmywljrbrjc7wa"
-	defaultOCIAvailDomain     = "qKAe:US-ASHBURN-AD-1"
-	defaultOCIMountTargetID   = "ocid1.mounttarget.oc1.iad.aaaaaa4np2zu32denfqwillqojxwiotjmfsc2ylefuzqaaaa"
-	defaultOCIExportSetID     = "ocid1.exportset.oc1.iad.aaaaaa4np2zu32ddnfqwillqojxwiotjmfsc2ylefuzqaaaa"
-	defaultOCIRegion          = "us-ashburn-1"
+	defaultOCICompartmentID = "ocid1.compartment.oc1..aaaaaaaa6ry2pwgcmatdwrtoll7pjbwomt3zjqs7wy7wa6nmywljrbrjc7wa"
+	defaultOCIAvailDomain   = "qKAe:US-ASHBURN-AD-1"
+	defaultOCIMountTargetID = "ocid1.mounttarget.oc1.iad.aaaaaa4np2zu32denfqwillqojxwiotjmfsc2ylefuzqaaaa"
+	defaultOCIExportSetID   = "ocid1.exportset.oc1.iad.aaaaaa4np2zu32ddnfqwillqojxwiotjmfsc2ylefuzqaaaa"
+	defaultOCIRegion        = "us-ashburn-1"
 )
 
 // ociConfig holds the cached OCI API authentication and resource configuration.
@@ -93,6 +89,12 @@ var (
 	ociCfgOnce sync.Once
 	ociCfgErr  error
 )
+
+// ociFSSEndpointFmt is the endpoint template for the FSS API; the %s
+// placeholder is the OCI region identifier. It is a var (not a const) so tests
+// can point the FSS calls at a local httptest server. Production never
+// reassigns it.
+var ociFSSEndpointFmt = "https://filestorage.%s.oraclecloud.com"
 
 // getEnvOrDefault returns the environment variable value, or fallback if unset/empty.
 func getEnvOrDefault(key, fallback string) string {
