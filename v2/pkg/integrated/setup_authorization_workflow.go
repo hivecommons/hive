@@ -19,6 +19,12 @@ func setupAuthorizationWorkflowJob(config Config) string {
 	}
 	allowed := managedSetupFilesForConfig(config)
 	uninstallRequired, uninstallAbsent := managedUninstallRequiredPaths(config)
+	if uninstallRequired == nil {
+		uninstallRequired = []string{}
+	}
+	if uninstallAbsent == nil {
+		uninstallAbsent = []string{}
+	}
 	uninstallAllowed := managedSetupFilesForConfig(config)
 	requiredJSON, _ := json.Marshal(required)
 	absentJSON, _ := json.Marshal(absent)
