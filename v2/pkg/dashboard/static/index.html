@@ -11828,8 +11828,11 @@ function burnAreaChart() {
     function renderAgentImport() {
       var exampleURL = 'https://github.com/kubestellar/hive/blob/v2/v2/examples/agents/customized-agent.yaml';
       var rawURL = 'https://raw.githubusercontent.com/kubestellar/hive/v2/v2/examples/agents/customized-agent.yaml';
+      // Field-by-field reference on the docs site (documents the same v2 schema
+      // as the example, and explains the doubled "v2/v2" path). See #1929/#1930.
+      var docsURL = 'https://docs.kubestellar.io/hive/agent-definition-yaml';
       return '<div style="max-width:600px;margin:0 auto">' +
-        '<p style="font-size:0.82rem;color:var(--muted);margin-bottom:16px">Import an agent from a YAML definition file. <a href="' + exampleURL + '" target="_blank" rel="noopener" style="color:var(--accent)">See example agent definition ↗</a></p>' +
+        '<p style="font-size:0.82rem;color:var(--muted);margin-bottom:16px">Import an agent from a YAML definition file. <a href="' + docsURL + '" target="_blank" rel="noopener" style="color:var(--accent)">Field reference ↗</a> · <a href="' + exampleURL + '" target="_blank" rel="noopener" style="color:var(--accent)">example definition ↗</a></p>' +
         '<div class="config-field" style="margin-bottom:12px">' +
           '<label>Import from URL</label>' +
           '<div style="display:flex;gap:8px"><input type="text" id="import-url-input" placeholder="' + rawURL + '" style="flex:1"><button onclick="previewImportFromURL()" style="padding:6px 16px;border-radius:6px;cursor:pointer;font-weight:600;border:none;background:var(--cyan);color:var(--bg);white-space:nowrap">Preview</button></div>' +
