@@ -1,3 +1,21 @@
+ARG VISUAL_HIVE_REF=9fb0eebf4ec4c3f6653092c1fd53795d4d80523e
+
+FROM node:22.23.1-bookworm-slim AS visual-hive-builder
+ARG VISUAL_HIVE_REF
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN git init \
+ && git remote add origin https://github.com/DavidDiaz0317/visual-hive.git \
+ && git fetch --depth=1 origin "$VISUAL_HIVE_REF" \
+ && git checkout --detach FETCH_HEAD \
+ && test "$(git rev-parse HEAD)" = "$VISUAL_HIVE_REF"
+RUN npm ci \
+ && npm run build \
+ && GITHUB_SHA="$VISUAL_HIVE_REF" node scripts/build-release-bundle.mjs --output /visual-hive-release \
+ && node -e 'const fs=require("node:fs");const m=JSON.parse(fs.readFileSync("/visual-hive-release/release-manifest.json","utf8"));if(m.gitCommit!==process.argv[1])throw new Error(`Visual Hive release commit mismatch: ${m.gitCommit}`)' "$VISUAL_HIVE_REF" \
+ && node /visual-hive-release/visual-hive.mjs --version
+
 FROM golang:1.25.12-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /src
@@ -136,6 +154,12 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 
 COPY --from=builder /hive /usr/local/bin/hive
 COPY --from=builder /bd /usr/local/bin/bd
+
+COPY --from=visual-hive-builder /visual-hive-release /opt/hive/visual-hive
+ENV HIVE_VISUAL_HIVE_HOME=/opt/hive/visual-hive
+RUN chmod -R a-w /opt/hive/visual-hive \
+ && test -f /opt/hive/visual-hive/release-manifest.json \
+ && node /opt/hive/visual-hive/visual-hive.mjs --version
 
 COPY v2/proxy/ /opt/hive/proxy/
 
