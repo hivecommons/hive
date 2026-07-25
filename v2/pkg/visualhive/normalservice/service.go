@@ -121,6 +121,12 @@ type Options struct {
 type Service struct {
 	options Options
 	mu      sync.Mutex
+	trigger chan triggerRequest
+}
+
+type triggerRequest struct {
+	context context.Context
+	result  chan error
 }
 
 func New(options Options) (*Service, error) {
@@ -150,7 +156,32 @@ func New(options Options) (*Service, error) {
 	if err := os.MkdirAll(filepath.Join(root, "normal-service"), 0o700); err != nil {
 		return nil, err
 	}
-	return &Service{options: options}, nil
+	return &Service{options: options, trigger: make(chan triggerRequest)}, nil
+}
+
+// Trigger requests one immediate cycle from the already-running normal
+// service. It never acquires a second lease, starts another scheduler, or
+// bypasses pause/quiescence: a request is accepted only by an active lease
+// epoch. The caller receives the exact result of the requested cycle.
+func (service *Service) Trigger(ctx context.Context) error {
+	if service == nil {
+		return errors.New("normal Visual Hive service is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request := triggerRequest{context: ctx, result: make(chan error, 1)}
+	select {
+	case service.trigger <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Run claims exclusive ownership before touching workflow state and retains it
@@ -234,15 +265,28 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 		release()
 	}()
 
+	var requested *triggerRequest
 	for {
 		startedAt := time.Now().UTC()
 		deadline := startedAt.Add(service.options.MaxCycleDuration)
 		cycleCtx, cancelCycle := context.WithDeadline(epochCtx, deadline)
+		var stopRequestedContext func() bool
+		if requested != nil {
+			stopRequestedContext = context.AfterFunc(requested.context, cancelCycle)
+		}
 		deadline, _ = cycleCtx.Deadline()
 		service.startCycle(startedAt, deadline)
 		err := service.RunCycle(cycleCtx)
+		if stopRequestedContext != nil {
+			stopRequestedContext()
+		}
 		cancelCycle()
 		service.reportCycle(err)
+		if requested != nil {
+			requested.result <- err
+			close(requested.result)
+			requested = nil
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -270,6 +314,14 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 				service.report(fmt.Errorf("monitor normal Visual Hive quiescence: %w", status.err))
 			}
 			return
+		case request := <-service.trigger:
+			stopTimer(timer)
+			if request.context.Err() != nil {
+				request.result <- request.context.Err()
+				close(request.result)
+				continue
+			}
+			requested = &request
 		case <-timer.C:
 		}
 	}

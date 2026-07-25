@@ -24,6 +24,7 @@ var integratedSetupDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // browser caller.
 type IntegratedSetupRequest struct {
 	Repository         string `json:"-"`
+	RequestID          string `json:"request_id"`
 	Coverage           string `json:"coverage"`
 	Automation         string `json:"automation"`
 	Provider           string `json:"provider"`
@@ -44,14 +45,6 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 		jsonError(w, "integrated setup is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	role := strings.TrimSpace(r.Header.Get("X-Hive-Role"))
-	if role == "" && s.authToken == "" && !s.directRouteAuthzEnabled() {
-		role = "owner"
-	}
-	if role != "owner" {
-		jsonError(w, "only the hive owner may manage integrated setup", http.StatusForbidden)
-		return
-	}
 
 	var request IntegratedSetupRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
@@ -64,9 +57,9 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 		jsonError(w, "invalid integrated setup request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	repository := strings.TrimSpace(s.deps.Config.Project.PrimaryRepo)
-	if repository == "" && len(s.deps.Config.Project.Repos) > 0 {
-		repository = strings.TrimSpace(s.deps.Config.Project.Repos[0])
+	token, repository, ok := s.authorizeIntegratedOwner(w, r)
+	if !ok {
+		return
 	}
 	request.Repository = repository
 	if err := validateIntegratedSetupRequest(request, apply); err != nil {
@@ -74,6 +67,38 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
+	action := "integrated_setup_plan"
+	if apply {
+		action = "integrated_setup_apply"
+	}
+	result, err := s.deps.IntegratedSetupFunc(r.Context(), request, token)
+	if err != nil {
+		s.writeIntegratedLifecycleError(w, r, strings.TrimPrefix(action, "integrated_"), request.Repository, token, err)
+		return
+	}
+	s.auditFromRequest(r, action, "", auditDetail(
+		"repository", request.Repository,
+		"request_id", request.RequestID,
+		"visual_hive_ref", request.VisualHiveRef,
+		"expected_plan_sha256", request.ExpectedPlanSHA256,
+	))
+	jsonResponse(w, result)
+}
+
+func (s *Server) authorizeIntegratedOwner(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	if s.deps == nil || s.deps.Config == nil {
+		jsonError(w, "integrated lifecycle is unavailable", http.StatusServiceUnavailable)
+		return "", "", false
+	}
+	if s.authToken == "" && !s.directRouteAuthzEnabled() {
+		jsonError(w, "integrated lifecycle requires an authenticated dashboard", http.StatusUnauthorized)
+		return "", "", false
+	}
+	role := strings.TrimSpace(r.Header.Get("X-Hive-Role"))
+	if role != "owner" {
+		jsonError(w, "only the hive owner may manage the integrated lifecycle", http.StatusForbidden)
+		return "", "", false
+	}
 	tokenLoader := func() (string, error) {
 		tokenData, err := os.ReadFile(userTokenPath)
 		return strings.TrimSpace(string(tokenData)), err
@@ -84,7 +109,7 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 	token, err := tokenLoader()
 	if err != nil || strings.TrimSpace(token) == "" {
 		jsonError(w, "owner GitHub authorization is required; complete the dashboard GitHub device-flow sign-in first", http.StatusConflict)
-		return
+		return "", "", false
 	}
 	authorizer := func(value string) (string, error) {
 		user, validateErr := github.ValidateToken(value, s.deps.Config.GitHub.ResolvedAPIURL())
@@ -102,31 +127,30 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 	username, err := authorizer(token)
 	if err != nil || username == "" {
 		jsonError(w, "saved owner GitHub authorization is invalid; sign in again through the dashboard", http.StatusConflict)
-		return
+		return "", "", false
 	}
 	actor := strings.TrimSpace(r.Header.Get("X-Hive-User"))
 	if actor != "" && !strings.EqualFold(actor, username) {
 		jsonError(w, "the active dashboard owner does not match the saved GitHub setup authorizer", http.StatusForbidden)
-		return
+		return "", "", false
 	}
-
-	action := "integrated_setup_plan"
-	if apply {
-		action = "integrated_setup_apply"
+	repository := strings.TrimSpace(s.deps.Config.Project.PrimaryRepo)
+	if repository == "" && len(s.deps.Config.Project.Repos) > 0 {
+		repository = strings.TrimSpace(s.deps.Config.Project.Repos[0])
 	}
-	result, err := s.deps.IntegratedSetupFunc(r.Context(), request, token)
-	if err != nil {
-		s.auditFromRequest(r, action+"_failed", "", auditDetail("repository", request.Repository, "error_sha256", digestSetupError(err)))
-		jsonError(w, err.Error(), http.StatusConflict)
-		return
+	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repository) {
+		jsonError(w, "the hive has no exact repository configured for the integrated lifecycle", http.StatusConflict)
+		return "", "", false
 	}
-	s.auditFromRequest(r, action, "", auditDetail("repository", request.Repository, "visual_hive_ref", request.VisualHiveRef))
-	jsonResponse(w, result)
+	return token, repository, true
 }
 
 func validateIntegratedSetupRequest(request IntegratedSetupRequest, apply bool) error {
 	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(request.Repository) {
 		return errors.New("the hive has no exact repository configured for integrated setup")
+	}
+	if !integratedRequestIDPattern.MatchString(request.RequestID) {
+		return errors.New("request_id must be 8-128 characters using letters, digits, dot, underscore, colon, or hyphen")
 	}
 	switch request.Coverage {
 	case "essential", "standard", "comprehensive", "custom":

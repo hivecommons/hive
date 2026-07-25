@@ -2,9 +2,8 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -39,9 +38,15 @@ func TestDashboardSetupEnvironmentReplacesOnlyGitHubToken(t *testing.T) {
 func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 	original := dashboardSetupCLIRunner
 	t.Cleanup(func() { dashboardSetupCLIRunner = original })
+	stateDir := filepath.Join(t.TempDir(), "repository-state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
 	planBytes := []byte("{\"applied\":false}\n")
-	planSum := sha256.Sum256(planBytes)
-	planDigest := hex.EncodeToString(planSum[:])
 	var calls [][]string
 	dashboardSetupCLIRunner = func(_ context.Context, args []string, token string) (map[string]any, []byte, error) {
 		if token != "owner-token" {
@@ -54,10 +59,14 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		return map[string]any{"applied": true}, []byte("{\"applied\":true}\n"), nil
 	}
 
-	result, err := runDashboardIntegratedSetup(context.Background(), dashboard.IntegratedSetupRequest{
+	request := dashboard.IntegratedSetupRequest{
+		RequestID:  "setup-cycle-a-001",
 		Repository: "owner/repository", Coverage: "essential", Automation: "repair-pr",
-		Provider: "codex", VisualHiveRef: strings.Repeat("a", 40), ExpectedPlanSHA256: planDigest,
-	}, "owner-token")
+		Provider: "codex", VisualHiveRef: strings.Repeat("a", 40),
+	}
+	planDigest := dashboardSetupPlanDigest(request, planBytes)
+	request.ExpectedPlanSHA256 = planDigest
+	result, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,17 +82,30 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		!reflect.DeepEqual(calls[1], wantBase) {
 		t.Fatalf("unexpected setup arguments: %v", calls)
 	}
+	replay, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
+	if err != nil || replay["idempotent_replay"] != true || len(calls) != 2 {
+		t.Fatalf("replay=%v err=%v calls=%v", replay, err, calls)
+	}
 }
 
 func TestDashboardIntegratedSetupRejectsPlanDriftBeforeApply(t *testing.T) {
 	original := dashboardSetupCLIRunner
 	t.Cleanup(func() { dashboardSetupCLIRunner = original })
+	stateDir := filepath.Join(t.TempDir(), "repository-state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
 	calls := 0
 	dashboardSetupCLIRunner = func(context.Context, []string, string) (map[string]any, []byte, error) {
 		calls++
 		return map[string]any{"applied": false}, []byte("{\"changed\":true}\n"), nil
 	}
 	_, err := runDashboardIntegratedSetup(context.Background(), dashboard.IntegratedSetupRequest{
+		RequestID:  "setup-cycle-a-002",
 		Repository: "owner/repository", Coverage: "essential", Automation: "repair-pr",
 		Provider: "codex", VisualHiveRef: strings.Repeat("a", 40), ExpectedPlanSHA256: strings.Repeat("0", 64),
 	}, "owner-token")

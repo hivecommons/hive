@@ -10,6 +10,7 @@ import (
 
 func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 	server, deps := apiServer(t)
+	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
 	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
 	deps.IntegratedSetupAuthorizerFunc = func(token string) (string, error) {
@@ -22,6 +23,7 @@ func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 	deps.IntegratedSetupFunc = func(_ context.Context, request IntegratedSetupRequest, token string) (map[string]any, error) {
 		called = true
 		if token != "saved-token" || request.Repository != "owner/repository" ||
+			request.RequestID != "setup-cycle-a-001" ||
 			request.Coverage != "essential" || request.Automation != "repair-pr" ||
 			request.Provider != "codex" || request.VisualHiveRef != strings.Repeat("a", 40) ||
 			request.ExpectedPlanSHA256 != "" {
@@ -32,6 +34,7 @@ func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/integrated/setup/plan", strings.NewReader(`{
+		"request_id":"setup-cycle-a-001",
 		"coverage":"essential",
 		"automation":"repair-pr",
 		"provider":"codex",
@@ -49,6 +52,7 @@ func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 
 func TestIntegratedSetupApplyRequiresExactPlanDigest(t *testing.T) {
 	server, deps := apiServer(t)
+	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
 	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
 	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
@@ -57,7 +61,8 @@ func TestIntegratedSetupApplyRequiresExactPlanDigest(t *testing.T) {
 		return nil, nil
 	}
 
-	recorder := doPost(server, "/api/integrated/setup/apply", map[string]any{
+	recorder := doIntegratedPost(server, "/api/integrated/setup/apply", map[string]any{
+		"request_id":      "setup-cycle-a-002",
 		"coverage":        "essential",
 		"automation":      "repair-pr",
 		"provider":        "codex",
@@ -70,6 +75,7 @@ func TestIntegratedSetupApplyRequiresExactPlanDigest(t *testing.T) {
 
 func TestIntegratedSetupRejectsDifferentDashboardActor(t *testing.T) {
 	server, deps := apiServer(t)
+	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
 	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
 	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
@@ -80,6 +86,7 @@ func TestIntegratedSetupRejectsDifferentDashboardActor(t *testing.T) {
 
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/api/integrated/setup/plan", strings.NewReader(`{
+		"request_id":"setup-cycle-a-003",
 		"coverage":"essential",
 		"automation":"repair-pr",
 		"provider":"codex",
@@ -97,6 +104,7 @@ func TestIntegratedSetupRejectsDifferentDashboardActor(t *testing.T) {
 
 func TestIntegratedSetupRejectsReadOnlyViewerAndUnknownFields(t *testing.T) {
 	server, deps := apiServer(t)
+	server.authToken = "dashboard-test-token"
 	deps.Config.Project.PrimaryRepo = "owner/repository"
 	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
 	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
@@ -113,7 +121,8 @@ func TestIntegratedSetupRejectsReadOnlyViewerAndUnknownFields(t *testing.T) {
 		t.Fatalf("viewer status=%d body=%s", viewer.Code, viewer.Body.String())
 	}
 
-	unknown := doPost(server, "/api/integrated/setup/plan", map[string]any{
+	unknown := doIntegratedPost(server, "/api/integrated/setup/plan", map[string]any{
+		"request_id":      "setup-cycle-a-004",
 		"coverage":        "essential",
 		"automation":      "repair-pr",
 		"provider":        "codex",
@@ -122,5 +131,29 @@ func TestIntegratedSetupRejectsReadOnlyViewerAndUnknownFields(t *testing.T) {
 	})
 	if unknown.Code != http.StatusBadRequest || !strings.Contains(unknown.Body.String(), "unknown field") {
 		t.Fatalf("unknown-field status=%d body=%s", unknown.Code, unknown.Body.String())
+	}
+}
+
+func TestIntegratedSetupScrubsSavedTokenFromErrors(t *testing.T) {
+	server, deps := apiServer(t)
+	server.authToken = "dashboard-test-token"
+	deps.Config.Project.PrimaryRepo = "owner/repository"
+	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-setup-token", nil }
+	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
+	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, string) (map[string]any, error) {
+		return nil, &testIntegratedLifecycleError{message: "provider rejected token saved-setup-token and sk-proj-secretvalue"}
+	}
+
+	recorder := doIntegratedPost(server, "/api/integrated/setup/plan", map[string]any{
+		"request_id":      "setup-cycle-a-005",
+		"coverage":        "essential",
+		"automation":      "repair-pr",
+		"provider":        "codex",
+		"visual_hive_ref": strings.Repeat("a", 40),
+	})
+	if recorder.Code != http.StatusConflict ||
+		strings.Contains(recorder.Body.String(), "saved-setup-token") ||
+		strings.Contains(recorder.Body.String(), "secretvalue") {
+		t.Fatalf("scrub status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }

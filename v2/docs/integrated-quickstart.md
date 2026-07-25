@@ -119,7 +119,22 @@ hive setup --repo OWNER/REPOSITORY --coverage comprehensive --automation repair-
 
 Configure that same ordinary Hive process with the exact `HIVE_STATE_DIR` value, ensure its normal project scope contains `OWNER/REPOSITORY`, and keep its existing dashboard listener HTTP-ready. After the managed setup is installed, restart the existing ordinary Hive/dashboard process through its normal Docker, Kubernetes, or service deployment. Use `hive doctor --state-dir /exact/hive-state --json` and `hive status --state-dir /exact/hive-state --json` to verify it. Do not use `hive run` or `hive start` for normal operation in this ownership mode. Use `hive stop` only when status or doctor directs cleanup of a stale legacy scheduler; it does not stop ordinary Hive/dashboard.
 
-Hosted dashboards keep GitHub credentials out of agent terminals. An authenticated owner can instead use the dashboard control-plane endpoints `POST /api/integrated/setup/plan` and `POST /api/integrated/setup/apply`. Both derive the repository from the running Hive configuration, require the saved GitHub device-flow identity to match the active dashboard owner, and invoke the same `hive setup` implementation with `--runtime local`. The plan response returns `plan_sha256`; apply requires that exact digest as `expected_plan_sha256` and re-runs the plan before any mutation. The credential remains in the dashboard process and is never returned, logged, or added to an agent environment. These endpoints do not start a second scheduler; restart the ordinary Hive/dashboard after the managed setup PR merges.
+Hosted dashboards keep GitHub credentials out of agent terminals. An authenticated owner can instead use the bounded dashboard control plane:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /api/integrated/setup/plan` | Read-only setup plan for the dashboard's configured repository |
+| `POST /api/integrated/setup/apply` | Apply the exact setup plan digest |
+| `GET /api/integrated/status` | Read authoritative integrated status |
+| `GET /api/integrated/doctor` | Run production-readiness diagnostics |
+| `POST /api/integrated/baseline/plan` | Bind every pending baseline artifact, PNG, PR, actor, and digest |
+| `POST /api/integrated/baseline/approve` | Apply those exact bindings with an accountable reason |
+| `POST /api/integrated/control/plan` | Plan one `trigger`, `pause`, `resume`, `uninstall`, `uninstall-finalize`, or `uninstall-cancel` transaction |
+| `POST /api/integrated/control/apply` | Apply that exact plan and idempotency key |
+
+Every endpoint derives the repository and state selection from the running Hive configuration, requires the saved GitHub device-flow identity to match the active dashboard owner, rejects unknown request fields, and invokes the same integrated lifecycle used by the CLI/MCP. Setup and control plans require a caller-generated `request_id` and return `plan_sha256`; apply requires that exact request/digest pair and re-reads current state before mutation. Baseline approval repeats every exact value returned by its specialized plan. Mutating requests use durable, owner-only idempotency receipts. The credential remains in the dashboard process, is isolated to the bounded child operation, and is never returned, logged, stored in a receipt, or added to an agent environment. Errors are token-scrubbed and audit records retain only operation bindings and error digests.
+
+The dashboard `trigger` operation wakes the existing normal Visual Hive reconciler inside the ordinary dashboard process. It cannot start a second scheduler, acquire a competing ownership lease, or run while the installation is paused. Restart the ordinary Hive/dashboard after the managed setup PR merges so that this existing reconciler loads the installed contract.
 
 For a KubeStellar Console fork test, use the fork repository, a dedicated normal Hive config/data root/state directory/dashboard port, and `repair-pr` authority. Preserve every existing Console workflow and leave the governed repair PR unmerged. This does not require or authorize any write to upstream Console or its production Hive.
 

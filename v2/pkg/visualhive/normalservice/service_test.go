@@ -300,6 +300,90 @@ func TestNormalServiceLeaseContentionDoesNotRunCycleUntilOwnership(t *testing.T)
 	}
 }
 
+func TestNormalServiceTriggerRunsImmediateCycleThroughExistingLeaseEpoch(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.intake.dispatch = nil
+	firstCycle := make(chan struct{}, 1)
+	service, err := New(Options{
+		StateDir: t.TempDir(), PollInterval: time.Hour,
+		AcquireLease:  func() (func(), error) { return func() {}, nil },
+		ShouldQuiesce: func() (bool, error) { return false, nil },
+		Source:        fixture.source, Intake: fixture.intake, Repairer: fixture.repairer, Verdict: fixture.verifier, PullRequestState: fixture.verifier,
+		OnCycle: func(error) {
+			select {
+			case firstCycle <- struct{}{}:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		service.Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-firstCycle:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("normal service did not complete its initial cycle")
+	}
+	triggerCtx, triggerCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer triggerCancel()
+	if err := service.Trigger(triggerCtx); !errors.Is(err, ErrNoDispatch) {
+		cancel()
+		t.Fatalf("triggered cycle result = %v", err)
+	}
+	if fixture.source.fetches != 2 {
+		cancel()
+		t.Fatalf("trigger did not run exactly one immediate cycle: fetches=%d", fixture.source.fetches)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("normal service did not stop after trigger test")
+	}
+}
+
+func TestNormalServiceTriggerDoesNotBypassQuiescence(t *testing.T) {
+	fixture := newServiceFixture(t)
+	service, err := New(Options{
+		StateDir: t.TempDir(), PollInterval: time.Hour, QuiesceInterval: time.Millisecond,
+		AcquireLease:  func() (func(), error) { t.Fatal("quiesced service acquired a lease"); return nil, nil },
+		ShouldQuiesce: func() (bool, error) { return true, nil },
+		Source:        fixture.source, Intake: fixture.intake, Repairer: fixture.repairer, Verdict: fixture.verifier, PullRequestState: fixture.verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		service.Run(runCtx)
+		close(done)
+	}()
+	triggerCtx, triggerCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer triggerCancel()
+	if err := service.Trigger(triggerCtx); !errors.Is(err, context.DeadlineExceeded) {
+		cancel()
+		t.Fatalf("quiesced trigger result = %v", err)
+	}
+	if fixture.source.fetches != 0 {
+		cancel()
+		t.Fatalf("quiesced trigger touched evidence: fetches=%d", fixture.source.fetches)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("quiesced service did not stop")
+	}
+}
+
 func TestNormalServicePublishesBoundedCycleStartBeforeRunCycle(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.intake.dispatch = nil

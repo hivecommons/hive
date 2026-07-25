@@ -1115,7 +1115,8 @@ func main() {
 			}
 			return nil
 		},
-		IntegratedSetupFunc: runDashboardIntegratedSetup,
+		IntegratedSetupFunc:     runDashboardIntegratedSetup,
+		IntegratedLifecycleFunc: runDashboardIntegratedLifecycle,
 	})
 
 	dashSrv.SetGitHubAppRequired(githubAppRequired)

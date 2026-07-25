@@ -45,6 +45,7 @@ type Dependencies struct {
 	AdvisoryResetFunc             func(newPrimaryRepo string)
 	ReinitGitHubFunc              func(appID, installationID int64, keyFile string) error
 	IntegratedSetupFunc           func(context.Context, IntegratedSetupRequest, string) (map[string]any, error)
+	IntegratedLifecycleFunc       func(context.Context, IntegratedLifecycleRequest, string) (map[string]any, error)
 	IntegratedSetupTokenFunc      func() (string, error)
 	IntegratedSetupAuthorizerFunc func(string) (string, error)
 }

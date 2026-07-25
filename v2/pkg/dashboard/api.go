@@ -82,6 +82,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/gh-user-auth/session", s.handleGHUserAuthSession)
 	s.mux.HandleFunc("POST /api/integrated/setup/plan", s.handleIntegratedSetupPlan)
 	s.mux.HandleFunc("POST /api/integrated/setup/apply", s.handleIntegratedSetupApply)
+	s.mux.HandleFunc("GET /api/integrated/status", s.handleIntegratedStatus)
+	s.mux.HandleFunc("GET /api/integrated/doctor", s.handleIntegratedDoctor)
+	s.mux.HandleFunc("POST /api/integrated/baseline/plan", s.handleIntegratedBaselinePlan)
+	s.mux.HandleFunc("POST /api/integrated/baseline/approve", s.handleIntegratedBaselineApprove)
+	s.mux.HandleFunc("POST /api/integrated/control/plan", s.handleIntegratedControlPlan)
+	s.mux.HandleFunc("POST /api/integrated/control/apply", s.handleIntegratedControlApply)
 
 	s.registerClaudeAuthRoutes()
 	s.registerCopilotAuthRoutes()

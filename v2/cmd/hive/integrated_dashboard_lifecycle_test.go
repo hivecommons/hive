@@ -1,0 +1,336 @@
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/dashboard"
+	"github.com/kubestellar/hive/v2/pkg/hostedcontrol"
+	"github.com/kubestellar/hive/v2/pkg/integrated"
+	"github.com/kubestellar/hive/v2/pkg/visualhive/normalservice"
+)
+
+func writeDashboardLifecycleContract(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "repository-state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := integrated.NewStore(filepath.Join(stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(integrated.Config{
+		Repository: "owner/repository", RepositoryID: "123", StateDir: stateDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+	return stateDir
+}
+
+func installDashboardLifecycleFakes(t *testing.T) {
+	t.Helper()
+	originalRunner := dashboardLifecycleCLIRunner
+	originalTrigger := dashboardLifecycleTrigger
+	t.Cleanup(func() {
+		dashboardLifecycleCLIRunner = originalRunner
+		dashboardLifecycleTrigger = originalTrigger
+	})
+}
+
+func TestDashboardIntegratedLifecycleStatusUsesAuthoritativeState(t *testing.T) {
+	stateDir := writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	var gotArgs []string
+	dashboardLifecycleCLIRunner = func(_ context.Context, args []string, token string, allowNonzero bool) (map[string]any, []byte, error) {
+		gotArgs = append([]string(nil), args...)
+		if token != "owner-token" || allowNonzero {
+			t.Fatalf("runner token=%q allowNonzero=%t", token, allowNonzero)
+		}
+		return map[string]any{"schema_version": "hive.status.v1"}, []byte(`{"schema_version":"hive.status.v1"}`), nil
+	}
+	result, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "status",
+	}, "owner-token")
+	if err != nil || result["schema_version"] != "hive.status.v1" {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+	want := []string{"status", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN"}
+	if !reflect.DeepEqual(gotArgs, want) {
+		t.Fatalf("status args=%v want=%v", gotArgs, want)
+	}
+}
+
+func TestDashboardIntegratedControlPlanApplyAndReplay(t *testing.T) {
+	stateDir := writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	statusCalls := 0
+	pauseCalls := 0
+	dashboardLifecycleCLIRunner = func(_ context.Context, args []string, token string, _ bool) (map[string]any, []byte, error) {
+		if token != "owner-token" {
+			t.Fatalf("runner token=%q", token)
+		}
+		switch args[0] {
+		case "status":
+			statusCalls++
+			return map[string]any{
+				"schema_version": "hive.status.v1",
+				"paused":         false,
+				"config":         map[string]any{"repository": "owner/repository"},
+				"health_message": fmt.Sprintf("last activity %d seconds ago", statusCalls),
+			}, []byte(fmt.Sprintf(`{"paused":false,"health_message":"last activity %d seconds ago"}`, statusCalls)), nil
+		case "pause":
+			pauseCalls++
+			return map[string]any{"repository": "owner/repository", "paused": true}, []byte(`{"paused":true}`), nil
+		default:
+			t.Fatalf("unexpected command %v", args)
+			return nil, nil, nil
+		}
+	}
+	base := dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-plan", Action: "pause", RequestID: "cycle-a-pause-001",
+	}
+	plan, err := runDashboardIntegratedLifecycle(context.Background(), base, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	planSHA, _ := plan["plan_sha256"].(string)
+	if len(planSHA) != 64 {
+		t.Fatalf("plan=%v", plan)
+	}
+	base.Operation = "control-apply"
+	base.ExpectedPlanSHA256 = planSHA
+	first, err := runDashboardIntegratedLifecycle(context.Background(), base, "owner-token")
+	if err != nil || first["paused"] != true {
+		t.Fatalf("first=%v err=%v", first, err)
+	}
+	if statusCalls != 2 {
+		t.Fatalf("control apply did not re-read stable status: calls=%d", statusCalls)
+	}
+	replay, err := runDashboardIntegratedLifecycle(context.Background(), base, "owner-token")
+	if err != nil || replay["idempotent_replay"] != true || pauseCalls != 1 {
+		t.Fatalf("replay=%v err=%v pauseCalls=%d", replay, err, pauseCalls)
+	}
+	ledger, err := loadDashboardLifecycleLedger(stateDir)
+	if err != nil || len(ledger.Entries) != 1 || ledger.Entries[0].Status != "completed" {
+		t.Fatalf("ledger=%+v err=%v", ledger, err)
+	}
+	paths, err := hostedcontrol.PortableInventory(stateDir)
+	if err != nil {
+		t.Fatalf("dashboard receipt broke portable state: %v", err)
+	}
+	for _, path := range paths {
+		if path == "integrated/dashboard-control-requests.json" {
+			t.Fatalf("operational dashboard receipt leaked into portable repository state: %v", paths)
+		}
+	}
+	ledgerPath, err := dashboardLifecycleLedgerPath(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(ledgerPath); err != nil || runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("dashboard receipt path is not private: info=%v err=%v", info, err)
+	}
+}
+
+func TestDashboardIntegratedControlRejectsPlanDrift(t *testing.T) {
+	writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	dashboardLifecycleCLIRunner = func(context.Context, []string, string, bool) (map[string]any, []byte, error) {
+		return map[string]any{"schema_version": "hive.status.v1"}, []byte(`{"schema_version":"hive.status.v1"}`), nil
+	}
+	_, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-apply", Action: "trigger",
+		RequestID: "cycle-a-trigger-001", ExpectedPlanSHA256: strings.Repeat("0", 64),
+	}, "owner-token")
+	if err == nil || !strings.Contains(err.Error(), "plan changed") {
+		t.Fatalf("plan drift err=%v", err)
+	}
+}
+
+func TestDashboardIntegratedControlRecoversStaleReceiptWithoutReplanning(t *testing.T) {
+	stateDir := writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	planSHA := strings.Repeat("a", 64)
+	if err := saveDashboardLifecycleLedger(stateDir, dashboardLifecycleLedger{
+		SchemaVersion: dashboardLifecycleLedgerSchema,
+		Entries: []dashboardLifecycleRequestRecord{{
+			RequestID:  "cycle-a-pause-stale-001",
+			Operation:  "pause",
+			PlanSHA256: planSHA,
+			Status:     "started",
+			StartedAt:  time.Now().UTC().Add(-56 * time.Minute),
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	statusCalls := 0
+	pauseCalls := 0
+	dashboardLifecycleCLIRunner = func(_ context.Context, args []string, _ string, _ bool) (map[string]any, []byte, error) {
+		switch args[0] {
+		case "status":
+			statusCalls++
+			return map[string]any{"paused": true}, []byte(`{"paused":true}`), nil
+		case "pause":
+			pauseCalls++
+			return map[string]any{"paused": true}, []byte(`{"paused":true}`), nil
+		default:
+			t.Fatalf("unexpected command %v", args)
+			return nil, nil, nil
+		}
+	}
+	result, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-apply", Action: "pause",
+		RequestID: "cycle-a-pause-stale-001", ExpectedPlanSHA256: planSHA,
+	}, "owner-token")
+	if err != nil || result["paused"] != true {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+	if statusCalls != 0 || pauseCalls != 1 {
+		t.Fatalf("statusCalls=%d pauseCalls=%d", statusCalls, pauseCalls)
+	}
+	replay, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-apply", Action: "pause",
+		RequestID: "cycle-a-pause-stale-001", ExpectedPlanSHA256: planSHA,
+	}, "owner-token")
+	if err != nil || replay["idempotent_replay"] != true || pauseCalls != 1 {
+		t.Fatalf("replay=%v err=%v pauseCalls=%d", replay, err, pauseCalls)
+	}
+}
+
+func TestDashboardIntegratedTriggerUsesExistingNormalService(t *testing.T) {
+	writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	statusBytes := []byte(`{"schema_version":"hive.status.v1"}`)
+	dashboardLifecycleCLIRunner = func(context.Context, []string, string, bool) (map[string]any, []byte, error) {
+		return map[string]any{"schema_version": "hive.status.v1"}, statusBytes, nil
+	}
+	triggerCalls := 0
+	dashboardLifecycleTrigger = func(context.Context) error {
+		triggerCalls++
+		return normalservice.ErrNoDispatch
+	}
+	request := dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-plan", Action: "trigger", RequestID: "cycle-a-trigger-002",
+	}
+	plan, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Operation = "control-apply"
+	request.ExpectedPlanSHA256 = plan["plan_sha256"].(string)
+	result, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil || result["outcome"] != "held" || triggerCalls != 1 {
+		t.Fatalf("result=%v err=%v calls=%d", result, err, triggerCalls)
+	}
+}
+
+func TestDashboardBaselineApprovalBindsExactCLIArgumentsAndReceipt(t *testing.T) {
+	stateDir := writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	var gotArgs []string
+	dashboardLifecycleCLIRunner = func(_ context.Context, args []string, token string, allowNonzero bool) (map[string]any, []byte, error) {
+		gotArgs = append([]string(nil), args...)
+		return map[string]any{"schema_version": "hive.baseline-approval.v1"}, []byte(`{"schema_version":"hive.baseline-approval.v1"}`), nil
+	}
+	approval := &dashboard.IntegratedBaselineApprovalRequest{
+		RequestID: "baseline-cycle-a-001", RepositoryID: "123", CaptureRunID: 41, ArtifactID: 42, PRNumber: 17,
+		HeadSHA: strings.Repeat("a", 40), BaseSHA: strings.Repeat("b", 40), DiffDigest: strings.Repeat("c", 64),
+		CandidateDigest: strings.Repeat("d", 64), ActorID: 99, PlanDigest: strings.Repeat("e", 64),
+		Reason: "Reviewed every exact candidate PNG at original resolution.",
+	}
+	result, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "baseline-approve", Baseline: approval,
+	}, "owner-token")
+	if err != nil || result["schema_version"] != "hive.baseline-approval.v1" {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+	required := []string{
+		"approve-baseline", "--state-dir", stateDir, "--repo-id", "123", "--run-id", "41", "--artifact-id", "42",
+		"--pr", "17", "--head", approval.HeadSHA, "--base", approval.BaseSHA, "--diff-digest", approval.DiffDigest,
+		"--candidate-digest", approval.CandidateDigest, "--actor-id", "99", "--plan-digest", approval.PlanDigest,
+		"--reason", approval.Reason, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
+	}
+	if !reflect.DeepEqual(gotArgs, required) {
+		t.Fatalf("baseline args=%v want=%v", gotArgs, required)
+	}
+	ledger, err := loadDashboardLifecycleLedger(stateDir)
+	if err != nil || len(ledger.Entries) != 1 || ledger.Entries[0].RequestID != approval.RequestID {
+		t.Fatalf("ledger=%+v err=%v", ledger, err)
+	}
+}
+
+func TestDashboardLifecycleMutationFailureIsDurablyBound(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "repository-state")
+	sum := sha256.Sum256([]byte("test plan"))
+	plan := hex.EncodeToString(sum[:])
+	calls := 0
+	_, err := runDashboardLifecycleMutation(stateDir, "failure-request-001", "pause", plan, func() (map[string]any, error) {
+		calls++
+		return nil, errors.New("bounded failure")
+	})
+	if err == nil {
+		t.Fatal("mutation failure was hidden")
+	}
+	_, replayErr := runDashboardLifecycleMutation(stateDir, "failure-request-001", "pause", plan, func() (map[string]any, error) {
+		calls++
+		return map[string]any{"unexpected": true}, nil
+	})
+	if replayErr == nil || calls != 1 || !strings.Contains(replayErr.Error(), "already failed") {
+		t.Fatalf("replayErr=%v calls=%d", replayErr, calls)
+	}
+}
+
+func TestDashboardLifecycleFinalizationReceiptDoesNotRecreateDeletedState(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "repository-state")
+	if err := os.MkdirAll(filepath.Join(stateDir, "integrated"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	plan := strings.Repeat("f", 64)
+	calls := 0
+	result, err := runDashboardLifecycleMutation(stateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
+		calls++
+		if err := os.RemoveAll(stateDir); err != nil {
+			return nil, err
+		}
+		return map[string]any{"uninstalled": true}, nil
+	})
+	if err != nil || result["uninstalled"] != true {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
+		t.Fatalf("finalization receipt recreated deleted state: err=%v", err)
+	}
+	replay, err := runDashboardLifecycleMutation(stateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
+		calls++
+		return nil, errors.New("replayed finalization")
+	})
+	if err != nil || replay["idempotent_replay"] != true || calls != 1 {
+		t.Fatalf("replay=%v err=%v calls=%d", replay, err, calls)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+	fullReplay, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-apply", Action: "uninstall-finalize",
+		RequestID: "uninstall-cycle-a-finalize-001", ExpectedPlanSHA256: plan,
+	}, "owner-token")
+	if err != nil || fullReplay["idempotent_replay"] != true {
+		t.Fatalf("full replay after contract deletion=%v err=%v", fullReplay, err)
+	}
+}
