@@ -567,6 +567,19 @@ func validateManagedIntegratedStateInventory(integratedDir, stateDir string, con
 		if entry.IsDir() && entry.Name() == "checkouts" {
 			continue
 		}
+		if entry.IsDir() && entry.Name() == "checkout" {
+			if strings.TrimSpace(config.CheckoutDir) == "" || !sameFilesystemPath(path, config.CheckoutDir) {
+				return fmt.Errorf("refusing to delete current managed checkout outside the exact configured path")
+			}
+			exists, checkoutErr := validateManagedCheckoutBeforeGit(path, config.Repository)
+			if checkoutErr != nil {
+				return fmt.Errorf("refusing to delete current managed checkout without exact ownership: %w", checkoutErr)
+			}
+			if !exists {
+				return fmt.Errorf("refusing to delete missing current managed checkout")
+			}
+			continue
+		}
 		if !entry.IsDir() && info.Mode().IsRegular() && allowedFiles[entry.Name()] {
 			continue
 		}

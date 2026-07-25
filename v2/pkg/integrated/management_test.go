@@ -117,6 +117,86 @@ func TestDeleteManagedStateRejectsUnrelatedIntegratedBytes(t *testing.T) {
 	}
 }
 
+func TestDeleteManagedStateAcceptsExactCurrentCheckout(t *testing.T) {
+	managed := t.TempDir()
+	checkout := filepath.Join(managed, "integrated", "checkout")
+	writeManagedDeletionConfig(t, managed, checkout)
+	writeFixture(t, managed, stateOwnershipMarkerFile, `{"schema_version":"hive.state-owner.v1","repository":"owner/repo","repository_id":"123"}`)
+	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedCheckoutOwner(checkout, "owner/repo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteManagedState(managed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatalf("managed state root still exists: %v", err)
+	}
+}
+
+func TestDeleteManagedStateRejectsUnownedOrMismatchedCurrentCheckout(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*testing.T, string, string)
+	}{
+		{name: "missing ownership marker", prepare: func(t *testing.T, _ string, checkout string) {
+			if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "wrong repository", prepare: func(t *testing.T, _ string, checkout string) {
+			if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeManagedCheckoutOwner(checkout, "other/repo"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "wrong configured path", prepare: func(t *testing.T, managed, checkout string) {
+			if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeManagedCheckoutOwner(checkout, "owner/repo"); err != nil {
+				t.Fatal(err)
+			}
+			writeManagedDeletionConfig(t, managed, filepath.Join(managed, "integrated", "other-checkout"))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			managed := t.TempDir()
+			checkout := filepath.Join(managed, "integrated", "checkout")
+			writeManagedDeletionConfig(t, managed, checkout)
+			writeFixture(t, managed, stateOwnershipMarkerFile, `{"schema_version":"hive.state-owner.v1","repository":"owner/repo","repository_id":"123"}`)
+			test.prepare(t, managed, checkout)
+			if err := deleteManagedState(managed); err == nil {
+				t.Fatal("unsafe current checkout authorized state deletion")
+			}
+			if _, err := os.Stat(managed); err != nil {
+				t.Fatalf("unsafe state root was changed: %v", err)
+			}
+		})
+	}
+}
+
+func writeManagedDeletionConfig(t *testing.T, managed, checkout string) {
+	t.Helper()
+	value := Config{
+		SchemaVersion: "hive.integrated-config.v1",
+		Repository:    "owner/repo",
+		RepositoryID:  "123",
+		StateDir:      managed,
+		CheckoutDir:   checkout,
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, managed, "integrated/config.json", string(data))
+}
+
 func TestDeleteManagedStateRequiresOwnershipMarkerEvenForLegacyConfig(t *testing.T) {
 	managed := t.TempDir()
 	writeFixture(t, managed, "integrated/config.json", `{"schema_version":"hive.integrated-config.v1","repository":"owner/repo","repository_id":"123"}`)
