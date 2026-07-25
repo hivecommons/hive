@@ -35,13 +35,13 @@ func TestCovACfg_General_AllFields(t *testing.T) {
 		"displayName":     "Scanner",
 		"description":     "desc",
 		"launchCmd":       "run",
-		"staleTimeout":    float64(30),
-		"restartStrategy": "always",
+		"staleTimeout":    float64(300),
+		"restartStrategy": "immediate",
 		"cliPinned":       true,
 		"emoji":           "🔍",
 		"color":           "#fff",
 		"sortOrder":       float64(2),
-		"beadRole":        "role",
+		"beadRole":        "worker",
 		"role":            "worker",
 		"kickTemplate":    "scanner.md",
 		"mode":            "ISSUES_ONLY",
@@ -150,9 +150,12 @@ func TestCovACfg_Export(t *testing.T) {
 		t.Fatalf("export json: %d", rec.Code)
 	}
 	// YAML response via Accept header.
-	rec := newReq(s, http.MethodGet, "/api/config/agent/scanner/export", "", map[string]string{"Accept": "text/yaml"})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("export yaml: %d", rec.Code)
+	yrec := httptest.NewRecorder()
+	yreq := httptest.NewRequest(http.MethodGet, "/api/config/agent/scanner/export", nil)
+	yreq.Header.Set("Accept", "text/yaml")
+	s.mux.ServeHTTP(yrec, yreq)
+	if yrec.Code != http.StatusOK {
+		t.Fatalf("export yaml: %d", yrec.Code)
 	}
 	// Unknown agent → 404.
 	if rec := doGet(s, "/api/config/agent/ghost/export"); rec.Code != http.StatusNotFound {
