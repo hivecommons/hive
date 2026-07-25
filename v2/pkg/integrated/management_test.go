@@ -241,6 +241,17 @@ func TestDeleteManagedStateRejectsUnsafeDaemonFiles(t *testing.T) {
 		{name: "malformed lease", mutate: func(t *testing.T, root string) {
 			writeFixture(t, root, "integrated/daemon.lease", `{"schema_version":"wrong"}`)
 		}},
+		{name: "normal visual lease for another state", mutate: func(t *testing.T, root string) {
+			writeJSONDeletionFixture(t, root, "integrated/daemon.lease", map[string]any{
+				"schema_version":    "hive.normal-visual-daemon-lease.v1",
+				"pid":               53036,
+				"state_dir":         filepath.Join(t.TempDir(), "other-state"),
+				"executable":        filepath.Join(root, "hive"),
+				"hive_commit":       strings.Repeat("a", 40),
+				"executable_sha256": strings.Repeat("b", 64),
+				"acquired_at":       "2026-07-12T09:53:01.9417791Z",
+			})
+		}},
 		{name: "oversized log", mutate: func(t *testing.T, root string) {
 			path := filepath.Join(root, "integrated", "daemon.log")
 			if err := os.Truncate(path, managedDaemonLogMaxBytes+1); err != nil {
@@ -283,6 +294,27 @@ func writeStoppedDaemonDeletionFixture(t *testing.T, root, repository string) {
 		"acquired_at":       "2026-07-12T09:53:01.9417791Z",
 	})
 	writeFixture(t, root, "integrated/daemon.log", "stopped scheduler output\n")
+}
+
+func TestDeleteManagedStateAcceptsStoppedNormalVisualLeaseForExactState(t *testing.T) {
+	managed := newManagedDeletionFixture(t)
+	writeDaemonDeletionStatus(t, managed, "owner/repo", managed)
+	writeJSONDeletionFixture(t, managed, "integrated/daemon.lease", map[string]any{
+		"schema_version":    "hive.normal-visual-daemon-lease.v1",
+		"pid":               53036,
+		"state_dir":         managed,
+		"executable":        filepath.Join(managed, "hive"),
+		"hive_commit":       strings.Repeat("a", 40),
+		"executable_sha256": strings.Repeat("b", 64),
+		"acquired_at":       "2026-07-12T09:53:01.9417791Z",
+	})
+	writeFixture(t, managed, "integrated/daemon.log", "stopped normal Visual service output\n")
+	if err := deleteManagedState(managed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatalf("managed state still exists after exact normal Visual lease deletion: %v", err)
+	}
 }
 
 func writeDaemonDeletionStatus(t *testing.T, root, repository, stateDir string) {

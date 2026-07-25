@@ -392,6 +392,7 @@ func main() {
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 	var normalVisualWorkOwnership *os.File
 	var normalVisualDashboardReadiness *normalVisualDashboardGate
+	defer func() { dashboardLifecycleStopNormalVisual = nil }()
 	defer shutdownOrdinaryVisualRuntime(cancel, agentMgr, func() {
 		if normalVisualDashboardReadiness != nil {
 			if err := normalVisualDashboardReadiness.Stop(); err != nil {
@@ -676,6 +677,9 @@ func main() {
 						normalVisualWorkService = service
 						normalVisualWorkOwnership = ownership
 						normalVisualDashboardReadiness = candidateDashboardReadiness
+						dashboardLifecycleStopNormalVisual = func(context.Context) error {
+							return errors.New("normal Visual Hive runtime initialization is not complete")
+						}
 						logger.Info("normal Visual Hive intake and governed repair service initialized with exclusive ordinary-Manager ownership", "repository", installed.Repository)
 					}
 				}
@@ -2113,7 +2117,32 @@ func main() {
 		} else if err := normalVisualWorkHealthWriter.Initialize(); err != nil {
 			logger.Error("normal Visual Hive service will not start without a generation-bound health record", "error", err)
 		} else {
-			go normalVisualWorkRunner.Run(ctx)
+			runner := normalVisualWorkRunner
+			runnerContext, cancelRunner := context.WithCancel(ctx)
+			runnerDone := make(chan struct{})
+			stopper := &normalVisualRuntimeStopper{
+				cancel:  cancelRunner,
+				done:    runnerDone,
+				manager: agentMgr,
+				logger:  logger,
+				releaseOwnership: func() {
+					if normalVisualDashboardReadiness != nil {
+						if err := normalVisualDashboardReadiness.Stop(); err != nil {
+							logger.Warn("remove normal Visual Hive dashboard readiness during uninstall", "error", err)
+						}
+						normalVisualDashboardReadiness = nil
+					}
+					releaseDaemonLease(normalVisualWorkOwnership)
+					normalVisualWorkOwnership = nil
+					normalVisualWorkRunner = nil
+					normalVisualWorkHealthWriter = nil
+				},
+			}
+			dashboardLifecycleStopNormalVisual = stopper.Stop
+			go func() {
+				defer close(runnerDone)
+				runner.Run(runnerContext)
+			}()
 		}
 	}
 

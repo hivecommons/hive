@@ -24,9 +24,10 @@ import (
 const dashboardLifecycleLedgerSchema = "hive.dashboard-integrated-requests.v1"
 
 var (
-	dashboardLifecycleCLIRunner = runDashboardLifecycleCLI
-	dashboardLifecycleTrigger   = triggerDashboardVisualCycle
-	dashboardLifecycleMu        sync.Mutex
+	dashboardLifecycleCLIRunner        = runDashboardLifecycleCLI
+	dashboardLifecycleTrigger          = triggerDashboardVisualCycle
+	dashboardLifecycleStopNormalVisual func(context.Context) error
+	dashboardLifecycleMu               sync.Mutex
 )
 
 type dashboardLifecycleLedger struct {
@@ -240,6 +241,11 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			}, token, false)
 			return result, runErr
 		case "uninstall", "uninstall-finalize", "uninstall-cancel":
+			if request.Action == "uninstall-finalize" && dashboardLifecycleStopNormalVisual != nil {
+				if stopErr := dashboardLifecycleStopNormalVisual(ctx); stopErr != nil {
+					return nil, fmt.Errorf("quiesce normal Visual Hive runtime before uninstall finalization: %w", stopErr)
+				}
+			}
 			args := []string{"uninstall", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN"}
 			switch request.Action {
 			case "uninstall-finalize":

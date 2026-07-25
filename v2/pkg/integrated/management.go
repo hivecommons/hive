@@ -537,6 +537,7 @@ type managedDaemonDeletionStatus struct {
 type managedDaemonDeletionLease struct {
 	SchemaVersion    string    `json:"schema_version"`
 	PID              int       `json:"pid"`
+	StateDir         string    `json:"state_dir,omitempty"`
 	Executable       string    `json:"executable"`
 	HiveCommit       string    `json:"hive_commit,omitempty"`
 	ExecutableSHA256 string    `json:"executable_sha256,omitempty"`
@@ -626,7 +627,13 @@ func validateManagedDaemonDeletionFile(path, name, stateDir string, config Confi
 		if err := decodeStrictManagedDaemonJSON(data, &lease); err != nil {
 			return fmt.Errorf("refusing to delete invalid daemon lease: %w", err)
 		}
-		validSchema := lease.SchemaVersion == "hive.integrated-daemon-lease.v1" || (lease.SchemaVersion == "hive.integrated-daemon-lease.v2" && immutableCommit.MatchString(lease.HiveCommit) && setupAuthorizationDigest.MatchString(lease.ExecutableSHA256))
+		validIntegratedSchema := lease.SchemaVersion == "hive.integrated-daemon-lease.v1" ||
+			(lease.SchemaVersion == "hive.integrated-daemon-lease.v2" && immutableCommit.MatchString(lease.HiveCommit) && setupAuthorizationDigest.MatchString(lease.ExecutableSHA256))
+		validNormalVisualSchema := lease.SchemaVersion == "hive.normal-visual-daemon-lease.v1" &&
+			sameFilesystemPath(lease.StateDir, stateDir) &&
+			immutableCommit.MatchString(lease.HiveCommit) &&
+			setupAuthorizationDigest.MatchString(lease.ExecutableSHA256)
+		validSchema := validIntegratedSchema || validNormalVisualSchema
 		if !validSchema || lease.PID <= 0 || strings.TrimSpace(lease.Executable) == "" || lease.AcquiredAt.IsZero() {
 			return fmt.Errorf("refusing to delete daemon lease with an invalid managed binding")
 		}
