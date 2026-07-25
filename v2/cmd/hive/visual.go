@@ -56,6 +56,7 @@ func runVisualCommand(args []string) int {
 	flags.SetOutput(os.Stderr)
 	bundlePath := flags.String("bundle", "", "path to a Visual Hive bundle manifest")
 	beadsDir := flags.String("beads-dir", "/data/beads/quality", "target Hive beads directory")
+	beadsRoot := flags.String("beads-root", "", "route imported beads by actor under this Hive beads root")
 	maxACMM := flags.Int("max-acmm", 3, "maximum ACMM level this Hive permits")
 	allowLocal := flags.Bool("allow-local", false, "allow explicit local proof bundles (never use for an untrusted artifact)")
 	flags.Bool("json", false, "emit machine-readable JSON")
@@ -73,12 +74,17 @@ func runVisualCommand(args []string) int {
 	}
 	output := visualImportOutput{Validation: bundle.Validation}
 	if action == "apply" {
-		store, err := beads.NewStore(*beadsDir)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "open beads store:", err)
-			return 1
+		var result beads.BatchResult
+		var err error
+		if strings.TrimSpace(*beadsRoot) != "" {
+			result, err = bundle.ImportByActor(*beadsRoot)
+		} else {
+			var store *beads.Store
+			store, err = beads.NewStore(*beadsDir)
+			if err == nil {
+				result, err = bundle.Import(store)
+			}
 		}
-		result, err := bundle.Import(store)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "import visual evidence:", err)
 			return 1

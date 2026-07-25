@@ -15,11 +15,11 @@ const beadPollIntervalS = 30
 
 // BeadWatcher polls bead stores and triggers agents based on match criteria.
 type BeadWatcher struct {
-	mgr     *Manager
-	mu      sync.Mutex
-	agents  map[string]config.AgentConfig
-	seen    map[string]bool
-	cancel  context.CancelFunc
+	mgr    *Manager
+	mu     sync.Mutex
+	agents map[string]config.AgentConfig
+	seen   map[string]bool
+	cancel context.CancelFunc
 }
 
 // NewBeadWatcher creates a new bead watcher.
@@ -134,9 +134,13 @@ func (b *BeadWatcher) matchesBead(path string, match map[string]string) bool {
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return false
 	}
+	fields := metadata
+	if nested, ok := metadata["metadata"].(map[string]interface{}); ok {
+		fields = nested
+	}
 
 	for key, expected := range match {
-		val, ok := metadata[key]
+		val, ok := fields[key]
 		if !ok {
 			return false
 		}
