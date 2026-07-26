@@ -122,13 +122,7 @@ func resolveIntegratedCodexHome() string {
 
 func specialistAgentConfigs(model string) map[string]config.AgentConfig {
 	agents := make(map[string]config.AgentConfig, 5)
-	for _, role := range []agent.SpecialistRole{
-		agent.SpecialistQuality,
-		agent.SpecialistCIMaintainer,
-		agent.SpecialistSecurity,
-		agent.SpecialistArchitect,
-		agent.SpecialistScanner,
-	} {
+	for _, role := range specialistRuntimeRoles() {
 		name := string(role)
 		agents[name] = config.AgentConfig{
 			ID: name, Backend: "codex", Model: model, Enabled: true,
@@ -136,6 +130,16 @@ func specialistAgentConfigs(model string) map[string]config.AgentConfig {
 		}
 	}
 	return agents
+}
+
+func specialistRuntimeRoles() []agent.SpecialistRole {
+	return []agent.SpecialistRole{
+		agent.SpecialistQuality,
+		agent.SpecialistCIMaintainer,
+		agent.SpecialistSecurity,
+		agent.SpecialistArchitect,
+		agent.SpecialistScanner,
+	}
 }
 
 func (runtimeState *integratedSpecialistRuntime) matches(stateDir string, durable integrated.Config) error {
