@@ -149,8 +149,11 @@ func validateV3ManifestJSONPresence(data []byte) error {
 	if err := json.Unmarshal(root["observations"], &observations); err != nil {
 		return fmt.Errorf("bundle v3 observations must be an array of objects")
 	}
-	observationFields := []string{"fingerprint", "repositoryFingerprint", "publicationRole", "rootCauseKey", "blockedByRootKeys", "state", "issueKind", "severity", "owningAgentHint", "title", "body", "labels", "sourceArtifacts", "affectedContracts", "validationCommand", "observedAt", "firstSeenAt", "sourceArtifact"}
 	for index, observation := range observations {
+		observationFields := []string{"fingerprint", "repositoryFingerprint", "publicationRole", "rootCauseKey", "blockedByRootKeys", "state", "issueKind", "severity", "owningAgentHint", "title", "body", "labels", "sourceArtifacts", "affectedContracts", "validationCommand", "observedAt", "firstSeenAt", "sourceArtifact"}
+		if _, present := observation["affectedFiles"]; present {
+			observationFields = append(observationFields, "affectedFiles")
+		}
 		if err := requireJSONFields(observation, fmt.Sprintf("bundle v3 observations[%d]", index), observationFields...); err != nil {
 			return err
 		}
@@ -843,6 +846,9 @@ func digestV3BundleContent(m Manifest) string {
 		record.array("labels", observation.Labels)
 		record.array("sourceArtifacts", observation.SourceArtifacts)
 		record.array("affectedContracts", observation.AffectedContracts)
+		if observation.AffectedFiles != nil {
+			record.array("affectedFiles", observation.AffectedFiles)
+		}
 		record.scalar("validationCommand", observation.ValidationCommand)
 		record.scalar("observedAt", observation.ObservedAt)
 		record.scalar("firstSeenAt", observation.FirstSeenAt)

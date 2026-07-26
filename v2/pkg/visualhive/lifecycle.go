@@ -67,6 +67,7 @@ type FindingLifecycle struct {
 	Body                           string                           `json:"body"`
 	Labels                         []string                         `json:"labels"`
 	AffectedContracts              []string                         `json:"affected_contracts"`
+	AffectedFiles                  []string                         `json:"affected_files,omitempty"`
 	ValidationCommand              string                           `json:"validation_command"`
 	HumanReviewRequired            bool                             `json:"human_review_required"`
 	ObservationHumanReviewRequired bool                             `json:"observation_human_review_required"`
@@ -801,6 +802,7 @@ func (s *LifecycleStore) ResolveImportPlanWorks(plan VerifiedImportPlan, options
 				Title: finding.Title, Body: finding.Body, Labels: append([]string(nil), finding.Labels...), Role: route.Role,
 				RoutingReason: "persisted lifecycle owner omitted from exhaustive verified inventory: " + route.Reason, RoutingAllowed: route.DispatchAllowed,
 				AffectedContracts: append([]string(nil), finding.AffectedContracts...), KnowledgeKeywordState: "unavailable_no_verified_facts",
+				AffectedFiles:      append([]string(nil), finding.AffectedFiles...),
 				ValidationCommands: validation, ReproductionCommands: append([]string(nil), validation...), ReproductionSource: "persisted_verified_observation_validation_command",
 				Authority: VisualWorkAuthority{ProposalOnly: true},
 			}
@@ -913,7 +915,7 @@ func controllerFindingBatchInput(manifest Manifest, finding *FindingLifecycle, r
 			"visual_hive_issue_kind": finding.IssueKind, "visual_hive_severity": finding.Severity,
 			"visual_hive_publication_role": finding.PublicationRole, "visual_hive_root_cause_key": finding.RootCauseKey,
 			"visual_hive_blocked_by_root_keys": append([]string(nil), finding.BlockedByRootKeys...),
-			"visual_hive_affected_contracts":   append([]string(nil), finding.AffectedContracts...), "visual_hive_validation_commands": validation,
+			"visual_hive_affected_contracts":   append([]string(nil), finding.AffectedContracts...), "visual_hive_affected_files": append([]string(nil), finding.AffectedFiles...), "visual_hive_validation_commands": validation,
 			"visual_hive_route_role": role, "visual_hive_route_reason": routingReason, "visual_hive_route_allowed": routingAllowed,
 			"hive_proposal_only": true, "hive_github_write_allowed": false, "hive_merge_allowed": false,
 			"hive_baseline_changes_allowed": false, "hive_baseline_approval_allowed": false,
@@ -2252,6 +2254,7 @@ func updateFindingFromObservation(finding *FindingLifecycle, manifest Manifest, 
 	finding.Body = observation.Body
 	finding.Labels = append([]string(nil), observation.Labels...)
 	finding.AffectedContracts = append([]string(nil), observation.AffectedContracts...)
+	finding.AffectedFiles = append([]string(nil), observation.AffectedFiles...)
 	finding.ValidationCommand = observation.ValidationCommand
 	finding.ObservationHumanReviewRequired = observationNeedsHumanReview(observation)
 	finding.HumanReviewRequired = finding.ObservationHumanReviewRequired || finding.ManualReviewKind != ""

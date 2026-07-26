@@ -98,6 +98,7 @@ type Observation struct {
 	Labels                []string `json:"labels"`
 	SourceArtifacts       []string `json:"sourceArtifacts"`
 	AffectedContracts     []string `json:"affectedContracts"`
+	AffectedFiles         []string `json:"affectedFiles,omitempty"`
 	ValidationCommand     string   `json:"validationCommand"`
 	ObservedAt            string   `json:"observedAt"`
 	FirstSeenAt           string   `json:"firstSeenAt"`
@@ -593,6 +594,7 @@ func validateScanAndObservations(m Manifest) error {
 		digestFields = append(digestFields, observation.Labels...)
 		digestFields = append(digestFields, observation.SourceArtifacts...)
 		digestFields = append(digestFields, observation.AffectedContracts...)
+		digestFields = append(digestFields, observation.AffectedFiles...)
 		for _, value := range digestFields {
 			if strings.ContainsRune(value, '\x00') {
 				return fmt.Errorf("bundle lifecycle observations cannot contain NUL delimiters")
@@ -630,7 +632,7 @@ func validateScanAndObservations(m Manifest) error {
 		if strings.TrimSpace(observation.IssueKind) == "" || strings.TrimSpace(observation.OwningAgentHint) == "" || strings.TrimSpace(observation.Title) == "" || strings.TrimSpace(observation.Body) == "" || strings.TrimSpace(observation.ValidationCommand) == "" {
 			return fmt.Errorf("bundle lifecycle observation is incomplete")
 		}
-		if len(observation.Title) > 512 || len(observation.Body) > 60000 || len(observation.Labels) > 50 || !sortedUnique(observation.Labels) || !sortedUnique(observation.SourceArtifacts) {
+		if len(observation.Title) > 512 || len(observation.Body) > 60000 || len(observation.Labels) > 50 || !sortedUnique(observation.Labels) || !sortedUnique(observation.SourceArtifacts) || !sortedUniqueOrEmpty(observation.AffectedFiles) {
 			return fmt.Errorf("bundle lifecycle observation issue content is invalid")
 		}
 		for _, sourceArtifact := range observation.SourceArtifacts {
@@ -651,6 +653,11 @@ func validateScanAndObservations(m Manifest) error {
 		}
 		if !sortedUnique(observation.AffectedContracts) {
 			return fmt.Errorf("bundle lifecycle affected contracts must be sorted and unique")
+		}
+		for _, affectedFile := range observation.AffectedFiles {
+			if err := validateSourcePath(affectedFile); err != nil {
+				return fmt.Errorf("bundle lifecycle affected files: %w", err)
+			}
 		}
 		if observation.State == "absent" {
 			for _, contract := range observation.AffectedContracts {
@@ -852,6 +859,11 @@ func digestLegacyBundleContent(manifest Manifest, fileLines []string) string {
 			strings.Join(observation.Labels, ","),
 			strings.Join(observation.SourceArtifacts, ","),
 			strings.Join(observation.AffectedContracts, ","),
+		)
+		if observation.AffectedFiles != nil {
+			fields = append(fields, strings.Join(observation.AffectedFiles, ","))
+		}
+		fields = append(fields,
 			observation.ValidationCommand,
 			observation.ObservedAt,
 			observation.FirstSeenAt,
@@ -976,6 +988,9 @@ func digestPublicationBundleContent(manifest Manifest) string {
 		record.array("labels", observation.Labels)
 		record.array("sourceArtifacts", observation.SourceArtifacts)
 		record.array("affectedContracts", observation.AffectedContracts)
+		if observation.AffectedFiles != nil {
+			record.array("affectedFiles", observation.AffectedFiles)
+		}
 		record.scalar("validationCommand", observation.ValidationCommand)
 		record.scalar("observedAt", observation.ObservedAt)
 		record.scalar("firstSeenAt", observation.FirstSeenAt)
@@ -1028,6 +1043,10 @@ func sortedUnique(values []string) bool {
 		}
 	}
 	return true
+}
+
+func sortedUniqueOrEmpty(values []string) bool {
+	return len(values) == 0 || sortedUnique(values)
 }
 
 func valueOr(value, fallback string) string {

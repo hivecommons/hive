@@ -74,6 +74,7 @@ type AdmittedVisualWork struct {
 	RoutingReason          string                    `json:"routing_reason"`
 	RoutingAllowed         bool                      `json:"routing_allowed"`
 	AffectedContracts      []string                  `json:"affected_contracts,omitempty"`
+	AffectedFiles          []string                  `json:"affected_files,omitempty"`
 	KnowledgeKeywords      []string                  `json:"knowledge_keywords,omitempty"`
 	KnowledgeKeywordState  string                    `json:"knowledge_keyword_state"`
 	EvidenceArtifacts      []EvidenceArtifactReceipt `json:"evidence_artifacts,omitempty"`
@@ -166,6 +167,7 @@ func (bundle *ValidatedBundle) BuildImportPlan() (VerifiedImportPlan, error) {
 			IssueKind: observation.IssueKind, Severity: observation.Severity, Title: observation.Title, Body: observation.Body,
 			Labels: append([]string(nil), observation.Labels...), Role: route.Role, RoutingReason: route.Reason, RoutingAllowed: route.DispatchAllowed,
 			AffectedContracts:     append([]string(nil), observation.AffectedContracts...),
+			AffectedFiles:         append([]string(nil), observation.AffectedFiles...),
 			KnowledgeKeywordState: "unavailable_no_verified_facts", Authority: VisualWorkAuthority{ProposalOnly: true},
 		}
 		if present {
@@ -386,6 +388,7 @@ func buildObservationImportInputs(manifest Manifest, index *ArtifactIndexReport)
 				"visual_hive_severity": observation.Severity, "visual_hive_publication_role": observation.PublicationRole,
 				"visual_hive_root_cause_key": observation.RootCauseKey, "visual_hive_blocked_by_root_keys": append([]string(nil), observation.BlockedByRootKeys...),
 				"visual_hive_dependency_external_refs": dependencyRefs, "visual_hive_affected_contracts": append([]string(nil), observation.AffectedContracts...),
+				"visual_hive_affected_files":      append([]string(nil), observation.AffectedFiles...),
 				"visual_hive_validation_commands": validation, "visual_hive_evidence_artifacts": artifacts,
 				"visual_hive_knowledge_keywords": []string{}, "visual_hive_knowledge_keyword_state": "unavailable_no_verified_facts",
 				"visual_hive_route_role": route.Role, "visual_hive_route_reason": route.Reason, "visual_hive_route_allowed": route.DispatchAllowed,

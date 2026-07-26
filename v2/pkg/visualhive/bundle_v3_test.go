@@ -576,6 +576,7 @@ func writeTestV3BundleFixture(t *testing.T, mutate func(*ArtifactIndexReport, *c
 			State: "present", IssueKind: "visual_regression", Severity: "high", OwningAgentHint: "hive/quality",
 			Title: "Manifest-owned visual regression", Body: "Verified observation body", Labels: []string{"visual-hive"},
 			SourceArtifacts: []string{evidencePath}, AffectedContracts: []string{"contract/app-shell"},
+			AffectedFiles:     []string{"src/App.tsx"},
 			ValidationCommand: "go test ./...", ObservedAt: "2026-07-09T12:00:00.000Z", FirstSeenAt: "2026-07-09T12:00:00.000Z",
 			SourceArtifact: ".visual-hive/issues.json",
 		}}

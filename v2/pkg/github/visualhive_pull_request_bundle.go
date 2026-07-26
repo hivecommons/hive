@@ -26,7 +26,7 @@ var exactVisualHiveSHA256 = regexp.MustCompile(`^[a-f0-9]{64}$`)
 // VisualHivePullRequestProducerCommit is the only audited runtime-sidecar
 // producer admitted by the exact PR lane. Updating it requires a deliberate
 // proof review; ordinary trusted-bundle imports retain their independent pin.
-const VisualHivePullRequestProducerCommit = "9f48408f9f090fc43fce0c7c6171771f05660444"
+const VisualHivePullRequestProducerCommit = "1de3765924043ba87d46f200e8883b9233d94a18"
 
 // VisualHivePullRequestBundleRequest carries only independently knowable
 // repository, PR, workflow, App, and producer pins. The verifier discovers the
