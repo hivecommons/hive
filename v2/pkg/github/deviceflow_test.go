@@ -19,6 +19,12 @@ func jsonBodyResponse(statusCode int, body any) *http.Response {
 
 func TestStartDeviceFlowSuccess(t *testing.T) {
 	withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
+		if err := req.ParseForm(); err != nil {
+			t.Fatalf("parse device request: %v", err)
+		}
+		if got := req.Form.Get("scope"); got != "repo workflow" {
+			t.Fatalf("scope = %q, want repo workflow", got)
+		}
 		resp := DeviceFlowState{
 			DeviceCode:      "ABCD-1234",
 			UserCode:        "EFGH-5678",
@@ -79,7 +85,7 @@ func TestPollDeviceFlowComplete(t *testing.T) {
 		return jsonBodyResponse(200, pollResponse{
 			AccessToken: "gho_test_token_12345",
 			TokenType:   "bearer",
-			Scope:       "repo",
+			Scope:       "repo, workflow",
 		}), nil
 	}, func() {
 		token, status, err := PollDeviceFlow("client-id", "device-code", "", "")
@@ -91,6 +97,24 @@ func TestPollDeviceFlowComplete(t *testing.T) {
 		}
 		if status != "complete" {
 			t.Errorf("status = %q", status)
+		}
+	})
+}
+
+func TestPollDeviceFlowRejectsMissingWorkflowScope(t *testing.T) {
+	withMockDeviceFlow(func(req *http.Request) (*http.Response, error) {
+		return jsonBodyResponse(200, pollResponse{
+			AccessToken: "gho_test_token_12345",
+			TokenType:   "bearer",
+			Scope:       "repo",
+		}), nil
+	}, func() {
+		token, status, err := PollDeviceFlow("client-id", "device-code", "", "")
+		if err == nil || !strings.Contains(err.Error(), `missing required OAuth scope "workflow"`) {
+			t.Fatalf("token=%q status=%q err=%v", token, status, err)
+		}
+		if token != "" || status != "" {
+			t.Fatalf("missing scope must not return a usable token: token=%q status=%q", token, status)
 		}
 	})
 }
