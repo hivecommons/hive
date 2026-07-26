@@ -890,9 +890,11 @@ func (controller *Controller) resumeAppliedWork(
 					controller.holdCorruptStage(ctx, store, bead, work, "held_corrupt_dispatch_intent", "deferred dispatch conflicts with its exact verified packet", &result)
 					continue
 				}
-				if launchErr := controller.dispatchLaunchAllowed(envelope, finding); launchErr != nil {
-					controller.persistAndAuditStage(ctx, store, bead, work, decision, dispatchHoldStage(finding), launchErr.Error(), &result)
-				}
+				// The one-PR acceptance loop explicitly made this exact packet
+				// ineligible for launch. Current launch policy is relevant only
+				// after a later verified packet reopens it; same-packet replay
+				// must preserve the durable deferral without converting it into
+				// a runtime hold.
 				continue
 			}
 			if err := controller.markStage(store, bead.ID, "pending", "later verified packet reopened a previously deferred launchable finding"); err != nil {

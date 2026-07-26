@@ -435,9 +435,11 @@ func (service *Service) RunCycle(ctx context.Context) error {
 	}
 	var envelope visualcontroller.DispatchEnvelope
 	if exists && ledger.SourceExternalRef != "" {
-		envelope, err = service.options.Intake.RevalidateSpecialistBoundary(ledger.SourceExternalRef, ledger.WorkOrderID, ledger.RequestSHA256)
-		if err != nil {
-			return err
+		if ledger.PullRequestNumber == 0 {
+			envelope, err = service.options.Intake.RevalidateSpecialistBoundary(ledger.SourceExternalRef, ledger.WorkOrderID, ledger.RequestSHA256)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		work, fetchErr := service.options.Source.Fetch(ctx)
@@ -524,9 +526,6 @@ func (service *Service) RunCycle(ctx context.Context) error {
 	}
 	if service.options.Verdict == nil {
 		return ErrFinalVerdictPending
-	}
-	if _, err := service.options.Intake.RevalidateSpecialistBoundary(ledger.SourceExternalRef, ledger.WorkOrderID, ledger.RequestSHA256); err != nil {
-		return err
 	}
 	receipt, err := service.options.Verdict.VerifyPullRequest(ctx, pullRequestVerdictRequest(ledger))
 	if err != nil {

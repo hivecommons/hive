@@ -76,7 +76,7 @@ func TestNormalServiceRepairResponseLossRevalidatesWithoutRefetchOrReimport(t *t
 	if err := service.RunCycle(context.Background()); err != nil {
 		t.Fatalf("ambiguous Worker recovery: %v", err)
 	}
-	if fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 2 ||
+	if fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 1 ||
 		fixture.repairer.runs != 2 || fixture.repairer.sideEffects != 1 || fixture.verifier.calls != 1 || fixture.source.consumeSideEffects != 1 {
 		t.Fatalf("Worker recovery refetched, reimported, or repeated a side effect: source=%+v intake=%+v repair=%+v verifier=%+v", fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
@@ -150,8 +150,29 @@ func TestNormalServiceLeavesWorkerPROpenUntilExactHeadVerifierExists(t *testing.
 	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrFinalVerdictPending) {
 		t.Fatalf("replay error = %v, want pending verdict", err)
 	}
-	if fixture.repairer.runs != 1 || fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 1 || fixture.source.consumes != 0 {
-		t.Fatalf("pending exact PR was refetched, reimported, duplicated, or consumed")
+	if fixture.repairer.runs != 1 || fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 0 || fixture.source.consumes != 0 {
+		t.Fatalf("pending exact PR was refetched, reimported, duplicated, or consumed: source=%+v intake=%+v repair=%+v", fixture.source, fixture.intake, fixture.repairer)
+	}
+}
+
+func TestNormalServiceExistingWorkerPRVerdictIgnoresLaterLaunchPolicyDrift(t *testing.T) {
+	fixture := newServiceFixture(t)
+	stateDir := t.TempDir()
+	withoutVerifier := fixture.serviceAt(t, stateDir, nil)
+	if err := withoutVerifier.RunCycle(context.Background()); !errors.Is(err, ErrFinalVerdictPending) {
+		t.Fatalf("initial Worker PR cycle error = %v, want pending verdict", err)
+	}
+	if fixture.repairer.runs != 1 || fixture.verifier.calls != 0 || fixture.intake.revalidates != 0 {
+		t.Fatalf("initial Worker PR cycle unexpectedly replayed launch checks: intake=%+v repair=%+v verifier=%+v", fixture.intake, fixture.repairer, fixture.verifier)
+	}
+
+	fixture.intake.revalidateErr = errors.New("current Governor mode no longer enables the selected role")
+	withVerifier := fixture.serviceAt(t, stateDir, fixture.verifier)
+	if err := withVerifier.RunCycle(context.Background()); err != nil {
+		t.Fatalf("existing Worker PR verdict was blocked by launch-only policy drift: %v", err)
+	}
+	if fixture.intake.revalidates != 0 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 || fixture.source.consumeSideEffects != 1 {
+		t.Fatalf("existing Worker PR replay relaunched work or skipped exact verdict: source=%+v intake=%+v repair=%+v verifier=%+v", fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
 }
 
@@ -1028,6 +1049,7 @@ type fakeIntake struct {
 	dispatch                    []visualcontroller.DispatchEnvelope
 	imports                     int
 	revalidates                 int
+	revalidateErr               error
 	deferralCalls               int
 	completes                   int
 	failCompletion              bool
@@ -1054,6 +1076,9 @@ func (intake *fakeIntake) Import(context.Context, hivegithub.VerifiedVisualHiveA
 
 func (intake *fakeIntake) RevalidateSpecialistBoundary(sourceExternalRef, _, _ string) (visualcontroller.DispatchEnvelope, error) {
 	intake.revalidates++
+	if intake.revalidateErr != nil {
+		return visualcontroller.DispatchEnvelope{}, intake.revalidateErr
+	}
 	for _, envelope := range intake.dispatch {
 		if envelope.SourceExternalRef == sourceExternalRef {
 			return envelope, nil

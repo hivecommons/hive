@@ -996,6 +996,17 @@ func TestMixedPacketAdmitsRoutedPeerAndNeverDispatchesManualHold(t *testing.T) {
 	if len(replay.Decisions) != 0 || len(replay.DispatchPending) != 1 || replay.DispatchPending[0].SourceExternalRef != works[0].SourceExternalRef || issues.upserts != 3 || len(gov.AdmissionHistory()) != history || visualBeadAdmissionState(store.FindByExternalRef(works[1].SourceExternalRef)) != "held_manual_review" || visualBeadAdmissionState(store.FindByExternalRef(works[2].SourceExternalRef)) != "admitted_dispatch_deferred" {
 		t.Fatalf("mixed replay duplicated or dispatched manual-held work: %+v", replay)
 	}
+	gov.UpdateConfigAndAgents(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]string{"quality": "1m"}},
+		"busy": {Cadences: map[string]string{"quality": "1m"}},
+	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}})
+	gov.SetMode(governor.ModeBusy)
+	deferredReplay := resumeAppliedForTest(controller, context.Background(), controllerEvidenceSource{completeControllerEvidence(digest)}, packet, []visualhive.AdmittedVisualWork{works[2]}, Result{Lifecycle: apply})
+	if len(deferredReplay.Decisions) != 0 || len(deferredReplay.DispatchPending) != 0 || len(deferredReplay.Errors) != 0 ||
+		visualBeadAdmissionState(store.FindByExternalRef(works[2].SourceExternalRef)) != "admitted_dispatch_deferred" {
+		t.Fatalf("same-packet deferred replay was changed by unrelated launch-policy drift: %+v", deferredReplay)
+	}
+	gov.SetMode(governor.ModeIdle)
 	peerDigest := strings.Repeat("2", 64)
 	peerManifest := bundle.Manifest
 	peerManifest.BundleID, peerManifest.OverallDigest = "peer-retry-packet", peerDigest
