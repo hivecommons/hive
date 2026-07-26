@@ -567,6 +567,7 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, lifecycleBead
 	if err != nil {
 		return err
 	}
+	attempts := repairStore.Snapshot().Attempts
 	beadStores, err := openUninstallLifecycleBeadStores(stateDir, lifecycleBeadsDirs)
 	if err != nil {
 		return err
@@ -591,7 +592,7 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, lifecycleBead
 		if finding == nil {
 			return fmt.Errorf("finding %s is missing durable state", key)
 		}
-		if err := drainFindingRepairResources(ctx, store, lifecycle, config, client, *finding); err != nil {
+		if err := drainFindingRepairResources(ctx, store, lifecycle, config, client, *finding, attempts[finding.RepositoryFingerprint]); err != nil {
 			return err
 		}
 		issueClosed := finding.IssueNumber > 0
@@ -665,7 +666,6 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, lifecycleBead
 			return err
 		}
 	}
-	attempts := repairStore.Snapshot().Attempts
 	attemptKeys := make([]string, 0, len(attempts))
 	for key := range attempts {
 		attemptKeys = append(attemptKeys, key)
@@ -747,7 +747,7 @@ func selectUninstallLifecycleBeadStore(stores []*beads.Store, beadID string) (*b
 	return match, nil
 }
 
-func drainFindingRepairResources(ctx context.Context, store *Store, lifecycle *visualhive.LifecycleStore, config Config, client *hivegithub.Client, finding visualhive.FindingLifecycle) error {
+func drainFindingRepairResources(ctx context.Context, store *Store, lifecycle *visualhive.LifecycleStore, config Config, client *hivegithub.Client, finding visualhive.FindingLifecycle, attempt *repair.Attempt) error {
 	marker := fmt.Sprintf("<!-- hive-repair: %s -->", finding.RepositoryFingerprint)
 	pulls, err := client.ListOpenRepairPullRequests(ctx, config.Repository, config.DefaultBranch, marker)
 	if err != nil {
@@ -773,10 +773,27 @@ func drainFindingRepairResources(ctx context.Context, store *Store, lifecycle *v
 			}
 		}
 	} else if finding.Branch != "" || finding.RepairCommitSHA != "" {
-		if finding.Branch == "" || finding.RepairCommitSHA == "" {
+		if finding.Branch == "" {
 			return fmt.Errorf("finding %s has an incomplete repair branch binding", finding.RepositoryFingerprint)
 		}
-		if err := deleteUninstallRepairBranch(ctx, store, lifecycle, config, client, finding.RepositoryFingerprint, finding.Branch, finding.RepairCommitSHA); err != nil {
+		if finding.RepairCommitSHA == "" {
+			if attempt == nil || attempt.RepositoryFingerprint != finding.RepositoryFingerprint || attempt.Stage != repair.StageNoChange ||
+				attempt.Branch != finding.Branch || attempt.CommitSHA != "" || attempt.PRNumber != 0 {
+				return fmt.Errorf("finding %s has an incomplete repair branch binding", finding.RepositoryFingerprint)
+			}
+			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, finding.Branch)
+			if err != nil {
+				return err
+			}
+			if !absent {
+				return fmt.Errorf("finding %s has an incomplete repair branch binding", finding.RepositoryFingerprint)
+			}
+			detail := fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", finding.RepositoryFingerprint, finding.Branch, attempt.Stage)
+			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_absent_repair_branch", Allowed: true, Repository: config.Repository, Detail: detail}); err != nil {
+				return err
+			}
+			lifecycle.RecordAuthorization(finding.RepositoryFingerprint, "uninstall_absent_repair_branch", true, detail)
+		} else if err := deleteUninstallRepairBranch(ctx, store, lifecycle, config, client, finding.RepositoryFingerprint, finding.Branch, finding.RepairCommitSHA); err != nil {
 			return err
 		}
 	}
@@ -817,12 +834,31 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			return err
 		}
 	}
-	if attempt.Branch != "" && attempt.CommitSHA != "" {
-		if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_delete_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s head=%s", attempt.RepositoryFingerprint, attempt.Branch, attempt.CommitSHA)}); err != nil {
-			return err
+	if attempt.Branch != "" || attempt.CommitSHA != "" {
+		if attempt.Branch == "" {
+			return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 		}
-		if err := client.DeleteRepairBranchExact(ctx, config.Repository, attempt.Branch, attempt.CommitSHA); err != nil {
-			return err
+		if attempt.CommitSHA == "" {
+			if attempt.Stage != repair.StageNoChange || attempt.PRNumber != 0 {
+				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
+			}
+			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, attempt.Branch)
+			if err != nil {
+				return err
+			}
+			if !absent {
+				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
+			}
+			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_absent_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", attempt.RepositoryFingerprint, attempt.Branch, attempt.Stage)}); err != nil {
+				return err
+			}
+		} else {
+			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_delete_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s head=%s", attempt.RepositoryFingerprint, attempt.Branch, attempt.CommitSHA)}); err != nil {
+				return err
+			}
+			if err := client.DeleteRepairBranchExact(ctx, config.Repository, attempt.Branch, attempt.CommitSHA); err != nil {
+				return err
+			}
 		}
 	}
 	if review := attempt.BaselineReview; review != nil && review.ProposalPRNumber > 0 {

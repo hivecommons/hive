@@ -464,6 +464,29 @@ func (c *Client) DeleteRepairBranchExact(ctx context.Context, repository, branch
 	return err
 }
 
+// RepairBranchAbsentExact proves that a named Hive repair ref does not exist.
+// It is used only when a durable no-change repair checkpoint never produced a
+// commit SHA. An existing ref is never accepted or deleted without the exact
+// head binding required by DeleteRepairBranchExact.
+func (c *Client) RepairBranchAbsentExact(ctx context.Context, repository, branch string) (bool, error) {
+	owner, repo, err := splitFullRepository(repository)
+	if err != nil {
+		return false, err
+	}
+	branch = strings.TrimSpace(branch)
+	if !strings.HasPrefix(branch, "hive/repair-") {
+		return false, fmt.Errorf("exact Hive repair branch is required")
+	}
+	_, response, err := c.client.Git.GetRef(ctx, owner, repo, "heads/"+branch)
+	if err != nil {
+		if response != nil && response.StatusCode == http.StatusNotFound {
+			return true, nil
+		}
+		return false, fmt.Errorf("read Hive repair branch %s: %w", branch, err)
+	}
+	return false, nil
+}
+
 // DeleteBaselineBranchExact removes only a Hive baseline-review branch whose
 // current ref still points at the exact reviewed proposal head. The bool is
 // false when GitHub already removed the branch, making restart reconciliation
