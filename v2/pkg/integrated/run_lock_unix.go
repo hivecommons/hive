@@ -4,6 +4,7 @@ package integrated
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
@@ -32,6 +33,13 @@ func legacyProductionRunOwnerMatches(pid int, startedAt time.Time) bool {
 	if err != nil && err != syscall.EPERM {
 		return false
 	}
+	if processLeader, known := legacyProductionRunProcessLeader(pid); known && !processLeader {
+		// Linux exposes every thread ID below /proc and kill(tid, 0) succeeds
+		// for one. A restarted Go process can therefore reuse a dead legacy
+		// owner's PID as a thread ID. The v1 lease was written by a process
+		// leader, so a non-leader task can never be that owner.
+		return false
+	}
 	processStartedAt, ok := legacyProductionRunProcessStartedAt(pid)
 	if !ok {
 		return true // a live, uninspectable legacy owner must fail closed
@@ -40,6 +48,26 @@ func legacyProductionRunOwnerMatches(pid int, startedAt time.Time) bool {
 	// the same PID that began later is a reused PID, regardless of the binary's
 	// filename (Hive may be renamed or launched through a packaged wrapper).
 	return !processStartedAt.After(startedAt.Add(3 * time.Second))
+}
+
+func legacyProductionRunProcessLeader(pid int) (bool, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+	if err != nil {
+		return false, false
+	}
+	processID, threadGroupID := 0, 0
+	for _, line := range strings.Split(string(data), "\n") {
+		switch {
+		case strings.HasPrefix(line, "Pid:"):
+			processID, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "Pid:")))
+		case strings.HasPrefix(line, "Tgid:"):
+			threadGroupID, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "Tgid:")))
+		}
+	}
+	if processID <= 0 || threadGroupID <= 0 {
+		return false, false
+	}
+	return processID == threadGroupID, true
 }
 
 func legacyProductionRunProcessStartedAt(pid int) (time.Time, bool) {
