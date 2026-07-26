@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -312,18 +313,18 @@ func TestExactWorkflowRunBindingStabilizesTransientDisplayTitle(t *testing.T) {
 		Ref:                  "main",
 		ExpectedDisplayTitle: workflowDispatchDisplayTitle(strings.Repeat("a", 64)),
 	}
-	reads := 0
+	var reads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		if request.Method != http.MethodGet || request.URL.Path != "/repos/owner/repo/actions/runs/51" {
 			http.Error(writer, request.Method+" "+request.URL.Path, http.StatusNotFound)
 			return
 		}
-		reads++
+		readCount := reads.Add(1)
 		displayTitle := visualHiveProductionWorkflowName
 		status := "queued"
 		conclusion := ""
-		if reads >= 3 {
+		if readCount >= 3 {
 			displayTitle = intent.ExpectedDisplayTitle
 			status = "completed"
 			conclusion = "success"
@@ -337,8 +338,8 @@ func TestExactWorkflowRunBindingStabilizesTransientDisplayTitle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reads != 3 || selected.GetID() != intent.RunID || selected.GetDisplayTitle() != intent.ExpectedDisplayTitle {
-		t.Fatalf("transient binding did not stabilize on the exact run: reads=%d selected=%+v", reads, selected)
+	if readCount := reads.Load(); readCount != 3 || selected.GetID() != intent.RunID || selected.GetDisplayTitle() != intent.ExpectedDisplayTitle {
+		t.Fatalf("transient binding did not stabilize on the exact run: reads=%d selected=%+v", readCount, selected)
 	}
 }
 
@@ -348,10 +349,10 @@ func TestExactWorkflowRunBindingStaticWorkflowTitleTimesOutFailClosed(t *testing
 		Ref:                  "main",
 		ExpectedDisplayTitle: workflowDispatchDisplayTitle(strings.Repeat("d", 64)),
 	}
-	reads := 0
+	var reads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		reads++
+		reads.Add(1)
 		_, _ = fmt.Fprintf(writer, `{"id":62,"display_title":%q,"event":"workflow_dispatch","head_branch":"main","status":"completed","conclusion":"success"}`, visualHiveProductionWorkflowName)
 	}))
 	defer server.Close()
@@ -361,8 +362,8 @@ func TestExactWorkflowRunBindingStaticWorkflowTitleTimesOutFailClosed(t *testing
 	if err == nil || !strings.Contains(err.Error(), "did not stabilize") || !strings.Contains(err.Error(), "display_title") || !strings.Contains(err.Error(), "remains bound to run 62") {
 		t.Fatalf("persistent static workflow title did not fail closed after bounded stabilization: %v", err)
 	}
-	if reads < 2 {
-		t.Fatalf("static workflow title was not retried before timeout: reads=%d", reads)
+	if readCount := reads.Load(); readCount < 2 {
+		t.Fatalf("static workflow title was not retried before timeout: reads=%d", readCount)
 	}
 }
 
@@ -382,9 +383,9 @@ func TestExactWorkflowRunBindingRejectsPermanentMismatch(t *testing.T) {
 			Conclusion:   gh.Ptr("success"),
 		}
 	}
-	reads := 0
+	var reads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		reads++
+		reads.Add(1)
 		http.Error(writer, "permanent mismatch must not be retried", http.StatusInternalServerError)
 	}))
 	defer server.Close()
@@ -400,15 +401,15 @@ func TestExactWorkflowRunBindingRejectsPermanentMismatch(t *testing.T) {
 		{name: "ref", mutate: func(run *gh.WorkflowRun) { run.HeadBranch = gh.Ptr("other") }, want: "head branch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			reads = 0
+			reads.Store(0)
 			run := exact()
 			test.mutate(run)
 			_, err := waitForExactWorkflowRunWithTiming(context.Background(), client, "owner", "repo", intent, run, 10*time.Millisecond, time.Millisecond, 100*time.Millisecond)
 			if err == nil || !strings.Contains(err.Error(), "violates its exact durable dispatch binding") || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("permanent mismatch was not rejected: %v", err)
 			}
-			if reads != 0 {
-				t.Fatalf("permanent mismatch triggered %d retry reads", reads)
+			if readCount := reads.Load(); readCount != 0 {
+				t.Fatalf("permanent mismatch triggered %d retry reads", readCount)
 			}
 		})
 	}
@@ -420,10 +421,10 @@ func TestExactWorkflowRunBindingStabilizationTimeoutIsActionable(t *testing.T) {
 		Ref:                  "main",
 		ExpectedDisplayTitle: workflowDispatchDisplayTitle(strings.Repeat("c", 64)),
 	}
-	reads := 0
+	var reads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
-		reads++
+		reads.Add(1)
 		_, _ = io.WriteString(writer, `{"id":61,"display_title":"","event":"workflow_dispatch","head_branch":"main","status":"queued"}`)
 	}))
 	defer server.Close()
@@ -433,8 +434,8 @@ func TestExactWorkflowRunBindingStabilizationTimeoutIsActionable(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "did not stabilize") || !strings.Contains(err.Error(), "display_title") || !strings.Contains(err.Error(), "remains bound to run 61") || !strings.Contains(err.Error(), "will not select a different run") {
 		t.Fatalf("persistent incomplete binding did not return an actionable fail-closed timeout: %v", err)
 	}
-	if reads < 2 {
-		t.Fatalf("incomplete binding was not retried before timeout: reads=%d", reads)
+	if readCount := reads.Load(); readCount < 2 {
+		t.Fatalf("incomplete binding was not retried before timeout: reads=%d", readCount)
 	}
 }
 
