@@ -2319,6 +2319,9 @@ func actorForHint(hint string) string {
 	if actor == "ci" {
 		return "ci-maintainer"
 	}
+	if actor == "map" {
+		return "scanner"
+	}
 	if actor == "" {
 		return "quality"
 	}
