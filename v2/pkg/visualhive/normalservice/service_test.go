@@ -138,6 +138,62 @@ func TestNormalServiceMultiFindingReplayDefersEveryUnselectedFindingBeforeOneWor
 	}
 }
 
+func TestSelectDispatchSetPrefersCanonicalRepairSignalOverAggregateAndCoverage(t *testing.T) {
+	coverageRef := "visual-hive://owner/repo/a-coverage"
+	aggregateRef := "visual-hive://owner/repo/b-aggregate"
+	componentRef := "visual-hive://owner/repo/c-component"
+	repairRef := "visual-hive://owner/repo/z-repair"
+	values := []visualcontroller.DispatchEnvelope{
+		{
+			SourceExternalRef: coverageRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "canonical",
+				Severity:        "medium",
+				IssueKind:       "missing_visual_coverage",
+				RootCauseKey:    "finding/missing_visual_coverage/generic",
+			},
+		},
+		{
+			SourceExternalRef: aggregateRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "aggregate",
+				Severity:        "critical",
+				IssueKind:       "provider_governance",
+				RootCauseKey:    "aggregate/provider/playwright",
+			},
+		},
+		{
+			SourceExternalRef: repairRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "canonical",
+				Severity:        "high",
+				IssueKind:       "selector_contract_failure",
+				RootCauseKey:    "contract/localPreview/guarded-repair-policy",
+			},
+		},
+		{
+			SourceExternalRef: componentRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "canonical",
+				Severity:        "high",
+				IssueKind:       "selector_contract_failure",
+				RootCauseKey:    "contract/componentLibrary/component-lab-storybook",
+			},
+		},
+	}
+
+	selected, deferred, ok, err := selectDispatchSet(values)
+	if err != nil || !ok {
+		t.Fatalf("select dispatch set: ok=%t err=%v", ok, err)
+	}
+	if selected.SourceExternalRef != repairRef {
+		t.Fatalf("selected source ref = %q, want canonical repair signal %q", selected.SourceExternalRef, repairRef)
+	}
+	if !reflect.DeepEqual(deferred, []string{coverageRef, aggregateRef, componentRef}) {
+		t.Fatalf("deferred source refs = %v, want stable lexical peers", deferred)
+	}
+}
+
 func TestNormalServiceLeavesWorkerPROpenUntilExactHeadVerifierExists(t *testing.T) {
 	fixture := newServiceFixture(t)
 	service := fixture.service(t, nil)

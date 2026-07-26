@@ -933,21 +933,102 @@ func TestExplicitRootPublicationCollapsesNineObservationsToTwoIssues(t *testing.
 func TestRepairPublicationPrefersTwoContractRootsAndStorybookDiscovery(t *testing.T) {
 	componentRoot := "contract/componentLibrary/component-lab-storybook"
 	repairRoot := "contract/localPreview/guarded-repair-policy"
+	genericRoot := "finding/missing_visual_coverage/generic"
 	observations := []Observation{
 		{RepositoryFingerprint: "component", State: "present", Severity: "high", IssueKind: "selector_contract_failure", PublicationRole: "canonical", RootCauseKey: componentRoot, Title: "component-lab-storybook failed deterministic validation"},
 		{RepositoryFingerprint: "repair", State: "present", Severity: "high", IssueKind: "selector_contract_failure", PublicationRole: "canonical", RootCauseKey: repairRoot, Title: "guarded-repair-policy failed deterministic validation"},
 		{RepositoryFingerprint: "component-handoff", State: "present", Severity: "high", IssueKind: "external_repo_onboarding", PublicationRole: "derivative", RootCauseKey: componentRoot, Title: "Repair component-lab-storybook: contract_result"},
 		{RepositoryFingerprint: "provider", State: "present", Severity: "high", IssueKind: "provider_governance", PublicationRole: "aggregate", RootCauseKey: "aggregate/provider/playwright", BlockedByRootKeys: []string{componentRoot, repairRoot}, Title: "Provider governance: playwright failed"},
 		{RepositoryFingerprint: "discovery", State: "present", Severity: "medium", IssueKind: "missing_visual_coverage", PublicationRole: "canonical", RootCauseKey: "finding/missing_visual_coverage/discovery", Title: "Repo map finding: storybook-discovery:.storybook/QualificationMissing.stories.tsx"},
-		{RepositoryFingerprint: "generic", State: "present", Severity: "medium", IssueKind: "missing_visual_coverage", PublicationRole: "canonical", RootCauseKey: "finding/missing_visual_coverage/generic", Title: "Add visual coverage: generic advisory"},
+		{RepositoryFingerprint: "generic", State: "present", Severity: "medium", IssueKind: "missing_visual_coverage", PublicationRole: "canonical", RootCauseKey: genericRoot, Title: "Add visual coverage: generic advisory"},
 	}
 
-	selected := selectIssuePublications("", observations, nil, 0, 3, true)
+	findings := map[string]*FindingLifecycle{
+		"generic": {
+			Repository:             "owner/repo",
+			RepositoryFingerprint:  "generic",
+			PublicationFingerprint: publicationFingerprint("owner/repo", genericRoot, "generic"),
+			RootCauseKey:           genericRoot,
+			IssueNumber:            17,
+			Status:                 StatusIssueClosed,
+		},
+	}
+	selected := selectIssuePublications("owner/repo", observations, findings, 0, 3, true)
 	if len(selected) != 3 || !selected["component"] || !selected["repair"] || !selected["discovery"] {
 		t.Fatalf("publication set = %v, want two exact contract roots plus Storybook discovery", selected)
 	}
 	if selected["component-handoff"] || selected["provider"] || selected["generic"] {
 		t.Fatalf("publication set included a derivative, aggregate echo, or lower-ranked generic advisory: %v", selected)
+	}
+}
+
+func TestInactiveHistoricalIssueMustWinCurrentPublicationRankingBeforeReopen(t *testing.T) {
+	root := t.TempDir()
+	genericRoot := "finding/missing_visual_coverage/generic"
+	generic := publicationTestObservation("generic", "canonical", genericRoot, "missing_visual_coverage", "Add visual coverage: generic advisory")
+	generic.Severity = "medium"
+
+	firstBundle := validateLocalBundle(t, writePublicationLifecycleBundle(t, filepath.Join(root, "first"), "bundle-historical-generic", []Observation{generic}, false))
+	lifecycle, err := NewLifecycleStore(filepath.Join(root, "lifecycle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beadStore := newTestBeadStore(t, filepath.Join(root, "beads"))
+	if _, err := lifecycle.ApplyBundle(firstBundle, beadStore, ApplyLifecycleOptions{TargetRef: "main", MaxActiveIssues: 3, PreferRepairable: true}); err != nil {
+		t.Fatal(err)
+	}
+	genericID := digest([]byte("owner/repo\x00" + genericRoot))
+	pending := lifecycle.PendingOutbox()
+	if len(pending) != 1 {
+		t.Fatalf("initial generic publication outbox = %+v, want one entry", pending)
+	}
+	if err := lifecycle.MarkIssueOpened(genericID, 17, "https://example.invalid/issues/17"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkOutboxAttempt(pending[0].ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.updateFinding(genericID, "test_close_historical_issue", func(finding *FindingLifecycle) error {
+		finding.Status = StatusIssueClosed
+		finding.PendingIssueAction = ""
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if historical, ok := lifecycle.Finding(genericID); !ok || historical.BeadID == "" {
+		t.Fatalf("historical generic finding missing its bead: found=%t finding=%+v", ok, historical)
+	} else if err := beadStore.Close(historical.BeadID); err != nil {
+		t.Fatal(err)
+	}
+
+	componentRoot := "contract/componentLibrary/component-lab-storybook"
+	repairRoot := "contract/localPreview/guarded-repair-policy"
+	component := publicationTestObservation("component", "canonical", componentRoot, "selector_contract_failure", "component-lab-storybook failed deterministic validation")
+	repair := publicationTestObservation("repair", "canonical", repairRoot, "selector_contract_failure", "guarded-repair-policy failed deterministic validation")
+	discovery := publicationTestObservation("discovery", "canonical", "finding/missing_visual_coverage/discovery", "missing_visual_coverage", "Repo map finding: storybook-discovery:.storybook/QualificationMissing.stories.tsx")
+	discovery.Severity = "medium"
+	secondBundle := validateLocalBundle(t, writePublicationLifecycleBundle(t, filepath.Join(root, "second"), "bundle-ranked-current-roots", []Observation{generic, component, repair, discovery}, false))
+
+	result, err := lifecycle.ApplyBundle(secondBundle, beadStore, ApplyLifecycleOptions{TargetRef: "main", MaxActiveIssues: 3, PreferRepairable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	historical, ok := lifecycle.Finding(genericID)
+	if !ok || historical.Status != StatusIssueClosed || historical.Recurrences != 0 || historical.PendingIssueAction != "" {
+		t.Fatalf("lower-ranked inactive historical issue was reopened: found=%t finding=%+v", ok, historical)
+	}
+	if result.Reopened != 0 {
+		t.Fatalf("lifecycle reopened %d historical issues, want none", result.Reopened)
+	}
+	if result.Deferred == 0 {
+		t.Fatalf("lower-ranked inactive historical issue was not recorded as deferred: %+v", result)
+	}
+	for _, rootCauseKey := range []string{componentRoot, repairRoot, "finding/missing_visual_coverage/discovery"} {
+		id := digest([]byte("owner/repo\x00" + rootCauseKey))
+		finding, exists := lifecycle.Finding(id)
+		if !exists || finding.Status != StatusDetected || finding.PendingIssueAction != OutboxOpenIssue {
+			t.Fatalf("selected current root %q was not published: found=%t finding=%+v", rootCauseKey, exists, finding)
+		}
 	}
 }
 

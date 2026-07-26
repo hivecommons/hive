@@ -18,6 +18,7 @@ import (
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
 	"github.com/kubestellar/hive/v2/pkg/repair"
+	"github.com/kubestellar/hive/v2/pkg/visualhive"
 	visualcontroller "github.com/kubestellar/hive/v2/pkg/visualhive/controller"
 )
 
@@ -595,20 +596,109 @@ func (service *Service) finish(_ context.Context, ledger workLedger) error {
 
 func selectDispatchSet(values []visualcontroller.DispatchEnvelope) (visualcontroller.DispatchEnvelope, []string, bool, error) {
 	ordered := append([]visualcontroller.DispatchEnvelope(nil), values...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].SourceExternalRef < ordered[j].SourceExternalRef })
-	for index, value := range ordered {
-		if strings.TrimSpace(value.SourceExternalRef) == "" || (index > 0 && value.SourceExternalRef == ordered[index-1].SourceExternalRef) {
+	seen := make(map[string]struct{}, len(ordered))
+	for _, value := range ordered {
+		ref := strings.TrimSpace(value.SourceExternalRef)
+		if ref == "" {
 			return visualcontroller.DispatchEnvelope{}, nil, false, errors.New("controller returned empty or duplicate launchable source refs")
 		}
+		if _, exists := seen[ref]; exists {
+			return visualcontroller.DispatchEnvelope{}, nil, false, errors.New("controller returned empty or duplicate launchable source refs")
+		}
+		seen[ref] = struct{}{}
 	}
 	if len(ordered) == 0 {
 		return visualcontroller.DispatchEnvelope{}, nil, false, nil
 	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return dispatchEnvelopePrecedes(ordered[i], ordered[j])
+	})
 	deferred := make([]string, 0, len(ordered)-1)
 	for _, value := range ordered[1:] {
 		deferred = append(deferred, value.SourceExternalRef)
 	}
+	sort.Strings(deferred)
 	return ordered[0], deferred, true, nil
+}
+
+func dispatchEnvelopePrecedes(left, right visualcontroller.DispatchEnvelope) bool {
+	if rank := dispatchPublicationRoleRank(left.Work.PublicationRole) - dispatchPublicationRoleRank(right.Work.PublicationRole); rank != 0 {
+		return rank > 0
+	}
+	if rank := dispatchSeverityRank(left.Work.Severity) - dispatchSeverityRank(right.Work.Severity); rank != 0 {
+		return rank > 0
+	}
+	if rank := dispatchIssueKindRank(left.Work.IssueKind) - dispatchIssueKindRank(right.Work.IssueKind); rank != 0 {
+		return rank > 0
+	}
+	if rank := dispatchContractScopeRank(left.Work.RootCauseKey) - dispatchContractScopeRank(right.Work.RootCauseKey); rank != 0 {
+		return rank > 0
+	}
+	if left.Work.RootCauseKey != right.Work.RootCauseKey {
+		return left.Work.RootCauseKey < right.Work.RootCauseKey
+	}
+	return left.SourceExternalRef < right.SourceExternalRef
+}
+
+func dispatchPublicationRoleRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "canonical":
+		return 4
+	case "":
+		// Legacy verified packets predate explicit publication metadata. Keep
+		// them independently actionable, but never let them outrank a canonical
+		// root from the same current packet.
+		return 3
+	case "derivative":
+		return 2
+	case "aggregate":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func dispatchSeverityRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func dispatchIssueKindRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case visualhive.RepositoryTestFailureKind:
+		return 6
+	case "visual_regression", "selector_contract_failure", "screenshot_diff", "mutation_survivor", "test_adequacy_gap", "accessibility_failure", "console_error", "network_error", "security_failure":
+		return 5
+	case "workflow_safety", "provider_governance":
+		return 4
+	case "weak_visual_test", "missing_visual_coverage":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func dispatchContractScopeRank(rootCauseKey string) int {
+	switch {
+	case strings.HasPrefix(rootCauseKey, "contract/localPreview/"):
+		return 4
+	case strings.HasPrefix(rootCauseKey, "contract/fullStack/"):
+		return 3
+	case strings.HasPrefix(rootCauseKey, "contract/componentLibrary/"):
+		return 2
+	case strings.HasPrefix(rootCauseKey, "contract/deployedPreview/"):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func validateRepairOutcome(envelope visualcontroller.DispatchEnvelope, outcome RepairOutcome) error {

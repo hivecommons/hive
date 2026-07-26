@@ -488,6 +488,9 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 		deferredReason := publicationDeferralReason(observation, coveredRoots)
 		preserveActiveOwner := deferredReason != "" && finding != nil && finding.IssueNumber > 0 && finding.RootCauseKey == observation.RootCauseKey &&
 			finding.PublicationFingerprint == publicationFingerprint(finding.Repository, finding.RootCauseKey, finding.RepositoryFingerprint)
+		deferInactivePublication := finding != nil && finding.IssueNumber > 0 &&
+			(finding.Status == StatusIssueClosed || finding.Status == StatusResolved) &&
+			!publicationSet[observation.RepositoryFingerprint]
 		wasReopened := false
 		if finding == nil {
 			firstSeenAt, _ := time.Parse(time.RFC3339Nano, observation.FirstSeenAt)
@@ -500,7 +503,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 			result.Created++
 		} else {
 			result.Updated++
-			if finding.Status == StatusIssueClosed || finding.Status == StatusResolved {
+			if !deferInactivePublication && (finding.Status == StatusIssueClosed || finding.Status == StatusResolved) {
 				finding.Status = StatusDetected
 				finding.ResolvedAt = nil
 				finding.ClosedAt = nil
@@ -525,6 +528,15 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 					finding.PublicationFingerprint = legacyPublicationFingerprint
 				}
 			}
+		}
+		if deferInactivePublication {
+			finding.PendingIssueAction = ""
+			result.Deferred++
+			if err := audit(LifecycleAuditEntry{Action: "defer_open_issue", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: "inactive historical issue did not win the current issue work-in-progress ranking"}); err != nil {
+				return result, err
+			}
+			result.FindingIDs = append(result.FindingIDs, observation.RepositoryFingerprint)
+			continue
 		}
 		beadFingerprint := observation.RepositoryFingerprint
 		if canonicalOwner != nil {
@@ -1052,7 +1064,7 @@ func selectIssuePublications(repository string, observations []Observation, find
 		if publicationDeferralReason(observation, coveredRoots) != "" {
 			continue
 		}
-		if publicationOwner(repository, findings, observation) != nil {
+		if issuePublicationOwnerActive(publicationOwner(repository, findings, observation)) {
 			selected[observation.RepositoryFingerprint] = true
 			continue
 		}
@@ -1184,6 +1196,10 @@ func publicationOwner(repository string, findings map[string]*FindingLifecycle, 
 		}
 	}
 	return owner
+}
+
+func issuePublicationOwnerActive(finding *FindingLifecycle) bool {
+	return finding != nil && finding.IssueNumber > 0 && finding.Status != StatusResolved && finding.Status != StatusIssueClosed
 }
 
 type legacyCanonicalMatch struct {
