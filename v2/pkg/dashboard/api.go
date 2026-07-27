@@ -66,6 +66,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/tokens", s.handleTokens)
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
+	s.mux.HandleFunc("GET /api/trend/history", s.handleTrendHistory)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
 	s.mux.HandleFunc("GET /api/model-advisor", s.handleModelAdvisor)
 	s.mux.HandleFunc("GET /api/budget-ignore", s.handleBudgetIgnoreGet)
@@ -4898,6 +4899,10 @@ func (s *Server) handleFactHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.CostHistory())
+}
+
+func (s *Server) handleTrendHistory(w http.ResponseWriter, r *http.Request) {
+	jsonResponse(w, s.TrendHistory())
 }
 
 func (s *Server) handleKnowledgeGraph(w http.ResponseWriter, r *http.Request) {

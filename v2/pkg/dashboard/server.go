@@ -69,6 +69,9 @@ type Server struct {
 	costHistoryMu sync.RWMutex
 	costHistory   []CostHistoryEntry
 
+	trendHistoryMu sync.RWMutex
+	trendHistory   []TrendHistoryEntry
+
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
 
@@ -397,6 +400,50 @@ const costHistoryMaxEntries = 8640
 // costHistoryMinIntervalMs prevents recording more than once per 5 minutes (ms),
 // mirroring factHistoryMinIntervalMs.
 const costHistoryMinIntervalMs = 300_000
+
+// TrendHistoryEntry records a point-in-time snapshot of the governor / per-repo
+// / beads / system-gauge trends that were previously kept only in the browser's
+// localStorage (hive_sparkline_history) and thus lost on a pod restart or a new
+// viewer. Persisting these server-side (same ring-buffer + PVC-seed treatment
+// as the fact/cost histories) makes the corresponding sparklines survive
+// restarts and render immediately for any viewer.
+type TrendHistoryEntry struct {
+	Timestamp int64 `json:"t"`
+	// Governor actionable counts.
+	GovIssues int `json:"govIssues"`
+	GovPrs    int `json:"govPrs"`
+	GovTotal  int `json:"govTotal"`
+	GovHold   int `json:"govHold"`
+	// Beads worker/supervisor counts.
+	BeadsWorkers    int `json:"beadsWorkers"`
+	BeadsSupervisor int `json:"beadsSupervisor"`
+	// Repos maps repo name → issues/prs at this snapshot. Omitted when empty.
+	Repos map[string]TrendRepoSnap `json:"repos,omitempty"`
+	// System gauges (disk/mem/cpu percent). Pointer so an entry recorded when
+	// systemResources was unavailable omits the field rather than reporting 0.
+	System *TrendSystemSnap `json:"system,omitempty"`
+}
+
+// TrendRepoSnap is one repo's actionable issue/PR counts at a snapshot.
+type TrendRepoSnap struct {
+	Issues int `json:"issues"`
+	PRs    int `json:"prs"`
+}
+
+// TrendSystemSnap is the disk/mem/cpu percentages at a snapshot.
+type TrendSystemSnap struct {
+	DiskPct float64 `json:"diskPct"`
+	MemPct  float64 `json:"memPct"`
+	CpuPct  float64 `json:"cpuPct"`
+}
+
+// trendHistoryMaxEntries caps the trend sparklines to ~30 days at 5-min
+// intervals, mirroring factHistoryMaxEntries / costHistoryMaxEntries.
+const trendHistoryMaxEntries = 8640
+
+// trendHistoryMinIntervalMs prevents recording more than once per 5 minutes (ms),
+// mirroring factHistoryMinIntervalMs / costHistoryMinIntervalMs.
+const trendHistoryMinIntervalMs = 300_000
 
 const sseRetryMs = 3000
 
@@ -880,6 +927,7 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.statusMu.Unlock()
 
 	s.AppendTokenSparkline(status)
+	s.AppendTrendHistory(status)
 
 	data, err := json.Marshal(status)
 	if err != nil {
@@ -1620,6 +1668,76 @@ func (s *Server) SeedCostHistory(entries []CostHistoryEntry) {
 		entries = entries[len(entries)-costHistoryMaxEntries:]
 	}
 	s.costHistory = entries
+}
+
+// AppendTrendHistory samples the governor / per-repo / beads / system-gauge
+// trends from the current status and records a timestamped entry if enough time
+// has passed since the last one. Mirrors AppendFactHistory / AppendCostHistory:
+// same 5-min cadence throttle and same ring-buffer cap so all the persisted
+// histories stay aligned. No-op on a nil status.
+func (s *Server) AppendTrendHistory(status *StatusPayload) {
+	if status == nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+
+	s.trendHistoryMu.Lock()
+	defer s.trendHistoryMu.Unlock()
+
+	if len(s.trendHistory) > 0 {
+		last := s.trendHistory[len(s.trendHistory)-1]
+		if now-last.Timestamp < trendHistoryMinIntervalMs {
+			return
+		}
+	}
+
+	entry := TrendHistoryEntry{
+		Timestamp:       now,
+		GovIssues:       status.Governor.Issues,
+		GovPrs:          status.Governor.PRs,
+		GovTotal:        status.Governor.Issues + status.Governor.PRs,
+		GovHold:         status.Hold.Total,
+		BeadsWorkers:    status.Beads.Workers,
+		BeadsSupervisor: status.Beads.Supervisor,
+	}
+	if len(status.Repos) > 0 {
+		repos := make(map[string]TrendRepoSnap, len(status.Repos))
+		for _, r := range status.Repos {
+			repos[r.Name] = TrendRepoSnap{Issues: r.Issues, PRs: r.PRs}
+		}
+		entry.Repos = repos
+	}
+	if status.SystemResources != nil {
+		entry.System = &TrendSystemSnap{
+			DiskPct: status.SystemResources.DiskPct,
+			MemPct:  status.SystemResources.MemPct,
+			CpuPct:  status.SystemResources.CpuPct,
+		}
+	}
+
+	s.trendHistory = append(s.trendHistory, entry)
+	if len(s.trendHistory) > trendHistoryMaxEntries {
+		s.trendHistory = s.trendHistory[len(s.trendHistory)-trendHistoryMaxEntries:]
+	}
+}
+
+// TrendHistory returns a copy of the trend history.
+func (s *Server) TrendHistory() []TrendHistoryEntry {
+	s.trendHistoryMu.RLock()
+	defer s.trendHistoryMu.RUnlock()
+	out := make([]TrendHistoryEntry, len(s.trendHistory))
+	copy(out, s.trendHistory)
+	return out
+}
+
+// SeedTrendHistory restores persisted trend history on startup.
+func (s *Server) SeedTrendHistory(entries []TrendHistoryEntry) {
+	s.trendHistoryMu.Lock()
+	defer s.trendHistoryMu.Unlock()
+	if len(entries) > trendHistoryMaxEntries {
+		entries = entries[len(entries)-trendHistoryMaxEntries:]
+	}
+	s.trendHistory = entries
 }
 
 // SetAdvisoryDigest stores the latest advisory digest for SSE broadcast.

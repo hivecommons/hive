@@ -300,6 +300,17 @@ func main() {
 		}
 	}
 
+	// Restore governor/repo/beads/system trend history from disk so those
+	// sparklines survive restarts and render for any viewer (previously kept
+	// only in the browser's localStorage).
+	const trendHistoryPath = "/data/trend-history.json"
+	var pendingTrendSeed []dashboard.TrendHistoryEntry
+	if trendData, err := os.ReadFile(trendHistoryPath); err == nil {
+		if err := json.Unmarshal(trendData, &pendingTrendSeed); err == nil && len(pendingTrendSeed) > 0 {
+			logger.Info("trend history loaded", "entries", len(pendingTrendSeed))
+		}
+	}
+
 	if cfg.Knowledge.Enabled {
 		layers := convertKnowledgeLayers(cfg.Knowledge.Layers)
 		primerCfg := knowledge.PrimerConfig{
@@ -570,6 +581,11 @@ func main() {
 	if len(pendingCostSeed) > 0 {
 		dashSrv.SeedCostHistory(pendingCostSeed)
 		logger.Info("cost history restored", "entries", len(pendingCostSeed))
+	}
+
+	if len(pendingTrendSeed) > 0 {
+		dashSrv.SeedTrendHistory(pendingTrendSeed)
+		logger.Info("trend history restored", "entries", len(pendingTrendSeed))
 	}
 
 	beadStores := make(map[string]*beads.Store)
@@ -2762,6 +2778,14 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 			costData, err := json.Marshal(costHist)
 			if err == nil {
 				atomicWrite("/data/cost-history.json", costData)
+			}
+		}
+
+		trendHist := dashSrv.TrendHistory()
+		if len(trendHist) > 0 {
+			trendData, err := json.Marshal(trendHist)
+			if err == nil {
+				atomicWrite("/data/trend-history.json", trendData)
 			}
 		}
 	}

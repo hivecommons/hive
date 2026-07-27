@@ -3724,6 +3724,70 @@
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
 
+    // ── Governor / repo / beads / system trend history (server-persisted) ──
+    // These trends used to live only in the browser's localStorage
+    // (hive_sparkline_history), so they were blank after a pod restart or for a
+    // brand-new viewer. The server now persists ~30 days of snapshots to
+    // /data/trend-history.json (same ring-buffer treatment as fact/cost). We
+    // fetch them and merge into historyData by timestamp so the governor / repo
+    // / beads / system-gauge sparklines render immediately instead of blank.
+    // Field names in the server entry mirror the client snapshot shape
+    // (govIssues, govPrs, govTotal, govHold, beadsWorkers, beadsSupervisor,
+    // repos[name].{issues,prs}) so no per-field translation is needed.
+    let _serverTrendHistory = [];
+    const TREND_MERGE_DELTA_MS = 60000;
+    async function fetchTrendHistory() {
+      try {
+        const r = await fetch('/api/trend/history');
+        const data = await r.json();
+        _serverTrendHistory = Array.isArray(data) ? data : [];
+        mergeTrendHistory();
+      } catch { /* non-critical */ }
+    }
+    // mergeTrendHistory folds cached server trend snapshots into historyData,
+    // matching each to the nearest live snapshot within TREND_MERGE_DELTA_MS and
+    // injecting any that have no live counterpart. Idempotent-ish: injected
+    // entries carry _fromTrend so a re-merge (after fetchHistory reassigns
+    // historyData) doesn't double-count against already-present live points.
+    function mergeTrendHistory() {
+      if (!_serverTrendHistory.length) return;
+      const matched = new Set();
+      for (const live of historyData) {
+        const lt = live.t || 0;
+        let bestIdx = -1, bestDelta = Infinity;
+        for (let i = 0; i < _serverTrendHistory.length; i++) {
+          const d = Math.abs((_serverTrendHistory[i].t || 0) - lt);
+          if (d < bestDelta) { bestDelta = d; bestIdx = i; }
+        }
+        if (bestIdx >= 0 && bestDelta < TREND_MERGE_DELTA_MS) matched.add(bestIdx);
+      }
+      const injected = [];
+      for (let i = 0; i < _serverTrendHistory.length; i++) {
+        if (matched.has(i)) continue;
+        const e = _serverTrendHistory[i];
+        const repos = {};
+        for (const [name, rs] of Object.entries(e.repos || {})) {
+          repos[name] = { issues: rs.issues || 0, prs: rs.prs || 0 };
+        }
+        injected.push({
+          t: e.t,
+          govIssues: e.govIssues || 0,
+          govPrs: e.govPrs || 0,
+          govTotal: e.govTotal || 0,
+          govHold: e.govHold || 0,
+          beadsWorkers: e.beadsWorkers || 0,
+          beadsSupervisor: e.beadsSupervisor || 0,
+          repos,
+          agents: {},
+          _fromTrend: true,
+        });
+      }
+      if (injected.length) {
+        historyData = historyData.concat(injected);
+        historyData.sort((a, b) => (a.t || 0) - (b.t || 0));
+      }
+    }
+
     // ── Cost spend-over-time (hourly / daily / weekly / monthly) ──
     // The server keeps 30 days of CUMULATIVE all-time estimated-$ snapshots at
     // ~5-min resolution. We derive per-bucket SPEND on the client by taking the
@@ -4013,6 +4077,9 @@
           evalEntries.sort((a, b) => (a.t || 0) - (b.t || 0));
         }
         historyData = evalEntries || [];
+        // Re-fold persisted governor/repo/beads trends into the freshly
+        // reassigned historyData so those sparklines survive the 30s refresh.
+        mergeTrendHistory();
       } catch (e) { /* ignore */ }
     }
     // fetchHistory() — deferred to _deferredInit
@@ -9041,6 +9108,12 @@ function burnAreaChart() {
     // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit
 
     // ── System resource gauge history for sparklines ──
+    // NOTE: these mini-sparklines still read this in-memory array, which resets
+    // on reload. The disk/mem/cpu percentages ARE now persisted server-side in
+    // the trend history (/api/trend/history, entry.system) alongside the
+    // governor/repo/beads trends, so the data survives restarts; wiring these
+    // gauge sparklines to that persisted series is a follow-up (kept client-only
+    // here to avoid reworking renderSystemGauges in this change).
     const SYS_GAUGE_HISTORY_MAX = 60;
     const _sysGaugeHistory = { disk: [], mem: [], cpu: [] };
 
@@ -16257,7 +16330,7 @@ function burnAreaChart() {
       setTimeout(() => {
         const deferred = [
           () => fetchFactHistory(),
-          () => fetchHistory().then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
+          () => fetchTrendHistory().then(() => fetchHistory()).then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
           () => fetchIssueCosts().then(() => { setInterval(fetchIssueCosts, ISSUE_COSTS_REFRESH_MS); }),
           () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
           () => fetchNousStatus().then(() => { setInterval(fetchNousStatus, NOUS_POLL_MS); }),
