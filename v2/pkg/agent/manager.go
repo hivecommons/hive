@@ -1009,7 +1009,12 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	}
 
 	cmd.Dir = filepath.Join("/data/agents", agent.Name)
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	// The shared npm cache under /data/home accumulates content-addressed
+	// entries owned by whichever agent UID wrote them first; npx run as the
+	// hive user then fails with EACCES on those shards and the agent launches
+	// without its proxy. A per-agent cache can never collide across UIDs.
+	npmCache := filepath.Join("/data/agents", agent.Name, ".npm-caveman-cache")
+	cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+npmCache)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		m.logger.Warn("caveman install failed", "agent", agent.Name, "error", err, "output", string(out))
 	}
