@@ -141,3 +141,13 @@ func TestEstimateFromSummary_Nil(t *testing.T) {
 		t.Fatalf("nil summary should still return initialized maps")
 	}
 }
+
+// TestGPT53CodexPriced guards the auto-mode routing target so it stops being
+// excluded from the estimated total.
+func TestGPT53CodexPriced(t *testing.T) {
+	for _, id := range []string{"gpt-5.3-codex", "gpt-5-3-codex", "openai/gpt-5.3-codex"} {
+		if _, priced := EstimateCostUSD(id, 1_000_000, 0, 0, 0); !priced {
+			t.Errorf("%q should be priced (auto-mode routes here)", id)
+		}
+	}
+}

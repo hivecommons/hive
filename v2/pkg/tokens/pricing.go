@@ -95,6 +95,7 @@ var modelPrices = map[string]ModelPrice{
 	"gpt-5-6-terra":       {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
 	"gpt-5-6-luna":        {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
 	"gpt-5-3-codex-spark": {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
+	"gpt-5-3-codex":       {InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25},
 
 	// ---- DeepSeek (common LiteLLM/OpenRouter routing target) ----
 	// deepseek-chat / V3: $0.27 in / $1.10 out; cache hit $0.07.
