@@ -40,10 +40,17 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 			stateDir, request.RequestID, "setup", request.ExpectedPlanSHA256,
 		)
 		if replayErr != nil || terminal {
+			if replayErr == nil {
+				replay = reconcileDashboardSetupRuntime(ctx, replay)
+			}
 			return replay, replayErr
 		}
 		if recoverStale {
-			return runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
+			result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
+			if mutationErr == nil {
+				result = reconcileDashboardSetupRuntime(ctx, result)
+			}
+			return result, mutationErr
 		}
 	}
 	plan, planBytes, err := dashboardSetupCLIRunner(ctx, append(append([]string(nil), baseArgs...), "--plan"), token)
@@ -65,7 +72,40 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	if request.ExpectedPlanSHA256 != planSHA256 {
 		return nil, fmt.Errorf("integrated setup plan changed: expected %s, current %s", request.ExpectedPlanSHA256, planSHA256)
 	}
-	return runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
+	result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
+	if mutationErr == nil {
+		result = reconcileDashboardSetupRuntime(ctx, result)
+	}
+	return result, mutationErr
+}
+
+func reconcileDashboardSetupRuntime(ctx context.Context, result map[string]any) map[string]any {
+	if result == nil {
+		result = map[string]any{}
+	}
+	activation := map[string]any{"state": "pending"}
+	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
+	if normalVisualRuntime == nil {
+		activation["error_reference"] = dashboardSetupErrorDigest(errors.New("normal Visual Hive runtime manager is unavailable"))
+		result["visual_runtime_activation"] = activation
+		return result
+	}
+	active, err := normalVisualRuntime.ResumeReconciliation(ctx)
+	switch {
+	case err != nil:
+		activation["error_reference"] = dashboardSetupErrorDigest(err)
+	case active:
+		activation["state"] = "ready"
+	default:
+		activation["error_reference"] = dashboardSetupErrorDigest(errors.New("authoritative Visual Hive contract is not yet available"))
+	}
+	result["visual_runtime_activation"] = activation
+	return result
+}
+
+func dashboardSetupErrorDigest(err error) string {
+	sum := sha256.Sum256([]byte(fmt.Sprint(err)))
+	return hex.EncodeToString(sum[:])
 }
 
 func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, planBytes []byte) (string, error) {

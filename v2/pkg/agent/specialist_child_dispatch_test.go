@@ -277,6 +277,32 @@ func configureTestSpecialistChild(t *testing.T, manager *Manager, executor Speci
 	return state
 }
 
+func TestResetSpecialistChildDispatcherRequiresNoActiveChildrenAndAllowsRebind(t *testing.T) {
+	manager := &Manager{specialistChildren: make(map[SpecialistRole]*specialistChildSession)}
+	first := &fakeSpecialistChildExecutor{identity: testSpecialistChildIdentity("codex")}
+	firstState := configureTestSpecialistChild(t, manager, first)
+	manager.specialistChildren[SpecialistQuality] = &specialistChildSession{}
+	if err := manager.ResetSpecialistChildDispatcher(firstState); err == nil || !strings.Contains(err.Error(), "children are active") {
+		t.Fatalf("active reset error=%v", err)
+	}
+	delete(manager.specialistChildren, SpecialistQuality)
+	manager.specialistsDown = true
+	if err := manager.ResetSpecialistChildDispatcher(filepath.Join(t.TempDir(), "different")); err == nil || !strings.Contains(err.Error(), "different repair state root") {
+		t.Fatalf("mismatched reset error=%v", err)
+	}
+	if err := manager.ResetSpecialistChildDispatcher(firstState); err != nil {
+		t.Fatal(err)
+	}
+	if manager.specialistChildExecutor != nil || manager.specialistChildRoot != "" || manager.specialistsDown {
+		t.Fatal("specialist dispatcher reset left runtime bindings behind")
+	}
+	second := &fakeSpecialistChildExecutor{identity: testSpecialistChildIdentity("codex")}
+	configureTestSpecialistChild(t, manager, second)
+	if manager.specialistChildExecutor != second || manager.specialistChildRoot == "" {
+		t.Fatal("specialist dispatcher did not accept managed rebind")
+	}
+}
+
 func testSpecialistChildDispatchRequest(t *testing.T, identity SpecialistSessionIdentity, kind string) SpecialistDispatchRequest {
 	profile := &SpecialistProposalExecutorProfile{
 		Backend: "codex", ProviderSHA256: identity.ProviderSHA256, Model: identity.ExecutorModel,

@@ -38,7 +38,6 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/governor"
 	"github.com/kubestellar/hive/v2/pkg/hub"
-	"github.com/kubestellar/hive/v2/pkg/integrated"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/notify"
@@ -50,7 +49,6 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/snapshot"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
 	"github.com/kubestellar/hive/v2/pkg/trajectory"
-	visualcontroller "github.com/kubestellar/hive/v2/pkg/visualhive/controller"
 )
 
 var (
@@ -411,17 +409,6 @@ func main() {
 		PolicyDir:  policyDir,
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
-	var normalVisualWorkOwnership *os.File
-	var normalVisualDashboardReadiness *normalVisualDashboardGate
-	defer func() { dashboardLifecycleStopNormalVisual = nil }()
-	defer shutdownOrdinaryVisualRuntime(cancel, agentMgr, func() {
-		if normalVisualDashboardReadiness != nil {
-			if err := normalVisualDashboardReadiness.Stop(); err != nil {
-				logger.Warn("remove normal Visual Hive dashboard readiness", "error", err)
-			}
-		}
-		releaseDaemonLease(normalVisualWorkOwnership)
-	}, logger)
 	configCoordinator := dashboard.NewConfigCoordinator(cfg, gov, agentMgr)
 	if appAuth != nil {
 		agentMgr.SetAppAuth(appAuth)
@@ -667,18 +654,6 @@ func main() {
 			logger.Info("orphan beads store loaded from disk", "agent", name, "count", store.Count())
 		}
 	}
-	installedVisualContract, visualContractExists, visualContractErr := loadCurrentVisualWorkContract(cfg)
-	if visualContractErr == nil && visualContractExists {
-		initialized, initErr := ensureVisualSpecialistBeadStores(beadStores, lifecycleBeadsDirs, beadsRootDir, cfg.HiveID)
-		if initErr != nil {
-			visualContractErr = fmt.Errorf("initialize fixed Visual Hive specialist bead stores: %w", initErr)
-		} else {
-			for _, role := range initialized {
-				logger.Info("Visual Hive specialist beads store initialized", "agent", role, "count", beadStores[role].Count())
-			}
-		}
-	}
-
 	lifecycleBeadRoles := make([]string, 0, len(lifecycleBeadsDirs))
 	for role := range lifecycleBeadsDirs {
 		lifecycleBeadRoles = append(lifecycleBeadRoles, role)
@@ -689,62 +664,23 @@ func main() {
 		dashboardLifecycleNormalBeadsDirs = append(dashboardLifecycleNormalBeadsDirs, strings.TrimSpace(lifecycleBeadsDirs[role]))
 	}
 
-	if visualContractErr != nil {
-		logger.Warn("normal Visual Hive contract unavailable", "error", visualContractErr)
-	} else if visualContractExists {
-		lifecycle, lifecycleErr := visualLifecycleForInstalledContract(installedVisualContract)
-		if lifecycleErr != nil {
-			logger.Warn("normal Visual Hive lifecycle unavailable", "error", lifecycleErr)
-		} else if service, serviceErr := visualcontroller.New(gov, lifecycle, beadStores, agentMgr, ghClient, installedVisualContract, inferACMMLevel(cfg)); serviceErr != nil {
-			logger.Warn("normal Visual Hive intake unavailable", "error", serviceErr)
-		} else {
-			service.SetAuditSink(dashboardVisualWorkAudit{server: dashSrv})
-			service.SetRuntimeConfigLoader(func() (integrated.Config, int, error) {
-				current, currentExists, currentErr := loadAuthoritativeVisualWorkContract()
-				if currentErr != nil {
-					return integrated.Config{}, 0, currentErr
-				}
-				if !currentExists {
-					return integrated.Config{}, 0, fmt.Errorf("authoritative installed Visual Hive contract is unavailable")
-				}
-				return current, agentMgr.GetACMMLevel(), nil
-			})
-			if configuredRuntimeOwnerIntent(installedVisualContract) != runtimeOwnerNormalHive {
-				normalVisualWorkService = service
-				logger.Info("normal Visual Hive intake initialized", "repository", installedVisualContract.Repository)
-				logger.Info("normal Visual Hive intake does not own repair polling for the current installed config", "repository", installedVisualContract.Repository, "runtime_owner", configuredRuntimeOwnerIntent(installedVisualContract))
-			} else {
-				candidateDashboardReadiness, readinessErr := newNormalVisualDashboardGate(dashSrv, installedVisualContract.StateDir, installedVisualContract.Repository)
-				if readinessErr != nil {
-					logger.Warn("normal Visual Hive dashboard readiness unavailable", "error", readinessErr)
-				} else {
-					ownership, runnerErr := claimNormalVisualWorkOwnership(installedVisualContract.StateDir, agentMgr, func(ordinaryManager *agent.Manager) (bool, error) {
-						runner, health, configureErr := configureNormalVisualWorkRunner(installedVisualContract, service, lifecycle, sched, ordinaryManager, ghClient, normalGitTransportToken, candidateDashboardReadiness.Ready, logger)
-						if configureErr != nil || runner == nil {
-							return false, configureErr
-						}
-						normalVisualWorkRunner = runner
-						normalVisualWorkHealthWriter = health
-						return true, nil
-					})
-					if runnerErr != nil {
-						if errors.Is(runnerErr, errDaemonLeaseHeld) {
-							logger.Warn("normal Visual Hive governed repair service held because the legacy scheduler owns this repository; stop it and restart normal Hive for a controlled transition", "repository", installedVisualContract.Repository)
-						} else {
-							logger.Warn("normal Visual Hive governed repair service unavailable", "error", runnerErr)
-						}
-					} else if ownership != nil {
-						normalVisualWorkService = service
-						normalVisualWorkOwnership = ownership
-						normalVisualDashboardReadiness = candidateDashboardReadiness
-						dashboardLifecycleStopNormalVisual = func(context.Context) error {
-							return errors.New("normal Visual Hive runtime initialization is not complete")
-						}
-						logger.Info("normal Visual Hive intake and governed repair service initialized with exclusive ordinary-Manager ownership", "repository", installedVisualContract.Repository)
-					}
-				}
-			}
-		}
+	normalVisualRuntime, runtimeManagerErr := newNormalVisualRuntimeManager(normalVisualRuntimeDependencies{
+		ProcessContext: ctx, NormalConfig: cfg, Governor: gov,
+		BeadStores: beadStores, LifecycleBeadDirs: lifecycleBeadsDirs,
+		BeadsRoot: beadsRootDir, HiveID: cfg.HiveID,
+		AgentManager: agentMgr, GitHub: ghClient, Scheduler: sched,
+		GitTransportToken: normalGitTransportToken, Dashboard: dashSrv, Logger: logger,
+	})
+	if runtimeManagerErr != nil {
+		logger.Error("normal Visual Hive runtime manager unavailable", "error", runtimeManagerErr)
+	} else {
+		dashboardNormalVisualRuntime.Store(normalVisualRuntime)
+		dashboardLifecycleStopNormalVisual = normalVisualRuntime.Stop
+		defer func() {
+			dashboardLifecycleStopNormalVisual = nil
+			dashboardNormalVisualRuntime.Store(nil)
+		}()
+		defer shutdownOrdinaryVisualRuntime(cancel, agentMgr, normalVisualRuntime.ReleaseOnProcessExit, logger)
 	}
 
 	initAgentConfigDrivenSystems(cfg)
@@ -1625,8 +1561,8 @@ func main() {
 
 	go func() {
 		err := dashSrv.Start()
-		if normalVisualDashboardReadiness != nil {
-			if stopErr := normalVisualDashboardReadiness.Stop(); stopErr != nil {
+		if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); normalVisualRuntime != nil {
+			if stopErr := normalVisualRuntime.ClearDashboardReadiness(); stopErr != nil {
 				logger.Warn("remove stopped normal Visual Hive dashboard readiness", "error", stopErr)
 			}
 		}
@@ -2177,44 +2113,18 @@ func main() {
 		dashboardHTTPReady = true
 	}
 	cancelDashboardReady()
-	if normalVisualWorkRunner != nil {
+	if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); normalVisualRuntime != nil {
 		if !dashboardHTTPReady {
 			logger.Error("normal Visual Hive service will not start without the existing dashboard HTTP listener")
-		} else if normalVisualDashboardReadiness == nil {
-			logger.Error("normal Visual Hive service will not start without dashboard readiness binding")
-		} else if err := normalVisualDashboardReadiness.Activate(time.Now().UTC()); err != nil {
-			logger.Error("normal Visual Hive service will not start without generation-bound dashboard readiness", "error", err)
-		} else if normalVisualWorkHealthWriter == nil {
-			logger.Error("normal Visual Hive service will not start without its health writer")
-		} else if err := normalVisualWorkHealthWriter.Initialize(); err != nil {
-			logger.Error("normal Visual Hive service will not start without a generation-bound health record", "error", err)
 		} else {
-			runner := normalVisualWorkRunner
-			runnerContext, cancelRunner := context.WithCancel(ctx)
-			runnerDone := make(chan struct{})
-			stopper := &normalVisualRuntimeStopper{
-				cancel:  cancelRunner,
-				done:    runnerDone,
-				manager: agentMgr,
-				logger:  logger,
-				releaseOwnership: func() {
-					if normalVisualDashboardReadiness != nil {
-						if err := normalVisualDashboardReadiness.Stop(); err != nil {
-							logger.Warn("remove normal Visual Hive dashboard readiness during uninstall", "error", err)
-						}
-						normalVisualDashboardReadiness = nil
-					}
-					releaseDaemonLease(normalVisualWorkOwnership)
-					normalVisualWorkOwnership = nil
-					normalVisualWorkRunner = nil
-					normalVisualWorkHealthWriter = nil
-				},
+			if _, err := normalVisualRuntime.Ensure(ctx); err != nil {
+				if errors.Is(err, errDaemonLeaseHeld) {
+					logger.Warn("normal Visual Hive governed repair service held because another runtime owns this repository", "error", err)
+				} else {
+					logger.Warn("normal Visual Hive runtime activation is pending", "error", err)
+				}
 			}
-			dashboardLifecycleStopNormalVisual = stopper.Stop
-			go func() {
-				defer close(runnerDone)
-				runner.Run(runnerContext)
-			}()
+			go normalVisualRuntime.Observe(ctx, normalVisualRuntimeReconcileInterval)
 		}
 	}
 

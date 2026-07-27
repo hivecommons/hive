@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -172,6 +173,36 @@ func (m *Manager) ConfigureSpecialistChildDispatcher(options SpecialistChildDisp
 	}
 	m.specialistChildExecutor = options.Executor
 	m.specialistChildRoot = childRoot
+	return nil
+}
+
+// ResetSpecialistChildDispatcher clears only the one-shot specialist transport
+// after the runtime that owned it has proven every child stopped. It leaves the
+// ordinary persistent agents untouched and permits a later managed Visual Hive
+// install to bind a fresh state root without restarting ordinary Hive.
+func (m *Manager) ResetSpecialistChildDispatcher(repairStateRoot string) error {
+	if m == nil {
+		return nil
+	}
+	repairStateRoot = filepath.Clean(strings.TrimSpace(repairStateRoot))
+	if repairStateRoot == "." || !filepath.IsAbs(repairStateRoot) {
+		return errors.New("specialist child dispatcher reset requires the exact absolute repair state root")
+	}
+	expectedChildRoot := filepath.Join(repairStateRoot, "specialist-children")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.specialistChildren) != 0 {
+		return errors.New("cannot reset specialist child dispatcher while children are active")
+	}
+	if m.specialistChildRoot != "" {
+		configuredRoot, expectedRoot := filepath.Clean(m.specialistChildRoot), filepath.Clean(expectedChildRoot)
+		if configuredRoot != expectedRoot && !(runtime.GOOS == "windows" && strings.EqualFold(configuredRoot, expectedRoot)) {
+			return errors.New("refuse to reset specialist child dispatcher for a different repair state root")
+		}
+	}
+	m.specialistChildExecutor = nil
+	m.specialistChildRoot = ""
+	m.specialistsDown = false
 	return nil
 }
 

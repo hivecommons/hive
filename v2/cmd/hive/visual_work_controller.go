@@ -16,8 +16,6 @@ import (
 	visualcontroller "github.com/kubestellar/hive/v2/pkg/visualhive/controller"
 )
 
-var normalVisualWorkService *visualcontroller.Controller
-
 type dashboardVisualWorkAudit struct{ server *dashboard.Server }
 
 func (sink dashboardVisualWorkAudit) RecordVisualWorkAudit(_ context.Context, event visualcontroller.AuditEvent) error {
@@ -101,10 +99,11 @@ func normalProjectContainsRepository(project config.ProjectConfig, repository st
 }
 
 func importNormalVisualWork(ctx context.Context, source hivegithub.VerifiedVisualHiveArtifact) (visualcontroller.Result, error) {
-	if normalVisualWorkService == nil {
+	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
+	if normalVisualRuntime == nil {
 		return visualcontroller.Result{}, errors.New("normal Visual Hive work service is not configured")
 	}
-	return normalVisualWorkService.Import(ctx, source)
+	return normalVisualRuntime.Import(ctx, source)
 }
 
 func visualLifecycleForInstalledContract(installed integrated.Config) (*visualhive.LifecycleStore, error) {
