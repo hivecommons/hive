@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agentparse"
 	"github.com/kubestellar/hive/v2/pkg/beads"
@@ -321,6 +322,31 @@ func TestBuildPlanning(t *testing.T) {
 	}
 	if fp.Replans24h != 0 {
 		t.Errorf("Replans24h: want 0, got %d", fp.Replans24h)
+	}
+}
+
+func TestBuildPlanning_Replans24h(t *testing.T) {
+	store, _ := beads.NewStore(t.TempDir())
+	now := time.Now()
+
+	// Approved epic replanned 2h ago → counted.
+	recent, _ := store.Create("recent", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	planning.DecomposeFromOutput(store, recent, "1. [T1] a [agent_suitable]\n", planning.Options{AutoApprove: true})
+	store.SetMetadata(recent.ID, planning.MetaLastReplanAt, now.Add(-2*time.Hour).Format(time.RFC3339))
+
+	// Approved epic replanned 30h ago → outside the 24h window, not counted.
+	old, _ := store.Create("old", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	planning.DecomposeFromOutput(store, old, "1. [T1] b [agent_suitable]\n", planning.Options{AutoApprove: true})
+	store.SetMetadata(old.ID, planning.MetaLastReplanAt, now.Add(-30*time.Hour).Format(time.RFC3339))
+
+	// Approved epic with a malformed timestamp → ignored, not counted.
+	bad, _ := store.Create("bad", beads.TypeEpic, beads.PriorityHigh, "architect", "")
+	planning.DecomposeFromOutput(store, bad, "1. [T1] c [agent_suitable]\n", planning.Options{AutoApprove: true})
+	store.SetMetadata(bad.ID, planning.MetaLastReplanAt, "not-a-timestamp")
+
+	fp := buildPlanningAt(map[string]*beads.Store{"architect": store}, now)
+	if fp.Replans24h != 1 {
+		t.Errorf("Replans24h: want 1 (only the 2h-ago replan), got %d", fp.Replans24h)
 	}
 }
 

@@ -798,10 +798,18 @@ func buildBeads(stores map[string]*beads.Store) FrontendBeads {
 // BuildPlanning computes the governor PLANNING metric block from bead metadata
 // across all stores (Phase 2 planning intelligence). An epic is "active" once it
 // carries a plan_status; "awaiting review" while that status is draft; and
-// "decomposing" (executing) when approved with at least one open child.
-// Replans24h is Phase 3 territory and stays 0.
+// "decomposing" (executing) when approved with at least one open child. Replans24h
+// (Phase 3) counts epics whose last_replan_at metadata falls within the last 24h,
+// so the tile reflects real governor stall-replans purely from bead state.
 func BuildPlanning(stores map[string]*beads.Store) FrontendPlanning {
+	return buildPlanningAt(stores, time.Now())
+}
+
+// buildPlanningAt is BuildPlanning with an injected `now`, so the replans_24h
+// window is unit-testable with backdated last_replan_at timestamps.
+func buildPlanningAt(stores map[string]*beads.Store, now time.Time) FrontendPlanning {
 	fp := FrontendPlanning{}
+	cutoff := now.Add(-planningReplanWindow)
 	for _, store := range stores {
 		all := store.List(beads.ListFilter{})
 
@@ -833,10 +841,19 @@ func BuildPlanning(stores map[string]*beads.Store) FrontendPlanning {
 					fp.Decomposing++
 				}
 			}
+			if raw := b.Meta(planning.MetaLastReplanAt); raw != "" {
+				if t, err := time.Parse(time.RFC3339, raw); err == nil && t.After(cutoff) {
+					fp.Replans24h++
+				}
+			}
 		}
 	}
 	return fp
 }
+
+// planningReplanWindow is the trailing window over which replans_24h counts
+// re-decomposed plans (matches the tile label "24h").
+const planningReplanWindow = 24 * time.Hour
 
 // BuildBeadsFromConfig uses agent config bead_role to partition bead counts.
 func BuildBeadsFromConfig(stores map[string]*beads.Store, cfg *config.Config) FrontendBeads {

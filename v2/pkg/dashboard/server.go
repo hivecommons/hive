@@ -319,8 +319,9 @@ type FrontendPlanning struct {
 	// Decomposing counts approved plans that still have open (unfinished)
 	// children — plans actively being executed by agents.
 	Decomposing int `json:"decomposing"`
-	// Replans24h counts plans re-decomposed in the last 24h. Phase 3 (governor
-	// stall-replan) populates this; it is 0 for now.
+	// Replans24h counts plans re-decomposed in the last 24h by the Phase 3
+	// governor stall-replan loop, derived from each epic's last_replan_at
+	// metadata.
 	Replans24h int `json:"replans_24h"`
 }
 
