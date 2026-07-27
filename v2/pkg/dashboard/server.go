@@ -59,16 +59,21 @@ type Server struct {
 	acmmEvalCache    *ACMMEvaluation
 	acmmEvalCachedAt time.Time
 
-	tokenHistoryMu    sync.RWMutex
-	tokenHistory      []TokenSparklineEntry
+	// Sparkline histories, all backed by the generic timeSeries ring buffer
+	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
+	// /costSeries() accessors so the zero-value Server needs no constructor
+	// change. Each keeps its own typed entry struct and JSON contract, so the
+	// unification is internal — on-disk files and /api/* endpoints are unchanged.
+	histOnce  sync.Once
+	tokenHist *timeSeries[TokenSparklineEntry]
+	factHist  *timeSeries[FactHistoryEntry]
+	costHist  *timeSeries[CostHistoryEntry]
+
+	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time
 
-	factHistoryMu sync.RWMutex
-	factHistory   []FactHistoryEntry
-
-	costHistoryMu sync.RWMutex
-	costHistory   []CostHistoryEntry
-
+	// fact/cost histories were migrated to the generic timeSeries store (#2041);
+	// the trend history (#2039) remains a dedicated buffer for now.
 	trendHistoryMu sync.RWMutex
 	trendHistory   []TrendHistoryEntry
 
@@ -1523,15 +1528,47 @@ func (s *Server) broadcastFrame(frame string) {
 	}
 }
 
+// initHistories lazily builds the three sparkline ring buffers. Called (once)
+// by each history accessor so a zero-value Server — as used in tests that do
+// `&Server{}` — works without a constructor. Token history has no throttle
+// (append every broadcast); fact/cost throttle to ~5 min. Each buffer's cap and
+// interval match the previous bespoke implementation exactly, so behavior and
+// on-disk shape are preserved.
+func (s *Server) initHistories() {
+	s.histOnce.Do(func() {
+		s.tokenHist = newTimeSeries(tokenSparklineMaxEntries, 0,
+			func(e TokenSparklineEntry) int64 { return e.Timestamp })
+		s.factHist = newTimeSeries(factHistoryMaxEntries, factHistoryMinIntervalMs,
+			func(e FactHistoryEntry) int64 { return e.Timestamp })
+		s.costHist = newTimeSeries(costHistoryMaxEntries, costHistoryMinIntervalMs,
+			func(e CostHistoryEntry) int64 { return e.Timestamp })
+	})
+}
+
+func (s *Server) tokenSeries() *timeSeries[TokenSparklineEntry] {
+	s.initHistories()
+	return s.tokenHist
+}
+
+func (s *Server) factSeries() *timeSeries[FactHistoryEntry] {
+	s.initHistories()
+	return s.factHist
+}
+
+func (s *Server) costSeries() *timeSeries[CostHistoryEntry] {
+	s.initHistories()
+	return s.costHist
+}
+
 // AppendTokenSparkline extracts token metrics from the current status and
-// appends a timestamped entry to the in-memory token sparkline history.
+// appends a timestamped entry to the token sparkline history (no throttle).
 func (s *Server) AppendTokenSparkline(status *StatusPayload) {
 	if status == nil {
 		return
 	}
 
 	entry := TokenSparklineEntry{
-		Timestamp:   time.Now().UnixMilli(),
+		Timestamp:   nowMillis(),
 		Input:       status.Tokens.Totals.Input,
 		Output:      status.Tokens.Totals.Output,
 		CacheRead:   status.Tokens.Totals.CacheRead,
@@ -1548,73 +1585,35 @@ func (s *Server) AppendTokenSparkline(status *StatusPayload) {
 		entry.ByModel[name] = bucket.Input + bucket.Output + bucket.CacheRead
 	}
 
-	s.tokenHistoryMu.Lock()
-	s.tokenHistory = append(s.tokenHistory, entry)
-	if len(s.tokenHistory) > tokenSparklineMaxEntries {
-		s.tokenHistory = s.tokenHistory[len(s.tokenHistory)-tokenSparklineMaxEntries:]
-	}
-	s.tokenHistoryMu.Unlock()
+	s.tokenSeries().append(entry)
 }
 
 // TokenSparklineHistory returns a copy of the current token sparkline history.
 func (s *Server) TokenSparklineHistory() []TokenSparklineEntry {
-	s.tokenHistoryMu.RLock()
-	defer s.tokenHistoryMu.RUnlock()
-	out := make([]TokenSparklineEntry, len(s.tokenHistory))
-	copy(out, s.tokenHistory)
-	return out
+	return s.tokenSeries().snapshot()
 }
 
 // SeedTokenSparklineHistory restores persisted token history on startup.
 func (s *Server) SeedTokenSparklineHistory(entries []TokenSparklineEntry) {
-	s.tokenHistoryMu.Lock()
-	defer s.tokenHistoryMu.Unlock()
-	if len(entries) > tokenSparklineMaxEntries {
-		entries = entries[len(entries)-tokenSparklineMaxEntries:]
-	}
-	s.tokenHistory = entries
+	s.tokenSeries().seed(entries)
 }
 
 // AppendFactHistory records a total-facts count if enough time has passed.
 func (s *Server) AppendFactHistory(count int) {
-	now := time.Now().UnixMilli()
-
-	s.factHistoryMu.Lock()
-	defer s.factHistoryMu.Unlock()
-
-	if len(s.factHistory) > 0 {
-		last := s.factHistory[len(s.factHistory)-1]
-		if now-last.Timestamp < factHistoryMinIntervalMs {
-			return
-		}
-	}
-
-	s.factHistory = append(s.factHistory, FactHistoryEntry{
-		Timestamp: now,
+	s.factSeries().append(FactHistoryEntry{
+		Timestamp: nowMillis(),
 		Count:     count,
 	})
-	if len(s.factHistory) > factHistoryMaxEntries {
-		s.factHistory = s.factHistory[len(s.factHistory)-factHistoryMaxEntries:]
-	}
 }
 
 // FactHistory returns a copy of the fact count history.
 func (s *Server) FactHistory() []FactHistoryEntry {
-	s.factHistoryMu.RLock()
-	defer s.factHistoryMu.RUnlock()
-	out := make([]FactHistoryEntry, len(s.factHistory))
-	copy(out, s.factHistory)
-	return out
+	return s.factSeries().snapshot()
 }
 
 // SeedFactHistory restores persisted fact history on startup.
 func (s *Server) SeedFactHistory(entries []FactHistoryEntry) {
-	s.factHistoryMu.Lock()
-	defer s.factHistoryMu.Unlock()
-	if len(entries) > factHistoryMaxEntries {
-		entries = entries[len(entries)-factHistoryMaxEntries:]
-	}
-	s.factHistory = entries
+	s.factSeries().seed(entries)
 }
 
 // AppendCostHistory records an estimated-cost ($) snapshot if enough time has
@@ -1633,20 +1632,8 @@ func (s *Server) AppendCostHistory(usd float64, agents ...map[string]float64) {
 // AppendCostHistoryFull is AppendCostHistory plus the per-model snapshot map
 // that feeds the cost table's mini sparklines.
 func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, models map[string]CostModelSnap) {
-	now := time.Now().UnixMilli()
-
-	s.costHistoryMu.Lock()
-	defer s.costHistoryMu.Unlock()
-
-	if len(s.costHistory) > 0 {
-		last := s.costHistory[len(s.costHistory)-1]
-		if now-last.Timestamp < costHistoryMinIntervalMs {
-			return
-		}
-	}
-
 	entry := CostHistoryEntry{
-		Timestamp: now,
+		Timestamp: nowMillis(),
 		USD:       usd,
 	}
 	if len(agents) > 0 {
@@ -1655,29 +1642,17 @@ func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, m
 	if len(models) > 0 {
 		entry.Models = models
 	}
-	s.costHistory = append(s.costHistory, entry)
-	if len(s.costHistory) > costHistoryMaxEntries {
-		s.costHistory = s.costHistory[len(s.costHistory)-costHistoryMaxEntries:]
-	}
+	s.costSeries().append(entry)
 }
 
 // CostHistory returns a copy of the estimated-cost history.
 func (s *Server) CostHistory() []CostHistoryEntry {
-	s.costHistoryMu.RLock()
-	defer s.costHistoryMu.RUnlock()
-	out := make([]CostHistoryEntry, len(s.costHistory))
-	copy(out, s.costHistory)
-	return out
+	return s.costSeries().snapshot()
 }
 
 // SeedCostHistory restores persisted cost history on startup.
 func (s *Server) SeedCostHistory(entries []CostHistoryEntry) {
-	s.costHistoryMu.Lock()
-	defer s.costHistoryMu.Unlock()
-	if len(entries) > costHistoryMaxEntries {
-		entries = entries[len(entries)-costHistoryMaxEntries:]
-	}
-	s.costHistory = entries
+	s.costSeries().seed(entries)
 }
 
 // AppendTrendHistory samples the governor / per-repo / beads / system-gauge

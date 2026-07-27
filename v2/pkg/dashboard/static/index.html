@@ -3660,6 +3660,32 @@
       });
     }
 
+    // Default stroke colors for the named series historyData carries. Keeps the
+    // sparkline() helper below a single source of truth for each series' color
+    // so the scattered render fns don't each repeat the getHistorySeries +
+    // sparkSvg + color triple.
+    const SPARKLINE_COLORS = {
+      govIssues: 'var(--blue)',
+      govPrs: 'var(--purple)',
+      govTotal: 'var(--green)',
+      govHold: 'var(--muted)', // sparkline tint only — the count itself is neutral
+      beadsWorkers: 'var(--cyan)',
+      beadsSupervisor: 'var(--yellow)',
+      tokenTotal: 'var(--cyan)',
+      tokenInput: 'var(--blue)',
+      tokenOutput: 'var(--purple)',
+      tokenCacheRead: 'var(--green)',
+      tokenCacheCreate: 'var(--yellow)',
+      tokenMessages: 'var(--muted)',
+    };
+    // sparkline(name, color?) renders the named historyData series as an SVG
+    // sparkline. color defaults to SPARKLINE_COLORS[name] (falling back to
+    // muted). One helper routes every historyData-backed sparkline through the
+    // same getHistorySeries + sparkSvg path.
+    function sparkline(name, color) {
+      return sparkSvg(getHistorySeries(name), color || SPARKLINE_COLORS[name] || 'var(--muted)');
+    }
+
     function restartSparkSvg(agentName) {
       const series = historyData
         .map(s => s.agents?.[agentName]?.restarts)
@@ -4762,9 +4788,9 @@
       const isStarting = !gov.active && !gov.mode;
       const cls = gov.active ? 'active' : (isStarting ? 'starting' : 'dead');
       el.className = `governor ${cls}`;
-      const issuesSpark = sparkSvg(getHistorySeries('govIssues'), 'var(--blue)');
-      const prsSpark = sparkSvg(getHistorySeries('govPrs'), 'var(--purple)');
-      const totalSpark = sparkSvg(getHistorySeries('govTotal'), 'var(--green)');
+      const issuesSpark = sparkline('govIssues');
+      const prsSpark = sparkline('govPrs');
+      const totalSpark = sparkline('govTotal');
       const issueCount = gov.issues || 0;
       const currentMode = gov.mode || 'idle';
       const modes = ['idle', 'quiet', 'busy', 'surge'];
@@ -4799,9 +4825,8 @@
       const holdData = data.hold || {};
       const holdTotal = holdData.total || 0;
       const holdItems = holdData.items || [];
-      const HOLD_COLOR = 'var(--muted)'; /* sparkline tint only — the count itself is neutral */
       const holdTooltip = holdItems.length > 0 ? escapeHtml(holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}: ${h.title}`).join('\n')) : 'No items on hold';
-      const holdSpark = sparkSvg(getHistorySeries('govHold'), HOLD_COLOR);
+      const holdSpark = sparkline('govHold');
 
       el.innerHTML = `
         <div class="gov-title">Governor <button class="config-gear" onclick="openConfigDialog('governor')" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
@@ -5039,8 +5064,8 @@
           'Counts appear here as soon as agents start filing beads — kick an agent, or let the governor cadence run, and check back.'));
         return;
       }
-      const wSpark = sparkSvg(getHistorySeries('beadsWorkers'), 'var(--cyan)');
-      const sSpark = sparkSvg(getHistorySeries('beadsSupervisor'), 'var(--yellow)');
+      const wSpark = sparkline('beadsWorkers');
+      const sSpark = sparkline('beadsSupervisor');
       setIfChanged(el, `
         <div class="bead-stat"><div class="spark-row"><span class="num">${workers}</span>${wSpark}</div><div class="label">workers</div></div>
         <div class="bead-stat"><div class="spark-row"><span class="num">${supervisor}</span>${sSpark}</div><div class="label">supervisor</div></div>`);
@@ -5965,7 +5990,7 @@ function burnAreaChart() {
 
       const advisorHtml = buildCadenceAdvisor(tokens.byAgent || {});
 
-      const totalSpark = sparkSvg(getHistorySeries('tokenTotal'), 'var(--cyan)');
+      const totalSpark = sparkline('tokenTotal');
       const ba = tokens.byAgent || {};
       const agentNames = Object.keys(ba).sort((a, b) => {
         const aOrder = _getAgentSortOrder(a);
@@ -5988,11 +6013,11 @@ function burnAreaChart() {
         </div>
         <div class="token-grid">
           <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(totalTokens)}</span>${totalSpark}</div><div class="tlabel">total tokens</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.input)}</span>${sparkSvg(getHistorySeries('tokenInput'), 'var(--blue)')}</div><div class="tlabel">input</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.output)}</span>${sparkSvg(getHistorySeries('tokenOutput'), 'var(--purple)')}</div><div class="tlabel">output</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheRead)}</span>${sparkSvg(getHistorySeries('tokenCacheRead'), 'var(--green)')}</div><div class="tlabel">cache read</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheCreate)}</span>${sparkSvg(getHistorySeries('tokenCacheCreate'), 'var(--yellow)')}</div><div class="tlabel">cache create</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${t.messages}</span>${sparkSvg(getHistorySeries('tokenMessages'), 'var(--muted)')}</div><div class="tlabel">messages</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.input)}</span>${sparkline('tokenInput')}</div><div class="tlabel">input</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.output)}</span>${sparkline('tokenOutput')}</div><div class="tlabel">output</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheRead)}</span>${sparkline('tokenCacheRead')}</div><div class="tlabel">cache read</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheCreate)}</span>${sparkline('tokenCacheCreate')}</div><div class="tlabel">cache create</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${t.messages}</span>${sparkline('tokenMessages')}</div><div class="tlabel">messages</div></div>
         </div>
         ${agentSparkRows ? `<div class="token-grid" style="margin-top:4px">${agentSparkRows}</div>` : ''}
         ${advisorHtml}

@@ -67,6 +67,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/cost", s.handleCost)
 	s.mux.HandleFunc("GET /api/cost/history", s.handleCostHistory)
 	s.mux.HandleFunc("GET /api/trend/history", s.handleTrendHistory)
+	s.mux.HandleFunc("GET /api/timeseries", s.handleTimeSeries)
 	s.mux.HandleFunc("GET /api/issue-costs", s.handleIssueCosts)
 	s.mux.HandleFunc("GET /api/model-advisor", s.handleModelAdvisor)
 	s.mux.HandleFunc("GET /api/budget-ignore", s.handleBudgetIgnoreGet)
@@ -4903,6 +4904,24 @@ func (s *Server) handleCostHistory(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleTrendHistory(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, s.TrendHistory())
+}
+
+// handleTimeSeries is the unified read endpoint over the sparkline histories.
+// GET /api/timeseries?series=<name> returns the same JSON the dedicated
+// endpoint returns (token → /api/tokens history, fact → /api/knowledge/
+// fact-history, cost → /api/cost/history), so it's an additive alias rather
+// than a replacement — the existing endpoints stay for back-compat.
+func (s *Server) handleTimeSeries(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Query().Get("series") {
+	case "token", "tokens":
+		jsonResponse(w, s.TokenSparklineHistory())
+	case "fact", "facts":
+		jsonResponse(w, s.FactHistory())
+	case "cost":
+		jsonResponse(w, s.CostHistory())
+	default:
+		http.Error(w, `{"error":"unknown series; valid: token, fact, cost"}`, http.StatusBadRequest)
+	}
 }
 
 func (s *Server) handleKnowledgeGraph(w http.ResponseWriter, r *http.Request) {
