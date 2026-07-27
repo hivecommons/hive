@@ -2,10 +2,10 @@ name: v2 CI
 
 on:
   push:
-    branches: [v2]
+    branches: [v2, v3]
     paths: ['v2/**']
   pull_request:
-    branches: [v2]
+    branches: [v2, v3]
     paths: ['v2/**']
 
 permissions:
