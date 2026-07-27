@@ -3827,18 +3827,37 @@
         buckets.push({ start, end, spend: 0, hasData: false });
       }
       if (hist.length < 2) return buckets;
-      // For each bucket, spend = usd at last snapshot in bucket − usd at last
-      // snapshot before bucket start (the cumulative baseline entering the bucket).
-      const at = (t) => costValueAt(hist, t, e => e.usd);
+      // Per-bucket spend = cumulative-$ at the last snapshot in the bucket minus
+      // the last snapshot before it. We estimate — exactness isn't the goal —
+      // and prefer the SUM OF PER-MODEL $ deltas over the single total-$ delta:
+      // the per-model figures capture activity the coarse rounded total can drop
+      // to ~0 at short (hourly) windows, and cover models added mid-window.
+      const totalAt = (t) => costValueAt(hist, t, e => e.usd);
+      // Sum of per-model cumulative $ at-or-before t (models present at that
+      // snapshot). null only if NO snapshot carries a models map up to t.
+      const modelSumAt = (t) => {
+        let sum = null;
+        for (const e of hist) {
+          if (e.timestamp > t) break;
+          if (e.models) {
+            let s = 0;
+            for (const k in e.models) { const u = e.models[k] && e.models[k].usd; if (typeof u === 'number') s += u; }
+            sum = s;
+          }
+        }
+        return sum;
+      };
+      const firstModelSum = () => { for (const e of hist) { if (e.models) { let s = 0; for (const k in e.models) { const u = e.models[k] && e.models[k].usd; if (typeof u === 'number') s += u; } return s; } } return null; };
       for (const b of buckets) {
-        const before = at(b.start);
-        const end = at(b.end);
+        // Try per-model deltas first, fall back to the total-$ delta.
+        let before = modelSumAt(b.start), end = modelSumAt(b.end), baseline = firstModelSum();
+        if (end == null) { before = totalAt(b.start); end = totalAt(b.end); baseline = hist[0].usd; }
         if (before != null && end != null) {
           b.spend = Math.max(0, end - before);
           b.hasData = true;
         } else if (end != null && before == null && hist[0].timestamp <= b.end) {
-          // History begins inside this bucket — spend since first snapshot.
-          b.spend = Math.max(0, end - hist[0].usd);
+          // History begins inside this bucket — spend since the first snapshot.
+          b.spend = Math.max(0, end - (baseline ?? 0));
           b.hasData = true;
         }
       }
@@ -5899,11 +5918,13 @@ function burnAreaChart() {
         </div>`;
       }).join('');
 
-      // Per-model estimated cost table. Unpriced models render "—".
+      // Per-model estimated cost table. Every model shows a $ estimate now —
+      // exact list price where known, a coarse tier estimate (~) otherwise.
       const models = (est.by_model || []).slice().sort((a, b) => b.usd - a.usd);
       const modelRows = models.map(m => {
-        const usdCell = m.source === 'unpriced'
-          ? `<span title="no list price known for this model">—</span>`
+        const approx = m.source === 'unpriced';
+        const usdCell = approx
+          ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
         return `<tr>
           <td class="cmodel">${esc(m.name || 'unknown')}</td>
@@ -5914,12 +5935,12 @@ function burnAreaChart() {
       }).join('');
 
       const unpricedNote = (est.unpriced_models && est.unpriced_models.length)
-        ? `<div class="cost-disclaimer">Not priced (excluded from estimated total): ${est.unpriced_models.map(esc).join(', ')}. Estimated total is a lower bound.</div>`
+        ? `<div class="cost-disclaimer">Tier-estimated (no exact list price, marked ~ and included in the total): ${est.unpriced_models.map(esc).join(', ')}.</div>`
         : '';
 
       el.innerHTML = `<div class="cost-panel">
         <div class="cost-title">Cost <span class="cost-badge est" title="Estimated from token counts × list prices; subscription/self-hosted billing may differ">est.</span></div>
-        <div class="cost-subtitle">List prices as of ${esc(cost.price_table_date || '')}. Metered gateways (OpenRouter, LiteLLM) show ACTUAL spend; everything else is ESTIMATED.</div>
+        <div class="cost-subtitle">Estimated from token counts × list prices (as of ${esc(cost.price_table_date || '')}); models without an exact price use a coarse tier estimate (~). Where a metered gateway reports actual spend it refines the estimate, but the figure is always an estimate.</div>
         <div class="cost-grid">
           <div class="cost-stat"><div class="cval">${fmtUSD(est.total_usd)}<span class="cost-badge est">est.</span></div><div class="clabel">estimated total — all-time cumulative (token × list price)</div>${costSparkSvg()}</div>
         </div>

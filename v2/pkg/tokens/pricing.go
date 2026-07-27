@@ -158,20 +158,55 @@ func LookupPrice(model string) (ModelPrice, bool) {
 	return p, ok
 }
 
-// EstimateCostUSD computes the estimated dollar cost for the given token counts
-// at the model's list price. priced is false when the model is not in the price
-// table (unknown model) — in that case usd is 0 and the UI should render "—"
-// rather than "$0.00" so an unknown model is never mistaken for a free one.
-func EstimateCostUSD(model string, inputTok, outputTok, cacheReadTok, cacheWriteTok int64) (usd float64, priced bool) {
+// Tier fallback prices (USD per MTok). Deliberately coarse — used only when a
+// model is not in the exact table, so the cost estimate reflects activity
+// instead of showing $0. The heuristic follows the obvious ordering: smaller /
+// older / lighter models cost less than bigger / newer / flagship ones.
+var (
+	tierCheap = ModelPrice{InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25}  // mini / flash / haiku / lite
+	tierMid   = ModelPrice{InputPerMTok: 1.25, OutputPerMTok: 10.00, CacheReadPerMTok: 0.125, CacheWritePerMTok: 1.25} // gpt-5.x / sonnet / codex class
+	tierBig   = ModelPrice{InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25}  // opus / pro / fable / flagship
+)
+
+// FallbackPrice returns a tier-based estimate for a model absent from the exact
+// table, plus false to signal it's a fallback (callers may still flag the row
+// as approximate). It never returns a zero price, so no active model shows $0.
+func FallbackPrice(model string) (ModelPrice, bool) {
+	id := normalizeModelID(model)
+	switch {
+	case id == "":
+		return tierMid, false
+	case strings.Contains(id, "mini") || strings.Contains(id, "flash") ||
+		strings.Contains(id, "haiku") || strings.Contains(id, "lite") ||
+		strings.Contains(id, "small") || strings.Contains(id, "nano"):
+		return tierCheap, false
+	case strings.Contains(id, "opus") || strings.Contains(id, "-pro") ||
+		strings.Contains(id, "fable") || strings.Contains(id, "ultra") ||
+		strings.Contains(id, "-max"):
+		return tierBig, false
+	default:
+		// Unknown mid-size (most GPT-5.x/codex/sonnet-class ids land here).
+		return tierMid, false
+	}
+}
+
+// EstimateCostUSD computes the estimated dollar cost for the given token counts.
+// It ALWAYS returns a dollar estimate: exact list price when the model is in the
+// table, otherwise a coarse tier fallback (see FallbackPrice) so an active model
+// never contributes $0 to the total. The `exact` return reports which was used —
+// true = exact list price, false = tier estimate — so the UI can mark a row as
+// approximate, but the number is real either way. (This whole card is an
+// estimate; we do not depend on unavailable "actual" gateway spend.)
+func EstimateCostUSD(model string, inputTok, outputTok, cacheReadTok, cacheWriteTok int64) (usd float64, exact bool) {
 	p, ok := LookupPrice(model)
 	if !ok {
-		return 0, false
+		p, _ = FallbackPrice(model)
 	}
 	usd = float64(inputTok)/tokensPerMillion*p.InputPerMTok +
 		float64(outputTok)/tokensPerMillion*p.OutputPerMTok +
 		float64(cacheReadTok)/tokensPerMillion*p.CacheReadPerMTok +
 		float64(cacheWriteTok)/tokensPerMillion*p.CacheWritePerMTok
-	return usd, true
+	return usd, ok
 }
 
 // ModelCost is the estimated dollar cost for one model or agent, plus whether
@@ -227,18 +262,20 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 		if b == nil {
 			continue
 		}
-		usd, priced := EstimateCostUSD(model, b.Input, b.Output, b.CacheRead, b.CacheCreate)
+		usd, exact := EstimateCostUSD(model, b.Input, b.Output, b.CacheRead, b.CacheCreate)
 		out.ByModel[model] = ModelCost{
 			USD:         usd,
-			Priced:      priced,
+			Priced:      exact,
 			Input:       b.Input,
 			Output:      b.Output,
 			CacheRead:   b.CacheRead,
 			CacheCreate: b.CacheCreate,
 		}
-		if priced {
-			out.TotalUSD += usd
-		} else if model != "" && !unpricedSeen[model] {
+		// Every model contributes to the total now — exact where we have a list
+		// price, tier estimate otherwise. UnpricedModels lists the estimated
+		// ones so the UI can mark them ~approximate (not exclude them).
+		out.TotalUSD += usd
+		if !exact && model != "" && !unpricedSeen[model] {
 			unpricedSeen[model] = true
 			out.UnpricedModels = append(out.UnpricedModels, model)
 		}
@@ -254,10 +291,10 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 			continue
 		}
 		model := agentModel[agent]
-		usd, priced := EstimateCostUSD(model, b.Input, b.Output, b.CacheRead, b.CacheCreate)
+		usd, exact := EstimateCostUSD(model, b.Input, b.Output, b.CacheRead, b.CacheCreate)
 		out.ByAgent[agent] = ModelCost{
 			USD:         usd,
-			Priced:      priced,
+			Priced:      exact,
 			Input:       b.Input,
 			Output:      b.Output,
 			CacheRead:   b.CacheRead,
