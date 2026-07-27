@@ -6,10 +6,10 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta property="og:title" content="Hive — AI agents that maintain your repo">
-  <meta property="og:description" content="You earn automation with test coverage. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — raise coverage, then raise how much the agents are allowed to do.">
+  <meta property="og:description" content="Put your repo on autopilot. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — test coverage earns the confidence to raise a level, and you (the admin) choose when to raise it.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://hive.kubestellar.io">
-  <meta name="description" content="Hive — you earn automation with test coverage. AI agents triage issues, write fixes, and patch CVEs behind six autonomy levels, from advisory to auto-merge. Raise coverage, then raise autonomy.">
+  <meta name="description" content="Hive — the AI maintainer you own outright. AI agents triage issues, write fixes, patch CVEs, and merge on green behind six autonomy levels. Coverage earns the confidence to level up; the admin decides when to raise it.">
   <title>Hive — AI agents that maintain your repo</title>
   <style>
     :root {
@@ -148,8 +148,39 @@
     .hero-sub-links a { color: var(--blue); }
     .hero-sub-links a:hover { text-decoration: underline; }
 
-    /* ── Hero proof strip: the receipts behind the coverage claim. Every figure
-       here is checkable via the public GitHub API on the kubestellar org. ── */
+    /* ── Hero rotator: crossfading value statements. Slides are absolutely
+       stacked so the block height stays stable while they fade; a spacer sizes
+       it to the tallest slide. Auto-rotation is JS-driven and disabled under
+       prefers-reduced-motion (handled in JS, not just CSS). ── */
+    .hero-rotator { position: relative; }
+    .hero-slide {
+      position: absolute; inset: 0;
+      opacity: 0; visibility: hidden;
+      transition: opacity .6s ease;
+    }
+    .hero-slide.is-active { opacity: 1; visibility: visible; }
+    .hero-slide-spacer { visibility: hidden; }
+    .hero-slide h1, .hero-slide-spacer h1 { margin: 0; }
+    @media (prefers-reduced-motion: reduce) {
+      .hero-slide { transition: none; }
+    }
+    .hero-dots {
+      display: flex; gap: .55rem; margin-top: 1.4rem;
+    }
+    .hero-dot {
+      width: .55rem; height: .55rem; border-radius: 999px;
+      border: 0; padding: 0; cursor: pointer;
+      background: #ffffff2e;
+      transition: background .2s, transform .2s;
+    }
+    .hero-dot:hover { background: #ffffff5c; }
+    .hero-dot.is-active { background: var(--amber); transform: scale(1.15); }
+    .hero-dot:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+
+    /* ── Hero proof strip: the live fleet-stats receipts. Numbers are fetched
+       from /api/fleet-stats — a fleet-wide total across every repo Hive manages
+       (all registered public spokes), NOT a single org. A stat is hidden when
+       unavailable rather than showing a fabricated number. ── */
     .hero-proof {
       display: flex;
       flex-wrap: wrap;
@@ -530,32 +561,65 @@
     <section class="hero section-pad" id="product">
       <div>
         <p class="section-label">Earned Autonomy for AI Agents</p>
-        <h1>You earn automation with test coverage</h1>
-        <p class="hero-lede">Hive runs a fleet of AI agents against your backlog &mdash; triaging issues, writing fixes, and patching CVEs. What makes that safe is the sequencing: raise your test coverage, and only then raise how much the agents are allowed to do. Six autonomy levels, from advisory to auto-merge. You move up when your tests justify it, not when you feel optimistic.</p>
+
+        <!-- ── Rotating hero: 5 value statements, auto-crossfading (JS). The
+             spacer sizes the block to the tallest slide so nothing jumps as
+             slides fade. Auto-rotation is disabled under prefers-reduced-motion. -->
+        <div class="hero-rotator" id="hero-rotator" aria-live="polite">
+          <!-- Spacer (aria-hidden, non-interactive): duplicates the tallest slide
+               so the rotator reserves its height and nothing jumps on crossfade. -->
+          <div class="hero-slide-spacer" aria-hidden="true">
+            <h1>You earn automation with test coverage</h1>
+            <p class="hero-lede">Six autonomy levels, from advisory to auto-merge. Strong test coverage is what earns the confidence to raise a level &mdash; and you, the admin, decide when to raise it. Your tests tell you when it's safe; the choice is always yours.</p>
+          </div>
+          <div class="hero-slide is-active">
+            <h1>Put your repo on autopilot</h1>
+            <p class="hero-lede">A fleet of AI agents triages your issues, writes the fixes, opens the PRs, and merges them on green &mdash; so maintainers get their time back for the work that actually needs a human.</p>
+          </div>
+          <div class="hero-slide">
+            <h1>You earn automation with test coverage</h1>
+            <p class="hero-lede">Six autonomy levels, from advisory to auto-merge. Strong test coverage is what earns the confidence to raise a level &mdash; and you, the admin, decide when to raise it. Your tests tell you when it's safe; the choice is always yours.</p>
+          </div>
+          <div class="hero-slide">
+            <h1>A deterministic pipeline, not a prompt</h1>
+            <p class="hero-lede">Every fix runs the gauntlet &mdash; build, lint, test, and policy checks &mdash; before anything merges. Autonomy comes from a repeatable pipeline you can audit, not from trusting a model's good mood.</p>
+          </div>
+          <div class="hero-slide">
+            <h1>From a big issue to a reviewed plan</h1>
+            <p class="hero-lede">Click Plan and the architect breaks an epic into a task DAG for you to approve before any work begins. You review the plan; the fleet executes it (ACMM L5&ndash;L6).</p>
+          </div>
+          <div class="hero-slide">
+            <h1>The AI maintainer you own outright</h1>
+            <p class="hero-lede">Free, open-source, and self-hosted. Point it at your repo, bring your own model, and run the whole fleet on your own terms &mdash; no per-seat license, no data leaving your cluster.</p>
+          </div>
+        </div>
+
+        <div class="hero-dots" id="hero-dots" role="tablist" aria-label="Hero highlights"></div>
+
         <div class="hero-actions">
           <a class="button primary" href="/get-started">Request a Hive</a>
           <a class="button secondary" href="#how-it-works">See how it works</a>
           <a class="button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
         </div>
-        <div class="hero-proof">
+        <div class="hero-proof" id="hero-proof">
           <div>
             <strong>90%</strong>
             <span>per-package coverage gate, enforced on every build</span>
           </div>
-          <div>
-            <strong>~14%</strong>
-            <span>of agent PRs rejected by the pipeline</span>
+          <div id="proof-prs-merged" hidden>
+            <strong data-stat="prs_merged">—</strong>
+            <span>PRs merged in the last 90 days, fleet-wide</span>
           </div>
-          <div>
-            <strong>42</strong>
-            <span>merged PRs closing named CVEs</span>
+          <div id="proof-prs-rejected" hidden>
+            <strong data-stat="prs_rejected">—</strong>
+            <span>agent PRs the pipeline rejected before merge (90d)</span>
           </div>
-          <div>
-            <strong>~4,000</strong>
-            <span>PRs merged last quarter across six repos</span>
+          <div id="proof-cves" hidden>
+            <strong data-stat="cves_closed">—</strong>
+            <span>merged PRs referencing a named CVE</span>
           </div>
         </div>
-        <p class="hero-proof-note">Measured on our own repos &mdash; Hive maintains Hive. Every figure is checkable in the <a href="https://github.com/kubestellar" target="_blank" rel="noopener">kubestellar org</a>, including the reverts where our test suite caught an agent regression and the fleet backed itself out.</p>
+        <p class="hero-proof-note" id="hero-proof-note">The <strong>90% coverage gate</strong> is enforced on Hive's own build. The other figures are <span id="proof-live-label">live</span> across every repo Hive manages &mdash; the fleet of <a href="#hives">public hives</a> below &mdash; aggregated over their spokes' contributions. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.</p>
         <p class="hero-sub-links">Already running a hive? <a href="/dashboard">Open your dashboard</a> &middot; <a href="/learn">Learn the concepts</a></p>
       </div>
 
@@ -616,7 +680,7 @@
       <div class="section-heading">
         <p class="section-label">How it works</p>
         <h2>Coverage first, then autonomy</h2>
-        <p>Point a hive at your repository and start at L1, where agents only advise. As your coverage climbs, you raise the autonomy level and agents take on more &mdash; filing issues, opening hold-gated PRs, and eventually merging on green. A governor decides minute by minute how hard they work based on your queue depth. Hive doesn&rsquo;t replace maintainers; it earns its way into the work.</p>
+        <p>Point a hive at your repository and start at L1, where agents only advise. Strong test coverage is what earns the confidence to go further &mdash; but the autonomy level never rises on its own. You (the admin) choose to raise it, and only then do agents take on more: filing issues, opening hold-gated PRs, and eventually merging on green. Coverage tells you when it's safe to level up; the decision is always yours. A governor decides minute by minute how hard they work based on your queue depth. Hive doesn&rsquo;t replace maintainers; it earns its way into the work.</p>
       </div>
       <div class="loop-rail">
         <div class="loop-step"><span>01</span><h3>Issue filed</h3><p style="font-size:.86rem">A bug report, feature request, or dependency alert lands on the repo.</p></div>
@@ -1155,6 +1219,97 @@
       if (!document.hidden) { loadRegistry(); loadLeaderboard(); }
     });
     window.addEventListener('focus', function() { loadRegistry(); loadLeaderboard(); });
+
+    // ── Rotating hero: crossfade through the value-statement slides on a timer,
+    // build clickable dot indicators, and pause auto-rotation for users who
+    // prefer reduced motion (they still get working dots to page manually). ──
+    (function heroRotator() {
+      var HERO_ROTATE_MS = 6000;
+      var rotator = document.getElementById('hero-rotator');
+      var dotsWrap = document.getElementById('hero-dots');
+      if (!rotator || !dotsWrap) return;
+      var slides = Array.prototype.slice.call(rotator.querySelectorAll('.hero-slide'));
+      if (slides.length < 2) return;
+      var idx = 0;
+      var dots = slides.map(function(_, i) {
+        var b = document.createElement('button');
+        b.className = 'hero-dot' + (i === 0 ? ' is-active' : '');
+        b.type = 'button';
+        b.setAttribute('role', 'tab');
+        b.setAttribute('aria-label', 'Show highlight ' + (i + 1));
+        b.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+        b.addEventListener('click', function() { show(i); restart(); });
+        dotsWrap.appendChild(b);
+        return b;
+      });
+      function show(n) {
+        idx = (n + slides.length) % slides.length;
+        slides.forEach(function(s, i) { s.classList.toggle('is-active', i === idx); });
+        dots.forEach(function(d, i) {
+          var on = i === idx;
+          d.classList.toggle('is-active', on);
+          d.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+      }
+      var timer = null;
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      function restart() {
+        if (reduce) return;
+        if (timer) clearInterval(timer);
+        timer = setInterval(function() { show(idx + 1); }, HERO_ROTATE_MS);
+      }
+      restart();
+      // Pause while the tab is hidden so slides don't silently churn offscreen.
+      document.addEventListener('visibilitychange', function() {
+        if (document.hidden) { if (timer) { clearInterval(timer); timer = null; } }
+        else { restart(); }
+      });
+    })();
+
+    // ── Live fleet stats: fetch /api/fleet-stats and fill the hero-proof strip.
+    // Only reveal a stat when the fleet actually reports a positive number — a
+    // zero or missing value keeps the stat HIDDEN rather than showing a fake or
+    // misleading figure. If no live data at all, the strip falls back to just
+    // the static 90% coverage stat plus a qualitative line. ──
+    (function loadFleetStats() {
+      var FLEET_POLL_MS = 60000;
+      var LIVE_STATS = [
+        { key: 'prs_merged', box: 'proof-prs-merged' },
+        { key: 'prs_rejected', box: 'proof-prs-rejected' },
+        { key: 'cves_closed', box: 'proof-cves' }
+      ];
+      function fmt(n) { return n.toLocaleString('en-US'); }
+      function apply(data) {
+        var anyLive = false;
+        LIVE_STATS.forEach(function(s) {
+          var box = document.getElementById(s.box);
+          if (!box) return;
+          var val = data && typeof data[s.key] === 'number' ? data[s.key] : 0;
+          if (val > 0) {
+            box.querySelector('[data-stat]').textContent = fmt(val);
+            box.hidden = false;
+            anyLive = true;
+          } else {
+            box.hidden = true;
+          }
+        });
+        var note = document.getElementById('hero-proof-note');
+        if (!anyLive && note) {
+          // No fleet data yet: don't imply live numbers exist. Swap to a
+          // qualitative line alongside the (always-true) 90% coverage stat.
+          note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build under <code>-race</code>. Spin up a hive and your fleet\'s merged-PR, rejected-PR, and CVE totals appear here, live. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+        }
+      }
+      function go() {
+        fetch('/api/fleet-stats')
+          .then(function(r) { return r.json(); })
+          .then(apply)
+          .catch(function() { apply(null); });
+      }
+      go();
+      setInterval(go, FLEET_POLL_MS);
+      window.addEventListener('focus', go);
+    })();
 
     var _userAccessStatus = {};
 
