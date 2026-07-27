@@ -502,6 +502,12 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/health/deep", s.handleHealthDeep)
 	s.mux.HandleFunc("GET /api/livez", s.handleLivez)
+	// Prometheus scrape endpoint for estimated LLM cost — opt-in, since it
+	// exposes cost data unauthenticated (Prometheus can't do device-flow auth).
+	// Enabled only when HIVE_METRICS_ENABLED is truthy; see isPublicPath.
+	if metricsEnabled() {
+		s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
@@ -675,6 +681,10 @@ func isPublicPath(path string) bool {
 		// pod is never restarted (the exact bug this endpoint was added to fix).
 		return true
 	case path == "/api/auth/token":
+		return true
+	case path == "/metrics" && metricsEnabled():
+		// Prometheus scrape target — public only when explicitly enabled via
+		// HIVE_METRICS_ENABLED. Prometheus cannot authenticate via device flow.
 		return true
 	case path == "/snapshot" || strings.HasPrefix(path, "/snapshot/"):
 		return true
