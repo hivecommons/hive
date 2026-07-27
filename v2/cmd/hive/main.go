@@ -659,6 +659,13 @@ func main() {
 	metricsCollector := dashboard.NewMetricsCollector(ghClient, cfg.Project.Org, primaryRepo, badgeURL, cfg.Project.AIAuthor, cfg.Project.Name, logger)
 	go metricsCollector.Start(ctx)
 
+	// Fleet-stats collector: computes this hive's AI-author contribution counts
+	// (merged/rejected PRs, CVE-referencing PRs) across its org on a slow timer
+	// and caches them, so each heartbeat can attach a fresh-but-cheap snapshot
+	// the hub aggregates into the public landing page's live fleet-stats strip.
+	fleetStatsCollector := dashboard.NewFleetStatsCollector(ghClient, cfg.Project.AIAuthor, cfg.Project.Org, logger)
+	go fleetStatsCollector.Start(ctx)
+
 	var lastActionable atomic.Pointer[github.ActionableResult]
 	refreshDashboard := func() {
 		actionable := lastActionable.Load()
@@ -1599,6 +1606,14 @@ func main() {
 			if cfg.ACMMLevel != nil {
 				acmmLvl = *cfg.ACMMLevel
 			}
+			// Attach cached fleet-stat counts only once the collector has done a
+			// successful compute — nil pointers until then, so the hub never
+			// aggregates a not-yet-computed zero into the public fleet total.
+			var prsMerged, prsRejected, cvesClosed *int
+			if fc, ok := fleetStatsCollector.Snapshot(); ok {
+				m, rj, cv := fc.PRsMerged, fc.PRsRejected, fc.CVEsClosed
+				prsMerged, prsRejected, cvesClosed = &m, &rj, &cv
+			}
 			return &hub.HeartbeatPayload{
 				HiveID:      cfg.HiveID,
 				Org:         cfg.Project.Org,
@@ -1684,6 +1699,9 @@ func main() {
 					}
 					return hub.CollectClusterHealth(logger)
 				}(),
+				PRsMerged90d:   prsMerged,
+				PRsRejected90d: prsRejected,
+				CVEsClosed:     cvesClosed,
 			}
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
