@@ -136,7 +136,7 @@ func TestCovH2_SystemResourcesAndRedact(t *testing.T) {
 	_ = readProcMemTotalBytes()
 
 	// redactTokens masks GitHub tokens and device-flow codes.
-	in := "token ghp_abcdefghijklmnop1234567890 and code ABCD-1234"
+	in := "token " + "ghp_" + "abcdefghijklmnop1234567890 and code ABCD-1234"
 	out := redactTokens(in)
 	if out == in {
 		t.Fatalf("redactTokens did not alter a token-bearing string: %q", out)

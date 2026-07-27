@@ -542,53 +542,60 @@ func TestSaveLocked_FileDoesNotExistYet(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// dashboardOverlayBytes: DASHBOARD_AUTH_TOKEN / HIVE_DASHBOARD_TOKEN scrubbing
+// persistenceBytes: dashboard auth token provenance and literal preservation
 // ---------------------------------------------------------------------------
 
-func TestDashboardOverlayBytes_ScrubsAuthToken(t *testing.T) {
-	tests := []struct {
-		name   string
-		envVar string
-	}{
-		{"DASHBOARD_AUTH_TOKEN", "DASHBOARD_AUTH_TOKEN"},
-		{"HIVE_DASHBOARD_TOKEN", "HIVE_DASHBOARD_TOKEN"},
+func TestPersistenceBytes_RestoresDashboardAuthTokenTemplate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hive.yaml")
+	t.Setenv("DASHBOARD_AUTH_TOKEN", "super-secret-token")
+	input := minimalValidYAML("acme", "ghp_test") + `
+dashboard:
+  auth_token: ${DASHBOARD_AUTH_TOKEN}
+`
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv(tt.envVar, "super-secret-token")
-			c := &Config{
-				Project:   ProjectConfig{Org: "acme"},
-				Agents:    map[string]AgentConfig{"scanner": {Role: "scanner"}},
-				Dashboard: DashboardConfig{AuthToken: "super-secret-token"},
-			}
-			data, err := c.dashboardOverlayBytes()
-			if err != nil {
-				t.Fatalf("dashboardOverlayBytes: %v", err)
-			}
-			if containsString(string(data), "super-secret-token") {
-				t.Error("overlay bytes should not contain the raw auth token")
-			}
-			// Live config unaffected.
-			if c.Dashboard.AuthToken != "super-secret-token" {
-				t.Errorf("live config mutated: %q", c.Dashboard.AuthToken)
-			}
-		})
+	c, err := LoadWithOverrides(path, "-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := c.persistenceBytes()
+	if err != nil {
+		t.Fatalf("persistenceBytes: %v", err)
+	}
+	if containsString(string(data), "super-secret-token") {
+		t.Error("persistence bytes should not contain the raw auth token")
+	}
+	if !containsString(string(data), "${DASHBOARD_AUTH_TOKEN}") {
+		t.Error("persistence bytes should restore the proven auth-token template")
+	}
+	if c.Dashboard.AuthToken != "super-secret-token" {
+		t.Errorf("live config mutated: %q", c.Dashboard.AuthToken)
 	}
 }
 
-func TestDashboardOverlayBytes_NoScrubWhenTokenDiffers(t *testing.T) {
+func TestPersistenceBytes_PreservesLiteralDashboardAuthToken(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hive.yaml")
 	t.Setenv("DASHBOARD_AUTH_TOKEN", "env-token")
-	c := &Config{
-		Project:   ProjectConfig{Org: "acme"},
-		Agents:    map[string]AgentConfig{"scanner": {Role: "scanner"}},
-		Dashboard: DashboardConfig{AuthToken: "different-token-not-from-env"},
+	input := minimalValidYAML("acme", "ghp_test") + `
+dashboard:
+  auth_token: different-token-not-from-env
+`
+	if err := os.WriteFile(path, []byte(input), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	data, err := c.dashboardOverlayBytes()
+	c, err := LoadWithOverrides(path, "-")
 	if err != nil {
-		t.Fatalf("dashboardOverlayBytes: %v", err)
+		t.Fatal(err)
+	}
+	data, err := c.persistenceBytes()
+	if err != nil {
+		t.Fatalf("persistenceBytes: %v", err)
 	}
 	if !containsString(string(data), "different-token-not-from-env") {
-		t.Error("overlay should keep a token that does not match the env var value")
+		t.Error("persistence bytes should keep a literal token that does not match the environment")
 	}
 }
 

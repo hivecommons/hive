@@ -248,7 +248,7 @@ func RunSetup(ctx context.Context, options SetupOptions) (SetupResult, error) {
 		return SetupResult{}, err
 	}
 	if options.GitHub != nil {
-		enrichRemoteInspection(ctx, options.GitHub, options.Repository, &inspection)
+		options.Repository = enrichRemoteInspection(ctx, options.GitHub, options.Repository, &inspection)
 	}
 	if !options.Apply && strings.TrimSpace(inspection.RepositoryID) != "" {
 		if err := ensureStateOwnershipMarker(options.StateDir, Config{Repository: options.Repository, RepositoryID: inspection.RepositoryID}); err != nil {
@@ -3323,13 +3323,17 @@ func authorizeSetup(store *Store, policy automation.Policy, repository string, a
 	return nil
 }
 
-func enrichRemoteInspection(ctx context.Context, client *hivegithub.Client, repository string, inspection *RepositoryInspection) {
+func enrichRemoteInspection(ctx context.Context, client *hivegithub.Client, repository string, inspection *RepositoryInspection) string {
+	canonicalRepository := strings.TrimSpace(repository)
 	owner, repo, ok := strings.Cut(repository, "/")
 	if !ok || client.GoGitHub() == nil {
-		return
+		return canonicalRepository
 	}
 	metadata, _, err := client.GoGitHub().Repositories.Get(ctx, owner, repo)
 	if err == nil {
+		if fullName := strings.TrimSpace(metadata.GetFullName()); strings.EqualFold(fullName, canonicalRepository) {
+			canonicalRepository = fullName
+		}
 		inspection.RepositoryID = fmt.Sprintf("%d", metadata.GetID())
 		if metadata.GetDefaultBranch() != "" {
 			inspection.DefaultBranch = metadata.GetDefaultBranch()
@@ -3341,6 +3345,7 @@ func enrichRemoteInspection(ctx context.Context, client *hivegithub.Client, repo
 	if _, _, err := client.GoGitHub().Repositories.GetBranchProtection(ctx, owner, repo, inspection.DefaultBranch); err == nil {
 		inspection.BranchProtection = true
 	}
+	return canonicalRepository
 }
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
