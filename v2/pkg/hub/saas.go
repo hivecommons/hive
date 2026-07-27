@@ -4180,6 +4180,43 @@ func (s *HubServer) handleAvailablePlaceholders(w http.ResponseWriter, r *http.R
 // record, is still an unclaimed placeholder (statusAvailable), or the spoke
 // already reports the recorded project. The spoke's currently-reported values
 // (curOrg/curRepos/curPrimary/curACMM) let the hub stop sending once matched.
+// adoptSpokeACMMLevel updates the hub's stored ACMM level for a CLAIMED hive to
+// match the level the spoke just reported, when they differ. It is called only
+// once the project is already reconciled (projectConfigForHiveID == nil), so a
+// difference here means the operator changed the level on the dashboard — the
+// dashboard is the source of truth for a running hive. Without this the hub
+// would re-push its stale meta level every beat and silently revert the change.
+//
+// No-op for unclaimed placeholders (assign owns their level) and when unchanged.
+func (s *HubServer) adoptSpokeACMMLevel(hiveID string, spokeLevel int) {
+	h := loadSaaSHive(hiveID)
+	if h == nil || h.Status == statusAvailable {
+		return // no record, or an unclaimed placeholder — assign controls it
+	}
+	if h.ACMMLevel == spokeLevel {
+		return // already in sync
+	}
+	prev := h.ACMMLevel
+	h.ACMMLevel = spokeLevel
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Warn("failed to persist spoke-reported ACMM level to meta",
+			"hive_id", hiveID, "level", spokeLevel, "error", err)
+		return
+	}
+	// Keep the in-memory registry consistent so the UI and the next
+	// projectConfigForHiveID comparison see the adopted level immediately.
+	s.mu.Lock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == hiveID {
+			s.registry.Hives[i].ACMMLevel = spokeLevel
+			break
+		}
+	}
+	s.mu.Unlock()
+	s.logger.Info("adopted dashboard-set ACMM level from spoke heartbeat",
+		"hive_id", hiveID, "was", prev, "now", spokeLevel)
+}
+
 func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int, curURL string) *HeartbeatProjectConfig {
 	h := loadSaaSHive(hiveID)
 	if h == nil {

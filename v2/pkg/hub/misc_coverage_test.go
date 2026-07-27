@@ -216,3 +216,30 @@ func TestHandleClusterHealth(t *testing.T) {
 	clusterHealthCacheTime = time.Time{}
 	clusterHealthCacheMu.Unlock()
 }
+
+// TestAdoptSpokeACMMLevel verifies the hub adopts a dashboard-set ACMM level
+// reported by a claimed spoke (the Joe Runde / spyre revert bug), and leaves
+// unclaimed placeholders and no-op cases alone.
+func TestAdoptSpokeACMMLevel(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	s := &HubServer{logger: slog.Default()}
+
+	// Claimed hive at level 2; spoke reports 3 (operator bumped it) -> adopt.
+	saveSaaSHive(&SaaSHive{ID: "claimed", Status: "running", Org: "o", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2})
+	s.adoptSpokeACMMLevel("claimed", 3)
+	if h := loadSaaSHive("claimed"); h == nil || h.ACMMLevel != 3 {
+		t.Errorf("claimed hive: meta ACMM = %v, want 3 (adopted)", h)
+	}
+
+	// Unclaimed placeholder: assign owns the level -> NOT adopted.
+	saveSaaSHive(&SaaSHive{ID: "ph", Status: statusAvailable, ACMMLevel: 2})
+	s.adoptSpokeACMMLevel("ph", 5)
+	if h := loadSaaSHive("ph"); h == nil || h.ACMMLevel != 2 {
+		t.Errorf("placeholder: meta ACMM = %v, want 2 (unchanged)", h)
+	}
+
+	// No record -> no panic, no-op.
+	s.adoptSpokeACMMLevel("missing", 4)
+}

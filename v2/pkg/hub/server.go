@@ -654,6 +654,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"primary_repo", projCfg.PrimaryRepo,
 			"acmm_level", projCfg.ACMMLevel,
 		)
+	} else {
+		// Already reconciled (projCfg == nil): the spoke's project matches meta,
+		// so the hub is no longer pushing. In THIS state a difference in the
+		// spoke-reported ACMM level means the operator changed it on the
+		// dashboard — adopt it into meta instead of fighting it next beat.
+		// Without this, a dashboard level bump is silently reverted: the spoke
+		// reports the new level, the hub sees level != meta and re-pushes the
+		// old meta level, and the spoke drops back (the Joe Runde / spyre bug).
+		s.adoptSpokeACMMLevel(payload.HiveID, clampInt(payload.ACMMLevel, 0, 6))
 	}
 
 	// Deliver a funded OpenRouter gateway to a firewalled/heartbeat-only spoke.
