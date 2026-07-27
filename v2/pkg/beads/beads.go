@@ -79,19 +79,19 @@ func (ft flexTime) MarshalJSON() ([]byte, error) {
 }
 
 type Bead struct {
-	ID          string            `json:"id"`
-	Title       string            `json:"title"`
-	Type        BeadType          `json:"type"`
-	Status      Status            `json:"status"`
-	Priority    Priority          `json:"priority"`
-	Actor       string            `json:"actor"`
-	ExternalRef string            `json:"external_ref,omitempty"`
+	ID          string                 `json:"id"`
+	Title       string                 `json:"title"`
+	Type        BeadType               `json:"type"`
+	Status      Status                 `json:"status"`
+	Priority    Priority               `json:"priority"`
+	Actor       string                 `json:"actor"`
+	ExternalRef string                 `json:"external_ref,omitempty"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
-	Notes       string            `json:"notes,omitempty"`
-	CreatedAt   flexTime          `json:"created_at"`
-	UpdatedAt   flexTime          `json:"updated_at"`
-	ClosedAt    *flexTime         `json:"closed_at,omitempty"`
-	DependsOn   []string          `json:"depends_on,omitempty"`
+	Notes       string                 `json:"notes,omitempty"`
+	CreatedAt   flexTime               `json:"created_at"`
+	UpdatedAt   flexTime               `json:"updated_at"`
+	ClosedAt    *flexTime              `json:"closed_at,omitempty"`
+	DependsOn   []string               `json:"depends_on,omitempty"`
 }
 
 // Meta returns a metadata value as a string, or "" if missing/non-string.
@@ -115,7 +115,12 @@ type Store struct {
 }
 
 func NewStore(dir string) (*Store, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	// 0770 (group-writable), not 0755: agent bead dirs under /data/beads/<agent>
+	// are owned by that agent's UID but must be writable by other node-group
+	// members — e.g. the dashboard/hub process minting an issue-sourced epic into
+	// the architect's store. This matches the shared-node-group model used for
+	// /data/home/* (see pkg/agent/permissions_watcher DirPerms=0o770).
+	if err := os.MkdirAll(dir, 0770); err != nil {
 		return nil, fmt.Errorf("creating beads dir %s: %w", dir, err)
 	}
 
@@ -444,7 +449,10 @@ func (s *Store) persist(_ *Bead) error {
 
 	path := filepath.Join(s.dir, beadsFileName)
 	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	// 0660 (group-writable) so a bead file created by one node-group member can be
+	// rewritten by another (e.g. the architect agent and the dashboard both write
+	// the architect store). Matches the /data/home/* FilePerms model.
+	if err := os.WriteFile(tmpPath, data, 0660); err != nil {
 		return fmt.Errorf("writing tmp beads: %w", err)
 	}
 	return os.Rename(tmpPath, path)
