@@ -200,3 +200,33 @@ func TestEstimateFromSummary_ModelDedup(t *testing.T) {
 		t.Errorf("merged cost = $%.4f, want $30 (opus 1M in + 1M out)", mc.USD)
 	}
 }
+
+// TestEstimateFromSummary_DropsRoutingAliases verifies "auto"/"default" are
+// excluded from the cost table (they're selection modes, not models).
+func TestEstimateFromSummary_DropsRoutingAliases(t *testing.T) {
+	agg := &AggregateSummary{
+		ByModelDetail: map[string]*AgentModelBucket{
+			"auto":            {Input: 0, Output: 0},
+			"default":         {Input: 0, Output: 0},
+			"claude-opus-4-8": {Input: 1_000_000, Output: 0},
+		},
+	}
+	est := EstimateFromSummary(agg)
+	if _, ok := est.ByModel["auto"]; ok {
+		t.Error("'auto' must not appear as a cost row")
+	}
+	if _, ok := est.ByModel["default"]; ok {
+		t.Error("'default' must not appear as a cost row")
+	}
+	if _, ok := est.ByModel["claude-opus-4-8"]; !ok {
+		t.Error("real model dropped")
+	}
+	if len(est.ByModel) != 1 {
+		t.Errorf("expected only the real model, got %d rows: %v", len(est.ByModel), est.ByModel)
+	}
+	for _, m := range est.UnpricedModels {
+		if m == "auto" || m == "default" {
+			t.Errorf("routing alias %q leaked into UnpricedModels", m)
+		}
+	}
+}

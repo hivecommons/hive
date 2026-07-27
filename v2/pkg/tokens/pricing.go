@@ -126,6 +126,18 @@ var modelPrices = map[string]ModelPrice{
 // It strips a leading provider prefix ("anthropic/", "openai/", …), lowercases,
 // unifies '.' and '_' separators to '-', and collapses repeated dashes. The
 // result is a table-lookup key, not a display string.
+// isRoutingAlias reports whether a NORMALIZED model id is a routing/selection
+// mode ("auto", "default") rather than a real model. Tokens are attributed to
+// the resolved model, so these carry ~no usage and should not appear as cost
+// rows. Pass the output of normalizeModelID.
+func isRoutingAlias(normalizedID string) bool {
+	switch normalizedID {
+	case "", "auto", "default":
+		return true
+	}
+	return false
+}
+
 func normalizeModelID(model string) string {
 	id := strings.TrimSpace(strings.ToLower(model))
 	if id == "" {
@@ -275,6 +287,12 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 			continue
 		}
 		key := normalizeModelID(model)
+		// Skip routing aliases — "auto"/"default" are selection MODES, not
+		// models. The tokens are attributed to the resolved model, so these
+		// buckets are always ~empty and just add a noise row to the cost table.
+		if isRoutingAlias(key) {
+			continue
+		}
 		m := merged[key]
 		if m == nil {
 			m = &mergedBucket{display: model}
