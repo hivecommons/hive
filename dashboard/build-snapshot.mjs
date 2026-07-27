@@ -194,11 +194,24 @@ async function main() {
       padding: 12px 20px; margin-bottom: 16px;
       display: flex; align-items: center; gap: 12px;
       font-size: 0.8rem;
+      /* Four inflexible children (one nowrap + min-width:10ch) could not fit a
+         phone width, so the countdown was pushed past the right edge and the
+         document scrolled sideways — the blank strip down the right of the
+         page. Let the row wrap instead. */
+      flex-wrap: wrap;
+      max-width: 100%;
     }
     .snapshot-banner .snap-icon { font-size: 1.2rem; }
     .snapshot-banner .snap-label { ${bannerLabelColor} font-weight: 600; }
     .snapshot-banner .snap-time { ${bannerTimeColor} }
     .snapshot-banner .snap-refresh { ${bannerRefreshColor} margin-left: auto; font-size: 0.75rem; font-variant-numeric: tabular-nums; min-width: 10ch; text-align: right; white-space: nowrap; }
+    @media (max-width: 640px) {
+      /* margin-left:auto would strand the countdown on its own line hard-right;
+         once wrapped, let it sit inline with the links. */
+      .snapshot-banner { padding: 10px 12px; gap: 8px; }
+      .snapshot-banner .snap-refresh { margin-left: 0; text-align: left; }
+      .snapshot-banner .snap-links { margin-left: 0; }
+    }
     .snapshot-banner .snap-links { margin-left: 12px; font-size: 0.75rem; }
     .snapshot-banner .snap-links a { ${bannerLabelColor} text-decoration: none; margin: 0 6px; }
     .snapshot-banner .snap-links a:hover { text-decoration: underline; }
