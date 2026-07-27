@@ -136,32 +136,44 @@ func TestProjectConfigForHiveID(t *testing.T) {
 	defer cleanup()
 
 	// No such hive -> nil.
-	if got := projectConfigForHiveID("missing", "", nil, "", 0); got != nil {
+	if got := projectConfigForHiveID("missing", "", nil, "", 0, ""); got != nil {
 		t.Errorf("missing hive -> %+v, want nil", got)
 	}
 
 	// Available placeholder -> nil (not yet claimed).
 	saveSaaSHive(&SaaSHive{ID: "ph", Status: statusAvailable})
-	if got := projectConfigForHiveID("ph", "", nil, "", 0); got != nil {
+	if got := projectConfigForHiveID("ph", "", nil, "", 0, ""); got != nil {
 		t.Errorf("placeholder -> %+v, want nil", got)
 	}
 
 	// Incomplete claim (no ACMM) -> nil.
 	saveSaaSHive(&SaaSHive{ID: "inc", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 0})
-	if got := projectConfigForHiveID("inc", "", nil, "", 0); got != nil {
+	if got := projectConfigForHiveID("inc", "", nil, "", 0, ""); got != nil {
 		t.Errorf("incomplete claim -> %+v, want nil", got)
 	}
 
 	// Complete claim, spoke not yet matching -> returns config.
 	saveSaaSHive(&SaaSHive{ID: "full", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3})
-	got := projectConfigForHiveID("full", "", nil, "", 0)
+	got := projectConfigForHiveID("full", "", nil, "", 0, "")
 	if got == nil || got.Org != "acme" || got.ACMMLevel != 3 {
 		t.Errorf("complete claim -> %+v, want org=acme acmm=3", got)
 	}
 
 	// Spoke already matches -> nil (stop sending).
-	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 3); got != nil {
+	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 3, ""); got != nil {
 		t.Errorf("matched spoke -> %+v, want nil", got)
+	}
+
+	// Vanity URL set but spoke hasn't adopted it -> keep sending (with the URL),
+	// even though org/repos/acmm already match.
+	saveSaaSHive(&SaaSHive{ID: "van", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3, VanityURL: "https://vanity.example/"})
+	got = projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "")
+	if got == nil || got.DashboardURL != "https://vanity.example/" {
+		t.Errorf("vanity not yet adopted -> %+v, want DashboardURL set", got)
+	}
+	// Spoke has now adopted the vanity URL -> stop sending.
+	if got := projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "https://vanity.example/"); got != nil {
+		t.Errorf("vanity adopted -> %+v, want nil", got)
 	}
 }
 

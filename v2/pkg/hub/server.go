@@ -646,7 +646,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// that reaches heartbeat-only clusters (vllm-d) — the hub cannot push
 	// config there over kubectl. A nil return means "spoke already matches, or
 	// no SaaS record / still a placeholder" — send nothing.
-	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel); projCfg != nil {
+	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL); projCfg != nil {
 		resp.ProjectConfig = projCfg
 		s.logger.Info("heartbeat: delivering claimed project config to spoke",
 			"hive_id", payload.HiveID,

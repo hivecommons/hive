@@ -1873,11 +1873,23 @@ func main() {
 			if cfg.ACMMLevel != nil {
 				curACMM = *cfg.ACMMLevel
 			}
+			// Adopt the vanity dashboard URL delivered on claim, if any. We
+			// report cfg.Hub.DashboardURL in our heartbeats, so once set the hub
+			// registry's dashboardUrl becomes the vanity URL (not the placeholder
+			// host). Track it in the already-reconciled check so a URL-only change
+			// still gets applied and persisted.
+			vanityMatched := pc.DashboardURL == "" || cfg.Hub.DashboardURL == pc.DashboardURL
 			if cfg.Project.Org == pc.Org &&
 				sameStringSlice(cfg.Project.Repos, pc.Repos) &&
 				cfg.Project.PrimaryRepo == pc.PrimaryRepo &&
-				curACMM == pc.ACMMLevel {
+				curACMM == pc.ACMMLevel &&
+				vanityMatched {
 				return // already reconciled
+			}
+			if pc.DashboardURL != "" && cfg.Hub.DashboardURL != pc.DashboardURL {
+				logger.Info("adopting vanity dashboard URL from hub heartbeat",
+					"was", cfg.Hub.DashboardURL, "now", pc.DashboardURL)
+				cfg.Hub.DashboardURL = pc.DashboardURL
 			}
 			logger.Info("project config updated from hub heartbeat (placeholder claimed)",
 				"was_org", cfg.Project.Org, "now_org", pc.Org,

@@ -460,6 +460,12 @@ type HeartbeatProjectConfig struct {
 	Repos       []string `json:"repos"`
 	PrimaryRepo string   `json:"primary_repo,omitempty"`
 	ACMMLevel   int      `json:"acmm_level"`
+	// DashboardURL is the claimed hive's vanity URL. The spoke adopts it as its
+	// hub.dashboard_url and reports it in subsequent heartbeats, so the hub
+	// registry's dashboardUrl becomes the vanity URL (rather than the raw
+	// placeholder subdomain) — and stays that way, since it's now the value the
+	// heartbeat carries. Empty = leave the spoke's dashboard URL unchanged.
+	DashboardURL string `json:"dashboard_url,omitempty"`
 }
 
 // HeartbeatGatewayConfig carries an OpenRouter model gateway (funded via the

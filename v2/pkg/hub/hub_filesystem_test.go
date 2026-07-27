@@ -1127,13 +1127,26 @@ func TestHandleAssignHiveWithFilesystem(t *testing.T) {
 		t.Errorf("assign wrote wrong meta: %+v", h)
 	}
 
+	// Assign derives a vanity URL from the claimed project (present because the
+	// test cluster has a domain). It's the marker that the placeholder is claimed.
+	if h.VanityURL == "" {
+		t.Error("expected assign to set a vanity URL")
+	}
+
 	// projectConfigForHiveID keeps returning the real project until the spoke
-	// reports it back, then goes quiet.
-	if pc := projectConfigForHiveID("hosted-assign-fs", "oldorg", []string{"old"}, "old", 2); pc == nil {
+	// reports BOTH the project AND the vanity URL back, then goes quiet.
+	if pc := projectConfigForHiveID("hosted-assign-fs", "oldorg", []string{"old"}, "old", 2, ""); pc == nil {
 		t.Error("expected non-nil project config while spoke reports stale project")
 	}
-	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3); pc != nil {
-		t.Errorf("expected nil project config once spoke matches, got %+v", pc)
+	// Project matches but the spoke hasn't adopted the vanity URL yet -> still sending.
+	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, ""); pc == nil {
+		t.Error("expected non-nil config while spoke has not yet adopted the vanity URL")
+	} else if pc.DashboardURL != h.VanityURL {
+		t.Errorf("project config DashboardURL = %q, want the vanity URL %q", pc.DashboardURL, h.VanityURL)
+	}
+	// Spoke now reports the vanity URL too -> goes quiet.
+	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, h.VanityURL); pc != nil {
+		t.Errorf("expected nil project config once spoke matches project + vanity URL, got %+v", pc)
 	}
 
 	// Assigning an already-claimed (non-available) hive is rejected.

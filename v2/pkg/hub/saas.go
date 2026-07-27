@@ -1367,7 +1367,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		//     restarted / hasn't beaten yet — not a fresh assignment).
 		spokeReportsDifferentProject := entry.Org != "" && !strings.EqualFold(entry.Org, sh.Org)
 		if !entry.Upgrading && spokeReportsDifferentProject &&
-			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel) != nil {
+			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel, entry.DashboardURL) != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
 		}
@@ -4180,7 +4180,7 @@ func (s *HubServer) handleAvailablePlaceholders(w http.ResponseWriter, r *http.R
 // record, is still an unclaimed placeholder (statusAvailable), or the spoke
 // already reports the recorded project. The spoke's currently-reported values
 // (curOrg/curRepos/curPrimary/curACMM) let the hub stop sending once matched.
-func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int) *HeartbeatProjectConfig {
+func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int, curURL string) *HeartbeatProjectConfig {
 	h := loadSaaSHive(hiveID)
 	if h == nil {
 		return nil
@@ -4207,18 +4207,22 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		return nil
 	}
 	// Already matching — stop sending (mirrors AuthorizedUsers "leave alone"
-	// semantics once the spoke has caught up).
+	// semantics once the spoke has caught up). Include the vanity URL: if it's
+	// set but the spoke hasn't adopted it yet, keep sending so the URL propagates.
+	urlMatched := h.VanityURL == "" || curURL == h.VanityURL
 	if strings.EqualFold(curOrg, h.Org) &&
 		sameStringSliceFold(curRepos, h.Repos) &&
 		strings.EqualFold(curPrimary, primary) &&
-		curACMM == h.ACMMLevel {
+		curACMM == h.ACMMLevel &&
+		urlMatched {
 		return nil
 	}
 	return &HeartbeatProjectConfig{
-		Org:         h.Org,
-		Repos:       h.Repos,
-		PrimaryRepo: primary,
-		ACMMLevel:   h.ACMMLevel,
+		Org:          h.Org,
+		Repos:        h.Repos,
+		PrimaryRepo:  primary,
+		ACMMLevel:    h.ACMMLevel,
+		DashboardURL: h.VanityURL, // empty until assign sets it
 	}
 }
 
@@ -4345,6 +4349,17 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.IsPublic = body.IsPublic
 	h.Status = ""
 	h.Error = ""
+	// Derive a stable, friendly vanity URL from the claimed project so the user
+	// sees hosted-<org>-<repo>-*.<domain> instead of the raw placeholder host.
+	// Compute once (idempotent re-assign keeps the same URL) and only when the
+	// hive's cluster domain is known. The spoke adopts this via the heartbeat
+	// (HeartbeatProjectConfig.DashboardURL) and reports it back, so the hub
+	// registry's dashboardUrl becomes the vanity URL and stays that way.
+	if h.VanityURL == "" {
+		if cluster := s.clusterForHive(h); cluster != nil && cluster.Domain != "" {
+			h.VanityURL = "https://" + generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
+		}
+	}
 	if err := saveSaaSHive(h); err != nil {
 		http.Error(w, `{"error":"failed to save hive assignment"}`, http.StatusInternalServerError)
 		return
