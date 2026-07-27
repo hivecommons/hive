@@ -162,3 +162,40 @@ func TestCovACfg_Export(t *testing.T) {
 		t.Fatalf("export ghost: %d", rec.Code)
 	}
 }
+
+// TestCovACfg_General_ModelPersists guards the fix for the config-dialog model
+// save bug: the general handler historically dropped the "model" and
+// "cliPinValue" keys, so a model chosen in the dialog silently never stuck.
+func TestCovACfg_General_ModelPersists(t *testing.T) {
+	s := acfgServer(t)
+	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{
+		"model":       "claude-opus-4-8",
+		"cliPinValue": "claude",
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	cfg := s.deps.Config.Agents["scanner"]
+	if cfg.Model != "claude-opus-4-8" {
+		t.Errorf("model not persisted: got %q, want claude-opus-4-8", cfg.Model)
+	}
+	if cfg.Backend != "claude" {
+		t.Errorf("backend not persisted: got %q, want claude", cfg.Backend)
+	}
+	// Empty cliPinValue must NOT blank the backend (dialog sends "" when the
+	// pin toggle is off); model="" IS a valid clear-to-launch-default.
+	rec2 := doPut(s, "/api/config/agent/scanner/general", map[string]any{
+		"model":       "",
+		"cliPinValue": "",
+	})
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("clear: want 200, got %d", rec2.Code)
+	}
+	cfg2 := s.deps.Config.Agents["scanner"]
+	if cfg2.Model != "" {
+		t.Errorf("model should clear to launch default, got %q", cfg2.Model)
+	}
+	if cfg2.Backend != "claude" {
+		t.Errorf("empty cliPinValue must not blank backend, got %q", cfg2.Backend)
+	}
+}

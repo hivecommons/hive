@@ -144,6 +144,30 @@ Then restart the spoke to pick up the ConfigMap:
 kubectl -n hive-hosted-<hive-id> rollout restart deploy/hive
 ```
 
+> **Gotcha — access grants are lost until the migrated spoke is rolled.** A
+> migration lands the hive on a **fresh PVC**, so the first `authorized_users`
+> the hub/dashboard writes go into `/data/hive.yaml.dashboard` *after* the new
+> pod has already booted. The running device-flow authorizer builds its access
+> list **at startup only** (config hot-reload does not rebuild it), so a user who
+> is `read-write` in **Manage Access** is rejected at login with
+> `device-flow login rejected: user not authorized for this hive`.
+>
+> Make this a **mandatory final migration step**:
+>
+> ```sh
+> # 1. The grant IS in the effective config (overlay merged at boot):
+> kubectl -n hive-hosted-<hive-id> exec deploy/hive -c hive -- \
+>   grep -A8 authorized_users /etc/hive/hive.yaml
+> # 2. Roll the spoke so the authorizer rebuilds from the current overlay:
+> kubectl -n hive-hosted-<hive-id> rollout restart deploy/hive
+> # 3. Verify no rejections after the roll:
+> kubectl -n hive-hosted-<hive-id> logs deploy/hive -c hive | grep 'not authorized'
+> ```
+>
+> Do **not** try to repair this by hand-creating `/data/hive.yaml` — the
+> effective config is the ConfigMap seed merged with the `.dashboard` overlay;
+> a stray `/data/hive.yaml` is never read and only muddies diagnosis.
+
 ### 4. Update the hub's records
 
 These live on the hub pod's PVC — **back them up first** (`kubectl cp` or a

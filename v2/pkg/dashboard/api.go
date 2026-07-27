@@ -2308,6 +2308,25 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.CLIPinned = b
 		}
 	}
+	// model / cliPinValue: the dialog's Model and CLI-Pin selects. These were
+	// historically dropped here (the handler only read a fixed allowlist), so
+	// changes made in the config dialog silently never persisted. Track whether
+	// they changed so we can apply them live after the config write, the same
+	// way the card dropdowns do (SetModelOverride + restart) — otherwise a stale
+	// live override would mask the freshly-saved value and it still wouldn't stick.
+	modelChanged, backendChanged := false, false
+	if v, ok := body["model"]; ok {
+		if str, ok := v.(string); ok {
+			agentCfg.Model = sanitizeString(str)
+			modelChanged = true
+		}
+	}
+	if v, ok := body["cliPinValue"]; ok {
+		if str, ok := v.(string); ok && str != "" {
+			agentCfg.Backend = sanitizeString(str)
+			backendChanged = true
+		}
+	}
 	if v, ok := body["emoji"]; ok {
 		if s, ok := v.(string); ok {
 			agentCfg.Emoji = sanitizeString(s)
@@ -2478,6 +2497,26 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			s.logger.Error("failed to persist agent overlay after update", "agent", name, "error", err)
 		}
 	}
+	// Apply model/backend live so the change takes effect immediately and isn't
+	// masked by a pre-existing override from a card dropdown. SetModelOverride
+	// with the saved value (or "" to clear back to the launch-command default)
+	// keeps the dialog and the card in sync; a single restart applies both.
+	if modelChanged {
+		if err := s.deps.AgentMgr.SetModelOverride(name, agentCfg.Model); err != nil {
+			s.logger.Warn("failed to apply model from config dialog", "agent", name, "error", err)
+		}
+	}
+	if backendChanged {
+		if err := s.deps.AgentMgr.SetBackendOverride(name, agentCfg.Backend); err != nil {
+			s.logger.Warn("failed to apply backend from config dialog", "agent", name, "error", err)
+		}
+	}
+	if modelChanged || backendChanged {
+		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
+			s.logger.Warn("restart after config-dialog model/backend change failed", "agent", name, "error", err)
+		}
+	}
+
 	s.auditFromRequest(r, "config_agent_general", auditDetail("section", "general"), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
