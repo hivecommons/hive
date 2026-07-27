@@ -175,6 +175,16 @@ type HeartbeatPayload struct {
 	UpgradeTargetSHA        string                        `json:"upgrade_target_sha,omitempty"`
 	PendingGitHubAppInstall bool                          `json:"pending_github_app_install,omitempty"`
 	ClusterHealth           *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
+	// Fleet contribution counts — the spoke's AI-author PR activity across its
+	// org, computed on a timer and cached (never per-heartbeat). The hub sums
+	// these across all public, non-stale hives for the landing page's live
+	// fleet-stats strip. Pointers so a spoke that hasn't computed them yet
+	// (old spoke, or first-collect still pending) is distinguishable from a
+	// genuine zero — nil means "no data, don't count me" so the hub never
+	// aggregates a not-yet-computed zero into a fabricated fleet total.
+	PRsMerged90d   *int `json:"prs_merged_90d,omitempty"`
+	PRsRejected90d *int `json:"prs_rejected_90d,omitempty"`
+	CVEsClosed     *int `json:"cves_closed,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload
