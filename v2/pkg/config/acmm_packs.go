@@ -52,6 +52,26 @@ type PackGovernor struct {
 	EvalIntervalS int                          `json:"evalIntervalS,omitempty" yaml:"eval_interval_s,omitempty"`
 	Cadences      map[string]map[string]string `json:"cadences,omitempty" yaml:"cadences,omitempty"`
 	Thresholds    map[string]int               `json:"thresholds,omitempty" yaml:"thresholds,omitempty"`
+	// PlanAutoApprove controls the Phase 2 plan-review gate for this maturity
+	// level. When false (default, low levels), a decomposed epic's plan stays
+	// plan_status=draft and its children are withheld from Ready() until a human
+	// approves it. When true (high-trust levels L5/L6), decomposition sets
+	// plan_status=approved immediately, releasing the children without a manual
+	// review step.
+	PlanAutoApprove bool `json:"planAutoApprove,omitempty" yaml:"plan_auto_approve,omitempty"`
+}
+
+// PlanAutoApproveForLevel reports whether the ACMM pack at the given level
+// enables automatic plan approval (plan_auto_approve). It is the single lookup
+// the decomposition path uses to decide whether a fresh plan is drafted (human
+// review required) or approved immediately. Unknown levels return false so the
+// safe default (require review) always wins.
+func PlanAutoApproveForLevel(level int) bool {
+	p, err := ACMMPackByLevel(level)
+	if err != nil {
+		return false
+	}
+	return p.Governor.PlanAutoApprove
 }
 
 // ACMMPacks returns the built-in ACMM level pack definitions loaded from

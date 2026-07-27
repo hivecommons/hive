@@ -33,6 +33,7 @@ func cmdDecompose(args []string) {
 	fs := flag.NewFlagSet("decompose", flag.ExitOnError)
 	planFile := fs.String("plan", "", "File containing the planner's task list (default: stdin)")
 	actor := fs.String("actor", "", "Override child bead actor/lane (default: classifier/architect)")
+	autoApprove := fs.Bool("auto-approve", false, "Approve the plan immediately (children claimable now, no review gate)")
 	printPrompt := fs.Bool("print-prompt", false, "Print the architect decomposition prompt for this epic and exit")
 	_ = fs.Parse(args[1:])
 
@@ -58,17 +59,21 @@ func cmdDecompose(args []string) {
 	// still built (and could be printed for the operator) but no agent runs.
 	planner := func(_ context.Context, _ string) (string, error) { return output, nil }
 
-	result, err := planning.Decompose(context.Background(), store, epic, planner, planning.Options{Actor: *actor})
+	result, err := planning.Decompose(context.Background(), store, epic, planner, planning.Options{Actor: *actor, AutoApprove: *autoApprove})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bd decompose: %v\n", err)
 		os.Exit(1)
 	}
 
+	planStatus := planning.PlanStatusDraft
+	if *autoApprove {
+		planStatus = planning.PlanStatusApproved
+	}
 	fmt.Printf("Decomposed epic %s into %d child bead(s):\n", epic.ID, len(result.Children))
 	for i, child := range result.Children {
 		fmt.Printf("  %s  [%s]  %s\n", child.ID, child.Meta(planning.MetaExecution), result.Tasks[i].Title)
 	}
-	fmt.Printf("Epic %s marked plan_status=%s\n", epic.ID, planning.PlanStatusDraft)
+	fmt.Printf("Epic %s marked plan_status=%s\n", epic.ID, planStatus)
 }
 
 // readPlan returns the plan text from path, or from stdin when path is empty.

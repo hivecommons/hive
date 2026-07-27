@@ -8,6 +8,9 @@ description: 'Multi-loop with external orchestration. Agents open issues, create
   '
 governor:
   modes: SURGE, BUSY, QUIET, IDLE
+  # High-trust level: decomposed epic plans are approved automatically, so their
+  # child sub-tasks become claimable without a human plan-review step.
+  plan_auto_approve: true
   merge_policy: 'Auto-merge on green CI. No hold label.
 
     '

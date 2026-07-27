@@ -45,11 +45,18 @@ const (
 	MetaPlanRef = "plan_ref"
 )
 
-// PlanStatusDraft marks an epic whose plan has been drafted but not yet
-// approved. TODO(planning phase 2): Store.Ready() must exclude children whose
-// parent epic still carries plan_status=draft; that gating is intentionally not
-// implemented here.
-const PlanStatusDraft = "draft"
+const (
+	// PlanStatusDraft marks an epic whose plan has been drafted but not yet
+	// approved. While an epic carries plan_status=draft, beads.Store.Ready()
+	// (Phase 2) excludes its children, so no agent can claim the sub-tasks
+	// until a human approves the plan.
+	PlanStatusDraft = "draft"
+	// PlanStatusApproved marks an epic whose plan a human has approved. Only
+	// this value releases the epic's children through beads.Store.Ready().
+	// It is set by ApprovePlan (or immediately at decomposition time when the
+	// active ACMM pack enables plan_auto_approve).
+	PlanStatusApproved = "approved"
+)
 
 // defaultChildPriority is the priority assigned to generated child beads when
 // the epic carries none distinguishable. Children inherit the epic's priority
@@ -70,6 +77,13 @@ type Options struct {
 	// ChildPriority overrides the child beads' priority. When nil, children
 	// inherit the epic's priority.
 	ChildPriority *beads.Priority
+	// AutoApprove, when true, sets the epic's plan_status to approved (instead
+	// of draft) immediately at decomposition time, releasing the children
+	// through Ready() without a human approval step. It is driven by the active
+	// ACMM pack's plan_auto_approve knob — high maturity levels (L5/L6) trust
+	// the planner enough to skip the review gate; lower levels leave it false so
+	// the plan stays draft pending human approval. Default false.
+	AutoApprove bool
 }
 
 // Result summarizes a decomposition.
@@ -232,8 +246,14 @@ func DecomposeFromOutput(store *beads.Store, epic *beads.Bead, output string, op
 		}
 	}
 
-	// Lay the Phase 2 readiness convention: mark the epic's plan as draft.
-	if err := store.SetMetadata(epic.ID, MetaPlanStatus, PlanStatusDraft); err != nil {
+	// Set the epic's plan_status. Normally draft (children stay gated until a
+	// human approves via ApprovePlan); when the active pack enables
+	// plan_auto_approve, approved (children released immediately).
+	planStatus := PlanStatusDraft
+	if opts.AutoApprove {
+		planStatus = PlanStatusApproved
+	}
+	if err := store.SetMetadata(epic.ID, MetaPlanStatus, planStatus); err != nil {
 		return nil, fmt.Errorf("planning: setting plan_status on epic %s: %w", epic.ID, err)
 	}
 
