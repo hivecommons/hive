@@ -269,13 +269,90 @@ func (s *Store) List(filter ListFilter) []*Bead {
 	return result
 }
 
+// Plan-review metadata keys. These mirror the convention written by
+// pkg/planning (planning.MetaParentEpic / planning.MetaPlanStatus /
+// planning.PlanStatusApproved); they are duplicated here as plain strings so
+// the low-level beads package can honor the plan-review gate WITHOUT importing
+// planning (which would create an import cycle: planning already imports beads).
+// Keep these values in sync with pkg/planning.
+const (
+	// metaParentEpic on a child bead holds the ID of the epic it decomposes.
+	// A bead without this key is a normal bead and is never gated.
+	metaParentEpic = "parent_epic"
+	// metaPlanStatus on an epic records its plan-review state.
+	metaPlanStatus = "plan_status"
+	// planStatusApproved is the only plan_status that releases an epic's
+	// children through Ready(). Any other value (e.g. "draft"), or the parent
+	// being missing, keeps the children hidden.
+	planStatusApproved = "approved"
+)
+
+// Ready returns the open beads a claimant may work on now, honoring the
+// plan-review gate (Phase 2 planning intelligence): a child bead of a
+// decomposed epic (one carrying a parent_epic metadata key) is EXCLUDED unless
+// that parent epic's plan_status metadata is "approved". Normal beads — those
+// with no parent_epic — are never affected by the gate.
+//
+// This is the readiness hook that feeds `bd ready` and governor claim
+// selection, so gating here transparently prevents an agent from claiming a
+// not-yet-reviewed plan's sub-tasks. Approval is a human action performed via
+// planning.ApprovePlan / the /api/plan/{epic}/approve endpoint.
 func (s *Store) Ready(actor string) []*Bead {
 	status := StatusOpen
 	filter := ListFilter{Status: &status}
 	if actor != "" {
 		filter.Actor = &actor
 	}
-	return s.List(filter)
+	candidates := s.List(filter)
+
+	// Resolve plan gating under a read lock so the parent lookups are
+	// consistent with the snapshot returned by List.
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := candidates[:0:0] // fresh slice, don't alias List's return
+	for _, b := range candidates {
+		if s.planGated(b) {
+			continue
+		}
+		result = append(result, b)
+	}
+	return result
+}
+
+// planGated reports whether bead b must be withheld from Ready() because it is a
+// child of an epic whose plan has not been approved. It reads only string
+// metadata by convention (no planning import). A bead with no parent_epic key is
+// never gated. A child whose parent cannot be found is gated (fail-closed): the
+// plan record is incomplete, so the child is not yet safe to claim.
+//
+// Caller must hold s.mu (at least RLock).
+func (s *Store) planGated(b *Bead) bool {
+	parentID := metaString(b, metaParentEpic)
+	if parentID == "" {
+		return false // normal bead, not a decomposed child
+	}
+	parent, ok := s.beads[parentID]
+	if !ok {
+		return true // fail-closed: parent epic missing
+	}
+	return metaString(parent, metaPlanStatus) != planStatusApproved
+}
+
+// metaString reads a string metadata value from a bead without locking. It
+// mirrors Bead.Meta but is used internally where the store lock is already held
+// and where only genuine string values should count (a non-string value is
+// treated as absent for gating purposes).
+func metaString(b *Bead, key string) string {
+	if b == nil || b.Metadata == nil {
+		return ""
+	}
+	if v, ok := b.Metadata[key]; ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 func (s *Store) FindByExternalRef(ref string) *Bead {
