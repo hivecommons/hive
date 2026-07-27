@@ -514,6 +514,7 @@ type GovernorConfig struct {
 	VLLM          InferenceAuthConfig   `yaml:"vllm"`
 	LLMD          InferenceAuthConfig   `yaml:"llm-d"`
 	Trajectory    TrajectoryConfig      `yaml:"trajectory"`
+	Replan        ReplanConfig          `yaml:"replan"`
 	// Gateways is the list of named model gateways (OpenAI-compatible endpoints
 	// like OpenRouter, a LiteLLM proxy, vLLM, or llm-d). An agent routes through
 	// a gateway by naming it as its backend. When empty, a single implicit
@@ -672,6 +673,33 @@ type TrajectoryConfig struct {
 	// ExemptAgents are never reviewed (e.g. advisory-only agents that open no
 	// PRs and touch no infrastructure).
 	ExemptAgents []string `yaml:"exempt_agents"`
+}
+
+// ReplanConfig governs the Phase 3 stall-replan lane: a periodic check that
+// finds approved plans whose sub-tasks have stopped progressing and re-kicks the
+// architect to revise them, bounded by a per-plan replan cap. It runs off the
+// governor tick on its own cadence (like the trajectory lane). On by default; it
+// is a no-op when there are no approved plans, so "on" is always safe.
+type ReplanConfig struct {
+	// Enabled turns the stall-replan lane on. Pointer so an omitted key defaults
+	// to enabled, while an explicit "false" disables it.
+	Enabled *bool `yaml:"enabled"`
+	// IntervalS is how often (seconds) the lane scans for stalled plans. It runs
+	// off the governor tick, so the effective floor is the governor eval
+	// interval. 0 → default (30m).
+	IntervalS int `yaml:"interval_s"`
+	// StallThresholdS is how long (seconds) a plan may go without any child
+	// progressing before it is considered stalled. 0 → default (6h).
+	StallThresholdS int `yaml:"stall_threshold_s"`
+	// MaxReplans caps replans per plan before the lane stops and escalates to a
+	// human. 0 → default (5).
+	MaxReplans int `yaml:"max_replans"`
+}
+
+// IsEnabled reports whether the stall-replan lane is on. Default is ON: a nil
+// Enabled (key omitted) counts as enabled, only an explicit false disables it.
+func (r ReplanConfig) IsEnabled() bool {
+	return r.Enabled == nil || *r.Enabled
 }
 
 // IsEnabled reports whether the trajectory-review lane is on. Default is ON:
