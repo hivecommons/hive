@@ -4643,6 +4643,23 @@
       gray:  {bg: 'rgba(107,114,128,0.12)', border: 'rgba(107,114,128,0.3)', color: 'var(--text)'}
     };
 
+    // bannerMarkdown renders a SAFE, minimal markdown subset for hub banners:
+    // links [text](http(s)://url) and **bold**. Everything is HTML-escaped
+    // FIRST (XSS-safe), then only these two constructs are re-introduced, and
+    // link hrefs are restricted to http/https. No other markdown/HTML passes.
+    function bannerMarkdown(text, linkColor) {
+      var esc = String(text || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      // Links: [label](url) — url must be http(s) and contain no quotes/spaces.
+      esc = esc.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)/g, function (_, label, url) {
+        return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" style="color:'
+          + (linkColor || 'inherit') + ';text-decoration:underline">' + label + '</a>';
+      });
+      // Bold: **text**
+      esc = esc.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      return esc;
+    }
+
     function renderHubBanner(banner) {
       var el = document.getElementById('hub-banner');
       if (!el) return;
@@ -4653,7 +4670,7 @@
       el.style.display = 'block';
       el.innerHTML = '<div style="background:' + s.bg + ';border:1px solid ' + s.border + ';border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;font-size:0.85rem">'
         + '<span style="font-size:1.1rem">📢</span>'
-        + '<span style="flex:1;color:' + s.color + '">' + (banner.message || '').replace(/</g, '&lt;') + '</span>'
+        + '<span style="flex:1;color:' + s.color + '">' + bannerMarkdown(banner.message, s.color) + '</span>'
         + '<button onclick="dismissHubBanner(\'' + (banner.id || '').replace(/'/g, "\\'") + '\')" style="background:none;border:none;color:' + s.color + ';opacity:0.6;cursor:pointer;font-size:1.1rem;padding:0 4px" title="Dismiss">✕</button>'
         + '</div>';
     }
