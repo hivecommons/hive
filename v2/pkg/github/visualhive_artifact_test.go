@@ -276,7 +276,7 @@ func TestFetchAndVerifyPullRequestArtifactBindsFailedExactHead(t *testing.T) {
 		verified.ReviewSchemaVersion != visualhive.ReviewEvidenceSchemaVersion || len(verified.ArtifactIndexSHA256) != 64 || verified.EvidenceRootPath == "" {
 		t.Fatalf("unexpected verified PR artifact: %+v", verified)
 	}
-	if data, err := os.ReadFile(filepath.Join(verified.ArtifactRoot, ".visual-hive", "report.json")); err != nil || !strings.Contains(string(data), "missing_baseline") {
+	if data, err := os.ReadFile(filepath.Join(verified.ArtifactRoot, "report.json")); err != nil || !strings.Contains(string(data), "missing_baseline") {
 		t.Fatalf("PR review evidence was not extracted: %q err=%v", data, err)
 	}
 	if _, err := client.FetchAndVerifyPullRequestArtifact(context.Background(), PullRequestArtifactRequest{
@@ -461,8 +461,11 @@ func buildPRReviewZip(t *testing.T) []byte {
 	}
 	buffer := new(bytes.Buffer)
 	archive := zip.NewWriter(buffer)
-	writeZipEntry(t, archive, ".visual-hive/report.json", report)
-	writeZipEntry(t, archive, ".visual-hive/artifacts-index.json", index)
+	// actions/upload-artifact flattens the uploaded .visual-hive directory:
+	// its contents are stored at the artifact root while indexed paths retain
+	// their canonical .visual-hive/ prefix.
+	writeZipEntry(t, archive, "report.json", report)
+	writeZipEntry(t, archive, "artifacts-index.json", index)
 	if err := archive.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -939,8 +939,11 @@ func VerifyReviewEvidenceArtifact(root string, artifactID int64) (VerifiedReview
 	if artifactID <= 0 {
 		return VerifiedReviewEvidenceArtifact{}, fmt.Errorf("positive PR evidence artifact ID is required")
 	}
-	const indexPath = ".visual-hive/artifacts-index.json"
-	indexFile, err := safeSourceTarget(root, indexPath)
+	const (
+		indexPath         = ".visual-hive/artifacts-index.json"
+		uploadedIndexPath = "artifacts-index.json"
+	)
+	indexFile, err := safeSourceTarget(root, uploadedIndexPath)
 	if err != nil {
 		return VerifiedReviewEvidenceArtifact{}, err
 	}
@@ -963,7 +966,7 @@ func VerifyReviewEvidenceArtifact(root string, artifactID int64) (VerifiedReview
 		return VerifiedReviewEvidenceArtifact{}, fmt.Errorf("PR evidence artifact index root must be .visual-hive")
 	}
 	indexDigest := digest(data)
-	_, evidenceRoot, err := verifyCompleteArtifactIndex(root, index, indexPath, indexDigest, strconv.FormatInt(artifactID, 10))
+	evidenceRoot, err := verifyCompleteUploadedArtifactIndex(root, index, indexPath, uploadedIndexPath, indexDigest, strconv.FormatInt(artifactID, 10))
 	if err != nil {
 		return VerifiedReviewEvidenceArtifact{}, err
 	}
@@ -971,6 +974,117 @@ func VerifyReviewEvidenceArtifact(root string, artifactID int64) (VerifiedReview
 		SchemaVersion: ReviewEvidenceSchemaVersion, ArtifactIndexSHA256: indexDigest, EvidenceRoot: evidenceRoot,
 		ArtifactCount: index.Summary.ArtifactCount, TotalBytes: index.Summary.TotalBytes,
 	}, nil
+}
+
+// verifyCompleteUploadedArtifactIndex verifies the exact directory shape
+// produced by actions/upload-artifact when its path is the .visual-hive
+// directory itself. GitHub intentionally stores that directory's contents at
+// the artifact root, while every content-addressed index entry retains its
+// canonical .visual-hive/ prefix. This verifier maps only that one documented
+// layout; it does not accept an arbitrary re-rooting or broaden the indexed
+// evidence set.
+func verifyCompleteUploadedArtifactIndex(root string, index ArtifactIndexReport, indexPath, uploadedIndexPath, indexDigest, artifactID string) (string, error) {
+	entries, err := validateArtifactIndexReport(index, indexPath)
+	if err != nil {
+		return "", err
+	}
+	indexFile, err := safeSourceTarget(root, uploadedIndexPath)
+	if err != nil {
+		return "", err
+	}
+	if err := verifyIndexedFile(indexFile, int64(-1), indexDigest); err != nil {
+		return "", fmt.Errorf("source artifact index identity mismatch: %w", err)
+	}
+
+	uploadedEntries := make(map[string]ArtifactIndexEntry, len(entries))
+	allowedDirectories := map[string]bool{".": true}
+	prefix := index.Root + "/"
+	for relative, entry := range entries {
+		uploadedRelative, ok := strings.CutPrefix(relative, prefix)
+		if !ok || uploadedRelative == "" {
+			return "", fmt.Errorf("source artifact entry %q is outside the indexed root", relative)
+		}
+		if err := validateSourcePath(uploadedRelative); err != nil {
+			return "", err
+		}
+		if _, exists := uploadedEntries[uploadedRelative]; exists {
+			return "", fmt.Errorf("source artifact upload path %q is duplicated", uploadedRelative)
+		}
+		uploadedEntries[uploadedRelative] = entry
+		for directory := filepath.ToSlash(filepath.Dir(uploadedRelative)); directory != "."; directory = filepath.ToSlash(filepath.Dir(directory)) {
+			allowedDirectories[directory] = true
+		}
+		target, err := safeSourceTarget(root, uploadedRelative)
+		if err != nil {
+			return "", err
+		}
+		if err := verifyIndexedFile(target, entry.Bytes, entry.SHA256); err != nil {
+			return "", fmt.Errorf("source artifact entry %q: %w", relative, err)
+		}
+	}
+
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	rootInfo, err := os.Lstat(absoluteRoot)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("source artifact upload root is not an ordinary directory")
+	}
+	err = filepath.WalkDir(absoluteRoot, func(filePath string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("source artifact contains symbolic link %q", filePath)
+		}
+		relative, err := filepath.Rel(absoluteRoot, filePath)
+		if err != nil {
+			return err
+		}
+		relative = filepath.ToSlash(relative)
+		if relative == "." {
+			return nil
+		}
+		if entry.IsDir() {
+			if allowedDirectories[relative] {
+				return nil
+			}
+			return fmt.Errorf("source artifact contains unindexed path %q", relative)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("source artifact contains non-regular file %q", relative)
+		}
+		if relative == sourceArtifactExtractionMarker {
+			expected := []byte(artifactID + "\n")
+			if info.Size() != int64(len(expected)) {
+				return fmt.Errorf("source artifact extraction marker is invalid")
+			}
+			actual, err := os.ReadFile(filePath)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(actual, expected) {
+				return fmt.Errorf("source artifact extraction marker does not match the bound artifact")
+			}
+			return nil
+		}
+		if relative == uploadedIndexPath {
+			return nil
+		}
+		if _, ok := uploadedEntries[relative]; !ok {
+			return fmt.Errorf("source artifact contains unindexed file %q", relative)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("verify complete uploaded source artifact index: %w", err)
+	}
+	return absoluteRoot, nil
 }
 
 // VerifySourceArtifact verifies the full source artifact against the v3
