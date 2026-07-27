@@ -257,6 +257,13 @@ func DecomposeFromOutput(store *beads.Store, epic *beads.Bead, output string, op
 		return nil, fmt.Errorf("planning: setting plan_status on epic %s: %w", epic.ID, err)
 	}
 
+	// Children now exist: clear any decompose_pending marker set when the epic was
+	// minted from an issue (Phase 4), so the queued request no longer shows as
+	// "waiting on the architect". Best-effort — the marker is advisory.
+	if epic.Meta(MetaDecomposePending) == "true" {
+		_ = ClearDecomposePending(store, epic.ID)
+	}
+
 	return &Result{Children: children, Tasks: tasks}, nil
 }
 
