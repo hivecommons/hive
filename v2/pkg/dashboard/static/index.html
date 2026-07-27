@@ -1034,6 +1034,8 @@
     .cost-custom-range input { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font-size: 0.7rem; padding: 2px 6px; font-family: var(--font-ui); }
     .agent-spend-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 0.66rem; font-weight: 600; color: var(--muted); vertical-align: middle; }
     .cell-spark { vertical-align: middle; margin-left: 6px; opacity: 0.75; }
+    .cagents-badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--text); font-weight: 600; font-size: 0.72rem; cursor: default; }
+    .cagents-zero { color: var(--muted); cursor: default; }
     .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
     .cost-range button:hover { color: var(--text); }
     .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
@@ -3827,36 +3829,53 @@
         buckets.push({ start, end, spend: 0, hasData: false });
       }
       if (hist.length < 2) return buckets;
-      // Per-bucket spend = cumulative-$ at the last snapshot in the bucket minus
-      // the last snapshot before it. We estimate — exactness isn't the goal —
-      // and prefer the SUM OF PER-MODEL $ deltas over the single total-$ delta:
-      // the per-model figures capture activity the coarse rounded total can drop
-      // to ~0 at short (hourly) windows, and cover models added mid-window.
-      const totalAt = (t) => costValueAt(hist, t, e => e.usd);
-      // Sum of per-model cumulative $ at-or-before t (models present at that
-      // snapshot). null only if NO snapshot carries a models map up to t.
-      const modelSumAt = (t) => {
-        let sum = null;
-        for (const e of hist) {
-          if (e.timestamp > t) break;
-          if (e.models) {
-            let s = 0;
-            for (const k in e.models) { const u = e.models[k] && e.models[k].usd; if (typeof u === 'number') s += u; }
-            sum = s;
-          }
+      // Per-bucket spend is derived from per-model TOKEN deltas priced at each
+      // model's *current* effective rate — NOT from cumulative-$ deltas.
+      //
+      // Why: the cumulative-$ series is not comparable across time. When the
+      // price table changes (new list price, tier-fallback tweak) the same token
+      // counts yield a different cumulative $, so a $-delta can go NEGATIVE and
+      // gets clamped to 0 — the exact reason the hourly window showed $0.00.
+      // Tokens only ever increase and are price-independent, so token-delta ×
+      // current-price is monotonic and stable. Exactness isn't the goal.
+      //
+      // Each model's current effective $/token comes from its own latest
+      // cumulative snapshot: rate = usd / (input + output). That folds in the
+      // real input/output price mix without shipping the price table to the JS.
+      const latest = hist[hist.length - 1];
+      const rate = {}; // model -> $ per (input+output) token, from newest snapshot
+      if (latest.models) {
+        for (const k in latest.models) {
+          const m = latest.models[k];
+          const toks = (m.i || 0) + (m.o || 0);
+          if (m && typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
         }
-        return sum;
+      }
+      // Sum over models of (token count at-or-before t) × current rate. null if
+      // no snapshot carries a models map up to t.
+      const pricedTokAt = (t) => {
+        let snap = null;
+        for (const e of hist) { if (e.timestamp > t) break; if (e.models) snap = e.models; }
+        if (!snap) return null;
+        let s = 0;
+        for (const k in snap) {
+          const m = snap[k];
+          const toks = (m.i || 0) + (m.o || 0);
+          s += toks * (rate[k] || 0);
+        }
+        return s;
       };
-      const firstModelSum = () => { for (const e of hist) { if (e.models) { let s = 0; for (const k in e.models) { const u = e.models[k] && e.models[k].usd; if (typeof u === 'number') s += u; } return s; } } return null; };
+      // Fallback for pre-per-model history (models map absent): coarse total-$
+      // delta, still clamped (best we can do without token detail).
+      const totalAt = (t) => costValueAt(hist, t, e => e.usd);
+      const firstPricedTok = () => { for (const e of hist) { if (e.models) return pricedTokAt(e.timestamp); } return null; };
       for (const b of buckets) {
-        // Try per-model deltas first, fall back to the total-$ delta.
-        let before = modelSumAt(b.start), end = modelSumAt(b.end), baseline = firstModelSum();
+        let before = pricedTokAt(b.start), end = pricedTokAt(b.end), baseline = firstPricedTok();
         if (end == null) { before = totalAt(b.start); end = totalAt(b.end); baseline = hist[0].usd; }
         if (before != null && end != null) {
           b.spend = Math.max(0, end - before);
           b.hasData = true;
         } else if (end != null && before == null && hist[0].timestamp <= b.end) {
-          // History begins inside this bucket — spend since the first snapshot.
           b.spend = Math.max(0, end - (baseline ?? 0));
           b.hasData = true;
         }
@@ -3886,6 +3905,42 @@
       if (_costRange === 'weekly') return `${d.getMonth() + 1}/${d.getDate()}`;
       if (_costRange === 'custom') return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}h`;
       return d.toLocaleString('en-US', { month: 'short' });
+    }
+
+    // costRunRate: estimated $ spent per millisecond, from recent token
+    // consumption. Uses the per-model TOKEN delta over the most recent span of
+    // history (price-independent, monotonic) priced at each model's current
+    // effective rate — so it never goes negative across a price change. Returns
+    // null if there isn't enough history to establish a pace.
+    function costRunRate() {
+      const hist = costHist();
+      if (hist.length < 2) return null;
+      const latest = hist[hist.length - 1];
+      if (!latest.models) return null;
+      // current $/token per model
+      const rate = {};
+      for (const k in latest.models) {
+        const m = latest.models[k];
+        const toks = (m.i || 0) + (m.o || 0);
+        if (typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
+      }
+      const pricedTok = (models) => {
+        if (!models) return null;
+        let s = 0;
+        for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
+        return s;
+      };
+      // Anchor to the earliest snapshot within a 6h lookback (or the first that
+      // has a models map), for a stable recent pace.
+      const lookbackStart = latest.timestamp - 6 * 3600e3;
+      let anchor = null;
+      for (const e of hist) { if (e.models && e.timestamp >= lookbackStart) { anchor = e; break; } }
+      if (!anchor) { for (const e of hist) { if (e.models) { anchor = e; break; } } }
+      if (!anchor || anchor.timestamp >= latest.timestamp) return null;
+      const dSpend = pricedTok(latest.models) - pricedTok(anchor.models);
+      const dMs = latest.timestamp - anchor.timestamp;
+      if (!(dMs > 0) || !(dSpend >= 0)) return null;
+      return dSpend / dMs; // $ per ms
     }
 
     function costTrendHtml() {
@@ -3929,11 +3984,37 @@
       const totalLabel = _costRange === 'custom'
         ? 'spend in range'
         : `spend this ${cfg.label} window`;
+      // Spend during the window. Agents are always running, so a bare $0.00 is
+      // misleading — when the window has no computable delta (too few snapshots,
+      // or a price-table shift zeroed the cumulative delta), estimate it from the
+      // run-rate × window length and mark it approximate (~).
+      const rate = costRunRate(); // $ per ms, or null
+      const winMs = _costRange === 'custom'
+        ? Math.max(_costCustom.end - _costCustom.start, 60e3)
+        : cfg.bucketMs;
+      let spendStr, approx = false;
+      if (total > 0) {
+        spendStr = fmtUSD(total);
+      } else if (rate != null) {
+        spendStr = '~' + fmtUSD(rate * winMs); approx = true;
+      } else {
+        spendStr = fmtUSD(0);
+      }
+      // Run-rate normalized to a readable unit per range.
+      let rateStr = '';
+      if (rate != null) {
+        const perUnit = _costRange === 'hourly' ? rate * 3600e3
+          : _costRange === 'weekly' ? rate * 24 * 3600e3          // $/day within a week view
+          : _costRange === 'monthly' ? rate * 24 * 3600e3         // $/day within a month view
+          : rate * 24 * 3600e3;                                    // daily/custom → $/day
+        const unit = _costRange === 'hourly' ? '/hr' : '/day';
+        rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(perUnit)}${unit}</b>`;
+      }
       return `<div class="cost-trend">
         <div class="cost-trend-head">
           <div class="cost-range">${pills}</div>
           ${customControls}
-          <div class="cost-trend-total">${totalLabel}: <b>${fmtUSD(total)}</b></div>
+          <div class="cost-trend-total">${totalLabel}: <b>${spendStr}</b>${approx ? ' <span title="estimated from current run-rate — window had no computable delta">(est.)</span>' : ''}${rateStr}</div>
         </div>
         ${body}
       </div>`;
@@ -5918,6 +5999,25 @@ function burnAreaChart() {
         </div>`;
       }).join('');
 
+      // Live count of running agents currently on each model. Model ids are
+      // normalized (lowercase, dots→dashes) so a table row "claude-opus-4.7"
+      // matches an agent whose model reads "claude-opus-4-7". Paused/off agents
+      // are excluded — this is "using now", not "assigned".
+      const normModel = (s) => (s || '').toLowerCase().replace(/\./g, '-').replace(/^.*\//, '');
+      const liveAgentCounts = (() => {
+        const counts = {};
+        for (const a of (window._lastAgents || [])) {
+          if (!a || !a.model) continue;
+          // Exclude agents that aren't actually running (same predicate the
+          // agent cards use): paused, off-by-cadence, or stopped.
+          if (a.paused === true || a.offByCadence === true || a.stopped === true) continue;
+          const k = normModel(a.model);
+          if (!counts[k]) counts[k] = [];
+          counts[k].push(a.displayName || a.name);
+        }
+        return counts;
+      })();
+
       // Per-model estimated cost table. Every model shows a $ estimate now —
       // exact list price where known, a coarse tier estimate (~) otherwise.
       const models = (est.by_model || []).slice().sort((a, b) => b.usd - a.usd);
@@ -5926,8 +6026,13 @@ function burnAreaChart() {
         const usdCell = approx
           ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
+        const users = liveAgentCounts[normModel(m.name)] || [];
+        const agentsCell = users.length
+          ? `<span class="cagents-badge" title="Agents using this model now: ${esc(users.join(', '))}">${users.length}</span>`
+          : `<span class="cagents-zero" title="No running agent on this model right now">—</span>`;
         return `<tr>
           <td class="cmodel">${esc(m.name || 'unknown')}</td>
+          <td class="cnum" style="text-align:center">${agentsCell}</td>
           <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)')}</td>
           <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)')}</td>
           <td class="cnum">${usdCell}${miniSparkSvg(modelSeries(m.name, 'usd'), 'var(--green)')}</td>
@@ -5947,8 +6052,8 @@ function burnAreaChart() {
         ${costTrendHtml()}
         ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
         <table class="cost-table">
-          <thead><tr><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
-          <tbody>${modelRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
+          <thead><tr><th>model</th><th style="text-align:center" title="Running agents on this model right now — hover the count for names">running agents</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
         </table>
         ${unpricedNote}
         <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
@@ -11489,6 +11594,9 @@ function burnAreaChart() {
           if (lastData.agents) {
             applyPinOverrides(lastData.agents);
             renderAgents(lastData.agents);
+            // Keep the cost table's "running agents" column live as agents
+            // switch models or pause/resume between cost polls.
+            if (_lastCost) renderCost(_lastCost);
           }
           ocUpdateFocusedState();
           const _lvl = (lastData.acmmLevel != null) ? lastData.acmmLevel : 0;
