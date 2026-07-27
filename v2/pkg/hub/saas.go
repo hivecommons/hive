@@ -1978,7 +1978,14 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("audit: hive migration initiated",
 		"hive_id", id, "from", currentClusterID, "to", req.TargetClusterID, "by", username)
 
-	go s.migrateHive(h, &fromCluster, &toCluster)
+	// Register with provisionWG so tests can drain this goroutine before
+	// mutating the shared package-level path vars; migrateHive reads them
+	// (via provisionHive) and would otherwise outlive the request/test.
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
+		s.migrateHive(h, &fromCluster, &toCluster)
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
