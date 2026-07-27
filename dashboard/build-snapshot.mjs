@@ -98,7 +98,12 @@ async function main() {
   // between <body> and that last <script> as body content (includes
   // the small script and all HTML structure).
   const styleEnd = sourceHtml.indexOf('</style>');
-  const bodyStart = sourceHtml.indexOf('<body>');
+  // Search for the real <body> AFTER the stylesheet ends. A plain indexOf
+  // matches the first occurrence anywhere in the file, so a CSS comment that
+  // merely mentions the tag (e.g. "the guard has to live on <html>, not just
+  // <body>") made the split land mid-stylesheet and dump the whole CSS block
+  // into the page as visible text.
+  const bodyStart = sourceHtml.indexOf('<body>', styleEnd > 0 ? styleEnd : 0);
   const mainScriptStart = sourceHtml.lastIndexOf('<script>');
   const mainScriptEnd = sourceHtml.lastIndexOf('</script>');
 
