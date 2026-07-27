@@ -3919,56 +3919,20 @@
         buckets.push({ start, end, spend: 0, hasData: false });
       }
       if (hist.length < 2) return buckets;
-      // Per-bucket spend is derived from per-model TOKEN deltas priced at each
-      // model's *current* effective rate — NOT from cumulative-$ deltas.
+      // Per-bucket spend = sum of POSITIVE per-model token increments inside the
+      // bucket, priced at each model's current effective rate.
       //
-      // Why: the cumulative-$ series is not comparable across time. When the
-      // price table changes (new list price, tier-fallback tweak) the same token
-      // counts yield a different cumulative $, so a $-delta can go NEGATIVE and
-      // gets clamped to 0 — the exact reason the hourly window showed $0.00.
-      // Tokens only ever increase and are price-independent, so token-delta ×
-      // current-price is monotonic and stable. Exactness isn't the goal.
-      //
-      // Each model's current effective $/token comes from its own latest
-      // cumulative snapshot: rate = usd / (input + output). That folds in the
-      // real input/output price mix without shipping the price table to the JS.
-      const latest = hist[hist.length - 1];
-      const rate = {}; // model -> $ per (input+output) token, from newest snapshot
-      if (latest.models) {
-        for (const k in latest.models) {
-          const m = latest.models[k];
-          const toks = (m.i || 0) + (m.o || 0);
-          if (m && typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
-        }
-      }
-      // Sum over models of (token count at-or-before t) × current rate. null if
-      // no snapshot carries a models map up to t.
-      const pricedTokAt = (t) => {
-        let snap = null;
-        for (const e of hist) { if (e.timestamp > t) break; if (e.models) snap = e.models; }
-        if (!snap) return null;
-        let s = 0;
-        for (const k in snap) {
-          const m = snap[k];
-          const toks = (m.i || 0) + (m.o || 0);
-          s += toks * (rate[k] || 0);
-        }
-        return s;
-      };
-      // Fallback for pre-per-model history (models map absent): coarse total-$
-      // delta, still clamped (best we can do without token detail).
-      const totalAt = (t) => costValueAt(hist, t, e => e.usd);
-      const firstPricedTok = () => { for (const e of hist) { if (e.models) return pricedTokAt(e.timestamp); } return null; };
+      // The token "cumulative" counter is not truly monotonic: it's a sum over
+      // the sessions currently visible to the scanner, so after a pod roll or as
+      // old sessions age out it DROPS. A plain end−start delta of that counter
+      // therefore goes negative and clamps to $0 even though agents kept running
+      // and really did spend. Summing only the step-to-step INCREASES recovers
+      // the actual spend from the noisy counter. (Also immune to price-table
+      // shifts, which move the cumulative $ but not the token increments.)
+      const rate = costPriceMap(hist);
       for (const b of buckets) {
-        let before = pricedTokAt(b.start), end = pricedTokAt(b.end), baseline = firstPricedTok();
-        if (end == null) { before = totalAt(b.start); end = totalAt(b.end); baseline = hist[0].usd; }
-        if (before != null && end != null) {
-          b.spend = Math.max(0, end - before);
-          b.hasData = true;
-        } else if (end != null && before == null && hist[0].timestamp <= b.end) {
-          b.spend = Math.max(0, end - (baseline ?? 0));
-          b.hasData = true;
-        }
+        const s = costSpendBetween(hist, rate, b.start, b.end);
+        if (s != null) { b.spend = s; b.hasData = true; }
       }
       return buckets;
     }
@@ -3979,13 +3943,20 @@
     function agentWindowSpend(name) {
       const win = costWindow();
       const hist = costHist().filter(e => e.agents && typeof e.agents[name] === 'number');
-      if (!hist.length || hist[0].timestamp > win.end) return null;
-      const pick = e => e.agents[name];
-      const endV = costValueAt(hist, win.end, pick);
-      if (endV == null) return null;
-      let startV = costValueAt(hist, win.start, pick);
-      if (startV == null) startV = hist[0].agents[name]; // history begins inside window
-      return Math.max(0, endV - startV);
+      if (hist.length < 2) return null;
+      // Same non-monotonic counter problem as the model spend: the per-agent
+      // cumulative $ drops after a pod roll / session-window shift, so an
+      // end−start delta clamps to $0 and the chip vanishes even for a busy
+      // agent. Sum only the positive step-to-step increases over the window.
+      let spend = 0, prev = null, saw = false;
+      for (const e of hist) {
+        if (e.timestamp < win.start || e.timestamp > win.end) { if (e.timestamp > win.end) break; continue; }
+        saw = true;
+        const cur = e.agents[name];
+        if (prev != null && cur > prev) spend += (cur - prev);
+        prev = cur;
+      }
+      return saw ? spend : null;
     }
 
     function costBucketAxisLabel(b) {
@@ -4002,35 +3973,61 @@
     // history (price-independent, monotonic) priced at each model's current
     // effective rate — so it never goes negative across a price change. Returns
     // null if there isn't enough history to establish a pace.
-    function costRunRate() {
-      const hist = costHist();
-      if (hist.length < 2) return null;
-      const latest = hist[hist.length - 1];
-      if (!latest.models) return null;
-      // current $/token per model
+    // priceMap: current $/token per model from the newest snapshot that has one.
+    function costPriceMap(hist) {
       const rate = {};
-      for (const k in latest.models) {
-        const m = latest.models[k];
-        const toks = (m.i || 0) + (m.o || 0);
-        if (typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
+      for (let i = hist.length - 1; i >= 0; i--) {
+        const models = hist[i].models;
+        if (!models) continue;
+        for (const k in models) {
+          const m = models[k];
+          const toks = (m.i || 0) + (m.o || 0);
+          if (rate[k] == null && typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
+        }
+        break;
       }
+      return rate;
+    }
+
+    // costSpendBetween: estimated $ spent in [t0, t1], summed from the POSITIVE
+    // step-to-step token increments priced at the current rate. The token
+    // "cumulative" counter is NOT truly monotonic — after a pod roll or when old
+    // sessions age out of the scanner window it drops — so a plain end−start
+    // delta goes negative and (wrongly) reads as $0. Summing only the positive
+    // increments recovers the real spend from that noisy counter.
+    function costSpendBetween(hist, rate, t0, t1) {
       const pricedTok = (models) => {
-        if (!models) return null;
         let s = 0;
         for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
         return s;
       };
-      // Anchor to the earliest snapshot within a 6h lookback (or the first that
-      // has a models map), for a stable recent pace.
-      const lookbackStart = latest.timestamp - 6 * 3600e3;
-      let anchor = null;
-      for (const e of hist) { if (e.models && e.timestamp >= lookbackStart) { anchor = e; break; } }
-      if (!anchor) { for (const e of hist) { if (e.models) { anchor = e; break; } } }
-      if (!anchor || anchor.timestamp >= latest.timestamp) return null;
-      const dSpend = pricedTok(latest.models) - pricedTok(anchor.models);
-      const dMs = latest.timestamp - anchor.timestamp;
-      if (!(dMs > 0) || !(dSpend >= 0)) return null;
-      return dSpend / dMs; // $ per ms
+      let spend = 0, prev = null, sawWindow = false;
+      for (const e of hist) {
+        if (!e.models || e.timestamp < t0 || e.timestamp > t1) { if (e.models && e.timestamp > t1) break; continue; }
+        sawWindow = true;
+        const cur = pricedTok(e.models);
+        if (prev != null && cur > prev) spend += (cur - prev); // count only increases
+        prev = cur;
+      }
+      return sawWindow ? spend : null;
+    }
+
+    function costRunRate() {
+      const hist = costHist();
+      if (hist.length < 2) return null;
+      const latest = hist[hist.length - 1];
+      const rate = costPriceMap(hist);
+      // Spend over the most recent 6h (or all history if shorter), divided by the
+      // span, using the positive-increment sum so a shrinking counter can't zero it.
+      const start = latest.timestamp - 6 * 3600e3;
+      let anchorTs = null;
+      for (const e of hist) { if (e.models && e.timestamp >= start) { anchorTs = e.timestamp; break; } }
+      if (anchorTs == null) { for (const e of hist) { if (e.models) { anchorTs = e.timestamp; break; } } }
+      if (anchorTs == null || anchorTs >= latest.timestamp) return null;
+      const spend = costSpendBetween(hist, rate, anchorTs, latest.timestamp);
+      const dMs = latest.timestamp - anchorTs;
+      if (spend == null || !(dMs > 0) || !(spend > 0)) return null;
+      return spend / dMs; // $ per ms
     }
 
     function costTrendHtml() {

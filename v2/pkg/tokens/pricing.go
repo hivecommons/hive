@@ -257,27 +257,58 @@ func EstimateFromSummary(agg *AggregateSummary) EstimatedCost {
 
 	unpricedSeen := make(map[string]bool)
 
-	// Per-model estimated cost — the authoritative source for the grand total.
+	// Merge raw per-model buckets by NORMALIZED model id first. The scanners key
+	// tokens by the exact model string, so the same model shows up under both
+	// dotted and dashed spellings (e.g. "claude-opus-4.7" from Copilot and
+	// "claude-opus-4-7" from the Claude CLI). Those distinctions matter for
+	// launching the CLI but NOT for cost — leaving them split double-lists one
+	// model as two rows. Collapse them here, keeping the most-used raw spelling
+	// as the display name.
+	type mergedBucket struct {
+		display                               string
+		displayTok                            int64
+		input, output, cacheRead, cacheCreate int64
+	}
+	merged := make(map[string]*mergedBucket)
 	for model, b := range agg.ByModelDetail {
 		if b == nil {
 			continue
 		}
-		usd, exact := EstimateCostUSD(model, b.Input, b.Output, b.CacheRead, b.CacheCreate)
-		out.ByModel[model] = ModelCost{
+		key := normalizeModelID(model)
+		m := merged[key]
+		if m == nil {
+			m = &mergedBucket{display: model}
+			merged[key] = m
+		}
+		// Prefer the spelling that carries the most tokens as the display name.
+		if tot := b.Input + b.Output; tot >= m.displayTok {
+			m.display = model
+			m.displayTok = tot
+		}
+		m.input += b.Input
+		m.output += b.Output
+		m.cacheRead += b.CacheRead
+		m.cacheCreate += b.CacheCreate
+	}
+
+	// Per-model estimated cost — the authoritative source for the grand total.
+	for _, m := range merged {
+		usd, exact := EstimateCostUSD(m.display, m.input, m.output, m.cacheRead, m.cacheCreate)
+		out.ByModel[m.display] = ModelCost{
 			USD:         usd,
 			Priced:      exact,
-			Input:       b.Input,
-			Output:      b.Output,
-			CacheRead:   b.CacheRead,
-			CacheCreate: b.CacheCreate,
+			Input:       m.input,
+			Output:      m.output,
+			CacheRead:   m.cacheRead,
+			CacheCreate: m.cacheCreate,
 		}
 		// Every model contributes to the total now — exact where we have a list
 		// price, tier estimate otherwise. UnpricedModels lists the estimated
 		// ones so the UI can mark them ~approximate (not exclude them).
 		out.TotalUSD += usd
-		if !exact && model != "" && !unpricedSeen[model] {
-			unpricedSeen[model] = true
-			out.UnpricedModels = append(out.UnpricedModels, model)
+		if !exact && m.display != "" && !unpricedSeen[m.display] {
+			unpricedSeen[m.display] = true
+			out.UnpricedModels = append(out.UnpricedModels, m.display)
 		}
 	}
 
