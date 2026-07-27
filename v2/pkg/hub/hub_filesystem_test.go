@@ -1156,20 +1156,18 @@ func TestHandleAssignHiveWithFilesystem(t *testing.T) {
 		t.Error("expected assign to set a vanity URL")
 	}
 
-	// projectConfigForHiveID keeps returning the real project until the spoke
-	// reports BOTH the project AND the vanity URL back, then goes quiet.
-	if pc := projectConfigForHiveID("hosted-assign-fs", "oldorg", []string{"old"}, "old", 2, ""); pc == nil {
-		t.Error("expected non-nil project config while spoke reports stale project")
-	}
-	// Project matches but the spoke hasn't adopted the vanity URL yet -> still sending.
+	// After a claim, org/repos/ACMM are operator-controlled and adopted (not
+	// pushed), so the ONLY thing projectConfigForHiveID still delivers is the
+	// vanity URL — until the spoke reports it back, then it goes quiet.
+	// URL not yet adopted -> still delivering (carries the vanity URL).
 	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, ""); pc == nil {
 		t.Error("expected non-nil config while spoke has not yet adopted the vanity URL")
 	} else if pc.DashboardURL != h.VanityURL {
 		t.Errorf("project config DashboardURL = %q, want the vanity URL %q", pc.DashboardURL, h.VanityURL)
 	}
-	// Spoke now reports the vanity URL too -> goes quiet.
+	// Spoke now reports the vanity URL -> nothing left to push -> nil.
 	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, h.VanityURL); pc != nil {
-		t.Errorf("expected nil project config once spoke matches project + vanity URL, got %+v", pc)
+		t.Errorf("expected nil project config once spoke reports the vanity URL, got %+v", pc)
 	}
 
 	// Assigning an already-claimed (non-available) hive is rejected.
