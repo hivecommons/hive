@@ -540,7 +540,7 @@
         <div class="hero-proof">
           <div>
             <strong>90%</strong>
-            <span>per-package coverage gate, enforced hourly under <code>-race</code></span>
+            <span>per-package coverage gate, enforced on every build</span>
           </div>
           <div>
             <strong>~14%</strong>
@@ -622,7 +622,7 @@
         <div class="loop-step"><span>01</span><h3>Issue filed</h3><p style="font-size:.86rem">A bug report, feature request, or dependency alert lands on the repo.</p></div>
         <div class="loop-step"><span>02</span><h3>Triage</h3><p style="font-size:.86rem">The scanner agent reads, labels, and assigns the issue within minutes.</p></div>
         <div class="loop-step"><span>03</span><h3>Fix agent</h3><p style="font-size:.86rem">A specialized agent writes the fix in an isolated worktree, opens a PR.</p></div>
-        <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold under <code>-race</code>. Roughly 1 in 7 agent PRs is rejected here.</p></div>
+        <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold. Roughly 1 in 7 agent PRs is rejected here.</p></div>
         <div class="loop-step"><span>05</span><h3>Review</h3><p style="font-size:.86rem">Reviewer agents check post-merge state, GA4 regressions, and invariant drift.</p></div>
         <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">PRs merge on green CI at the autonomy level you allow. No human approval needed at L4+.</p></div>
         <div class="loop-step"><span>07</span><h3>Rerun</h3><p style="font-size:.86rem">The loop restarts. Security patches, dep updates, and test fixes happen continuously.</p></div>
