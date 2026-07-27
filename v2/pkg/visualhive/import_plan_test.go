@@ -53,6 +53,9 @@ func TestBuildImportPlanUsesVerifiedObservationsNotProducerPreview(t *testing.T)
 	if len(work.AllowedPaths) != 0 {
 		t.Fatalf("import plan invented repair paths: %v", work.AllowedPaths)
 	}
+	if !reflect.DeepEqual(work.AffectedFiles, []string{"src/App.tsx"}) {
+		t.Fatalf("import plan lost verified affected files: %v", work.AffectedFiles)
+	}
 	lifecycle, err := NewLifecycleStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

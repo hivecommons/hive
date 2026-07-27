@@ -566,6 +566,32 @@ func TestDeleteBaselineBranchRequiresExactReviewedHead(t *testing.T) {
 	}
 }
 
+func TestDeleteSetupBranchDescendantExactRejectsBaselineAndDeletesExactSetup(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	deleted := 0
+	server := newPullRequestGateTestServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/git/ref/heads/hive/setup-123":
+			_, _ = io.WriteString(writer, fmt.Sprintf(`{"ref":"refs/heads/hive/setup-123","object":{"sha":%q,"type":"commit"}}`, head))
+		case request.Method == http.MethodDelete && request.URL.Path == "/repos/owner/repo/git/refs/heads/hive/setup-123":
+			deleted++
+			writer.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(writer, request.Method+" "+request.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+	if _, _, err := client.DeleteSetupBranchDescendantExact(context.Background(), "owner/repo", "hive/setup-baseline-123", head); err == nil || deleted != 0 {
+		t.Fatalf("setup baseline branch used generic setup retirement: deleted=%d err=%v", deleted, err)
+	}
+	wasDeleted, retiredHead, err := client.DeleteSetupBranchDescendantExact(context.Background(), "owner/repo", "hive/setup-123", head)
+	if err != nil || !wasDeleted || retiredHead != head || deleted != 1 {
+		t.Fatalf("exact setup branch was not retired: deleted=%d head=%s err=%v", deleted, retiredHead, err)
+	}
+}
+
 func TestInspectPullRequestGateKeepsUnsafeAndPendingSignals(t *testing.T) {
 	server := newPullRequestGateTestServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

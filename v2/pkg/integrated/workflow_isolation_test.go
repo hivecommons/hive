@@ -264,6 +264,43 @@ func TestGeneratedWorkflowsUseCanonicalYAMLWhitespace(t *testing.T) {
 	}
 }
 
+func TestGeneratedUninstallAuthorizationUsesArraysWhenEveryManagedPathHasSameOwnership(t *testing.T) {
+	for _, existed := range []bool{false, true} {
+		config := isolationWorkflowConfig()
+		config.ManagedPreimagesVersion = managedPreimagesVersion
+		config.ManagedPathPreimages = map[string]ManagedPathPreimage{}
+		for _, relative := range managedSetupFilesForConfig(config) {
+			content := []byte("pre-existing\n")
+			contentDigest := sha256.Sum256(content)
+			config.ManagedPathPreimages[relative] = ManagedPathPreimage{
+				Existed:       existed,
+				GitMode:       "100644",
+				Content:       content,
+				ContentSHA256: fmt.Sprintf("%x", contentDigest),
+			}
+		}
+		if !existed {
+			for relative, preimage := range config.ManagedPathPreimages {
+				preimage.GitMode = ""
+				preimage.Content = nil
+				config.ManagedPathPreimages[relative] = preimage
+			}
+		}
+		value := setupAuthorizationWorkflowJob(config)
+		emptyScalar := `HIVE_UNINSTALL_REQUIRED_FILES: "[]"`
+		if existed {
+			emptyScalar = `HIVE_UNINSTALL_REQUIRED_ABSENT: '[]'`
+		}
+		if !strings.Contains(value, emptyScalar) {
+			t.Fatalf("same-ownership uninstall arrays were not serialized as JSON arrays (existed=%t)", existed)
+		}
+		if strings.Contains(value, "HIVE_UNINSTALL_REQUIRED_FILES: 'null'") ||
+			strings.Contains(value, "HIVE_UNINSTALL_REQUIRED_ABSENT: 'null'") {
+			t.Fatalf("same-ownership uninstall arrays serialized as null (existed=%t)", existed)
+		}
+	}
+}
+
 func TestGeneratedRepositoryTestAnchorsPreserveMaximumPlanSemantics(t *testing.T) {
 	const maximumWorkflowBytes = 512 * 1024
 	config := isolationWorkflowConfig()

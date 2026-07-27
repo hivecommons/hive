@@ -67,6 +67,7 @@ type FindingLifecycle struct {
 	Body                           string                           `json:"body"`
 	Labels                         []string                         `json:"labels"`
 	AffectedContracts              []string                         `json:"affected_contracts"`
+	AffectedFiles                  []string                         `json:"affected_files,omitempty"`
 	ValidationCommand              string                           `json:"validation_command"`
 	HumanReviewRequired            bool                             `json:"human_review_required"`
 	ObservationHumanReviewRequired bool                             `json:"observation_human_review_required"`
@@ -488,6 +489,9 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 		deferredReason := publicationDeferralReason(observation, coveredRoots)
 		preserveActiveOwner := deferredReason != "" && finding != nil && finding.IssueNumber > 0 && finding.RootCauseKey == observation.RootCauseKey &&
 			finding.PublicationFingerprint == publicationFingerprint(finding.Repository, finding.RootCauseKey, finding.RepositoryFingerprint)
+		deferInactivePublication := finding != nil && finding.IssueNumber > 0 &&
+			(finding.Status == StatusIssueClosed || finding.Status == StatusResolved) &&
+			!publicationSet[observation.RepositoryFingerprint]
 		wasReopened := false
 		if finding == nil {
 			firstSeenAt, _ := time.Parse(time.RFC3339Nano, observation.FirstSeenAt)
@@ -500,7 +504,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 			result.Created++
 		} else {
 			result.Updated++
-			if finding.Status == StatusIssueClosed || finding.Status == StatusResolved {
+			if !deferInactivePublication && (finding.Status == StatusIssueClosed || finding.Status == StatusResolved) {
 				finding.Status = StatusDetected
 				finding.ResolvedAt = nil
 				finding.ClosedAt = nil
@@ -525,6 +529,15 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 					finding.PublicationFingerprint = legacyPublicationFingerprint
 				}
 			}
+		}
+		if deferInactivePublication {
+			finding.PendingIssueAction = ""
+			result.Deferred++
+			if err := audit(LifecycleAuditEntry{Action: "defer_open_issue", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: "inactive historical issue did not win the current issue work-in-progress ranking"}); err != nil {
+				return result, err
+			}
+			result.FindingIDs = append(result.FindingIDs, observation.RepositoryFingerprint)
+			continue
 		}
 		beadFingerprint := observation.RepositoryFingerprint
 		if canonicalOwner != nil {
@@ -789,6 +802,7 @@ func (s *LifecycleStore) ResolveImportPlanWorks(plan VerifiedImportPlan, options
 				Title: finding.Title, Body: finding.Body, Labels: append([]string(nil), finding.Labels...), Role: route.Role,
 				RoutingReason: "persisted lifecycle owner omitted from exhaustive verified inventory: " + route.Reason, RoutingAllowed: route.DispatchAllowed,
 				AffectedContracts: append([]string(nil), finding.AffectedContracts...), KnowledgeKeywordState: "unavailable_no_verified_facts",
+				AffectedFiles:      append([]string(nil), finding.AffectedFiles...),
 				ValidationCommands: validation, ReproductionCommands: append([]string(nil), validation...), ReproductionSource: "persisted_verified_observation_validation_command",
 				Authority: VisualWorkAuthority{ProposalOnly: true},
 			}
@@ -901,7 +915,7 @@ func controllerFindingBatchInput(manifest Manifest, finding *FindingLifecycle, r
 			"visual_hive_issue_kind": finding.IssueKind, "visual_hive_severity": finding.Severity,
 			"visual_hive_publication_role": finding.PublicationRole, "visual_hive_root_cause_key": finding.RootCauseKey,
 			"visual_hive_blocked_by_root_keys": append([]string(nil), finding.BlockedByRootKeys...),
-			"visual_hive_affected_contracts":   append([]string(nil), finding.AffectedContracts...), "visual_hive_validation_commands": validation,
+			"visual_hive_affected_contracts":   append([]string(nil), finding.AffectedContracts...), "visual_hive_affected_files": append([]string(nil), finding.AffectedFiles...), "visual_hive_validation_commands": validation,
 			"visual_hive_route_role": role, "visual_hive_route_reason": routingReason, "visual_hive_route_allowed": routingAllowed,
 			"hive_proposal_only": true, "hive_github_write_allowed": false, "hive_merge_allowed": false,
 			"hive_baseline_changes_allowed": false, "hive_baseline_approval_allowed": false,
@@ -1052,7 +1066,7 @@ func selectIssuePublications(repository string, observations []Observation, find
 		if publicationDeferralReason(observation, coveredRoots) != "" {
 			continue
 		}
-		if publicationOwner(repository, findings, observation) != nil {
+		if issuePublicationOwnerActive(publicationOwner(repository, findings, observation)) {
 			selected[observation.RepositoryFingerprint] = true
 			continue
 		}
@@ -1186,6 +1200,10 @@ func publicationOwner(repository string, findings map[string]*FindingLifecycle, 
 	return owner
 }
 
+func issuePublicationOwnerActive(finding *FindingLifecycle) bool {
+	return finding != nil && finding.IssueNumber > 0 && finding.Status != StatusResolved && finding.Status != StatusIssueClosed
+}
+
 type legacyCanonicalMatch struct {
 	key     string
 	finding *FindingLifecycle
@@ -1276,6 +1294,9 @@ func repairSignalRank(observation Observation) int {
 	}
 	if strings.Contains(title, "failed deterministic validation") || strings.Contains(title, "contract_result") || strings.Contains(title, "contract result") {
 		return 5
+	}
+	if observation.IssueKind == "missing_visual_coverage" && strings.Contains(title, "storybook-discovery:") {
+		return 4
 	}
 	if observation.IssueKind == "missing_visual_coverage" {
 		for _, contract := range observation.AffectedContracts {
@@ -2233,6 +2254,7 @@ func updateFindingFromObservation(finding *FindingLifecycle, manifest Manifest, 
 	finding.Body = observation.Body
 	finding.Labels = append([]string(nil), observation.Labels...)
 	finding.AffectedContracts = append([]string(nil), observation.AffectedContracts...)
+	finding.AffectedFiles = append([]string(nil), observation.AffectedFiles...)
 	finding.ValidationCommand = observation.ValidationCommand
 	finding.ObservationHumanReviewRequired = observationNeedsHumanReview(observation)
 	finding.HumanReviewRequired = finding.ObservationHumanReviewRequired || finding.ManualReviewKind != ""
@@ -2315,6 +2337,9 @@ func actorForHint(hint string) string {
 	}
 	if actor == "ci" {
 		return "ci-maintainer"
+	}
+	if actor == "map" {
+		return "scanner"
 	}
 	if actor == "" {
 		return "quality"

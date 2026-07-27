@@ -38,6 +38,17 @@ const (
 	setupBaselineArtifactSchema     = "hive.setup-baseline-artifact.v1"
 )
 
+// ErrSetupBaselineLifecycleHold marks an expected, durable setup-baseline
+// checkpoint that requires a later Hive cycle or exact owner approval. It is
+// not used for failed GitHub operations, invalid evidence, or persistence
+// errors, so callers can present normal lifecycle progress without masking a
+// real failure.
+var ErrSetupBaselineLifecycleHold = errors.New("setup baseline lifecycle awaits its next governed step")
+
+func setupBaselineLifecycleHoldf(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrSetupBaselineLifecycleHold, fmt.Sprintf(format, args...))
+}
+
 type SetupBaselineCandidate struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256"`
@@ -681,7 +692,7 @@ func reconcileRequiredSetupBaselineBeforeRun(ctx context.Context, store *Store, 
 		if err != nil {
 			return intent, true, fmt.Errorf("recover required setup baseline checkpoint: %w", err)
 		}
-		return intent, true, fmt.Errorf("recovered missing required setup baseline checkpoint at %s; run Hive again to start the exact hosted capture", currentHead)
+		return intent, true, setupBaselineLifecycleHoldf("recovered missing required setup baseline checkpoint at %s; run Hive again to start the exact hosted capture", currentHead)
 	}
 	return reconcileSetupBaselineBeforeRun(ctx, store, config, client)
 }
@@ -758,7 +769,7 @@ func reconcileSetupBaselineBeforeRun(ctx context.Context, store *Store, config C
 		if err != nil {
 			return intent, true, err
 		}
-		return intent, true, fmt.Errorf("setup baseline production verification succeeded; run Hive again to permit activation and lifecycle writes")
+		return intent, true, setupBaselineLifecycleHoldf("setup baseline production verification succeeded; run Hive again to permit activation and lifecycle writes")
 	}
 	if intent.Phase == SetupBaselineApproved {
 		intent, merged, mergeErr := mergeApprovedSetupBaseline(ctx, store, config, intent, client)
@@ -766,12 +777,12 @@ func reconcileSetupBaselineBeforeRun(ctx context.Context, store *Store, config C
 			return intent, true, fmt.Errorf("complete durably approved setup baseline merge: %w", mergeErr)
 		}
 		if merged {
-			return intent, true, fmt.Errorf("approved setup baselines merged at %s; run Hive again for exact production verification", intent.MergeSHA)
+			return intent, true, setupBaselineLifecycleHoldf("approved setup baselines merged at %s; run Hive again for exact production verification", intent.MergeSHA)
 		}
-		return intent, true, fmt.Errorf("setup baseline approval remains pending exact merge gates")
+		return intent, true, setupBaselineLifecycleHoldf("setup baseline approval remains pending exact merge gates")
 	}
 	if intent.Phase == SetupBaselinePROpen {
-		return intent, true, fmt.Errorf("setup baseline review PR %s requires exact approval; run %s", intent.PRURL, setupBaselinePlanCommand(config.StateDir, intent))
+		return intent, true, setupBaselineLifecycleHoldf("setup baseline review PR %s requires exact approval; run %s", intent.PRURL, setupBaselinePlanCommand(config.StateDir, intent))
 	}
 	if intent.Phase == SetupBaselinePending {
 		if dispatch, dispatchExists, dispatchErr := store.LoadWorkflowDispatchIntent(); dispatchErr != nil {
@@ -872,10 +883,10 @@ func reconcileSetupBaselineBeforeRun(ctx context.Context, store *Store, config C
 			return intent, true, err
 		}
 		if intent.Phase == SetupBaselineMerged && intent.ExistingHeadReverified {
-			return intent, true, fmt.Errorf("recaptured setup baselines already match exact default head %s; run Hive again for full production verification", intent.MergeSHA)
+			return intent, true, setupBaselineLifecycleHoldf("recaptured setup baselines already match exact default head %s; run Hive again for full production verification", intent.MergeSHA)
 		}
 	}
-	return intent, true, fmt.Errorf("setup baseline review PR %s is ready; run %s", intent.PRURL, setupBaselinePlanCommand(config.StateDir, intent))
+	return intent, true, setupBaselineLifecycleHoldf("setup baseline review PR %s is ready; run %s", intent.PRURL, setupBaselinePlanCommand(config.StateDir, intent))
 }
 
 func postBaselineProductionValidationAccepted(status string, trusted bool) bool {

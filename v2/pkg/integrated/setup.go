@@ -2588,7 +2588,10 @@ func commandCoverageRank(command []string) int {
 			return 3
 		}
 	}
-	for _, standard := range []string{"integration", "e2e", "api", "visual", "a11y", "accessibility", "mutation", "mutate", "security"} {
+	// Bare "api" names are ambiguous and commonly denote a persistent mock
+	// server. API checks remain selectable through explicit evidence terms
+	// such as test, smoke, check, verify, or validation.
+	for _, standard := range []string{"integration", "e2e", "smoke", "visual", "a11y", "accessibility", "mutation", "mutate", "security"} {
 		if strings.Contains(name, standard) {
 			return 2
 		}

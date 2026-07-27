@@ -33,6 +33,7 @@ const (
 	uninstallAlreadyClean         = "already_clean"
 	maxUninstallDrainFindings     = 100
 	maxUninstallDrainPullsPerItem = 20
+	maxUninstallLifecycleStores   = 64
 )
 
 // UninstallIntent is the durable authority boundary between preparing a
@@ -345,9 +346,96 @@ func finalizeUninstall(ctx context.Context, options ManagementOptions, store *St
 	if err := reconcileUninstallProtection(ctx, options.GitHub, store, config); err != nil {
 		return err
 	}
+	if err := retirePreviousSetupReviewForUninstall(ctx, options.GitHub, store, config, intent); err != nil {
+		return err
+	}
+	if err := retireUninstallCleanupBranch(ctx, options.GitHub, store, config, intent); err != nil {
+		return err
+	}
 	result.CleanupVerified = true
 	result.ProtectionReconciled = true
 	return nil
+}
+
+func retireUninstallCleanupBranch(ctx context.Context, client *hivegithub.Client, store *Store, config Config, intent UninstallIntent) error {
+	if client == nil || store == nil {
+		return fmt.Errorf("uninstall cleanup branch retirement requires GitHub and audit stores")
+	}
+	detail := fmt.Sprintf("branch=%s owned_head=%s", intent.Branch, intent.CleanupCommitSHA)
+	if err := store.AuditStrict(AuditEntry{
+		Action: "authorize_uninstall_delete_cleanup_branch", Allowed: true, Repository: config.Repository, Detail: detail,
+	}); err != nil {
+		return err
+	}
+	deleted, retiredHead, err := client.DeleteUninstallBranchDescendantExact(ctx, config.Repository, intent.Branch, intent.CleanupCommitSHA)
+	if err != nil {
+		return fmt.Errorf("retire exact uninstall cleanup branch after verified finalization: %w", err)
+	}
+	return store.AuditStrict(AuditEntry{
+		Action: "uninstall_cleanup_branch_retired", Allowed: true, Repository: config.Repository,
+		Detail: fmt.Sprintf("%s retired_head=%s deleted=%t", detail, retiredHead, deleted),
+	})
+}
+
+func retirePreviousSetupReviewForUninstall(ctx context.Context, client *hivegithub.Client, store *Store, config Config, intent UninstallIntent) error {
+	if intent.PreviousSetupPRNumber == 0 {
+		return nil
+	}
+	expectedBranch := managedOperationBranch("setup", config.RepositoryID)
+	if client == nil || store == nil ||
+		intent.PreviousSetupBranch != expectedBranch ||
+		strings.TrimSpace(intent.PreviousSetupPRURL) == "" ||
+		!immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(config.SetupHeadSHA))) {
+		return fmt.Errorf("previous setup pull request lacks an exact managed branch, URL, or head binding")
+	}
+	marker := "<!-- hive-setup: " + strings.ToLower(strings.TrimSpace(config.Repository)) + " -->"
+	snapshot, err := client.InspectManagedPullRequestExact(
+		ctx, config.Repository, config.RepositoryID, intent.PreviousSetupPRNumber,
+		marker, intent.PreviousSetupBranch, config.SetupHeadSHA, config.DefaultBranch,
+	)
+	if err != nil {
+		return fmt.Errorf("inspect previous setup pull request before uninstall retirement: %w", err)
+	}
+	if snapshot.URL != intent.PreviousSetupPRURL {
+		return fmt.Errorf("previous setup pull request URL no longer matches its durable uninstall binding")
+	}
+	closed := snapshot.State == "closed"
+	if !snapshot.Merged {
+		if snapshot.State != "open" && snapshot.State != "closed" {
+			return fmt.Errorf("previous setup pull request has unsupported state %q", snapshot.State)
+		}
+		if err := store.AuditStrict(AuditEntry{
+			Action: "authorize_uninstall_close_setup_pr", Allowed: true, Repository: config.Repository,
+			Detail: fmt.Sprintf("pr=%d head=%s branch=%s", snapshot.Number, snapshot.HeadSHA, snapshot.HeadBranch),
+		}); err != nil {
+			return err
+		}
+		closedSnapshot, found, err := client.CloseManagedPullRequestForCancellation(
+			ctx, config.Repository, config.RepositoryID, intent.PreviousSetupPRNumber,
+			intent.PreviousSetupPRURL, marker, intent.PreviousSetupBranch, config.DefaultBranch,
+		)
+		if err != nil {
+			return fmt.Errorf("close previous unmerged setup pull request during uninstall: %w", err)
+		}
+		if !found || closedSnapshot.Number != snapshot.Number || !strings.EqualFold(closedSnapshot.HeadSHA, snapshot.HeadSHA) {
+			return fmt.Errorf("previous setup pull request did not close with its exact managed identity")
+		}
+		closed = true
+	}
+	if err := store.AuditStrict(AuditEntry{
+		Action: "authorize_uninstall_delete_setup_branch", Allowed: true, Repository: config.Repository,
+		Detail: fmt.Sprintf("branch=%s owned_head=%s", intent.PreviousSetupBranch, config.SetupHeadSHA),
+	}); err != nil {
+		return err
+	}
+	deleted, retiredHead, err := client.DeleteSetupBranchDescendantExact(ctx, config.Repository, intent.PreviousSetupBranch, config.SetupHeadSHA)
+	if err != nil {
+		return fmt.Errorf("retire previous setup branch during uninstall: %w", err)
+	}
+	return store.AuditStrict(AuditEntry{
+		Action: "uninstall_setup_review_retired", Allowed: true, Repository: config.Repository,
+		Detail: fmt.Sprintf("pr=%d merged=%t closed=%t branch_deleted=%t retired_head=%s", snapshot.Number, snapshot.Merged, closed, deleted, retiredHead),
+	})
 }
 
 func validateUninstallIntentBinding(intent UninstallIntent, config Config) error {
@@ -424,7 +512,47 @@ func verifyUninstallRecoveryState(store *Store) error {
 	return nil
 }
 
-func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store, config Config, client *hivegithub.Client) error {
+func drainWorkflowDispatchForUninstall(ctx context.Context, store *Store, config Config, client *hivegithub.Client) error {
+	intent, exists, err := store.LoadWorkflowDispatchIntent()
+	if err != nil || !exists {
+		return err
+	}
+	if intent.Repository != config.Repository || intent.RepositoryID != config.RepositoryID {
+		return fmt.Errorf("workflow dispatch state no longer matches installed repository authority")
+	}
+	if intent.RunID <= 0 || strings.TrimSpace(intent.RunURL) == "" || intent.MatchedAt.IsZero() {
+		return fmt.Errorf("workflow dispatch %s is not bound to one exact run; recover it before uninstall", intent.CorrelationID)
+	}
+	owner, repository, ok := strings.Cut(config.Repository, "/")
+	if client == nil || client.GoGitHub() == nil || !ok || owner == "" || repository == "" {
+		return fmt.Errorf("GitHub authentication and an exact repository are required to retire a workflow dispatch")
+	}
+	run, _, err := client.GoGitHub().Actions.GetWorkflowRunByID(ctx, owner, repository, intent.RunID)
+	if err != nil {
+		return fmt.Errorf("read exact workflow dispatch before uninstall: %w", err)
+	}
+	if err := validateExactWorkflowRun(run, intent); err != nil {
+		return fmt.Errorf("verify exact workflow dispatch before uninstall: %w", err)
+	}
+	if run.GetHTMLURL() != intent.RunURL || run.GetStatus() != "completed" || strings.TrimSpace(run.GetConclusion()) == "" {
+		return fmt.Errorf("workflow dispatch %d is not the exact completed run recorded by Hive", intent.RunID)
+	}
+	detail := fmt.Sprintf(
+		"operation=%s correlation=%s run=%d url=%s conclusion=%s head=%s matched_at=%s",
+		intent.Operation, intent.CorrelationID, intent.RunID, intent.RunURL, run.GetConclusion(), run.GetHeadSHA(), intent.MatchedAt.Format(time.RFC3339Nano),
+	)
+	if err := store.AuditStrict(AuditEntry{
+		Action: "authorize_uninstall_workflow_dispatch_retirement", Allowed: true, Repository: config.Repository, Detail: detail,
+	}); err != nil {
+		return err
+	}
+	if err := store.DeleteWorkflowDispatchIntent(); err != nil {
+		return fmt.Errorf("retire exact workflow dispatch before uninstall: %w", err)
+	}
+	return nil
+}
+
+func drainUninstallLifecycle(ctx context.Context, stateDir string, lifecycleBeadsDirs []string, store *Store, config Config, client *hivegithub.Client) error {
 	lifecycle, err := visualhive.NewLifecycleStore(filepath.Join(stateDir, "visual-hive"))
 	if err != nil {
 		return err
@@ -439,7 +567,8 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store,
 	if err != nil {
 		return err
 	}
-	beadStore, err := beads.NewStore(filepath.Join(stateDir, "beads", "quality"))
+	attempts := repairStore.Snapshot().Attempts
+	beadStores, err := openUninstallLifecycleBeadStores(stateDir, lifecycleBeadsDirs)
 	if err != nil {
 		return err
 	}
@@ -463,7 +592,7 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store,
 		if finding == nil {
 			return fmt.Errorf("finding %s is missing durable state", key)
 		}
-		if err := drainFindingRepairResources(ctx, store, lifecycle, config, client, *finding); err != nil {
+		if err := drainFindingRepairResources(ctx, store, lifecycle, config, client, *finding, attempts[finding.RepositoryFingerprint]); err != nil {
 			return err
 		}
 		issueClosed := finding.IssueNumber > 0
@@ -526,11 +655,17 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store,
 		if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_cancel_finding", Allowed: true, Repository: config.Repository, Detail: "finding=" + finding.RepositoryFingerprint}); err != nil {
 			return err
 		}
+		var beadStore *beads.Store
+		if strings.TrimSpace(finding.BeadID) != "" {
+			beadStore, err = selectUninstallLifecycleBeadStore(beadStores, finding.BeadID)
+			if err != nil {
+				return err
+			}
+		}
 		if err := lifecycle.CancelForUninstall(finding.RepositoryFingerprint, issueClosed, beadStore); err != nil {
 			return err
 		}
 	}
-	attempts := repairStore.Snapshot().Attempts
 	attemptKeys := make([]string, 0, len(attempts))
 	for key := range attempts {
 		attemptKeys = append(attemptKeys, key)
@@ -557,7 +692,62 @@ func drainUninstallLifecycle(ctx context.Context, stateDir string, store *Store,
 	return nil
 }
 
-func drainFindingRepairResources(ctx context.Context, store *Store, lifecycle *visualhive.LifecycleStore, config Config, client *hivegithub.Client, finding visualhive.FindingLifecycle) error {
+func openUninstallLifecycleBeadStores(stateDir string, configuredDirs []string) ([]*beads.Store, error) {
+	if len(configuredDirs) == 0 {
+		store, err := beads.NewStore(filepath.Join(stateDir, "beads", "quality"))
+		if err != nil {
+			return nil, err
+		}
+		return []*beads.Store{store}, nil
+	}
+	if len(configuredDirs) > maxUninstallLifecycleStores {
+		return nil, fmt.Errorf("ordinary Hive lifecycle beads directories are bounded to %d", maxUninstallLifecycleStores)
+	}
+	seen := make(map[string]bool, len(configuredDirs))
+	stores := make([]*beads.Store, 0, len(configuredDirs))
+	for _, configuredDir := range configuredDirs {
+		configuredDir = strings.TrimSpace(configuredDir)
+		if configuredDir == "" || !filepath.IsAbs(configuredDir) {
+			return nil, fmt.Errorf("ordinary Hive lifecycle beads directory must be absolute")
+		}
+		configuredDir = filepath.Clean(configuredDir)
+		if seen[configuredDir] {
+			continue
+		}
+		seen[configuredDir] = true
+		store, err := beads.NewSharedStore(configuredDir)
+		if err != nil {
+			return nil, err
+		}
+		stores = append(stores, store)
+	}
+	if len(stores) == 0 {
+		return nil, fmt.Errorf("ordinary Hive lifecycle beads directories are required")
+	}
+	return stores, nil
+}
+
+func selectUninstallLifecycleBeadStore(stores []*beads.Store, beadID string) (*beads.Store, error) {
+	var match *beads.Store
+	for _, store := range stores {
+		if store == nil {
+			continue
+		}
+		if _, err := store.Get(beadID); err != nil {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("bead %s exists in multiple ordinary Hive role stores", beadID)
+		}
+		match = store
+	}
+	if match == nil {
+		return nil, fmt.Errorf("bead %s not found in ordinary Hive role stores", beadID)
+	}
+	return match, nil
+}
+
+func drainFindingRepairResources(ctx context.Context, store *Store, lifecycle *visualhive.LifecycleStore, config Config, client *hivegithub.Client, finding visualhive.FindingLifecycle, attempt *repair.Attempt) error {
 	marker := fmt.Sprintf("<!-- hive-repair: %s -->", finding.RepositoryFingerprint)
 	pulls, err := client.ListOpenRepairPullRequests(ctx, config.Repository, config.DefaultBranch, marker)
 	if err != nil {
@@ -583,10 +773,27 @@ func drainFindingRepairResources(ctx context.Context, store *Store, lifecycle *v
 			}
 		}
 	} else if finding.Branch != "" || finding.RepairCommitSHA != "" {
-		if finding.Branch == "" || finding.RepairCommitSHA == "" {
+		if finding.Branch == "" {
 			return fmt.Errorf("finding %s has an incomplete repair branch binding", finding.RepositoryFingerprint)
 		}
-		if err := deleteUninstallRepairBranch(ctx, store, lifecycle, config, client, finding.RepositoryFingerprint, finding.Branch, finding.RepairCommitSHA); err != nil {
+		if finding.RepairCommitSHA == "" {
+			if attempt == nil || attempt.RepositoryFingerprint != finding.RepositoryFingerprint || attempt.Stage != repair.StageNoChange ||
+				attempt.Branch != finding.Branch || attempt.CommitSHA != "" || attempt.PRNumber != 0 {
+				return fmt.Errorf("finding %s has an incomplete repair branch binding", finding.RepositoryFingerprint)
+			}
+			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, finding.Branch)
+			if err != nil {
+				return err
+			}
+			if !absent {
+				return fmt.Errorf("finding %s has an incomplete repair branch binding", finding.RepositoryFingerprint)
+			}
+			detail := fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", finding.RepositoryFingerprint, finding.Branch, attempt.Stage)
+			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_absent_repair_branch", Allowed: true, Repository: config.Repository, Detail: detail}); err != nil {
+				return err
+			}
+			lifecycle.RecordAuthorization(finding.RepositoryFingerprint, "uninstall_absent_repair_branch", true, detail)
+		} else if err := deleteUninstallRepairBranch(ctx, store, lifecycle, config, client, finding.RepositoryFingerprint, finding.Branch, finding.RepairCommitSHA); err != nil {
 			return err
 		}
 	}
@@ -627,12 +834,31 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			return err
 		}
 	}
-	if attempt.Branch != "" && attempt.CommitSHA != "" {
-		if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_delete_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s head=%s", attempt.RepositoryFingerprint, attempt.Branch, attempt.CommitSHA)}); err != nil {
-			return err
+	if attempt.Branch != "" || attempt.CommitSHA != "" {
+		if attempt.Branch == "" {
+			return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 		}
-		if err := client.DeleteRepairBranchExact(ctx, config.Repository, attempt.Branch, attempt.CommitSHA); err != nil {
-			return err
+		if attempt.CommitSHA == "" {
+			if attempt.Stage != repair.StageNoChange || attempt.PRNumber != 0 {
+				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
+			}
+			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, attempt.Branch)
+			if err != nil {
+				return err
+			}
+			if !absent {
+				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
+			}
+			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_absent_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", attempt.RepositoryFingerprint, attempt.Branch, attempt.Stage)}); err != nil {
+				return err
+			}
+		} else {
+			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_delete_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s head=%s", attempt.RepositoryFingerprint, attempt.Branch, attempt.CommitSHA)}); err != nil {
+				return err
+			}
+			if err := client.DeleteRepairBranchExact(ctx, config.Repository, attempt.Branch, attempt.CommitSHA); err != nil {
+				return err
+			}
 		}
 	}
 	if review := attempt.BaselineReview; review != nil && review.ProposalPRNumber > 0 {
@@ -902,6 +1128,97 @@ func restoreInterruptedStateDeletion(store *Store) error {
 		return fmt.Errorf("restore interrupted uninstall finalization: %w", err)
 	}
 	return nil
+}
+
+// RestoreInterruptedUninstallFinalization recovers the exact durable config
+// marker left when a final state-deletion attempt stopped after the config was
+// sealed but before the managed state root could be removed. Dashboard
+// callers use this only for an owner-requested uninstall-finalize operation so
+// a new exact plan can be produced without selecting repository state from
+// client input.
+func RestoreInterruptedUninstallFinalization(stateDir, repository string) error {
+	stateDir = strings.TrimSpace(stateDir)
+	repository = strings.TrimSpace(repository)
+	if stateDir == "" || repository == "" {
+		return fmt.Errorf("state directory and repository are required to recover uninstall finalization")
+	}
+	absolute, err := filepath.Abs(stateDir)
+	if err != nil {
+		return err
+	}
+	absolute = filepath.Clean(absolute)
+	rootInfo, err := os.Lstat(absolute)
+	if err != nil || !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 || deletionPathIsReparsePoint(absolute) {
+		return fmt.Errorf("interrupted uninstall state root is unavailable or non-ordinary")
+	}
+	integratedDir := filepath.Join(absolute, "integrated")
+	integratedInfo, err := os.Lstat(integratedDir)
+	if err != nil || !integratedInfo.IsDir() || integratedInfo.Mode()&os.ModeSymlink != 0 || deletionPathIsReparsePoint(integratedDir) {
+		return fmt.Errorf("interrupted uninstall integrated state is unavailable or non-ordinary")
+	}
+	store := &Store{
+		dir:        integratedDir,
+		configPath: filepath.Join(integratedDir, "config.json"),
+		auditPath:  filepath.Join(integratedDir, "audit.jsonl"),
+	}
+	if _, statErr := os.Lstat(store.configPath); statErr == nil {
+		config, loadErr := store.Load()
+		if loadErr != nil {
+			return loadErr
+		}
+		if !strings.EqualFold(config.Repository, repository) || !sameFilesystemPath(config.StateDir, absolute) {
+			return fmt.Errorf("installed integrated lifecycle does not match repository %s and its exact state directory", repository)
+		}
+		return nil
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	marker := filepath.Join(store.dir, uninstallFinalizingConfigFile)
+	data, err := readOrdinaryStateFile(marker)
+	if err != nil {
+		return fmt.Errorf("read interrupted uninstall finalization marker: %w", err)
+	}
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil || !supportedDurableConfigSchema(config.SchemaVersion) {
+		return fmt.Errorf("interrupted uninstall finalization marker has an invalid managed config identity")
+	}
+	if !strings.EqualFold(config.Repository, repository) || !sameFilesystemPath(config.StateDir, absolute) {
+		return fmt.Errorf("interrupted uninstall finalization does not match repository %s and its exact state directory", repository)
+	}
+	if !config.Paused {
+		return fmt.Errorf("interrupted uninstall finalization is not durably paused")
+	}
+	ownerData, err := readOrdinaryStateFile(filepath.Join(absolute, stateOwnershipMarkerFile))
+	if err != nil {
+		return fmt.Errorf("read interrupted uninstall state ownership: %w", err)
+	}
+	var owner stateOwnershipMarker
+	if json.Unmarshal(ownerData, &owner) != nil ||
+		owner.SchemaVersion != "hive.state-owner.v1" ||
+		!strings.EqualFold(owner.Repository, config.Repository) ||
+		owner.RepositoryID != config.RepositoryID {
+		return fmt.Errorf("interrupted uninstall state ownership does not match the managed config")
+	}
+	intent, exists, err := store.LoadUninstallIntent()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("interrupted uninstall finalization has no durable uninstall intent")
+	}
+	if err := validateUninstallIntentBinding(intent, config); err != nil {
+		return fmt.Errorf("interrupted uninstall finalization intent is invalid: %w", err)
+	}
+	if err := restoreInterruptedStateDeletion(store); err != nil {
+		return err
+	}
+	return store.AuditStrict(AuditEntry{
+		Action:     "uninstall_finalization_recovered",
+		Allowed:    true,
+		Repository: config.Repository,
+		Detail:     fmt.Sprintf("phase=%s request=owner_dashboard_finalize", intent.Phase),
+	})
 }
 
 func digestPaths(paths []string) (string, error) {

@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -151,6 +152,17 @@ func TestFetchAndVerifyVisualHivePullRequestBundleAcceptsGitHubForkAssociationSh
 				t.Fatalf("real GitHub fork association shape was rejected: %v", err)
 			}
 		})
+	}
+}
+
+func TestFetchAndVerifyVisualHivePullRequestBundleClassifiesMissingSuccessfulRun(t *testing.T) {
+	fixture := buildPullRequestV3Fixture(t, testPRHeadSHA)
+	server := newPullRequestVerifierServer(t, fixture, pullRequestServerMutation{RunConclusion: "failure"})
+	defer server.Close()
+	client := NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+	_, _, err := client.FetchAndVerifyVisualHivePullRequestBundle(context.Background(), pullRequestBundleRequest(t, fixture))
+	if !errors.Is(err, ErrNoSuccessfulVisualHivePullRequestRun) {
+		t.Fatalf("failed exact-head workflow error = %v, want unavailable-success sentinel", err)
 	}
 }
 
@@ -784,7 +796,7 @@ func TestVisualHivePullRequestBundleRequestRequiresOnlyIndependentImmutablePins(
 }
 
 func TestVisualHivePullRequestProducerCommitMatchesAuditedRuntime(t *testing.T) {
-	const auditedProducerCommit = "9fb0eebf4ec4c3f6653092c1fd53795d4d80523e"
+	const auditedProducerCommit = "1de3765924043ba87d46f200e8883b9233d94a18"
 	if VisualHivePullRequestProducerCommit != auditedProducerCommit {
 		t.Fatalf("Visual Hive PR producer pin %q does not match audited runtime %q", VisualHivePullRequestProducerCommit, auditedProducerCommit)
 	}

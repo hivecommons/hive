@@ -197,7 +197,12 @@ func (c *Client) upsertHivePullRequest(ctx context.Context, repository, branch, 
 	if err != nil {
 		return RepairPullRequest{}, err
 	}
-	if err := c.verifyManagedBranchHead(ctx, owner, repo, branch, expectedHeadSHA); err != nil {
+	// A successful git push can briefly precede GitHub's REST ref view. Wait
+	// only for this exact repository-owned branch to expose the already-known
+	// commit before inspecting PR marker claimants. Every later verification
+	// remains an immediate exact check so external branch movement still fails
+	// closed.
+	if err := c.waitForManagedBranchHead(ctx, owner, repo, branch, expectedHeadSHA); err != nil {
 		return RepairPullRequest{}, err
 	}
 	// Search every open PR, not only the requested base. A marker claimant on a
@@ -329,6 +334,45 @@ func (c *Client) waitForManagedPullHeadRefresh(ctx context.Context, owner, repo 
 		current = live
 	}
 	return nil, fmt.Errorf("head remained at prior SHA %q after %s", prior.HeadSHA, time.Duration(managedPullHeadRefreshAttempts-1)*managedPullHeadRefreshDelay)
+}
+
+func (c *Client) waitForManagedBranchHead(ctx context.Context, owner, repo, branch, expectedHeadSHA string) error {
+	branch = strings.TrimSpace(branch)
+	expectedHeadSHA = strings.TrimSpace(expectedHeadSHA)
+	if branch == "" || expectedHeadSHA == "" {
+		return fmt.Errorf("managed branch and exact head SHA are required")
+	}
+	var observedHeadSHA string
+	for attempt := 0; attempt < managedPullHeadRefreshAttempts; attempt++ {
+		ref, _, err := c.client.Git.GetRef(ctx, owner, repo, "heads/"+branch)
+		if err != nil {
+			return fmt.Errorf("verify managed branch %s: %w", branch, err)
+		}
+		if ref.GetRef() != "refs/heads/"+branch {
+			return fmt.Errorf("managed branch %s resolved to unexpected ref %q", branch, ref.GetRef())
+		}
+		observedHeadSHA = strings.TrimSpace(ref.GetObject().GetSHA())
+		if strings.EqualFold(observedHeadSHA, expectedHeadSHA) {
+			return nil
+		}
+		if attempt == managedPullHeadRefreshAttempts-1 {
+			break
+		}
+		timer := time.NewTimer(managedPullHeadRefreshDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf(
+		"managed branch %s remained at SHA %q instead of exact head %s after %s",
+		branch,
+		observedHeadSHA,
+		expectedHeadSHA,
+		time.Duration(managedPullHeadRefreshAttempts-1)*managedPullHeadRefreshDelay,
+	)
 }
 
 // ListOpenRepairPullRequests returns every open PR carrying one exact Hive

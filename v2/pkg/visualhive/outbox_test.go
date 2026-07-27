@@ -144,6 +144,32 @@ func TestProcessOutboxUsesACMMAndClosesOnlyResolvedFinding(t *testing.T) {
 	}
 }
 
+func TestProcessOutboxAuthorizesVerifiedMapFindingAsScannerAtL4(t *testing.T) {
+	root := t.TempDir()
+	lifecycle, err := NewLifecycleStore(filepath.Join(root, "lifecycle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beadStore := newTestBeadStore(t, filepath.Join(root, "beads"))
+	manifestPath := writeLifecycleBundle(t, filepath.Join(root, "present"), "bundle-map", "present", "main", true)
+	manifest := readManifest(t, manifestPath)
+	manifest.Observations[0].IssueKind = "missing_visual_coverage"
+	manifest.Observations[0].OwningAgentHint = "visual-hive/map"
+	sealTestManifest(t, manifestPath, &manifest)
+	present := validateLocalBundle(t, manifestPath)
+	if _, err := lifecycle.ApplyBundle(present, beadStore, ApplyLifecycleOptions{TargetRef: "main"}); err != nil {
+		t.Fatal(err)
+	}
+
+	client := &fakeLifecycleIssueClient{}
+	result := ProcessOutbox(context.Background(), lifecycle, beadStore, automation.Policy{
+		ACMMLevel: 4, Mode: automation.ModeIssues, AllowedRepositories: []string{"owner/repo"},
+	}, client)
+	if result.Succeeded != 1 || result.Denied != 0 || client.upserts != 1 {
+		t.Fatalf("verified map finding was not authorized as scanner at L4: result=%+v client=%+v", result, client)
+	}
+}
+
 func TestExplicitRootIssueBodyCannotTriggerLegacyDerivativeRebind(t *testing.T) {
 	entry := OutboxEntry{Body: "<!-- visual-hive-issue dedupe:legacy-derivative -->\nEvidence remains", BundleID: "bundle", BundleDigest: "digest", Evidence: map[string]string{}}
 	rootFinding := FindingLifecycle{Fingerprint: "source", RootCauseKey: "mutation/api-500/localPreview/dashboard-shell"}

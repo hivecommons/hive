@@ -112,6 +112,52 @@ func TestUpsertRepairPullRequestRefreshesStaleListHeadAfterManagedPush(t *testin
 	}
 }
 
+func TestUpsertRepairPullRequestWaitsForManagedBranchRefAfterPush(t *testing.T) {
+	marker := "<!-- hive-setup: owner/repo -->"
+	priorHead := strings.Repeat("9", 40)
+	expectedHead := strings.Repeat("a", 40)
+	title, body := "Previous setup", marker+"\nprevious"
+	refCalls, editCalls, createCalls := 0, 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo":
+			writeManagedRepository(writer)
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/git/ref/heads/hive/setup-proof":
+			refCalls++
+			head := expectedHead
+			if refCalls <= 2 {
+				head = priorHead
+			}
+			writeManagedRef(writer, "hive/setup-proof", head)
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/pulls":
+			writeManagedPullList(writer, managedPull(7, title, body, "hive/setup-proof", expectedHead, "main", 123, "owner/repo"))
+		case request.Method == http.MethodGet && request.URL.Path == "/repos/owner/repo/pulls/7":
+			writeManagedPull(writer, managedPull(7, title, body, "hive/setup-proof", expectedHead, "main", 123, "owner/repo"))
+		case request.Method == http.MethodPatch && request.URL.Path == "/repos/owner/repo/pulls/7":
+			editCalls++
+			var input struct {
+				Title string `json:"title"`
+				Body  string `json:"body"`
+			}
+			_ = json.NewDecoder(request.Body).Decode(&input)
+			title, body = input.Title, input.Body
+			writeManagedPull(writer, managedPull(7, title, body, "hive/setup-proof", expectedHead, "main", 123, "owner/repo"))
+		case request.Method == http.MethodPost && request.URL.Path == "/repos/owner/repo/pulls":
+			createCalls++
+			http.Error(writer, "must not create a duplicate", http.StatusInternalServerError)
+		default:
+			http.Error(writer, request.Method+" "+request.URL.Path, http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+	pull, err := client.UpsertRepairPullRequest(context.Background(), "owner/repo", "hive/setup-proof", expectedHead, "main", "Current setup", marker+"\ncurrent", marker)
+	if err != nil || pull.Created || pull.Number != 7 || pull.HeadSHA != expectedHead || refCalls != 4 || editCalls != 1 || createCalls != 0 {
+		t.Fatalf("managed branch ref did not converge safely: pull=%+v refs=%d edits=%d creates=%d err=%v", pull, refCalls, editCalls, createCalls, err)
+	}
+}
+
 func TestUpsertSetupPullRequestWaitsForExactStateBoundPriorHead(t *testing.T) {
 	marker := "<!-- hive-setup: owner/repo -->"
 	priorHead := strings.Repeat("9", 40)

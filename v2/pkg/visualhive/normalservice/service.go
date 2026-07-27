@@ -18,6 +18,7 @@ import (
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
 	"github.com/kubestellar/hive/v2/pkg/repair"
+	"github.com/kubestellar/hive/v2/pkg/visualhive"
 	visualcontroller "github.com/kubestellar/hive/v2/pkg/visualhive/controller"
 )
 
@@ -121,6 +122,12 @@ type Options struct {
 type Service struct {
 	options Options
 	mu      sync.Mutex
+	trigger chan triggerRequest
+}
+
+type triggerRequest struct {
+	context context.Context
+	result  chan error
 }
 
 func New(options Options) (*Service, error) {
@@ -150,7 +157,32 @@ func New(options Options) (*Service, error) {
 	if err := os.MkdirAll(filepath.Join(root, "normal-service"), 0o700); err != nil {
 		return nil, err
 	}
-	return &Service{options: options}, nil
+	return &Service{options: options, trigger: make(chan triggerRequest)}, nil
+}
+
+// Trigger requests one immediate cycle from the already-running normal
+// service. It never acquires a second lease, starts another scheduler, or
+// bypasses pause/quiescence: a request is accepted only by an active lease
+// epoch. The caller receives the exact result of the requested cycle.
+func (service *Service) Trigger(ctx context.Context) error {
+	if service == nil {
+		return errors.New("normal Visual Hive service is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request := triggerRequest{context: ctx, result: make(chan error, 1)}
+	select {
+	case service.trigger <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Run claims exclusive ownership before touching workflow state and retains it
@@ -234,15 +266,28 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 		release()
 	}()
 
+	var requested *triggerRequest
 	for {
 		startedAt := time.Now().UTC()
 		deadline := startedAt.Add(service.options.MaxCycleDuration)
 		cycleCtx, cancelCycle := context.WithDeadline(epochCtx, deadline)
+		var stopRequestedContext func() bool
+		if requested != nil {
+			stopRequestedContext = context.AfterFunc(requested.context, cancelCycle)
+		}
 		deadline, _ = cycleCtx.Deadline()
 		service.startCycle(startedAt, deadline)
 		err := service.RunCycle(cycleCtx)
+		if stopRequestedContext != nil {
+			stopRequestedContext()
+		}
 		cancelCycle()
 		service.reportCycle(err)
+		if requested != nil {
+			requested.result <- err
+			close(requested.result)
+			requested = nil
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -270,6 +315,14 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 				service.report(fmt.Errorf("monitor normal Visual Hive quiescence: %w", status.err))
 			}
 			return
+		case request := <-service.trigger:
+			stopTimer(timer)
+			if request.context.Err() != nil {
+				request.result <- request.context.Err()
+				close(request.result)
+				continue
+			}
+			requested = &request
 		case <-timer.C:
 		}
 	}
@@ -314,7 +367,9 @@ func stopTimer(timer *time.Timer) {
 }
 
 func (service *Service) report(err error) {
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrNoDispatch) && !errors.Is(err, ErrFinalVerdictPending) && !errors.Is(err, ErrOpenPullRequest) && !errors.Is(err, integrated.ErrRunInProgress) {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrNoDispatch) && !errors.Is(err, ErrFinalVerdictPending) &&
+		!errors.Is(err, ErrOpenPullRequest) && !errors.Is(err, integrated.ErrRunInProgress) &&
+		!errors.Is(err, integrated.ErrNormalVisualSetupBaselinePending) && !errors.Is(err, integrated.ErrSetupBaselineLifecycleHold) {
 		service.options.Logger.Warn("normal Visual Hive cycle held", "error", err)
 	}
 }
@@ -377,13 +432,18 @@ func (service *Service) RunCycle(ctx context.Context) error {
 		return ErrNoDispatch
 	}
 	if exists && ledger.VerdictReceiptSHA256 != "" {
+		if ledger.VerdictStatus != "success" {
+			return ErrOpenPullRequest
+		}
 		return service.finish(ctx, ledger)
 	}
 	var envelope visualcontroller.DispatchEnvelope
 	if exists && ledger.SourceExternalRef != "" {
-		envelope, err = service.options.Intake.RevalidateSpecialistBoundary(ledger.SourceExternalRef, ledger.WorkOrderID, ledger.RequestSHA256)
-		if err != nil {
-			return err
+		if ledger.PullRequestNumber == 0 {
+			envelope, err = service.options.Intake.RevalidateSpecialistBoundary(ledger.SourceExternalRef, ledger.WorkOrderID, ledger.RequestSHA256)
+			if err != nil {
+				return err
+			}
 		}
 	} else {
 		work, fetchErr := service.options.Source.Fetch(ctx)
@@ -471,9 +531,6 @@ func (service *Service) RunCycle(ctx context.Context) error {
 	if service.options.Verdict == nil {
 		return ErrFinalVerdictPending
 	}
-	if _, err := service.options.Intake.RevalidateSpecialistBoundary(ledger.SourceExternalRef, ledger.WorkOrderID, ledger.RequestSHA256); err != nil {
-		return err
-	}
 	receipt, err := service.options.Verdict.VerifyPullRequest(ctx, pullRequestVerdictRequest(ledger))
 	if err != nil {
 		return err
@@ -487,6 +544,12 @@ func (service *Service) RunCycle(ctx context.Context) error {
 	ledger.VerdictReceiptSHA256 = strings.ToLower(receipt.ReceiptSHA256)
 	if err := service.saveLedger(ledger); err != nil {
 		return err
+	}
+	if ledger.VerdictStatus != "success" {
+		// A verified red exact-head review is durable evidence that this Worker
+		// PR must remain open. It grants neither specialist completion nor
+		// source consumption, and replay stays on this one ledger/PR.
+		return ErrOpenPullRequest
 	}
 	return service.finish(ctx, ledger)
 }
@@ -542,20 +605,109 @@ func (service *Service) finish(_ context.Context, ledger workLedger) error {
 
 func selectDispatchSet(values []visualcontroller.DispatchEnvelope) (visualcontroller.DispatchEnvelope, []string, bool, error) {
 	ordered := append([]visualcontroller.DispatchEnvelope(nil), values...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].SourceExternalRef < ordered[j].SourceExternalRef })
-	for index, value := range ordered {
-		if strings.TrimSpace(value.SourceExternalRef) == "" || (index > 0 && value.SourceExternalRef == ordered[index-1].SourceExternalRef) {
+	seen := make(map[string]struct{}, len(ordered))
+	for _, value := range ordered {
+		ref := strings.TrimSpace(value.SourceExternalRef)
+		if ref == "" {
 			return visualcontroller.DispatchEnvelope{}, nil, false, errors.New("controller returned empty or duplicate launchable source refs")
 		}
+		if _, exists := seen[ref]; exists {
+			return visualcontroller.DispatchEnvelope{}, nil, false, errors.New("controller returned empty or duplicate launchable source refs")
+		}
+		seen[ref] = struct{}{}
 	}
 	if len(ordered) == 0 {
 		return visualcontroller.DispatchEnvelope{}, nil, false, nil
 	}
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return dispatchEnvelopePrecedes(ordered[i], ordered[j])
+	})
 	deferred := make([]string, 0, len(ordered)-1)
 	for _, value := range ordered[1:] {
 		deferred = append(deferred, value.SourceExternalRef)
 	}
+	sort.Strings(deferred)
 	return ordered[0], deferred, true, nil
+}
+
+func dispatchEnvelopePrecedes(left, right visualcontroller.DispatchEnvelope) bool {
+	if rank := dispatchPublicationRoleRank(left.Work.PublicationRole) - dispatchPublicationRoleRank(right.Work.PublicationRole); rank != 0 {
+		return rank > 0
+	}
+	if rank := dispatchSeverityRank(left.Work.Severity) - dispatchSeverityRank(right.Work.Severity); rank != 0 {
+		return rank > 0
+	}
+	if rank := dispatchIssueKindRank(left.Work.IssueKind) - dispatchIssueKindRank(right.Work.IssueKind); rank != 0 {
+		return rank > 0
+	}
+	if rank := dispatchContractScopeRank(left.Work.RootCauseKey) - dispatchContractScopeRank(right.Work.RootCauseKey); rank != 0 {
+		return rank > 0
+	}
+	if left.Work.RootCauseKey != right.Work.RootCauseKey {
+		return left.Work.RootCauseKey < right.Work.RootCauseKey
+	}
+	return left.SourceExternalRef < right.SourceExternalRef
+}
+
+func dispatchPublicationRoleRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "canonical":
+		return 4
+	case "":
+		// Legacy verified packets predate explicit publication metadata. Keep
+		// them independently actionable, but never let them outrank a canonical
+		// root from the same current packet.
+		return 3
+	case "derivative":
+		return 2
+	case "aggregate":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func dispatchSeverityRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical":
+		return 4
+	case "high":
+		return 3
+	case "medium":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func dispatchIssueKindRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case visualhive.RepositoryTestFailureKind:
+		return 6
+	case "visual_regression", "selector_contract_failure", "screenshot_diff", "mutation_survivor", "test_adequacy_gap", "accessibility_failure", "console_error", "network_error", "security_failure":
+		return 5
+	case "workflow_safety", "provider_governance":
+		return 4
+	case "weak_visual_test", "missing_visual_coverage":
+		return 2
+	default:
+		return 1
+	}
+}
+
+func dispatchContractScopeRank(rootCauseKey string) int {
+	switch {
+	case strings.HasPrefix(rootCauseKey, "contract/localPreview/"):
+		return 4
+	case strings.HasPrefix(rootCauseKey, "contract/fullStack/"):
+		return 3
+	case strings.HasPrefix(rootCauseKey, "contract/componentLibrary/"):
+		return 2
+	case strings.HasPrefix(rootCauseKey, "contract/deployedPreview/"):
+		return 1
+	default:
+		return 0
+	}
 }
 
 func validateRepairOutcome(envelope visualcontroller.DispatchEnvelope, outcome RepairOutcome) error {
@@ -570,8 +722,9 @@ func validateRepairOutcome(envelope visualcontroller.DispatchEnvelope, outcome R
 
 func validateVerdictReceipt(ledger workLedger, receipt PullRequestVerdictReceipt) error {
 	receipt.HeadSHA = strings.ToLower(strings.TrimSpace(receipt.HeadSHA))
+	receipt.Status = strings.ToLower(strings.TrimSpace(receipt.Status))
 	receipt.ReceiptSHA256 = strings.ToLower(strings.TrimSpace(receipt.ReceiptSHA256))
-	if receipt.HeadSHA != ledger.CommitSHA || strings.TrimSpace(receipt.Status) == "" || !json.Valid(receipt.Receipt) {
+	if receipt.HeadSHA != ledger.CommitSHA || (receipt.Status != "success" && receipt.Status != "failure") || !json.Valid(receipt.Receipt) {
 		return errors.New("pull-request verdict is not a valid exact-head receipt")
 	}
 	digest := sha256.Sum256(receipt.Receipt)
@@ -747,6 +900,9 @@ func validateWorkLedger(ledger workLedger) error {
 	}
 	if ledger.CompletionRecorded && !verdictPresent {
 		return errors.New("controller completion has no exact-head verdict")
+	}
+	if verdictPresent && ledger.VerdictStatus != "success" && (ledger.CompletionRecorded || ledger.ConsumeStarted || ledger.Consumed) {
+		return errors.New("red exact-head verdict cannot complete or consume the Worker lifecycle")
 	}
 	if ledger.ConsumeStarted && ledger.SourceExternalRef != "" && !ledger.CompletionRecorded {
 		return errors.New("admitted workflow consumption started before controller completion")

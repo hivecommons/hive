@@ -287,6 +287,13 @@ func packageScriptCommands(packagePath, runner string, scripts map[string]string
 		commands = append(commands, packageScriptCommand(packagePath, runner, "test:ci:lite"))
 	}
 	for _, name := range names {
+		// Visual Hive owns its namespaced lifecycle and evidence commands.
+		// Running them again as independent repository-test jobs is both
+		// redundant and incorrect: those jobs do not carry the sealed Visual
+		// Hive CLI or evidence produced by earlier lifecycle phases.
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), "vh:") {
+			continue
+		}
 		if name == "test:ci:lite" || !safeAutomationScript(name, scripts[name]) || !hasSafePackageScriptClosure(name, scripts) {
 			continue
 		}

@@ -26,15 +26,16 @@ const (
 )
 
 type ManagementOptions struct {
-	Operation         ManagementOperation
-	StateDir          string
-	VisualHiveRef     string
-	VisualHiveCommand string
-	VisualHiveArgs    []string
-	DeleteState       bool
-	Cancel            bool
-	GitHub            *hivegithub.Client
-	GitTransportToken string
+	Operation          ManagementOperation
+	StateDir           string
+	LifecycleBeadsDirs []string
+	VisualHiveRef      string
+	VisualHiveCommand  string
+	VisualHiveArgs     []string
+	DeleteState        bool
+	Cancel             bool
+	GitHub             *hivegithub.Client
+	GitTransportToken  string
 }
 
 type ManagementResult struct {
@@ -119,6 +120,9 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 		if err := verifyManagedOperationAuthorizer(ctx, options.GitHub, config, options.Operation); err != nil {
 			return result, err
 		}
+		if err := drainWorkflowDispatchForUninstall(ctx, store, config, options.GitHub); err != nil {
+			return result, fmt.Errorf("drain workflow dispatch lifecycle before uninstall: %w", err)
+		}
 		if err := drainSetupBaselineForUninstall(ctx, store, config, options.GitHub); err != nil {
 			return result, fmt.Errorf("drain setup baseline lifecycle before uninstall: %w", err)
 		}
@@ -151,7 +155,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 		if err := store.AuditStrict(AuditEntry{Action: "uninstall_drain_started", Allowed: true, Repository: config.Repository, Detail: "automation paused before exact issue/PR/branch cancellation"}); err != nil {
 			return result, err
 		}
-		if drainErr := drainUninstallLifecycle(ctx, options.StateDir, store, config, options.GitHub); drainErr != nil {
+		if drainErr := drainUninstallLifecycle(ctx, options.StateDir, options.LifecycleBeadsDirs, store, config, options.GitHub); drainErr != nil {
 			_ = store.AuditStrict(AuditEntry{Action: "uninstall_drain", Allowed: false, Repository: config.Repository, Detail: drainErr.Error()})
 			return result, fmt.Errorf("uninstall drain stopped with automation paused and state preserved: %w; correct the exact ownership mismatch and retry %s", drainErr, result.NextCommand)
 		}
@@ -466,7 +470,10 @@ func deleteManagedState(stateDir string) error {
 	if json.Unmarshal(data, &config) != nil || !supportedDurableConfigSchema(config.SchemaVersion) || strings.TrimSpace(config.Repository) == "" || strings.TrimSpace(config.RepositoryID) == "" {
 		return fmt.Errorf("refusing to delete %s because its managed config identity is invalid", absolute)
 	}
-	allowedDirectories := map[string]bool{"integrated": true, "visual-hive": true, "repair": true, "beads": true, "runtime": true}
+	allowedDirectories := map[string]bool{
+		"integrated": true, "visual-hive": true, "repair": true, "beads": true, "runtime": true,
+		"setup-baseline": true,
+	}
 	entries, err := os.ReadDir(absolute)
 	if err != nil {
 		return err
@@ -537,6 +544,7 @@ type managedDaemonDeletionStatus struct {
 type managedDaemonDeletionLease struct {
 	SchemaVersion    string    `json:"schema_version"`
 	PID              int       `json:"pid"`
+	StateDir         string    `json:"state_dir,omitempty"`
 	Executable       string    `json:"executable"`
 	HiveCommit       string    `json:"hive_commit,omitempty"`
 	ExecutableSHA256 string    `json:"executable_sha256,omitempty"`
@@ -565,6 +573,19 @@ func validateManagedIntegratedStateInventory(integratedDir, stateDir string, con
 			return fmt.Errorf("refusing to delete linked or unreadable integrated state entry %s", entry.Name())
 		}
 		if entry.IsDir() && entry.Name() == "checkouts" {
+			continue
+		}
+		if entry.IsDir() && entry.Name() == "checkout" {
+			if strings.TrimSpace(config.CheckoutDir) == "" || !sameFilesystemPath(path, config.CheckoutDir) {
+				return fmt.Errorf("refusing to delete current managed checkout outside the exact configured path")
+			}
+			exists, checkoutErr := validateManagedCheckoutBeforeGit(path, config.Repository)
+			if checkoutErr != nil {
+				return fmt.Errorf("refusing to delete current managed checkout without exact ownership: %w", checkoutErr)
+			}
+			if !exists {
+				return fmt.Errorf("refusing to delete missing current managed checkout")
+			}
 			continue
 		}
 		if !entry.IsDir() && info.Mode().IsRegular() && allowedFiles[entry.Name()] {
@@ -613,7 +634,13 @@ func validateManagedDaemonDeletionFile(path, name, stateDir string, config Confi
 		if err := decodeStrictManagedDaemonJSON(data, &lease); err != nil {
 			return fmt.Errorf("refusing to delete invalid daemon lease: %w", err)
 		}
-		validSchema := lease.SchemaVersion == "hive.integrated-daemon-lease.v1" || (lease.SchemaVersion == "hive.integrated-daemon-lease.v2" && immutableCommit.MatchString(lease.HiveCommit) && setupAuthorizationDigest.MatchString(lease.ExecutableSHA256))
+		validIntegratedSchema := lease.SchemaVersion == "hive.integrated-daemon-lease.v1" ||
+			(lease.SchemaVersion == "hive.integrated-daemon-lease.v2" && immutableCommit.MatchString(lease.HiveCommit) && setupAuthorizationDigest.MatchString(lease.ExecutableSHA256))
+		validNormalVisualSchema := lease.SchemaVersion == "hive.normal-visual-daemon-lease.v1" &&
+			sameFilesystemPath(lease.StateDir, stateDir) &&
+			immutableCommit.MatchString(lease.HiveCommit) &&
+			setupAuthorizationDigest.MatchString(lease.ExecutableSHA256)
+		validSchema := validIntegratedSchema || validNormalVisualSchema
 		if !validSchema || lease.PID <= 0 || strings.TrimSpace(lease.Executable) == "" || lease.AcquiredAt.IsZero() {
 			return fmt.Errorf("refusing to delete daemon lease with an invalid managed binding")
 		}
@@ -633,7 +660,7 @@ func decodeStrictManagedDaemonJSON(data []byte, destination any) error {
 }
 
 func validateManagedStateDeletionTree(root string, config Config) error {
-	allowedDirectories := []string{"integrated", "visual-hive", "repair", "beads", "runtime"}
+	allowedDirectories := []string{"integrated", "visual-hive", "repair", "beads", "runtime", "setup-baseline"}
 	for _, name := range allowedDirectories {
 		path := filepath.Join(root, name)
 		if _, err := os.Lstat(path); os.IsNotExist(err) {

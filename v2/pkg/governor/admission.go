@@ -139,6 +139,7 @@ func (g *Governor) bindAdmissionRequestLocked(request WorkAdmissionRequest) Work
 		request.RoleConfigured = false
 		request.RoleConfigSHA256 = ""
 	}
+	request.ConfiguredCadence = ""
 	if mode, ok := g.cfg.Modes[modeToConfigKey(g.state.Mode)]; ok {
 		request.ConfiguredCadence = mode.Cadences[request.Role]
 	}
