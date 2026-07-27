@@ -32,7 +32,7 @@ type copilotUserMessage struct {
 }
 
 type copilotShutdown struct {
-	CurrentModel string                       `json:"currentModel"`
+	CurrentModel string                        `json:"currentModel"`
 	ModelMetrics map[string]copilotModelMetric `json:"modelMetrics"`
 }
 
@@ -41,9 +41,9 @@ type copilotModelMetric struct {
 }
 
 type copilotUsage struct {
-	InputTokens     int64 `json:"inputTokens"`
-	OutputTokens    int64 `json:"outputTokens"`
-	CacheReadTokens int64 `json:"cacheReadTokens"`
+	InputTokens      int64 `json:"inputTokens"`
+	OutputTokens     int64 `json:"outputTokens"`
+	CacheReadTokens  int64 `json:"cacheReadTokens"`
 	CacheWriteTokens int64 `json:"cacheWriteTokens"`
 }
 
@@ -54,7 +54,16 @@ type copilotToolComplete struct {
 // ScanCopilotSessions reads Copilot CLI session files from the session-state
 // directory and returns an AggregateSummary. The sessionsDir is typically
 // ~/.copilot/session-state.
-func ScanCopilotSessions(sessionsDir string) (*AggregateSummary, error) {
+//
+// When liveCapture is true, the MITM proxy is recording Copilot token usage
+// live (per completion response) into the inference sink, so this scanner MUST
+// NOT also accrue tokens from the session.shutdown ModelMetrics — doing so would
+// double-count every Copilot session (once live via the sink, once at shutdown
+// here). In that mode the scanner still contributes session presence, message
+// counts, model, and last-active timestamps (which the live sink does not
+// capture), but records zero tokens; the proxy sink is the single source of
+// Copilot token totals.
+func ScanCopilotSessions(sessionsDir string, liveCapture bool) (*AggregateSummary, error) {
 	agg := &AggregateSummary{
 		ByAgent:       make(map[string]int64),
 		ByModel:       make(map[string]int64),
@@ -85,7 +94,7 @@ func ScanCopilotSessions(sessionsDir string) (*AggregateSummary, error) {
 			continue
 		}
 
-		summary, err := parseCopilotSessionFile(eventsFile)
+		summary, err := parseCopilotSessionFile(eventsFile, liveCapture)
 		if err != nil || summary == nil || summary.TotalTokens == 0 && summary.Messages == 0 {
 			continue
 		}
@@ -129,7 +138,7 @@ func ScanCopilotSessions(sessionsDir string) (*AggregateSummary, error) {
 	return agg, nil
 }
 
-func parseCopilotSessionFile(path string) (*SessionSummary, error) {
+func parseCopilotSessionFile(path string, liveCapture bool) (*SessionSummary, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -211,11 +220,17 @@ func parseCopilotSessionFile(path string) (*SessionSummary, error) {
 				if shutdown.CurrentModel != "" {
 					summary.Model = shutdown.CurrentModel
 				}
-				for _, metrics := range shutdown.ModelMetrics {
-					summary.InputTokens += metrics.Usage.InputTokens
-					summary.OutputTokens += metrics.Usage.OutputTokens
-					summary.CacheRead += metrics.Usage.CacheReadTokens
-					summary.CacheCreate += metrics.Usage.CacheWriteTokens
+				// When the live-capture proxy is active it already recorded
+				// every completion's tokens into the inference sink; accruing
+				// the shutdown ModelMetrics here would double-count. Keep the
+				// model (set above) but skip the token totals.
+				if !liveCapture {
+					for _, metrics := range shutdown.ModelMetrics {
+						summary.InputTokens += metrics.Usage.InputTokens
+						summary.OutputTokens += metrics.Usage.OutputTokens
+						summary.CacheRead += metrics.Usage.CacheReadTokens
+						summary.CacheCreate += metrics.Usage.CacheWriteTokens
+					}
 				}
 			}
 		}
@@ -238,4 +253,3 @@ func detectAgentFromCwd(cwd string) string {
 	}
 	return ""
 }
-

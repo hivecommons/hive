@@ -70,6 +70,21 @@ type GitHubProxy struct {
 	// agents, whose usage the file-scanning token collector cannot see
 	// otherwise. May be nil (Record is a safe no-op on a nil sink).
 	tokenSink *tokens.InferenceSink
+
+	// copilotDial, when set, overrides how the Copilot-sniff MITM path dials the
+	// upstream Copilot host (default: tls.Dial to host:443). It exists solely as
+	// a test seam so the CONNECT handler can be driven against a local fake
+	// upstream; production leaves it nil.
+	copilotDial func(host string) (net.Conn, error)
+}
+
+// dialCopilotUpstream connects to the real Copilot host over TLS (or the test
+// seam when set).
+func (p *GitHubProxy) dialCopilotUpstream(host string) (net.Conn, error) {
+	if p.copilotDial != nil {
+		return p.copilotDial(host)
+	}
+	return tls.Dial("tcp", net.JoinHostPort(host, "443"), &tls.Config{ServerName: host})
 }
 
 // SetTokenSink wires the inference token sink so the translator can record
@@ -254,6 +269,15 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 				agentName = p.uidMap.LookupByUID(uid)
 			}
 		}
+	}
+
+	// Copilot completion host under iptables redirection: MITM to read live
+	// token usage (same guard as the explicit-CONNECT path). The peeked
+	// ClientHello is replayed via prefixConn so the TLS handshake sees the full
+	// record.
+	if IsCopilotAPIHost(host) && p.tokenSink != nil && agentName != "" {
+		p.sniffCopilotOnTLS(&prefixConn{Conn: conn, prefix: fullBuf}, host, agentName)
+		return
 	}
 
 	if !IsGitHubHost(host) || !NeedsMITM(host) {
@@ -463,6 +487,14 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 			p.handleAnthropicReroute(conn, r, host, agentName, route)
 			return
 		}
+	}
+
+	// Copilot completion host: MITM to read live token usage. Only when a token
+	// sink is active and the agent is identified — otherwise fall through to an
+	// opaque tunnel so Copilot traffic is never broken by usage capture.
+	if IsCopilotAPIHost(host) && p.tokenSink != nil && agentName != "" {
+		p.handleCopilotSniff(conn, host, agentName)
+		return
 	}
 
 	// Non-GitHub hosts: tunnel without inspection.
@@ -1317,6 +1349,173 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		Body:       io.NopCloser(bytes.NewReader(translated)),
 	}
 	httpResp.Write(conn)
+}
+
+// handleCopilotSniff MITMs a GitHub Copilot completion-API connection to read
+// the OpenAI-shaped token usage out of each /chat/completions response, then
+// records it via the same token sink the inference path uses so Copilot cost
+// goes live instead of only tallying at session shutdown.
+//
+// Unlike the inference reroute, this does NOT translate or reroute: the client's
+// request is forwarded verbatim to the real Copilot host (with one exception —
+// streaming requests get stream_options.include_usage injected so the terminal
+// SSE usage chunk is emitted), and the upstream response is streamed back
+// byte-for-byte to the client. The proxy only reads a copy of the response to
+// extract usage.
+//
+// It is only invoked when a token sink is active and the agent is identified;
+// callers fall back to opaque tunneling otherwise, so a missing sink or unknown
+// agent never breaks Copilot traffic.
+func (p *GitHubProxy) handleCopilotSniff(conn net.Conn, host, agentName string) {
+	if _, err := fmt.Fprintf(conn, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
+		p.logger.Error("copilot sniff: CONNECT response failed", "error", err)
+		return
+	}
+	p.sniffCopilotOnTLS(conn, host, agentName)
+}
+
+// sniffCopilotOnTLS TLS-terminates a client connection (already past any CONNECT
+// handshake), dials the real Copilot upstream, and pumps requests/responses
+// through proxyCopilotHTTP so usage is recorded. Shared by the explicit-CONNECT
+// (handleCopilotSniff) and the transparent-TLS (iptables) entry points so the
+// forge/handshake/dial logic lives in one place. clientConn must be the raw
+// (pre-TLS) client socket, optionally already wrapped in a prefixConn carrying a
+// peeked ClientHello.
+func (p *GitHubProxy) sniffCopilotOnTLS(clientConn net.Conn, host, agentName string) {
+	tlsCert, err := p.forgeCert(host)
+	if err != nil {
+		p.logger.Error("copilot sniff: forge cert failed", "host", host, "error", err)
+		return
+	}
+
+	tlsClientConn := tls.Server(clientConn, &tls.Config{Certificates: []tls.Certificate{tlsCert}})
+	if err := tlsClientConn.Handshake(); err != nil {
+		p.logger.Warn("copilot sniff: client TLS handshake failed", "error", err)
+		return
+	}
+	defer tlsClientConn.Close()
+
+	upstreamConn, err := p.dialCopilotUpstream(host)
+	if err != nil {
+		p.logger.Error("copilot sniff: upstream dial failed", "host", host, "error", err)
+		return
+	}
+	defer upstreamConn.Close()
+
+	p.proxyCopilotHTTP(tlsClientConn, upstreamConn, host, agentName)
+}
+
+// copilotSniffBodyLimit caps how much of a Copilot request/response body the
+// proxy buffers in order to read the usage block. Completion payloads are well
+// under this; the limit bounds memory against a pathological body. Bodies larger
+// than the limit are still forwarded in full (streamed), only usage extraction
+// is skipped for the oversized case.
+const copilotSniffBodyLimit = 32 * 1024 * 1024 // 32 MiB
+
+// proxyCopilotHTTP reads HTTP requests from the client, forwards them to the
+// Copilot upstream, and forwards responses back — extracting token usage from
+// completion responses along the way. It keeps the connection alive across
+// multiple request/response pairs (HTTP keep-alive), exiting when either side
+// closes.
+func (p *GitHubProxy) proxyCopilotHTTP(client net.Conn, upstream net.Conn, host, agentName string) {
+	clientBuf := bufio.NewReader(client)
+	upstreamBuf := bufio.NewReader(upstream)
+
+	for {
+		req, err := http.ReadRequest(clientBuf)
+		if err != nil {
+			return // client closed
+		}
+
+		isCompletion := isCopilotCompletionsPath(req.URL.Path)
+		model := ""
+
+		// For completion requests, buffer the body so we can (a) learn the
+		// model id and (b) inject include_usage on streaming requests. Other
+		// requests (model listings, etc.) are forwarded without buffering.
+		if isCompletion && req.Body != nil {
+			body, readErr := io.ReadAll(io.LimitReader(req.Body, copilotSniffBodyLimit))
+			req.Body.Close()
+			if readErr != nil {
+				return
+			}
+			var streaming bool
+			model, streaming = parseCopilotRequest(body)
+			if streaming {
+				body = ensureStreamUsageRequested(body)
+			}
+			req.Body = io.NopCloser(bytes.NewReader(body))
+			req.ContentLength = int64(len(body))
+			req.Header.Set("Content-Length", fmt.Sprintf("%d", len(body)))
+		}
+
+		if err := req.Write(upstream); err != nil {
+			return
+		}
+
+		resp, err := http.ReadResponse(upstreamBuf, req)
+		if err != nil {
+			return
+		}
+
+		if isCompletion && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			p.forwardCopilotResponseWithUsage(client, resp, host, agentName, model)
+		} else {
+			if err := resp.Write(client); err != nil {
+				resp.Body.Close()
+				return
+			}
+			resp.Body.Close()
+		}
+
+		if req.Close || resp.Close {
+			return
+		}
+	}
+}
+
+// forwardCopilotResponseWithUsage forwards a completion response to the client
+// while extracting token usage from a buffered copy. The full body is read into
+// memory (completion responses are small), usage is recorded, then the response
+// is rewritten to the client verbatim. resp.Body is consumed and closed here.
+func (p *GitHubProxy) forwardCopilotResponseWithUsage(client net.Conn, resp *http.Response, host, agentName, model string) {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, copilotSniffBodyLimit))
+	resp.Body.Close()
+	if err != nil {
+		// Best effort: nothing to forward.
+		return
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if in, out := extractCopilotUsage(contentType, body); in > 0 || out > 0 {
+		resolvedModel := model
+		if resolvedModel == "" || resolvedModel == copilotAutoModelSentinel {
+			// Fall back to the model reported in the response when the request
+			// did not pin a concrete id (e.g. --model auto). Never record the
+			// "auto" sentinel — it is not a real model row.
+			if rm := extractCopilotResponseModel(body, contentType); rm != "" {
+				resolvedModel = rm
+			}
+		}
+		if resolvedModel != "" && resolvedModel != copilotAutoModelSentinel {
+			p.tokenSink.Record(agentName, resolvedModel, in, out)
+			p.logger.Info("copilot usage recorded",
+				"agent", agentName,
+				"host", host,
+				"model", resolvedModel,
+				"input", in,
+				"output", out,
+			)
+		}
+	}
+
+	// Rewrite the response to the client verbatim. Replace the body with the
+	// buffered copy and drop Content-Length ambiguity by setting it explicitly.
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	resp.ContentLength = int64(len(body))
+	if err := resp.Write(client); err != nil {
+		p.logger.Warn("copilot sniff: response write to client failed", "agent", agentName, "error", err)
+	}
 }
 
 func (p *GitHubProxy) writeHTTPError(conn net.Conn, status int, msg string) {
