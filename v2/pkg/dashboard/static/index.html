@@ -3742,7 +3742,11 @@
     // truncated to whatever the ring buffer holds (labeled in the UI).
     function costBuckets() {
       const cfg = COST_RANGES[_costRange];
-      const hist = (_costHistory || []).filter(e => e && typeof e.usd === 'number' && e.timestamp);
+      // The server serializes the timestamp as `t` (CostHistoryEntry json:"t");
+      // accept `timestamp` too so a future rename can't zero the card again.
+      const hist = (_costHistory || [])
+        .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp })
+        .filter(e => e && typeof e.usd === 'number' && typeof e.timestamp === 'number');
       const now = Date.now();
       const windowStart = now - cfg.windowMs;
       // Snap the last bucket edge to now, walk backwards by bucketMs.
