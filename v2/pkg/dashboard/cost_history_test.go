@@ -77,3 +77,25 @@ func TestSeedCostHistoryCapAndOrdering(t *testing.T) {
 		}
 	}
 }
+
+// TestAppendCostHistoryPerAgent verifies the optional per-agent map is stored
+// on the entry and omitted when empty.
+func TestAppendCostHistoryPerAgent(t *testing.T) {
+	s := &Server{}
+	s.AppendCostHistory(10.0, map[string]float64{"scanner": 7.5, "quality": 2.5})
+
+	got := s.CostHistory()
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	if got[0].Agents["scanner"] != 7.5 || got[0].Agents["quality"] != 2.5 {
+		t.Errorf("agents map = %v, want scanner=7.5 quality=2.5", got[0].Agents)
+	}
+
+	// Empty map should be dropped, not stored as {}.
+	s2 := &Server{}
+	s2.AppendCostHistory(1.0, map[string]float64{})
+	if got := s2.CostHistory(); len(got) != 1 || got[0].Agents != nil {
+		t.Errorf("empty agents map should be nil on the entry, got %v", got[0].Agents)
+	}
+}

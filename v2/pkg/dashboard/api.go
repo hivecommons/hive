@@ -4832,8 +4832,16 @@ func (s *Server) handleKnowledgeStats(w http.ResponseWriter, r *http.Request) {
 	// Sample the estimated cost on the same cadence as the fact history so the
 	// cost sparkline shares the fact sparkline's timer (both throttled to
 	// ~5-min intervals). The figure is the same all-time cumulative estimated
-	// total that GET /api/cost returns.
-	s.AppendCostHistory(s.estimatedCost().TotalUSD)
+	// total that GET /api/cost returns; the per-agent map feeds the agent
+	// cards' spend-over-window display.
+	est := s.estimatedCost()
+	perAgent := make(map[string]float64, len(est.ByAgent))
+	for _, row := range est.ByAgent {
+		if row.USD > 0 {
+			perAgent[row.Name] = row.USD
+		}
+	}
+	s.AppendCostHistory(est.TotalUSD, perAgent)
 
 	jsonResponse(w, stats)
 }
