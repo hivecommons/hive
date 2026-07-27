@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
+	"github.com/kubestellar/hive/v2/pkg/agentparse"
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/governor"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
@@ -20,15 +20,15 @@ import (
 )
 
 const (
-	inceptionWatchIntervalS  = 5 * time.Second
-	inceptionBeadRefPrefix   = "inception/"
-	minQuestionsForAdvance   = 5
-	minFactsForAdvance           = 3
-	targetFactCount              = 8
-	factEnrichmentGracePeriod    = 15 * time.Second
-	autoFactFallbackTimeout      = 60 * time.Second  // minimum time before fact fallback can fire
-	autoQuestionFallbackTimeout  = 60 * time.Second  // minimum time before fallback can fire
-	agentIdleThreshold           = 30 * time.Second  // agent must be idle this long before fallback
+	inceptionWatchIntervalS     = 5 * time.Second
+	inceptionBeadRefPrefix      = "inception/"
+	minQuestionsForAdvance      = 5
+	minFactsForAdvance          = 3
+	targetFactCount             = 8
+	factEnrichmentGracePeriod   = 15 * time.Second
+	autoFactFallbackTimeout     = 60 * time.Second // minimum time before fact fallback can fire
+	autoQuestionFallbackTimeout = 60 * time.Second // minimum time before fallback can fire
+	agentIdleThreshold          = 30 * time.Second // agent must be idle this long before fallback
 )
 
 // InceptionWatcher polls brainstorm beads and bridges them into the inception
@@ -391,11 +391,11 @@ func (w *InceptionWatcher) checkForQuestions(inceptionBeads []*beads.Bead) {
 }
 
 const (
-	outputParseLineCount       = 100
-	interceptBufferLineCount   = 500
-	kickRetryDelayS        = 20 * time.Second
-	kickRetryGracePeriodS  = 15 * time.Second
-	maxKickRetries         = 5
+	outputParseLineCount     = 100
+	interceptBufferLineCount = 500
+	kickRetryDelayS          = 20 * time.Second
+	kickRetryGracePeriodS    = 15 * time.Second
+	maxKickRetries           = 5
 )
 
 // retryKickIfStale re-sends the inception prompt via SendKick when the
@@ -788,154 +788,51 @@ func (w *InceptionWatcher) checkForQuestionsInOutput() {
 	)
 }
 
-// parseQuestionTable extracts questions from the agent's formatted table output.
-// The table uses │ as column delimiters with columns: #/Bead, Category, Question, Default.
-// categoryKeywords are the valid question categories the agent produces.
+// categoryKeywords are the valid question categories the agent produces during
+// Level-1 ideation. They are passed to the shared agentparse list-parsers.
 var categoryKeywords = map[string]bool{
 	"users": true, "features": true, "constraints": true,
 	"testing": true, "deployment": true, "storage": true,
 	"language": true, "general": true,
 }
 
-// parseQuestionTable extracts questions from the agent's formatted table output.
-// Scans each │-delimited row for a column matching a known category keyword,
-// then takes the next column as the question and the one after as the default.
-// Handles variable column layouts (# | Category | Question | Default) and
-// (Bead | Category | Question | Default) by finding the category dynamically.
+// parseQuestionTable extracts questions from the agent's │-delimited table
+// output. It is a thin, behavior-preserving adapter over agentparse.ParseTable:
+// the generic parser finds the category column and extracts title/default, and
+// this adapter maps each Item into a knowledge.Question (ID == Category, as
+// before).
 func parseQuestionTable(lines []string) []knowledge.Question {
-	var questions []knowledge.Question
-	seen := make(map[string]bool)
-
-	var currentCat, currentQuestion, currentDefault string
-
-	for _, line := range lines {
-		if !strings.Contains(line, "│") {
-			continue
-		}
-
-		// Split by │ delimiter
-		cols := strings.Split(line, "│")
-		var cleaned []string
-		for _, c := range cols {
-			cleaned = append(cleaned, strings.TrimSpace(c))
-		}
-
-		// Find category column by matching known keywords
-		catIdx := -1
-		for i, c := range cleaned {
-			if categoryKeywords[strings.ToLower(c)] {
-				catIdx = i
-				break
-			}
-		}
-
-		if catIdx >= 0 && catIdx+1 < len(cleaned) {
-			// Flush previous question
-			if currentCat != "" && currentQuestion != "" {
-				key := currentCat + ":" + currentQuestion
-				if !seen[key] {
-					seen[key] = true
-					questions = append(questions, knowledge.Question{
-						ID:       currentCat,
-						Text:     strings.TrimSpace(currentQuestion),
-						Default:  strings.TrimSpace(currentDefault),
-						Category: currentCat,
-					})
-				}
-			}
-
-			// Start new question
-			currentCat = strings.ToLower(cleaned[catIdx])
-			currentQuestion = cleaned[catIdx+1]
-			if catIdx+2 < len(cleaned) {
-				currentDefault = cleaned[catIdx+2]
-			} else {
-				currentDefault = ""
-			}
-		} else if currentCat != "" {
-			// Continuation row — append non-empty columns to question/default
-			nonEmpty := 0
-			for _, c := range cleaned {
-				if c != "" {
-					nonEmpty++
-					if nonEmpty == 1 {
-						currentQuestion += " " + c
-					} else if nonEmpty == 2 {
-						currentDefault += " " + c
-					}
-				}
-			}
-		}
+	items := agentparse.ParseTable(lines, categoryKeywords)
+	questions := make([]knowledge.Question, 0, len(items))
+	for _, it := range items {
+		questions = append(questions, knowledge.Question{
+			ID:       it.Category,
+			Text:     it.Title,
+			Default:  it.Default,
+			Category: it.Category,
+		})
 	}
-
-	// Flush last question
-	if currentCat != "" && currentQuestion != "" {
-		key := currentCat + ":" + currentQuestion
-		if !seen[key] {
-			seen[key] = true
-			questions = append(questions, knowledge.Question{
-				ID:       currentCat,
-				Text:     strings.TrimSpace(currentQuestion),
-				Default:  strings.TrimSpace(currentDefault),
-				Category: currentCat,
-			})
-		}
-	}
-
 	return questions
 }
 
-// numberedQuestionRe matches lines like "1. Primary users — who will use this?"
-// or "1. **Primary users** — who will use this?" or "- Primary users: ..."
-var numberedQuestionRe = regexp.MustCompile(`^\s*(?:\d+[\.\)]\s*|[-*]\s+)(?:\*\*)?(\w[\w/\s]*?)(?:\*\*)?\s*[-—:]+\s*(.+)`)
+// numberedQuestionRe is retained for callers in this file that strip list
+// decoration from a single line; it is the same matcher agentparse uses.
+var numberedQuestionRe = agentparse.NumberedListRe()
 
 // parseNumberedQuestions extracts questions from numbered or bulleted lists.
-// Catches the case where the agent outputs questions as:
-//   1. Primary users — who will use this and how?
-//   2. Must-have features — the 2-3 things it must do
-// instead of a │-delimited table.
+// Thin, behavior-preserving adapter over agentparse.ParseNumberedList with the
+// "general" fallback category, mapping each Item into a knowledge.Question.
 func parseNumberedQuestions(lines []string) []knowledge.Question {
-	var questions []knowledge.Question
-	seen := make(map[string]bool)
-
-	for _, line := range lines {
-		m := numberedQuestionRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-
-		label := strings.TrimSpace(strings.ToLower(m[1]))
-		question := strings.TrimSpace(m[2])
-		if question == "" {
-			continue
-		}
-
-		// Map label to category
-		cat := ""
-		for kw := range categoryKeywords {
-			if strings.Contains(label, kw) {
-				cat = kw
-				break
-			}
-		}
-		if cat == "" {
-			cat = "general"
-		}
-
-		key := cat + ":" + question
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-
+	items := agentparse.ParseNumberedList(lines, categoryKeywords, "general")
+	questions := make([]knowledge.Question, 0, len(items))
+	for _, it := range items {
 		questions = append(questions, knowledge.Question{
-			ID:       cat,
-			Text:     question,
+			ID:       it.Category,
+			Text:     it.Title,
 			Default:  "",
-			Category: cat,
+			Category: it.Category,
 		})
 	}
-
 	return questions
 }
 
@@ -1404,42 +1301,21 @@ func (w *InceptionWatcher) interceptQuestionsFromBuffer(state *knowledge.Incepti
 	}
 }
 
-// bdCreateTitleRe extracts the --title value from a bd create command line.
-var bdCreateTitleRe = regexp.MustCompile(`--title\s+"([^"]+)"`)
-
 // isTemplatePlaceholder rejects placeholder titles that the agent outputs
 // as part of showing a command template before filling in actual values.
+// Thin, behavior-preserving adapter over agentparse.IsTemplatePlaceholder.
 func isTemplatePlaceholder(title string) bool {
-	lower := strings.ToLower(title)
-	if strings.HasPrefix(lower, "<") && strings.HasSuffix(lower, ">") {
-		return true
-	}
-	placeholders := []string{
-		"<fact title>", "<question title>", "<title>",
-		"<your question>", "<description>", "<bead title>",
-		"fact_title", "question_title", "your question here",
-	}
-	for _, p := range placeholders {
-		if lower == p {
-			return true
-		}
-	}
-	return false
+	return agentparse.IsTemplatePlaceholder(title)
 }
 
 // parseQuestionFromBdCreate extracts a question from a bd create command
 // in the agent's raw output. Works regardless of --type, --actor, or
-// --external-ref values — the title IS the question.
+// --external-ref values — the title IS the question. Title extraction and
+// placeholder rejection are delegated to agentparse.TitleFromBdCreate; category
+// inference and prefix handling stay here (inception-specific).
 func (w *InceptionWatcher) parseQuestionFromBdCreate(line string) *knowledge.Question {
-	m := bdCreateTitleRe.FindStringSubmatch(line)
-	if m == nil || len(m) < 2 {
-		return nil
-	}
-	title := strings.TrimSpace(m[1])
-	if title == "" {
-		return nil
-	}
-	if isTemplatePlaceholder(title) {
+	title, ok := agentparse.TitleFromBdCreate(line)
+	if !ok {
 		return nil
 	}
 
