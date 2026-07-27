@@ -62,15 +62,23 @@ type Server struct {
 	acmmEvalCache    *ACMMEvaluation
 	acmmEvalCachedAt time.Time
 
-	tokenHistoryMu    sync.RWMutex
-	tokenHistory      []TokenSparklineEntry
+	// Sparkline histories, all backed by the generic timeSeries ring buffer
+	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
+	// /costSeries() accessors so the zero-value Server needs no constructor
+	// change. Each keeps its own typed entry struct and JSON contract, so the
+	// unification is internal — on-disk files and /api/* endpoints are unchanged.
+	histOnce  sync.Once
+	tokenHist *timeSeries[TokenSparklineEntry]
+	factHist  *timeSeries[FactHistoryEntry]
+	costHist  *timeSeries[CostHistoryEntry]
+
+	// lastFullBroadcast is guarded by statusMu (set/read alongside s.status).
 	lastFullBroadcast time.Time
 
-	factHistoryMu sync.RWMutex
-	factHistory   []FactHistoryEntry
-
-	costHistoryMu sync.RWMutex
-	costHistory   []CostHistoryEntry
+	// fact/cost histories were migrated to the generic timeSeries store (#2041);
+	// the trend history (#2039) remains a dedicated buffer for now.
+	trendHistoryMu sync.RWMutex
+	trendHistory   []TrendHistoryEntry
 
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
@@ -409,6 +417,50 @@ const costHistoryMaxEntries = 8640
 // mirroring factHistoryMinIntervalMs.
 const costHistoryMinIntervalMs = 300_000
 
+// TrendHistoryEntry records a point-in-time snapshot of the governor / per-repo
+// / beads / system-gauge trends that were previously kept only in the browser's
+// localStorage (hive_sparkline_history) and thus lost on a pod restart or a new
+// viewer. Persisting these server-side (same ring-buffer + PVC-seed treatment
+// as the fact/cost histories) makes the corresponding sparklines survive
+// restarts and render immediately for any viewer.
+type TrendHistoryEntry struct {
+	Timestamp int64 `json:"t"`
+	// Governor actionable counts.
+	GovIssues int `json:"govIssues"`
+	GovPrs    int `json:"govPrs"`
+	GovTotal  int `json:"govTotal"`
+	GovHold   int `json:"govHold"`
+	// Beads worker/supervisor counts.
+	BeadsWorkers    int `json:"beadsWorkers"`
+	BeadsSupervisor int `json:"beadsSupervisor"`
+	// Repos maps repo name → issues/prs at this snapshot. Omitted when empty.
+	Repos map[string]TrendRepoSnap `json:"repos,omitempty"`
+	// System gauges (disk/mem/cpu percent). Pointer so an entry recorded when
+	// systemResources was unavailable omits the field rather than reporting 0.
+	System *TrendSystemSnap `json:"system,omitempty"`
+}
+
+// TrendRepoSnap is one repo's actionable issue/PR counts at a snapshot.
+type TrendRepoSnap struct {
+	Issues int `json:"issues"`
+	PRs    int `json:"prs"`
+}
+
+// TrendSystemSnap is the disk/mem/cpu percentages at a snapshot.
+type TrendSystemSnap struct {
+	DiskPct float64 `json:"diskPct"`
+	MemPct  float64 `json:"memPct"`
+	CpuPct  float64 `json:"cpuPct"`
+}
+
+// trendHistoryMaxEntries caps the trend sparklines to ~30 days at 5-min
+// intervals, mirroring factHistoryMaxEntries / costHistoryMaxEntries.
+const trendHistoryMaxEntries = 8640
+
+// trendHistoryMinIntervalMs prevents recording more than once per 5 minutes (ms),
+// mirroring factHistoryMinIntervalMs / costHistoryMinIntervalMs.
+const trendHistoryMinIntervalMs = 300_000
+
 const sseRetryMs = 3000
 
 func NewServer(port int, logger *slog.Logger) *Server {
@@ -524,6 +576,12 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/health/deep", s.handleHealthDeep)
 	s.mux.HandleFunc("GET /api/livez", s.handleLivez)
+	// Prometheus scrape endpoint for estimated LLM cost — opt-in, since it
+	// exposes cost data unauthenticated (Prometheus can't do device-flow auth).
+	// Enabled only when HIVE_METRICS_ENABLED is truthy; see isPublicPath.
+	if metricsEnabled() {
+		s.mux.HandleFunc("GET /metrics", s.handleMetrics)
+	}
 	s.mux.HandleFunc("GET /api/status", s.handleStatus)
 	s.mux.HandleFunc("GET /api/events", s.handleSSE)
 	s.mux.HandleFunc("POST /api/github-app/recheck", s.handleGitHubAppRecheck)
@@ -866,6 +924,10 @@ func isPublicPath(path string) bool {
 		return true
 	case path == "/api/auth/token":
 		return true
+	case path == "/metrics" && metricsEnabled():
+		// Prometheus scrape target — public only when explicitly enabled via
+		// HIVE_METRICS_ENABLED. Prometheus cannot authenticate via device flow.
+		return true
 	case path == "/snapshot" || strings.HasPrefix(path, "/snapshot/"):
 		return true
 	case strings.HasPrefix(path, "/api/snapshot"):
@@ -1070,6 +1132,7 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.statusMu.Unlock()
 
 	s.AppendTokenSparkline(status)
+	s.AppendTrendHistory(status)
 
 	data, err := json.Marshal(status)
 	if err != nil {
@@ -1671,15 +1734,47 @@ func (s *Server) broadcastFrame(frame string) {
 	}
 }
 
+// initHistories lazily builds the three sparkline ring buffers. Called (once)
+// by each history accessor so a zero-value Server — as used in tests that do
+// `&Server{}` — works without a constructor. Token history has no throttle
+// (append every broadcast); fact/cost throttle to ~5 min. Each buffer's cap and
+// interval match the previous bespoke implementation exactly, so behavior and
+// on-disk shape are preserved.
+func (s *Server) initHistories() {
+	s.histOnce.Do(func() {
+		s.tokenHist = newTimeSeries(tokenSparklineMaxEntries, 0,
+			func(e TokenSparklineEntry) int64 { return e.Timestamp })
+		s.factHist = newTimeSeries(factHistoryMaxEntries, factHistoryMinIntervalMs,
+			func(e FactHistoryEntry) int64 { return e.Timestamp })
+		s.costHist = newTimeSeries(costHistoryMaxEntries, costHistoryMinIntervalMs,
+			func(e CostHistoryEntry) int64 { return e.Timestamp })
+	})
+}
+
+func (s *Server) tokenSeries() *timeSeries[TokenSparklineEntry] {
+	s.initHistories()
+	return s.tokenHist
+}
+
+func (s *Server) factSeries() *timeSeries[FactHistoryEntry] {
+	s.initHistories()
+	return s.factHist
+}
+
+func (s *Server) costSeries() *timeSeries[CostHistoryEntry] {
+	s.initHistories()
+	return s.costHist
+}
+
 // AppendTokenSparkline extracts token metrics from the current status and
-// appends a timestamped entry to the in-memory token sparkline history.
+// appends a timestamped entry to the token sparkline history (no throttle).
 func (s *Server) AppendTokenSparkline(status *StatusPayload) {
 	if status == nil {
 		return
 	}
 
 	entry := TokenSparklineEntry{
-		Timestamp:   time.Now().UnixMilli(),
+		Timestamp:   nowMillis(),
 		Input:       status.Tokens.Totals.Input,
 		Output:      status.Tokens.Totals.Output,
 		CacheRead:   status.Tokens.Totals.CacheRead,
@@ -1696,73 +1791,35 @@ func (s *Server) AppendTokenSparkline(status *StatusPayload) {
 		entry.ByModel[name] = bucket.Input + bucket.Output + bucket.CacheRead
 	}
 
-	s.tokenHistoryMu.Lock()
-	s.tokenHistory = append(s.tokenHistory, entry)
-	if len(s.tokenHistory) > tokenSparklineMaxEntries {
-		s.tokenHistory = s.tokenHistory[len(s.tokenHistory)-tokenSparklineMaxEntries:]
-	}
-	s.tokenHistoryMu.Unlock()
+	s.tokenSeries().append(entry)
 }
 
 // TokenSparklineHistory returns a copy of the current token sparkline history.
 func (s *Server) TokenSparklineHistory() []TokenSparklineEntry {
-	s.tokenHistoryMu.RLock()
-	defer s.tokenHistoryMu.RUnlock()
-	out := make([]TokenSparklineEntry, len(s.tokenHistory))
-	copy(out, s.tokenHistory)
-	return out
+	return s.tokenSeries().snapshot()
 }
 
 // SeedTokenSparklineHistory restores persisted token history on startup.
 func (s *Server) SeedTokenSparklineHistory(entries []TokenSparklineEntry) {
-	s.tokenHistoryMu.Lock()
-	defer s.tokenHistoryMu.Unlock()
-	if len(entries) > tokenSparklineMaxEntries {
-		entries = entries[len(entries)-tokenSparklineMaxEntries:]
-	}
-	s.tokenHistory = entries
+	s.tokenSeries().seed(entries)
 }
 
 // AppendFactHistory records a total-facts count if enough time has passed.
 func (s *Server) AppendFactHistory(count int) {
-	now := time.Now().UnixMilli()
-
-	s.factHistoryMu.Lock()
-	defer s.factHistoryMu.Unlock()
-
-	if len(s.factHistory) > 0 {
-		last := s.factHistory[len(s.factHistory)-1]
-		if now-last.Timestamp < factHistoryMinIntervalMs {
-			return
-		}
-	}
-
-	s.factHistory = append(s.factHistory, FactHistoryEntry{
-		Timestamp: now,
+	s.factSeries().append(FactHistoryEntry{
+		Timestamp: nowMillis(),
 		Count:     count,
 	})
-	if len(s.factHistory) > factHistoryMaxEntries {
-		s.factHistory = s.factHistory[len(s.factHistory)-factHistoryMaxEntries:]
-	}
 }
 
 // FactHistory returns a copy of the fact count history.
 func (s *Server) FactHistory() []FactHistoryEntry {
-	s.factHistoryMu.RLock()
-	defer s.factHistoryMu.RUnlock()
-	out := make([]FactHistoryEntry, len(s.factHistory))
-	copy(out, s.factHistory)
-	return out
+	return s.factSeries().snapshot()
 }
 
 // SeedFactHistory restores persisted fact history on startup.
 func (s *Server) SeedFactHistory(entries []FactHistoryEntry) {
-	s.factHistoryMu.Lock()
-	defer s.factHistoryMu.Unlock()
-	if len(entries) > factHistoryMaxEntries {
-		entries = entries[len(entries)-factHistoryMaxEntries:]
-	}
-	s.factHistory = entries
+	s.factSeries().seed(entries)
 }
 
 // AppendCostHistory records an estimated-cost ($) snapshot if enough time has
@@ -1781,20 +1838,8 @@ func (s *Server) AppendCostHistory(usd float64, agents ...map[string]float64) {
 // AppendCostHistoryFull is AppendCostHistory plus the per-model snapshot map
 // that feeds the cost table's mini sparklines.
 func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, models map[string]CostModelSnap) {
-	now := time.Now().UnixMilli()
-
-	s.costHistoryMu.Lock()
-	defer s.costHistoryMu.Unlock()
-
-	if len(s.costHistory) > 0 {
-		last := s.costHistory[len(s.costHistory)-1]
-		if now-last.Timestamp < costHistoryMinIntervalMs {
-			return
-		}
-	}
-
 	entry := CostHistoryEntry{
-		Timestamp: now,
+		Timestamp: nowMillis(),
 		USD:       usd,
 	}
 	if len(agents) > 0 {
@@ -1803,29 +1848,87 @@ func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, m
 	if len(models) > 0 {
 		entry.Models = models
 	}
-	s.costHistory = append(s.costHistory, entry)
-	if len(s.costHistory) > costHistoryMaxEntries {
-		s.costHistory = s.costHistory[len(s.costHistory)-costHistoryMaxEntries:]
-	}
+	s.costSeries().append(entry)
 }
 
 // CostHistory returns a copy of the estimated-cost history.
 func (s *Server) CostHistory() []CostHistoryEntry {
-	s.costHistoryMu.RLock()
-	defer s.costHistoryMu.RUnlock()
-	out := make([]CostHistoryEntry, len(s.costHistory))
-	copy(out, s.costHistory)
-	return out
+	return s.costSeries().snapshot()
 }
 
 // SeedCostHistory restores persisted cost history on startup.
 func (s *Server) SeedCostHistory(entries []CostHistoryEntry) {
-	s.costHistoryMu.Lock()
-	defer s.costHistoryMu.Unlock()
-	if len(entries) > costHistoryMaxEntries {
-		entries = entries[len(entries)-costHistoryMaxEntries:]
+	s.costSeries().seed(entries)
+}
+
+// AppendTrendHistory samples the governor / per-repo / beads / system-gauge
+// trends from the current status and records a timestamped entry if enough time
+// has passed since the last one. Mirrors AppendFactHistory / AppendCostHistory:
+// same 5-min cadence throttle and same ring-buffer cap so all the persisted
+// histories stay aligned. No-op on a nil status.
+func (s *Server) AppendTrendHistory(status *StatusPayload) {
+	if status == nil {
+		return
 	}
-	s.costHistory = entries
+	now := time.Now().UnixMilli()
+
+	s.trendHistoryMu.Lock()
+	defer s.trendHistoryMu.Unlock()
+
+	if len(s.trendHistory) > 0 {
+		last := s.trendHistory[len(s.trendHistory)-1]
+		if now-last.Timestamp < trendHistoryMinIntervalMs {
+			return
+		}
+	}
+
+	entry := TrendHistoryEntry{
+		Timestamp:       now,
+		GovIssues:       status.Governor.Issues,
+		GovPrs:          status.Governor.PRs,
+		GovTotal:        status.Governor.Issues + status.Governor.PRs,
+		GovHold:         status.Hold.Total,
+		BeadsWorkers:    status.Beads.Workers,
+		BeadsSupervisor: status.Beads.Supervisor,
+	}
+	if len(status.Repos) > 0 {
+		repos := make(map[string]TrendRepoSnap, len(status.Repos))
+		for _, r := range status.Repos {
+			repos[r.Name] = TrendRepoSnap{Issues: r.Issues, PRs: r.PRs}
+		}
+		entry.Repos = repos
+	}
+	if status.SystemResources != nil {
+		entry.System = &TrendSystemSnap{
+			DiskPct: status.SystemResources.DiskPct,
+			MemPct:  status.SystemResources.MemPct,
+			CpuPct:  status.SystemResources.CpuPct,
+		}
+	}
+
+	s.trendHistory = append(s.trendHistory, entry)
+	if len(s.trendHistory) > trendHistoryMaxEntries {
+		s.trendHistory = s.trendHistory[len(s.trendHistory)-trendHistoryMaxEntries:]
+	}
+}
+
+// TrendHistory returns a copy of the trend history.
+func (s *Server) TrendHistory() []TrendHistoryEntry {
+	s.trendHistoryMu.RLock()
+	defer s.trendHistoryMu.RUnlock()
+	out := make([]TrendHistoryEntry, len(s.trendHistory))
+	copy(out, s.trendHistory)
+	return out
+}
+
+// SeedTrendHistory restores persisted trend history on startup.
+func (s *Server) SeedTrendHistory(entries []TrendHistoryEntry) {
+	s.trendHistoryMu.Lock()
+	defer s.trendHistoryMu.Unlock()
+	if len(entries) > trendHistoryMaxEntries {
+		entries = entries[len(entries)-trendHistoryMaxEntries:]
+	}
+	s.trendHistory = entries
 }
 
 // SetAdvisoryDigest stores the latest advisory digest for SSE broadcast.

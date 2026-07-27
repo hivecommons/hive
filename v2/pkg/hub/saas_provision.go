@@ -245,16 +245,23 @@ type PendingAccessRequest struct {
 }
 
 type SaaSHive struct {
-	ID              string                 `json:"id"`
-	Owner           string                 `json:"owner"`
-	ProjectName     string                 `json:"project_name"`
-	Org             string                 `json:"org"`
-	Repos           []string               `json:"repos"`
-	PrimaryRepo     string                 `json:"primary_repo"`
-	ACMMLevel       int                    `json:"acmm_level"`
-	Status          string                 `json:"status"`
-	CreatedAt       string                 `json:"created_at"`
-	Subdomain       string                 `json:"subdomain"`
+	ID          string   `json:"id"`
+	Owner       string   `json:"owner"`
+	ProjectName string   `json:"project_name"`
+	Org         string   `json:"org"`
+	Repos       []string `json:"repos"`
+	PrimaryRepo string   `json:"primary_repo"`
+	ACMMLevel   int      `json:"acmm_level"`
+	Status      string   `json:"status"`
+	CreatedAt   string   `json:"created_at"`
+	Subdomain   string   `json:"subdomain"`
+	// VanityURL is the friendly dashboard URL derived from the claimed project
+	// (e.g. hosted-<org>-<repo>-*.hive.kubestellar.io), set at ASSIGN time. Its
+	// presence is the explicit marker that a placeholder has been claimed —
+	// callers prefer it over the raw placeholder Subdomain and must NOT infer
+	// "claimed" by pattern-matching the placeholder name. Empty = unclaimed
+	// placeholder (or a pre-vanity hive).
+	VanityURL       string                 `json:"vanity_url,omitempty"`
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`

@@ -170,3 +170,63 @@ func TestGPT53CodexPriced(t *testing.T) {
 		}
 	}
 }
+
+// TestEstimateFromSummary_ModelDedup verifies dotted/dashed spellings of the
+// same model collapse into one cost row (they must stay distinct for CLI
+// launch, but not for cost).
+func TestEstimateFromSummary_ModelDedup(t *testing.T) {
+	agg := &AggregateSummary{
+		ByModelDetail: map[string]*AgentModelBucket{
+			"claude-opus-4.7": {Input: 1_000_000, Output: 0}, // Copilot spelling
+			"claude-opus-4-7": {Input: 0, Output: 1_000_000}, // Claude CLI spelling
+		},
+		Sessions: []SessionSummary{},
+	}
+	est := EstimateFromSummary(agg)
+	// Exactly one merged row for the two spellings.
+	if n := len(est.ByModel); n != 1 {
+		t.Fatalf("expected 1 merged model row, got %d: %v", n, est.ByModel)
+	}
+	var mc ModelCost
+	for _, v := range est.ByModel {
+		mc = v
+	}
+	// Tokens summed across both spellings.
+	if mc.Input != 1_000_000 || mc.Output != 1_000_000 {
+		t.Errorf("merged tokens wrong: in=%d out=%d, want 1M/1M", mc.Input, mc.Output)
+	}
+	// opus 1M in + 1M out = $5 + $25 = $30.
+	if !approxEqual(mc.USD, 30.0) {
+		t.Errorf("merged cost = $%.4f, want $30 (opus 1M in + 1M out)", mc.USD)
+	}
+}
+
+// TestEstimateFromSummary_DropsRoutingAliases verifies "auto"/"default" are
+// excluded from the cost table (they're selection modes, not models).
+func TestEstimateFromSummary_DropsRoutingAliases(t *testing.T) {
+	agg := &AggregateSummary{
+		ByModelDetail: map[string]*AgentModelBucket{
+			"auto":            {Input: 0, Output: 0},
+			"default":         {Input: 0, Output: 0},
+			"claude-opus-4-8": {Input: 1_000_000, Output: 0},
+		},
+	}
+	est := EstimateFromSummary(agg)
+	if _, ok := est.ByModel["auto"]; ok {
+		t.Error("'auto' must not appear as a cost row")
+	}
+	if _, ok := est.ByModel["default"]; ok {
+		t.Error("'default' must not appear as a cost row")
+	}
+	if _, ok := est.ByModel["claude-opus-4-8"]; !ok {
+		t.Error("real model dropped")
+	}
+	if len(est.ByModel) != 1 {
+		t.Errorf("expected only the real model, got %d rows: %v", len(est.ByModel), est.ByModel)
+	}
+	for _, m := range est.UnpricedModels {
+		if m == "auto" || m == "default" {
+			t.Errorf("routing alias %q leaked into UnpricedModels", m)
+		}
+	}
+}

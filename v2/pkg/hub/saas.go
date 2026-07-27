@@ -1371,7 +1371,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		//     restarted / hasn't beaten yet — not a fresh assignment).
 		spokeReportsDifferentProject := entry.Org != "" && !strings.EqualFold(entry.Org, sh.Org)
 		if !entry.Upgrading && spokeReportsDifferentProject &&
-			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel) != nil {
+			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel, entry.DashboardURL) != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
 		}
@@ -1988,7 +1988,14 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("audit: hive migration initiated",
 		"hive_id", id, "from", currentClusterID, "to", req.TargetClusterID, "by", username)
 
-	go s.migrateHive(h, &fromCluster, &toCluster)
+	// Registered with provisionWG so tests can drain this goroutine before
+	// swapping the package-level saas*Dir vars. Without it, migrateHive's
+	// saveSaaSHive call races the next test's temp-dir teardown.
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
+		s.migrateHive(h, &fromCluster, &toCluster)
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{
@@ -4183,7 +4190,7 @@ func (s *HubServer) handleAvailablePlaceholders(w http.ResponseWriter, r *http.R
 // record, is still an unclaimed placeholder (statusAvailable), or the spoke
 // already reports the recorded project. The spoke's currently-reported values
 // (curOrg/curRepos/curPrimary/curACMM) let the hub stop sending once matched.
-func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int) *HeartbeatProjectConfig {
+func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int, curURL string) *HeartbeatProjectConfig {
 	h := loadSaaSHive(hiveID)
 	if h == nil {
 		return nil
@@ -4210,18 +4217,22 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		return nil
 	}
 	// Already matching — stop sending (mirrors AuthorizedUsers "leave alone"
-	// semantics once the spoke has caught up).
+	// semantics once the spoke has caught up). Include the vanity URL: if it's
+	// set but the spoke hasn't adopted it yet, keep sending so the URL propagates.
+	urlMatched := h.VanityURL == "" || curURL == h.VanityURL
 	if strings.EqualFold(curOrg, h.Org) &&
 		sameStringSliceFold(curRepos, h.Repos) &&
 		strings.EqualFold(curPrimary, primary) &&
-		curACMM == h.ACMMLevel {
+		curACMM == h.ACMMLevel &&
+		urlMatched {
 		return nil
 	}
 	return &HeartbeatProjectConfig{
-		Org:         h.Org,
-		Repos:       h.Repos,
-		PrimaryRepo: primary,
-		ACMMLevel:   h.ACMMLevel,
+		Org:          h.Org,
+		Repos:        h.Repos,
+		PrimaryRepo:  primary,
+		ACMMLevel:    h.ACMMLevel,
+		DashboardURL: h.VanityURL, // empty until assign sets it
 	}
 }
 
@@ -4348,6 +4359,17 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.IsPublic = body.IsPublic
 	h.Status = ""
 	h.Error = ""
+	// Derive a stable, friendly vanity URL from the claimed project so the user
+	// sees hosted-<org>-<repo>-*.<domain> instead of the raw placeholder host.
+	// Compute once (idempotent re-assign keeps the same URL) and only when the
+	// hive's cluster domain is known. The spoke adopts this via the heartbeat
+	// (HeartbeatProjectConfig.DashboardURL) and reports it back, so the hub
+	// registry's dashboardUrl becomes the vanity URL and stays that way.
+	if h.VanityURL == "" {
+		if cluster := s.clusterForHive(h); cluster != nil && cluster.Domain != "" {
+			h.VanityURL = "https://" + generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
+		}
+	}
 	if err := saveSaaSHive(h); err != nil {
 		http.Error(w, `{"error":"failed to save hive assignment"}`, http.StatusInternalServerError)
 		return
@@ -6881,8 +6903,14 @@ const dashboardHTML = `<!DOCTYPE html>
       <div style="flex:1;overflow-y:auto;padding:0 32px">
         <div style="margin-bottom:12px">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Message *</label>
-          <textarea id="banner-message" rows="3" maxlength="500" placeholder="Announce a new capability..." style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;resize:vertical;font-family:inherit"></textarea>
-          <div style="font-size:0.7rem;color:var(--muted);text-align:right;margin-top:2px"><span id="banner-char-count">0</span>/500</div>
+          <div style="display:flex;gap:6px;margin-bottom:6px">
+            <button type="button" onclick="bannerFmtBold()" title="Bold (**text**)" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-weight:700;font-size:0.8rem">B</button>
+            <button type="button" onclick="bannerFmtLink()" title="Insert link ([text](url))" style="padding:3px 10px;background:var(--bg);border:1px solid var(--border);border-radius:5px;color:var(--text);cursor:pointer;font-size:0.8rem">🔗 Link</button>
+          </div>
+          <textarea id="banner-message" rows="3" maxlength="500" oninput="updateBannerPreview()" placeholder="Announce a new capability... — use the buttons above for bold and links" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;resize:vertical;font-family:inherit"></textarea>
+          <div style="font-size:0.7rem;color:var(--muted);display:flex;justify-content:space-between;margin-top:2px"><span>Markdown: <code>**bold**</code>, <code>[text](https://url)</code></span><span><span id="banner-char-count">0</span>/500</span></div>
+          <div style="font-size:0.7rem;color:var(--muted);margin:8px 0 3px">Preview</div>
+          <div id="banner-preview" style="padding:10px 14px;border:1px dashed var(--border);border-radius:6px;font-size:0.85rem;min-height:1.4em;color:var(--text)"></div>
         </div>
         <div style="margin-bottom:16px">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:8px">Color</label>
@@ -7294,6 +7322,19 @@ const dashboardHTML = `<!DOCTYPE html>
       radios.forEach(function(r) { r.addEventListener('change', updateBannerPreview); });
     })();
 
+    // Same safe minimal-markdown as the spoke's renderHubBanner: escape first,
+    // then re-introduce only **bold** and [text](http(s)://url) links. Keep this
+    // in sync with bannerMarkdown() in the spoke dashboard.
+    function bannerMarkdown(text, linkColor) {
+      var out = String(text || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)/g, function(_, label, url) {
+        return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" style="color:'
+          + (linkColor || 'inherit') + ';text-decoration:underline">' + label + '</a>';
+      });
+      return out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    }
+
     function updateBannerPreview() {
       var msg = (document.getElementById('banner-message').value || '').trim();
       var color = (document.querySelector('input[name="banner-color"]:checked') || {}).value || 'green';
@@ -7302,8 +7343,25 @@ const dashboardHTML = `<!DOCTYPE html>
       preview.style.background = s.bg;
       preview.style.border = s.border;
       preview.style.color = s.color;
-      preview.innerHTML = msg ? esc(msg) : '<em style="opacity:0.6">Type a message above to preview...</em>';
+      preview.innerHTML = msg ? ('📢 ' + bannerMarkdown(msg, s.color)) : '<em style="opacity:0.6">Type a message above to preview...</em>';
     }
+
+    // Toolbar helpers: wrap the current selection (or insert a template) at the
+    // cursor, then refresh the char count + preview.
+    function bannerInsert(before, after, placeholder) {
+      var el = document.getElementById('banner-message');
+      var start = el.selectionStart, end = el.selectionEnd;
+      var sel = el.value.slice(start, end) || placeholder;
+      el.value = el.value.slice(0, start) + before + sel + after + el.value.slice(end);
+      // Re-select the inserted content so the user can type over the placeholder.
+      el.focus();
+      el.selectionStart = start + before.length;
+      el.selectionEnd = start + before.length + sel.length;
+      document.getElementById('banner-char-count').textContent = el.value.length;
+      updateBannerPreview();
+    }
+    function bannerFmtBold() { bannerInsert('**', '**', 'bold text'); }
+    function bannerFmtLink() { bannerInsert('[', '](https://)', 'link text'); }
 
     function loadBannerHiveList() {
       var container = document.getElementById('banner-hive-list');

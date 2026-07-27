@@ -1034,6 +1034,8 @@
     .cost-custom-range input { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font-size: 0.7rem; padding: 2px 6px; font-family: var(--font-ui); }
     .agent-spend-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 0.66rem; font-weight: 600; color: var(--muted); vertical-align: middle; }
     .cell-spark { vertical-align: middle; margin-left: 6px; opacity: 0.75; }
+    .cagents-badge { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 9px; background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--text); font-weight: 600; font-size: 0.72rem; cursor: default; }
+    .cagents-zero { color: var(--muted); cursor: default; }
     .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
     .cost-range button:hover { color: var(--text); }
     .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
@@ -3658,6 +3660,32 @@
       });
     }
 
+    // Default stroke colors for the named series historyData carries. Keeps the
+    // sparkline() helper below a single source of truth for each series' color
+    // so the scattered render fns don't each repeat the getHistorySeries +
+    // sparkSvg + color triple.
+    const SPARKLINE_COLORS = {
+      govIssues: 'var(--blue)',
+      govPrs: 'var(--purple)',
+      govTotal: 'var(--green)',
+      govHold: 'var(--muted)', // sparkline tint only — the count itself is neutral
+      beadsWorkers: 'var(--cyan)',
+      beadsSupervisor: 'var(--yellow)',
+      tokenTotal: 'var(--cyan)',
+      tokenInput: 'var(--blue)',
+      tokenOutput: 'var(--purple)',
+      tokenCacheRead: 'var(--green)',
+      tokenCacheCreate: 'var(--yellow)',
+      tokenMessages: 'var(--muted)',
+    };
+    // sparkline(name, color?) renders the named historyData series as an SVG
+    // sparkline. color defaults to SPARKLINE_COLORS[name] (falling back to
+    // muted). One helper routes every historyData-backed sparkline through the
+    // same getHistorySeries + sparkSvg path.
+    function sparkline(name, color) {
+      return sparkSvg(getHistorySeries(name), color || SPARKLINE_COLORS[name] || 'var(--muted)');
+    }
+
     function restartSparkSvg(agentName) {
       const series = historyData
         .map(s => s.agents?.[agentName]?.restarts)
@@ -3723,6 +3751,70 @@
         `</svg></span>`;
     }
     // fetchCostHistory() is invoked alongside fetchCost() (see below).
+
+    // ── Governor / repo / beads / system trend history (server-persisted) ──
+    // These trends used to live only in the browser's localStorage
+    // (hive_sparkline_history), so they were blank after a pod restart or for a
+    // brand-new viewer. The server now persists ~30 days of snapshots to
+    // /data/trend-history.json (same ring-buffer treatment as fact/cost). We
+    // fetch them and merge into historyData by timestamp so the governor / repo
+    // / beads / system-gauge sparklines render immediately instead of blank.
+    // Field names in the server entry mirror the client snapshot shape
+    // (govIssues, govPrs, govTotal, govHold, beadsWorkers, beadsSupervisor,
+    // repos[name].{issues,prs}) so no per-field translation is needed.
+    let _serverTrendHistory = [];
+    const TREND_MERGE_DELTA_MS = 60000;
+    async function fetchTrendHistory() {
+      try {
+        const r = await fetch('/api/trend/history');
+        const data = await r.json();
+        _serverTrendHistory = Array.isArray(data) ? data : [];
+        mergeTrendHistory();
+      } catch { /* non-critical */ }
+    }
+    // mergeTrendHistory folds cached server trend snapshots into historyData,
+    // matching each to the nearest live snapshot within TREND_MERGE_DELTA_MS and
+    // injecting any that have no live counterpart. Idempotent-ish: injected
+    // entries carry _fromTrend so a re-merge (after fetchHistory reassigns
+    // historyData) doesn't double-count against already-present live points.
+    function mergeTrendHistory() {
+      if (!_serverTrendHistory.length) return;
+      const matched = new Set();
+      for (const live of historyData) {
+        const lt = live.t || 0;
+        let bestIdx = -1, bestDelta = Infinity;
+        for (let i = 0; i < _serverTrendHistory.length; i++) {
+          const d = Math.abs((_serverTrendHistory[i].t || 0) - lt);
+          if (d < bestDelta) { bestDelta = d; bestIdx = i; }
+        }
+        if (bestIdx >= 0 && bestDelta < TREND_MERGE_DELTA_MS) matched.add(bestIdx);
+      }
+      const injected = [];
+      for (let i = 0; i < _serverTrendHistory.length; i++) {
+        if (matched.has(i)) continue;
+        const e = _serverTrendHistory[i];
+        const repos = {};
+        for (const [name, rs] of Object.entries(e.repos || {})) {
+          repos[name] = { issues: rs.issues || 0, prs: rs.prs || 0 };
+        }
+        injected.push({
+          t: e.t,
+          govIssues: e.govIssues || 0,
+          govPrs: e.govPrs || 0,
+          govTotal: e.govTotal || 0,
+          govHold: e.govHold || 0,
+          beadsWorkers: e.beadsWorkers || 0,
+          beadsSupervisor: e.beadsSupervisor || 0,
+          repos,
+          agents: {},
+          _fromTrend: true,
+        });
+      }
+      if (injected.length) {
+        historyData = historyData.concat(injected);
+        historyData.sort((a, b) => (a.t || 0) - (b.t || 0));
+      }
+    }
 
     // ── Cost spend-over-time (hourly / daily / weekly / monthly) ──
     // The server keeps 30 days of CUMULATIVE all-time estimated-$ snapshots at
@@ -3827,39 +3919,20 @@
         buckets.push({ start, end, spend: 0, hasData: false });
       }
       if (hist.length < 2) return buckets;
-      // Per-bucket spend = cumulative-$ at the last snapshot in the bucket minus
-      // the last snapshot before it. We estimate — exactness isn't the goal —
-      // and prefer the SUM OF PER-MODEL $ deltas over the single total-$ delta:
-      // the per-model figures capture activity the coarse rounded total can drop
-      // to ~0 at short (hourly) windows, and cover models added mid-window.
-      const totalAt = (t) => costValueAt(hist, t, e => e.usd);
-      // Sum of per-model cumulative $ at-or-before t (models present at that
-      // snapshot). null only if NO snapshot carries a models map up to t.
-      const modelSumAt = (t) => {
-        let sum = null;
-        for (const e of hist) {
-          if (e.timestamp > t) break;
-          if (e.models) {
-            let s = 0;
-            for (const k in e.models) { const u = e.models[k] && e.models[k].usd; if (typeof u === 'number') s += u; }
-            sum = s;
-          }
-        }
-        return sum;
-      };
-      const firstModelSum = () => { for (const e of hist) { if (e.models) { let s = 0; for (const k in e.models) { const u = e.models[k] && e.models[k].usd; if (typeof u === 'number') s += u; } return s; } } return null; };
+      // Per-bucket spend = sum of POSITIVE per-model token increments inside the
+      // bucket, priced at each model's current effective rate.
+      //
+      // The token "cumulative" counter is not truly monotonic: it's a sum over
+      // the sessions currently visible to the scanner, so after a pod roll or as
+      // old sessions age out it DROPS. A plain end−start delta of that counter
+      // therefore goes negative and clamps to $0 even though agents kept running
+      // and really did spend. Summing only the step-to-step INCREASES recovers
+      // the actual spend from the noisy counter. (Also immune to price-table
+      // shifts, which move the cumulative $ but not the token increments.)
+      const rate = costPriceMap(hist);
       for (const b of buckets) {
-        // Try per-model deltas first, fall back to the total-$ delta.
-        let before = modelSumAt(b.start), end = modelSumAt(b.end), baseline = firstModelSum();
-        if (end == null) { before = totalAt(b.start); end = totalAt(b.end); baseline = hist[0].usd; }
-        if (before != null && end != null) {
-          b.spend = Math.max(0, end - before);
-          b.hasData = true;
-        } else if (end != null && before == null && hist[0].timestamp <= b.end) {
-          // History begins inside this bucket — spend since the first snapshot.
-          b.spend = Math.max(0, end - (baseline ?? 0));
-          b.hasData = true;
-        }
+        const s = costSpendBetween(hist, rate, b.start, b.end);
+        if (s != null) { b.spend = s; b.hasData = true; }
       }
       return buckets;
     }
@@ -3870,13 +3943,20 @@
     function agentWindowSpend(name) {
       const win = costWindow();
       const hist = costHist().filter(e => e.agents && typeof e.agents[name] === 'number');
-      if (!hist.length || hist[0].timestamp > win.end) return null;
-      const pick = e => e.agents[name];
-      const endV = costValueAt(hist, win.end, pick);
-      if (endV == null) return null;
-      let startV = costValueAt(hist, win.start, pick);
-      if (startV == null) startV = hist[0].agents[name]; // history begins inside window
-      return Math.max(0, endV - startV);
+      if (hist.length < 2) return null;
+      // Same non-monotonic counter problem as the model spend: the per-agent
+      // cumulative $ drops after a pod roll / session-window shift, so an
+      // end−start delta clamps to $0 and the chip vanishes even for a busy
+      // agent. Sum only the positive step-to-step increases over the window.
+      let spend = 0, prev = null, saw = false;
+      for (const e of hist) {
+        if (e.timestamp < win.start || e.timestamp > win.end) { if (e.timestamp > win.end) break; continue; }
+        saw = true;
+        const cur = e.agents[name];
+        if (prev != null && cur > prev) spend += (cur - prev);
+        prev = cur;
+      }
+      return saw ? spend : null;
     }
 
     function costBucketAxisLabel(b) {
@@ -3886,6 +3966,68 @@
       if (_costRange === 'weekly') return `${d.getMonth() + 1}/${d.getDate()}`;
       if (_costRange === 'custom') return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}h`;
       return d.toLocaleString('en-US', { month: 'short' });
+    }
+
+    // costRunRate: estimated $ spent per millisecond, from recent token
+    // consumption. Uses the per-model TOKEN delta over the most recent span of
+    // history (price-independent, monotonic) priced at each model's current
+    // effective rate — so it never goes negative across a price change. Returns
+    // null if there isn't enough history to establish a pace.
+    // priceMap: current $/token per model from the newest snapshot that has one.
+    function costPriceMap(hist) {
+      const rate = {};
+      for (let i = hist.length - 1; i >= 0; i--) {
+        const models = hist[i].models;
+        if (!models) continue;
+        for (const k in models) {
+          const m = models[k];
+          const toks = (m.i || 0) + (m.o || 0);
+          if (rate[k] == null && typeof m.usd === 'number' && toks > 0) rate[k] = m.usd / toks;
+        }
+        break;
+      }
+      return rate;
+    }
+
+    // costSpendBetween: estimated $ spent in [t0, t1], summed from the POSITIVE
+    // step-to-step token increments priced at the current rate. The token
+    // "cumulative" counter is NOT truly monotonic — after a pod roll or when old
+    // sessions age out of the scanner window it drops — so a plain end−start
+    // delta goes negative and (wrongly) reads as $0. Summing only the positive
+    // increments recovers the real spend from that noisy counter.
+    function costSpendBetween(hist, rate, t0, t1) {
+      const pricedTok = (models) => {
+        let s = 0;
+        for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
+        return s;
+      };
+      let spend = 0, prev = null, sawWindow = false;
+      for (const e of hist) {
+        if (!e.models || e.timestamp < t0 || e.timestamp > t1) { if (e.models && e.timestamp > t1) break; continue; }
+        sawWindow = true;
+        const cur = pricedTok(e.models);
+        if (prev != null && cur > prev) spend += (cur - prev); // count only increases
+        prev = cur;
+      }
+      return sawWindow ? spend : null;
+    }
+
+    function costRunRate() {
+      const hist = costHist();
+      if (hist.length < 2) return null;
+      const latest = hist[hist.length - 1];
+      const rate = costPriceMap(hist);
+      // Spend over the most recent 6h (or all history if shorter), divided by the
+      // span, using the positive-increment sum so a shrinking counter can't zero it.
+      const start = latest.timestamp - 6 * 3600e3;
+      let anchorTs = null;
+      for (const e of hist) { if (e.models && e.timestamp >= start) { anchorTs = e.timestamp; break; } }
+      if (anchorTs == null) { for (const e of hist) { if (e.models) { anchorTs = e.timestamp; break; } } }
+      if (anchorTs == null || anchorTs >= latest.timestamp) return null;
+      const spend = costSpendBetween(hist, rate, anchorTs, latest.timestamp);
+      const dMs = latest.timestamp - anchorTs;
+      if (spend == null || !(dMs > 0) || !(spend > 0)) return null;
+      return spend / dMs; // $ per ms
     }
 
     function costTrendHtml() {
@@ -3929,11 +4071,37 @@
       const totalLabel = _costRange === 'custom'
         ? 'spend in range'
         : `spend this ${cfg.label} window`;
+      // Spend during the window. Agents are always running, so a bare $0.00 is
+      // misleading — when the window has no computable delta (too few snapshots,
+      // or a price-table shift zeroed the cumulative delta), estimate it from the
+      // run-rate × window length and mark it approximate (~).
+      const rate = costRunRate(); // $ per ms, or null
+      const winMs = _costRange === 'custom'
+        ? Math.max(_costCustom.end - _costCustom.start, 60e3)
+        : cfg.bucketMs;
+      let spendStr, approx = false;
+      if (total > 0) {
+        spendStr = fmtUSD(total);
+      } else if (rate != null) {
+        spendStr = '~' + fmtUSD(rate * winMs); approx = true;
+      } else {
+        spendStr = fmtUSD(0);
+      }
+      // Run-rate normalized to a readable unit per range.
+      let rateStr = '';
+      if (rate != null) {
+        const perUnit = _costRange === 'hourly' ? rate * 3600e3
+          : _costRange === 'weekly' ? rate * 24 * 3600e3          // $/day within a week view
+          : _costRange === 'monthly' ? rate * 24 * 3600e3         // $/day within a month view
+          : rate * 24 * 3600e3;                                    // daily/custom → $/day
+        const unit = _costRange === 'hourly' ? '/hr' : '/day';
+        rateStr = ` &nbsp;·&nbsp; run-rate: <b>~${fmtUSD(perUnit)}${unit}</b>`;
+      }
       return `<div class="cost-trend">
         <div class="cost-trend-head">
           <div class="cost-range">${pills}</div>
           ${customControls}
-          <div class="cost-trend-total">${totalLabel}: <b>${fmtUSD(total)}</b></div>
+          <div class="cost-trend-total">${totalLabel}: <b>${spendStr}</b>${approx ? ' <span title="estimated from current run-rate — window had no computable delta">(est.)</span>' : ''}${rateStr}</div>
         </div>
         ${body}
       </div>`;
@@ -4013,6 +4181,9 @@
           evalEntries.sort((a, b) => (a.t || 0) - (b.t || 0));
         }
         historyData = evalEntries || [];
+        // Re-fold persisted governor/repo/beads trends into the freshly
+        // reassigned historyData so those sparklines survive the 30s refresh.
+        mergeTrendHistory();
       } catch (e) { /* ignore */ }
     }
     // fetchHistory() — deferred to _deferredInit
@@ -4472,6 +4643,23 @@
       gray:  {bg: 'rgba(107,114,128,0.12)', border: 'rgba(107,114,128,0.3)', color: 'var(--text)'}
     };
 
+    // bannerMarkdown renders a SAFE, minimal markdown subset for hub banners:
+    // links [text](http(s)://url) and **bold**. Everything is HTML-escaped
+    // FIRST (XSS-safe), then only these two constructs are re-introduced, and
+    // link hrefs are restricted to http/https. No other markdown/HTML passes.
+    function bannerMarkdown(text, linkColor) {
+      var esc = String(text || '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      // Links: [label](url) — url must be http(s) and contain no quotes/spaces.
+      esc = esc.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)"']+)\)/g, function (_, label, url) {
+        return '<a href="' + url + '" target="_blank" rel="noopener noreferrer" style="color:'
+          + (linkColor || 'inherit') + ';text-decoration:underline">' + label + '</a>';
+      });
+      // Bold: **text**
+      esc = esc.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      return esc;
+    }
+
     function renderHubBanner(banner) {
       var el = document.getElementById('hub-banner');
       if (!el) return;
@@ -4482,7 +4670,7 @@
       el.style.display = 'block';
       el.innerHTML = '<div style="background:' + s.bg + ';border:1px solid ' + s.border + ';border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;font-size:0.85rem">'
         + '<span style="font-size:1.1rem">📢</span>'
-        + '<span style="flex:1;color:' + s.color + '">' + (banner.message || '').replace(/</g, '&lt;') + '</span>'
+        + '<span style="flex:1;color:' + s.color + '">' + bannerMarkdown(banner.message, s.color) + '</span>'
         + '<button onclick="dismissHubBanner(\'' + (banner.id || '').replace(/'/g, "\\'") + '\')" style="background:none;border:none;color:' + s.color + ';opacity:0.6;cursor:pointer;font-size:1.1rem;padding:0 4px" title="Dismiss">✕</button>'
         + '</div>';
     }
@@ -4614,9 +4802,9 @@
       const isStarting = !gov.active && !gov.mode;
       const cls = gov.active ? 'active' : (isStarting ? 'starting' : 'dead');
       el.className = `governor ${cls}`;
-      const issuesSpark = sparkSvg(getHistorySeries('govIssues'), 'var(--blue)');
-      const prsSpark = sparkSvg(getHistorySeries('govPrs'), 'var(--purple)');
-      const totalSpark = sparkSvg(getHistorySeries('govTotal'), 'var(--green)');
+      const issuesSpark = sparkline('govIssues');
+      const prsSpark = sparkline('govPrs');
+      const totalSpark = sparkline('govTotal');
       const issueCount = gov.issues || 0;
       const currentMode = gov.mode || 'idle';
       const modes = ['idle', 'quiet', 'busy', 'surge'];
@@ -4651,9 +4839,8 @@
       const holdData = data.hold || {};
       const holdTotal = holdData.total || 0;
       const holdItems = holdData.items || [];
-      const HOLD_COLOR = 'var(--muted)'; /* sparkline tint only — the count itself is neutral */
       const holdTooltip = holdItems.length > 0 ? escapeHtml(holdItems.map(h => `${h.type === 'pr' ? 'PR' : 'Issue'} ${h.repo}#${h.number}: ${h.title}`).join('\n')) : 'No items on hold';
-      const holdSpark = sparkSvg(getHistorySeries('govHold'), HOLD_COLOR);
+      const holdSpark = sparkline('govHold');
 
       el.innerHTML = `
         <div class="gov-title">Governor <button class="config-gear" onclick="openConfigDialog('governor')" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
@@ -4891,8 +5078,8 @@
           'Counts appear here as soon as agents start filing beads — kick an agent, or let the governor cadence run, and check back.'));
         return;
       }
-      const wSpark = sparkSvg(getHistorySeries('beadsWorkers'), 'var(--cyan)');
-      const sSpark = sparkSvg(getHistorySeries('beadsSupervisor'), 'var(--yellow)');
+      const wSpark = sparkline('beadsWorkers');
+      const sSpark = sparkline('beadsSupervisor');
       setIfChanged(el, `
         <div class="bead-stat"><div class="spark-row"><span class="num">${workers}</span>${wSpark}</div><div class="label">workers</div></div>
         <div class="bead-stat"><div class="spark-row"><span class="num">${supervisor}</span>${sSpark}</div><div class="label">supervisor</div></div>`);
@@ -5817,7 +6004,7 @@ function burnAreaChart() {
 
       const advisorHtml = buildCadenceAdvisor(tokens.byAgent || {});
 
-      const totalSpark = sparkSvg(getHistorySeries('tokenTotal'), 'var(--cyan)');
+      const totalSpark = sparkline('tokenTotal');
       const ba = tokens.byAgent || {};
       const agentNames = Object.keys(ba).sort((a, b) => {
         const aOrder = _getAgentSortOrder(a);
@@ -5840,11 +6027,11 @@ function burnAreaChart() {
         </div>
         <div class="token-grid">
           <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(totalTokens)}</span>${totalSpark}</div><div class="tlabel">total tokens</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.input)}</span>${sparkSvg(getHistorySeries('tokenInput'), 'var(--blue)')}</div><div class="tlabel">input</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.output)}</span>${sparkSvg(getHistorySeries('tokenOutput'), 'var(--purple)')}</div><div class="tlabel">output</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheRead)}</span>${sparkSvg(getHistorySeries('tokenCacheRead'), 'var(--green)')}</div><div class="tlabel">cache read</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheCreate)}</span>${sparkSvg(getHistorySeries('tokenCacheCreate'), 'var(--yellow)')}</div><div class="tlabel">cache create</div></div>
-          <div class="token-stat"><div class="spark-row"><span class="tval">${t.messages}</span>${sparkSvg(getHistorySeries('tokenMessages'), 'var(--muted)')}</div><div class="tlabel">messages</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.input)}</span>${sparkline('tokenInput')}</div><div class="tlabel">input</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.output)}</span>${sparkline('tokenOutput')}</div><div class="tlabel">output</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheRead)}</span>${sparkline('tokenCacheRead')}</div><div class="tlabel">cache read</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${fmtTokens(t.cacheCreate)}</span>${sparkline('tokenCacheCreate')}</div><div class="tlabel">cache create</div></div>
+          <div class="token-stat"><div class="spark-row"><span class="tval">${t.messages}</span>${sparkline('tokenMessages')}</div><div class="tlabel">messages</div></div>
         </div>
         ${agentSparkRows ? `<div class="token-grid" style="margin-top:4px">${agentSparkRows}</div>` : ''}
         ${advisorHtml}
@@ -5918,6 +6105,25 @@ function burnAreaChart() {
         </div>`;
       }).join('');
 
+      // Live count of running agents currently on each model. Model ids are
+      // normalized (lowercase, dots→dashes) so a table row "claude-opus-4.7"
+      // matches an agent whose model reads "claude-opus-4-7". Paused/off agents
+      // are excluded — this is "using now", not "assigned".
+      const normModel = (s) => (s || '').toLowerCase().replace(/\./g, '-').replace(/^.*\//, '');
+      const liveAgentCounts = (() => {
+        const counts = {};
+        for (const a of (window._lastAgents || [])) {
+          if (!a || !a.model) continue;
+          // Exclude agents that aren't actually running (same predicate the
+          // agent cards use): paused, off-by-cadence, or stopped.
+          if (a.paused === true || a.offByCadence === true || a.stopped === true) continue;
+          const k = normModel(a.model);
+          if (!counts[k]) counts[k] = [];
+          counts[k].push(a.displayName || a.name);
+        }
+        return counts;
+      })();
+
       // Per-model estimated cost table. Every model shows a $ estimate now —
       // exact list price where known, a coarse tier estimate (~) otherwise.
       const models = (est.by_model || []).slice().sort((a, b) => b.usd - a.usd);
@@ -5926,8 +6132,13 @@ function burnAreaChart() {
         const usdCell = approx
           ? `<span title="tier estimate — no exact list price for this model">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
+        const users = liveAgentCounts[normModel(m.name)] || [];
+        const agentsCell = users.length
+          ? `<span class="cagents-badge" title="Agents using this model now: ${esc(users.join(', '))}">${users.length}</span>`
+          : `<span class="cagents-zero" title="No running agent on this model right now">—</span>`;
         return `<tr>
           <td class="cmodel">${esc(m.name || 'unknown')}</td>
+          <td class="cnum" style="text-align:center">${agentsCell}</td>
           <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)')}</td>
           <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)')}</td>
           <td class="cnum">${usdCell}${miniSparkSvg(modelSeries(m.name, 'usd'), 'var(--green)')}</td>
@@ -5947,8 +6158,8 @@ function burnAreaChart() {
         ${costTrendHtml()}
         ${gwCards ? `<div class="cost-gateways">${gwCards}</div>` : ''}
         <table class="cost-table">
-          <thead><tr><th>model</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
-          <tbody>${modelRows || '<tr><td colspan="4" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
+          <thead><tr><th>model</th><th style="text-align:center" title="Running agents on this model right now — hover the count for names">running agents</th><th style="text-align:right">input</th><th style="text-align:right">output</th><th style="text-align:right">est. $</th></tr></thead>
+          <tbody>${modelRows || '<tr><td colspan="5" style="color:var(--muted)">no usage yet</td></tr>'}</tbody>
         </table>
         ${unpricedNote}
         <div class="cost-disclaimer">${esc(cost.disclaimer || '')} vLLM / self-hosted figures are estimated (reflect list price, not your infra cost).</div>
@@ -9041,6 +9252,12 @@ function burnAreaChart() {
     // fetchContributors() + fetchLeaderboard() — deferred to _deferredInit
 
     // ── System resource gauge history for sparklines ──
+    // NOTE: these mini-sparklines still read this in-memory array, which resets
+    // on reload. The disk/mem/cpu percentages ARE now persisted server-side in
+    // the trend history (/api/trend/history, entry.system) alongside the
+    // governor/repo/beads trends, so the data survives restarts; wiring these
+    // gauge sparklines to that persisted series is a follow-up (kept client-only
+    // here to avoid reworking renderSystemGauges in this change).
     const SYS_GAUGE_HISTORY_MAX = 60;
     const _sysGaugeHistory = { disk: [], mem: [], cpu: [] };
 
@@ -11444,7 +11661,7 @@ function burnAreaChart() {
             agents: {},
           };
           for (const r of (data.repos || [])) snap.repos[r.name] = { issues: r.issues || 0, prs: r.prs || 0 };
-          for (const a of (data.agents || [])) snap.agents[a.name] = { busy: a.busy === 'working' ? 1 : 0 };
+          for (const a of (data.agents || [])) snap.agents[a.name] = { busy: a.busy === 'working' ? 1 : 0, restarts: a.restarts || 0 };
           // Token sparkline data
           snap.tokens = {};
           snap.tokenTotal = 0;
@@ -11489,6 +11706,9 @@ function burnAreaChart() {
           if (lastData.agents) {
             applyPinOverrides(lastData.agents);
             renderAgents(lastData.agents);
+            // Keep the cost table's "running agents" column live as agents
+            // switch models or pause/resume between cost polls.
+            if (_lastCost) renderCost(_lastCost);
           }
           ocUpdateFocusedState();
           const _lvl = (lastData.acmmLevel != null) ? lastData.acmmLevel : 0;
@@ -16257,7 +16477,7 @@ function burnAreaChart() {
       setTimeout(() => {
         const deferred = [
           () => fetchFactHistory(),
-          () => fetchHistory().then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
+          () => fetchTrendHistory().then(() => fetchHistory()).then(() => { setInterval(fetchHistory, HISTORY_REFRESH_MS); }),
           () => fetchIssueCosts().then(() => { setInterval(fetchIssueCosts, ISSUE_COSTS_REFRESH_MS); }),
           () => fetch('/api/budget-ignore').then(r => r.json()).then(d => { budgetIgnored = d.ignored; }).catch(() => {}),
           () => fetchNousStatus().then(() => { setInterval(fetchNousStatus, NOUS_POLL_MS); }),
