@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -151,6 +152,17 @@ func TestFetchAndVerifyVisualHivePullRequestBundleAcceptsGitHubForkAssociationSh
 				t.Fatalf("real GitHub fork association shape was rejected: %v", err)
 			}
 		})
+	}
+}
+
+func TestFetchAndVerifyVisualHivePullRequestBundleClassifiesMissingSuccessfulRun(t *testing.T) {
+	fixture := buildPullRequestV3Fixture(t, testPRHeadSHA)
+	server := newPullRequestVerifierServer(t, fixture, pullRequestServerMutation{RunConclusion: "failure"})
+	defer server.Close()
+	client := NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
+	_, _, err := client.FetchAndVerifyVisualHivePullRequestBundle(context.Background(), pullRequestBundleRequest(t, fixture))
+	if !errors.Is(err, ErrNoSuccessfulVisualHivePullRequestRun) {
+		t.Fatalf("failed exact-head workflow error = %v, want unavailable-success sentinel", err)
 	}
 }
 

@@ -432,6 +432,9 @@ func (service *Service) RunCycle(ctx context.Context) error {
 		return ErrNoDispatch
 	}
 	if exists && ledger.VerdictReceiptSHA256 != "" {
+		if ledger.VerdictStatus != "success" {
+			return ErrOpenPullRequest
+		}
 		return service.finish(ctx, ledger)
 	}
 	var envelope visualcontroller.DispatchEnvelope
@@ -541,6 +544,12 @@ func (service *Service) RunCycle(ctx context.Context) error {
 	ledger.VerdictReceiptSHA256 = strings.ToLower(receipt.ReceiptSHA256)
 	if err := service.saveLedger(ledger); err != nil {
 		return err
+	}
+	if ledger.VerdictStatus != "success" {
+		// A verified red exact-head review is durable evidence that this Worker
+		// PR must remain open. It grants neither specialist completion nor
+		// source consumption, and replay stays on this one ledger/PR.
+		return ErrOpenPullRequest
 	}
 	return service.finish(ctx, ledger)
 }
@@ -713,8 +722,9 @@ func validateRepairOutcome(envelope visualcontroller.DispatchEnvelope, outcome R
 
 func validateVerdictReceipt(ledger workLedger, receipt PullRequestVerdictReceipt) error {
 	receipt.HeadSHA = strings.ToLower(strings.TrimSpace(receipt.HeadSHA))
+	receipt.Status = strings.ToLower(strings.TrimSpace(receipt.Status))
 	receipt.ReceiptSHA256 = strings.ToLower(strings.TrimSpace(receipt.ReceiptSHA256))
-	if receipt.HeadSHA != ledger.CommitSHA || strings.TrimSpace(receipt.Status) == "" || !json.Valid(receipt.Receipt) {
+	if receipt.HeadSHA != ledger.CommitSHA || (receipt.Status != "success" && receipt.Status != "failure") || !json.Valid(receipt.Receipt) {
 		return errors.New("pull-request verdict is not a valid exact-head receipt")
 	}
 	digest := sha256.Sum256(receipt.Receipt)
@@ -890,6 +900,9 @@ func validateWorkLedger(ledger workLedger) error {
 	}
 	if ledger.CompletionRecorded && !verdictPresent {
 		return errors.New("controller completion has no exact-head verdict")
+	}
+	if verdictPresent && ledger.VerdictStatus != "success" && (ledger.CompletionRecorded || ledger.ConsumeStarted || ledger.Consumed) {
+		return errors.New("red exact-head verdict cannot complete or consume the Worker lifecycle")
 	}
 	if ledger.ConsumeStarted && ledger.SourceExternalRef != "" && !ledger.CompletionRecorded {
 		return errors.New("admitted workflow consumption started before controller completion")

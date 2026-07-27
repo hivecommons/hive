@@ -43,8 +43,35 @@ func TestNormalServiceCrashReplayKeepsOneImportProposalPRAndVerdict(t *testing.T
 	if fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 || fixture.source.consumes != 1 {
 		t.Fatalf("durable replay repeated import/proposal/PR/verdict: source=%+v intake=%+v repair=%+v verifier=%+v", fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
-	if fixture.intake.completion.VerdictStatus != "failed" || fixture.intake.completion.VerdictHeadSHA != fixture.repairer.outcome.Result.CommitSHA {
-		t.Fatalf("red exact-head receipt was not recorded without reinterpretation: %+v", fixture.intake.completion)
+	if fixture.intake.completion.VerdictStatus != "success" || fixture.intake.completion.VerdictHeadSHA != fixture.repairer.outcome.Result.CommitSHA {
+		t.Fatalf("green exact-head receipt was not recorded without reinterpretation: %+v", fixture.intake.completion)
+	}
+}
+
+func TestNormalServiceVerifiedRedExactHeadRemainsOneOpenUnconsumedPR(t *testing.T) {
+	fixture := newServiceFixture(t)
+	receipt := json.RawMessage(`{"schema_version":"hive.normal-visual-pr-failure.v1","conclusion":"failure"}`)
+	digest := sha256.Sum256(receipt)
+	fixture.verifier.receipt = PullRequestVerdictReceipt{
+		HeadSHA: fixture.repairer.outcome.Result.CommitSHA, Status: "failure",
+		Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:]),
+	}
+	service := fixture.service(t, fixture.verifier)
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrOpenPullRequest) {
+		t.Fatalf("red exact-head cycle error = %v, want open-PR hold", err)
+	}
+	if fixture.source.fetches != 1 || fixture.source.consumes != 0 || fixture.source.consumeSideEffects != 0 ||
+		fixture.intake.imports != 1 || fixture.intake.completes != 0 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 {
+		t.Fatalf("red exact-head verdict completed, consumed, or duplicated work: source=%+v intake=%+v repair=%+v verifier=%+v",
+			fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
+	}
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrOpenPullRequest) {
+		t.Fatalf("red exact-head replay error = %v, want same open-PR hold", err)
+	}
+	if fixture.source.fetches != 1 || fixture.source.consumes != 0 || fixture.intake.imports != 1 ||
+		fixture.intake.completes != 0 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 {
+		t.Fatalf("red exact-head replay repeated a side effect: source=%+v intake=%+v repair=%+v verifier=%+v",
+			fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
 }
 
@@ -927,6 +954,18 @@ func TestNormalServiceRejectsCorruptLedgerStateMachineBeforeSideEffects(t *testi
 			ledger.VerdictReceipt = []byte(`{"status":"failed"}`)
 			ledger.VerdictReceiptSHA256 = strings.Repeat("1", 64)
 		},
+		"red verdict completed": func(ledger *workLedger) {
+			ledger.SourceExternalRef = "visual-hive://owner/repo/finding"
+			ledger.DeferralsRecorded = true
+			ledger.WorkOrderID, ledger.RequestSHA256 = "swo-"+strings.Repeat("e", 64), strings.Repeat("e", 64)
+			ledger.Branch, ledger.CommitSHA = "hive/repair-one", strings.Repeat("f", 40)
+			ledger.PullRequestNumber, ledger.PullRequestURL = 9, "https://example.test/pr/9"
+			ledger.VerdictHeadSHA, ledger.VerdictStatus = ledger.CommitSHA, "failure"
+			ledger.VerdictReceipt = []byte(`{"status":"failure"}`)
+			digest := sha256.Sum256(ledger.VerdictReceipt)
+			ledger.VerdictReceiptSHA256 = hex.EncodeToString(digest[:])
+			ledger.CompletionRecorded = true
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			service := fixture.service(t, fixture.verifier)
@@ -975,14 +1014,14 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 		WorkOrderID: "swo-" + strings.Repeat("e", 64), RequestSHA256: strings.Repeat("e", 64),
 		Result: repair.Result{RepositoryFingerprint: envelope.Work.RepositoryFingerprint, Branch: "hive/repair-one", CommitSHA: strings.Repeat("f", 40), PRNumber: 9, PRURL: "https://example.test/pr/9"},
 	}
-	receipt := json.RawMessage(`{"schema_version":"visual-hive.pr-verdict.v1","status":"failed"}`)
+	receipt := json.RawMessage(`{"schema_version":"visual-hive.pr-verdict.v1","status":"success"}`)
 	digest := sha256.Sum256(receipt)
 	return &serviceFixture{
 		work:     work,
 		source:   &fakeArtifactSource{work: work},
 		intake:   &fakeIntake{dispatch: []visualcontroller.DispatchEnvelope{envelope}},
 		repairer: &fakeRepairer{outcome: outcome},
-		verifier: &fakeVerdictVerifier{pullRequestOpen: true, receipt: PullRequestVerdictReceipt{HeadSHA: outcome.Result.CommitSHA, Status: "failed", Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:])}},
+		verifier: &fakeVerdictVerifier{pullRequestOpen: true, receipt: PullRequestVerdictReceipt{HeadSHA: outcome.Result.CommitSHA, Status: "success", Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:])}},
 	}
 }
 

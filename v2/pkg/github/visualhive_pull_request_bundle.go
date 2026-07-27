@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -22,6 +23,13 @@ import (
 )
 
 var exactVisualHiveSHA256 = regexp.MustCompile(`^[a-f0-9]{64}$`)
+
+// ErrNoSuccessfulVisualHivePullRequestRun means the exact open PR head has no
+// successful Visual Hive PR workflow run to admit through the authoritative
+// bundle path. Callers must inspect the exact-head gate before distinguishing a
+// still-pending run from a completed failed review; neither state grants
+// successful check authority.
+var ErrNoSuccessfulVisualHivePullRequestRun = errors.New("no successful Visual Hive pull-request run")
 
 // VisualHivePullRequestProducerCommit is the only audited runtime-sidecar
 // producer admitted by the exact PR lane. Updating it requires a deliberate
@@ -487,7 +495,7 @@ func (c *Client) findExactPullRequestWorkflowRun(ctx context.Context, owner, rep
 		return nil, fmt.Errorf("PR workflow run pagination did not cover the declared inventory")
 	}
 	if matched == nil {
-		return nil, fmt.Errorf("no unique successful workflow run matches the exact PR head and workflow")
+		return nil, fmt.Errorf("%w: no unique successful workflow run matches the exact PR head and workflow", ErrNoSuccessfulVisualHivePullRequestRun)
 	}
 	detail, _, err := c.client.Actions.GetWorkflowRunByID(ctx, owner, repo, matched.GetID())
 	if err != nil {
