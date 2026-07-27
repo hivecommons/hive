@@ -310,7 +310,7 @@ func TestBuildPlanning(t *testing.T) {
 	// A plain epic never decomposed → not counted.
 	store.Create("plain", beads.TypeEpic, beads.PriorityHigh, "architect", "")
 
-	fp := BuildPlanning(map[string]*beads.Store{"architect": store})
+	fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false)
 	if fp.ActivePlans != 2 {
 		t.Errorf("ActivePlans: want 2, got %d", fp.ActivePlans)
 	}
@@ -344,14 +344,14 @@ func TestBuildPlanning_Replans24h(t *testing.T) {
 	planning.DecomposeFromOutput(store, bad, "1. [T1] c [agent_suitable]\n", planning.Options{AutoApprove: true})
 	store.SetMetadata(bad.ID, planning.MetaLastReplanAt, "not-a-timestamp")
 
-	fp := buildPlanningAt(map[string]*beads.Store{"architect": store}, now)
+	fp := buildPlanningAt(map[string]*beads.Store{"architect": store}, false, now)
 	if fp.Replans24h != 1 {
 		t.Errorf("Replans24h: want 1 (only the 2h-ago replan), got %d", fp.Replans24h)
 	}
 }
 
 func TestBuildPlanning_Empty(t *testing.T) {
-	fp := BuildPlanning(map[string]*beads.Store{})
+	fp := BuildPlanning(map[string]*beads.Store{}, false)
 	if fp.ActivePlans != 0 || fp.AwaitingReview != 0 {
 		t.Errorf("empty stores should yield zero planning metric, got %+v", fp)
 	}

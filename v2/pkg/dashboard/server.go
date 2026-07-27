@@ -16,6 +16,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/openrouter"
+	"github.com/kubestellar/hive/v2/pkg/planning"
 )
 
 //go:embed static
@@ -71,6 +72,10 @@ type Server struct {
 
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
+
+	// decomposeKickerOverride is a test-only seam for the Phase 4 plan-from-issue
+	// decompose handoff; production leaves it nil and uses deps.AgentMgr.
+	decomposeKickerOverride planning.DecomposeKicker
 
 	deviceFlowMu    sync.Mutex
 	deviceFlowState *github.DeviceFlowState
@@ -323,6 +328,14 @@ type FrontendPlanning struct {
 	// governor stall-replan loop, derived from each epic's last_replan_at
 	// metadata.
 	Replans24h int `json:"replans_24h"`
+	// PendingDecompose counts epics minted from an issue (Phase 4) that are
+	// accepted but not yet decomposed by the architect (decompose_pending). While
+	// >0 there is planning work queued for the architect.
+	PendingDecompose int `json:"pending_decompose"`
+	// ArchitectPaused is true when >=1 plan is pending AND the architect is paused,
+	// so nothing will be built until the operator resumes it. The tile shows the
+	// "architect is paused" message when this is set.
+	ArchitectPaused bool `json:"architect_paused"`
 }
 
 type FrontendBudget struct {

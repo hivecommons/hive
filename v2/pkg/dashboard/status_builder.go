@@ -135,7 +135,7 @@ func BuildFrontendStatus(
 		Tokens:       buildTokens(tokenCollector),
 		Repos:        buildRepos(cfg, actionable),
 		Beads:        BuildBeadsFromConfig(beadStores, cfg),
-		Planning:     BuildPlanning(beadStores),
+		Planning:     BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses)),
 		Health:       buildHealth(ghClient, ctx),
 		Budget:       buildBudget(gov, tokenCollector),
 		CadenceMatrix: buildCadenceMatrix(cfg, agentStatuses),
@@ -801,13 +801,16 @@ func buildBeads(stores map[string]*beads.Store) FrontendBeads {
 // "decomposing" (executing) when approved with at least one open child. Replans24h
 // (Phase 3) counts epics whose last_replan_at metadata falls within the last 24h,
 // so the tile reflects real governor stall-replans purely from bead state.
-func BuildPlanning(stores map[string]*beads.Store) FrontendPlanning {
-	return buildPlanningAt(stores, time.Now())
+// PendingDecompose (Phase 4) counts issue-sourced epics not yet built by the
+// architect; architectPaused says whether that queue is blocked on a paused
+// architect (so the tile can show the "resume the architect" message).
+func BuildPlanning(stores map[string]*beads.Store, architectPaused bool) FrontendPlanning {
+	return buildPlanningAt(stores, architectPaused, time.Now())
 }
 
 // buildPlanningAt is BuildPlanning with an injected `now`, so the replans_24h
 // window is unit-testable with backdated last_replan_at timestamps.
-func buildPlanningAt(stores map[string]*beads.Store, now time.Time) FrontendPlanning {
+func buildPlanningAt(stores map[string]*beads.Store, architectPaused bool, now time.Time) FrontendPlanning {
 	fp := FrontendPlanning{}
 	cutoff := now.Add(-planningReplanWindow)
 	for _, store := range stores {
@@ -841,6 +844,11 @@ func buildPlanningAt(stores map[string]*beads.Store, now time.Time) FrontendPlan
 					fp.Decomposing++
 				}
 			}
+			// Phase 4: an issue-sourced epic still marked decompose_pending is
+			// queued for the architect (children not yet materialized).
+			if planning.DecomposePending(b) {
+				fp.PendingDecompose++
+			}
 			if raw := b.Meta(planning.MetaLastReplanAt); raw != "" {
 				if t, err := time.Parse(time.RFC3339, raw); err == nil && t.After(cutoff) {
 					fp.Replans24h++
@@ -848,12 +856,25 @@ func buildPlanningAt(stores map[string]*beads.Store, now time.Time) FrontendPlan
 			}
 		}
 	}
+	// Only flag the paused-architect condition when it actually matters: there is
+	// queued work AND the architect is paused. Otherwise the tile stays quiet.
+	fp.ArchitectPaused = fp.PendingDecompose > 0 && architectPaused
 	return fp
 }
 
 // planningReplanWindow is the trailing window over which replans_24h counts
 // re-decomposed plans (matches the tile label "24h").
 const planningReplanWindow = 24 * time.Hour
+
+// architectPausedFromStatuses reads the architect's paused state from the
+// already-collected agent statuses, so the PLANNING tile can flag a queue
+// blocked on a paused architect WITHOUT taking the agent-manager lock.
+func architectPausedFromStatuses(statuses map[string]*agent.AgentProcess) bool {
+	if ap, ok := statuses[planning.ArchitectAgentName]; ok && ap != nil {
+		return ap.Paused
+	}
+	return false
+}
 
 // BuildBeadsFromConfig uses agent config bead_role to partition bead counts.
 func BuildBeadsFromConfig(stores map[string]*beads.Store, cfg *config.Config) FrontendBeads {

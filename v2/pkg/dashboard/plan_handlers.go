@@ -2,10 +2,184 @@ package dashboard
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
+	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/planning"
 )
+
+// planEpicStore returns the bead store to mint issue-sourced epics into: the
+// architect store when present, else any store (deterministic pick not required
+// — findEpicStore locates the epic by ID afterward regardless of which store
+// holds it). Returns (nil, "") when no bead stores are configured.
+func (s *Server) planEpicStore() (*beads.Store, string) {
+	if s.deps == nil || s.deps.BeadStores == nil {
+		return nil, ""
+	}
+	if store, ok := s.deps.BeadStores[planning.ArchitectAgentName]; ok {
+		return store, planning.ArchitectAgentName
+	}
+	for name, store := range s.deps.BeadStores {
+		return store, name
+	}
+	return nil, ""
+}
+
+// decomposeKicker returns the manager as a planning.DecomposeKicker (nil when no
+// manager is wired). A test-only override (decomposeKickerOverride) lets tests
+// inject a fake kicker and exercise the paused / kicked / no-agent branches
+// without a live tmux Manager; production never sets it.
+func (s *Server) decomposeKicker() planning.DecomposeKicker {
+	if s.decomposeKickerOverride != nil {
+		return s.decomposeKickerOverride
+	}
+	if s.deps == nil || s.deps.AgentMgr == nil {
+		return nil
+	}
+	return s.deps.AgentMgr
+}
+
+// requestArchitectDecompose hands a freshly-minted (pending) epic to the
+// architect, RESPECTING its pause: a paused architect leaves the request queued
+// and returns DecomposeQueuedPaused so the handler can tell the user WHY nothing
+// is happening. Only SendKick/IsPaused are called — never the launch-path mutex.
+// On a successful kick it records the governor kick. The epic stays
+// decompose_pending until the architect materializes children.
+func (s *Server) requestArchitectDecompose(epic *beads.Bead) planning.DecomposeState {
+	state := planning.RequestDecompose(s.decomposeKicker(), epic)
+	switch state {
+	case planning.DecomposeKicked:
+		if s.deps != nil && s.deps.Governor != nil {
+			s.deps.Governor.RecordKick(planning.ArchitectAgentName)
+		}
+	case planning.DecomposeQueuedPaused:
+		s.logger.Info("plan-from-issue: architect paused, plan queued", "epic", epic.ID)
+	case planning.DecomposeQueuedNoAgent:
+		s.logger.Warn("plan-from-issue: architect unavailable, plan queued", "epic", epic.ID)
+	}
+	return state
+}
+
+// handlePlanFromIssue serves POST /api/plan/from-issue: the "Plan this issue"
+// dashboard action (Part A). Body: {repo, number, url, title, body}. It mints an
+// epic from the issue (idempotent via planning.EpicFromIssue) and REQUESTS
+// decomposition by kicking the architect out-of-band with the decomposition
+// prompt — the same lock-safe SendKick path every other kick uses, never the
+// agent-launch mutex. It does NOT decompose synchronously (that would block the
+// HTTP handler on a live tmux agent); instead it returns the epic id so the UI
+// polls GET /api/plan/{epicID} and the architect fills the plan in, surfaced via
+// the existing plan-review gate.
+func (s *Server) handlePlanFromIssue(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Repo   string `json:"repo"`
+		Number int    `json:"number"`
+		URL    string `json:"url"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	issue := github.Issue{
+		Repo:   sanitizeString(body.Repo),
+		Number: body.Number,
+		URL:    sanitizeString(body.URL),
+		Title:  sanitizeString(body.Title),
+	}
+	// When the client sent only a repo+number (no title), resolve the full issue
+	// from the last enumerated actionable set so we always mint a titled epic.
+	if issue.Title == "" {
+		if resolved, ok := s.resolveActionableIssue(issue.Repo, issue.Number, issue.URL); ok {
+			if issue.Title == "" {
+				issue.Title = resolved.Title
+			}
+			if issue.URL == "" {
+				issue.URL = resolved.URL
+			}
+			if issue.Repo == "" {
+				issue.Repo = resolved.Repo
+			}
+			issue.Labels = resolved.Labels
+		}
+	}
+	if issue.Title == "" {
+		jsonError(w, "issue title is required (or a resolvable repo+number)", http.StatusBadRequest)
+		return
+	}
+
+	store, agentName := s.planEpicStore()
+	if store == nil {
+		jsonError(w, "bead stores not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
+	epic, err := planning.EpicFromIssue(store, issue, sanitizeString(body.Body))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Hand the epic to the architect out-of-band, respecting its pause. Extracted
+	// so the paused/kicked/queued bookkeeping is testable without a live tmux agent.
+	state := s.requestArchitectDecompose(epic)
+	kicked := state == planning.DecomposeKicked
+
+	// Build a user-facing message. When the architect is paused, say so clearly and
+	// point at the fix — the user paused it deliberately and must know that is why
+	// the plan is not being built yet.
+	message := "Plan queued — the architect will build it."
+	if kicked {
+		message = "Plan requested — the architect is decomposing this issue now."
+	} else if state == planning.DecomposeQueuedPaused {
+		message = planning.ArchitectPausedMessage
+	}
+
+	s.auditFromRequest(r, "plan_from_issue",
+		auditDetail("epic", epic.ID, "ref", epic.ExternalRef, "state", string(state)), agentName)
+	s.refreshAndPersist()
+
+	jsonResponse(w, map[string]interface{}{
+		"ok":              true,
+		"epic_id":         epic.ID,
+		"epic":            epic,
+		"kicked":          kicked,
+		"state":           string(state),
+		"architectPaused": state == planning.DecomposeQueuedPaused,
+		"message":         message,
+		"poll_url":        "/api/plan/" + epic.ID,
+	})
+}
+
+// resolveActionableIssue looks up an actionable issue by repo+number (or url)
+// from the last enumerated status, so a click that sends only identifiers can
+// still recover the title/labels. Returns (issue, true) on a match.
+func (s *Server) resolveActionableIssue(repo string, number int, url string) (github.Issue, bool) {
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	if status == nil {
+		return github.Issue{}, false
+	}
+	for _, repoStatus := range status.Repos {
+		for _, raw := range repoStatus.ActionableIssues {
+			iss, ok := raw.(github.Issue)
+			if !ok {
+				continue
+			}
+			if url != "" && iss.URL == url {
+				return iss, true
+			}
+			if number > 0 && iss.Number == number &&
+				(repo == "" || strings.EqualFold(iss.Repo, repo) || strings.HasSuffix(strings.ToLower(iss.Repo), "/"+strings.ToLower(repo))) {
+				return iss, true
+			}
+		}
+	}
+	return github.Issue{}, false
+}
 
 // Plan-review dashboard endpoints (Phase 2 planning intelligence). They mirror
 // the /api/inception/* shape: thin HTTP handlers that delegate all logic to

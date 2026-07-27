@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
+	"github.com/kubestellar/hive/v2/pkg/classify"
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/hub"
@@ -195,6 +196,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/inception/import", s.handleInceptionImport)
 
 	// Plan-review gate (Phase 2 planning intelligence). Mirrors /api/inception/*.
+	// Phase 4 adds the issue entry point: mint an epic from a GitHub issue and
+	// request its decomposition (the "Plan this issue" dashboard action).
+	s.mux.HandleFunc("POST /api/plan/from-issue", s.handlePlanFromIssue)
 	s.mux.HandleFunc("GET /api/plan/{epicID}", s.handlePlanTree)
 	s.mux.HandleFunc("POST /api/plan/{epicID}/approve", s.handlePlanApprove)
 	s.mux.HandleFunc("POST /api/plan/{epicID}/reject", s.handlePlanReject)
@@ -3244,6 +3248,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		},
 		"litellm":    litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory": trajectorySectionResponse(&cfg.Governor),
+		"classifier": classifierSectionResponse(),
 		"hub": map[string]interface{}{
 			"enabled":                          cfg.Hub.Enabled,
 			"url":                              cfg.Hub.URL,
@@ -3834,6 +3839,21 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 		// redactSecret guards the pathological case of a key-like env var
 		// NAME appearing in the source string.
 		"keySource": redactSecret(lc.ResolveAPIKeySource(), key),
+	}
+}
+
+// classifierSectionResponse surfaces the effective tier-classification keyword
+// lists (Phase 4 Part C) to the dashboard governor-config view. It returns the
+// keywords actually in force — config-driven when a `classifier:` block is set,
+// else the built-in defaults — so operators can see and (via hive.yaml) edit
+// which title keywords map issues to the Simple/Complex tiers. classify.SetLanes
+// already surfaces per-agent lane_keywords per-agent; these are the analogous
+// global tier lists.
+func classifierSectionResponse() map[string]interface{} {
+	simple, complex := classify.TierKeywords()
+	return map[string]interface{}{
+		"simpleKeywords": simple,
+		"complexSignals": complex,
 	}
 }
 

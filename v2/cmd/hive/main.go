@@ -2128,6 +2128,72 @@ func (k agentKicker) Kick(agent, message string) error {
 	return k.mgr.SendKick(agent, message)
 }
 
+// planFromLabeledIssues is Phase 4 Part B: for each actionable issue carrying a
+// `plan`/`epic` label, mint an epic (idempotent) and hand it to the architect,
+// RESPECTING the architect's pause. It is a plain synchronous call on the eval
+// tick — no goroutine — and only ever touches the manager via SendKick/IsPaused,
+// exactly like every governor kick, so it never re-enters the launch-path mutex.
+// Epics are minted into the architect store (falling back to any store) so the
+// dashboard plan-review flow and replan lane find them the same way.
+//
+// A minted epic is decompose_pending (plan_status=draft). While the architect is
+// paused, the request stays queued and visible (the PLANNING tile shows it as
+// pending) — we never force-unpause. Once the architect is available, we kick it
+// each cycle until it decomposes and clears the pending marker.
+func planFromLabeledIssues(
+	actionable *github.ActionableResult,
+	beadStores map[string]*beads.Store,
+	agentMgr *agent.Manager,
+	gov *governor.Governor,
+	dashSrv *dashboard.Server,
+	logger *slog.Logger,
+) {
+	if actionable == nil || len(beadStores) == 0 {
+		return
+	}
+	store, ok := beadStores[planning.ArchitectAgentName]
+	if !ok {
+		for name := range beadStores {
+			store = beadStores[name]
+			break
+		}
+	}
+	if store == nil {
+		return
+	}
+
+	sink := labelPlanSink{gov: gov, dashSrv: dashSrv, logger: logger}
+	planning.PlanIssuesFromLabels(store, agentMgr, actionable.Issues.Items, sink,
+		func(ref string, err error) {
+			logger.Warn("plan-from-label: minting epic failed", "issue", ref, "error", err)
+		})
+}
+
+// labelPlanSink adapts the governor/dashboard/logger to planning.LabelPlanSink so
+// the label-trigger core lives (and is tested) in pkg/planning.
+type labelPlanSink struct {
+	gov     *governor.Governor
+	dashSrv *dashboard.Server
+	logger  *slog.Logger
+}
+
+func (s labelPlanSink) KickedPlan(epic *beads.Bead) {
+	s.gov.RecordKick(planning.ArchitectAgentName)
+	if s.dashSrv != nil {
+		s.dashSrv.AuditLog("planning", "plan_from_label", "epic="+epic.ID+" ref="+epic.ExternalRef, planning.ArchitectAgentName)
+	}
+	s.logger.Info("audit: plan requested from labeled issue", "epic", epic.ID, "ref", epic.ExternalRef)
+}
+
+func (s labelPlanSink) QueuedPlan(epic *beads.Bead, paused bool) {
+	if paused {
+		// Architect deliberately paused — queue, do not unpause, log once.
+		s.logger.Info("plan-from-label: architect paused, plan queued", "epic", epic.ID, "ref", epic.ExternalRef)
+		return
+	}
+	s.logger.Warn("plan-from-label: architect unavailable, plan queued", "epic", epic.ID, "ref", epic.ExternalRef)
+}
+
 // diagnoseGitHubAppWrite returns "" when the configured GitHub App
 // installation belongs to expectedOwner and grants issues:write. Otherwise it
 // returns a banner-ready diagnosis distinguishing the two write-failure causes
@@ -2372,6 +2438,17 @@ func runEvalCycle(
 		if err := store.Reload(); err != nil {
 			logger.Warn("failed to reload beads from disk", "agent", name, "error", err)
 		}
+	}
+
+	// Phase 4 Part B: `plan`/`epic` label trigger. An actionable issue carrying a
+	// plan label auto-mints an epic and requests decomposition — the same flow as
+	// the dashboard "Plan this issue" click, but triggered by the label. It runs
+	// AFTER the store reload so FindByExternalRef sees current state (idempotent:
+	// no duplicate epic if one already exists). Cheap, synchronous, adds NO
+	// goroutine, and drives the architect only via SendKick (never the launch
+	// path). Gated by config/ACMM so low-maturity hives stay advisory-only.
+	if cfg.Planning.PlanFromLabelEnabled(inferACMMLevel(cfg)) {
+		planFromLabeledIssues(actionable, beadStores, agentMgr, gov, dashSrv, logger)
 	}
 
 	// Advisory digest: build from beads (the source of truth) before status broadcast.
@@ -3159,6 +3236,11 @@ func initAgentConfigDrivenSystems(cfg *config.Config) {
 	if len(lanes) > 0 {
 		classify.SetLanes(lanes)
 	}
+	// Tier-classification keywords (config-driven, mirroring SetLanes). Empty
+	// lists leave the built-in defaults in force, so an absent classifier block
+	// keeps behavior unchanged. Always call so a reload that CLEARS the block
+	// restores defaults.
+	classify.SetTierKeywords(cfg.Classifier.SimpleKeywords, cfg.Classifier.ComplexSignals)
 	if len(detectKeywords) > 0 {
 		tokens.SetDetectKeywords(detectKeywords)
 	}
