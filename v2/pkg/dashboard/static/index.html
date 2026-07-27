@@ -266,6 +266,23 @@
       padding: 0 20px; z-index: 99;
     }
     .oc-topbar-left { font-size: 0.85rem; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+    /* Drawer toggle. Hidden on desktop; the ≤768px block flips it to
+       inline-flex. Lives in .oc-topbar-left because that is the shortest
+       topbar group — putting it in center/right would risk wrapping the
+       topbar to a third row and breaking the padding-top:104px assumption
+       that the ≤600px block relies on. 44px min for a real tap target. */
+    #oc-drawer-toggle {
+      display: none;
+      align-items: center; justify-content: center;
+      min-width: 44px; min-height: 44px;
+      margin-left: -10px;
+      background: none; border: 0; padding: 0;
+      color: var(--text); cursor: pointer;
+      font-size: 1.15rem; line-height: 1;
+      border-radius: 8px;
+    }
+    #oc-drawer-toggle:active { background: var(--panel-strong); }
+    #oc-drawer-backdrop { display: none; }
     .oc-topbar-center { display: flex; align-items: center; gap: 6px; }
     .oc-topbar-center .oc-tb-link {
       font-size: 0.72rem; color: var(--muted); cursor: pointer; padding: 4px 10px;
@@ -538,10 +555,52 @@
 
 
 
+    /* ── Mobile: the sidebar becomes a slide-over drawer ──
+       It used to be `display: none !important`, which deleted the ONLY path to
+       agent selection, section nav, add-agent/group, the ACMM badge, and the
+       system gauges. We keep it in the layout and move it offscreen instead.
+
+       Why transform and not display: applyLayout() sets `sidebar.style.display
+       = 'flex'` inline (see the light/dark toggle), and an inline style beats a
+       media query — that is why the old rule needed !important. Driving the
+       drawer off `transform` leaves `display:flex` untouched, so applyLayout()
+       can keep doing its thing without reopening the drawer. */
     @media (max-width: 768px) {
-      .oc-sidebar { display: none !important; }
+      .oc-sidebar {
+        width: min(var(--sidebar-w), 84vw);
+        transform: translateX(-100%);
+        visibility: hidden;
+        transition: transform .22s ease, visibility 0s linear .22s;
+        z-index: 150;
+        box-shadow: 2px 0 24px #0007;
+      }
+      .oc-sidebar.open {
+        transform: none;
+        visibility: visible;
+        transition: transform .22s ease, visibility 0s;
+      }
+      /* The 5px col-resize strip is fixed at left:calc(var(--sidebar-w) - 2px)
+         with a localStorage-persisted width. If the user ever dragged it below
+         ~180px it lands on top of content at z-index 101 and silently eats
+         taps. Drag-resize is meaningless on a drawer anyway. */
+      .oc-sidebar-resize { display: none; }
+      /* Per-agent and per-group actions are hover-reveal on desktop. Touch has
+         no hover, so without this the ⚙/✕ buttons are unreachable in the drawer. */
+      .oc-nav-item .oc-nav-actions,
+      .oc-sidebar-group-header .oc-group-actions { display: flex; }
+      #oc-drawer-toggle { display: inline-flex; }
+      #oc-drawer-backdrop {
+        display: block;
+        position: fixed; inset: 0; z-index: 149;
+        background: #000a; opacity: 0; pointer-events: none;
+        transition: opacity .22s ease;
+      }
+      #oc-drawer-backdrop.open { opacity: 1; pointer-events: auto; }
       .oc-topbar { left: 0; }
       body { padding-left: 16px; }
+    }
+    @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+      .oc-sidebar, .oc-sidebar.open, #oc-drawer-backdrop { transition: none; }
     }
     @media (max-width: 600px) {
       /* The fixed 48px topbar can't hold its content at phone widths —
@@ -889,6 +948,13 @@
     .tl-surge { color: var(--red); }
 
     /* Governor cadence matrix table */
+    /* table-layout:fixed means this never overflows — it just squeezes columns
+       until they are unreadable. On narrow screens give it a floor and let the
+       wrapper scroll, same idea as .sum-table-wrap. */
+    .gov-matrix-wrap { overflow-x: auto; }
+    @media (max-width: 768px) {
+      .gov-matrix { min-width: 460px; }
+    }
     .gov-matrix { margin-top: 14px; width: 100%; border-collapse: collapse; font-size: 0.72rem; table-layout: fixed; }
     .gov-matrix th { color: var(--muted); font-weight: 600; padding: 3px 8px; text-align: center; border-bottom: 1px solid var(--border); }
     .gov-matrix th.mode-active { border-radius: 4px 4px 0 0; padding: 4px 10px; font-weight: 700; }
@@ -1897,7 +1963,15 @@
       box-shadow: var(--shadow-modal);
     }
     @media (max-width: 600px) {
-      .config-modal { border-radius: 0; } /* fullscreen on mobile (see mobile block above) */
+      /* .config-modal already goes fullscreen (incl. border-radius:0) in the
+         600px block above; the duplicate rule that used to live here was dead.
+         The Strategy Lab dialog never got the same treatment — at 900px wide
+         with only max-width:95vw it is cramped on a phone. */
+      .nous-config-dialog {
+        width: 100vw; max-width: 100vw;
+        height: 100vh; max-height: 100vh;
+        border-radius: 0;
+      }
     }
 
     /* ══ Input system (Phase 2) ══
@@ -2414,9 +2488,17 @@
     </div>
   </nav>
 
+  <!-- Dim layer behind the mobile drawer. display:none on desktop; the ≤768px
+       block turns it on. Its id is registered in OVERLAY_SELECTOR so the
+       existing installModalScrollLock() observer body-locks scroll for free. -->
+  <div id="oc-drawer-backdrop"></div>
+
   <!-- Light top bar (hidden by default) -->
   <header id="oc-topbar" class="oc-topbar">
     <div class="oc-topbar-left">
+      <button id="oc-drawer-toggle" type="button" aria-label="Open menu"
+              aria-expanded="false" aria-controls="oc-sidebar"
+              title="Menu">&#9776;</button>
       <span id="oc-project-name"></span>
       <span id="oc-git-version" class="git-version"></span>
     </div>
@@ -2555,7 +2637,7 @@
   <div id="inception-section" style="margin-top: 16px; margin-bottom: 24px;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('inception-section')"><span class="section-chevron">▼</span> 💡 Project Inception</h2>
     <div class="section-body">
-      <div id="inception-panel" style="height:800px;overflow-y:auto;overflow-x:hidden;"></div>
+      <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
     </div>
   </div>
 
@@ -2814,12 +2896,19 @@
     // hive-dialog, nous) and any added later; per-modal open/close handlers
     // no longer need to touch body.style.overflow.
     (function installModalScrollLock() {
-      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay';
+      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, #oc-drawer-backdrop';
       function anyOverlayOpen() {
         var overlays = document.querySelectorAll(OVERLAY_SELECTOR);
         for (var i = 0; i < overlays.length; i++) {
           var el = overlays[i];
           if (el.classList.contains('hidden')) continue;
+          // The mobile drawer backdrop is always display:block under 768px and
+          // animates on opacity, so display alone would read as permanently
+          // open. It is open only while it carries .open.
+          if (el.id === 'oc-drawer-backdrop') {
+            if (el.classList.contains('open')) return true;
+            continue;
+          }
           var disp = el.style.display || getComputedStyle(el).display;
           if (disp !== 'none') return true;
         }
@@ -4928,10 +5017,10 @@
         const cls = `mode-${m}${isActive ? ' mode-active' : ''}`;
         return `<th class="${cls}">${m}${isActive ? ' ◀' : ''}</th>`;
       }).join('');
-      return `<table class="gov-matrix">
+      return `<div class="gov-matrix-wrap"><table class="gov-matrix">
         <thead><tr><th></th>${headers}<th>method</th><th>model</th></tr></thead>
         <tbody>${rows}</tbody>
-      </table>`;
+      </table></div>`;
     }
 
     /* --- Collapsible advisory sections (persisted in localStorage) --- */
@@ -9107,7 +9196,11 @@ function burnAreaChart() {
             </div>
           </div>`;
         }).join('');
-        html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(500px,1fr));gap:12px">${cards}</div>`;
+        // min(500px,100%) so the track can collapse below 500px. Plain
+        // auto-fill,minmax(500px,1fr) never goes under its floor, which forced a
+        // 500px column into a ~355px phone viewport — clipped, not scrollable,
+        // because body has overflow-x:hidden.
+        html += `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(500px,100%),1fr));gap:12px">${cards}</div>`;
       } else if (!revoked.length) {
         html += '<div style="color:var(--muted);padding:24px;text-align:center;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">No contributors match the selected filters.</div>';
       }
@@ -15506,6 +15599,56 @@ function burnAreaChart() {
     })();
 
     // Sidebar resize handle — drag right edge to resize sidebar width
+    // Mobile drawer. Under 768px the sidebar is translated offscreen; .open
+    // slides it back in. Nothing is persisted — a drawer left open across
+    // reloads would be a bug, not a feature.
+    (function initMobileDrawer() {
+      const DRAWER_MAX_W = 768; // must match the @media breakpoint above
+      const sidebar = document.getElementById('oc-sidebar');
+      const toggle = document.getElementById('oc-drawer-toggle');
+      const backdrop = document.getElementById('oc-drawer-backdrop');
+      if (!sidebar || !toggle || !backdrop) return;
+
+      function isMobile() { return window.innerWidth <= DRAWER_MAX_W; }
+      function isOpen() { return sidebar.classList.contains('open'); }
+
+      function setOpen(open) {
+        sidebar.classList.toggle('open', open);
+        backdrop.classList.toggle('open', open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      }
+      function closeDrawer() { if (isOpen()) setOpen(false); }
+
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setOpen(!isOpen());
+      });
+      backdrop.addEventListener('click', closeDrawer);
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeDrawer();
+      });
+      // Rotating to landscape (or resizing past the breakpoint) must not strand
+      // the drawer open — above 768px the sidebar is a normal static column and
+      // a leftover .open would leave the backdrop covering the page.
+      window.addEventListener('resize', () => {
+        if (!isMobile()) closeDrawer();
+      });
+      // Picking a destination should reveal it, not leave the drawer on top of
+      // it. Capture phase so this runs even though the nav items are handled by
+      // a delegated click listener further up the tree.
+      sidebar.addEventListener('click', (e) => {
+        if (!isMobile() || !isOpen()) return;
+        const item = e.target.closest('[data-action="ocSelectAgent"], .oc-nav-item[onclick], .oc-nav-item');
+        if (!item) return;
+        // Row-level action buttons (⚙ / ✕) open their own dialogs — keep the
+        // drawer up so the user keeps their place in the list.
+        if (e.target.closest('.oc-nav-actions, .oc-group-actions, .oc-tree-toggle, .oc-sidebar-group-header')) return;
+        closeDrawer();
+      });
+      window.hiveCloseMobileDrawer = closeDrawer;
+    })();
+
     (function initSidebarResize() {
       const SIDEBAR_WIDTH_KEY = 'hive-sidebar-width';
       const SIDEBAR_MIN_W = 180;
