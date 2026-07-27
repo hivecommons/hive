@@ -66,6 +66,12 @@
       font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 800;
       letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber);
     }
+    /* The overflow guard has to live on <html>, not just <body>. A too-wide
+       descendant still grows documentElement.scrollWidth when only body
+       clips, and the document then scrolls sideways — that is the blank
+       strip down the right edge on phones, with the page content ending
+       short of it. Belt-and-braces: clip at both levels. */
+    html { overflow-x: hidden; max-width: 100%; }
     body {
       font-family: var(--font-ui);
       background: var(--bg); color: var(--text);
@@ -133,7 +139,15 @@
       left: calc(var(--sidebar-w) - 2px);
       cursor: col-resize; z-index: 101;
     }
-    .oc-sidebar-resize:hover, .oc-sidebar-resize.dragging {
+    /* Only tint on real hover. On touch, :hover latches after a tap and paints
+       a full-height amber line down the page (it is position:fixed, top:0,
+       bottom:0, z-index:101). .dragging still applies everywhere. */
+    @media (hover: hover) {
+      .oc-sidebar-resize:hover {
+        background: color-mix(in srgb, var(--amber) 30%, transparent);
+      }
+    }
+    .oc-sidebar-resize.dragging {
       background: color-mix(in srgb, var(--amber) 30%, transparent);
     }
     .oc-sidebar-logo {
@@ -964,9 +978,11 @@
     /* table-layout:fixed means this never overflows — it just squeezes columns
        until they are unreadable. On narrow screens give it a floor and let the
        wrapper scroll, same idea as .sum-table-wrap. */
-    .gov-matrix-wrap { overflow-x: auto; }
+    .gov-matrix-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
     @media (max-width: 768px) {
-      .gov-matrix { min-width: 460px; }
+      /* Wide enough that the longest pill ("on demand") fits without
+         ellipsis; the wrapper scrolls horizontally to reach method/model. */
+      .gov-matrix { min-width: 620px; }
     }
     .gov-matrix { margin-top: 14px; width: 100%; border-collapse: collapse; font-size: 0.72rem; table-layout: fixed; }
     .gov-matrix th { color: var(--muted); font-weight: 600; padding: 3px 8px; text-align: center; border-bottom: 1px solid var(--border); }
@@ -1949,6 +1965,21 @@
     @media (max-width: 480px) {
       .pause-badge { font-size: 0.55rem; padding: 0 5px; margin-left: 2px; }
     }
+    /* Pills inside the governor matrix sit in table-layout:fixed cells. An
+       inline-flex box will not shrink below its content, so "on demand" or
+       "opus-4.7" pushed the rounded background out over the neighbouring
+       column — the overlapping pills seen on phones. Cap them to the cell and
+       ellipsize instead of bleeding. */
+    .gov-matrix .status-badge, .gov-matrix .model-chip, .gov-matrix .pause-badge,
+    .gov-matrix .off-badge, .gov-matrix .on-demand-badge, .gov-matrix .ind-tag {
+      max-width: 100%;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: inline-block;
+    }
+    .gov-matrix td, .gov-matrix th { overflow: hidden; }
 
     /* ══ Modal system (Phase 2) ══
        One overlay recipe + one glassy panel recipe (hub identity), applied
