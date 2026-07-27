@@ -39,6 +39,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/notify"
+	"github.com/kubestellar/hive/v2/pkg/planning"
 	"github.com/kubestellar/hive/v2/pkg/policies"
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
@@ -1960,6 +1961,34 @@ func main() {
 	// enabled AND no reviewer resolves; clears when off or configured).
 	dashSrv.ReconcileTrajectoryAlert(&cfg.Governor)
 
+	// Stall-replan lane (Phase 3 planning intelligence): periodically detects
+	// approved plans whose sub-tasks have stopped progressing and re-kicks the
+	// architect to revise them, bounded by a per-plan replan cap. It runs off the
+	// governor tick, gated by its own Due() cadence (no goroutine of its own), and
+	// drives the architect only through SendKick (agentKicker) from this tick —
+	// never from the agent-launch path — so it cannot touch the manager lock
+	// unsafely. On by default; a no-op when there are no approved plans.
+	var replanLane *planning.ReplanLane
+	if cfg.Governor.Replan.IsEnabled() {
+		rc := cfg.Governor.Replan
+		replanLane = planning.NewReplanLane(
+			beadStores,
+			agentKicker{mgr: agentMgr},
+			gov,
+			dashboard.NewReplanSink(dashSrv, notifier),
+			planning.ReplanLaneConfig{
+				IntervalS: rc.IntervalS,
+				Stall: planning.StallConfig{
+					StallThreshold: time.Duration(rc.StallThresholdS) * time.Second,
+					MaxReplans:     rc.MaxReplans,
+				},
+			}, logger)
+		logger.Info("stall-replan lane enabled",
+			"interval_s", rc.IntervalS,
+			"stall_threshold_s", rc.StallThresholdS,
+			"max_replans", rc.MaxReplans)
+	}
+
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)
 	lastEvalInterval := cfg.Governor.EvalIntervalS
 	ticker := time.NewTicker(time.Duration(cfg.Governor.EvalIntervalS) * time.Second)
@@ -2030,6 +2059,14 @@ func main() {
 			if trajLane != nil && trajLane.Due(time.Now()) {
 				trajLane.Run(ctx)
 			}
+			// Stall-replan runs on the same tick, gated by its own Due() cadence.
+			// It is synchronous and adds no goroutine; kicks go through the same
+			// out-of-band SendKick path as the eval cycle above.
+			if replanLane != nil && replanLane.Due(time.Now()) {
+				if n := replanLane.Run(ctx); n > 0 {
+					logger.Info("stall-replan lane re-kicked stalled plans", "replans", n)
+				}
+			}
 			persistState(agentMgr, gov, cfg, tokenCollector, statePath, logger, dashSrv)
 			if cfg.Governor.EvalIntervalS != lastEvalInterval && cfg.Governor.EvalIntervalS > 0 {
 				logger.Info("eval interval changed, resetting ticker",
@@ -2078,6 +2115,17 @@ func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions,
 		dashSrv.AddSystemAlert(budgetExhaustedAlertID, "error", msg)
 		notifier.Send("Budget exhausted", msg, notify.PriorityHigh)
 	}
+}
+
+// agentKicker adapts *agent.Manager to planning.Kicker for the Phase 3
+// stall-replan lane. Kick delegates to SendKick, which takes the manager lock
+// ITSELF and is only ever called here from the governor tick (never from the
+// agent-launch path), so it cannot re-enter a held manager lock. This is the
+// same out-of-band kick path the eval loop already uses for governor kicks.
+type agentKicker struct{ mgr *agent.Manager }
+
+func (k agentKicker) Kick(agent, message string) error {
+	return k.mgr.SendKick(agent, message)
 }
 
 // diagnoseGitHubAppWrite returns "" when the configured GitHub App
