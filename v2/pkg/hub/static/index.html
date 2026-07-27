@@ -6,10 +6,10 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta property="og:title" content="Hive — AI agents that maintain your repo">
-  <meta property="og:description" content="A fleet of AI agents handles the repetitive parts of software maintenance — open source or private — triaging issues, writing fixes, keeping dependencies secure, and merging on green CI.">
+  <meta property="og:description" content="You earn automation with test coverage. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — raise coverage, then raise how much the agents are allowed to do.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://hive.kubestellar.io">
-  <meta name="description" content="Hive — AI agents that maintain your repo. Automated issue triage, dependency security, test fixes, and PR merges so maintainers can focus on innovation.">
+  <meta name="description" content="Hive — you earn automation with test coverage. AI agents triage issues, write fixes, and patch CVEs behind six autonomy levels, from advisory to auto-merge. Raise coverage, then raise autonomy.">
   <title>Hive — AI agents that maintain your repo</title>
   <style>
     :root {
@@ -147,6 +147,41 @@
     }
     .hero-sub-links a { color: var(--blue); }
     .hero-sub-links a:hover { text-decoration: underline; }
+
+    /* ── Hero proof strip: the receipts behind the coverage claim. Every figure
+       here is checkable via the public GitHub API on the kubestellar org. ── */
+    .hero-proof {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.6rem 2.4rem;
+      margin-top: 2.2rem;
+      padding-top: 1.6rem;
+      border-top: 1px solid var(--line);
+      max-width: 44rem;
+    }
+    .hero-proof div { min-width: 7rem; }
+    .hero-proof strong {
+      display: block;
+      font-size: clamp(1.35rem, 2vw, 1.7rem);
+      color: var(--amber);
+      line-height: 1.15;
+      font-variant-numeric: tabular-nums;
+    }
+    .hero-proof span {
+      display: block;
+      font-size: .78rem;
+      color: var(--muted);
+      margin-top: .25rem;
+      line-height: 1.35;
+    }
+    .hero-proof-note {
+      margin-top: 1rem;
+      font-size: .75rem;
+      color: var(--muted);
+      max-width: 44rem;
+    }
+    .hero-proof-note a { color: var(--blue); }
+    .hero-proof-note a:hover { text-decoration: underline; }
 
     /* Hero panel */
     .hero-panel {
@@ -494,14 +529,33 @@
     <!-- ── Hero ── -->
     <section class="hero section-pad" id="product">
       <div>
-        <p class="section-label">Open &amp; Closed Source Maintenance on Autopilot</p>
-        <h1>Put your repo on autopilot</h1>
-        <p class="hero-lede">Hive is a fleet of AI agents that handle the repetitive parts of maintaining a software project &mdash; open source or private &mdash; triaging issues, writing fixes, keeping dependencies secure, and merging on green CI. Maintainers are freed to innovate, grow adoption, and focus on strategy.</p>
+        <p class="section-label">Earned Autonomy for AI Agents</p>
+        <h1>You earn automation with test coverage</h1>
+        <p class="hero-lede">Hive runs a fleet of AI agents against your backlog &mdash; triaging issues, writing fixes, and patching CVEs. What makes that safe is the sequencing: raise your test coverage, and only then raise how much the agents are allowed to do. Six autonomy levels, from advisory to auto-merge. You move up when your tests justify it, not when you feel optimistic.</p>
         <div class="hero-actions">
           <a class="button primary" href="/get-started">Request a Hive</a>
           <a class="button secondary" href="#how-it-works">See how it works</a>
           <a class="button tertiary" href="https://arxiv.org/abs/2604.09388" target="_blank">Read the ACMM paper</a>
         </div>
+        <div class="hero-proof">
+          <div>
+            <strong>90%</strong>
+            <span>per-package coverage gate, enforced hourly under <code>-race</code></span>
+          </div>
+          <div>
+            <strong>~14%</strong>
+            <span>of agent PRs rejected by the pipeline</span>
+          </div>
+          <div>
+            <strong>42</strong>
+            <span>merged PRs closing named CVEs</span>
+          </div>
+          <div>
+            <strong>~4,000</strong>
+            <span>PRs merged last quarter across six repos</span>
+          </div>
+        </div>
+        <p class="hero-proof-note">Measured on our own repos &mdash; Hive maintains Hive. Every figure is checkable in the <a href="https://github.com/kubestellar" target="_blank" rel="noopener">kubestellar org</a>, including the reverts where our test suite caught an agent regression and the fleet backed itself out.</p>
         <p class="hero-sub-links">Already running a hive? <a href="/dashboard">Open your dashboard</a> &middot; <a href="/learn">Learn the concepts</a></p>
       </div>
 
@@ -561,14 +615,14 @@
     <section class="loop section-pad" id="how-it-works">
       <div class="section-heading">
         <p class="section-label">How it works</p>
-        <h2>From backlog to self-maintaining</h2>
-        <p>Point a hive at your repository and a governor decides, minute by minute, how hard the agents should work based on your open issue and PR queue. You choose how much autonomy to grant. Hive doesn&rsquo;t replace maintainers &mdash; it handles the mundane so they can focus on what matters.</p>
+        <h2>Coverage first, then autonomy</h2>
+        <p>Point a hive at your repository and start at L1, where agents only advise. As your coverage climbs, you raise the autonomy level and agents take on more &mdash; filing issues, opening hold-gated PRs, and eventually merging on green. A governor decides minute by minute how hard they work based on your queue depth. Hive doesn&rsquo;t replace maintainers; it earns its way into the work.</p>
       </div>
       <div class="loop-rail">
         <div class="loop-step"><span>01</span><h3>Issue filed</h3><p style="font-size:.86rem">A bug report, feature request, or dependency alert lands on the repo.</p></div>
         <div class="loop-step"><span>02</span><h3>Triage</h3><p style="font-size:.86rem">The scanner agent reads, labels, and assigns the issue within minutes.</p></div>
         <div class="loop-step"><span>03</span><h3>Fix agent</h3><p style="font-size:.86rem">A specialized agent writes the fix in an isolated worktree, opens a PR.</p></div>
-        <div class="loop-step"><span>04</span><h3>CI gate</h3><p style="font-size:.86rem">The deterministic pipeline gates every change &mdash; build, lint, and tests must pass.</p></div>
+        <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold under <code>-race</code>. Roughly 1 in 7 agent PRs is rejected here.</p></div>
         <div class="loop-step"><span>05</span><h3>Review</h3><p style="font-size:.86rem">Reviewer agents check post-merge state, GA4 regressions, and invariant drift.</p></div>
         <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">PRs merge on green CI at the autonomy level you allow. No human approval needed at L4+.</p></div>
         <div class="loop-step"><span>07</span><h3>Rerun</h3><p style="font-size:.86rem">The loop restarts. Security patches, dep updates, and test fixes happen continuously.</p></div>
@@ -599,7 +653,7 @@
         <div class="proof-card">
           <div class="tag">Deterministic</div>
           <h3>A pipeline, not a prompt</h3>
-          <p>Every fix goes through a deterministic two-layer pipeline &mdash; build, lint, test, and policy checks &mdash; before any LLM or merge touches it.</p>
+          <p>Filtering, classification, and merge-gating are shell scripts that run <em>before</em> any LLM sees the work. Agents only get the judgment calls &mdash; and a coverage threshold decides what actually lands.</p>
           <div style="margin-top:1rem"><a class="button tertiary" href="/learn">Learn the architecture</a></div>
         </div>
       </div>
