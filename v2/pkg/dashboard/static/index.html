@@ -66,11 +66,16 @@
       font-family: var(--font-ui); font-size: var(--fs-xs); font-weight: 800;
       letter-spacing: 0.12em; text-transform: uppercase; color: var(--amber);
     }
-    /* The overflow guard has to live on <html>, not just <body>. A too-wide
-       descendant still grows documentElement.scrollWidth when only body
-       clips, and the document then scrolls sideways — that is the blank
+    /* The overflow guard has to live on the root element, not just on body.
+       A too-wide descendant still grows documentElement.scrollWidth when only
+       body clips, and the document then scrolls sideways — that is the blank
        strip down the right edge on phones, with the page content ending
-       short of it. Belt-and-braces: clip at both levels. */
+       short of it. Belt-and-braces: clip at both levels.
+       NOTE: do not write literal HTML tag syntax in this stylesheet's
+       comments. dashboard/build-snapshot.mjs splits the page with
+       sourceHtml.indexOf('<' + 'body>'), so a tag-looking string here makes
+       the snapshot builder cut mid-stylesheet and dump the CSS into the page
+       as visible text. */
     html { overflow-x: hidden; max-width: 100%; }
     body {
       font-family: var(--font-ui);
