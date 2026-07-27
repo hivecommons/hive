@@ -397,7 +397,7 @@ func TestCollector_Start_StopsOnChannel(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestScanCopilotSessions_EmptyDir(t *testing.T) {
-	agg, err := ScanCopilotSessions("")
+	agg, err := ScanCopilotSessions("", false)
 	if err != nil {
 		t.Fatalf("ScanCopilotSessions error: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestScanCopilotSessions_EmptyDir(t *testing.T) {
 }
 
 func TestScanCopilotSessions_NonexistentDir(t *testing.T) {
-	agg, err := ScanCopilotSessions("/nonexistent/dir")
+	agg, err := ScanCopilotSessions("/nonexistent/dir", false)
 	if err != nil {
 		t.Fatalf("ScanCopilotSessions error: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestScanCopilotSessions_WithSessions(t *testing.T) {
 	}, "\n") + "\n"
 	writeFile(t, sessionDir, "events.jsonl", content)
 
-	agg, err := ScanCopilotSessions(dir)
+	agg, err := ScanCopilotSessions(dir, false)
 	if err != nil {
 		t.Fatalf("ScanCopilotSessions error: %v", err)
 	}
@@ -452,13 +452,60 @@ func TestScanCopilotSessions_WithSessions(t *testing.T) {
 	}
 }
 
+// TestScanCopilotSessions_LiveCaptureSkipsTokens verifies that when live capture
+// is on (the MITM proxy records Copilot usage per response), the session-shutdown
+// scanner does NOT accrue tokens again — otherwise every Copilot session would be
+// double-counted. It must still report the session, its messages, and the model.
+func TestScanCopilotSessions_LiveCaptureSkipsTokens(t *testing.T) {
+	dir := t.TempDir()
+	sessionDir := filepath.Join(dir, "session-live")
+	os.MkdirAll(sessionDir, 0o755)
+
+	content := strings.Join([]string{
+		`{"type":"session.start","data":{"sessionId":"live123456789","selectedModel":"gpt-5","context":{"cwd":"/data/agents/scanner"}}}`,
+		`{"type":"user.message","timestamp":"2025-06-01T00:00:00Z","data":{"content":"scan for bugs"}}`,
+		`{"type":"assistant.message","timestamp":"2025-06-01T00:01:00Z","data":{}}`,
+		`{"type":"session.shutdown","data":{"currentModel":"gpt-5","modelMetrics":{"gpt-5":{"usage":{"inputTokens":500,"outputTokens":200,"cacheReadTokens":100,"cacheWriteTokens":50}}}}}`,
+	}, "\n") + "\n"
+	writeFile(t, sessionDir, "events.jsonl", content)
+
+	// liveCapture=true: tokens must be zero, but the session is still counted
+	// (it has messages) and the model is preserved.
+	agg, err := ScanCopilotSessions(dir, true)
+	if err != nil {
+		t.Fatalf("ScanCopilotSessions error: %v", err)
+	}
+	if agg.SessionCount != 1 {
+		t.Fatalf("expected 1 session, got %d", agg.SessionCount)
+	}
+	if agg.TotalInput != 0 || agg.TotalOutput != 0 || agg.TotalCacheRead != 0 || agg.TotalCacheCreate != 0 {
+		t.Errorf("live capture must skip token accrual; got in=%d out=%d cr=%d cc=%d",
+			agg.TotalInput, agg.TotalOutput, agg.TotalCacheRead, agg.TotalCacheCreate)
+	}
+	if agg.TotalMessages != 2 {
+		t.Errorf("TotalMessages = %d, want 2 (messages still counted)", agg.TotalMessages)
+	}
+	if _, ok := agg.ByModel["gpt-5"]; !ok {
+		t.Errorf("model gpt-5 should still be present as a row, got %+v", agg.ByModel)
+	}
+
+	// Same file, liveCapture=false: tokens ARE accrued (proves the flag gates it).
+	agg2, err := ScanCopilotSessions(dir, false)
+	if err != nil {
+		t.Fatalf("ScanCopilotSessions error: %v", err)
+	}
+	if agg2.TotalInput != 500 || agg2.TotalOutput != 200 {
+		t.Errorf("non-live capture should accrue tokens; got in=%d out=%d", agg2.TotalInput, agg2.TotalOutput)
+	}
+}
+
 func TestScanCopilotSessions_SkipsNonDirectories(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create a regular file (not a directory)
 	writeFile(t, dir, "not-a-dir.txt", "hello")
 
-	agg, err := ScanCopilotSessions(dir)
+	agg, err := ScanCopilotSessions(dir, false)
 	if err != nil {
 		t.Fatalf("ScanCopilotSessions error: %v", err)
 	}
@@ -480,7 +527,7 @@ func TestScanCopilotSessions_SkipsOldSessions(t *testing.T) {
 	oldTime := time.Now().Add(-60 * 24 * time.Hour)
 	os.Chtimes(path, oldTime, oldTime)
 
-	agg, err := ScanCopilotSessions(dir)
+	agg, err := ScanCopilotSessions(dir, false)
 	if err != nil {
 		t.Fatalf("ScanCopilotSessions error: %v", err)
 	}
@@ -535,7 +582,7 @@ func TestParseCopilotSessionFile_AgentFromMessage(t *testing.T) {
 	}, "\n") + "\n"
 	path := writeFile(t, dir, "events.jsonl", content)
 
-	summary, err := parseCopilotSessionFile(path)
+	summary, err := parseCopilotSessionFile(path, false)
 	if err != nil {
 		t.Fatalf("parseCopilotSessionFile error: %v", err)
 	}
@@ -553,7 +600,7 @@ func TestParseCopilotSessionFile_AgentFromCwd(t *testing.T) {
 	}, "\n") + "\n"
 	path := writeFile(t, dir, "events.jsonl", content)
 
-	summary, err := parseCopilotSessionFile(path)
+	summary, err := parseCopilotSessionFile(path, false)
 	if err != nil {
 		t.Fatalf("parseCopilotSessionFile error: %v", err)
 	}
@@ -576,7 +623,7 @@ func TestParseCopilotSessionFile_MaxAgentScan(t *testing.T) {
 	content := strings.Join(lines, "\n") + "\n"
 	path := writeFile(t, dir, "events.jsonl", content)
 
-	summary, err := parseCopilotSessionFile(path)
+	summary, err := parseCopilotSessionFile(path, false)
 	if err != nil {
 		t.Fatalf("parseCopilotSessionFile error: %v", err)
 	}
@@ -593,7 +640,7 @@ func TestParseCopilotSessionFile_NoTokens(t *testing.T) {
 	content := `{"type":"session.start","data":{"sessionId":"abc","selectedModel":"gpt-4o"}}` + "\n"
 	path := writeFile(t, dir, "events.jsonl", content)
 
-	summary, err := parseCopilotSessionFile(path)
+	summary, err := parseCopilotSessionFile(path, false)
 	if err != nil {
 		t.Fatalf("parseCopilotSessionFile error: %v", err)
 	}

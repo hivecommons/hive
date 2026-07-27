@@ -1369,6 +1369,13 @@ func main() {
 		// their consumption reads as zero.
 		githubProxy.SetTokenSink(tokens.NewInferenceSink(cfg.Data.MetricsDir, logger))
 
+		// With the sink active, the proxy also MITMs the Copilot completion host
+		// (api.githubcopilot.com) to record Copilot token usage live per
+		// response — so Copilot cost shows up while an agent runs instead of only
+		// tallying at session shutdown. Tell the collector to defer Copilot token
+		// accrual from session-shutdown files to the sink to avoid double-counting.
+		tokenCollector.SetCopilotLiveCapture(true)
+
 		vllmEndpoints := parseEndpointList(envOrDefault("HIVE_VLLM_ENDPOINT", "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000"))
 		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"))
 		inferenceEndpoints := map[string][]string{
