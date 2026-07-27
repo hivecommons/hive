@@ -196,6 +196,27 @@ func HasPlanLabel(issue github.Issue) bool {
 // force-unpausing it.
 const ArchitectAgentName = "architect"
 
+// PlanningMinACMMLevel is the lowest ACMM level at which issue planning is
+// offered. The architect agent that decomposes epics is only SCHEDULED at ACMM
+// L5 (4h cadence) and L6 (15m); it has no cadence at L1-L4 (see
+// pkg/config/packs/level-{5,6}.yaml). Offering the ⧉ Plan button or honoring
+// the `plan` label below L5 would mint an epic that nothing ever decomposes —
+// it would sit in decompose_pending forever. Gate all planning entrypoints to
+// this level.
+const PlanningMinACMMLevel = 5
+
+// PlanningLevelGateMessage is the user-facing explanation returned when planning
+// is attempted below PlanningMinACMMLevel. It names the reason (the architect is
+// not scheduled that low) and points at the fix.
+const PlanningLevelGateMessage = "Planning requires ACMM level 5+ — the architect agent that decomposes plans is not scheduled below L5. Raise the level or manually assign the architect."
+
+// PlanningAllowedAtLevel reports whether issue planning should be offered at the
+// given ACMM level. It is the single source of truth for the L5+ gate shared by
+// the dashboard handler and the label trigger.
+func PlanningAllowedAtLevel(acmmLevel int) bool {
+	return acmmLevel >= PlanningMinACMMLevel
+}
+
 // DecomposeKicker drives the architect out-of-band and reports whether it is
 // currently paused. Both methods must be safe to call from the governor tick /
 // an HTTP handler and must NOT touch the agent-launch mutex. *agent.Manager
@@ -284,9 +305,18 @@ type LabelPlanSink interface {
 // over the injected store/kicker/sink, so cmd/hive is a thin adapter and the
 // whole decision path is unit-tested here. mintErr (nil-safe) is called on a mint
 // failure so the caller can log it.
-func PlanIssuesFromLabels(store *beads.Store, kicker DecomposeKicker, issues []github.Issue, sink LabelPlanSink, mintErr func(ref string, err error)) LabelPlanResult {
+//
+// acmmLevel gates the whole pass: below PlanningMinACMMLevel the architect has no
+// cadence, so minting epics would strand them in decompose_pending. In that case
+// this is a no-op returning the zero result — no epics are minted.
+func PlanIssuesFromLabels(store *beads.Store, kicker DecomposeKicker, issues []github.Issue, sink LabelPlanSink, mintErr func(ref string, err error), acmmLevel int) LabelPlanResult {
 	var res LabelPlanResult
 	if store == nil {
+		return res
+	}
+	// Gate: the architect that decomposes these epics is not scheduled below L5.
+	// Minting here would create epics nothing ever decomposes, so skip entirely.
+	if !PlanningAllowedAtLevel(acmmLevel) {
 		return res
 	}
 	for _, issue := range issues {

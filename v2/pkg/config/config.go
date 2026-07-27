@@ -54,20 +54,31 @@ type Config struct {
 type PlanningConfig struct {
 	// PlanFromLabel enables the label trigger. Pointer so an omitted key is
 	// distinguishable from an explicit false: when nil, the trigger falls back to
-	// an ACMM-level gate (on at L4+), so mature hives get it without extra config
+	// an ACMM-level gate (on at L5+), so mature hives get it without extra config
 	// while low-maturity hives stay advisory-only. An explicit value overrides the
-	// ACMM gate in either direction.
+	// ACMM gate in either direction — but see the note below: even an explicit
+	// true is a no-op below L5, because the architect that decomposes the minted
+	// epics is not scheduled there.
 	PlanFromLabel *bool `yaml:"plan_from_label,omitempty" json:"plan_from_label,omitempty"`
 }
 
+// planFromLabelMinACMM is the lowest ACMM level at which the label trigger fires
+// by default. It matches planning.PlanningMinACMMLevel: the architect agent that
+// decomposes the minted epics only has a cadence at L5 (4h) and L6 (15m), so
+// below L5 a minted epic would sit in decompose_pending forever. It is duplicated
+// here (rather than imported) to avoid a config→planning import cycle.
+const planFromLabelMinACMM = 5
+
 // PlanFromLabelEnabled reports whether the label trigger should fire, given the
 // hive's ACMM level. Explicit config wins; otherwise the trigger is on at ACMM
-// L4 and above (where the hive is trusted to act, not just advise).
+// L5 and above (where the architect that decomposes epics is scheduled). Note:
+// even when this returns true because of an explicit override, planning's own
+// PlanIssuesFromLabels applies a hard L5+ no-op — the architect cadence gate is
+// defense-in-depth and cannot be overridden away.
 func (p PlanningConfig) PlanFromLabelEnabled(acmmLevel int) bool {
 	if p.PlanFromLabel != nil {
 		return *p.PlanFromLabel
 	}
-	const planFromLabelMinACMM = 4
 	return acmmLevel >= planFromLabelMinACMM
 }
 

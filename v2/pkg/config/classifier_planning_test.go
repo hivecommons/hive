@@ -18,9 +18,10 @@ func TestPlanFromLabelEnabled(t *testing.T) {
 	}{
 		{"explicit true wins at L1", PlanningConfig{PlanFromLabel: boolPtr(true)}, 1, true},
 		{"explicit false wins at L6", PlanningConfig{PlanFromLabel: boolPtr(false)}, 6, false},
-		{"nil defaults off below L4", PlanningConfig{}, 3, false},
-		{"nil defaults on at L4", PlanningConfig{}, 4, true},
-		{"nil defaults on above L4", PlanningConfig{}, 6, true},
+		{"nil defaults off below L5", PlanningConfig{}, 3, false},
+		{"nil defaults off at L4 (boundary)", PlanningConfig{}, 4, false},
+		{"nil defaults on at L5 (boundary)", PlanningConfig{}, 5, true},
+		{"nil defaults on above L5", PlanningConfig{}, 6, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,8 +68,8 @@ func TestClassifierConfig_AbsentIsZero(t *testing.T) {
 	if cfg.Planning.PlanFromLabel != nil {
 		t.Errorf("expected nil PlanFromLabel, got %v", *cfg.Planning.PlanFromLabel)
 	}
-	// The ACMM gate then applies.
-	if cfg.Planning.PlanFromLabelEnabled(4) != true || cfg.Planning.PlanFromLabelEnabled(3) != false {
+	// The ACMM gate then applies: on at L5+ (architect scheduled), off below.
+	if cfg.Planning.PlanFromLabelEnabled(5) != true || cfg.Planning.PlanFromLabelEnabled(4) != false {
 		t.Errorf("ACMM gate wrong for nil PlanFromLabel")
 	}
 }

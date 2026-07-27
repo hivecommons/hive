@@ -83,6 +83,15 @@ func (s *Server) handlePlanFromIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Gate: planning below ACMM L5 mints an epic that nothing decomposes — the
+	// architect agent has no cadence until L5 (see planning.PlanningMinACMMLevel).
+	// Reject with a clear explanation rather than stranding a decompose_pending
+	// epic. Read from the same config source the status payload uses.
+	if s.deps == nil || s.deps.Config == nil || !planning.PlanningAllowedAtLevel(detectACMMLevel(s.deps.Config)) {
+		jsonError(w, planning.PlanningLevelGateMessage, http.StatusConflict)
+		return
+	}
+
 	issue := github.Issue{
 		Repo:   sanitizeString(body.Repo),
 		Number: body.Number,

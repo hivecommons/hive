@@ -2175,6 +2175,7 @@ func planFromLabeledIssues(
 	gov *governor.Governor,
 	dashSrv *dashboard.Server,
 	logger *slog.Logger,
+	acmmLevel int,
 ) {
 	if actionable == nil || len(beadStores) == 0 {
 		return
@@ -2194,7 +2195,7 @@ func planFromLabeledIssues(
 	planning.PlanIssuesFromLabels(store, agentMgr, actionable.Issues.Items, sink,
 		func(ref string, err error) {
 			logger.Warn("plan-from-label: minting epic failed", "issue", ref, "error", err)
-		})
+		}, acmmLevel)
 }
 
 // labelPlanSink adapts the governor/dashboard/logger to planning.LabelPlanSink so
@@ -2475,8 +2476,8 @@ func runEvalCycle(
 	// no duplicate epic if one already exists). Cheap, synchronous, adds NO
 	// goroutine, and drives the architect only via SendKick (never the launch
 	// path). Gated by config/ACMM so low-maturity hives stay advisory-only.
-	if cfg.Planning.PlanFromLabelEnabled(inferACMMLevel(cfg)) {
-		planFromLabeledIssues(actionable, beadStores, agentMgr, gov, dashSrv, logger)
+	if acmmLvl := inferACMMLevel(cfg); cfg.Planning.PlanFromLabelEnabled(acmmLvl) {
+		planFromLabeledIssues(actionable, beadStores, agentMgr, gov, dashSrv, logger, acmmLvl)
 	}
 
 	// Advisory digest: build from beads (the source of truth) before status broadcast.

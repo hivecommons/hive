@@ -3146,8 +3146,12 @@
             if (paused) planTitle = `⏸ Architect is paused — ${pending} queued plan(s) won't be built until you resume the architect agent.`;
             else if (pending > 0) planTitle = `${pending} plan(s) queued for the architect to decompose`;
             // Empty-state discoverability hint when there is no planning activity.
+            // Below ACMM L5 the architect that decomposes epics has no cadence, so
+            // planning is unavailable — say so instead of pointing at a button we hide.
             if (active === 0 && pending === 0) {
-              planTitle = 'Break a big issue into a plan → click ⧉ Plan on any issue, or add the `plan` label on GitHub.';
+              planTitle = ((window._lastStatus?.acmmLevel || 0) >= 5)
+                ? 'Break a big issue into a plan → click ⧉ Plan on any issue, or add the `plan` label on GitHub.'
+                : 'Planning needs ACMM level 5+ — the architect that decomposes plans is only scheduled at L5/L6. Raise the level to enable ⧉ Plan and the `plan` label.';
             }
             return `<div class="gov-metric" title="${esc(planTitle)}"><span class="gm-label">planning</span><span class="gm-val ${planClass}">${esc(planText)}${pending > 0 ? ` <span style="opacity:0.7;font-size:0.85em">+${pending} queued</span>` : ''}</span></div>`;
           })()}
@@ -4731,7 +4735,10 @@
       // planning activity exists we assume the user has found it — stay quiet.
       var plan = (data && data.planning) || {};
       var alreadyUsed = (plan.active_plans || 0) > 0 || (plan.pending_decompose || 0) > 0;
-      if (!hasRepos || alreadyUsed) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      // Planning needs ACMM L5+ (the architect that decomposes epics is only
+      // scheduled there) — don't advertise a feature the hive can't act on.
+      var levelOK = ((data && data.acmmLevel) || 0) >= 5;
+      if (!hasRepos || alreadyUsed || !levelOK) { el.style.display = 'none'; el.innerHTML = ''; return; }
       el.style.display = 'block';
       el.innerHTML = '<div style="background:rgba(124,58,237,0.10);border:1px solid rgba(124,58,237,0.32);border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;font-size:0.85rem">'
         + '<span style="font-size:1.1rem">🧭</span>'
@@ -5088,8 +5095,18 @@
       setIfChanged(el, html);
     }
 
+    // Planning (⧉ Plan button + `plan`-label trigger) requires ACMM L5+: the
+    // architect agent that decomposes epics only has a cadence at L5/L6. Below
+    // that, offering the button would mint an epic nothing ever decomposes, so
+    // hide it entirely. Mirrors planning.PlanningMinACMMLevel on the backend.
+    const PLANNING_MIN_ACMM_LEVEL = 5;
+    function planningAllowed() {
+      return ((window._lastStatus && window._lastStatus.acmmLevel) || 0) >= PLANNING_MIN_ACMM_LEVEL;
+    }
+
     function renderRepos(repos) {
       const el = document.getElementById('repos');
+      const showPlan = planningAllowed();
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)');
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)');
@@ -5102,7 +5119,9 @@
           const repoFull = r.full || r.name || '';
           // ⧉ Plan action (Phase 4): mint an epic from this issue and request
           // decomposition. data-action wires into the delegated click handler.
-          const planBtn = `<button class="repo-issue-plan" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Break this issue into a reviewable task plan (architect decomposes it; you approve before work starts)">⧉ Plan</button>`;
+          // Only rendered at ACMM L5+, where the architect that decomposes the
+          // epic is actually scheduled — below that the button is hidden.
+          const planBtn = showPlan ? `<button class="repo-issue-plan" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Break this issue into a reviewable task plan (architect decomposes it; you approve before work starts)">⧉ Plan</button>` : '';
           return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}</span>`;
         }).join('');
         const prPills = (r.openPrs || []).map(p => {

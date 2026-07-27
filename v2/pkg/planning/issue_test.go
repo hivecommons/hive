@@ -274,7 +274,7 @@ func TestPlanIssuesFromLabels_MintsKicksAndSkips(t *testing.T) {
 		{Repo: "a/b", Number: 3, Title: "labeled epic", Labels: []string{"epic"}},
 	}
 	sink := &recordingSink{}
-	res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil)
+	res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil, PlanningMinACMMLevel)
 
 	if res.Minted != 2 || res.Kicked != 2 {
 		t.Fatalf("res = %+v, want Minted=2 Kicked=2", res)
@@ -299,13 +299,13 @@ func TestPlanIssuesFromLabels_Idempotent(t *testing.T) {
 	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "once", Labels: []string{"plan"}}}
 	sink := &recordingSink{}
 
-	first := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil)
+	first := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil, PlanningMinACMMLevel)
 	if first.Minted != 1 {
 		t.Fatalf("first Minted = %d, want 1", first.Minted)
 	}
 	// Second pass: epic already exists AND is still pending (kicker did nothing
 	// real), so it is NOT minted again but IS re-kicked (still pending).
-	second := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil)
+	second := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, sink, nil, PlanningMinACMMLevel)
 	if second.Minted != 0 {
 		t.Errorf("second Minted = %d, want 0 (no duplicate)", second.Minted)
 	}
@@ -315,7 +315,7 @@ func TestPlanIssuesFromLabels_PausedQueues(t *testing.T) {
 	store := newStore(t)
 	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"plan"}}}
 	sink := &recordingSink{}
-	res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{paused: true}, issues, sink, nil)
+	res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{paused: true}, issues, sink, nil, PlanningMinACMMLevel)
 
 	if res.Kicked != 0 || res.QueuedPaused != 1 {
 		t.Fatalf("res = %+v, want Kicked=0 QueuedPaused=1", res)
@@ -332,7 +332,7 @@ func TestPlanIssuesFromLabels_PausedQueues(t *testing.T) {
 
 func TestPlanIssuesFromLabels_NilStoreAndMintErr(t *testing.T) {
 	// Nil store → no-op zero result.
-	if res := PlanIssuesFromLabels(nil, &fakeDecomposeKicker{}, nil, nil, nil); res != (LabelPlanResult{}) {
+	if res := PlanIssuesFromLabels(nil, &fakeDecomposeKicker{}, nil, nil, nil, PlanningMinACMMLevel); res != (LabelPlanResult{}) {
 		t.Errorf("nil store: got %+v, want zero", res)
 	}
 	// Mint error (issue with a title but no ref) → mintErr callback fires.
@@ -342,7 +342,8 @@ func TestPlanIssuesFromLabels_NilStoreAndMintErr(t *testing.T) {
 		&fakeDecomposeKicker{},
 		[]github.Issue{{Title: "no ref", Labels: []string{"plan"}}},
 		nil,
-		func(string, error) { called = true })
+		func(string, error) { called = true },
+		PlanningMinACMMLevel)
 	if !called {
 		t.Error("expected mintErr callback on unref-able labeled issue")
 	}
@@ -353,9 +354,58 @@ func TestPlanIssuesFromLabels_QueuedNoAgent(t *testing.T) {
 	issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan", Labels: []string{"plan"}}}
 	sink := &recordingSink{}
 	// Kick fails → queued (no agent) path + sink.QueuedPlan(paused=false).
-	PlanIssuesFromLabels(store, &fakeDecomposeKicker{kickErr: errFake}, issues, sink, nil)
+	PlanIssuesFromLabels(store, &fakeDecomposeKicker{kickErr: errFake}, issues, sink, nil, PlanningMinACMMLevel)
 	if len(sink.queuedNo) != 1 {
 		t.Errorf("expected 1 no-agent-queued plan, got %d", len(sink.queuedNo))
+	}
+}
+
+func TestPlanningAllowedAtLevel(t *testing.T) {
+	tests := []struct {
+		level int
+		want  bool
+	}{
+		{1, false}, {2, false}, {3, false}, {4, false}, // architect has no cadence
+		{5, true}, {6, true}, // architect scheduled (4h / 15m)
+	}
+	for _, tc := range tests {
+		if got := PlanningAllowedAtLevel(tc.level); got != tc.want {
+			t.Errorf("PlanningAllowedAtLevel(%d) = %v, want %v", tc.level, got, tc.want)
+		}
+	}
+}
+
+// TestPlanIssuesFromLabels_LevelGate proves the L5+ gate: below L5 the pass is a
+// hard no-op that mints nothing (the architect has no cadence to decompose it);
+// at L5/L6 it mints as before. Covers the boundary (L4 blocked, L5 allowed).
+func TestPlanIssuesFromLabels_LevelGate(t *testing.T) {
+	tests := []struct {
+		name       string
+		level      int
+		wantMinted int
+	}{
+		{"L1 blocked", 1, 0},
+		{"L4 blocked (boundary)", 4, 0},
+		{"L5 allowed (boundary)", 5, 1},
+		{"L6 allowed", 6, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newStore(t)
+			issues := []github.Issue{{Repo: "a/b", Number: 1, Title: "plan me", Labels: []string{"plan"}}}
+			res := PlanIssuesFromLabels(store, &fakeDecomposeKicker{}, issues, &recordingSink{}, nil, tc.level)
+			if res.Minted != tc.wantMinted {
+				t.Errorf("level %d: Minted = %d, want %d", tc.level, res.Minted, tc.wantMinted)
+			}
+			// Below the gate, no epic should exist at all.
+			epic := store.FindByExternalRef("gh-a/b#1")
+			if tc.wantMinted == 0 && epic != nil {
+				t.Errorf("level %d: expected no epic minted, but found %s", tc.level, epic.ID)
+			}
+			if tc.wantMinted > 0 && epic == nil {
+				t.Errorf("level %d: expected an epic minted, found none", tc.level)
+			}
+		})
 	}
 }
 

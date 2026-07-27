@@ -17,9 +17,16 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/planning"
 )
 
+// acmmL5 returns a pointer to ACMM level 5, the lowest level at which planning is
+// enabled (the architect that decomposes epics is scheduled at L5/L6). Tests that
+// exercise the mint/kick paths must set this so handlePlanFromIssue's L5+ gate
+// admits the request; the gate itself is covered by TestHandlePlanFromIssue_LevelGate.
+func acmmL5() *int { l := planning.PlanningMinACMMLevel; return &l }
+
 // planIssueServer builds a Server with an empty "architect" bead store and no
 // AgentMgr, so handlePlanFromIssue mints the epic but records kicked=false
-// (the kick path is nil-guarded). Returns the server and store.
+// (the kick path is nil-guarded). ACMM level is set to L5 so the L5+ planning
+// gate admits the request. Returns the server and store.
 func planIssueServer(t *testing.T) (*Server, *beads.Store) {
 	t.Helper()
 	store, err := beads.NewStore(t.TempDir())
@@ -28,7 +35,7 @@ func planIssueServer(t *testing.T) (*Server, *beads.Store) {
 	}
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}},
+		Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: acmmL5()},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"architect": store},
@@ -168,7 +175,8 @@ func TestHandlePlanFromIssue_ResolvesTitleFromStatus(t *testing.T) {
 
 func TestHandlePlanFromIssue_NoStores(t *testing.T) {
 	srv := NewServer(0, slog.Default())
-	srv.deps = &Dependencies{Config: &config.Config{}, Logger: slog.Default(), Ctx: context.Background()}
+	// L5 so the request clears the planning-level gate and reaches the store check.
+	srv.deps = &Dependencies{Config: &config.Config{ACMMLevel: acmmL5()}, Logger: slog.Default(), Ctx: context.Background()}
 	srv.RegisterAPI(srv.deps)
 	w := postPlanFromIssue(t, srv, `{"repo":"a/b","number":1,"title":"t"}`)
 	if w.Code != http.StatusServiceUnavailable {
@@ -182,7 +190,7 @@ func TestHandlePlanFromIssue_WithAgentMgr_KickPath(t *testing.T) {
 		t.Fatalf("NewStore: %v", err)
 	}
 	logger := slog.Default()
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"architect": {}}}
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{"architect": {}}, ACMMLevel: acmmL5()}
 	mgr := agent.NewManager(cfg.Agents, logger, agent.ProjectContext{})
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
 
@@ -218,6 +226,73 @@ func TestHandlePlanFromIssue_WithAgentMgr_KickPath(t *testing.T) {
 	}
 }
 
+// TestHandlePlanFromIssue_LevelGate proves the L5+ gate on the HTTP handler:
+// below L5 the request is rejected (409) with the gate message and NO epic is
+// minted; at L5/L6 it proceeds and mints. Covers the boundary (L4 blocked, L5
+// allowed) plus the nil-config edge.
+func TestHandlePlanFromIssue_LevelGate(t *testing.T) {
+	newSrvAtLevel := func(level *int) (*Server, *beads.Store) {
+		store, err := beads.NewStore(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		srv := NewServer(0, slog.Default())
+		srv.deps = &Dependencies{
+			Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: level},
+			Logger:     slog.Default(),
+			Ctx:        context.Background(),
+			BeadStores: map[string]*beads.Store{"architect": store},
+		}
+		srv.RegisterAPI(srv.deps)
+		return srv, store
+	}
+	lvl := func(n int) *int { return &n }
+
+	tests := []struct {
+		name     string
+		level    *int
+		wantCode int
+		wantMint bool
+	}{
+		{"nil level (defaults to L1) blocked", nil, http.StatusConflict, false},
+		{"L1 blocked", lvl(1), http.StatusConflict, false},
+		{"L4 blocked (boundary)", lvl(4), http.StatusConflict, false},
+		{"L5 allowed (boundary)", lvl(5), http.StatusOK, true},
+		{"L6 allowed", lvl(6), http.StatusOK, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, store := newSrvAtLevel(tc.level)
+			w := postPlanFromIssue(t, srv, `{"repo":"org/repo","number":42,"title":"gate me"}`)
+			if w.Code != tc.wantCode {
+				t.Fatalf("code = %d, want %d: %s", w.Code, tc.wantCode, w.Body.String())
+			}
+			epics := 0
+			for _, b := range store.List(beads.ListFilter{}) {
+				if b.Type == beads.TypeEpic {
+					epics++
+				}
+			}
+			if tc.wantMint && epics != 1 {
+				t.Errorf("expected 1 epic minted, got %d", epics)
+			}
+			if !tc.wantMint {
+				if epics != 0 {
+					t.Errorf("expected no epic minted below L5, got %d", epics)
+				}
+				// The rejection must carry the explanatory gate message.
+				var resp struct {
+					Error string `json:"error"`
+				}
+				_ = json.Unmarshal(w.Body.Bytes(), &resp)
+				if resp.Error != planning.PlanningLevelGateMessage {
+					t.Errorf("error = %q, want the gate message", resp.Error)
+				}
+			}
+		})
+	}
+}
+
 // stubKicker is a test DecomposeKicker with a settable paused state.
 type stubKicker struct {
 	paused bool
@@ -231,7 +306,7 @@ func TestRequestArchitectDecompose_States(t *testing.T) {
 	store, _ := beads.NewStore(t.TempDir())
 	epic, _ := store.Create("e", beads.TypeEpic, beads.PriorityMedium, "architect", "gh-a/b#1")
 	logger := slog.Default()
-	cfg := &config.Config{Agents: map[string]config.AgentConfig{"architect": {}}}
+	cfg := &config.Config{Agents: map[string]config.AgentConfig{"architect": {}}, ACMMLevel: acmmL5()}
 
 	newSrv := func(k planning.DecomposeKicker) *Server {
 		srv := NewServer(0, logger)
@@ -273,7 +348,7 @@ func TestHandlePlanFromIssue_PausedArchitectMessage(t *testing.T) {
 	store, _ := beads.NewStore(t.TempDir())
 	srv := NewServer(0, slog.Default())
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}},
+		Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: acmmL5()},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"architect": store},
@@ -322,7 +397,7 @@ func TestPlanEpicStore_FallbackToAnyStore(t *testing.T) {
 	srv := NewServer(0, slog.Default())
 	// No "architect" store — planEpicStore must fall back to the only store.
 	srv.deps = &Dependencies{
-		Config:     &config.Config{Agents: map[string]config.AgentConfig{}},
+		Config:     &config.Config{Agents: map[string]config.AgentConfig{}, ACMMLevel: acmmL5()},
 		Logger:     slog.Default(),
 		Ctx:        context.Background(),
 		BeadStores: map[string]*beads.Store{"scanner": store},
