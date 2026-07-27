@@ -4111,13 +4111,26 @@
         for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
         return s;
       };
-      let spend = 0, prev = null, sawWindow = false;
+      // Prefer the per-model token measure (immune to price-table shifts and to
+      // the non-monotonic cumulative counter). But snapshots recorded before the
+      // `models` field existed only carry a cumulative `usd` — those must NOT be
+      // skipped, or every hour older than the field's introduction renders blank
+      // (the "recent hours only" gap). For a legacy entry, fall back to the
+      // cumulative usd and count its positive step-to-step increases the same way.
+      // The two measures live on different scales (priced-token sum vs. cumulative
+      // usd), so a delta must never be taken ACROSS a measure change. Reset prev
+      // whenever the entry's measure type flips, so we only ever difference like
+      // with like — legacy usd runs and new models runs each contribute their own
+      // positive increments to the bucket total.
+      let spend = 0, prev = null, prevKind = null, sawWindow = false;
       for (const e of hist) {
-        if (!e.models || e.timestamp < t0 || e.timestamp > t1) { if (e.models && e.timestamp > t1) break; continue; }
+        if (e.timestamp < t0 || e.timestamp > t1) { if (e.timestamp > t1) break; continue; }
+        const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
+        if (kind == null) continue;
+        const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
         sawWindow = true;
-        const cur = pricedTok(e.models);
-        if (prev != null && cur > prev) spend += (cur - prev); // count only increases
-        prev = cur;
+        if (prev != null && kind === prevKind && cur > prev) spend += (cur - prev);
+        prev = cur; prevKind = kind;
       }
       return sawWindow ? spend : null;
     }
