@@ -18,13 +18,18 @@ const (
 	webhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET"
 	webhookSecretPath   = "/data/saas/webhook-secret.key"
 	webhookMaxBodyBytes = 256 * 1024
-	webhookPushTimeout  = 30 * time.Second
 	webhookPushRetries  = 3
 )
 
-// webhookRetryDelay is the backoff between spoke config-push retries. A var (not
-// a const) so tests can shorten it; production keeps the default.
-var webhookRetryDelay = 5 * time.Second
+// webhookRetryDelay is the backoff between spoke config-push retries, and
+// webhookPushTimeout bounds each push attempt. Both are vars (not consts) so
+// tests can shorten them — a test that forces a connection-level failure would
+// otherwise wait the full 30s timeout per retry (minutes total). Production
+// keeps the defaults.
+var (
+	webhookRetryDelay  = 5 * time.Second
+	webhookPushTimeout = 30 * time.Second
+)
 
 type installationEvent struct {
 	Action       string `json:"action"`

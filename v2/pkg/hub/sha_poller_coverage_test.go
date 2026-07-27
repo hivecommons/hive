@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -43,11 +44,19 @@ func TestStartLatestSHAPollerPreLoop(t *testing.T) {
 	// A registered hive contributes a tracked branch so the fetch loop runs.
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
 
+	// Run the poller under a cancellable context and JOIN the goroutine before
+	// returning. Otherwise the daemon keeps reading the package-level saas path
+	// vars (via triggerAutoUpgrades -> listSaaSHives) after the test ends,
+	// racing the next test's per-test temp-dir teardown. This defer runs before
+	// helperSetupTempDirs' t.Cleanup, so the goroutine is stopped while the
+	// temp dirs still exist.
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		s.StartLatestSHAPoller() // blocks on the 2-min ticker after the first pass
-		close(done)
+		defer close(done)
+		s.StartLatestSHAPoller(ctx) // blocks on the 2-min ticker after the first pass
 	}()
+	defer func() { cancel(); <-done }()
 
 	// Give the synchronous pre-loop pass time to finish its fetch.
 	deadline := time.After(3 * time.Second)
@@ -62,6 +71,5 @@ func TestStartLatestSHAPollerPreLoop(t *testing.T) {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-	// The poller goroutine is intentionally left blocking on its long ticker;
-	// it makes no further network calls until the 2-minute tick, well past test end.
+	// The poller goroutine is cancelled and joined via the deferred cancel above.
 }

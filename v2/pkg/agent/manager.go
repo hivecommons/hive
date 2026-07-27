@@ -1089,14 +1089,24 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 
 	m.logger.Info("installing caveman", "agent", agent.Name, "backend", backend, "mode", mode)
 
+	// Pinned: unpinned HEAD broke every install on 2026-07-27 when upstream
+	// removed the --mode flag. Bump deliberately, after checking `--help`.
+	const cavemanRef = "github:JuliusBrussee/caveman#0d95a81d35a9"
+	// Upstream replaced `--mode full|minimal` with `--all` / `--minimal`
+	// (--all = hooks + init).
+	modeFlag := "--all"
+	if mode == "minimal" {
+		modeFlag = "--minimal"
+	}
+
 	var cmd *exec.Cmd
 	switch backend {
 	case "claude":
-		cmd = exec.Command("npx", "-y", "github:JuliusBrussee/caveman", "--", "--only", "claude", "--mode", mode)
+		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "claude", modeFlag)
 	case "copilot":
-		cmd = exec.Command("npx", "-y", "github:JuliusBrussee/caveman", "--", "--only", "copilot", "--with-init", "--mode", mode)
+		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "copilot", "--with-init", modeFlag)
 	case "gemini":
-		cmd = exec.Command("npx", "-y", "github:JuliusBrussee/caveman", "--", "--only", "gemini", "--mode", mode)
+		cmd = exec.Command("npx", "-y", cavemanRef, "--", "--only", "gemini", modeFlag)
 	case "goose":
 		cmd = exec.Command("npx", "-y", "skills", "add", "JuliusBrussee/caveman", "-a", "goose")
 	case "codex":
@@ -1109,7 +1119,12 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	}
 
 	cmd.Dir = filepath.Join("/data/agents", agent.Name)
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	// The shared npm cache under /data/home accumulates content-addressed
+	// entries owned by whichever agent UID wrote them first; npx run as the
+	// hive user then fails with EACCES on those shards and the agent launches
+	// without its proxy. A per-agent cache can never collide across UIDs.
+	npmCache := filepath.Join("/data/agents", agent.Name, ".npm-caveman-cache")
+	cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+npmCache)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		m.logger.Warn("caveman install failed", "agent", agent.Name, "error", err, "output", string(out))
 	}

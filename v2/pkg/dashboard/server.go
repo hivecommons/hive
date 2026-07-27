@@ -385,6 +385,20 @@ const factHistoryMinIntervalMs = 300_000
 type CostHistoryEntry struct {
 	Timestamp int64   `json:"t"`
 	USD       float64 `json:"usd"`
+	// Agents maps agent name → cumulative estimated $ at this snapshot,
+	// enabling per-agent spend-over-window on the client. Omitted on entries
+	// recorded before this field existed.
+	Agents map[string]float64 `json:"agents,omitempty"`
+	// Models maps model name → cumulative token/cost snapshot, feeding the
+	// per-model mini sparklines in the cost table. Omitted on older entries.
+	Models map[string]CostModelSnap `json:"models,omitempty"`
+}
+
+// CostModelSnap is one model's cumulative counters at a history snapshot.
+type CostModelSnap struct {
+	Input  int64   `json:"i"`
+	Output int64   `json:"o"`
+	USD    float64 `json:"usd"`
 }
 
 // costHistoryMaxEntries caps the cost sparkline to ~30 days at 5-min intervals,
@@ -1753,8 +1767,20 @@ func (s *Server) SeedFactHistory(entries []FactHistoryEntry) {
 
 // AppendCostHistory records an estimated-cost ($) snapshot if enough time has
 // passed since the last one. Mirrors AppendFactHistory: same cadence throttle
-// and same ring-buffer cap so the two histories stay aligned.
-func (s *Server) AppendCostHistory(usd float64) {
+// and same ring-buffer cap so the two histories stay aligned. The optional
+// agents map carries per-agent cumulative $ so the UI can derive per-agent
+// spend over a time window (agent cards); variadic to keep old callers valid.
+func (s *Server) AppendCostHistory(usd float64, agents ...map[string]float64) {
+	var a map[string]float64
+	if len(agents) > 0 {
+		a = agents[0]
+	}
+	s.AppendCostHistoryFull(usd, a, nil)
+}
+
+// AppendCostHistoryFull is AppendCostHistory plus the per-model snapshot map
+// that feeds the cost table's mini sparklines.
+func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, models map[string]CostModelSnap) {
 	now := time.Now().UnixMilli()
 
 	s.costHistoryMu.Lock()
@@ -1767,10 +1793,17 @@ func (s *Server) AppendCostHistory(usd float64) {
 		}
 	}
 
-	s.costHistory = append(s.costHistory, CostHistoryEntry{
+	entry := CostHistoryEntry{
 		Timestamp: now,
 		USD:       usd,
-	})
+	}
+	if len(agents) > 0 {
+		entry.Agents = agents
+	}
+	if len(models) > 0 {
+		entry.Models = models
+	}
+	s.costHistory = append(s.costHistory, entry)
 	if len(s.costHistory) > costHistoryMaxEntries {
 		s.costHistory = s.costHistory[len(s.costHistory)-costHistoryMaxEntries:]
 	}

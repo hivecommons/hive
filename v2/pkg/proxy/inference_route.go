@@ -147,6 +147,13 @@ func (ir *inferenceRouter) Get(agentName string) *InferenceRoute {
 // (asynchronous) query was issued for. This prevents a slow probe from an old
 // model switch from clobbering a route the user changed again in the meantime.
 // Returns true if the update was applied.
+//
+// The update is copy-on-write: it stores a NEW *InferenceRoute rather than
+// mutating the existing struct in place. Get() hands its caller a bare pointer
+// and releases the lock, so any concurrent reader of route.MaxContextLen (e.g.
+// the token-capping path in the inference request handlers) would otherwise
+// race this write. Replacing the map entry means existing readers keep a
+// consistent snapshot and only subsequent Get() calls observe the new value.
 func (ir *inferenceRouter) UpdateMaxContextLen(agentName, endpoint, model string, maxLen int) bool {
 	ir.mu.Lock()
 	defer ir.mu.Unlock()
@@ -154,7 +161,9 @@ func (ir *inferenceRouter) UpdateMaxContextLen(agentName, endpoint, model string
 	if !ok || route.Endpoint != endpoint || route.Model != model {
 		return false
 	}
-	route.MaxContextLen = maxLen
+	updated := *route // shallow copy; InferenceRoute has no reference-type fields that alias mutably
+	updated.MaxContextLen = maxLen
+	ir.routes[agentName] = &updated
 	return true
 }
 

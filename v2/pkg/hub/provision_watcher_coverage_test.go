@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -50,7 +51,16 @@ func TestStartProvisionWatcher(t *testing.T) {
 	})
 
 	s := &HubServer{logger: slog.Default(), clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}}}
-	go s.startProvisionWatcher()
+
+	// Run the watcher under a cancellable context and JOIN the goroutine before
+	// returning. Otherwise the daemon keeps polling listSaaSHives() (which reads
+	// the package-level saas path vars) after the test ends, racing the next
+	// test's per-test temp-dir teardown. This defer runs before helperSetupTempDirs'
+	// t.Cleanup, so the goroutine is stopped while the temp dirs still exist.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); s.startProvisionWatcher(ctx) }()
+	defer func() { cancel(); <-done }()
 
 	// Wait for the watcher to process at least one poll.
 	deadline := time.After(3 * time.Second)

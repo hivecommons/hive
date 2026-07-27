@@ -169,8 +169,8 @@ func (s *HubServer) registerSaaSRoutes() {
 }
 
 var startHubBackgroundWorkers = func(s *HubServer) {
-	go s.startProvisionWatcher()
-	go s.StartLatestSHAPoller()
+	go s.startProvisionWatcher(context.Background())
+	go s.StartLatestSHAPoller(context.Background())
 	// Periodically probe every spoke's unauthenticated /api/status and alert
 	// on any that answer 200 (wide open) — catches auth drift automatically.
 	go s.StartAuthAudit(context.Background())
@@ -2890,7 +2890,12 @@ func persistLatestSHAs(logger *slog.Logger) {
 	}
 }
 
-func (s *HubServer) StartLatestSHAPoller() {
+// StartLatestSHAPoller polls GitHub/GHCR for the latest branch SHAs until ctx
+// is cancelled. It takes a context so the loop can be stopped for a clean
+// shutdown (and so tests can stop the goroutine rather than leaking it past the
+// test, which otherwise races the package-level saas path state that per-test
+// temp-dir setup rewrites — same class as startProvisionWatcher).
+func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// Serve last-known-good SHAs immediately; live fetches below refresh them.
 	loadPersistedSHAs(s.logger, s.trackedBranchList())
 	prevInfos := snapshotBranchSHAs()
@@ -2902,7 +2907,12 @@ func (s *HubServer) StartLatestSHAPoller() {
 	s.triggerAutoUpgrades()
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		oldSHAs := getLatestSHAs()
 		oldInfos := snapshotBranchSHAs()
 		// Re-resolve each tick so branches from newly registered hives are

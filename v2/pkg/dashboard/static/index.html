@@ -1030,6 +1030,10 @@
     .cost-trend { margin: 6px 0 14px; }
     .cost-trend-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
     .cost-range { display: inline-flex; gap: 2px; background: rgba(128,128,128,0.12); border-radius: 7px; padding: 2px; }
+    .cost-custom-range { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.7rem; }
+    .cost-custom-range input { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font-size: 0.7rem; padding: 2px 6px; font-family: var(--font-ui); }
+    .agent-spend-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 0.66rem; font-weight: 600; color: var(--muted); vertical-align: middle; }
+    .cell-spark { vertical-align: middle; margin-left: 6px; opacity: 0.75; }
     .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
     .cost-range button:hover { color: var(--text); }
     .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
@@ -1917,7 +1921,8 @@
     .config-field textarea:focus,
     .nous-config-section textarea:focus, .nous-config-section input[type="text"]:focus, .nous-config-section input[type="number"]:focus,
     .config-list-add input:focus,
-    .kick-prompt:focus, .kb-search-box:focus, .oc-chat-input:focus, .hive-chat-input:focus, .backend-select:focus {
+    .kick-prompt:focus, .kb-search-box:focus, .oc-chat-input:focus, .hive-chat-input:focus, .backend-select:focus,
+    #audit-search:focus {
       border-color: color-mix(in srgb, var(--amber) 60%, var(--line));
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--amber) 22%, transparent);
     }
@@ -2522,9 +2527,9 @@
   <div id="audit-section" style="margin-top: 16px; margin-bottom: 24px;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('audit-section')"><span class="section-chevron">▼</span> 📋 Audit Log</h2>
     <div class="section-body">
-      <div class="audit-controls-row" style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+      <div class="audit-controls-row" style="margin-bottom:5px;padding:3px;display:flex;align-items:center;gap:8px">
         <div style="flex:1;position:relative">
-          <input id="audit-search" list="audit-saved-searches" type="text" placeholder="Search audit log... (supports /regex/)" oninput="filterAuditLog()" onkeydown="if(event.key==='Enter')saveAuditSearch()" style="width:100%;padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem">
+          <input id="audit-search" list="audit-saved-searches" type="text" placeholder="Search audit log... (terms are OR'd, supports /regex/)" oninput="filterAuditLog()" onkeydown="if(event.key==='Enter')saveAuditSearch()" style="width:100%;padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem;outline:none">
           <datalist id="audit-saved-searches"></datalist>
         </div>
         <button onclick="saveAuditSearch()" title="Save this search" style="padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;font-size:0.75rem;white-space:nowrap">💾 Save</button>
@@ -3725,42 +3730,106 @@
     // delta of the cumulative value across each bucket boundary — no backend
     // change needed. Selected range persists across re-renders and page loads.
     const COST_RANGES = {
-      // key: { label, bucketMs, windowMs, buckets, axisFmt }
+      // key: { label, bucketMs, windowMs, buckets }
       hourly:  { label: 'hourly',  bucketMs: 3600e3,        windowMs: 24 * 3600e3,      buckets: 24 },
       daily:   { label: 'daily',   bucketMs: 24 * 3600e3,   windowMs: 30 * 24 * 3600e3, buckets: 30 },
       weekly:  { label: 'weekly',  bucketMs: 7 * 24 * 3600e3, windowMs: 12 * 7 * 24 * 3600e3, buckets: 12 },
       monthly: { label: 'monthly', bucketMs: 30 * 24 * 3600e3, windowMs: 12 * 30 * 24 * 3600e3, buckets: 12 },
+      custom:  { label: 'custom' }, // bounds come from _costCustom; slices derived
     };
     let _costRange = (() => {
       try { const s = localStorage.getItem('hiveCostRange'); if (s && COST_RANGES[s]) return s; } catch {}
       return 'daily';
     })();
+    // Custom range bounds (ms since epoch), persisted like the range key.
+    let _costCustom = (() => {
+      try {
+        const s = JSON.parse(localStorage.getItem('hiveCostCustom') || 'null');
+        if (s && typeof s.start === 'number' && typeof s.end === 'number' && s.end > s.start) return s;
+      } catch {}
+      const now = Date.now();
+      return { start: now - 24 * 3600e3, end: now };
+    })();
+    const COST_CUSTOM_BUCKETS = 24; // bar-chart slices for a custom range
+
+    // costWindow: {start, end, bucketMs, count} for the active range. Preset
+    // ranges anchor to now and walk backwards; custom uses the picked bounds.
+    function costWindow() {
+      if (_costRange === 'custom') {
+        const span = Math.max(_costCustom.end - _costCustom.start, 60e3);
+        return { start: _costCustom.start, end: _costCustom.end,
+                 bucketMs: span / COST_CUSTOM_BUCKETS, count: COST_CUSTOM_BUCKETS };
+      }
+      const cfg = COST_RANGES[_costRange];
+      const now = Date.now();
+      return { start: now - cfg.windowMs, end: now, bucketMs: cfg.bucketMs, count: cfg.buckets };
+    }
+
+    // Normalized history [{usd, timestamp, agents}]. The server serializes the
+    // timestamp as `t` (CostHistoryEntry json:"t"); accept `timestamp` too so a
+    // future rename can't zero the card again. `agents` (name → cumulative $)
+    // is absent on entries recorded before per-agent snapshots existed.
+    function costHist() {
+      return (_costHistory || [])
+        .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp, agents: e.agents, models: e.models })
+        .filter(e => e && typeof e.usd === 'number' && typeof e.timestamp === 'number');
+    }
+
+    // Tiny inline sparkline for cost-table cells. Same min/max scaling as the
+    // big sparkline, sized to sit beside a number.
+    function miniSparkSvg(values, color) {
+      if (!values || values.length < 2) return '';
+      const W = 56, H = 14;
+      const max = Math.max(...values), min = Math.min(...values);
+      const range = (max - min) || max || 1;
+      const pts = values.map((v, i) =>
+        `${(i / (values.length - 1) * W).toFixed(1)},${(H - ((v - min) / range) * (H - 2) - 1).toFixed(1)}`);
+      return `<svg class="cell-spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+
+    // Cumulative series for one model's field ('i' input, 'o' output, 'usd')
+    // across the active cost window — the table sparklines follow the same
+    // timeframe selector as everything else.
+    function modelSeries(name, field) {
+      const win = costWindow();
+      const out = [];
+      for (const e of costHist()) {
+        if (e.timestamp < win.start || e.timestamp > win.end) continue;
+        const m = e.models && e.models[name];
+        if (m && typeof m[field] === 'number') out.push(m[field]);
+      }
+      return out;
+    }
+
+    // Last cumulative value at-or-before t via pick(e); null if history starts
+    // after t (or pick never yields a number up to t).
+    function costValueAt(hist, t, pick) {
+      let v = null;
+      for (const e of hist) {
+        if (e.timestamp > t) break;
+        const x = pick(e);
+        if (typeof x === 'number') v = x;
+      }
+      return v;
+    }
 
     // costBuckets: returns [{start, end, spend}] for the active range. spend is the
     // cumulative-$ delta over the bucket; 30d of history means longer ranges are
     // truncated to whatever the ring buffer holds (labeled in the UI).
     function costBuckets() {
-      const cfg = COST_RANGES[_costRange];
-      const hist = (_costHistory || []).filter(e => e && typeof e.usd === 'number' && e.timestamp);
-      const now = Date.now();
-      const windowStart = now - cfg.windowMs;
-      // Snap the last bucket edge to now, walk backwards by bucketMs.
+      const win = costWindow();
+      const hist = costHist();
       const buckets = [];
-      for (let i = cfg.buckets - 1; i >= 0; i--) {
-        const end = now - i * cfg.bucketMs;
-        const start = end - cfg.bucketMs;
-        if (end <= windowStart) continue;
+      for (let i = win.count - 1; i >= 0; i--) {
+        const end = win.end - i * win.bucketMs;
+        const start = end - win.bucketMs;
+        if (end <= win.start) continue;
         buckets.push({ start, end, spend: 0, hasData: false });
       }
       if (hist.length < 2) return buckets;
       // For each bucket, spend = usd at last snapshot in bucket − usd at last
       // snapshot before bucket start (the cumulative baseline entering the bucket).
-      const at = (t) => {
-        // last cumulative value at-or-before time t; null if history starts after t.
-        let v = null;
-        for (const e of hist) { if (e.timestamp <= t) v = e.usd; else break; }
-        return v;
-      };
+      const at = (t) => costValueAt(hist, t, e => e.usd);
       for (const b of buckets) {
         const before = at(b.start);
         const end = at(b.end);
@@ -3776,11 +3845,27 @@
       return buckets;
     }
 
+    // agentWindowSpend: estimated $ spent by one agent inside the active cost
+    // window, derived from per-agent cumulative snapshots. null = no per-agent
+    // data covering this window (e.g. history predates the feature).
+    function agentWindowSpend(name) {
+      const win = costWindow();
+      const hist = costHist().filter(e => e.agents && typeof e.agents[name] === 'number');
+      if (!hist.length || hist[0].timestamp > win.end) return null;
+      const pick = e => e.agents[name];
+      const endV = costValueAt(hist, win.end, pick);
+      if (endV == null) return null;
+      let startV = costValueAt(hist, win.start, pick);
+      if (startV == null) startV = hist[0].agents[name]; // history begins inside window
+      return Math.max(0, endV - startV);
+    }
+
     function costBucketAxisLabel(b) {
       const d = new Date(b.end);
       if (_costRange === 'hourly') return String(d.getHours()).padStart(2, '0');
       if (_costRange === 'daily')  return `${d.getMonth() + 1}/${d.getDate()}`;
       if (_costRange === 'weekly') return `${d.getMonth() + 1}/${d.getDate()}`;
+      if (_costRange === 'custom') return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}h`;
       return d.toLocaleString('en-US', { month: 'short' });
     }
 
@@ -3789,6 +3874,16 @@
       const pills = Object.keys(COST_RANGES).map(k =>
         `<button data-cost-range="${k}" class="${k === _costRange ? 'active' : ''}">${COST_RANGES[k].label}</button>`
       ).join('');
+      let customControls = '';
+      if (_costRange === 'custom') {
+        // datetime-local wants local wall-clock time without zone suffix.
+        const toLocal = (ms) => new Date(ms - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        customControls = `<div class="cost-custom-range">
+          <input type="datetime-local" id="cost-custom-start" value="${toLocal(_costCustom.start)}" onchange="costCustomChanged()" title="Custom range start">
+          <span>→</span>
+          <input type="datetime-local" id="cost-custom-end" value="${toLocal(_costCustom.end)}" onchange="costCustomChanged()" title="Custom range end">
+        </div>`;
+      }
       const buckets = costBuckets();
       const withData = buckets.filter(b => b.hasData);
       const total = withData.reduce((s, b) => s + b.spend, 0);
@@ -3799,7 +3894,9 @@
         body = `<div class="cost-trend-empty">No cost history yet for this range — data accrues as agents run.</div>`;
       } else {
         const bars = buckets.map(b => {
-          const h = max > 0 ? Math.max(1, (b.spend / max) * 100) : 0;
+          // All-zero windows still draw a 2% baseline so the chart reads as
+          // "flat at zero" rather than missing (only axis labels visible).
+          const h = max > 0 ? Math.max(1, (b.spend / max) * 100) : (b.hasData ? 2 : 0);
           const cls = b.spend > 0 ? 'cost-bar' : 'cost-bar zero';
           const tip = `${new Date(b.start).toLocaleString()} → ${new Date(b.end).toLocaleString()}: ${fmtUSD(b.spend)}`;
           return `<div class="${cls}" style="height:${h.toFixed(1)}%" title="${esc(tip)}"></div>`;
@@ -3810,13 +3907,30 @@
           <div class="cost-bars-axis"><span>${esc(costBucketAxisLabel(first))}</span><span>${esc(costBucketAxisLabel(mid))}</span><span>${esc(costBucketAxisLabel(last))}</span></div>`;
       }
 
+      const totalLabel = _costRange === 'custom'
+        ? 'spend in range'
+        : `spend this ${cfg.label.replace('ly','')} window`;
       return `<div class="cost-trend">
         <div class="cost-trend-head">
           <div class="cost-range">${pills}</div>
-          <div class="cost-trend-total">spend this ${cfg.label.replace('ly','')} window: <b>${fmtUSD(total)}</b></div>
+          ${customControls}
+          <div class="cost-trend-total">${totalLabel}: <b>${fmtUSD(total)}</b></div>
         </div>
         ${body}
       </div>`;
+    }
+
+    function costCustomChanged() {
+      const s = document.getElementById('cost-custom-start');
+      const e = document.getElementById('cost-custom-end');
+      if (!s || !e || !s.value || !e.value) return;
+      const start = new Date(s.value).getTime();
+      const end = new Date(e.value).getTime();
+      if (!(end > start)) { hiveToast('Custom range: end must be after start', 'error'); return; }
+      _costCustom = { start, end };
+      try { localStorage.setItem('hiveCostCustom', JSON.stringify(_costCustom)); } catch {}
+      if (_lastCost) renderCost(_lastCost);
+      if (window._lastAgents) renderAgents(window._lastAgents);
     }
 
     async function fetchHistory() {
@@ -4106,6 +4220,23 @@
       return 0;
     }
 
+    // Per-agent estimated spend over the Cost section's active timeframe.
+    // The chip shows on the card header (visible in compact and expanded);
+    // the row adds detail inside the expanded card. Both return '' when the
+    // history has no per-agent data covering the window.
+    function agentSpendChip(name) {
+      const usd = agentWindowSpend(name);
+      if (usd == null) return '';
+      const lbl = _costRange === 'custom' ? 'custom range' : `${COST_RANGES[_costRange].label} window`;
+      return `<span class="agent-spend-chip" title="Estimated spend over the ${lbl} — follows the Cost section's timeframe selector (token × list price)">${fmtUSD(usd)}</span>`;
+    }
+    function agentSpendRow(name) {
+      const usd = agentWindowSpend(name);
+      if (usd == null) return '';
+      const lbl = _costRange === 'custom' ? 'custom range' : COST_RANGES[_costRange].label;
+      return `<div class="agent-field"><span class="label" title="Estimated cost attributed to this agent over the timeframe selected in the Cost section (token × list price)">spend (${lbl})</span><span class="value">${fmtUSD(usd)}</span></div>`;
+    }
+
     function agentTokenRow(name, cadence) {
       const byAgent = window._tokensByAgent || {};
       const t = byAgent[name];
@@ -4201,7 +4332,7 @@
             if (a.structuredStatus === 'DONE') return '<span class="status-badge done">done</span>';
             if (isStale) return '<span class="status-badge needs-context">stale</span>';
             return '';
-          })()}</div>
+          })()}${agentSpendChip(a.name)}</div>
           <div class="agent-card-details">
           <div class="agent-field"><span class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot). Pin to prevent governor from switching it.'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'method' : 'cli'}</span><span class="value">${cliChip(a.cli, a.pinnedBoth || a.pinnedCli, a.name)}${(a.pinnedBoth || a.pinnedCli) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" title="Pin CLI — lock current backend" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
           <div class="agent-field"><span class="label" title="The LLM model powering this agent. Governor may change it based on budget or mode. Pin to lock.">model</span><span class="value">${modelChip(a.model, a.govReason, a.pinnedBoth || a.pinnedModel, a.name)}${(a.pinnedBoth || a.pinnedModel) ? '' : ` <button class="pin-toggle" data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" title="Pin model — lock current model" style="opacity:0.4;cursor:pointer;border:none;background:none">📌</button>`}</span></div>
@@ -4211,6 +4342,7 @@
           <div class="agent-field"><span class="label" title="When the governor last kicked (started a work pass for) this agent.">last run</span><span class="value">${a.lastKick || '—'}</span></div>
           <div class="agent-field"><span class="label" title="When the governor will next kick this agent based on its cadence interval.">next run</span><span class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : (a.nextKick || '—')}</span></div>
           ${agentTokenRow(a.name, a.cadence)}
+          ${agentSpendRow(a.name)}
           <div class="agent-field"><span class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability or rate limiting.">restarts</span><span class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts || 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? `<button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></span></div>
           <div class="agent-field"><span class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">auth</span><span class="value">${(() => {
             const isClaude = a.cli === 'claude';
@@ -5775,9 +5907,9 @@ function burnAreaChart() {
           : fmtUSD(m.usd);
         return `<tr>
           <td class="cmodel">${esc(m.name || 'unknown')}</td>
-          <td class="cnum">${fmtTokens(m.input)}</td>
-          <td class="cnum">${fmtTokens(m.output)}</td>
-          <td class="cnum">${usdCell}</td>
+          <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)')}</td>
+          <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)')}</td>
+          <td class="cnum">${usdCell}${miniSparkSvg(modelSeries(m.name, 'usd'), 'var(--green)')}</td>
         </tr>`;
       }).join('');
 
@@ -5823,6 +5955,8 @@ function burnAreaChart() {
       _costRange = r;
       try { localStorage.setItem('hiveCostRange', r); } catch {}
       if (_lastCost) renderCost(_lastCost);
+      // Agent cards' spend chips follow this selector as their global filter.
+      if (window._lastAgents) renderAgents(window._lastAgents);
     });
 
     // GitHub auth health — sticky banner when 401
@@ -8528,10 +8662,12 @@ function burnAreaChart() {
         return;
       }
       var query = parseAuditQuery(raw);
+      var terms = typeof query === 'string' ? query.split(/\s+/).filter(Boolean) : [];
       var filtered = _auditEntries.filter(function(e) {
         var haystack = [e.ts || '', e.user || '', e.action || '', e.agent || '', e.detail || ''].join(' ');
         if (query instanceof RegExp) return query.test(haystack);
-        return haystack.toLowerCase().includes(query);
+        var lower = haystack.toLowerCase();
+        return terms.some(function(t) { return lower.includes(t); });
       });
       renderAuditTable(filtered);
       if (countEl) countEl.textContent = filtered.length + ' / ' + _auditEntries.length;
