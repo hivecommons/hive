@@ -543,6 +543,33 @@ The dashboard's `Config.Save()` writes the overlay. Therefore:
 - Verify effective config by `grep`-ing `/etc/hive/hive.yaml` in the running pod,
   **never** the ConfigMap.
 
+> **Gotcha — access grants (`dashboard.authorized_users`) only take effect on a
+> pod roll.** The overlay merge in step 2 runs **at boot**. When you grant a user
+> in the dashboard's **Manage Access** dialog, `Config.Save()` appends them to
+> `/data/hive.yaml.dashboard`, but the *running* device-flow authorizer keeps the
+> access list it built at startup — config hot-reload does **not** rebuild it.
+> Symptom: the user shows as `read-write` in Manage Access yet the spoke logs
+> `device-flow login rejected: user not authorized for this hive`.
+>
+> This bites hardest **right after provisioning or a cross-cluster migration onto
+> a fresh PVC**, where the first grants are written after the pod already booted.
+> Always finish provisioning with the verification below.
+>
+> ```sh
+> # 1. Confirm the grant reached the effective config:
+> kubectl -n hive-hosted-<id> exec deploy/hive -c hive -- \
+>   grep -A6 authorized_users /etc/hive/hive.yaml
+> # 2. If the user is present but still rejected, roll the pod so the authorizer
+> #    rebuilds from the current overlay:
+> kubectl -n hive-hosted-<id> rollout restart deploy/hive
+> # 3. Confirm no post-roll rejections:
+> kubectl -n hive-hosted-<id> logs deploy/hive -c hive | grep 'not authorized'
+> ```
+>
+> Do **not** hand-create `/data/hive.yaml` to "fix" a missing config — the
+> effective config is ConfigMap-seed + `.dashboard` overlay; a stray
+> `/data/hive.yaml` is never read and only adds confusion.
+
 ---
 
 ## Placeholder pools
@@ -628,5 +655,6 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 | Hive online but **Upgrade** → `hive not found` | No `meta.json` on the hub | Create `/data/saas/hives/<id>/meta.json` |
 | Not visible in My Hives | No `meta.json`, or `owner` doesn't match | Create/patch `meta.json` with the right `owner` |
 | ConfigMap edits have no effect | PVC overlay is authoritative | Edit `/data/hive.yaml.dashboard`, not the ConfigMap |
+| User has `read-write` in Manage Access but login fails with `device-flow login rejected: user not authorized` | Grant written to `/data/hive.yaml.dashboard` after the pod booted; the running authorizer only rebuilds `authorized_users` at startup (common right after provisioning / cross-cluster migration onto a fresh PVC) | Confirm the user is in the pod's `/etc/hive/hive.yaml`, then `rollout restart deploy/hive` so the authorizer rebuilds |
 | Admission warnings on apply | Cluster requires an `owner` label | Add `owner: <login>` to every `metadata.labels` |
 | Placeholder shows a version / "online" dot | It heartbeated once (automated path) | Remove its `/data/hub-registry.json` entry (hub scaled to 0) |
