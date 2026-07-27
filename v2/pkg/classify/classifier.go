@@ -50,9 +50,68 @@ type Classification struct {
 	ClusterKey string              `json:"cluster_key,omitempty"`
 }
 
-var simpleKeywords = []string{
+// defaultSimpleKeywords are the built-in title keywords that mark an issue as
+// Tier "Simple". Kept as the fallback when no config-driven set is provided via
+// SetTierKeywords, so behavior is unchanged when the classifier block is absent
+// from hive.yaml.
+var defaultSimpleKeywords = []string{
 	"typo", "i18n", "rename", "const", "label", "badge",
 	"tooltip", "placeholder", "aria", "alt text",
+}
+
+// defaultComplexSignals are the built-in title signals that mark an issue as
+// Tier "Complex". Like defaultSimpleKeywords, this is the fallback used when
+// SetTierKeywords has not been called with a non-empty complex set.
+var defaultComplexSignals = []string{
+	"race condition", "deadlock", "memory leak", "performance", "api change",
+}
+
+var tierMu sync.RWMutex
+var configuredSimpleKeywords []string
+var configuredComplexSignals []string
+
+// SetTierKeywords replaces the tier-classification keyword sets used by
+// classifyTier, mirroring SetLanes. Empty slices leave the corresponding
+// default in force, so a partial config (only simple, only complex, or neither)
+// still classifies with the built-in list for the unset side. It is safe to
+// call concurrently with Classify.
+func SetTierKeywords(simple, complex []string) {
+	tierMu.Lock()
+	defer tierMu.Unlock()
+	configuredSimpleKeywords = simple
+	configuredComplexSignals = complex
+}
+
+// activeSimpleKeywords returns the configured Simple-tier keywords, or the
+// built-in defaults when none are configured.
+func activeSimpleKeywords() []string {
+	tierMu.RLock()
+	defer tierMu.RUnlock()
+	if len(configuredSimpleKeywords) > 0 {
+		return configuredSimpleKeywords
+	}
+	return defaultSimpleKeywords
+}
+
+// activeComplexSignals returns the configured Complex-tier signals, or the
+// built-in defaults when none are configured.
+func activeComplexSignals() []string {
+	tierMu.RLock()
+	defer tierMu.RUnlock()
+	if len(configuredComplexSignals) > 0 {
+		return configuredComplexSignals
+	}
+	return defaultComplexSignals
+}
+
+// TierKeywords returns copies of the currently-effective Simple keywords and
+// Complex signals (config-driven when set, else the built-in defaults). The
+// dashboard governor-config endpoint surfaces these so operators can see exactly
+// which lists are in force. Copies are returned so callers cannot mutate
+// classifier state.
+func TierKeywords() (simple, complex []string) {
+	return append([]string(nil), activeSimpleKeywords()...),
+		append([]string(nil), activeComplexSignals()...)
 }
 
 // defaultLanes is the built-in lane config used when no config-driven lanes are provided.
@@ -129,7 +188,7 @@ func classifyLane(titleLower, labelsStr string) Lane {
 }
 
 func classifyTier(titleLower, labelsStr string, labels []string) Tier {
-	for _, kw := range simpleKeywords {
+	for _, kw := range activeSimpleKeywords() {
 		if strings.Contains(titleLower, kw) {
 			return TierSimple
 		}
@@ -145,8 +204,7 @@ func classifyTier(titleLower, labelsStr string, labels []string) Tier {
 		return TierComplex
 	}
 
-	complexSignals := []string{"race condition", "deadlock", "memory leak", "performance", "api change"}
-	for _, sig := range complexSignals {
+	for _, sig := range activeComplexSignals() {
 		if strings.Contains(titleLower, sig) {
 			return TierComplex
 		}
