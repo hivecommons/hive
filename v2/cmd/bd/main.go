@@ -69,6 +69,8 @@ func main() {
 		cmdUpdate(os.Args[2:])
 	case "close":
 		cmdClose(os.Args[2:])
+	case "decompose":
+		cmdDecompose(os.Args[2:])
 	case "reset":
 		cmdReset(os.Args[2:])
 	case "remember":
@@ -106,6 +108,9 @@ Commands:
   kb       list-docs                      List imported documents
   remember "<fact>"                        Quick-add an advisory bead
   close  <id>                              Close a bead
+  decompose <epic-id> [--plan <file>] [--actor <lane>]
+                                           Decompose an epic into a DAG of child task beads
+                                           (Phase 1: reads the planner's task list from --plan or stdin)
   reset  [--reason "..."]                  Close all open/in_progress/blocked beads
   dolt   push                              No-op (data already on disk)
   init                                     No-op (store auto-creates)
