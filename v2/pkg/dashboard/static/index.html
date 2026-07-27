@@ -11444,7 +11444,7 @@ function burnAreaChart() {
             agents: {},
           };
           for (const r of (data.repos || [])) snap.repos[r.name] = { issues: r.issues || 0, prs: r.prs || 0 };
-          for (const a of (data.agents || [])) snap.agents[a.name] = { busy: a.busy === 'working' ? 1 : 0 };
+          for (const a of (data.agents || [])) snap.agents[a.name] = { busy: a.busy === 'working' ? 1 : 0, restarts: a.restarts || 0 };
           // Token sparkline data
           snap.tokens = {};
           snap.tokenTotal = 0;
