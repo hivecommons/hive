@@ -140,6 +140,7 @@ type StatusPayload struct {
 	Tokens              FrontendTokens         `json:"tokens"`
 	Repos               []FrontendRepo         `json:"repos"`
 	Beads               FrontendBeads          `json:"beads"`
+	Planning            FrontendPlanning       `json:"planning"`
 	Health              map[string]any         `json:"health"`
 	Budget              FrontendBudget         `json:"budget"`
 	CadenceMatrix       []FrontendCadence      `json:"cadenceMatrix"`
@@ -303,6 +304,24 @@ type FrontendRepo struct {
 type FrontendBeads struct {
 	Workers    int `json:"workers"`
 	Supervisor int `json:"supervisor"`
+}
+
+// FrontendPlanning is the governor-facing PLANNING metric block (Phase 2
+// planning intelligence). It is computed from bead metadata (parent_epic +
+// plan_status) across all bead stores.
+type FrontendPlanning struct {
+	// ActivePlans counts epics that have been decomposed (carry a plan_status),
+	// i.e. plans currently in flight (draft or approved).
+	ActivePlans int `json:"active_plans"`
+	// AwaitingReview counts epics whose plan_status is draft — the
+	// human-action-required state the governor tile highlights.
+	AwaitingReview int `json:"awaiting_review"`
+	// Decomposing counts approved plans that still have open (unfinished)
+	// children — plans actively being executed by agents.
+	Decomposing int `json:"decomposing"`
+	// Replans24h counts plans re-decomposed in the last 24h. Phase 3 (governor
+	// stall-replan) populates this; it is 0 for now.
+	Replans24h int `json:"replans_24h"`
 }
 
 type FrontendBudget struct {

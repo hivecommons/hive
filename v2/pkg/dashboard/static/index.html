@@ -342,6 +342,9 @@
     .oc-gov-strip .gov-metric .gm-val.mode-quiet { color: var(--blue); }
     .oc-gov-strip .gov-metric .gm-val.mode-busy { color: var(--yellow); }
     .oc-gov-strip .gov-metric .gm-val.mode-surge { color: var(--red); }
+    /* gm-alert: human-action-required highlight (plans awaiting review), amber
+       to draw the eye like the "N Issues" / ON HOLD indicators. */
+    .oc-gov-strip .gov-metric .gm-val.gm-alert { color: var(--yellow); font-weight: 800; }
     .oc-gov-gauge { flex-basis: 100%; margin-top: 4px; }
     .oc-gov-gauge .temp-gauge-track { height: 14px; }
     .oc-gov-gauge .temp-gauge-labels { font-size: 0.55rem; }
@@ -3113,6 +3116,19 @@
           <div class="gov-metric"><span class="gm-label">PRs</span><span class="gm-val">${govPrs}</span></div>
           <div class="gov-metric"><span class="gm-label">MTTR</span><span class="gm-val">${formatFixTime(itmMedian)}</span></div>
           <div class="gov-metric" title="${esc((window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + ': ' + h.title).join('\n') || 'No items on hold')}"><span class="gm-label">on hold</span><span class="gm-val">${window._lastStatus?.hold?.total || 0}</span></div>
+          ${(() => {
+            const plan = window._lastStatus?.planning || {};
+            const active = plan.active_plans || 0;
+            const awaiting = plan.awaiting_review || 0;
+            // Highlight when plans await human review — a human-action-required
+            // state, surfaced amber like the "N Issues" / ON HOLD indicators.
+            const planClass = awaiting > 0 ? 'gm-alert' : '';
+            const planText = awaiting > 0 ? `${active} (${awaiting} review)` : `${active}`;
+            const planTitle = awaiting > 0
+              ? `${awaiting} plan(s) awaiting human review — decomposed epic children are withheld until approved`
+              : `${active} active plan(s)`;
+            return `<div class="gov-metric" title="${esc(planTitle)}"><span class="gm-label">planning</span><span class="gm-val ${planClass}">${esc(planText)}</span></div>`;
+          })()}
           <div class="oc-gov-gauge">
             <div class="temp-gauge-track" style="background:linear-gradient(to right, var(--green) 0%, var(--green) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) 100%)">
               <div class="temp-gauge-glow" style="width:100%"></div>

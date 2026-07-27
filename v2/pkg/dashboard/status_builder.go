@@ -20,6 +20,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/governor"
+	"github.com/kubestellar/hive/v2/pkg/planning"
 	"github.com/kubestellar/hive/v2/pkg/resolve"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
 )
@@ -134,6 +135,7 @@ func BuildFrontendStatus(
 		Tokens:       buildTokens(tokenCollector),
 		Repos:        buildRepos(cfg, actionable),
 		Beads:        BuildBeadsFromConfig(beadStores, cfg),
+		Planning:     BuildPlanning(beadStores),
 		Health:       buildHealth(ghClient, ctx),
 		Budget:       buildBudget(gov, tokenCollector),
 		CadenceMatrix: buildCadenceMatrix(cfg, agentStatuses),
@@ -791,6 +793,49 @@ func buildBeads(stores map[string]*beads.Store) FrontendBeads {
 		}
 	}
 	return fb
+}
+
+// BuildPlanning computes the governor PLANNING metric block from bead metadata
+// across all stores (Phase 2 planning intelligence). An epic is "active" once it
+// carries a plan_status; "awaiting review" while that status is draft; and
+// "decomposing" (executing) when approved with at least one open child.
+// Replans24h is Phase 3 territory and stays 0.
+func BuildPlanning(stores map[string]*beads.Store) FrontendPlanning {
+	fp := FrontendPlanning{}
+	for _, store := range stores {
+		all := store.List(beads.ListFilter{})
+
+		// Count open children per epic so we can tell executing plans apart from
+		// fully-completed ones.
+		openChildrenByEpic := make(map[string]int)
+		for _, b := range all {
+			if epicID := b.Meta(planning.MetaParentEpic); epicID != "" {
+				if b.Status == beads.StatusOpen || b.Status == beads.StatusInProgress {
+					openChildrenByEpic[epicID]++
+				}
+			}
+		}
+
+		for _, b := range all {
+			if b.Type != beads.TypeEpic {
+				continue
+			}
+			status := b.Meta(planning.MetaPlanStatus)
+			if status == "" {
+				continue // never decomposed
+			}
+			fp.ActivePlans++
+			switch status {
+			case planning.PlanStatusDraft:
+				fp.AwaitingReview++
+			case planning.PlanStatusApproved:
+				if openChildrenByEpic[b.ID] > 0 {
+					fp.Decomposing++
+				}
+			}
+		}
+	}
+	return fp
 }
 
 // BuildBeadsFromConfig uses agent config bead_role to partition bead counts.
