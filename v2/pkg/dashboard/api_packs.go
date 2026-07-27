@@ -221,11 +221,18 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 			s.deps.Config.Governor.Modes[modeName] = mode
 		}
 		for modeName, threshold := range pack.Governor.Thresholds {
-			mode := s.deps.Config.Governor.Modes[modeName]
-			if isFirstApplyOrExpansion || mode.Threshold == 0 {
+			// On first apply / level expansion, seed the pack's threshold. On a
+			// pure merge, only fill a mode that has NO existing entry — never
+			// overwrite an operator-set value. The old `|| mode.Threshold == 0`
+			// clause broke this: threshold 0 is a legitimate operator setting
+			// (e.g. a low QUIET bound), not "unset", so re-applying a pack —
+			// including the apply triggered by an ACMM level bounce — reset the
+			// operator's tuning.
+			mode, present := s.deps.Config.Governor.Modes[modeName]
+			if isFirstApplyOrExpansion || !present {
 				mode.Threshold = threshold
+				s.deps.Config.Governor.Modes[modeName] = mode
 			}
-			s.deps.Config.Governor.Modes[modeName] = mode
 		}
 	}
 

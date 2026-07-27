@@ -261,7 +261,14 @@ type SaaSHive struct {
 	// callers prefer it over the raw placeholder Subdomain and must NOT infer
 	// "claimed" by pattern-matching the placeholder name. Empty = unclaimed
 	// placeholder (or a pre-vanity hive).
-	VanityURL       string                 `json:"vanity_url,omitempty"`
+	VanityURL string `json:"vanity_url,omitempty"`
+	// ClaimDelivered flips true once a claimed spoke first reports back the
+	// assigned org/repos, i.e. the claim payload reached it. Before that the hub
+	// PUSHES org/repos to the spoke (it may still report its old placeholder
+	// project); after that the spoke's dashboard becomes the source of truth and
+	// the hub ADOPTS operator edits instead of pushing. (ACMM is operator-owned
+	// from the start and always adopted, independent of this flag.)
+	ClaimDelivered  bool                   `json:"claim_delivered,omitempty"`
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`

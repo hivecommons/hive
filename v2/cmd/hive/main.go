@@ -563,9 +563,14 @@ func main() {
 
 	dashSrv := dashboard.NewServerWithAuth(cfg.Dashboard.Port, cfg.Dashboard.AuthToken, logger)
 
-	// Persist per-user dashboard sessions next to the config (the PVC in
-	// hosted mode) so direct-route users aren't logged out by pod restarts.
-	dashSrv.EnableSessionPersistence(filepath.Join(filepath.Dir(*configPath), "dashboard-sessions.json"))
+	// Persist per-user dashboard sessions on the PVC (/data) so direct-route
+	// users aren't logged out by pod restarts. NOTE: use /data explicitly, NOT
+	// filepath.Dir(configPath) — the config lives at /etc/hive/hive.yaml, which
+	// is an ephemeral emptyDir (the ConfigMap seed mount), so a sessions file
+	// there is wiped on every pod roll. That was the "re-login on every visit"
+	// bug on direct-route spokes. /data is the CephFS PVC (same place cost/fact
+	// history persist).
+	dashSrv.EnableSessionPersistence("/data/dashboard-sessions.json")
 
 	// Seed token sparkline history now that the dashboard server exists
 	if len(pendingTokenSeed) > 0 {
