@@ -164,7 +164,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// race detector rightly flags. Production behavior is unchanged; tests
 	// that need poller logic call the functions directly.
 	if !testing.Testing() {
-		go s.startProvisionWatcher()
+		go s.startProvisionWatcher(context.Background())
 		go s.StartLatestSHAPoller()
 		// Periodically probe every spoke's unauthenticated /api/status and alert
 		// on any that answer 200 (wide open) — catches auth drift automatically.

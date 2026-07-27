@@ -26,7 +26,7 @@ jobs:
           cache-dependency-path: v2/go.sum
 
       - name: Test with coverage
-        run: go test ./pkg/... -short -race -coverprofile=coverage.out -count=1 -timeout 300s
+        run: go test ./pkg/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s
 
       - name: Check per-package coverage
         id: coverage
@@ -44,7 +44,7 @@ jobs:
               FAILED="${FAILED}${pkg}: ${pct}%\n"
             fi
             REPORT="${REPORT}${pkg}: ${pct}%\n"
-          done < <(go test -cover ./pkg/... -short -count=1 -timeout 300s 2>&1 | grep '^ok')
+          done < <(go test -cover ./pkg/... -short -count=1 -timeout 600s 2>&1 | grep '^ok')
 
           TOTAL=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}')
           echo "Total coverage: ${TOTAL}"

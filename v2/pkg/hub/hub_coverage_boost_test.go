@@ -503,12 +503,12 @@ func TestHandleHeartbeatValidPayload(t *testing.T) {
 	srv.hubSecret = "test-secret"
 
 	payload := HeartbeatPayload{
-		HiveID:      "test-hive",
-		Org:         "myorg",
-		PrimaryRepo: "myrepo",
-		Repos:       []string{"repo1", "repo2"},
+		HiveID:       "test-hive",
+		Org:          "myorg",
+		PrimaryRepo:  "myrepo",
+		Repos:        []string{"repo1", "repo2"},
 		DashboardURL: "https://example.com",
-		SnapshotURL: "https://snapshot.example.com",
+		SnapshotURL:  "https://snapshot.example.com",
 		Agents: []AgentSummary{
 			{Name: "scanner", State: "running"},
 			{Name: "fixer", State: "idle"},

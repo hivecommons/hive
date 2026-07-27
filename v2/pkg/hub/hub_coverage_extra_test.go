@@ -666,13 +666,13 @@ func TestHandleHeartbeatUpdateExistingWithSparkline(t *testing.T) {
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
 		{
-			ID:               "spark-hive",
-			Online:           true,
-			RegisteredAt:     "2024-01-01T00:00:00Z",
-			GitHash:          "old123",
-			IssueHistory:     []SparkPoint{{T: oldTime, V: 3}},
-			PRHistory:        []SparkPoint{{T: oldTime, V: 2}},
-			LastHeartbeat:    time.Now().Format(time.RFC3339),
+			ID:            "spark-hive",
+			Online:        true,
+			RegisteredAt:  "2024-01-01T00:00:00Z",
+			GitHash:       "old123",
+			IssueHistory:  []SparkPoint{{T: oldTime, V: 3}},
+			PRHistory:     []SparkPoint{{T: oldTime, V: 2}},
+			LastHeartbeat: time.Now().Format(time.RFC3339),
 		},
 	}
 	srv.mu.Unlock()

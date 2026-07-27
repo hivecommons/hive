@@ -1091,4 +1091,3 @@ func TestIsCSRFSafeGetAlwaysPasses(t *testing.T) {
 		}
 	}
 }
-

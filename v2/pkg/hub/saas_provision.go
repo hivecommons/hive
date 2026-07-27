@@ -888,11 +888,20 @@ func extractYAMLValue(yamlStr, key string) string {
 	return ""
 }
 
-func (s *HubServer) startProvisionWatcher() {
+// startProvisionWatcher polls provisioning hives until ctx is cancelled. It
+// takes a context so the loop can be stopped for a clean shutdown (and so tests
+// can stop the goroutine rather than leaking it past the test, which otherwise
+// races the package-level state that per-test temp-dir setup rewrites).
+func (s *HubServer) startProvisionWatcher(ctx context.Context) {
 	ticker := time.NewTicker(provisionPollInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 		hives := listSaaSHives()
 		for _, h := range hives {
 			if h.Status != "provisioning" {

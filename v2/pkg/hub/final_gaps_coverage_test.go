@@ -86,10 +86,13 @@ func TestPushGitHubConfigToSpokeRetryThenSucceed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Shorten the retry delay so the test is fast.
-	oldDelay := webhookRetryDelay
+	// Shorten the retry delay AND the per-attempt timeout so the test is fast:
+	// the forced connection failure would otherwise hang each attempt for the
+	// full 30s push timeout (minutes across all retries).
+	oldDelay, oldTimeout := webhookRetryDelay, webhookPushTimeout
 	webhookRetryDelay = time.Millisecond
-	defer func() { webhookRetryDelay = oldDelay }()
+	webhookPushTimeout = 2 * time.Second
+	defer func() { webhookRetryDelay = oldDelay; webhookPushTimeout = oldTimeout }()
 
 	s := &HubServer{logger: slog.Default(), clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke"}}}
 	hive := &RegistryEntry{ID: "h1", ClusterID: "hive-oke", DashboardURL: srv.URL}
