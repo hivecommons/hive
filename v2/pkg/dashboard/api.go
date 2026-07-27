@@ -194,6 +194,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/inception/wiki-name", s.handleInceptionRenameWiki)
 	s.mux.HandleFunc("POST /api/inception/import", s.handleInceptionImport)
 
+	// Plan-review gate (Phase 2 planning intelligence). Mirrors /api/inception/*.
+	s.mux.HandleFunc("GET /api/plan/{epicID}", s.handlePlanTree)
+	s.mux.HandleFunc("POST /api/plan/{epicID}/approve", s.handlePlanApprove)
+	s.mux.HandleFunc("POST /api/plan/{epicID}/reject", s.handlePlanReject)
+	s.mux.HandleFunc("POST /api/plan/{epicID}/child/{childID}", s.handlePlanChild)
+
 	s.mux.HandleFunc("POST /api/chat", s.handleChat)
 
 	s.mux.HandleFunc("GET /api/nous/status", s.handleNousStatus)
