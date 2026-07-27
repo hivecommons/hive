@@ -15,6 +15,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -29,6 +30,18 @@ var staticFS embed.FS
 // registryPath is the on-disk hub registry file. A var (not a const) so tests
 // can redirect it at a temp file; production keeps the default.
 var registryPath = "/data/hub-registry.json"
+
+// hubBannersPath is the on-disk file where admin-sent banners are persisted so
+// they survive hub restarts and upgrades (an in-place upgrade rolls the pod,
+// which would otherwise wipe the in-memory map and silently drop every active
+// banner). A var (not a const) so tests can redirect it at a temp file.
+var hubBannersPath = "/data/saas/hub-banners.json"
+
+// hubBannerMaxAge bounds how long a persisted banner is honored after it was
+// sent. On load, entries older than this are dropped so a long-forgotten banner
+// does not resurrect across an upgrade months later. Admins still clear banners
+// explicitly; this is only a backstop for stale on-disk state.
+const hubBannerMaxAge = 30 * 24 * time.Hour
 
 const (
 	maxHeartbeatAge     = 5 * time.Minute
@@ -207,6 +220,83 @@ type HubBannerEntry struct {
 	SentAt  string `json:"sent_at"`
 }
 
+// saveHubBanners persists the in-memory banner map to the PVC so banners survive
+// hub restarts and upgrades. Caller must NOT hold hubBannersMu — this takes an
+// RLock itself. Writes atomically (tmp + rename) so a crash mid-write never
+// leaves a half-written file. A persistence failure is logged, not fatal: a lost
+// banner is a soft failure, and the admin can resend.
+func (s *HubServer) saveHubBanners() {
+	s.hubBannersMu.RLock()
+	snapshot := make(map[string]*HubBannerEntry, len(s.hubBanners))
+	for id, entry := range s.hubBanners {
+		snapshot[id] = entry
+	}
+	s.hubBannersMu.RUnlock()
+
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		s.logger.Error("failed to marshal hub banners for persistence", "error", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(hubBannersPath), 0o755); err != nil {
+		s.logger.Error("failed to create hub banners dir", "error", err)
+		return
+	}
+	tmpPath := hubBannersPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		s.logger.Error("failed to write hub banners tmp file", "error", err)
+		return
+	}
+	if err := os.Rename(tmpPath, hubBannersPath); err != nil {
+		s.logger.Error("failed to rename hub banners file", "error", err)
+	}
+}
+
+// loadHubBanners reads persisted banners from the PVC into the in-memory map on
+// startup. Entries older than hubBannerMaxAge (by SentAt) are dropped so stale
+// banners do not resurrect long after they were relevant; if any are dropped the
+// pruned set is written back. A missing file is normal (no banners yet).
+func (s *HubServer) loadHubBanners() {
+	data, err := os.ReadFile(hubBannersPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			s.logger.Error("failed to read persisted hub banners", "error", err)
+		}
+		return
+	}
+	var stored map[string]*HubBannerEntry
+	if err := json.Unmarshal(data, &stored); err != nil {
+		s.logger.Error("failed to parse persisted hub banners", "error", err)
+		return
+	}
+
+	pruned := false
+	s.hubBannersMu.Lock()
+	for id, entry := range stored {
+		if entry == nil {
+			pruned = true
+			continue
+		}
+		if sent, perr := time.Parse(time.RFC3339, entry.SentAt); perr == nil {
+			if time.Since(sent) > hubBannerMaxAge {
+				pruned = true
+				continue // drop stale banner
+			}
+		}
+		s.hubBanners[id] = entry
+	}
+	loaded := len(s.hubBanners)
+	s.hubBannersMu.Unlock()
+
+	if loaded > 0 {
+		s.logger.Info("loaded persisted hub banners", "count", loaded)
+	}
+	if pruned {
+		// Rewrite the file without the dropped/stale entries.
+		s.saveHubBanners()
+	}
+}
+
 func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *HubServer {
 	if gitBranch == "" || gitBranch == "unknown" {
 		gitBranch = "v2"
@@ -246,6 +336,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	}
 
 	s.loadRegistry()
+	s.loadHubBanners()
 
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)

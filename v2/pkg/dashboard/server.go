@@ -979,11 +979,18 @@ func (s *Server) ClearSystemAlert(id string) {
 	}
 }
 
-// SetHubBanner sets the hub admin banner displayed on the spoke dashboard.
+// SetHubBanner sets the hub admin banner displayed on the spoke dashboard. It is
+// called on every heartbeat that carries a banner, so it logs the first display
+// only when the banner ID actually changes (a new banner became active), not on
+// every re-delivery of the same one.
 func (s *Server) SetHubBanner(id, message, color string) {
 	s.hubBannerMu.Lock()
-	defer s.hubBannerMu.Unlock()
+	isNew := s.hubBanner == nil || s.hubBanner.ID != id
 	s.hubBanner = &HubBannerState{ID: id, Message: message, Color: color}
+	s.hubBannerMu.Unlock()
+	if isNew && s.logger != nil {
+		s.logger.Info("hub banner displayed", "banner_id", id, "message", message, "color", color)
+	}
 }
 
 // ClearHubBanner removes the hub admin banner.
@@ -991,6 +998,52 @@ func (s *Server) ClearHubBanner() {
 	s.hubBannerMu.Lock()
 	defer s.hubBannerMu.Unlock()
 	s.hubBanner = nil
+}
+
+// handleBannerDismissed records that an authenticated user dismissed the hub
+// banner. Dismissal remains a client-side action (the banner stays in the hub
+// and re-appears for other viewers) — this endpoint only produces an audit line
+// attributing the dismissal to a specific user, so an admin can tell who acted
+// on a banner and when.
+//
+// Only authenticated users with write/owner permissions may dismiss: the
+// roleEnforcement middleware already rejects a "read"-role viewer's POST with
+// 403, and this handler additionally 403s any request it cannot attribute to a
+// signed-in user (no session, no proxy-injected identity). The frontend keeps
+// the banner visible on a non-2xx so a rejected dismissal does not hide it.
+func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ID == "" {
+		jsonError(w, "missing banner id", http.StatusBadRequest)
+		return
+	}
+
+	// Resolve the acting user: a direct-route spoke has a per-user session
+	// cookie; a hub-proxied spoke gets identity injected as X-Hive-User /
+	// X-Hive-Role by nginx. Either establishes an authenticated user.
+	username, role := "", ""
+	if sess := s.sessionFromRequest(r); sess != nil {
+		username, role = sess.Username, sess.Role
+	} else if hubUser := r.Header.Get("X-Hive-User"); hubUser != "" {
+		username, role = hubUser, r.Header.Get("X-Hive-Role")
+	}
+	if username == "" {
+		jsonError(w, "you must be signed in to dismiss this banner", http.StatusForbidden)
+		return
+	}
+	// Defense in depth: reject a read-only user even if the middleware let this
+	// through (e.g. no X-Hive-Role header on a direct-route read session).
+	if role == "read" {
+		jsonError(w, "read-only users cannot dismiss banners", http.StatusForbidden)
+		return
+	}
+
+	if s.logger != nil {
+		s.logger.Info("hub banner dismissed", "banner_id", body.ID, "by", username, "role", role)
+	}
+	jsonResponse(w, map[string]bool{"ok": true})
 }
 
 func (s *Server) SetGitHubAppRequired(required bool) {

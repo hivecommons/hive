@@ -7022,12 +7022,6 @@ const dashboardHTML = `<!DOCTYPE html>
           </div>
           <div id="banner-hive-list" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;background:var(--bg);padding:4px"></div>
         </div>
-        <div style="margin-bottom:12px">
-          <label style="font-size:0.8rem;color:var(--muted);margin-bottom:4px;display:block">Preview</label>
-          <div id="banner-preview" style="padding:12px 16px;border-radius:6px;font-size:0.85rem;background:rgba(22,163,74,0.12);border:1px solid rgba(22,163,74,0.3);color:var(--text)">
-            <em style="opacity:0.6">Type a message above to preview...</em>
-          </div>
-        </div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:8px;padding:16px 32px 32px;flex-shrink:0">
         <button onclick="document.getElementById('banner-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>
@@ -7621,6 +7615,9 @@ func (s *HubServer) handleSendHubBanner(w http.ResponseWriter, r *http.Request) 
 		s.hubBanners[hiveID] = entry
 	}
 	s.hubBannersMu.Unlock()
+	// Persist so the banner survives a hub restart/upgrade (the pod roll would
+	// otherwise wipe the in-memory map and silently drop it).
+	s.saveHubBanners()
 
 	username := s.getAuthUser(r)
 	s.logger.Info("hub banner sent",
@@ -7640,6 +7637,8 @@ func (s *HubServer) handleClearHubBanner(w http.ResponseWriter, r *http.Request)
 	count := len(s.hubBanners)
 	s.hubBanners = make(map[string]*HubBannerEntry)
 	s.hubBannersMu.Unlock()
+	// Persist the cleared (empty) state so banners stay gone across a restart.
+	s.saveHubBanners()
 
 	username := s.getAuthUser(r)
 	s.logger.Info("hub banners cleared", "cleared_count", count, "by", username)

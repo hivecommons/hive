@@ -4799,9 +4799,29 @@
     }
 
     function dismissHubBanner(id) {
-      localStorage.setItem('hub-banner-dismissed-' + id, '1');
-      var el = document.getElementById('hub-banner');
-      if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+      // Record the dismissal server-side so it is attributed to the signed-in
+      // user in the spoke's audit log. The server authorizes: only an
+      // authenticated write/owner user gets a 2xx. We hide the banner ONLY on
+      // success — a read-only or signed-out viewer gets a 403 and the banner
+      // stays visible (their dismissal isn't honored). Dismissal remains
+      // per-browser (localStorage) for the view; the POST is just the audit
+      // trail, so a network failure still lets the user hide it locally.
+      fetch('/api/banner-dismissed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: id })
+      }).then(function(resp) {
+        if (!resp.ok) return; // not authorized to dismiss — leave banner up
+        localStorage.setItem('hub-banner-dismissed-' + id, '1');
+        var el = document.getElementById('hub-banner');
+        if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+      }).catch(function() {
+        // Network/API failure: fall back to a local-only hide so the user is
+        // never stuck with an undismissable banner (no audit line in this case).
+        localStorage.setItem('hub-banner-dismissed-' + id, '1');
+        var el = document.getElementById('hub-banner');
+        if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+      });
     }
 
     function renderSystemAlerts(alerts) {
