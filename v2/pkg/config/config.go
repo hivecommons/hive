@@ -41,8 +41,49 @@ type Config struct {
 	HiveID        string                 `yaml:"hive_id"`
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	Variables     VariablesConfig        `yaml:"variables,omitempty"`
+	Classifier    ClassifierConfig       `yaml:"classifier,omitempty" json:"classifier,omitempty"`
+	Planning      PlanningConfig         `yaml:"planning,omitempty" json:"planning,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+}
+
+// PlanningConfig gates the Phase 4 planning entry points that fire automatically
+// (as opposed to the explicit dashboard "Plan this issue" click, which is always
+// available). Today that is the `plan`/`epic` label trigger: an actionable issue
+// carrying one of those labels auto-mints an epic and requests decomposition.
+type PlanningConfig struct {
+	// PlanFromLabel enables the label trigger. Pointer so an omitted key is
+	// distinguishable from an explicit false: when nil, the trigger falls back to
+	// an ACMM-level gate (on at L4+), so mature hives get it without extra config
+	// while low-maturity hives stay advisory-only. An explicit value overrides the
+	// ACMM gate in either direction.
+	PlanFromLabel *bool `yaml:"plan_from_label,omitempty" json:"plan_from_label,omitempty"`
+}
+
+// PlanFromLabelEnabled reports whether the label trigger should fire, given the
+// hive's ACMM level. Explicit config wins; otherwise the trigger is on at ACMM
+// L4 and above (where the hive is trusted to act, not just advise).
+func (p PlanningConfig) PlanFromLabelEnabled(acmmLevel int) bool {
+	if p.PlanFromLabel != nil {
+		return *p.PlanFromLabel
+	}
+	const planFromLabelMinACMM = 4
+	return acmmLevel >= planFromLabelMinACMM
+}
+
+// ClassifierConfig makes the tier-classification keyword lists (pkg/classify)
+// config-driven and dashboard-visible, mirroring how per-agent lane_keywords
+// drive lane routing. Both fields are optional: when a list is empty, the
+// classifier keeps its built-in default for that tier, so an absent
+// `classifier:` block is byte-for-byte the old hardcoded behavior. Wired via
+// classify.SetTierKeywords from cmd/hive.
+type ClassifierConfig struct {
+	// SimpleKeywords are title substrings that classify an issue as Tier
+	// "Simple" (→ haiku). Empty keeps the built-in default set.
+	SimpleKeywords []string `yaml:"simple_keywords,omitempty" json:"simple_keywords,omitempty"`
+	// ComplexSignals are title substrings that classify an issue as Tier
+	// "Complex" (→ opus). Empty keeps the built-in default set.
+	ComplexSignals []string `yaml:"complex_signals,omitempty" json:"complex_signals,omitempty"`
 }
 
 // VariablesConfig declares operator-defined ${VAR} substitutions and the trust
