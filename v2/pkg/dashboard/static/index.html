@@ -782,9 +782,10 @@
     .repo-issue-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     .repo-issue-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-issue-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* ⧉ Plan action sits beside its issue pill; hidden until the pill row is hovered. */
+    /* ⧉ Plan action sits beside its issue pill. Always visible (so the feature is
+       discoverable) but visually secondary; brightens to full on row hover. */
     .repo-issue-pill-wrap { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
-    .repo-issue-plan { --pill-c: var(--purple); border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; opacity: 0; transition: opacity 0.15s, background 0.15s; }
+    .repo-issue-plan { --pill-c: var(--purple); border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; opacity: 0.75; transition: opacity 0.15s, background 0.15s; }
     .repo-issue-pill-wrap:hover .repo-issue-plan { opacity: 1; }
     .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
     .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
