@@ -782,6 +782,12 @@
     .repo-issue-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     .repo-issue-pill .pill-num { font-weight: 700; white-space: nowrap; }
     .repo-issue-pill .pill-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* ⧉ Plan action sits beside its issue pill; hidden until the pill row is hovered. */
+    .repo-issue-pill-wrap { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
+    .repo-issue-plan { --pill-c: var(--purple); border: 1px solid color-mix(in srgb, var(--pill-c) 40%, transparent); background: color-mix(in srgb, var(--pill-c) 12%, transparent); color: var(--pill-c); font-size: 0.7rem; font-weight: 600; line-height: 1; padding: 3px 6px; border-radius: 999px; cursor: pointer; white-space: nowrap; opacity: 0; transition: opacity 0.15s, background 0.15s; }
+    .repo-issue-pill-wrap:hover .repo-issue-plan { opacity: 1; }
+    .repo-issue-plan:hover { background: color-mix(in srgb, var(--pill-c) 26%, transparent); }
+    .repo-issue-plan:disabled { opacity: 0.5; cursor: default; }
     .repo-pr-pill { --pill-c: var(--purple); text-decoration: none; max-width: 100%; transition: background 0.15s; }
     .repo-pr-pill:hover { background: color-mix(in srgb, var(--pill-c) 24%, transparent); text-decoration: none; }
     .repo-pr-pill.mergeable { --pill-c: var(--green); }
@@ -2473,6 +2479,7 @@
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
   </div>
   <div id="hub-banner" style="display:none"></div>
+  <div id="planning-intro" style="display:none"></div>
   <div id="system-alerts-banner" style="display:none"></div>
   <div class="governor" id="governor"></div>
 
@@ -3120,14 +3127,23 @@
             const plan = window._lastStatus?.planning || {};
             const active = plan.active_plans || 0;
             const awaiting = plan.awaiting_review || 0;
+            const pending = plan.pending_decompose || 0;
+            const paused = !!plan.architect_paused;
             // Highlight when plans await human review — a human-action-required
             // state, surfaced amber like the "N Issues" / ON HOLD indicators.
-            const planClass = awaiting > 0 ? 'gm-alert' : '';
-            const planText = awaiting > 0 ? `${active} (${awaiting} review)` : `${active}`;
-            const planTitle = awaiting > 0
-              ? `${awaiting} plan(s) awaiting human review — decomposed epic children are withheld until approved`
-              : `${active} active plan(s)`;
-            return `<div class="gov-metric" title="${esc(planTitle)}"><span class="gm-label">planning</span><span class="gm-val ${planClass}">${esc(planText)}</span></div>`;
+            const planClass = (awaiting > 0 || paused) ? 'gm-alert' : '';
+            let planText = `${active}`;
+            if (awaiting > 0) planText = `${active} (${awaiting} review)`;
+            if (paused) planText = `⏸ ${planText}`;
+            let planTitle = active > 0 ? `${active} active plan(s)` : '';
+            if (awaiting > 0) planTitle = `${awaiting} plan(s) awaiting human review — decomposed epic children are withheld until approved`;
+            if (paused) planTitle = `⏸ Architect is paused — ${pending} queued plan(s) won't be built until you resume the architect agent.`;
+            else if (pending > 0) planTitle = `${pending} plan(s) queued for the architect to decompose`;
+            // Empty-state discoverability hint when there is no planning activity.
+            if (active === 0 && pending === 0) {
+              planTitle = 'Break a big issue into a plan → click ⧉ Plan on any issue, or add the `plan` label on GitHub.';
+            }
+            return `<div class="gov-metric" title="${esc(planTitle)}"><span class="gm-label">planning</span><span class="gm-val ${planClass}">${esc(planText)}${pending > 0 ? ` <span style="opacity:0.7;font-size:0.85em">+${pending} queued</span>` : ''}</span></div>`;
           })()}
           <div class="oc-gov-gauge">
             <div class="temp-gauge-track" style="background:linear-gradient(to right, var(--green) 0%, var(--green) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) 100%)">
@@ -4490,6 +4506,34 @@
       if (el) { el.style.display = 'none'; el.innerHTML = ''; }
     }
 
+    // maybePlanningIntro shows a ONE-TIME callout the first time planning is
+    // available (there is at least one repo to plan issues from), teaching the
+    // two entry points: the ⧉ Plan button and the `plan` GitHub label. Dismissed
+    // permanently via localStorage.
+    var PLANNING_INTRO_KEY = 'planning-intro-dismissed';
+    function maybePlanningIntro(data) {
+      var el = document.getElementById('planning-intro');
+      if (!el) return;
+      if (localStorage.getItem(PLANNING_INTRO_KEY)) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      var hasRepos = (data && data.repos && data.repos.length > 0);
+      // Only introduce the feature once there is something to plan, and once any
+      // planning activity exists we assume the user has found it — stay quiet.
+      var plan = (data && data.planning) || {};
+      var alreadyUsed = (plan.active_plans || 0) > 0 || (plan.pending_decompose || 0) > 0;
+      if (!hasRepos || alreadyUsed) { el.style.display = 'none'; el.innerHTML = ''; return; }
+      el.style.display = 'block';
+      el.innerHTML = '<div style="background:rgba(124,58,237,0.10);border:1px solid rgba(124,58,237,0.32);border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:center;gap:10px;font-size:0.85rem">'
+        + '<span style="font-size:1.1rem">🧭</span>'
+        + '<span style="flex:1;color:var(--text)"><strong>New: plan a GitHub issue.</strong> Add the <code>plan</code> label to any issue on GitHub — or click <strong>⧉ Plan</strong> on an issue below — and the architect breaks it into a reviewable task plan you approve before work starts.</span>'
+        + '<button onclick="dismissPlanningIntro()" style="background:none;border:none;color:var(--text);opacity:0.6;cursor:pointer;font-size:1.1rem;padding:0 4px" title="Dismiss">✕</button>'
+        + '</div>';
+    }
+    function dismissPlanningIntro() {
+      localStorage.setItem(PLANNING_INTRO_KEY, '1');
+      var el = document.getElementById('planning-intro');
+      if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+    }
+
     function renderSystemAlerts(alerts) {
       var banner = document.getElementById('system-alerts-banner');
       if (!banner) return;
@@ -4845,7 +4889,11 @@
           const title = i.title && i.title.length > MAX_PILL_TITLE_LEN ? i.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (i.title || '');
           const age = pillAge(i.created_at);
           const tip = (i.title || '') + (i.author ? ' — @' + i.author : '') + (age ? ' (' + age + ')' : '');
-          return `<a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>`;
+          const repoFull = r.full || r.name || '';
+          // ⧉ Plan action (Phase 4): mint an epic from this issue and request
+          // decomposition. data-action wires into the delegated click handler.
+          const planBtn = `<button class="repo-issue-plan" data-action="planIssue" data-repo="${esc(repoFull)}" data-number="${i.number}" data-url="${esc(i.url || '')}" data-title="${esc(i.title || '')}" title="Break this issue into a reviewable task plan (architect decomposes it; you approve before work starts)">⧉ Plan</button>`;
+          return `<span class="repo-issue-pill-wrap"><a class="repo-issue-pill" href="${esc(i.url)}" target="_blank" rel="noopener" title="${esc(tip)}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span></a>${planBtn}</span>`;
         }).join('');
         const prPills = (r.openPrs || []).map(p => {
           const title = p.title && p.title.length > MAX_PILL_TITLE_LEN ? p.title.slice(0, MAX_PILL_TITLE_LEN) + '…' : (p.title || '');
@@ -9251,6 +9299,7 @@ function burnAreaChart() {
       renderGitHubAppBanner(data);
       refreshWelcomeAutoChecks(data);
       renderHubBanner(data.hubBanner);
+      maybePlanningIntro(data);
       renderSystemAlerts(data.systemAlerts || []);
       if (!_dropdownOpen && !_configModalOpen) {
         applyPinOverrides(data.agents || []);
@@ -10333,6 +10382,7 @@ function burnAreaChart() {
         case 'toggleRestriction': { const cb = el.querySelector('input[type=checkbox]') || el; toggleRestriction(parseInt(el.dataset.index, 10), cb.checked); } break;
         case 'removeRestriction': removeRestriction(parseInt(el.dataset.index, 10)); break;
         case 'removeAgent': removeAgent(agent); break;
+        case 'planIssue': planIssue(el); break;
         default: break;
       }
     });
@@ -10441,6 +10491,39 @@ function burnAreaChart() {
       if (!data.ok) { showToast('Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
       showToast(`Kicked ${agent}`, 'success');
       if (input) input.value = '';
+    }
+
+    // planIssue (Phase 4 "Plan this issue"): POST the issue to /api/plan/from-issue,
+    // which mints an epic and kicks the architect to decompose it. The response
+    // returns the epic id; decomposition is asynchronous (request-and-poll), so we
+    // surface the epic in the plan-review view once the architect fills it in.
+    async function planIssue(el) {
+      const repo = el.dataset.repo || '';
+      const number = parseInt(el.dataset.number, 10) || 0;
+      const url = el.dataset.url || '';
+      const title = el.dataset.title || '';
+      el.disabled = true;
+      const toast = showToast(`Planning ${repo}#${number || '?'}...`, 'info', true);
+      try {
+        const res = await fetch('/api/plan/from-issue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo, number, url, title }),
+        });
+        const data = await res.json();
+        if (!data.ok) { dismissToast(toast, 'Plan failed: ' + (data.error || 'unknown'), 'error'); el.disabled = false; return; }
+        // The server returns a clear, state-specific message. When the architect
+        // is paused it explains THAT is why the plan is queued and points at the
+        // fix — surface it as a warning so the user notices.
+        const msg = data.message || (`Epic ${data.epic_id} created`);
+        dismissToast(toast, msg, data.architectPaused ? 'error' : 'success');
+        // Open the plan-review view for the new epic if that navigation exists;
+        // otherwise the epic surfaces via the existing "awaiting review" flow.
+        if (typeof openPlanReview === 'function' && data.epic_id) openPlanReview(data.epic_id);
+      } catch (e) {
+        dismissToast(toast, 'Plan failed: ' + e.message, 'error');
+        el.disabled = false;
+      }
     }
 
     async function toggleAgent(agent, currentlyPaused) {
