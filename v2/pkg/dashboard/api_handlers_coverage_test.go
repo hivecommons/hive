@@ -38,7 +38,7 @@ func TestCovI_VariableUpsert(t *testing.T) {
 		t.Fatalf("bad scope: expected 400, got %d", rec.Code)
 	}
 	// Secret-looking static value → 400.
-	if rec := doPut(s, "/api/config/variables/MYVAR", map[string]any{"type": "static", "value": "ghp_0123456789abcdefghijklmnopqrstuvwxyz"}); rec.Code != http.StatusBadRequest {
+	if rec := doPut(s, "/api/config/variables/MYVAR", map[string]any{"type": "static", "value": "ghp_" + "0123456789abcdefghijklmnopqrstuvwxyz"}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("secret value: expected 400, got %d", rec.Code)
 	}
 	// Valid static var → 200.

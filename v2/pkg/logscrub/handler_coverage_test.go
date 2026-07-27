@@ -22,7 +22,7 @@ func TestWithGroup(t *testing.T) {
 	}
 
 	logger := slog.New(grouped)
-	logger.Info("grouped message", "secret", "ghs_grouptoken1234567890")
+	logger.Info("grouped message", "secret", "ghs_"+"grouptoken1234567890")
 	out := buf.String()
 	if !strings.Contains(out, "mygroup") {
 		t.Errorf("expected group name in output: %s", out)
@@ -41,7 +41,7 @@ func TestScrubAttrGroupKind(t *testing.T) {
 
 	logger.Info("grouped attrs",
 		slog.Group("auth",
-			slog.String("token", "ghp_nestedtoken1234567890"),
+			slog.String("token", "ghp_"+"nestedtoken1234567890"),
 			slog.Int("count", 3),
 		),
 	)

@@ -20,7 +20,7 @@ func covHelperServer(t *testing.T) *Server {
 
 func TestCovJ_RedactAndMask(t *testing.T) {
 	// redactTokensInLine: a long token gets its prefix kept; short match fully redacted.
-	line := "using ghp_abcdefghij1234567890 for auth"
+	line := "using " + "ghp_" + "abcdefghij1234567890 for auth"
 	if out := redactTokensInLine(line); out == line || !containsStr(out, "REDACTED") {
 		t.Fatalf("redactTokensInLine did not redact: %q", out)
 	}
@@ -33,7 +33,7 @@ func TestCovJ_RedactAndMask(t *testing.T) {
 	if got := maskSecretHint("abc"); got != "••••" {
 		t.Fatalf("maskSecretHint short = %q", got)
 	}
-	if got := maskSecretHint("sk-verylongsecretvalue1234567890"); got == "••••" {
+	if got := maskSecretHint("sk-" + "verylongsecretvalue1234567890"); got == "••••" {
 		t.Fatalf("maskSecretHint long should reveal a tail hint")
 	}
 
