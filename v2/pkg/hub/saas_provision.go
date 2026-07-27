@@ -22,7 +22,6 @@ var saasHivesDir = "/data/saas/hives"
 const (
 	maxHivesPerUser       = 3
 	maxSaaSHivesTotal     = 0 // 0 = unlimited
-	provisionPollInterval = 30 * time.Second
 	provisionTimeout      = 5 * time.Minute
 	cpuRequest            = "500m"
 	cpuLimit              = "2000m"
@@ -73,6 +72,11 @@ const (
 	sccServiceAccountName = "hive-sa"
 )
 
+// provisionPollInterval is how often startProvisionWatcher polls provisioning
+// hives for readiness. A var (not a const) so tests can drive one loop
+// iteration quickly; production keeps the default.
+var provisionPollInterval = 30 * time.Second
+
 // defaultClusterID is the cluster ID assigned to hives that predate
 // multi-cluster support.
 const defaultClusterID = "hive-oke"
@@ -101,8 +105,9 @@ const (
 )
 
 // clustersConfigPath is the on-disk location where the hub reads cluster
-// definitions. It is a JSON array of ClusterConfig objects.
-const clustersConfigPath = "/data/saas/clusters.json"
+// definitions. It is a JSON array of ClusterConfig objects. A var (not a const)
+// so tests can point it at a temp file; production never reassigns it.
+var clustersConfigPath = "/data/saas/clusters.json"
 
 // ClusterConfig describes a Kubernetes cluster that the hub can provision
 // hive spokes onto. Each cluster has its own kubeconfig, storage backend,

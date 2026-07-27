@@ -18,10 +18,13 @@ const (
 	webhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET"
 	webhookSecretPath   = "/data/saas/webhook-secret.key"
 	webhookMaxBodyBytes = 256 * 1024
-	webhookPushTimeout    = 30 * time.Second
-	webhookPushRetries    = 3
-	webhookRetryDelay     = 5 * time.Second
+	webhookPushTimeout  = 30 * time.Second
+	webhookPushRetries  = 3
 )
+
+// webhookRetryDelay is the backoff between spoke config-push retries. A var (not
+// a const) so tests can shorten it; production keeps the default.
+var webhookRetryDelay = 5 * time.Second
 
 type installationEvent struct {
 	Action       string `json:"action"`

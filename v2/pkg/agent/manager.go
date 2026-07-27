@@ -1452,7 +1452,10 @@ func (m *Manager) buildProjectPreamble(agent *AgentProcess) string {
 		mode.Emoji(), mode.String(), prPolicy)
 }
 
-const metricsCachePath = "/data/metrics/agent-metrics-cache.json"
+// metricsCachePath is a var (not const) so tests can point it at a temp file
+// to exercise readCoveragePreamble without a real /data volume. Production
+// value is unchanged.
+var metricsCachePath = "/data/metrics/agent-metrics-cache.json"
 
 func (m *Manager) readCoveragePreamble() string {
 	data, err := os.ReadFile(metricsCachePath)
@@ -3114,9 +3117,17 @@ func backendCommand(backend string) (string, bool) {
 	return binary, ok
 }
 
-const (
+// sharedCopilotConfigPath and sharedClaudeCredentialPath are vars (not consts)
+// solely so tests can redirect them to temp files and exercise the config/token
+// helpers (copilotConfigHasTokens, clearExpiredTokens, configHasTokens,
+// fixSharedConfigPerms) without a real /data volume. Production values are
+// unchanged; nothing on the launch path mutates them.
+var (
 	sharedCopilotConfigPath    = "/data/home/.copilot/config.json"
 	sharedClaudeCredentialPath = "/data/home/.claude/.credentials.json"
+)
+
+const (
 	sharedConfigDesiredMode    = 0o660
 	tokenRestartCooldownSec    = 60  // minimum seconds between token-triggered restarts per agent
 	expiredTokenHangTimeoutSec = 180 // blank pane after this many seconds triggers token purge + restart
@@ -4308,8 +4319,13 @@ var cliProcessMarkers = []string{
 // concurrent claude processes on different models. tmux kill-session alone is
 // insufficient — a detached node/claude child can survive the session's SIGHUP
 // and keep hitting the gateway (403-flooding the pane on a stale model).
+// procRoot is the /proc mount the reaper scans. A var (not const) so tests can
+// point it at a fake proc tree on non-Linux hosts; production value is "/proc"
+// and nothing on the launch path mutates it.
+var procRoot = "/proc"
+
 func (m *Manager) reapAgentCLI(agent *AgentProcess) int {
-	const procPath = "/proc"
+	procPath := procRoot
 	marker := "HIVE_AGENT=" + agent.Name
 	// Specialist managers deliberately reuse Hive's existing role names. The
 	// manager-specific namespace is therefore part of the process identity:
@@ -4419,7 +4435,7 @@ func environHasName(environ, name string) bool {
 // sends SIGKILL to each. Hung copilot binaries ignore SIGINT, so brute-force
 // cleanup is needed to prevent orphan accumulation on the shared SQLite store.
 func killAgentProcesses(uid int, logger *slog.Logger) int {
-	const procPath = "/proc"
+	procPath := procRoot
 	entries, err := os.ReadDir(procPath)
 	if err != nil {
 		logger.Warn("failed to read /proc for process cleanup", "uid", uid, "error", err)

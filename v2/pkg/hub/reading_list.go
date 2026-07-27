@@ -22,9 +22,6 @@ import (
 // good fetch, to a baked-in seed list. New Apr-2026+ articles are picked up
 // automatically as Medium updates, while the section is never empty.
 const (
-	// readingListURL is the KubeStellar Medium curated list fetched server-side.
-	readingListURL = "https://kubestellar.medium.com/list/reading-list"
-
 	// readingListMediumBase resolves bare "/slug" article hrefs to absolute URLs.
 	readingListMediumBase = "https://kubestellar.medium.com"
 
@@ -47,6 +44,11 @@ const (
 // published on or after April 1, 2026 are included; everything earlier (2025,
 // 2024, …) is excluded.
 var readingListCutoff = time.Date(2026, time.April, 1, 0, 0, 0, 0, time.UTC)
+
+// readingListURLVar is the KubeStellar Medium curated list fetched server-side.
+// It is a var (not a const) so tests can point fetchReadingList at an httptest
+// server; production never reassigns it.
+var readingListURLVar = "https://kubestellar.medium.com/list/reading-list"
 
 // ReadingArticle is a single Medium article in the reading list.
 type ReadingArticle struct {
@@ -147,7 +149,7 @@ func (s *HubServer) readingList() ([]ReadingArticle, time.Time, string) {
 // follows the outbound-HTTP pattern used elsewhere in this package
 // (&http.Client{Timeout: ...}, http.NewRequest).
 func (s *HubServer) fetchReadingList() ([]ReadingArticle, error) {
-	req, err := http.NewRequest(http.MethodGet, readingListURL, nil)
+	req, err := http.NewRequest(http.MethodGet, readingListURLVar, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -41,7 +41,11 @@ var WatchedHomeDirs = []string{
 // GooseLogsDir is the rolling log directory goose 1.37 creates on startup.
 // Goose panics if this directory doesn't exist, so the watcher ensures it
 // is created at startup with correct permissions.
-const GooseLogsDir = "/data/home/.local/state/goose/logs/cli"
+//
+// A var (not const) so tests can point the permissions watcher at a writable
+// temp tree (together with WatchedHomeDirs) to exercise ensureWatchedDirs /
+// fixPermissions / fixEntry. Production value is unchanged.
+var GooseLogsDir = "/data/home/.local/state/goose/logs/cli"
 
 // StartPermissionsWatcher runs a background goroutine that periodically
 // scans WatchedHomeDirs and fixes files/directories that were created

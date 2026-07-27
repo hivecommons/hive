@@ -171,6 +171,9 @@ func (s *HubServer) registerSaaSRoutes() {
 var startHubBackgroundWorkers = func(s *HubServer) {
 	go s.startProvisionWatcher()
 	go s.StartLatestSHAPoller()
+	// Periodically probe every spoke's unauthenticated /api/status and alert
+	// on any that answer 200 (wide open) — catches auth drift automatically.
+	go s.StartAuthAudit(context.Background())
 }
 
 func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -2454,6 +2457,14 @@ type branchHeadInfo struct {
 	ImageStatus string
 }
 
+// githubAPIBase and ghcrBase are the GitHub/GHCR origins used by the SHA-poll
+// fetch helpers. They are vars (not consts) so tests can point those helpers at
+// a local httptest server; production never reassigns them.
+var (
+	githubAPIBase = "https://api.github.com"
+	ghcrBase      = "https://ghcr.io"
+)
+
 var (
 	latestSHAMu sync.RWMutex
 	// latestSHAByBranch only ever advances to SHAs whose container image is
@@ -2564,7 +2575,7 @@ func discoveredImageBranches() []string {
 // treat "unknown" as "don't filter" rather than hiding valid branches.
 func listRepoBranches(client *http.Client) []string {
 	var names []string
-	url := "https://api.github.com/repos/kubestellar/hive/branches?per_page=100"
+	url := githubAPIBase + "/repos/kubestellar/hive/branches?per_page=100"
 	const maxPages = 10
 	for page := 0; url != "" && page < maxPages; page++ {
 		req, _ := http.NewRequest("GET", url, nil)
@@ -2608,7 +2619,7 @@ func nextGitHubLink(link string) string {
 // ghcr.io/kubestellar/hive and returns the branch name of every "<x>-latest"
 // tag (the "<x>" part).
 func listLatestImageBranches(client *http.Client) []string {
-	tokenResp, err := client.Get("https://ghcr.io/token?scope=repository:kubestellar/hive:pull")
+	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:kubestellar/hive:pull")
 	if err != nil {
 		return nil
 	}
@@ -2625,7 +2636,7 @@ func listLatestImageBranches(client *http.Client) []string {
 	// "<branch>-latest" tags we want may live on a later page — follow Link
 	// until exhausted (bounded) rather than reading only the first page.
 	branchSet := map[string]struct{}{}
-	next := "https://ghcr.io/v2/kubestellar/hive/tags/list?n=1000"
+	next := ghcrBase + "/v2/kubestellar/hive/tags/list?n=1000"
 	const maxPages = 20 // bound: up to ~20k tags
 	for page := 0; next != "" && page < maxPages; page++ {
 		req, _ := http.NewRequest("GET", next, nil)
@@ -2672,7 +2683,7 @@ func nextLinkURL(link string) string {
 		}
 		u := part[start+1 : end]
 		if strings.HasPrefix(u, "/") {
-			return "https://ghcr.io" + u
+			return ghcrBase + u
 		}
 		return u
 	}
@@ -3088,7 +3099,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	// Step 1: get the latest commit SHA on the branch from the GitHub API
 	const shaFetchTimeout = 10 * time.Second
 	client := &http.Client{Timeout: shaFetchTimeout}
-	branchURL := fmt.Sprintf("https://api.github.com/repos/kubestellar/hive/branches/%s", branch)
+	branchURL := fmt.Sprintf("%s/repos/kubestellar/hive/branches/%s", githubAPIBase, branch)
 	req, _ := http.NewRequest("GET", branchURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
@@ -3183,7 +3194,7 @@ const dockerWorkflowFile = "docker.yml"
 // unavailable so the caller can keep the last-known status instead of
 // flapping ready/building on transient errors.
 func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Logger) string {
-	runsURL := fmt.Sprintf("https://api.github.com/repos/kubestellar/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", dockerWorkflowFile, fullSHA)
+	runsURL := fmt.Sprintf("%s/repos/kubestellar/hive/actions/workflows/%s/runs?head_sha=%s&per_page=1", githubAPIBase, dockerWorkflowFile, fullSHA)
 	req, _ := http.NewRequest("GET", runsURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
@@ -3226,7 +3237,7 @@ func fetchImageBuildStatus(client *http.Client, fullSHA string, logger *slog.Log
 // Uses a separate endpoint that's less likely to be rate-limited since it's called
 // only once per new SHA (not every poll cycle).
 func fetchCommitMessage(client *http.Client, fullSHA string, logger *slog.Logger) string {
-	commitURL := fmt.Sprintf("https://api.github.com/repos/kubestellar/hive/commits/%s", fullSHA)
+	commitURL := fmt.Sprintf("%s/repos/kubestellar/hive/commits/%s", githubAPIBase, fullSHA)
 	req, _ := http.NewRequest("GET", commitURL, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
@@ -3278,7 +3289,7 @@ func backfillCommitMessage(client *http.Client, branch string, logger *slog.Logg
 // Uses an anonymous token (public package) and a HEAD on the manifest endpoint.
 func ghcrTagExists(client *http.Client, tag string, logger *slog.Logger) bool {
 	// Get anonymous pull token
-	tokenResp, err := client.Get("https://ghcr.io/token?scope=repository:kubestellar/hive:pull")
+	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:kubestellar/hive:pull")
 	if err != nil {
 		logger.Warn("SHA poll: GHCR token request failed", "error", err)
 		return false
@@ -3291,7 +3302,7 @@ func ghcrTagExists(client *http.Client, tag string, logger *slog.Logger) bool {
 		return false
 	}
 
-	manifestURL := fmt.Sprintf("https://ghcr.io/v2/kubestellar/hive/manifests/%s", tag)
+	manifestURL := fmt.Sprintf("%s/v2/kubestellar/hive/manifests/%s", ghcrBase, tag)
 	req, _ := http.NewRequest("HEAD", manifestURL, nil)
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
 	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
@@ -4223,16 +4234,16 @@ func sameStringSliceFold(a, b []string) bool {
 // the real project the placeholder is being claimed for, plus optional GitHub
 // App credentials to deliver to the spoke via the heartbeat channel.
 type AssignHiveRequest struct {
-	Owner         string `json:"owner"`
-	Org           string `json:"org"`
-	Repos         string `json:"repos"`
-	PrimaryRepo   string `json:"primary_repo"`
-	ProjectName   string `json:"project_name"`
-	ACMMLevel     int    `json:"acmm_level"`
-	IsPublic      bool   `json:"is_public"`
-	AppID         string `json:"app_id"`
+	Owner          string `json:"owner"`
+	Org            string `json:"org"`
+	Repos          string `json:"repos"`
+	PrimaryRepo    string `json:"primary_repo"`
+	ProjectName    string `json:"project_name"`
+	ACMMLevel      int    `json:"acmm_level"`
+	IsPublic       bool   `json:"is_public"`
+	AppID          string `json:"app_id"`
 	InstallationID string `json:"installation_id"`
-	AppPrivateKey string `json:"app_private_key"`
+	AppPrivateKey  string `json:"app_private_key"`
 }
 
 // handleAssignHive assigns an available placeholder hive to a real owner/project
@@ -5335,7 +5346,7 @@ const dashboardHTML = `<!DOCTYPE html>
         return;
       }
       var repoPath = function(h) { return h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : h.primaryRepo || ''; };
-      var rows = hives.map(function(h, i) {
+      var buildRow = function(h, i) {
         var dot = h.online ? healthBadge(h) : '<span class="online-dot off"></span>';
         var rp = repoPath(h);
         var repoLink = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '';
@@ -5493,7 +5504,46 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + sparkline(h.prHistory, '#3b82f6', 50, 14) + (h.actionablePRs || 0) + '</td>' +
           '<td>' + (h.activeContributors || 0) + '</td>' +
           '</tr>' + pendingExpandRow;
-      }).join('');
+      };
+      /* Section-header row: a labeled separator spanning all columns, styled to
+         match the table's muted uppercase heading treatment (see .hive-table th). */
+      var TOTAL_COLUMNS_HEADER = 13;
+      var sectionHeader = function(label, count) {
+        return '<tr class="hive-section-head"><td colspan="' + TOTAL_COLUMNS_HEADER + '" ' +
+          'style="padding:14px 12px 6px;color:var(--muted);font-weight:600;font-size:0.75rem;' +
+          'text-transform:uppercase;letter-spacing:0.5px;text-align:left">' +
+          esc(label) + ' (' + count + ')</td></tr>';
+      };
+      var rows;
+      if (_isAdmin) {
+        /* Admin-only organizational aid: split into assigned (real, claimed)
+           hives and unassigned placeholders. A placeholder is signalled by
+           provStatus === 'available' (primary), with an org 'available-*'
+           prefix as a fallback for placeholders that have not yet reported
+           provStatus. Preserve incoming order so each section stays sorted. */
+        var assigned = [], unassigned = [];
+        for (var _hi = 0; _hi < hives.length; _hi++) {
+          var _h = hives[_hi];
+          var _isPlaceholder = _h.provStatus === 'available' ||
+            (_h.org && _h.org.indexOf('available-') === 0);
+          if (_isPlaceholder) unassigned.push(_h); else assigned.push(_h);
+        }
+        /* Global running index across BOTH groups so menu ids (hive-menu-<i>)
+           never collide between sections and the ⋮ dropdowns keep working. */
+        var _idx = 0;
+        rows = '';
+        if (assigned.length > 0) {
+          rows += sectionHeader('Assigned hives', assigned.length);
+          for (var _ai = 0; _ai < assigned.length; _ai++) { rows += buildRow(assigned[_ai], _idx++); }
+        }
+        if (unassigned.length > 0) {
+          rows += sectionHeader('Unassigned hives', unassigned.length);
+          for (var _ui = 0; _ui < unassigned.length; _ui++) { rows += buildRow(unassigned[_ui], _idx++); }
+        }
+      } else {
+        /* Non-admin: single flat list, exactly as before. */
+        rows = hives.map(buildRow).join('');
+      }
       document.getElementById('hives-container').innerHTML =
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
         '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +

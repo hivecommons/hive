@@ -39,7 +39,9 @@ import (
 // OpenRouter endpoint constants. All OpenRouter URLs live here as named consts
 // (no magic strings): the base API, the OAuth authorize page, the PKCE
 // key-exchange endpoint, and the key-info (credit) endpoint.
-const (
+// OpenRouter endpoints. Declared as var (not const) so tests can point them at
+// an httptest server; production code never reassigns them.
+var (
 	// BaseURL is the OpenAI-compatible base URL a created gateway routes through.
 	BaseURL = "https://openrouter.ai/api/v1"
 	// AuthURL is the OAuth authorize page the sponsor is sent to (via QR/link).

@@ -12,14 +12,20 @@ import (
 )
 
 const (
+	oauthTimeout     = 10 * time.Second
+	cookieMaxAgeDays = 7 // login session cookie lifetime
+)
+
+// These GitHub.com OAuth/API endpoints are vars (not consts) so tests can point
+// the token-exchange and user-fetch flows at a local httptest server; the hub
+// never reassigns them in production.
+var (
 	// defaultGHAuthorizeURL is the GitHub.com OAuth authorization endpoint.
 	defaultGHAuthorizeURL = "https://github.com/login/oauth/authorize"
 	// defaultGHTokenURL is the GitHub.com OAuth token exchange endpoint.
 	defaultGHTokenURL = "https://github.com/login/oauth/access_token"
 	// defaultGHUserURL is the GitHub.com API user endpoint.
 	defaultGHUserURL = "https://api.github.com/user"
-	oauthTimeout     = 10 * time.Second
-	cookieMaxAgeDays = 7 // login session cookie lifetime
 )
 
 func (s *HubServer) registerOAuth() {

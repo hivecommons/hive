@@ -3,6 +3,7 @@ package trajectory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -129,6 +130,92 @@ func TestLaneSkipsNonDivergentAndExemptAndPaused(t *testing.T) {
 	}
 	if len(sink.audits) != 0 {
 		t.Errorf("no audits expected, got %v", sink.audits)
+	}
+}
+
+// TestLaneReviewErrorFailsOpen: a reviewer transport error must be logged and
+// skipped, never pausing the agent (fail-open on outage).
+func TestLaneReviewErrorFailsOpen(t *testing.T) {
+	src := &fakeSource{agents: []AgentView{
+		{Name: "scanner", Running: true, Intent: "fix the bug", Transcript: "splitting token"},
+	}}
+	sink := &fakeSink{}
+	// Point the reviewer at an endpoint with no listener so the HTTP call
+	// itself fails (transport error), exercising Run's error branch.
+	reviewer, err := NewReviewer(Config{Endpoint: "http://127.0.0.1:1", Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lane := NewLane(reviewer, src, sink, LaneConfig{OnDivergence: "pause"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	lane.Run(context.Background())
+
+	if len(src.paused) != 0 {
+		t.Errorf("reviewer outage must not pause, got %v", src.paused)
+	}
+	if len(sink.audits) != 0 {
+		t.Errorf("reviewer outage must not audit, got %v", sink.audits)
+	}
+}
+
+// TestLanePauseFailureFallsThroughToAlert: when Pause itself errors, the
+// divergence must still be surfaced via audit/alert/notify.
+func TestLanePauseFailureFallsThroughToAlert(t *testing.T) {
+	srv := verdictServer(t, true)
+	defer srv.Close()
+	src := &pauseFailSource{fakeSource: fakeSource{agents: []AgentView{
+		{Name: "scanner", Running: true, Intent: "fix the bug", Transcript: "splitting token"},
+	}}}
+	sink := &fakeSink{}
+	lane := newTestLane(t, src, sink, srv.URL, LaneConfig{OnDivergence: "pause"})
+	lane.Run(context.Background())
+
+	if len(sink.audits) != 1 || !strings.HasPrefix(sink.audits[0], "scanner/trajectory-pause") {
+		t.Errorf("expected pause audit despite Pause error, got %v", sink.audits)
+	}
+	if len(sink.alerts) != 1 {
+		t.Errorf("expected alert despite Pause error, got %v", sink.alerts)
+	}
+	if len(sink.notifs) != 1 {
+		t.Errorf("expected notify despite Pause error, got %v", sink.notifs)
+	}
+}
+
+type pauseFailSource struct {
+	fakeSource
+}
+
+func (p *pauseFailSource) Pause(name, trigger, reason string) error {
+	return errPauseBoom
+}
+
+var errPauseBoom = errors.New("pause boom")
+
+// TestItoa covers zero, positive, negative, and multi-digit paths.
+func TestItoa(t *testing.T) {
+	cases := map[int]string{
+		0:     "0",
+		5:     "5",
+		42:    "42",
+		-7:    "-7",
+		-1234: "-1234",
+		999:   "999",
+	}
+	for in, want := range cases {
+		if got := itoa(in); got != want {
+			t.Errorf("itoa(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestSanitize collapses newlines, carriage returns, and tabs to spaces.
+func TestSanitize(t *testing.T) {
+	in := "line one\nline two\r\nwith\ttab"
+	want := "line one line two  with tab"
+	if got := sanitize(in); got != want {
+		t.Errorf("sanitize = %q, want %q", got, want)
+	}
+	if got := sanitize("no special chars"); got != "no special chars" {
+		t.Errorf("sanitize should be identity when nothing to strip, got %q", got)
 	}
 }
 
