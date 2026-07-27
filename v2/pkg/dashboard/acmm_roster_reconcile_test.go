@@ -196,3 +196,51 @@ func TestApplyPackReconcilesStalePackFields(t *testing.T) {
 		t.Error("scanner still on stale advisory template after L5 apply")
 	}
 }
+
+// TestApplyPackPreservesOperatorThreshold guards the fix for the governor
+// threshold revert (Joe Runde / spyre): a pure re-apply of the SAME level (a
+// merge, not an expansion) must NOT overwrite an operator-set threshold — even
+// when that threshold is 0, which the old `mode.Threshold == 0` clause wrongly
+// treated as "unset".
+func TestApplyPackPreservesOperatorThreshold(t *testing.T) {
+	srv := newFullServer(t)
+
+	// First apply at L2 seeds the pack's thresholds + roster.
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2): %v", err)
+	}
+
+	// Operator tunes QUIET to 0 (a legitimate low bound) via the dashboard.
+	const mode = "quiet"
+	m := srv.deps.Config.Governor.Modes[mode]
+	m.Threshold = 0
+	srv.deps.Config.Governor.Modes[mode] = m
+
+	// Re-apply the SAME level — a pure merge (no agents created). The operator's
+	// 0 must survive; the old code reset it to the pack default.
+	if _, err := srv.ApplyPack(2); err != nil {
+		t.Fatalf("ApplyPack(2) re-apply: %v", err)
+	}
+	if got := srv.deps.Config.Governor.Modes[mode].Threshold; got != 0 {
+		t.Errorf("operator threshold clobbered on merge: quiet = %d, want 0 (preserved)", got)
+	}
+
+	// A brand-new mode with no existing entry IS still seeded on merge.
+	pack, err := config.ACMMPackByLevel(2)
+	if err != nil {
+		t.Fatalf("ACMMPackByLevel(2): %v", err)
+	}
+	for modeName, want := range pack.Governor.Thresholds {
+		if modeName == mode {
+			continue // operator-overridden above
+		}
+		delete(srv.deps.Config.Governor.Modes, modeName)
+		if _, err := srv.ApplyPack(2); err != nil {
+			t.Fatalf("ApplyPack(2) after deleting %q: %v", modeName, err)
+		}
+		if got := srv.deps.Config.Governor.Modes[modeName].Threshold; got != want {
+			t.Errorf("absent mode %q not seeded on merge: got %d, want %d", modeName, got, want)
+		}
+		break
+	}
+}

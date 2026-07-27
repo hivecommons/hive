@@ -4180,41 +4180,86 @@ func (s *HubServer) handleAvailablePlaceholders(w http.ResponseWriter, r *http.R
 // record, is still an unclaimed placeholder (statusAvailable), or the spoke
 // already reports the recorded project. The spoke's currently-reported values
 // (curOrg/curRepos/curPrimary/curACMM) let the hub stop sending once matched.
-// adoptSpokeACMMLevel updates the hub's stored ACMM level for a CLAIMED hive to
-// match the level the spoke just reported, when they differ. It is called only
-// once the project is already reconciled (projectConfigForHiveID == nil), so a
-// difference here means the operator changed the level on the dashboard — the
-// dashboard is the source of truth for a running hive. Without this the hub
-// would re-push its stale meta level every beat and silently revert the change.
+// adoptSpokeProjectConfig makes the hub's meta.json track what a CLAIMED hive's
+// spoke reports for its OPERATOR-CONTROLLED runtime settings: org, repos,
+// primary_repo, and ACMM level. Once a placeholder is claimed, the spoke
+// dashboard is the source of truth for these — an operator can re-point repos or
+// change the level there. Without adopting them, the reconcile in
+// projectConfigForHiveID keeps re-pushing meta's old values and silently reverts
+// the operator's edit every heartbeat (the spyre / Joe Runde bug — originally
+// just ACMM, but org/repos have the identical failure mode).
 //
-// No-op for unclaimed placeholders (assign owns their level) and when unchanged.
-func (s *HubServer) adoptSpokeACMMLevel(hiveID string, spokeLevel int) {
+// Guardrails:
+//   - No-op for a hive with no SaaS record or an unclaimed placeholder
+//     (statusAvailable) — assign owns those until claimed.
+//   - Never adopt EMPTY/zero values: a spoke reporting empty org/repos or level 0
+//     (e.g. mid-boot, before its config loads) must not wipe/downgrade meta.
+//   - Only writes when something actually changed.
+func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, primary string, level int) {
 	h := loadSaaSHive(hiveID)
 	if h == nil || h.Status == statusAvailable {
 		return // no record, or an unclaimed placeholder — assign controls it
 	}
-	if h.ACMMLevel == spokeLevel {
-		return // already in sync
+	changed := false
+	prevLevel := h.ACMMLevel
+
+	// ACMM is operator-owned from the start — always adopt a non-zero level.
+	if level > 0 && level != h.ACMMLevel {
+		h.ACMMLevel = level
+		changed = true
 	}
-	prev := h.ACMMLevel
-	h.ACMMLevel = spokeLevel
+
+	// Org/repos: while the claim hasn't been delivered yet, the hub is still
+	// PUSHING them down and the spoke may report its OLD placeholder project —
+	// do NOT adopt that (it would clobber the real claim). Mark the claim
+	// delivered once the spoke reports the matching org/repos, and only AFTER
+	// delivery treat the spoke as the source of truth for repo edits.
+	orgMatches := org != "" && strings.EqualFold(org, h.Org)
+	reposMatch := len(repos) > 0 && sameStringSliceFold(repos, h.Repos)
+	primaryMatches := primary == "" || strings.EqualFold(primary, h.PrimaryRepo)
+	if !h.ClaimDelivered {
+		if orgMatches && reposMatch && primaryMatches {
+			h.ClaimDelivered = true
+			changed = true
+		}
+	} else {
+		if org != "" && !strings.EqualFold(org, h.Org) {
+			h.Org = org
+			changed = true
+		}
+		if len(repos) > 0 && !sameStringSliceFold(repos, h.Repos) {
+			h.Repos = repos
+			changed = true
+		}
+		if primary != "" && !strings.EqualFold(primary, h.PrimaryRepo) {
+			h.PrimaryRepo = primary
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
 	if err := saveSaaSHive(h); err != nil {
-		s.logger.Warn("failed to persist spoke-reported ACMM level to meta",
-			"hive_id", hiveID, "level", spokeLevel, "error", err)
+		s.logger.Warn("failed to persist spoke-reported project config to meta",
+			"hive_id", hiveID, "error", err)
 		return
 	}
 	// Keep the in-memory registry consistent so the UI and the next
-	// projectConfigForHiveID comparison see the adopted level immediately.
+	// projectConfigForHiveID comparison see the adopted values immediately.
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == hiveID {
-			s.registry.Hives[i].ACMMLevel = spokeLevel
+			s.registry.Hives[i].Org = h.Org
+			s.registry.Hives[i].Repos = h.Repos
+			s.registry.Hives[i].PrimaryRepo = h.PrimaryRepo
+			s.registry.Hives[i].ACMMLevel = h.ACMMLevel
 			break
 		}
 	}
 	s.mu.Unlock()
-	s.logger.Info("adopted dashboard-set ACMM level from spoke heartbeat",
-		"hive_id", hiveID, "was", prev, "now", spokeLevel)
+	s.logger.Info("adopted dashboard-set project config from spoke heartbeat",
+		"hive_id", hiveID, "org", h.Org, "primary_repo", h.PrimaryRepo,
+		"acmm_was", prevLevel, "acmm_now", h.ACMMLevel)
 }
 
 func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int, curURL string) *HeartbeatProjectConfig {
@@ -4243,23 +4288,30 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		// Incomplete/stale record (a pre-claim hive) — leave the spoke alone.
 		return nil
 	}
-	// Already matching — stop sending (mirrors AuthorizedUsers "leave alone"
-	// semantics once the spoke has caught up). Include the vanity URL: if it's
-	// set but the spoke hasn't adopted it yet, keep sending so the URL propagates.
-	urlMatched := h.VanityURL == "" || curURL == h.VanityURL
-	if strings.EqualFold(curOrg, h.Org) &&
-		sameStringSliceFold(curRepos, h.Repos) &&
-		strings.EqualFold(curPrimary, primary) &&
-		curACMM == h.ACMMLevel &&
-		urlMatched {
-		return nil
+	// What the hub still PUSHES to the spoke, and until when:
+	//   - org/repos/primary_repo: pushed only until the claim is DELIVERED (the
+	//     spoke first reports the assigned project). After delivery the spoke's
+	//     dashboard owns them and the caller adopts operator edits instead.
+	//   - vanity URL: pushed until the spoke first reports it back.
+	//   - ACMM level: NEVER pushed — operator-owned from the start, always
+	//     adopted by the caller. Including it here (as the old code did) made any
+	//     dashboard level change get reverted every beat (the spyre bug).
+	// curACMM is unused for the push decision (kept for signature/back-compat).
+	_ = curACMM
+	needClaimPush := !h.ClaimDelivered &&
+		!(strings.EqualFold(curOrg, h.Org) &&
+			sameStringSliceFold(curRepos, h.Repos) &&
+			strings.EqualFold(curPrimary, primary))
+	needURLPush := h.VanityURL != "" && curURL != h.VanityURL
+	if !needClaimPush && !needURLPush {
+		return nil // nothing left to push
 	}
 	return &HeartbeatProjectConfig{
 		Org:          h.Org,
 		Repos:        h.Repos,
 		PrimaryRepo:  primary,
 		ACMMLevel:    h.ACMMLevel,
-		DashboardURL: h.VanityURL, // empty until assign sets it
+		DashboardURL: h.VanityURL,
 	}
 }
 
@@ -4386,6 +4438,10 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.IsPublic = body.IsPublic
 	h.Status = ""
 	h.Error = ""
+	// A (re)assignment is a new claim payload: reset delivery so the hub pushes
+	// this project to the spoke until it reports the new org/repos back, before
+	// letting the spoke's dashboard own them.
+	h.ClaimDelivered = false
 	// Derive a stable, friendly vanity URL from the claimed project so the user
 	// sees hosted-<org>-<repo>-*.<domain> instead of the raw placeholder host.
 	// Compute once (idempotent re-assign keeps the same URL) and only when the

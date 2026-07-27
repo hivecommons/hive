@@ -646,6 +646,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// that reaches heartbeat-only clusters (vllm-d) — the hub cannot push
 	// config there over kubectl. A nil return means "spoke already matches, or
 	// no SaaS record / still a placeholder" — send nothing.
+	// Org/repos/primary_repo/ACMM are operator-controlled on the spoke dashboard
+	// once a hive is claimed, so the spoke's reported values are authoritative:
+	// adopt them into meta every beat. This runs BEFORE the reconcile below,
+	// which now only delivers the vanity URL. Without it, an operator's dashboard
+	// edit (repos or level) is reverted every heartbeat — the spyre / Joe Runde
+	// bug. (No-op for unclaimed placeholders and for empty/zero reported values.)
+	s.adoptSpokeProjectConfig(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, clampInt(payload.ACMMLevel, 0, 6))
+
 	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL); projCfg != nil {
 		resp.ProjectConfig = projCfg
 		s.logger.Info("heartbeat: delivering claimed project config to spoke",
@@ -654,15 +662,6 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"primary_repo", projCfg.PrimaryRepo,
 			"acmm_level", projCfg.ACMMLevel,
 		)
-	} else {
-		// Already reconciled (projCfg == nil): the spoke's project matches meta,
-		// so the hub is no longer pushing. In THIS state a difference in the
-		// spoke-reported ACMM level means the operator changed it on the
-		// dashboard — adopt it into meta instead of fighting it next beat.
-		// Without this, a dashboard level bump is silently reverted: the spoke
-		// reports the new level, the hub sees level != meta and re-pushes the
-		// old meta level, and the spoke drops back (the Joe Runde / spyre bug).
-		s.adoptSpokeACMMLevel(payload.HiveID, clampInt(payload.ACMMLevel, 0, 6))
 	}
 
 	// Deliver a funded OpenRouter gateway to a firewalled/heartbeat-only spoke.

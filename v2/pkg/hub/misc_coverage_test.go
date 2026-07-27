@@ -152,22 +152,29 @@ func TestProjectConfigForHiveID(t *testing.T) {
 		t.Errorf("incomplete claim -> %+v, want nil", got)
 	}
 
-	// Complete claim, spoke not yet matching -> returns config.
-	saveSaaSHive(&SaaSHive{ID: "full", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3})
-	got := projectConfigForHiveID("full", "", nil, "", 0, "")
-	if got == nil || got.Org != "acme" || got.ACMMLevel != 3 {
-		t.Errorf("complete claim -> %+v, want org=acme acmm=3", got)
+	// Freshly-claimed hive (ClaimDelivered=false), spoke still reporting a stale
+	// placeholder project -> hub PUSHES the real claim until the spoke reports it.
+	saveSaaSHive(&SaaSHive{ID: "fresh", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3})
+	if got := projectConfigForHiveID("fresh", "placeholder", nil, "old", 0, ""); got == nil || got.Org != "acme" {
+		t.Errorf("undelivered claim, stale spoke -> %+v, want claim pushed (org=acme)", got)
 	}
 
-	// Spoke already matches -> nil (stop sending).
+	// Delivered claim (ClaimDelivered=true): org/repos/ACMM are now operator-owned
+	// and adopted by the caller, not pushed here — so projectConfigForHiveID
+	// returns nil regardless of what the spoke reports (nothing to push).
+	saveSaaSHive(&SaaSHive{ID: "full", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3, ClaimDelivered: true})
 	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 3, ""); got != nil {
-		t.Errorf("matched spoke -> %+v, want nil", got)
+		t.Errorf("delivered claim -> %+v, want nil (org/repos/ACMM are adopted, not pushed)", got)
+	}
+	// Even a spoke reporting a different level -> still nil (no push; adopt path handles it).
+	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 2, ""); got != nil {
+		t.Errorf("differing ACMM -> %+v, want nil (adopted, not pushed)", got)
 	}
 
 	// Vanity URL set but spoke hasn't adopted it -> keep sending (with the URL),
-	// even though org/repos/acmm already match.
-	saveSaaSHive(&SaaSHive{ID: "van", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3, VanityURL: "https://vanity.example/"})
-	got = projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "")
+	// even though the claim is delivered and org/repos/acmm already match.
+	saveSaaSHive(&SaaSHive{ID: "van", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3, ClaimDelivered: true, VanityURL: "https://vanity.example/"})
+	got := projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "")
 	if got == nil || got.DashboardURL != "https://vanity.example/" {
 		t.Errorf("vanity not yet adopted -> %+v, want DashboardURL set", got)
 	}
@@ -217,29 +224,60 @@ func TestHandleClusterHealth(t *testing.T) {
 	clusterHealthCacheMu.Unlock()
 }
 
-// TestAdoptSpokeACMMLevel verifies the hub adopts a dashboard-set ACMM level
-// reported by a claimed spoke (the Joe Runde / spyre revert bug), and leaves
-// unclaimed placeholders and no-op cases alone.
-func TestAdoptSpokeACMMLevel(t *testing.T) {
+// TestAdoptSpokeProjectConfig verifies the hub's adopt path:
+//   - ACMM level is operator-owned from the start and always adopted (the Joe
+//     Runde / spyre revert bug);
+//   - org/repos/primary follow the ClaimDelivered handshake: before the spoke
+//     first reports the claimed project, hub-pushed values are authoritative and
+//     spoke reports do NOT adopt (a stale placeholder must not win); the first
+//     matching report flips ClaimDelivered, and only afterwards do dashboard
+//     edits to org/repos get adopted.
+//
+// It also leaves unclaimed placeholders and empty/no-op reports alone.
+func TestAdoptSpokeProjectConfig(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
 	s := &HubServer{logger: slog.Default()}
 
-	// Claimed hive at level 2; spoke reports 3 (operator bumped it) -> adopt.
+	// Freshly-claimed hive (ClaimDelivered=false). ACMM is adopted immediately,
+	// but org/repos edits reported before delivery are IGNORED (could be a stale
+	// placeholder still reporting old values). A report that MATCHES the claim
+	// flips ClaimDelivered.
 	saveSaaSHive(&SaaSHive{ID: "claimed", Status: "running", Org: "o", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2})
-	s.adoptSpokeACMMLevel("claimed", 3)
-	if h := loadSaaSHive("claimed"); h == nil || h.ACMMLevel != 3 {
-		t.Errorf("claimed hive: meta ACMM = %v, want 3 (adopted)", h)
+
+	// Pre-delivery: spoke reports a DIFFERENT org/repos (stale) but a new level.
+	// -> adopt the level (3) only; org/repos stay as the claim; not yet delivered.
+	s.adoptSpokeProjectConfig("claimed", "stale", []string{"old"}, "old", 3)
+	if h := loadSaaSHive("claimed"); h == nil || h.ACMMLevel != 3 || h.Org != "o" || len(h.Repos) != 1 || h.ClaimDelivered {
+		t.Errorf("pre-delivery stale report: meta = %+v, want acmm=3 org=o repos=[r] ClaimDelivered=false", h)
 	}
 
-	// Unclaimed placeholder: assign owns the level -> NOT adopted.
-	saveSaaSHive(&SaaSHive{ID: "ph", Status: statusAvailable, ACMMLevel: 2})
-	s.adoptSpokeACMMLevel("ph", 5)
-	if h := loadSaaSHive("ph"); h == nil || h.ACMMLevel != 2 {
-		t.Errorf("placeholder: meta ACMM = %v, want 2 (unchanged)", h)
+	// Spoke now reports the actual claimed project -> flips ClaimDelivered.
+	s.adoptSpokeProjectConfig("claimed", "o", []string{"r"}, "r", 3)
+	if h := loadSaaSHive("claimed"); h == nil || !h.ClaimDelivered {
+		t.Errorf("matching report should mark ClaimDelivered: %+v", h)
+	}
+
+	// Post-delivery: operator changes repos on the dashboard -> adopted.
+	s.adoptSpokeProjectConfig("claimed", "o", []string{"r", "r2"}, "r2", 4)
+	if h := loadSaaSHive("claimed"); h == nil || h.ACMMLevel != 4 || len(h.Repos) != 2 || h.PrimaryRepo != "r2" {
+		t.Errorf("post-delivery edit: meta = %+v, want acmm=4 repos=[r r2] primary=r2 (adopted)", h)
+	}
+
+	// EMPTY/zero reported values must NOT wipe or downgrade meta (mid-boot spoke).
+	s.adoptSpokeProjectConfig("claimed", "", nil, "", 0)
+	if h := loadSaaSHive("claimed"); h == nil || h.ACMMLevel != 4 || len(h.Repos) != 2 || h.Org != "o" {
+		t.Errorf("empty report clobbered meta: %+v, want unchanged", h)
+	}
+
+	// Unclaimed placeholder: assign owns it -> NOT adopted.
+	saveSaaSHive(&SaaSHive{ID: "ph", Status: statusAvailable, ACMMLevel: 2, Org: "orig"})
+	s.adoptSpokeProjectConfig("ph", "hijack", []string{"x"}, "x", 5)
+	if h := loadSaaSHive("ph"); h == nil || h.ACMMLevel != 2 || h.Org != "orig" {
+		t.Errorf("placeholder: meta = %+v, want unchanged (assign owns it)", h)
 	}
 
 	// No record -> no panic, no-op.
-	s.adoptSpokeACMMLevel("missing", 4)
+	s.adoptSpokeProjectConfig("missing", "o", []string{"r"}, "r", 4)
 }
