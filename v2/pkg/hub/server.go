@@ -82,6 +82,13 @@ type RegistryEntry struct {
 	GitHubAppPermIssue        string             `json:"githubAppPermIssue,omitempty"`
 	PendingGitHubAppInstall   bool               `json:"pendingGitHubAppInstall,omitempty"`
 	PendingGitHubAppInstallAt time.Time          `json:"pendingGitHubAppInstallAt,omitempty"`
+	// Fleet contribution counts reported by the spoke (nil = not reported /
+	// not yet computed). Aggregated across public, non-stale hives into the
+	// /api/fleet-stats total. Pointers preserve the nil-vs-zero distinction so
+	// a hive that never reported is never counted as a zero.
+	PRsMerged90d   *int `json:"prsMerged90d,omitempty"`
+	PRsRejected90d *int `json:"prsRejected90d,omitempty"`
+	CVEsClosed     *int `json:"cvesClosed,omitempty"`
 }
 
 type SparkPoint struct {
@@ -252,6 +259,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/registry", s.handleRegistry)
 	s.mux.HandleFunc("GET /api/hub/leaderboard", s.handleLeaderboard)
 	s.mux.HandleFunc("GET /api/hub/stats", s.handleStats)
+	s.mux.HandleFunc("GET /api/fleet-stats", s.handleFleetStats)
 	s.mux.HandleFunc("GET /api/hub/version", s.handleHubVersion)
 	s.mux.HandleFunc("DELETE /api/hub/registry/{id}", s.handleRegistryDelete)
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeProxy)
@@ -466,6 +474,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return time.Time{}
 		}(),
+		PRsMerged90d:   clampFleetCount(payload.PRsMerged90d),
+		PRsRejected90d: clampFleetCount(payload.PRsRejected90d),
+		CVEsClosed:     clampFleetCount(payload.CVEsClosed),
 	}
 
 	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
@@ -917,6 +928,77 @@ func (s *HubServer) handleStats(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// FleetStats is the aggregated, fleet-wide contribution total exposed at
+// GET /api/fleet-stats and rendered by the public landing page's hero-proof
+// strip. It sums the spoke-reported counts across every PUBLIC, non-stale
+// hive, so the numbers are a true fleet total (every managed repo of every
+// live spoke) rather than a single org's figures.
+type FleetStats struct {
+	ReposManaged int    `json:"repos_managed"`
+	PRsMerged    int    `json:"prs_merged"`
+	PRsRejected  int    `json:"prs_rejected"`
+	CVEsClosed   int    `json:"cves_closed"`
+	Hives        int    `json:"hives"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+// computeFleetStats aggregates fleet-wide contribution counts across public,
+// non-stale hives. A hive that never reported a given count (nil pointer) is
+// skipped for that count — the aggregate reflects only hives with real data,
+// so a not-yet-computed zero is never fabricated into the total. Distinct
+// repos are counted across hives (deduplicated by org/repo reference) so two
+// hives on the same repo don't double-count it.
+//
+// Caller must hold s.mu (read or write).
+func (s *HubServer) computeFleetStats() FleetStats {
+	var fs FleetStats
+	repoSet := make(map[string]struct{})
+	for _, h := range s.registry.Hives {
+		if !h.IsPublic || !h.Online {
+			continue
+		}
+		fs.Hives++
+		for _, r := range h.Repos {
+			if r == "" {
+				continue
+			}
+			// Normalize a bare "repo" to "org/repo" so the same repo reported
+			// with and without an org prefix isn't counted twice.
+			key := r
+			if !strings.Contains(r, "/") && h.Org != "" {
+				key = h.Org + "/" + r
+			}
+			repoSet[key] = struct{}{}
+		}
+		if h.PRsMerged90d != nil {
+			fs.PRsMerged += *h.PRsMerged90d
+		}
+		if h.PRsRejected90d != nil {
+			fs.PRsRejected += *h.PRsRejected90d
+		}
+		if h.CVEsClosed != nil {
+			fs.CVEsClosed += *h.CVEsClosed
+		}
+	}
+	fs.ReposManaged = len(repoSet)
+	return fs
+}
+
+func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	s.markStaleHives()
+	s.mu.Unlock()
+
+	s.mu.RLock()
+	fs := s.computeFleetStats()
+	s.mu.RUnlock()
+	fs.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+	data, _ := json.Marshal(fs)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(data)
+}
+
 // removeRegistryEntry removes a hive from the in-memory registry by ID.
 func (s *HubServer) removeRegistryEntry(id, by string) {
 	s.mu.Lock()
@@ -1207,6 +1289,24 @@ func clampInt(v, min, max int) int {
 		return max
 	}
 	return v
+}
+
+// maxFleetCount bounds a single hive's reported fleet contribution count, so a
+// malicious or buggy spoke can't inflate the public fleet total with an absurd
+// value. Ten million PRs from one hive is already far beyond plausible.
+const maxFleetCount = 10_000_000
+
+// clampFleetCount validates a spoke-reported fleet count pointer. nil stays nil
+// (the hive reported nothing — it must NOT be aggregated as a zero). A negative
+// value is treated as nil (garbage → don't count). Otherwise it is clamped to
+// [0, maxFleetCount] and returned as a fresh pointer (never aliasing the
+// caller's payload).
+func clampFleetCount(v *int) *int {
+	if v == nil || *v < 0 {
+		return nil
+	}
+	c := clampInt(*v, 0, maxFleetCount)
+	return &c
 }
 
 func clampInt64(v, min, max int64) int64 {
