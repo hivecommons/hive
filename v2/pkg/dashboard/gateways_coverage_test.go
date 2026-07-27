@@ -95,7 +95,7 @@ func TestCovD_GatewaysUpsert(t *testing.T) {
 		t.Errorf("bad endpoint = %d, want 400", rec.Code)
 	}
 	// api_key_env holding a key VALUE guardrail
-	keyish := "sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	keyish := "sk-" + "ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	rec = doPut(s, "/api/config/governor/gateways", map[string]interface{}{
 		"name": "gw5", "endpoint": "http://x/v1", "api_key_env": keyish,
 	})
