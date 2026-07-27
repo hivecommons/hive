@@ -220,7 +220,8 @@ func (reporter *normalVisualServiceHealthReporter) update(mutate func(*normalVis
 
 func normalVisualCycleHealthy(err error) bool {
 	return err == nil || errors.Is(err, normalservice.ErrNoDispatch) || errors.Is(err, normalservice.ErrOpenPullRequest) ||
-		errors.Is(err, normalservice.ErrFinalVerdictPending) || errors.Is(err, integrated.ErrRunInProgress)
+		errors.Is(err, normalservice.ErrFinalVerdictPending) || errors.Is(err, integrated.ErrRunInProgress) ||
+		errors.Is(err, integrated.ErrNormalVisualSetupBaselinePending) || errors.Is(err, integrated.ErrSetupBaselineLifecycleHold)
 }
 
 func normalVisualCycleErrorClass(err error) string {

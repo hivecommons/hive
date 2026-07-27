@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,6 +29,8 @@ type normalVisualVerifiedPullRequest interface {
 
 type normalVisualPullRequestFetcher func(context.Context, hivegithub.VisualHivePullRequestBundleRequest) (normalVisualVerifiedPullRequest, error)
 type normalVisualPullRequestStateInspector func(context.Context, string, string, int, string, string, string, string) (hivegithub.ManagedPullRequestSnapshot, error)
+type normalVisualPullRequestGateInspector func(context.Context, string, int) (hivegithub.PullRequestGate, error)
+type normalVisualPullRequestReviewFetcher func(context.Context, hivegithub.PullRequestArtifactRequest) (hivegithub.VerifiedPullRequestArtifact, error)
 
 // normalVisualPullRequestVerifier is the sole post-Worker verdict adapter. It
 // discovers and verifies the exact GitHub run/artifacts through pkg/github,
@@ -40,6 +43,8 @@ type normalVisualPullRequestVerifier struct {
 	loadConfig   func() (integrated.Config, int, error)
 	fetch        normalVisualPullRequestFetcher
 	inspectState normalVisualPullRequestStateInspector
+	inspectGate  normalVisualPullRequestGateInspector
+	fetchReview  normalVisualPullRequestReviewFetcher
 	actionsAppID func(context.Context) (int64, error)
 }
 
@@ -79,6 +84,9 @@ func (verifier *normalVisualPullRequestVerifier) VerifyPullRequest(ctx context.C
 		DestinationDir: filepath.Join(current.StateDir, "visual-hive", "pr-verifier"), MaxACMM: maxACMM,
 	})
 	if err != nil {
+		if errors.Is(err, hivegithub.ErrNoSuccessfulVisualHivePullRequestRun) {
+			return verifier.verifyFailedOrPendingPullRequest(ctx, request, current, repositoryID)
+		}
 		return normalservice.PullRequestVerdictReceipt{}, err
 	}
 	snapshot, err := verified.Receipt()
@@ -107,6 +115,145 @@ func (verifier *normalVisualPullRequestVerifier) VerifyPullRequest(ctx context.C
 		HeadSHA: snapshot.Identity.Source.Head.SHA, Status: snapshot.Identity.Check.Conclusion,
 		Receipt: receiptBytes, ReceiptSHA256: snapshot.ReceiptSHA256,
 	}, nil
+}
+
+type normalVisualFailedPullRequestReceiptIdentity struct {
+	SchemaVersion       string `json:"schema_version"`
+	Repository          string `json:"repository"`
+	RepositoryID        string `json:"repository_id"`
+	PullRequestNumber   int    `json:"pull_request_number"`
+	PullRequestURL      string `json:"pull_request_url"`
+	BaseBranch          string `json:"base_branch"`
+	BaseSHA             string `json:"base_sha"`
+	HeadBranch          string `json:"head_branch"`
+	HeadSHA             string `json:"head_sha"`
+	WorkflowRunID       int64  `json:"workflow_run_id"`
+	WorkflowRunAttempt  int    `json:"workflow_run_attempt"`
+	WorkflowName        string `json:"workflow_name"`
+	WorkflowPath        string `json:"workflow_path"`
+	WorkflowEvent       string `json:"workflow_event"`
+	Conclusion          string `json:"conclusion"`
+	RunURL              string `json:"run_url"`
+	ArtifactID          int64  `json:"artifact_id"`
+	ArtifactName        string `json:"artifact_name"`
+	ArtifactIndexSHA256 string `json:"artifact_index_sha256"`
+	Authority           string `json:"authority"`
+}
+
+// verifyFailedOrPendingPullRequest handles only the state excluded from the
+// successful bundle verifier. A pending run remains pending. A completed red
+// run must first pass the separate review-artifact verifier before its exact
+// check evidence can move the Worker lifecycle to needs_revision. The receipt
+// is durable observation only: it cannot complete, consume, merge, or resolve
+// the repair.
+func (verifier *normalVisualPullRequestVerifier) verifyFailedOrPendingPullRequest(
+	ctx context.Context,
+	request normalservice.PullRequestVerdictRequest,
+	current integrated.Config,
+	repositoryID int64,
+) (normalservice.PullRequestVerdictReceipt, error) {
+	gate, err := verifier.inspectPullRequestGate(ctx, current.Repository, request.PullRequestNumber)
+	if err != nil {
+		return normalservice.PullRequestVerdictReceipt{}, err
+	}
+	if gate.Number != request.PullRequestNumber || gate.URL != request.PullRequestURL || !gate.Open || gate.Merged ||
+		gate.BaseBranch != request.BaseBranch || !strings.EqualFold(gate.BaseSHA, request.BaseSHA) ||
+		!strings.EqualFold(gate.HeadSHA, request.HeadSHA) {
+		return normalservice.PullRequestVerdictReceipt{}, errors.New("exact-head failed-verdict gate differs from the existing Worker PR")
+	}
+	state := strings.ToLower(strings.TrimSpace(gate.VisualHiveCheckState))
+	switch state {
+	case "", "pending", "queued", "in_progress", "requested", "waiting":
+		return normalservice.PullRequestVerdictReceipt{}, normalservice.ErrFinalVerdictPending
+	case "failure":
+		// Continue below only for one independently provenance-verified failed
+		// pull_request workflow bound to the exact head.
+	default:
+		return normalservice.PullRequestVerdictReceipt{}, fmt.Errorf("exact-head Visual Hive PR check ended in unsupported state %q", state)
+	}
+	if !gate.VisualHiveProvenanceVerified || gate.VisualHiveWorkflowRunID <= 0 ||
+		gate.VisualHiveWorkflowPath != normalVisualPullRequestWorkflowPath ||
+		gate.VisualHiveWorkflowEvent != "pull_request" {
+		return normalservice.PullRequestVerdictReceipt{}, errors.New("failed exact-head Visual Hive PR check lacks trusted workflow provenance")
+	}
+	review, err := verifier.fetchPullRequestReview(ctx, hivegithub.PullRequestArtifactRequest{
+		Repository: current.Repository, PullRequestNumber: request.PullRequestNumber,
+		ExpectedWorkflowRunID: gate.VisualHiveWorkflowRunID, ExpectedHeadSHA: request.HeadSHA,
+		ExpectedHeadBranch: request.HeadBranch, ExpectedWorkflowName: normalVisualPullRequestWorkflowName,
+		ExpectedWorkflowPath: normalVisualPullRequestWorkflowPath, ArtifactName: "visual-hive-pr",
+		DestinationDir: filepath.Join(current.StateDir, "visual-hive", "pr-review"),
+	})
+	if err != nil {
+		return normalservice.PullRequestVerdictReceipt{}, err
+	}
+	if review.RepositoryID != strconv.FormatInt(repositoryID, 10) || review.PullRequestNumber != request.PullRequestNumber ||
+		review.CommitSHA != request.HeadSHA || review.HeadBranch != request.HeadBranch ||
+		review.WorkflowRunID != gate.VisualHiveWorkflowRunID || review.WorkflowRunAttempt <= 0 ||
+		review.WorkflowName != normalVisualPullRequestWorkflowName ||
+		review.WorkflowPath != normalVisualPullRequestWorkflowPath || review.Conclusion != "failure" ||
+		review.ArtifactName != "visual-hive-pr" || review.ArtifactID <= 0 ||
+		review.ReviewSchemaVersion != visualhive.ReviewEvidenceSchemaVersion ||
+		len(review.ArtifactIndexSHA256) != sha256.Size*2 {
+		return normalservice.PullRequestVerdictReceipt{}, errors.New("verified failed review artifact differs from the exact Worker PR gate")
+	}
+	if _, err := hex.DecodeString(review.ArtifactIndexSHA256); err != nil {
+		return normalservice.PullRequestVerdictReceipt{}, errors.New("verified failed review artifact has an invalid content index digest")
+	}
+	checks := normalVisualCheckEvidence(gate.Checks)
+	if err := verifier.lifecycle.MarkChecksWithEvidence(
+		request.RepositoryFingerprint,
+		request.HeadSHA,
+		false,
+		normalVisualCheckSummary(gate.Checks),
+		checks,
+	); err != nil {
+		return normalservice.PullRequestVerdictReceipt{}, err
+	}
+	identity := normalVisualFailedPullRequestReceiptIdentity{
+		SchemaVersion: "hive.normal-visual-pr-failure.v1",
+		Repository:    current.Repository, RepositoryID: strconv.FormatInt(repositoryID, 10),
+		PullRequestNumber: request.PullRequestNumber, PullRequestURL: request.PullRequestURL,
+		BaseBranch: request.BaseBranch, BaseSHA: strings.ToLower(request.BaseSHA),
+		HeadBranch: request.HeadBranch, HeadSHA: strings.ToLower(request.HeadSHA),
+		WorkflowRunID: review.WorkflowRunID, WorkflowRunAttempt: review.WorkflowRunAttempt,
+		WorkflowName: review.WorkflowName, WorkflowPath: review.WorkflowPath, WorkflowEvent: "pull_request",
+		Conclusion: review.Conclusion, RunURL: review.RunURL,
+		ArtifactID: review.ArtifactID, ArtifactName: review.ArtifactName,
+		ArtifactIndexSHA256: strings.ToLower(review.ArtifactIndexSHA256),
+		Authority:           "check-evidence-only; no completion, consume, merge, or resolution authority",
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		return normalservice.PullRequestVerdictReceipt{}, err
+	}
+	digest := sha256.Sum256(encoded)
+	return normalservice.PullRequestVerdictReceipt{
+		HeadSHA: request.HeadSHA, Status: review.Conclusion, Receipt: encoded,
+		ReceiptSHA256: hex.EncodeToString(digest[:]),
+	}, nil
+}
+
+func normalVisualCheckEvidence(checks []hivegithub.CheckObservation) []visualhive.CheckEvidence {
+	result := make([]visualhive.CheckEvidence, 0, len(checks))
+	for _, check := range checks {
+		result = append(result, visualhive.CheckEvidence{
+			Name: check.Name, State: check.State, URL: check.URL,
+			ProvenanceVerified: check.ProvenanceVerified, WorkflowRunID: check.WorkflowRunID,
+			WorkflowPath: check.WorkflowPath, WorkflowEvent: check.WorkflowEvent,
+		})
+	}
+	return result
+}
+
+func normalVisualCheckSummary(checks []hivegithub.CheckObservation) string {
+	parts := make([]string, 0, len(checks))
+	for _, check := range checks {
+		parts = append(parts, fmt.Sprintf("%s=%s", check.Name, check.State))
+	}
+	if len(parts) == 0 {
+		return "no hosted checks observed"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ObservePullRequestState reuses Hive's existing exact managed-PR inspector as
@@ -203,6 +350,26 @@ func (verifier *normalVisualPullRequestVerifier) inspectPullRequestState(ctx con
 		return hivegithub.ManagedPullRequestSnapshot{}, errors.New("normal Visual Hive GitHub client is unavailable")
 	}
 	return verifier.github.InspectManagedPullRequestExact(ctx, repository, repositoryID, number, marker, branch, headSHA, base)
+}
+
+func (verifier *normalVisualPullRequestVerifier) inspectPullRequestGate(ctx context.Context, repository string, number int) (hivegithub.PullRequestGate, error) {
+	if verifier.inspectGate != nil {
+		return verifier.inspectGate(ctx, repository, number)
+	}
+	if verifier.github == nil {
+		return hivegithub.PullRequestGate{}, errors.New("normal Visual Hive GitHub client is unavailable")
+	}
+	return verifier.github.InspectPullRequestGate(ctx, repository, number)
+}
+
+func (verifier *normalVisualPullRequestVerifier) fetchPullRequestReview(ctx context.Context, request hivegithub.PullRequestArtifactRequest) (hivegithub.VerifiedPullRequestArtifact, error) {
+	if verifier.fetchReview != nil {
+		return verifier.fetchReview(ctx, request)
+	}
+	if verifier.github == nil {
+		return hivegithub.VerifiedPullRequestArtifact{}, errors.New("normal Visual Hive GitHub client is unavailable")
+	}
+	return verifier.github.FetchAndVerifyPullRequestArtifact(ctx, request)
 }
 
 func (verifier *normalVisualPullRequestVerifier) resolveActionsAppID(ctx context.Context) (int64, error) {

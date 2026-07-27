@@ -48,7 +48,7 @@ func TestNormalVisualSetupBaselineRecoversMissingCheckpointAndFailsClosed(t *tes
 	client := hivegithub.NewClientForTest(server.URL, "owner", []string{"repo"}, slog.Default())
 
 	err = reconcileNormalVisualSetupBaselineBeforeProduction(context.Background(), store, config, client)
-	if err == nil || !strings.Contains(err.Error(), "recovered missing required setup baseline checkpoint") || dispatches != 0 {
+	if err == nil || !errors.Is(err, ErrSetupBaselineLifecycleHold) || !strings.Contains(err.Error(), "recovered missing required setup baseline checkpoint") || dispatches != 0 {
 		t.Fatalf("normal production did not stop at recovered setup baseline: dispatches=%d err=%v", dispatches, err)
 	}
 	intent, exists, loadErr := store.LoadSetupBaselineIntent()
@@ -95,7 +95,7 @@ func TestNormalVisualSetupBaselineHeldReplayIsIdempotentAndNeverDispatches(t *te
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		err := reconcileNormalVisualSetupBaselineBeforeProduction(context.Background(), store, config, client)
-		if err == nil || !strings.Contains(err.Error(), "requires exact approval") {
+		if err == nil || !errors.Is(err, ErrSetupBaselineLifecycleHold) || !strings.Contains(err.Error(), "requires exact approval") {
 			t.Fatalf("held replay %d escaped setup baseline gate: %v", attempt+1, err)
 		}
 		held, holdErr := NormalVisualWorkRequiresSetupQuiescence(stateDir)

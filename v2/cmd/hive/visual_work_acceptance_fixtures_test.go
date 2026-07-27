@@ -279,13 +279,20 @@ func acceptanceV3BundleDigest(manifest visualhive.Manifest) string {
 	acceptanceDigestCollection(stream, "files", files)
 	observations := make([][]byte, 0, len(manifest.Observations))
 	for _, observation := range manifest.Observations {
-		observations = append(observations, acceptanceDigestRecord("observation",
+		fields := []acceptanceDigestField{
 			acceptanceDigestField{"repositoryFingerprint", observation.RepositoryFingerprint}, acceptanceDigestField{"fingerprint", observation.Fingerprint},
 			acceptanceDigestField{"publicationRole", observation.PublicationRole}, acceptanceDigestField{"rootCauseKey", observation.RootCauseKey}, acceptanceDigestArray("blockedByRootKeys", observation.BlockedByRootKeys),
 			acceptanceDigestField{"state", observation.State}, acceptanceDigestField{"issueKind", observation.IssueKind}, acceptanceDigestField{"severity", observation.Severity}, acceptanceDigestField{"owningAgentHint", observation.OwningAgentHint},
 			acceptanceDigestField{"title", observation.Title}, acceptanceDigestField{"body", observation.Body}, acceptanceDigestArray("labels", observation.Labels), acceptanceDigestArray("sourceArtifacts", observation.SourceArtifacts),
-			acceptanceDigestArray("affectedContracts", observation.AffectedContracts), acceptanceDigestField{"validationCommand", observation.ValidationCommand}, acceptanceDigestField{"observedAt", observation.ObservedAt},
-			acceptanceDigestField{"firstSeenAt", observation.FirstSeenAt}, acceptanceDigestField{"sourceArtifact", observation.SourceArtifact}))
+			acceptanceDigestArray("affectedContracts", observation.AffectedContracts),
+		}
+		if observation.AffectedFiles != nil {
+			fields = append(fields, acceptanceDigestArray("affectedFiles", observation.AffectedFiles))
+		}
+		fields = append(fields,
+			acceptanceDigestField{"validationCommand", observation.ValidationCommand}, acceptanceDigestField{"observedAt", observation.ObservedAt},
+			acceptanceDigestField{"firstSeenAt", observation.FirstSeenAt}, acceptanceDigestField{"sourceArtifact", observation.SourceArtifact})
+		observations = append(observations, acceptanceDigestRecord("observation", fields...))
 	}
 	acceptanceDigestCollection(stream, "observations", observations)
 	stream.Write(acceptanceDigestRecord("scan", acceptanceDigestField{"scope", manifest.Scan.Scope}, acceptanceDigestField{"authoritativeForResolution", strconv.FormatBool(manifest.Scan.AuthoritativeForResolution)}, acceptanceDigestArray("evaluatedContracts", manifest.Scan.EvaluatedContracts), acceptanceDigestArray("evaluatedFiles", manifest.Scan.EvaluatedFiles), acceptanceDigestField{"testPlanVersion", manifest.Scan.TestPlanVersion}, acceptanceDigestField{"toolRegistryVersion", manifest.Scan.ToolRegistryVersion}))

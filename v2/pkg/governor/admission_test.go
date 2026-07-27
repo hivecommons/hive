@@ -38,6 +38,22 @@ func TestAdmitWorkUsesNormalGovernorStateAndRecordsReasons(t *testing.T) {
 	}
 }
 
+func TestBindAdmissionRequestClearsCadenceWhenCurrentModeIsUnconfigured(t *testing.T) {
+	gov := New(config.GovernorConfig{Modes: map[string]config.ModeConfig{
+		"idle": {Cadences: map[string]string{"quality": "1m"}},
+	}}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	admitted := gov.BindAdmissionRequest(WorkAdmissionRequest{Role: "quality"})
+	if admitted.ConfiguredCadence != "1m" {
+		t.Fatalf("initial cadence = %q, want 1m", admitted.ConfiguredCadence)
+	}
+
+	gov.SetMode(ModeBusy)
+	current := gov.BindAdmissionRequest(admitted)
+	if current.GovernorMode != ModeBusy || current.ConfiguredCadence != "" {
+		t.Fatalf("unconfigured current mode retained stale admission policy: %+v", current)
+	}
+}
+
 func TestGovernorAgentSnapshotAndAdmissionDigestAreDeeplyImmutable(t *testing.T) {
 	enabled, include := true, true
 	agents := map[string]config.AgentConfig{"quality": {

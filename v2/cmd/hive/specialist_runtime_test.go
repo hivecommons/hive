@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -136,6 +137,16 @@ func TestSpecialistModelFromProviderArgsIsNarrowAndDeterministic(t *testing.T) {
 		if _, err := specialistModelFromProviderArgs(args); err == nil {
 			t.Errorf("unsafe provider args were accepted: %v", args)
 		}
+	}
+}
+
+func TestIntegratedSetupCodexProviderUsesExplicitBoundedHome(t *testing.T) {
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	t.Setenv("CODEX_HOME", codexHome)
+	provider := integratedSetupCodexProvider("/opt/hive/codex/bin/codex", []string{"--model=gpt-5"})
+	if provider.Command != "/opt/hive/codex/bin/codex" || provider.CodexHome != codexHome ||
+		!reflect.DeepEqual(provider.Prefix, []string{"--model=gpt-5"}) {
+		t.Fatalf("provider = %#v", provider)
 	}
 }
 

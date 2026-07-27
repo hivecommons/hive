@@ -43,8 +43,35 @@ func TestNormalServiceCrashReplayKeepsOneImportProposalPRAndVerdict(t *testing.T
 	if fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 || fixture.source.consumes != 1 {
 		t.Fatalf("durable replay repeated import/proposal/PR/verdict: source=%+v intake=%+v repair=%+v verifier=%+v", fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
-	if fixture.intake.completion.VerdictStatus != "failed" || fixture.intake.completion.VerdictHeadSHA != fixture.repairer.outcome.Result.CommitSHA {
-		t.Fatalf("red exact-head receipt was not recorded without reinterpretation: %+v", fixture.intake.completion)
+	if fixture.intake.completion.VerdictStatus != "success" || fixture.intake.completion.VerdictHeadSHA != fixture.repairer.outcome.Result.CommitSHA {
+		t.Fatalf("green exact-head receipt was not recorded without reinterpretation: %+v", fixture.intake.completion)
+	}
+}
+
+func TestNormalServiceVerifiedRedExactHeadRemainsOneOpenUnconsumedPR(t *testing.T) {
+	fixture := newServiceFixture(t)
+	receipt := json.RawMessage(`{"schema_version":"hive.normal-visual-pr-failure.v1","conclusion":"failure"}`)
+	digest := sha256.Sum256(receipt)
+	fixture.verifier.receipt = PullRequestVerdictReceipt{
+		HeadSHA: fixture.repairer.outcome.Result.CommitSHA, Status: "failure",
+		Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:]),
+	}
+	service := fixture.service(t, fixture.verifier)
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrOpenPullRequest) {
+		t.Fatalf("red exact-head cycle error = %v, want open-PR hold", err)
+	}
+	if fixture.source.fetches != 1 || fixture.source.consumes != 0 || fixture.source.consumeSideEffects != 0 ||
+		fixture.intake.imports != 1 || fixture.intake.completes != 0 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 {
+		t.Fatalf("red exact-head verdict completed, consumed, or duplicated work: source=%+v intake=%+v repair=%+v verifier=%+v",
+			fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
+	}
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrOpenPullRequest) {
+		t.Fatalf("red exact-head replay error = %v, want same open-PR hold", err)
+	}
+	if fixture.source.fetches != 1 || fixture.source.consumes != 0 || fixture.intake.imports != 1 ||
+		fixture.intake.completes != 0 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 {
+		t.Fatalf("red exact-head replay repeated a side effect: source=%+v intake=%+v repair=%+v verifier=%+v",
+			fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
 }
 
@@ -76,7 +103,7 @@ func TestNormalServiceRepairResponseLossRevalidatesWithoutRefetchOrReimport(t *t
 	if err := service.RunCycle(context.Background()); err != nil {
 		t.Fatalf("ambiguous Worker recovery: %v", err)
 	}
-	if fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 2 ||
+	if fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 1 ||
 		fixture.repairer.runs != 2 || fixture.repairer.sideEffects != 1 || fixture.verifier.calls != 1 || fixture.source.consumeSideEffects != 1 {
 		t.Fatalf("Worker recovery refetched, reimported, or repeated a side effect: source=%+v intake=%+v repair=%+v verifier=%+v", fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
@@ -138,6 +165,62 @@ func TestNormalServiceMultiFindingReplayDefersEveryUnselectedFindingBeforeOneWor
 	}
 }
 
+func TestSelectDispatchSetPrefersCanonicalRepairSignalOverAggregateAndCoverage(t *testing.T) {
+	coverageRef := "visual-hive://owner/repo/a-coverage"
+	aggregateRef := "visual-hive://owner/repo/b-aggregate"
+	componentRef := "visual-hive://owner/repo/c-component"
+	repairRef := "visual-hive://owner/repo/z-repair"
+	values := []visualcontroller.DispatchEnvelope{
+		{
+			SourceExternalRef: coverageRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "canonical",
+				Severity:        "medium",
+				IssueKind:       "missing_visual_coverage",
+				RootCauseKey:    "finding/missing_visual_coverage/generic",
+			},
+		},
+		{
+			SourceExternalRef: aggregateRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "aggregate",
+				Severity:        "critical",
+				IssueKind:       "provider_governance",
+				RootCauseKey:    "aggregate/provider/playwright",
+			},
+		},
+		{
+			SourceExternalRef: repairRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "canonical",
+				Severity:        "high",
+				IssueKind:       "selector_contract_failure",
+				RootCauseKey:    "contract/localPreview/guarded-repair-policy",
+			},
+		},
+		{
+			SourceExternalRef: componentRef,
+			Work: visualhive.AdmittedVisualWork{
+				PublicationRole: "canonical",
+				Severity:        "high",
+				IssueKind:       "selector_contract_failure",
+				RootCauseKey:    "contract/componentLibrary/component-lab-storybook",
+			},
+		},
+	}
+
+	selected, deferred, ok, err := selectDispatchSet(values)
+	if err != nil || !ok {
+		t.Fatalf("select dispatch set: ok=%t err=%v", ok, err)
+	}
+	if selected.SourceExternalRef != repairRef {
+		t.Fatalf("selected source ref = %q, want canonical repair signal %q", selected.SourceExternalRef, repairRef)
+	}
+	if !reflect.DeepEqual(deferred, []string{coverageRef, aggregateRef, componentRef}) {
+		t.Fatalf("deferred source refs = %v, want stable lexical peers", deferred)
+	}
+}
+
 func TestNormalServiceLeavesWorkerPROpenUntilExactHeadVerifierExists(t *testing.T) {
 	fixture := newServiceFixture(t)
 	service := fixture.service(t, nil)
@@ -150,8 +233,29 @@ func TestNormalServiceLeavesWorkerPROpenUntilExactHeadVerifierExists(t *testing.
 	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrFinalVerdictPending) {
 		t.Fatalf("replay error = %v, want pending verdict", err)
 	}
-	if fixture.repairer.runs != 1 || fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 1 || fixture.source.consumes != 0 {
-		t.Fatalf("pending exact PR was refetched, reimported, duplicated, or consumed")
+	if fixture.repairer.runs != 1 || fixture.source.fetches != 1 || fixture.intake.imports != 1 || fixture.intake.revalidates != 0 || fixture.source.consumes != 0 {
+		t.Fatalf("pending exact PR was refetched, reimported, duplicated, or consumed: source=%+v intake=%+v repair=%+v", fixture.source, fixture.intake, fixture.repairer)
+	}
+}
+
+func TestNormalServiceExistingWorkerPRVerdictIgnoresLaterLaunchPolicyDrift(t *testing.T) {
+	fixture := newServiceFixture(t)
+	stateDir := t.TempDir()
+	withoutVerifier := fixture.serviceAt(t, stateDir, nil)
+	if err := withoutVerifier.RunCycle(context.Background()); !errors.Is(err, ErrFinalVerdictPending) {
+		t.Fatalf("initial Worker PR cycle error = %v, want pending verdict", err)
+	}
+	if fixture.repairer.runs != 1 || fixture.verifier.calls != 0 || fixture.intake.revalidates != 0 {
+		t.Fatalf("initial Worker PR cycle unexpectedly replayed launch checks: intake=%+v repair=%+v verifier=%+v", fixture.intake, fixture.repairer, fixture.verifier)
+	}
+
+	fixture.intake.revalidateErr = errors.New("current Governor mode no longer enables the selected role")
+	withVerifier := fixture.serviceAt(t, stateDir, fixture.verifier)
+	if err := withVerifier.RunCycle(context.Background()); err != nil {
+		t.Fatalf("existing Worker PR verdict was blocked by launch-only policy drift: %v", err)
+	}
+	if fixture.intake.revalidates != 0 || fixture.repairer.runs != 1 || fixture.verifier.calls != 1 || fixture.source.consumeSideEffects != 1 {
+		t.Fatalf("existing Worker PR replay relaunched work or skipped exact verdict: source=%+v intake=%+v repair=%+v verifier=%+v", fixture.source, fixture.intake, fixture.repairer, fixture.verifier)
 	}
 }
 
@@ -297,6 +401,90 @@ func TestNormalServiceLeaseContentionDoesNotRunCycleUntilOwnership(t *testing.T)
 	service.Run(ctx)
 	if claims != 2 || !released || fixture.source.fetches != 1 {
 		t.Fatalf("lease reconciliation = claims=%d released=%t fetches=%d", claims, released, fixture.source.fetches)
+	}
+}
+
+func TestNormalServiceTriggerRunsImmediateCycleThroughExistingLeaseEpoch(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.intake.dispatch = nil
+	firstCycle := make(chan struct{}, 1)
+	service, err := New(Options{
+		StateDir: t.TempDir(), PollInterval: time.Hour,
+		AcquireLease:  func() (func(), error) { return func() {}, nil },
+		ShouldQuiesce: func() (bool, error) { return false, nil },
+		Source:        fixture.source, Intake: fixture.intake, Repairer: fixture.repairer, Verdict: fixture.verifier, PullRequestState: fixture.verifier,
+		OnCycle: func(error) {
+			select {
+			case firstCycle <- struct{}{}:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		service.Run(ctx)
+		close(done)
+	}()
+	select {
+	case <-firstCycle:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("normal service did not complete its initial cycle")
+	}
+	triggerCtx, triggerCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer triggerCancel()
+	if err := service.Trigger(triggerCtx); !errors.Is(err, ErrNoDispatch) {
+		cancel()
+		t.Fatalf("triggered cycle result = %v", err)
+	}
+	if fixture.source.fetches != 2 {
+		cancel()
+		t.Fatalf("trigger did not run exactly one immediate cycle: fetches=%d", fixture.source.fetches)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("normal service did not stop after trigger test")
+	}
+}
+
+func TestNormalServiceTriggerDoesNotBypassQuiescence(t *testing.T) {
+	fixture := newServiceFixture(t)
+	service, err := New(Options{
+		StateDir: t.TempDir(), PollInterval: time.Hour, QuiesceInterval: time.Millisecond,
+		AcquireLease:  func() (func(), error) { t.Fatal("quiesced service acquired a lease"); return nil, nil },
+		ShouldQuiesce: func() (bool, error) { return true, nil },
+		Source:        fixture.source, Intake: fixture.intake, Repairer: fixture.repairer, Verdict: fixture.verifier, PullRequestState: fixture.verifier,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		service.Run(runCtx)
+		close(done)
+	}()
+	triggerCtx, triggerCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer triggerCancel()
+	if err := service.Trigger(triggerCtx); !errors.Is(err, context.DeadlineExceeded) {
+		cancel()
+		t.Fatalf("quiesced trigger result = %v", err)
+	}
+	if fixture.source.fetches != 0 {
+		cancel()
+		t.Fatalf("quiesced trigger touched evidence: fetches=%d", fixture.source.fetches)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("quiesced service did not stop")
 	}
 }
 
@@ -766,6 +954,18 @@ func TestNormalServiceRejectsCorruptLedgerStateMachineBeforeSideEffects(t *testi
 			ledger.VerdictReceipt = []byte(`{"status":"failed"}`)
 			ledger.VerdictReceiptSHA256 = strings.Repeat("1", 64)
 		},
+		"red verdict completed": func(ledger *workLedger) {
+			ledger.SourceExternalRef = "visual-hive://owner/repo/finding"
+			ledger.DeferralsRecorded = true
+			ledger.WorkOrderID, ledger.RequestSHA256 = "swo-"+strings.Repeat("e", 64), strings.Repeat("e", 64)
+			ledger.Branch, ledger.CommitSHA = "hive/repair-one", strings.Repeat("f", 40)
+			ledger.PullRequestNumber, ledger.PullRequestURL = 9, "https://example.test/pr/9"
+			ledger.VerdictHeadSHA, ledger.VerdictStatus = ledger.CommitSHA, "failure"
+			ledger.VerdictReceipt = []byte(`{"status":"failure"}`)
+			digest := sha256.Sum256(ledger.VerdictReceipt)
+			ledger.VerdictReceiptSHA256 = hex.EncodeToString(digest[:])
+			ledger.CompletionRecorded = true
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			service := fixture.service(t, fixture.verifier)
@@ -814,14 +1014,14 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 		WorkOrderID: "swo-" + strings.Repeat("e", 64), RequestSHA256: strings.Repeat("e", 64),
 		Result: repair.Result{RepositoryFingerprint: envelope.Work.RepositoryFingerprint, Branch: "hive/repair-one", CommitSHA: strings.Repeat("f", 40), PRNumber: 9, PRURL: "https://example.test/pr/9"},
 	}
-	receipt := json.RawMessage(`{"schema_version":"visual-hive.pr-verdict.v1","status":"failed"}`)
+	receipt := json.RawMessage(`{"schema_version":"visual-hive.pr-verdict.v1","status":"success"}`)
 	digest := sha256.Sum256(receipt)
 	return &serviceFixture{
 		work:     work,
 		source:   &fakeArtifactSource{work: work},
 		intake:   &fakeIntake{dispatch: []visualcontroller.DispatchEnvelope{envelope}},
 		repairer: &fakeRepairer{outcome: outcome},
-		verifier: &fakeVerdictVerifier{pullRequestOpen: true, receipt: PullRequestVerdictReceipt{HeadSHA: outcome.Result.CommitSHA, Status: "failed", Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:])}},
+		verifier: &fakeVerdictVerifier{pullRequestOpen: true, receipt: PullRequestVerdictReceipt{HeadSHA: outcome.Result.CommitSHA, Status: "success", Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:])}},
 	}
 }
 
@@ -944,6 +1144,7 @@ type fakeIntake struct {
 	dispatch                    []visualcontroller.DispatchEnvelope
 	imports                     int
 	revalidates                 int
+	revalidateErr               error
 	deferralCalls               int
 	completes                   int
 	failCompletion              bool
@@ -970,6 +1171,9 @@ func (intake *fakeIntake) Import(context.Context, hivegithub.VerifiedVisualHiveA
 
 func (intake *fakeIntake) RevalidateSpecialistBoundary(sourceExternalRef, _, _ string) (visualcontroller.DispatchEnvelope, error) {
 	intake.revalidates++
+	if intake.revalidateErr != nil {
+		return visualcontroller.DispatchEnvelope{}, intake.revalidateErr
+	}
 	for _, envelope := range intake.dispatch {
 		if envelope.SourceExternalRef == sourceExternalRef {
 			return envelope, nil

@@ -54,7 +54,10 @@ func TestGeneratedUninstallPublisherCreatesAndRecoversOnlyExactAuthorizedCheck(t
 	external := "hive-uninstall-" + digest
 	exact := map[string]any{
 		"id": 91, "name": "visual-hive", "head_sha": head, "status": "completed", "conclusion": "success",
-		"details_url": details, "external_id": external, "app": map[string]any{"slug": "github-actions"},
+		// GitHub Actions owns this response field and rewrites a requested PR
+		// URL to the created check-run URL. The authorization digest already
+		// binds the exact PR URL before this publisher runs.
+		"details_url": "https://github.test/owner/repo/runs/91", "external_id": external, "app": map[string]any{"slug": "github-actions"},
 	}
 	var mu sync.Mutex
 	created, posts := false, 0

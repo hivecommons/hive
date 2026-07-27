@@ -168,6 +168,28 @@ func TestValidateBundleAcceptsExplicitCanonicalRootIdentity(t *testing.T) {
 	}
 }
 
+func TestValidateBundleAcceptsProviderAggregateWithExactBlockedRoots(t *testing.T) {
+	manifestPath := writeTestBundle(t, t.TempDir(), false)
+	manifest := readManifest(t, manifestPath)
+	manifest.Observations[0].PublicationRole = "aggregate"
+	manifest.Observations[0].RootCauseKey = "aggregate/provider_governance/playwright"
+	manifest.Observations[0].BlockedByRootKeys = []string{
+		"contract/componentLibrary/component-lab-storybook",
+		"contract/localPreview/guarded-repair-policy",
+	}
+	manifest.Observations[0].IssueKind = "provider_governance"
+	manifest.DigestAlgorithm = PublicationDigestAlgorithm
+	sealTestManifest(t, manifestPath, &manifest)
+
+	bundle, err := ValidateBundle(manifestPath, ValidationOptions{Now: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC), MaxACMM: 3, AllowLocal: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := bundle.Manifest.Observations[0]; got.PublicationRole != "aggregate" || len(got.BlockedByRootKeys) != 2 {
+		t.Fatalf("provider aggregate publication metadata was not preserved: %+v", got)
+	}
+}
+
 func TestValidateBundleRejectsInvalidPublicationMetadata(t *testing.T) {
 	cases := []struct {
 		name    string

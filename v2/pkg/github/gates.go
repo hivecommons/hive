@@ -464,6 +464,29 @@ func (c *Client) DeleteRepairBranchExact(ctx context.Context, repository, branch
 	return err
 }
 
+// RepairBranchAbsentExact proves that a named Hive repair ref does not exist.
+// It is used only when a durable no-change repair checkpoint never produced a
+// commit SHA. An existing ref is never accepted or deleted without the exact
+// head binding required by DeleteRepairBranchExact.
+func (c *Client) RepairBranchAbsentExact(ctx context.Context, repository, branch string) (bool, error) {
+	owner, repo, err := splitFullRepository(repository)
+	if err != nil {
+		return false, err
+	}
+	branch = strings.TrimSpace(branch)
+	if !strings.HasPrefix(branch, "hive/repair-") {
+		return false, fmt.Errorf("exact Hive repair branch is required")
+	}
+	_, response, err := c.client.Git.GetRef(ctx, owner, repo, "heads/"+branch)
+	if err != nil {
+		if response != nil && response.StatusCode == http.StatusNotFound {
+			return true, nil
+		}
+		return false, fmt.Errorf("read Hive repair branch %s: %w", branch, err)
+	}
+	return false, nil
+}
+
 // DeleteBaselineBranchExact removes only a Hive baseline-review branch whose
 // current ref still points at the exact reviewed proposal head. The bool is
 // false when GitHub already removed the branch, making restart reconciliation
@@ -496,6 +519,17 @@ func (c *Client) DeleteUninstallBranchDescendantExact(ctx context.Context, repos
 // baseline review ref at an exact Hive-owned commit or proven descendant.
 func (c *Client) DeleteSetupBaselineBranchDescendantExact(ctx context.Context, repository, branch, ownedAncestorSHA string) (bool, string, error) {
 	return c.deleteHiveBranchDescendantExact(ctx, repository, branch, ownedAncestorSHA, "hive/setup-baseline-")
+}
+
+// DeleteSetupBranchDescendantExact retires only the repository setup ref at
+// an exact Hive-owned commit or proven descendant. Setup-baseline refs are a
+// distinct lifecycle and are deliberately rejected even though they share the
+// "hive/setup-" prefix.
+func (c *Client) DeleteSetupBranchDescendantExact(ctx context.Context, repository, branch, ownedAncestorSHA string) (bool, string, error) {
+	if strings.HasPrefix(strings.TrimSpace(branch), "hive/setup-baseline-") {
+		return false, "", fmt.Errorf("setup baseline branches require their dedicated retirement path")
+	}
+	return c.deleteHiveBranchDescendantExact(ctx, repository, branch, ownedAncestorSHA, "hive/setup-")
 }
 
 func (c *Client) deleteHiveBranchDescendantExact(ctx context.Context, repository, branch, ownedAncestorSHA, requiredPrefix string) (bool, string, error) {

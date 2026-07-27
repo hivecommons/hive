@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -797,7 +798,7 @@ func (controller *Controller) resumeWorks(packet visualhive.VerifiedPacketIdenti
 			BlockedByRootKeys: append([]string(nil), finding.BlockedByRootKeys...), IssueKind: finding.IssueKind,
 			Severity: finding.Severity, Title: finding.Title, Body: finding.Body, Labels: append([]string(nil), finding.Labels...), Role: role,
 			RoutingReason: "persisted owning role for authoritative Hive lifecycle absence", RoutingAllowed: true,
-			AffectedContracts: append([]string(nil), finding.AffectedContracts...), KnowledgeKeywordState: "unavailable_no_verified_facts",
+			AffectedContracts: append([]string(nil), finding.AffectedContracts...), AffectedFiles: append([]string(nil), finding.AffectedFiles...), KnowledgeKeywordState: "unavailable_no_verified_facts",
 			ValidationCommands: validation, ReproductionCommands: append([]string(nil), validation...),
 			ReproductionSource: "persisted_verified_observation_validation_command", Authority: visualhive.VisualWorkAuthority{ProposalOnly: true},
 		})
@@ -890,9 +891,11 @@ func (controller *Controller) resumeAppliedWork(
 					controller.holdCorruptStage(ctx, store, bead, work, "held_corrupt_dispatch_intent", "deferred dispatch conflicts with its exact verified packet", &result)
 					continue
 				}
-				if launchErr := controller.dispatchLaunchAllowed(envelope, finding); launchErr != nil {
-					controller.persistAndAuditStage(ctx, store, bead, work, decision, dispatchHoldStage(finding), launchErr.Error(), &result)
-				}
+				// The one-PR acceptance loop explicitly made this exact packet
+				// ineligible for launch. Current launch policy is relevant only
+				// after a later verified packet reopens it; same-packet replay
+				// must preserve the durable deferral without converting it into
+				// a runtime hold.
 				continue
 			}
 			if err := controller.markStage(store, bead.ID, "pending", "later verified packet reopened a previously deferred launchable finding"); err != nil {
@@ -930,6 +933,7 @@ func (controller *Controller) resumeAppliedWork(
 			}
 		}
 		allowedPaths := integrated.RepairPathsForFinding(controller.installed.AllowedRepairPaths, finding)
+		policyDeniedFiles := repairPolicyDeniedFiles(work.AffectedFiles, allowedPaths)
 		baseTreeSHA, treeErr := controller.baseTree(ctx, controller.installed, packet.BaseSHA)
 		repairAuthorized := controller.installed.Automation == integrated.AutomationRepairPR || controller.installed.Automation == integrated.AutomationAutoMerge
 		issueAuthorized := controller.installed.Automation == integrated.AutomationIssues || repairAuthorized
@@ -940,7 +944,7 @@ func (controller *Controller) resumeAppliedWork(
 			validationReady = validationErr == nil
 		}
 		safeExecution := evidenceErr == nil && validationReady
-		repairReady := safeExecution && !manualLifecycleHold && treeErr == nil && baseTreeSHA != "" && len(allowedPaths) > 0 && len(work.ValidationCommands) > 0
+		repairReady := safeExecution && !manualLifecycleHold && len(policyDeniedFiles) == 0 && treeErr == nil && baseTreeSHA != "" && len(allowedPaths) > 0 && len(work.ValidationCommands) > 0
 		activeWIP := 0
 		if store != nil {
 			for _, candidate := range store.List(beads.ListFilter{}) {
@@ -1086,6 +1090,19 @@ func (controller *Controller) resumeAppliedWork(
 			controller.persistAndAuditStage(ctx, store, bead, work, decision, "admitted_manual_review_held", detail, &result)
 			continue
 		}
+		if len(policyDeniedFiles) > 0 {
+			controller.persistAndAuditStage(
+				ctx,
+				store,
+				bead,
+				work,
+				decision,
+				"admitted_repair_policy_denied",
+				"verified affected repository files are outside the installed repair allowlist: "+strings.Join(policyDeniedFiles, ", "),
+				&result,
+			)
+			continue
+		}
 		if !repairReady {
 			controller.persistAndAuditStage(ctx, store, bead, work, decision, "admitted_repair_held", "repair paths, base tree, or validation are incomplete", &result)
 			continue
@@ -1135,6 +1152,60 @@ func (controller *Controller) resumeAppliedWork(
 		result.DispatchPending = append(result.DispatchPending, persistedEnvelope)
 	}
 	return result
+}
+
+func repairPolicyDeniedFiles(affectedFiles, allowedPatterns []string) []string {
+	denied := make([]string, 0, len(affectedFiles))
+	for _, candidate := range affectedFiles {
+		allowed := false
+		for _, pattern := range allowedPatterns {
+			if repairPolicyPathAllowed(pattern, candidate) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			denied = append(denied, candidate)
+		}
+	}
+	sort.Strings(denied)
+	return denied
+}
+
+func repairPolicyPathAllowed(pattern, candidate string) bool {
+	pattern = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(pattern)), "./")
+	candidate = strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(candidate)), "./")
+	if pattern == "" || candidate == "" {
+		return false
+	}
+	var expression strings.Builder
+	expression.WriteString("^")
+	for index := 0; index < len(pattern); {
+		switch pattern[index] {
+		case '*':
+			if index+1 < len(pattern) && pattern[index+1] == '*' {
+				index += 2
+				if index < len(pattern) && pattern[index] == '/' {
+					expression.WriteString("(?:.*/)?")
+					index++
+				} else {
+					expression.WriteString(".*")
+				}
+			} else {
+				expression.WriteString("[^/]*")
+				index++
+			}
+		case '?':
+			expression.WriteString("[^/]")
+			index++
+		default:
+			expression.WriteString(regexp.QuoteMeta(string(pattern[index])))
+			index++
+		}
+	}
+	expression.WriteString("$")
+	matched, err := regexp.MatchString(expression.String(), candidate)
+	return err == nil && matched
 }
 
 func (controller *Controller) validatePacket(packet visualhive.VerifiedPacketIdentity) error {
@@ -1335,9 +1406,15 @@ func (controller *Controller) dispatchLaunchAllowed(envelope DispatchEnvelope, f
 	if !validSHA256(admitted.RoleConfigSHA256) || !current.RoleConfigured || current.RoleConfigSHA256 != admitted.RoleConfigSHA256 {
 		return errors.New("selected normal role is no longer configured and enabled")
 	}
-	if current.GovernorMode != admitted.GovernorMode || current.ConfiguredCadence != admitted.ConfiguredCadence || current.ConfiguredCadence == "" ||
+	// Opening the admitted issue can legitimately move the normal Governor
+	// between modes before the specialist returns. The mode label itself is
+	// not an execution grant: the selected role configuration and its cadence
+	// are. Revalidate those exact values so a same-policy mode transition does
+	// not strand an otherwise valid repair, while disabled, paused, missing,
+	// or changed role policy still fails closed.
+	if current.ConfiguredCadence != admitted.ConfiguredCadence || current.ConfiguredCadence == "" ||
 		strings.EqualFold(current.ConfiguredCadence, "pause") || strings.EqualFold(current.ConfiguredCadence, "paused") {
-		return errors.New("current Governor mode no longer enables the selected role")
+		return errors.New("current Governor policy no longer enables the selected role")
 	}
 	if current.BudgetLimit > 0 && current.BudgetUsed >= current.BudgetLimit && !current.BudgetIgnoredForRole {
 		return errors.New("current Governor budget no longer permits specialist launch")

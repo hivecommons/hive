@@ -277,7 +277,7 @@ func TestInspectCheckoutDetectsPlaywrightAndVisualHiveReviewedBaselines(t *testi
 	}
 }
 
-func TestInspectCheckoutKeepsOnlyBoundedNonInteractiveAutomation(t *testing.T) {
+func TestInspectCheckoutKeepsRepositoryChecksOutOfVisualHiveLifecycle(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, "package.json", `{"scripts":{"vh:test-creation":"node test-creation.js","vh:suite":"node suite.js","vh:mutation-proof":"node proof.js","vh:mutate":"node mutate.js","vh:run":"node run.js","vh:plan":"node plan.js","vh:build-source":"node build-visual-hive-source.mjs","typecheck":"tsc --noEmit","build":"vite build"}}`)
 	writeFixture(t, root, "package-lock.json", `{}`)
@@ -286,7 +286,7 @@ func TestInspectCheckoutKeepsOnlyBoundedNonInteractiveAutomation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"build", "typecheck", "vh:mutate", "vh:mutation-proof"}
+	want := []string{"build", "typecheck"}
 	if len(inspection.TestCommands) != len(want) {
 		t.Fatalf("unexpected commands: %+v", inspection.TestCommands)
 	}
@@ -295,6 +295,23 @@ func TestInspectCheckoutKeepsOnlyBoundedNonInteractiveAutomation(t *testing.T) {
 		if len(command) != 3 || command[2] != name {
 			t.Fatalf("command %d = %v, want npm run %s", index, command, name)
 		}
+	}
+}
+
+func TestInspectCheckoutRejectsPersistentMockAPIWithoutDroppingAPIEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "package.json", `{"scripts":{"mock-api":"node scripts/mock-api.mjs","test:api":"node --test api.test.js","api-smoke":"node scripts/api-smoke.mjs"}}`)
+	writeFixture(t, root, "package-lock.json", `{}`)
+
+	inspection, err := InspectCheckout(root, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasCommandNamed(inspection.TestCommands, "mock-api") {
+		t.Fatalf("persistent mock API was selected as an isolated test: %+v", inspection.TestCommands)
+	}
+	if !hasCommandNamed(inspection.TestCommands, "test:api") || !hasCommandNamed(inspection.TestCommands, "api-smoke") {
+		t.Fatalf("explicit API evidence commands were dropped: %+v", inspection.TestCommands)
 	}
 }
 

@@ -21,7 +21,7 @@ const (
 	defaultTokenURL = "https://github.com/login/oauth/access_token"
 	// defaultUserURL is the GitHub.com API user endpoint.
 	defaultUserURL = "https://api.github.com/user"
-	deviceScope    = "repo"
+	deviceScope    = "repo workflow"
 )
 
 // deviceFlowURLs derives the device flow endpoints from a custom base URL.
@@ -131,6 +131,17 @@ func PollDeviceFlow(clientID, deviceCode, baseURL, apiURL string) (token string,
 	}
 
 	if pr.AccessToken != "" {
+		granted := map[string]bool{}
+		for _, scope := range strings.FieldsFunc(pr.Scope, func(r rune) bool {
+			return r == ',' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+		}) {
+			granted[strings.TrimSpace(scope)] = true
+		}
+		for _, required := range strings.Fields(deviceScope) {
+			if !granted[required] {
+				return "", "", fmt.Errorf("device flow token is missing required OAuth scope %q", required)
+			}
+		}
 		return pr.AccessToken, "complete", nil
 	}
 	if pr.Error == "authorization_pending" || pr.Error == "slow_down" {

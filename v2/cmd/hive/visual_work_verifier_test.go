@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,119 @@ func TestNormalVisualPullRequestVerifierRejectsReceiptDriftBeforeLifecycleApply(
 	})
 	if err == nil || !strings.Contains(err.Error(), "differs from the exact installed Worker PR") || verified.applyCalls != 0 {
 		t.Fatalf("drifted receipt reached lifecycle apply: err=%v verified=%+v", err, verified)
+	}
+}
+
+func TestNormalVisualPullRequestVerifierRecordsVerifiedFailedReviewWithoutCompletionAuthority(t *testing.T) {
+	fingerprint := strings.Repeat("f", 64)
+	baseSHA, headSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	lifecycle := writeNormalVisualVerifierLifecycle(t, fingerprint, headSHA)
+	config := integrated.Config{
+		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", StateDir: t.TempDir(),
+		VisualHive: true, Automation: integrated.AutomationRepairPR, ACMMLevel: 5,
+	}
+	request := normalservice.PullRequestVerdictRequest{
+		IdempotencyKey: "workflow:order", Repository: config.Repository, RepositoryFingerprint: fingerprint,
+		PullRequestNumber: 7, PullRequestURL: "https://example.test/pr/7",
+		HeadBranch: "hive/repair-proof", HeadSHA: headSHA, BaseBranch: "main", BaseSHA: baseSHA,
+	}
+	var reviewRequest hivegithub.PullRequestArtifactRequest
+	verifier := &normalVisualPullRequestVerifier{
+		lifecycle: lifecycle, loadConfig: func() (integrated.Config, int, error) { return config, 5, nil },
+		actionsAppID: func(context.Context) (int64, error) { return 15368, nil },
+		fetch: func(context.Context, hivegithub.VisualHivePullRequestBundleRequest) (normalVisualVerifiedPullRequest, error) {
+			return nil, hivegithub.ErrNoSuccessfulVisualHivePullRequestRun
+		},
+		inspectGate: func(_ context.Context, repository string, number int) (hivegithub.PullRequestGate, error) {
+			if repository != config.Repository || number != request.PullRequestNumber {
+				t.Fatalf("gate inspection lost exact PR identity: repository=%s number=%d", repository, number)
+			}
+			return hivegithub.PullRequestGate{
+				Number: number, URL: request.PullRequestURL, Open: true,
+				BaseBranch: request.BaseBranch, BaseSHA: request.BaseSHA, HeadSHA: request.HeadSHA,
+				VisualHiveCheckState: "failure", VisualHiveProvenanceVerified: true,
+				VisualHiveWorkflowRunID: 77, VisualHiveWorkflowPath: normalVisualPullRequestWorkflowPath,
+				VisualHiveWorkflowEvent: "pull_request",
+				Checks: []hivegithub.CheckObservation{
+					{Name: "repository-test-001", State: "success"},
+					{Name: "visual-hive", State: "failure", URL: "https://example.test/run/77", ProvenanceVerified: true, WorkflowRunID: 77, WorkflowPath: normalVisualPullRequestWorkflowPath, WorkflowEvent: "pull_request"},
+				},
+			}, nil
+		},
+		fetchReview: func(_ context.Context, value hivegithub.PullRequestArtifactRequest) (hivegithub.VerifiedPullRequestArtifact, error) {
+			reviewRequest = value
+			return hivegithub.VerifiedPullRequestArtifact{
+				RepositoryID: config.RepositoryID, PullRequestNumber: request.PullRequestNumber,
+				WorkflowRunID: 77, WorkflowRunAttempt: 1, ArtifactID: 99, ArtifactName: "visual-hive-pr",
+				CommitSHA: request.HeadSHA, HeadBranch: request.HeadBranch,
+				WorkflowName: normalVisualPullRequestWorkflowName, WorkflowPath: normalVisualPullRequestWorkflowPath,
+				Conclusion: "failure", RunURL: "https://example.test/run/77",
+				ReviewSchemaVersion: visualhive.ReviewEvidenceSchemaVersion, ArtifactIndexSHA256: strings.Repeat("c", 64),
+			}, nil
+		},
+	}
+	receipt, err := verifier.VerifyPullRequest(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.HeadSHA != headSHA || receipt.Status != "failure" || !json.Valid(receipt.Receipt) {
+		t.Fatalf("failed review did not return an exact red receipt: %+v", receipt)
+	}
+	digest := sha256.Sum256(receipt.Receipt)
+	if receipt.ReceiptSHA256 != hex.EncodeToString(digest[:]) {
+		t.Fatalf("failed review receipt digest = %s, want %s", receipt.ReceiptSHA256, hex.EncodeToString(digest[:]))
+	}
+	if reviewRequest.Repository != config.Repository || reviewRequest.PullRequestNumber != request.PullRequestNumber ||
+		reviewRequest.ExpectedWorkflowRunID != 77 || reviewRequest.ExpectedHeadSHA != request.HeadSHA ||
+		reviewRequest.ExpectedHeadBranch != request.HeadBranch || reviewRequest.ArtifactName != "visual-hive-pr" ||
+		reviewRequest.DestinationDir != filepath.Join(config.StateDir, "visual-hive", "pr-review") {
+		t.Fatalf("failed review fetch lost exact immutable identity: %+v", reviewRequest)
+	}
+	finding, exists := lifecycle.Finding(fingerprint)
+	if !exists || finding.Status != visualhive.StatusNeedsRevision || finding.LastPullRequestCheckReceipt != nil ||
+		len(finding.LastCheckRuns) != 2 || finding.LastCheckRuns[1].State != "failure" ||
+		!finding.LastCheckRuns[1].ProvenanceVerified {
+		t.Fatalf("failed review was reinterpreted or not durably recorded: exists=%t finding=%+v", exists, finding)
+	}
+}
+
+func TestNormalVisualPullRequestVerifierKeepsUnfinishedExactHeadPending(t *testing.T) {
+	fingerprint := strings.Repeat("f", 64)
+	baseSHA, headSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	lifecycle := writeNormalVisualVerifierLifecycle(t, fingerprint, headSHA)
+	config := integrated.Config{
+		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", StateDir: t.TempDir(),
+		VisualHive: true, Automation: integrated.AutomationRepairPR, ACMMLevel: 5,
+	}
+	reviewFetches := 0
+	verifier := &normalVisualPullRequestVerifier{
+		lifecycle: lifecycle, loadConfig: func() (integrated.Config, int, error) { return config, 5, nil },
+		actionsAppID: func(context.Context) (int64, error) { return 15368, nil },
+		fetch: func(context.Context, hivegithub.VisualHivePullRequestBundleRequest) (normalVisualVerifiedPullRequest, error) {
+			return nil, hivegithub.ErrNoSuccessfulVisualHivePullRequestRun
+		},
+		inspectGate: func(context.Context, string, int) (hivegithub.PullRequestGate, error) {
+			return hivegithub.PullRequestGate{
+				Number: 7, URL: "https://example.test/pr/7", Open: true,
+				BaseBranch: "main", BaseSHA: baseSHA, HeadSHA: headSHA, VisualHiveCheckState: "in_progress",
+			}, nil
+		},
+		fetchReview: func(context.Context, hivegithub.PullRequestArtifactRequest) (hivegithub.VerifiedPullRequestArtifact, error) {
+			reviewFetches++
+			return hivegithub.VerifiedPullRequestArtifact{}, nil
+		},
+	}
+	_, err := verifier.VerifyPullRequest(context.Background(), normalservice.PullRequestVerdictRequest{
+		IdempotencyKey: "workflow:order", Repository: config.Repository, RepositoryFingerprint: fingerprint,
+		PullRequestNumber: 7, PullRequestURL: "https://example.test/pr/7",
+		HeadBranch: "hive/repair-proof", HeadSHA: headSHA, BaseBranch: "main", BaseSHA: baseSHA,
+	})
+	if !errors.Is(err, normalservice.ErrFinalVerdictPending) || reviewFetches != 0 {
+		t.Fatalf("unfinished exact head = %v, review fetches=%d; want pending without review fetch", err, reviewFetches)
+	}
+	finding, _ := lifecycle.Finding(fingerprint)
+	if finding.Status != visualhive.StatusPROpen {
+		t.Fatalf("pending exact head changed lifecycle status: %+v", finding)
 	}
 }
 

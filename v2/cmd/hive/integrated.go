@@ -527,6 +527,8 @@ func runIntegratedManagement(command string, args []string) int {
 	flags := flag.NewFlagSet("hive "+command, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	stateDir := flags.String("state-dir", defaultIntegratedStateDir(), "persistent Hive state directory")
+	var lifecycleBeadsDirs stringListFlag
+	flags.Var(&lifecycleBeadsDirs, "beads-dir", "ordinary Hive role beads directory for normal-runtime uninstall; repeatable")
 	visualRef := ""
 	flags.StringVar(&visualRef, "version", "", "immutable Visual Hive commit SHA")
 	flags.StringVar(&visualRef, "visual-hive-ref", "", "immutable Visual Hive commit SHA")
@@ -536,6 +538,10 @@ func runIntegratedManagement(command string, args []string) int {
 	githubTokenEnv := flags.String("github-token-env", "HIVE_GITHUB_TOKEN", "environment variable containing GitHub token")
 	githubAPIURL := flags.String("github-api-url", "", "optional GitHub Enterprise API URL")
 	if err := parseExactFlags(flags, args); err != nil {
+		return 2
+	}
+	if command != "uninstall" && len(lifecycleBeadsDirs) != 0 {
+		fmt.Fprintln(os.Stderr, "--beads-dir is supported only for uninstall")
 		return 2
 	}
 	if command != "uninstall" && visualRef == "" && command != "rollback" {
@@ -600,7 +606,7 @@ func runIntegratedManagement(command string, args []string) int {
 	result, err := integrated.RunManagement(ctx, integrated.ManagementOptions{
 		Operation: integrated.ManagementOperation(command), StateDir: *stateDir, VisualHiveRef: visualRef,
 		VisualHiveCommand: managementRuntimeCommand, VisualHiveArgs: managementRuntimeArgs,
-		DeleteState: *deleteState, Cancel: *cancelPending, GitHub: client, GitTransportToken: token,
+		LifecycleBeadsDirs: append([]string(nil), lifecycleBeadsDirs...), DeleteState: *deleteState, Cancel: *cancelPending, GitHub: client, GitTransportToken: token,
 	})
 	if err != nil {
 		shouldRestart := shouldRestartManagementScheduler(command, *stateDir)
@@ -1178,7 +1184,7 @@ func runIntegratedStatus(args []string) int {
 	var providerErr error
 	providerMessage := "repair provider is not required for this automation level"
 	if config.Automation == integrated.AutomationRepairPR || config.Automation == integrated.AutomationAutoMerge {
-		provider := repair.CodexProvider{Command: config.ProviderCommand, Prefix: config.ProviderArgs}
+		provider := integratedSetupCodexProvider(config.ProviderCommand, config.ProviderArgs)
 		providerCtx, providerCancel := context.WithTimeout(ctx, 45*time.Second)
 		providerErr = provider.Health(providerCtx)
 		providerCancel()
@@ -1813,7 +1819,7 @@ func collectIntegratedDoctorChecks(stateDir, githubTokenEnv, githubAPIURL string
 		runtimeOK, runtimeMessage := validateVisualHiveLauncher(config)
 		checks = append(checks, doctorCheck{Name: "visual_hive_runtime", OK: runtimeOK, Message: runtimeMessage})
 		if config.Automation == integrated.AutomationRepairPR || config.Automation == integrated.AutomationAutoMerge {
-			provider := repair.CodexProvider{Command: config.ProviderCommand, Prefix: config.ProviderArgs}
+			provider := integratedSetupCodexProvider(config.ProviderCommand, config.ProviderArgs)
 			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 			providerErr := provider.Health(ctx)
 			cancel()
@@ -1987,7 +1993,7 @@ func resolveIntegratedProvider(ctx context.Context, provider, command string, ar
 			continue
 		}
 		healthCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		err := (repair.CodexProvider{Command: resolved, Prefix: append([]string(nil), args...)}).Health(healthCtx)
+		err := integratedSetupCodexProvider(resolved, args).Health(healthCtx)
 		cancel()
 		if err == nil {
 			absolute, _ := filepath.Abs(resolved)
@@ -1999,6 +2005,14 @@ func resolveIntegratedProvider(ctx context.Context, provider, command string, ar
 		return "", fmt.Errorf("no usable authenticated Codex provider was found (%s)", strings.Join(errorsSeen, "; "))
 	}
 	return "", fmt.Errorf("Codex provider was not found; install/authenticate Codex or pass --provider-command")
+}
+
+func integratedSetupCodexProvider(command string, args []string) repair.CodexProvider {
+	return repair.CodexProvider{
+		Command:   command,
+		Prefix:    append([]string(nil), args...),
+		CodexHome: resolveIntegratedCodexHome(),
+	}
 }
 
 func validateVisualHiveLauncher(config integrated.Config) (bool, string) {

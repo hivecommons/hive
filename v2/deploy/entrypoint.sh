@@ -239,7 +239,11 @@ if [ "$(id -u)" = "0" ]; then
   # Seed data files from image into /data if they don't already exist
   if [ -d /opt/hive/seed-data ]; then
     echo "[entrypoint] Seeding data files..."
-    cp -rn /opt/hive/seed-data/* /data/ 2>/dev/null || true
+    # Seed as the runtime principal. A fresh volume is repaired above and is
+    # writable by dev; copying as root here would recreate /data/agents and
+    # other first-boot paths as root after the ownership repair, preventing
+    # ordinary agents from creating their work directories.
+    gosu dev:node cp -rn /opt/hive/seed-data/* /data/ 2>/dev/null || true
   fi
 
   # Create the shared root before role discovery. Config-only installations
@@ -281,6 +285,12 @@ if [ "$(id -u)" = "0" ]; then
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
   mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/config/github-copilot /home/dev/.config
+  # These parents are created after the mounted-volume ownership check above.
+  # On a fresh volume whose root was pre-seeded as dev, mkdir would otherwise
+  # recreate them as root while DATA_OWNER=1001 skips the recursive repair.
+  # Normalize the shared parents unconditionally before any agent can start.
+  chown dev:node /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
+  chmod 2775 /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
   chmod 2770 /data/home/.copilot 2>/dev/null || true
   chown dev:node /data/home/.copilot 2>/dev/null || true
   chmod 2775 /data/home/.claude /data/home/.claude/session-env 2>/dev/null || true
@@ -291,6 +301,11 @@ if [ "$(id -u)" = "0" ]; then
   # codex backend fails with "Permission denied" initializing state_N.sqlite.
   chmod 2775 /data/home/.codex 2>/dev/null || true
   chown -R dev:node /data/home/.codex 2>/dev/null || true
+  # The dashboard process keeps HOME=/home/dev, while authenticated CLI state
+  # lives on the persistent volume. Give controller-owned Codex health checks
+  # the explicit bounded home instead of symlinking credential directories or
+  # copying auth.json into the image account.
+  export CODEX_HOME="${CODEX_HOME:-/data/home/.codex}"
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot

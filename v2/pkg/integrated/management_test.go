@@ -104,6 +104,19 @@ func TestDeleteManagedStateRequiresMarkerAndRemovesOnlyNamedRoot(t *testing.T) {
 	}
 }
 
+func TestDeleteManagedStateAcceptsExactSetupBaselineArtifactCache(t *testing.T) {
+	managed := newManagedDeletionFixture(t)
+	writeFixture(t, managed, "setup-baseline/capture-artifacts/setup-baseline-artifact-42/setup-baseline-manifest.json", `{"schema_version":"hive.setup-baseline-artifact.v1"}`)
+	writeFixture(t, managed, "setup-baseline/capture-artifacts/setup-baseline-artifact-42/.hive-extraction-complete", "complete\n")
+	writeFixture(t, managed, "setup-baseline/production-verification/source-artifact-43/.visual-hive/report.json", `{"schemaVersion":"visual-hive.report.v1"}`)
+	if err := deleteManagedState(managed); err != nil {
+		t.Fatalf("exact Hive setup-baseline artifact cache blocked managed deletion: %v", err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatalf("managed state root still exists: %v", err)
+	}
+}
+
 func TestDeleteManagedStateRejectsUnrelatedIntegratedBytes(t *testing.T) {
 	managed := t.TempDir()
 	writeFixture(t, managed, "integrated/config.json", `{"schema_version":"hive.integrated-config.v1","repository":"owner/repo","repository_id":"123"}`)
@@ -115,6 +128,86 @@ func TestDeleteManagedStateRejectsUnrelatedIntegratedBytes(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(managed, "integrated", "operator-notes.txt")); err != nil || string(data) != "must survive" {
 		t.Fatalf("unrelated integrated sentinel changed: %q err=%v", data, err)
 	}
+}
+
+func TestDeleteManagedStateAcceptsExactCurrentCheckout(t *testing.T) {
+	managed := t.TempDir()
+	checkout := filepath.Join(managed, "integrated", "checkout")
+	writeManagedDeletionConfig(t, managed, checkout)
+	writeFixture(t, managed, stateOwnershipMarkerFile, `{"schema_version":"hive.state-owner.v1","repository":"owner/repo","repository_id":"123"}`)
+	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeManagedCheckoutOwner(checkout, "owner/repo"); err != nil {
+		t.Fatal(err)
+	}
+	if err := deleteManagedState(managed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatalf("managed state root still exists: %v", err)
+	}
+}
+
+func TestDeleteManagedStateRejectsUnownedOrMismatchedCurrentCheckout(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*testing.T, string, string)
+	}{
+		{name: "missing ownership marker", prepare: func(t *testing.T, _ string, checkout string) {
+			if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "wrong repository", prepare: func(t *testing.T, _ string, checkout string) {
+			if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeManagedCheckoutOwner(checkout, "other/repo"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "wrong configured path", prepare: func(t *testing.T, managed, checkout string) {
+			if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeManagedCheckoutOwner(checkout, "owner/repo"); err != nil {
+				t.Fatal(err)
+			}
+			writeManagedDeletionConfig(t, managed, filepath.Join(managed, "integrated", "other-checkout"))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			managed := t.TempDir()
+			checkout := filepath.Join(managed, "integrated", "checkout")
+			writeManagedDeletionConfig(t, managed, checkout)
+			writeFixture(t, managed, stateOwnershipMarkerFile, `{"schema_version":"hive.state-owner.v1","repository":"owner/repo","repository_id":"123"}`)
+			test.prepare(t, managed, checkout)
+			if err := deleteManagedState(managed); err == nil {
+				t.Fatal("unsafe current checkout authorized state deletion")
+			}
+			if _, err := os.Stat(managed); err != nil {
+				t.Fatalf("unsafe state root was changed: %v", err)
+			}
+		})
+	}
+}
+
+func writeManagedDeletionConfig(t *testing.T, managed, checkout string) {
+	t.Helper()
+	value := Config{
+		SchemaVersion: "hive.integrated-config.v1",
+		Repository:    "owner/repo",
+		RepositoryID:  "123",
+		StateDir:      managed,
+		CheckoutDir:   checkout,
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, managed, "integrated/config.json", string(data))
 }
 
 func TestDeleteManagedStateRequiresOwnershipMarkerEvenForLegacyConfig(t *testing.T) {
@@ -161,6 +254,17 @@ func TestDeleteManagedStateRejectsUnsafeDaemonFiles(t *testing.T) {
 		{name: "malformed lease", mutate: func(t *testing.T, root string) {
 			writeFixture(t, root, "integrated/daemon.lease", `{"schema_version":"wrong"}`)
 		}},
+		{name: "normal visual lease for another state", mutate: func(t *testing.T, root string) {
+			writeJSONDeletionFixture(t, root, "integrated/daemon.lease", map[string]any{
+				"schema_version":    "hive.normal-visual-daemon-lease.v1",
+				"pid":               53036,
+				"state_dir":         filepath.Join(t.TempDir(), "other-state"),
+				"executable":        filepath.Join(root, "hive"),
+				"hive_commit":       strings.Repeat("a", 40),
+				"executable_sha256": strings.Repeat("b", 64),
+				"acquired_at":       "2026-07-12T09:53:01.9417791Z",
+			})
+		}},
 		{name: "oversized log", mutate: func(t *testing.T, root string) {
 			path := filepath.Join(root, "integrated", "daemon.log")
 			if err := os.Truncate(path, managedDaemonLogMaxBytes+1); err != nil {
@@ -203,6 +307,27 @@ func writeStoppedDaemonDeletionFixture(t *testing.T, root, repository string) {
 		"acquired_at":       "2026-07-12T09:53:01.9417791Z",
 	})
 	writeFixture(t, root, "integrated/daemon.log", "stopped scheduler output\n")
+}
+
+func TestDeleteManagedStateAcceptsStoppedNormalVisualLeaseForExactState(t *testing.T) {
+	managed := newManagedDeletionFixture(t)
+	writeDaemonDeletionStatus(t, managed, "owner/repo", managed)
+	writeJSONDeletionFixture(t, managed, "integrated/daemon.lease", map[string]any{
+		"schema_version":    "hive.normal-visual-daemon-lease.v1",
+		"pid":               53036,
+		"state_dir":         managed,
+		"executable":        filepath.Join(managed, "hive"),
+		"hive_commit":       strings.Repeat("a", 40),
+		"executable_sha256": strings.Repeat("b", 64),
+		"acquired_at":       "2026-07-12T09:53:01.9417791Z",
+	})
+	writeFixture(t, managed, "integrated/daemon.log", "stopped normal Visual service output\n")
+	if err := deleteManagedState(managed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(managed); !os.IsNotExist(err) {
+		t.Fatalf("managed state still exists after exact normal Visual lease deletion: %v", err)
+	}
 }
 
 func writeDaemonDeletionStatus(t *testing.T, root, repository, stateDir string) {
@@ -251,6 +376,16 @@ func TestDeleteManagedStateRejectsNestedUnownedCheckoutAndLinkedTree(t *testing.
 				t.Fatal(err)
 			}
 			if err := os.Symlink(outside, filepath.Join(root, "runtime", "linked")); err != nil {
+				t.Skipf("filesystem link creation unavailable: %v", err)
+			}
+		}},
+		{name: "linked setup baseline artifact", prepare: func(t *testing.T, root string) {
+			outside := t.TempDir()
+			writeFixture(t, outside, "sentinel.txt", "must survive")
+			if err := os.MkdirAll(filepath.Join(root, "setup-baseline"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, filepath.Join(root, "setup-baseline", "linked")); err != nil {
 				t.Skipf("filesystem link creation unavailable: %v", err)
 			}
 		}},
