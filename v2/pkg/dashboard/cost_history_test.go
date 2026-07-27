@@ -99,3 +99,23 @@ func TestAppendCostHistoryPerAgent(t *testing.T) {
 		t.Errorf("empty agents map should be nil on the entry, got %v", got[0].Agents)
 	}
 }
+
+// TestAppendCostHistoryFullModels verifies per-model snapshots land on the entry.
+func TestAppendCostHistoryFullModels(t *testing.T) {
+	s := &Server{}
+	s.AppendCostHistoryFull(5.0,
+		map[string]float64{"scanner": 5.0},
+		map[string]CostModelSnap{"claude-opus-4.7": {Input: 100, Output: 10, USD: 5.0}})
+
+	got := s.CostHistory()
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1", len(got))
+	}
+	snap, ok := got[0].Models["claude-opus-4.7"]
+	if !ok || snap.Input != 100 || snap.Output != 10 || snap.USD != 5.0 {
+		t.Errorf("model snap = %+v ok=%v, want {100 10 5}", snap, ok)
+	}
+	if got[0].Agents["scanner"] != 5.0 {
+		t.Errorf("agents map lost alongside models: %v", got[0].Agents)
+	}
+}

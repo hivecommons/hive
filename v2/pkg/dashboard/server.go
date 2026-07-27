@@ -378,6 +378,16 @@ type CostHistoryEntry struct {
 	// enabling per-agent spend-over-window on the client. Omitted on entries
 	// recorded before this field existed.
 	Agents map[string]float64 `json:"agents,omitempty"`
+	// Models maps model name → cumulative token/cost snapshot, feeding the
+	// per-model mini sparklines in the cost table. Omitted on older entries.
+	Models map[string]CostModelSnap `json:"models,omitempty"`
+}
+
+// CostModelSnap is one model's cumulative counters at a history snapshot.
+type CostModelSnap struct {
+	Input  int64   `json:"i"`
+	Output int64   `json:"o"`
+	USD    float64 `json:"usd"`
 }
 
 // costHistoryMaxEntries caps the cost sparkline to ~30 days at 5-min intervals,
@@ -1555,6 +1565,16 @@ func (s *Server) SeedFactHistory(entries []FactHistoryEntry) {
 // agents map carries per-agent cumulative $ so the UI can derive per-agent
 // spend over a time window (agent cards); variadic to keep old callers valid.
 func (s *Server) AppendCostHistory(usd float64, agents ...map[string]float64) {
+	var a map[string]float64
+	if len(agents) > 0 {
+		a = agents[0]
+	}
+	s.AppendCostHistoryFull(usd, a, nil)
+}
+
+// AppendCostHistoryFull is AppendCostHistory plus the per-model snapshot map
+// that feeds the cost table's mini sparklines.
+func (s *Server) AppendCostHistoryFull(usd float64, agents map[string]float64, models map[string]CostModelSnap) {
 	now := time.Now().UnixMilli()
 
 	s.costHistoryMu.Lock()
@@ -1571,8 +1591,11 @@ func (s *Server) AppendCostHistory(usd float64, agents ...map[string]float64) {
 		Timestamp: now,
 		USD:       usd,
 	}
-	if len(agents) > 0 && len(agents[0]) > 0 {
-		entry.Agents = agents[0]
+	if len(agents) > 0 {
+		entry.Agents = agents
+	}
+	if len(models) > 0 {
+		entry.Models = models
 	}
 	s.costHistory = append(s.costHistory, entry)
 	if len(s.costHistory) > costHistoryMaxEntries {

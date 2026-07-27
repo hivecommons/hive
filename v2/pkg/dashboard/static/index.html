@@ -1033,6 +1033,7 @@
     .cost-custom-range { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.7rem; }
     .cost-custom-range input { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; color: var(--text); font-size: 0.7rem; padding: 2px 6px; font-family: var(--font-ui); }
     .agent-spend-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--line); border-radius: 8px; font-size: 0.66rem; font-weight: 600; color: var(--muted); vertical-align: middle; }
+    .cell-spark { vertical-align: middle; margin-left: 6px; opacity: 0.75; }
     .cost-range button { border: none; background: none; color: var(--muted); font-size: 0.66rem; font-weight: 600; padding: 3px 9px; border-radius: 5px; cursor: pointer; text-transform: capitalize; }
     .cost-range button:hover { color: var(--text); }
     .cost-range button.active { background: var(--panel); color: var(--green); box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
@@ -3770,8 +3771,34 @@
     // is absent on entries recorded before per-agent snapshots existed.
     function costHist() {
       return (_costHistory || [])
-        .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp, agents: e.agents })
+        .map(e => e && { usd: e.usd, timestamp: e.t ?? e.timestamp, agents: e.agents, models: e.models })
         .filter(e => e && typeof e.usd === 'number' && typeof e.timestamp === 'number');
+    }
+
+    // Tiny inline sparkline for cost-table cells. Same min/max scaling as the
+    // big sparkline, sized to sit beside a number.
+    function miniSparkSvg(values, color) {
+      if (!values || values.length < 2) return '';
+      const W = 56, H = 14;
+      const max = Math.max(...values), min = Math.min(...values);
+      const range = (max - min) || max || 1;
+      const pts = values.map((v, i) =>
+        `${(i / (values.length - 1) * W).toFixed(1)},${(H - ((v - min) / range) * (H - 2) - 1).toFixed(1)}`);
+      return `<svg class="cell-spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    }
+
+    // Cumulative series for one model's field ('i' input, 'o' output, 'usd')
+    // across the active cost window — the table sparklines follow the same
+    // timeframe selector as everything else.
+    function modelSeries(name, field) {
+      const win = costWindow();
+      const out = [];
+      for (const e of costHist()) {
+        if (e.timestamp < win.start || e.timestamp > win.end) continue;
+        const m = e.models && e.models[name];
+        if (m && typeof m[field] === 'number') out.push(m[field]);
+      }
+      return out;
     }
 
     // Last cumulative value at-or-before t via pick(e); null if history starts
@@ -3867,7 +3894,9 @@
         body = `<div class="cost-trend-empty">No cost history yet for this range — data accrues as agents run.</div>`;
       } else {
         const bars = buckets.map(b => {
-          const h = max > 0 ? Math.max(1, (b.spend / max) * 100) : 0;
+          // All-zero windows still draw a 2% baseline so the chart reads as
+          // "flat at zero" rather than missing (only axis labels visible).
+          const h = max > 0 ? Math.max(1, (b.spend / max) * 100) : (b.hasData ? 2 : 0);
           const cls = b.spend > 0 ? 'cost-bar' : 'cost-bar zero';
           const tip = `${new Date(b.start).toLocaleString()} → ${new Date(b.end).toLocaleString()}: ${fmtUSD(b.spend)}`;
           return `<div class="${cls}" style="height:${h.toFixed(1)}%" title="${esc(tip)}"></div>`;
@@ -5878,9 +5907,9 @@ function burnAreaChart() {
           : fmtUSD(m.usd);
         return `<tr>
           <td class="cmodel">${esc(m.name || 'unknown')}</td>
-          <td class="cnum">${fmtTokens(m.input)}</td>
-          <td class="cnum">${fmtTokens(m.output)}</td>
-          <td class="cnum">${usdCell}</td>
+          <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)')}</td>
+          <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)')}</td>
+          <td class="cnum">${usdCell}${miniSparkSvg(modelSeries(m.name, 'usd'), 'var(--green)')}</td>
         </tr>`;
       }).join('');
 
