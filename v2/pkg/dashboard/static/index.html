@@ -1917,7 +1917,8 @@
     .config-field textarea:focus,
     .nous-config-section textarea:focus, .nous-config-section input[type="text"]:focus, .nous-config-section input[type="number"]:focus,
     .config-list-add input:focus,
-    .kick-prompt:focus, .kb-search-box:focus, .oc-chat-input:focus, .hive-chat-input:focus, .backend-select:focus {
+    .kick-prompt:focus, .kb-search-box:focus, .oc-chat-input:focus, .hive-chat-input:focus, .backend-select:focus,
+    #audit-search:focus {
       border-color: color-mix(in srgb, var(--amber) 60%, var(--line));
       box-shadow: 0 0 0 2px color-mix(in srgb, var(--amber) 22%, transparent);
     }
@@ -2522,9 +2523,9 @@
   <div id="audit-section" style="margin-top: 16px; margin-bottom: 24px;">
     <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('audit-section')"><span class="section-chevron">▼</span> 📋 Audit Log</h2>
     <div class="section-body">
-      <div class="audit-controls-row" style="margin-bottom:8px;display:flex;align-items:center;gap:8px">
+      <div class="audit-controls-row" style="margin-bottom:5px;padding:3px;display:flex;align-items:center;gap:8px">
         <div style="flex:1;position:relative">
-          <input id="audit-search" list="audit-saved-searches" type="text" placeholder="Search audit log... (supports /regex/)" oninput="filterAuditLog()" onkeydown="if(event.key==='Enter')saveAuditSearch()" style="width:100%;padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem">
+          <input id="audit-search" list="audit-saved-searches" type="text" placeholder="Search audit log... (terms are OR'd, supports /regex/)" oninput="filterAuditLog()" onkeydown="if(event.key==='Enter')saveAuditSearch()" style="width:100%;padding:6px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.82rem;outline:none">
           <datalist id="audit-saved-searches"></datalist>
         </div>
         <button onclick="saveAuditSearch()" title="Save this search" style="padding:4px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;font-size:0.75rem;white-space:nowrap">💾 Save</button>
@@ -8528,10 +8529,12 @@ function burnAreaChart() {
         return;
       }
       var query = parseAuditQuery(raw);
+      var terms = typeof query === 'string' ? query.split(/\s+/).filter(Boolean) : [];
       var filtered = _auditEntries.filter(function(e) {
         var haystack = [e.ts || '', e.user || '', e.action || '', e.agent || '', e.detail || ''].join(' ');
         if (query instanceof RegExp) return query.test(haystack);
-        return haystack.toLowerCase().includes(query);
+        var lower = haystack.toLowerCase();
+        return terms.some(function(t) { return lower.includes(t); });
       });
       renderAuditTable(filtered);
       if (countEl) countEl.textContent = filtered.length + ' / ' + _auditEntries.length;
