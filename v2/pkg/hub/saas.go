@@ -134,6 +134,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /api/saas/auth-check", s.handleSaaSAuthCheck)
 	s.mux.HandleFunc("POST /api/saas/user-token", s.requireAuth(s.handleUserToken))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/access", s.requireAuth(s.handleAccessList))
+	s.mux.HandleFunc("GET /api/saas/grantable-users", s.requireAuth(s.handleGrantableUsers))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/access", s.requireAuth(s.handleAccessAdd))
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}/access/{username}", s.requireAuth(s.handleAccessRemove))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/request-access", s.requireAuth(s.handleRequestAccess))
@@ -3508,6 +3509,41 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"access": access})
+}
+
+// handleGrantableUsers lists the usernames a hive owner may grant access to.
+// The Manage Access dropdown used to read /api/saas/admin/users, which is
+// requireAdmin — so for every owner who is not the hub admin it 403'd and the
+// dropdown silently rendered empty, making it look as though known users simply
+// "weren't there". Owners legitimately need the roster to grant access, so this
+// exposes exactly that and nothing else: usernames only, no emails, quotas, or
+// hive assignments (which would leak the shape of other people's fleets).
+func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request) {
+	username := s.getAuthUser(r)
+	// Any user who owns at least one hive may see the roster; that is the same
+	// bar as being able to open Manage Access at all. Admin always qualifies.
+	owns := username == hubAdminUsername
+	if !owns {
+		for _, h := range listSaaSHives() {
+			if h.Owner == username {
+				owns = true
+				break
+			}
+		}
+	}
+	if !owns {
+		http.Error(w, `{"error":"only hive owners can list users"}`, http.StatusForbidden)
+		return
+	}
+	names := make([]string, 0)
+	for _, u := range listAllSaaSUsers() {
+		if u.GitHubUsername != "" {
+			names = append(names, u.GitHubUsername)
+		}
+	}
+	sort.Strings(names)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"users": names})
 }
 
 func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
@@ -7573,16 +7609,28 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     async function loadAccessUserDropdown() {
+      var sel = document.getElementById('access-username');
+      if (!sel) return;
       try {
-        var resp = await fetch('/api/saas/admin/users');
-        if (resp.status === 403) return;
+        // grantable-users, NOT admin/users: the latter is admin-only, so every
+        // non-admin owner got a 403 and an empty dropdown with no explanation.
+        var resp = await fetch('/api/saas/grantable-users');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
         var data = await resp.json();
-        var users = (data.users || []).map(function(u) { return u.github_username; });
-        var sel = document.getElementById('access-username');
+        var users = (data.users || []);
+        if (!users.length) {
+          sel.innerHTML = '<option value="">No users yet — they must sign in to the hub once</option>';
+          return;
+        }
         sel.innerHTML = '<option value="">Select user...</option>' + users.map(function(u) {
           return '<option value="' + esc(u) + '">' + esc(u) + '</option>';
         }).join('');
-      } catch(e) {}
+      } catch(e) {
+        // Never leave the control looking merely empty — an empty dropdown is
+        // indistinguishable from "no such users", which is what made this
+        // confusing in the first place.
+        sel.innerHTML = '<option value="">Could not load users</option>';
+      }
     }
 
     async function loadAccessList() {
