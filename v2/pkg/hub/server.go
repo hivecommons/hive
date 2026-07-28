@@ -1516,3 +1516,19 @@ func sanitizeRepoEntry(s string) string {
 	}
 	return strings.Join(parts, "/")
 }
+
+// gheAPIURLForHost turns a GitHub host into the API base URL the spoke should
+// use. GitHub Enterprise serves its v3 API at https://<host>/api/v3 — the
+// working reference is hosted-open-source-osscar, which runs against
+// github.ibm.com with exactly that value.
+//
+// Public github.com (and an empty host) return "", meaning "leave the spoke's
+// github.api_url alone" — its own default is already https://api.github.com,
+// and pushing a value here would overwrite a hand-tuned config.
+func gheAPIURLForHost(host string) string {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "" || host == "github.com" || host == "api.github.com" {
+		return ""
+	}
+	return "https://" + host + "/api/v3"
+}

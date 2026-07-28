@@ -1942,11 +1942,13 @@ func main() {
 			// still gets applied and persisted.
 			vanityMatched := pc.DashboardURL == "" || cfg.Hub.DashboardURL == pc.DashboardURL
 			authorMatched := pc.AIAuthor == "" || cfg.Project.AIAuthor == pc.AIAuthor
+			apiURLMatched := pc.GitHubAPIURL == "" || cfg.GitHub.APIURL == pc.GitHubAPIURL
 			if cfg.Project.Org == pc.Org &&
 				sameStringSlice(cfg.Project.Repos, pc.Repos) &&
 				cfg.Project.PrimaryRepo == pc.PrimaryRepo &&
 				curACMM == pc.ACMMLevel &&
 				authorMatched &&
+				apiURLMatched &&
 				vanityMatched {
 				return // already reconciled
 			}
@@ -1968,6 +1970,14 @@ func main() {
 			// kept the fleet-stats collector disabled on every hive.
 			if pc.AIAuthor != "" {
 				cfg.Project.AIAuthor = pc.AIAuthor
+			}
+			// Adopt a GitHub Enterprise API URL when the hub sends one. Empty
+			// means "leave mine alone" — the spoke's own default is already
+			// api.github.com, so this never clobbers a working config.
+			if pc.GitHubAPIURL != "" && cfg.GitHub.APIURL != pc.GitHubAPIURL {
+				logger.Info("adopting GitHub API URL from hub heartbeat",
+					"was", cfg.GitHub.APIURL, "now", pc.GitHubAPIURL)
+				cfg.GitHub.APIURL = pc.GitHubAPIURL
 			}
 			level := pc.ACMMLevel
 			cfg.ACMMLevel = &level

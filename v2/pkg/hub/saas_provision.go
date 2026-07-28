@@ -249,6 +249,11 @@ type SaaSHive struct {
 	Owner       string   `json:"owner"`
 	ProjectName string   `json:"project_name"`
 	Org         string   `json:"org"`
+	// GitHubHost is the GitHub instance this project lives on — empty means
+	// public github.com, otherwise a GitHub Enterprise host (github.ibm.com,
+	// github.cisco.com, …). Recorded at assign time from the requested org so
+	// the spoke can be pointed at the right API over the heartbeat.
+	GitHubHost  string   `json:"github_host,omitempty"`
 	Repos       []string `json:"repos"`
 	PrimaryRepo string   `json:"primary_repo"`
 	ACMMLevel   int      `json:"acmm_level"`

@@ -4477,6 +4477,11 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		PrimaryRepo:  pushPrimary,
 		ACMMLevel:    h.ACMMLevel,
 		DashboardURL: h.VanityURL,
+		// Point a GHE hive at its enterprise API. jjs-world
+		// (hosted-open-source-osscar) is the working reference: a bare
+		// primary_repo plus github.api_url = https://<host>/api/v3. Empty host
+		// pushes nothing, so a github.com hive keeps the spoke's own default.
+		GitHubAPIURL: gheAPIURLForHost(h.GitHubHost),
 		// AIAuthor is deliberately left empty here. Provisioning state never
 		// knows the agents' GitHub account — the spoke owns it — and the spoke
 		// treats an empty author as "leave mine alone". Setting it from this
@@ -4626,6 +4631,11 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// (and any stale error) alone makes it show under the new owner in My Hives.
 	h.Owner = body.Owner
 	h.Org = body.Org
+	// Record the GHE host (if any) so the heartbeat can point this spoke at the
+	// right GitHub API. Never blank an existing value with an empty one.
+	if body.GitHubHost != "" {
+		h.GitHubHost = body.GitHubHost
+	}
 	h.Repos = repos
 	h.PrimaryRepo = primaryRepo
 	if body.ProjectName != "" {

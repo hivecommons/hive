@@ -489,6 +489,15 @@ type HeartbeatProjectConfig struct {
 	// placeholder subdomain) — and stays that way, since it's now the value the
 	// heartbeat carries. Empty = leave the spoke's dashboard URL unchanged.
 	DashboardURL string `json:"dashboard_url,omitempty"`
+	// GitHubAPIURL points the spoke at a GitHub Enterprise API when the request
+	// named a GHE org (github.ibm.com/my-org). Without it a GHE hive silently
+	// talks to api.github.com and 404s on every repo call, which is what drove
+	// users to paste the host into the repo field instead — the malformed value
+	// then failed heartbeat validation and crash-looped the pod.
+	//
+	// Empty = leave the spoke's github.api_url unchanged (public github.com is
+	// the spoke's own default), so this never blanks a working config.
+	GitHubAPIURL string `json:"github_api_url,omitempty"`
 }
 
 // HeartbeatGatewayConfig carries an OpenRouter model gateway (funded via the
