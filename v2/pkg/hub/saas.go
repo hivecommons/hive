@@ -2024,7 +2024,7 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 
 	// If enabling and hub is behind, trigger immediately
 	if body.AutoUpgrade {
-		latestSHA := getLatestSHAForBranch(s.hubGitBranch)
+		latestSHA := getLatestHubSHAForBranch(s.hubGitBranch)
 		if latestSHA != "" && !sameCommit(latestSHA, s.hubGitHash) {
 			s.logger.Info("audit: hub auto-upgrade initial trigger", "from", s.hubGitHash, "to", latestSHA)
 			// Route through rolloutHubToSHA so this shares the hub-image gate and
@@ -2082,7 +2082,10 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 // admin-clicked rollout ("upgrading") from everything else ("queued"), so an
 // AUTO rollout in progress showed a misleading "queued".
 func (s *HubServer) hubUpgradeState() string {
-	latest := getLatestSHAForBranch(s.hubGitBranch)
+	// Gate the badge on the HUB image, matching what rolloutHubToSHA can
+	// actually roll to — otherwise the UI shows "behind"/"queued" against a
+	// target the hub is incapable of reaching.
+	latest := getLatestHubSHAForBranch(s.hubGitBranch)
 	if latest == "" {
 		return "unknown"
 	}
@@ -2104,7 +2107,7 @@ func (s *HubServer) hubUpgradeState() string {
 
 func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
-	target := getLatestSHAForBranch(s.hubGitBranch)
+	target := getLatestHubSHAForBranch(s.hubGitBranch)
 	s.logger.Info("audit: hub self-upgrade triggered", "by", username, "to", target)
 	if err := s.rolloutHubToSHA(target); err != nil {
 		s.logger.Warn("hub self-upgrade failed", "error", err)
@@ -2560,6 +2563,14 @@ var (
 	// latestSHAByBranch only ever advances to SHAs whose container image is
 	// verified pullable on GHCR — it drives upgrade targets.
 	latestSHAByBranch = map[string]branchSHAInfo{}
+	// latestHubSHAByBranch is the same idea for the HUB's own image, which is a
+	// separate build from the spoke's (ghcrRepoHub vs ghcrRepoSpoke) and can
+	// succeed or fail independently for the same commit. Tracking one shared
+	// value meant the hub's upgrade target was gated on the SPOKE image: when a
+	// spoke build failed but the hub build succeeded, that SHA never entered
+	// latestSHAByBranch, so the hub could never roll to it and reported
+	// "current" against a stale target.
+	latestHubSHAByBranch = map[string]branchSHAInfo{}
 	// headSHAByBranch advances to the branch HEAD immediately so the
 	// dashboard can show the newest commit with a build-status indicator.
 	headSHAByBranch = map[string]branchHeadInfo{}
@@ -2797,6 +2808,16 @@ func getLatestSHAForBranch(branch string) string {
 	return latestSHAByBranch[branch].SHA
 }
 
+// getLatestHubSHAForBranch returns the newest SHA on this branch whose HUB
+// image is verified pullable. Use this — never getLatestSHAForBranch — for the
+// hub's own upgrade target, since the hub and spoke images are separate builds
+// that can fail independently for the same commit.
+func getLatestHubSHAForBranch(branch string) string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	return latestHubSHAByBranch[branch].SHA
+}
+
 // getLatestSHAs returns a branch→SHA map (backward-compatible string values).
 func getLatestSHAs() map[string]string {
 	latestSHAMu.RLock()
@@ -3031,7 +3052,10 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		// a rollout restart. A debounce prevents re-restarting every 2min while a
 		// restart is already rolling out (the new pod reports the new hash, which
 		// clears the condition, but the poll can fire before the rollout lands).
-		hubBranchSHA := getLatestSHAForBranch("v2")
+		// Use the hub's OWN branch, not a hardcoded "v2": hubUpgradeState() and
+		// handleHubSelfUpgrade() both read s.hubGitBranch, so hardcoding here
+		// made the badge and the poller disagree the moment a hub ran on v3.
+		hubBranchSHA := getLatestHubSHAForBranch(s.hubGitBranch)
 		s.hubUpgradeMu.Lock()
 		debounced := time.Since(s.lastHubUpgradeTrigger) > hubUpgradeDebounce
 		s.hubUpgradeMu.Unlock()
@@ -3247,6 +3271,17 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 	// dashboard can show the new commit while its image builds.
 	prevHead := getBranchHead(branch)
 	headChanged := prevHead.SHA != candidateSHA
+
+	// The hub image is a SEPARATE build from the spoke image and can land in
+	// either order (or fail independently). Probe it on its own so the hub's
+	// upgrade target is never gated on the spoke build, and vice versa.
+	if candidateSHA != getLatestHubSHAForBranch(branch) &&
+		ghcrTagExists(client, ghcrRepoHub, candidateSHA, logger) {
+		latestSHAMu.Lock()
+		latestHubSHAByBranch[branch] = branchSHAInfo{SHA: candidateSHA, Message: commitMsg}
+		latestSHAMu.Unlock()
+		logger.Info("SHA poll: hub image verified on GHCR", "branch", branch, "sha", candidateSHA)
+	}
 
 	if candidateSHA == getLatestSHAForBranch(branch) {
 		// Head unchanged since its image was verified — nothing to re-check.
