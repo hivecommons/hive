@@ -4421,6 +4421,10 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		PrimaryRepo:  primary,
 		ACMMLevel:    h.ACMMLevel,
 		DashboardURL: h.VanityURL,
+		// AIAuthor is deliberately left empty here. Provisioning state never
+		// knows the agents' GitHub account — the spoke owns it — and the spoke
+		// treats an empty author as "leave mine alone". Setting it from this
+		// struct would reintroduce the blanking bug.
 	}
 }
 
