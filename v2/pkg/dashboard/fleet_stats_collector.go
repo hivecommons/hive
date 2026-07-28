@@ -73,7 +73,12 @@ func (fc *FleetStatsCollector) collect(ctx context.Context) {
 	counts, err := fc.ghClient.ComputeFleetContribCounts(ctx, fc.author, fc.org)
 	if err != nil {
 		if fc.logger != nil {
-			fc.logger.Debug("fleet stats collect failed", "error", err)
+			// Warn, not Debug: a failure here means this hive silently drops out
+			// of the public fleet-stats total, and the only symptom is a blank
+			// strip on the landing page. That is not something to hide at a log
+			// level nobody enables.
+			fc.logger.Warn("fleet stats collect failed; this hive will not contribute to the fleet total",
+				"error", err, "author", fc.author, "org", fc.org)
 		}
 		return
 	}
