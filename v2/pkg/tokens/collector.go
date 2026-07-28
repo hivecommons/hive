@@ -72,20 +72,20 @@ const (
 )
 
 type Collector struct {
-	sessionsDir        string
-	claudeSessionsDir  string
-	copilotSessionsDir string
-	copilotLiveCapture bool
-	persistPath        string
-	detector           func(string) string
-	logger             *slog.Logger
-	mu                 sync.RWMutex
-	latest             *AggregateSummary
-	issueCosts         map[string]int64
-	scanInterval       time.Duration
-	prevSessionCount   int
-	prevTotalTokens    int64
-	prevByAgent        map[string]int64
+	sessionsDir               string
+	claudeSessionsDir         string
+	copilotSessionsDir        string
+	copilotLiveCaptureSinceMs int64
+	persistPath               string
+	detector                  func(string) string
+	logger                    *slog.Logger
+	mu                        sync.RWMutex
+	latest                    *AggregateSummary
+	issueCosts                map[string]int64
+	scanInterval              time.Duration
+	prevSessionCount          int
+	prevTotalTokens           int64
+	prevByAgent               map[string]int64
 }
 
 func NewCollector(sessionsDir string, logger *slog.Logger) *Collector {
@@ -115,23 +115,29 @@ func (c *Collector) SetCopilotSessionsDir(dir string) {
 	c.copilotSessionsDir = dir
 }
 
-// SetCopilotLiveCapture tells the collector that the MITM proxy is recording
-// Copilot token usage live (per completion) into the inference sink. When set,
-// the copilot session-file scanner defers token accrual to the sink to avoid
-// double-counting; it still contributes session/message/model metadata. It is
-// mutex-guarded so it can be called after Start (the scan goroutine reads it
+// SetCopilotLiveCapture tells the collector that the MITM proxy began recording
+// Copilot token usage live (per completion) into the inference sink at
+// sinceUnixMs. The copilot session-file scanner then defers token accrual to the
+// sink ONLY for sessions that were still active at/after that moment (i.e. ones
+// the proxy could actually have sniffed). Sessions that ended BEFORE live
+// capture started were never seen by the sink, so the scanner must still count
+// their session.shutdown ModelMetrics — otherwise all historical Copilot spend
+// vanishes (the $18k→$394 regression). A sinceUnixMs of 0 disables the deferral
+// entirely (always count shutdown tokens).
+//
+// Mutex-guarded so it can be called after Start (the scan goroutine reads it
 // under the same lock).
-func (c *Collector) SetCopilotLiveCapture(enabled bool) {
+func (c *Collector) SetCopilotLiveCapture(sinceUnixMs int64) {
 	c.mu.Lock()
-	c.copilotLiveCapture = enabled
+	c.copilotLiveCaptureSinceMs = sinceUnixMs
 	c.mu.Unlock()
 }
 
-// copilotLiveCaptureEnabled reads the flag under the lock.
-func (c *Collector) copilotLiveCaptureEnabled() bool {
+// copilotLiveCaptureSince reads the live-capture start timestamp (ms), 0 if off.
+func (c *Collector) copilotLiveCaptureSince() int64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.copilotLiveCapture
+	return c.copilotLiveCaptureSinceMs
 }
 
 func (c *Collector) Start(stop <-chan struct{}) {
@@ -165,7 +171,7 @@ func (c *Collector) scan() {
 	}
 
 	if c.copilotSessionsDir != "" {
-		copilotAgg, err := ScanCopilotSessions(c.copilotSessionsDir, c.copilotLiveCaptureEnabled())
+		copilotAgg, err := ScanCopilotSessions(c.copilotSessionsDir, c.copilotLiveCaptureSince())
 		if err != nil {
 			c.logger.Warn("copilot session scan failed", "error", err)
 		} else if copilotAgg != nil && copilotAgg.SessionCount > 0 {
