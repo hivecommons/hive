@@ -61,6 +61,11 @@ type RegistryEntry struct {
 	Name                      string             `json:"name"`
 	Org                       string             `json:"org"`
 	Repos                     []string           `json:"repos"`
+	// AIAuthor is the GitHub account this hive's agents open PRs as, as
+	// reported by the spoke. The hub needs it to echo project config back
+	// without blanking it, and it is the author the fleet-stats counts are
+	// scoped to.
+	AIAuthor                  string             `json:"aiAuthor,omitempty"`
 	PrimaryRepo               string             `json:"primaryRepo"`
 	DashboardURL              string             `json:"dashboardUrl"`
 	SnapshotURL               string             `json:"snapshotUrl,omitempty"`
@@ -506,6 +511,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			return safe
 		}(),
 		PrimaryRepo:  safePrimary,
+		AIAuthor:     sanitizeField(payload.AIAuthor),
 		DashboardURL: payload.DashboardURL,
 		SnapshotURL:  payload.SnapshotURL,
 		ACMMLevel:    clampInt(payload.ACMMLevel, 0, 6),
