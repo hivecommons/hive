@@ -55,15 +55,17 @@ type copilotToolComplete struct {
 // directory and returns an AggregateSummary. The sessionsDir is typically
 // ~/.copilot/session-state.
 //
-// When liveCapture is true, the MITM proxy is recording Copilot token usage
-// live (per completion response) into the inference sink, so this scanner MUST
-// NOT also accrue tokens from the session.shutdown ModelMetrics — doing so would
-// double-count every Copilot session (once live via the sink, once at shutdown
-// here). In that mode the scanner still contributes session presence, message
-// counts, model, and last-active timestamps (which the live sink does not
-// capture), but records zero tokens; the proxy sink is the single source of
-// Copilot token totals.
-func ScanCopilotSessions(sessionsDir string, liveCapture bool) (*AggregateSummary, error) {
+// liveCaptureSinceMs, when > 0, is the Unix-ms moment the MITM proxy began
+// recording Copilot token usage live into the inference sink. For any session
+// still active AT OR AFTER that moment, the proxy already counted its tokens, so
+// this scanner MUST NOT also accrue them from session.shutdown ModelMetrics
+// (that would double-count). But sessions that ended BEFORE liveCaptureSinceMs
+// were never seen by the sink, so their shutdown tokens MUST still be counted —
+// otherwise all pre-live-capture Copilot spend disappears. A value of 0 disables
+// the deferral entirely (always count shutdown tokens). Either way the scanner
+// always contributes session presence, message counts, model, and last-active
+// timestamps (which the live sink does not capture).
+func ScanCopilotSessions(sessionsDir string, liveCaptureSinceMs int64) (*AggregateSummary, error) {
 	agg := &AggregateSummary{
 		ByAgent:       make(map[string]int64),
 		ByModel:       make(map[string]int64),
@@ -94,8 +96,24 @@ func ScanCopilotSessions(sessionsDir string, liveCapture bool) (*AggregateSummar
 			continue
 		}
 
-		summary, err := parseCopilotSessionFile(eventsFile, liveCapture)
-		if err != nil || summary == nil || summary.TotalTokens == 0 && summary.Messages == 0 {
+		// Always parse the full shutdown usage; decide per-session below whether
+		// to keep it (older than live capture → keep) or defer it to the proxy
+		// sink (active at/after live capture → zero the tokens to avoid
+		// double-counting). Deciding here — not inside the parser — means we can
+		// use the session's own LastActive, which is only known after parsing.
+		summary, err := parseCopilotSessionFile(eventsFile)
+		if err != nil || summary == nil {
+			continue
+		}
+		if liveCaptureSinceMs > 0 && summary.LastActive >= liveCaptureSinceMs {
+			// Proxy captured this session's tokens live; keep metadata, drop tokens.
+			summary.InputTokens = 0
+			summary.OutputTokens = 0
+			summary.CacheRead = 0
+			summary.CacheCreate = 0
+			summary.TotalTokens = 0
+		}
+		if summary.TotalTokens == 0 && summary.Messages == 0 {
 			continue
 		}
 
@@ -138,7 +156,7 @@ func ScanCopilotSessions(sessionsDir string, liveCapture bool) (*AggregateSummar
 	return agg, nil
 }
 
-func parseCopilotSessionFile(path string, liveCapture bool) (*SessionSummary, error) {
+func parseCopilotSessionFile(path string) (*SessionSummary, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -220,17 +238,16 @@ func parseCopilotSessionFile(path string, liveCapture bool) (*SessionSummary, er
 				if shutdown.CurrentModel != "" {
 					summary.Model = shutdown.CurrentModel
 				}
-				// When the live-capture proxy is active it already recorded
-				// every completion's tokens into the inference sink; accruing
-				// the shutdown ModelMetrics here would double-count. Keep the
-				// model (set above) but skip the token totals.
-				if !liveCapture {
-					for _, metrics := range shutdown.ModelMetrics {
-						summary.InputTokens += metrics.Usage.InputTokens
-						summary.OutputTokens += metrics.Usage.OutputTokens
-						summary.CacheRead += metrics.Usage.CacheReadTokens
-						summary.CacheCreate += metrics.Usage.CacheWriteTokens
-					}
+				// Always accrue the shutdown token totals here. The caller
+				// (ScanCopilotSessions) decides per-session whether to keep them
+				// or zero them out for double-count avoidance, based on whether
+				// the session was active after live capture started — a decision
+				// that needs the fully-parsed LastActive timestamp.
+				for _, metrics := range shutdown.ModelMetrics {
+					summary.InputTokens += metrics.Usage.InputTokens
+					summary.OutputTokens += metrics.Usage.OutputTokens
+					summary.CacheRead += metrics.Usage.CacheReadTokens
+					summary.CacheCreate += metrics.Usage.CacheWriteTokens
 				}
 			}
 		}

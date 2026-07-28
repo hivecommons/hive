@@ -1531,8 +1531,11 @@ func main() {
 		// (api.githubcopilot.com) to record Copilot token usage live per
 		// response — so Copilot cost shows up while an agent runs instead of only
 		// tallying at session shutdown. Tell the collector to defer Copilot token
-		// accrual from session-shutdown files to the sink to avoid double-counting.
-		tokenCollector.SetCopilotLiveCapture(true)
+		// accrual to the sink ONLY for sessions active from NOW on (the moment
+		// live capture starts). Sessions that ended earlier were never sniffed by
+		// the proxy, so the scanner keeps counting their shutdown tokens —
+		// otherwise all pre-existing Copilot spend would vanish.
+		tokenCollector.SetCopilotLiveCapture(time.Now().UnixMilli())
 
 		vllmEndpoints := parseEndpointList(envOrDefault("HIVE_VLLM_ENDPOINT", "http://hive-vllm-svc.hive-inference.svc.cluster.local:8000"))
 		llmdEndpoints := parseEndpointList(envOrDefault("HIVE_LLMD_ENDPOINT", "http://hive-llm-d-epp.hive-inference.svc.cluster.local:8000"))
