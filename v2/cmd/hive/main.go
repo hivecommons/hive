@@ -663,7 +663,35 @@ func main() {
 	// (merged/rejected PRs, CVE-referencing PRs) across its org on a slow timer
 	// and caches them, so each heartbeat can attach a fresh-but-cheap snapshot
 	// the hub aggregates into the public landing page's live fleet-stats strip.
-	fleetStatsCollector := dashboard.NewFleetStatsCollector(ghClient, cfg.Project.AIAuthor, cfg.Project.Org, logger)
+	// ai_author is optional config and hosted hives are provisioned without it,
+	// so most spokes had an empty author — which silently disabled the collector
+	// entirely (Start() returns early) and left the public fleet-stats strip
+	// blank. Fall back to the bot token's own GitHub login: that IS the account
+	// the agents open PRs as, so it is the correct author to count. Never fall
+	// back to an org-wide search with no author filter — that would sweep in
+	// human PRs and overstate what the fleet's agents actually did.
+	fleetStatsAuthor := cfg.Project.AIAuthor
+	fleetStatsToken := cfg.GitHub.Token
+	if fleetStatsToken == "" {
+		fleetStatsToken = os.Getenv("HIVE_GITHUB_TOKEN")
+	}
+	if fleetStatsAuthor == "" && fleetStatsToken != "" {
+		if botUser, err := github.ValidateToken(fleetStatsToken, cfg.GitHub.ResolvedAPIURL()); err == nil && botUser.Login != "" {
+			fleetStatsAuthor = botUser.Login
+			logger.Info("fleet stats: ai_author unset, using bot token identity",
+				"author", fleetStatsAuthor)
+		} else if err != nil {
+			logger.Warn("fleet stats: ai_author unset and bot identity lookup failed; "+
+				"this hive will not contribute to the public fleet-stats total",
+				"error", err)
+		}
+	}
+	if fleetStatsAuthor == "" || cfg.Project.Org == "" {
+		logger.Warn("fleet stats collector disabled: author or org is empty; "+
+			"set project.ai_author in hive.yaml so this hive contributes to the fleet total",
+			"author", fleetStatsAuthor, "org", cfg.Project.Org)
+	}
+	fleetStatsCollector := dashboard.NewFleetStatsCollector(ghClient, fleetStatsAuthor, cfg.Project.Org, logger)
 	go fleetStatsCollector.Start(ctx)
 
 	var lastActionable atomic.Pointer[github.ActionableResult]
