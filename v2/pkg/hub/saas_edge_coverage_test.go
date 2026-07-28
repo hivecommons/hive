@@ -118,8 +118,16 @@ func TestHandleHubSelfUpgrade_Edge(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 
+	// A latest v2 SHA must be resolved for the handler to have a target.
+	setV2Latest(t, "target1")
+	// Stub the GHCR hub-image check so tests don't hit the network; assume the
+	// hub image exists for the success path.
+	oldImgCheck := hubImageExists
+	hubImageExists = func(sha string, _ *slog.Logger) bool { return true }
+	t.Cleanup(func() { hubImageExists = oldImgCheck })
+
 	// Failure path: fail-fast fake kubectl (exit 1) -> 500.
-	s := &HubServer{logger: slog.Default(), clusters: map[string]ClusterConfig{defaultClusterID: {ID: defaultClusterID, InCluster: true}}}
+	s := &HubServer{logger: slog.Default(), hubGitBranch: "v2", clusters: map[string]ClusterConfig{defaultClusterID: {ID: defaultClusterID, InCluster: true}}}
 	rec := httptest.NewRecorder()
 	req := reqWithUser(http.MethodPost, "/hub-self", "", "admin")
 	s.handleHubSelfUpgrade(rec, req)
@@ -134,6 +142,15 @@ func TestHandleHubSelfUpgrade_Edge(t *testing.T) {
 	s.handleHubSelfUpgrade(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("hub self-upgrade (kubectl ok) status = %d, want 200", rec.Code)
+	}
+
+	// Missing hub image -> handler fails even with a healthy kubectl.
+	hubImageExists = func(sha string, _ *slog.Logger) bool { return false }
+	rec = httptest.NewRecorder()
+	req = reqWithUser(http.MethodPost, "/hub-self", "", "admin")
+	s.handleHubSelfUpgrade(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("hub self-upgrade (missing hub image) status = %d, want 500", rec.Code)
 	}
 }
 
