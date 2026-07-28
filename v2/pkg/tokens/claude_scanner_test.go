@@ -407,7 +407,7 @@ func TestCollectorCopilotLiveCapture(t *testing.T) {
 
 	c := NewCollector(metricsDir, testLogger())
 	c.SetCopilotSessionsDir(copilotDir)
-	c.SetCopilotLiveCapture(true)
+	c.SetCopilotLiveCapture(1)
 	c.scan()
 
 	summary := c.Summary()
