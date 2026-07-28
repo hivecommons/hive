@@ -1,10 +1,10 @@
 package proxy
 
 import (
-	"sync"
 	"encoding/json"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
 )
@@ -60,6 +60,30 @@ func IsGitHubHost(host string) bool {
 // tunnel because it carries OAuth and Git smart-HTTP traffic.
 func NeedsMITM(host string) bool {
 	return host != "github.com" && IsGitHubHost(host)
+}
+
+// copilotAPIHostSuffix matches the GitHub Copilot completion API hosts. The
+// public host is api.githubcopilot.com and enterprise plans use
+// api.enterprise.githubcopilot.com (and other per-account subdomains discovered
+// via copilot_internal/user), so a suffix match covers every variant without
+// hardcoding each subdomain.
+const copilotAPIHostSuffix = ".githubcopilot.com"
+
+// copilotAPIHostExact is the public Copilot completion host, matched exactly so
+// the bare apex (no leading dot) is also recognized.
+const copilotAPIHostExact = "githubcopilot.com"
+
+// IsCopilotAPIHost reports whether host is a GitHub Copilot completion API host
+// whose /chat/completions responses carry an OpenAI-shaped usage block. The
+// proxy MITMs these hosts (when a token sink is active) purely to read that
+// usage block for live cost attribution — request and response bodies are
+// otherwise forwarded verbatim; no content is altered beyond an optional
+// stream_options.include_usage hint on streaming completion requests.
+func IsCopilotAPIHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	return host == copilotAPIHostExact || strings.HasSuffix(host, copilotAPIHostSuffix)
 }
 
 // rules defines every GitHub API operation and the minimum mode needed.

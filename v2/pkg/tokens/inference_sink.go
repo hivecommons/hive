@@ -1,11 +1,13 @@
 package tokens
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -44,12 +46,81 @@ type inferenceAgentTotals struct {
 
 // NewInferenceSink returns a sink that writes per-agent usage files into dir.
 // dir is created if missing. A nil sink (dir == "") is a safe no-op.
+//
+// On construction the sink reloads any existing per-agent totals from the
+// inference-<agent>.jsonl files already on disk, so cumulative counts survive a
+// hive restart. Without this, an in-memory-only sink would restart every agent's
+// counter at zero and overwrite the persisted file with a lower value on the
+// next Record — silently losing all pre-restart tokens (this affected inference
+// agents and would double-hurt the Copilot live path, whose only durable record
+// is this file once the session-shutdown scanner defers to the sink).
 func NewInferenceSink(dir string, logger *slog.Logger) *InferenceSink {
-	return &InferenceSink{
+	s := &InferenceSink{
 		dir:    dir,
 		logger: logger,
 		totals: make(map[string]*inferenceAgentTotals),
 	}
+	s.restoreFromDisk()
+	return s
+}
+
+// restoreFromDisk rebuilds the in-memory per-agent totals from the persisted
+// inference-<agent>.jsonl files. Best-effort: unreadable or malformed files are
+// skipped. Safe to call before any goroutines run (only invoked from the
+// constructor).
+func (s *InferenceSink) restoreFromDisk() {
+	if s == nil || s.dir == "" {
+		return
+	}
+	matches, err := filepath.Glob(filepath.Join(s.dir, inferenceSessionFilePrefix+"*.jsonl"))
+	if err != nil {
+		return
+	}
+	for _, path := range matches {
+		base := filepath.Base(path)
+		agent := strings.TrimSuffix(strings.TrimPrefix(base, inferenceSessionFilePrefix), ".jsonl")
+		if agent == "" {
+			continue
+		}
+		t := s.parseAgentFile(path)
+		if t != nil {
+			s.totals[agent] = t
+		}
+	}
+}
+
+// parseAgentFile reads a persisted inference usage file back into totals. The
+// file holds a "user" pin line and an "assistant" line carrying the cumulative
+// InputTokens/OutputTokens/Model. Returns nil on any read/parse failure.
+func (s *InferenceSink) parseAgentFile(path string) *inferenceAgentTotals {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	t := &inferenceAgentTotals{}
+	found := false
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var e SessionEntry
+		if json.Unmarshal(scanner.Bytes(), &e) != nil {
+			continue
+		}
+		if e.Model != "" {
+			t.Model = e.Model
+		}
+		if e.InputTokens > 0 || e.OutputTokens > 0 {
+			t.InputTokens += e.InputTokens
+			t.OutputTokens += e.OutputTokens
+			found = true
+		}
+	}
+	if !found {
+		return nil
+	}
+	return t
 }
 
 // Record adds one response's token usage for agent to the running total and

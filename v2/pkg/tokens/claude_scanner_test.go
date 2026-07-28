@@ -337,7 +337,7 @@ func TestAgentFromTmuxEnv(t *testing.T) {
 
 func TestParseTimestampToUnixMilli(t *testing.T) {
 	tests := []struct {
-		input   string
+		input    string
 		wantNon0 bool
 	}{
 		{"2025-01-01T00:00:00Z", true},
@@ -379,6 +379,45 @@ func TestCollectorSetClaudeSessionsDir(t *testing.T) {
 	c.SetClaudeSessionsDir("/root/.claude/projects")
 	if c.claudeSessionsDir != "/root/.claude/projects" {
 		t.Errorf("claudeSessionsDir = %q", c.claudeSessionsDir)
+	}
+}
+
+// TestCollectorCopilotLiveCapture verifies the collector honors the live-capture
+// flag: with it set, the copilot scanner defers token accrual to the sink, so the
+// scanned copilot session contributes no tokens (but is still counted), and the
+// per-agent live usage the sink wrote is what surfaces instead.
+func TestCollectorCopilotLiveCapture(t *testing.T) {
+	metricsDir := t.TempDir()
+	copilotDir := t.TempDir()
+
+	// A live copilot usage record from the proxy sink (per-response).
+	sink := NewInferenceSink(metricsDir, testLogger())
+	sink.Record("scanner", "gpt-5", 300, 100)
+
+	// A copilot session file whose shutdown metrics would double-count if the
+	// scanner accrued them.
+	sessionDir := filepath.Join(copilotDir, "s1")
+	os.MkdirAll(sessionDir, 0o755)
+	content := strings.Join([]string{
+		`{"type":"session.start","data":{"sessionId":"abc123456789","selectedModel":"gpt-5","context":{"cwd":"/data/agents/scanner"}}}`,
+		`{"type":"user.message","timestamp":"2025-06-01T00:00:00Z","data":{"content":"go"}}`,
+		`{"type":"session.shutdown","data":{"currentModel":"gpt-5","modelMetrics":{"gpt-5":{"usage":{"inputTokens":300,"outputTokens":100}}}}}`,
+	}, "\n") + "\n"
+	os.WriteFile(filepath.Join(sessionDir, "events.jsonl"), []byte(content), 0o600)
+
+	c := NewCollector(metricsDir, testLogger())
+	c.SetCopilotSessionsDir(copilotDir)
+	c.SetCopilotLiveCapture(true)
+	c.scan()
+
+	summary := c.Summary()
+	if summary == nil {
+		t.Fatal("nil summary")
+	}
+	// scanner's tokens come ONLY from the sink (400), not doubled by the
+	// shutdown scan (which would make it 800).
+	if got := summary.ByAgent["scanner"]; got != 400 {
+		t.Fatalf("ByAgent[scanner] = %d, want 400 (live sink only, no double-count)", got)
 	}
 }
 

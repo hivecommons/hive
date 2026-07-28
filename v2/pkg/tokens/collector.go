@@ -75,6 +75,7 @@ type Collector struct {
 	sessionsDir        string
 	claudeSessionsDir  string
 	copilotSessionsDir string
+	copilotLiveCapture bool
 	persistPath        string
 	detector           func(string) string
 	logger             *slog.Logger
@@ -124,6 +125,25 @@ func (c *Collector) SetCopilotSessionsDir(dir string) {
 	c.copilotSessionsDir = dir
 }
 
+// SetCopilotLiveCapture tells the collector that the MITM proxy is recording
+// Copilot token usage live (per completion) into the inference sink. When set,
+// the copilot session-file scanner defers token accrual to the sink to avoid
+// double-counting; it still contributes session/message/model metadata. It is
+// mutex-guarded so it can be called after Start (the scan goroutine reads it
+// under the same lock).
+func (c *Collector) SetCopilotLiveCapture(enabled bool) {
+	c.mu.Lock()
+	c.copilotLiveCapture = enabled
+	c.mu.Unlock()
+}
+
+// copilotLiveCaptureEnabled reads the flag under the lock.
+func (c *Collector) copilotLiveCaptureEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.copilotLiveCapture
+}
+
 func (c *Collector) Start(stop <-chan struct{}) {
 	c.scan()
 	ticker := time.NewTicker(c.scanInterval)
@@ -155,7 +175,7 @@ func (c *Collector) scan() {
 	}
 
 	if c.copilotSessionsDir != "" {
-		copilotAgg, err := ScanCopilotSessions(c.copilotSessionsDir)
+		copilotAgg, err := ScanCopilotSessions(c.copilotSessionsDir, c.copilotLiveCaptureEnabled())
 		if err != nil {
 			c.logger.Warn("copilot session scan failed", "error", err)
 		} else if copilotAgg != nil && copilotAgg.SessionCount > 0 {
