@@ -66,6 +66,9 @@ type RegistryEntry struct {
 	// without blanking it, and it is the author the fleet-stats counts are
 	// scoped to.
 	AIAuthor                  string             `json:"aiAuthor,omitempty"`
+	// StartedAt is the spoke process start time, reported over the heartbeat.
+	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
+	StartedAt                 string             `json:"startedAt,omitempty"`
 	PrimaryRepo               string             `json:"primaryRepo"`
 	DashboardURL              string             `json:"dashboardUrl"`
 	SnapshotURL               string             `json:"snapshotUrl,omitempty"`
@@ -565,6 +568,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}(),
 		PrimaryRepo:  safePrimary,
 		AIAuthor:     sanitizeField(payload.AIAuthor),
+		StartedAt:    sanitizeField(payload.StartedAt),
 		DashboardURL: payload.DashboardURL,
 		SnapshotURL:  payload.SnapshotURL,
 		ACMMLevel:    clampInt(payload.ACMMLevel, 0, 6),

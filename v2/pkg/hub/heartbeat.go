@@ -162,6 +162,11 @@ type HeartbeatPayload struct {
 	Tokens24h               int64                         `json:"tokens_24h"`
 	Contributors            ContributorSummary            `json:"contributors"`
 	Leaderboard             []LeaderboardEntry            `json:"leaderboard"`
+	// StartedAt is the spoke process start time (RFC3339). The hub renders it
+	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
+	// but restarted 35 times — is visible in My Hives instead of looking
+	// healthy. A short uptime that keeps resetting is the tell.
+	StartedAt               string                        `json:"started_at,omitempty"`
 	Health                  map[string]any                `json:"health"`
 	DashboardURL            string                        `json:"dashboard_url"`
 	SnapshotURL             string                        `json:"snapshot_url"`

@@ -54,6 +54,12 @@ var (
 	gitBranch = "unknown"
 )
 
+// processStartedAt is when this hive process began. Reported over the heartbeat
+// so the hub can show an uptime pill — a hive that is 1/1 Running but restarting
+// every couple of minutes looks healthy in a pod listing and in My Hives, and a
+// short uptime that keeps resetting is the only visible tell.
+var processStartedAt = time.Now()
+
 func main() {
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
@@ -1656,6 +1662,7 @@ func main() {
 				HiveID:      cfg.HiveID,
 				Org:         cfg.Project.Org,
 				AIAuthor:    cfg.Project.AIAuthor,
+				StartedAt:   processStartedAt.UTC().Format(time.RFC3339),
 				Repos:       cfg.Project.Repos,
 				PrimaryRepo: cfg.Project.PrimaryRepo,
 				ACMMLevel:   acmmLvl,
