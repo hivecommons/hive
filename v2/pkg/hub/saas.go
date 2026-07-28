@@ -5737,7 +5737,7 @@ const dashboardHTML = `<!DOCTYPE html>
             actions += '<br style="margin-bottom:4px"><button onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="margin-top:6px;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:0.65rem;white-space:nowrap" title="Remove from registry (does not delete the hive)">Remove</button>';
           }
         } else if (isHosted && (h.role === 'owner' || h.role === 'read-write')) {
-          actions = '<button onclick="openAccessModal(\'' + esc(h.id) + '\')" style="padding:3px 10px;background:var(--blue);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap;margin-right:4px">Permissions</button>';
+          actions = '<button onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="padding:3px 10px;background:var(--blue);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap;margin-right:4px">Permissions</button>';
           if (h.role === 'owner') {
             actions += '<button onclick="deleteHive(\'' + esc(h.id) + '\')" style="padding:3px 10px;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;white-space:nowrap">Delete</button>';
           }
@@ -5755,7 +5755,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (apiBase) menuItems.push('<a href="' + apiBase + '/api/docs" target="_blank" style="' + mi + '">API Docs</a>');
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
-        if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\')" style="' + mi + '">Permissions</div>');
+        if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="' + mi + '">Permissions</div>');
         if (h.role === 'owner' || h.role === 'read-write' || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
         if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
@@ -7475,9 +7475,28 @@ const dashboardHTML = `<!DOCTYPE html>
   <script>
     var _accessHiveId = '';
 
-    async function openAccessModal(hiveId) {
+    async function openAccessModal(hiveId, dashUrl) {
       _accessHiveId = hiveId;
-      document.getElementById('access-hive-label').textContent = 'Hive: ' + hiveId;
+      // Show the hive's URL alongside its id. The raw placeholder id
+      // (hosted-available-oke-05-placeholder-6q84) says nothing about where the
+      // hive actually lives, and the vanity URL is what an owner recognises.
+      var label = document.getElementById('access-hive-label');
+      label.textContent = 'Hive: ' + hiveId;
+      var urlEl = document.getElementById('access-hive-url');
+      if (!urlEl) {
+        urlEl = document.createElement('div');
+        urlEl.id = 'access-hive-url';
+        urlEl.style.cssText = 'padding:0 32px 4px;font-size:0.8rem';
+        label.parentNode.insertBefore(urlEl, label.nextSibling);
+      }
+      if (dashUrl && dashUrl.indexOf('localhost') === -1) {
+        urlEl.innerHTML = '<a href="' + esc(dashUrl) + '" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none">' +
+          esc(dashUrl.replace(/^https?:\/\//, '')) + '</a>';
+        urlEl.style.display = '';
+      } else {
+        urlEl.textContent = '';
+        urlEl.style.display = 'none';
+      }
       document.getElementById('access-modal').style.display = 'flex';
       await loadAccessList();
       await loadAccessUserDropdown();
