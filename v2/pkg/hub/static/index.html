@@ -659,73 +659,6 @@
       </div>
     </section>
 
-    <!-- ── Watch: latest presentation ── -->
-    <section class="section-pad video-section" id="watch">
-      <div class="section-heading" style="margin-left:auto;margin-right:auto">
-        <p class="section-label">Watch</p>
-        <h2>How Hive works &mdash; and why not build your own</h2>
-        <p>A walkthrough of the agents, the governor, and the guardrails that make Hive safe to leave running &mdash; and why standing up your own agent loop means re-solving problems Hive already handles.</p>
-      </div>
-      <div class="video-frame">
-        <div class="aspect">
-          <iframe src="https://www.youtube-nocookie.com/embed/_5zt6m4qQnI"
-            title="How Hive works — and why to use it instead of building your own"
-            loading="lazy"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerpolicy="strict-origin-when-cross-origin"
-            allowfullscreen></iframe>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── How it works ── -->
-    <section class="loop section-pad" id="how-it-works">
-      <div class="section-heading">
-        <p class="section-label">How it works</p>
-        <h2>Coverage first, then autonomy</h2>
-        <p>Point a hive at your repository and start at L1, where agents only advise. Strong test coverage is what earns the confidence to go further &mdash; but the autonomy level never rises on its own. You (the admin) choose to raise it, and only then do agents take on more: filing issues, opening hold-gated PRs, and eventually merging on green. Coverage tells you when it's safe to level up; the decision is always yours. A governor decides minute by minute how hard they work based on your queue depth. Hive doesn&rsquo;t replace maintainers; it earns its way into the work.</p>
-      </div>
-      <div class="loop-rail">
-        <div class="loop-step"><span>01</span><h3>Issue filed</h3><p style="font-size:.86rem">A bug report, feature request, or dependency alert lands on the repo.</p></div>
-        <div class="loop-step"><span>02</span><h3>Triage</h3><p style="font-size:.86rem">The scanner agent reads, labels, and assigns the issue within minutes.</p></div>
-        <div class="loop-step"><span>03</span><h3>Fix agent</h3><p style="font-size:.86rem">A specialized agent writes the fix in an isolated worktree, opens a PR.</p></div>
-        <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold. Roughly 1 in 7 agent PRs is rejected here.</p></div>
-        <div class="loop-step"><span>05</span><h3>Review</h3><p style="font-size:.86rem">Reviewer agents check post-merge state, GA4 regressions, and invariant drift.</p></div>
-        <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">PRs merge on green CI at the autonomy level you allow. No human approval needed at L4+.</p></div>
-        <div class="loop-step"><span>07</span><h3>Rerun</h3><p style="font-size:.86rem">The loop restarts. Security patches, dep updates, and test fixes happen continuously.</p></div>
-      </div>
-    </section>
-
-    <!-- ── Proof / Options ── -->
-    <section class="section-pad">
-      <div class="section-heading">
-        <p class="section-label">Why Hive</p>
-        <h2>Automate the mundane, reclaim your time</h2>
-        <p>Hive is not about replacing humans. Security patches, dependency updates, test fixes, and issue triage are essential but repetitive. Hive automates them so maintainers can spend time on outreach, adoption, innovation, and strategy &mdash; the things that are often neglected.</p>
-      </div>
-      <div class="proof-grid">
-        <div class="proof-card">
-          <div class="tag">Hosted</div>
-          <h3>Get a hive for your project</h3>
-          <p>Hosted on our infrastructure &mdash; no Kubernetes, no setup. Request one and invite contributors to run the agents.</p>
-          <div style="margin-top:1rem"><a class="button primary" href="/get-started">Request a Hive</a></div>
-          <p style="font-size:.8rem;margin-top:.8rem"><a href="/get-started#self-host" style="color:var(--blue)">Prefer to self-host? →</a></p>
-        </div>
-        <div class="proof-card">
-          <div class="tag">Community</div>
-          <h3>Contribute compute to a hive</h3>
-          <p>Lend your AI CLI to run agents for a public project. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
-          <div style="margin-top:1rem"><a class="button secondary" href="/get-started#contribute">Start contributing</a></div>
-        </div>
-        <div class="proof-card">
-          <div class="tag">Deterministic</div>
-          <h3>A pipeline, not a prompt</h3>
-          <p>Filtering, classification, and merge-gating are shell scripts that run <em>before</em> any LLM sees the work. Agents only get the judgment calls &mdash; and a coverage threshold decides what actually lands.</p>
-          <div style="margin-top:1rem"><a class="button tertiary" href="/learn">Learn the architecture</a></div>
-        </div>
-      </div>
-    </section>
-
     <!-- ── How Hive compares ── -->
     <section class="section-pad" id="compare">
       <div class="section-heading">
@@ -827,6 +760,73 @@
       </div>
       <p class="compare-legend"><span class="c-yes">&#10003;</span> yes &nbsp;&middot;&nbsp; <span class="c-part">partial</span> &nbsp;&middot;&nbsp; <span class="c-no">&#10007;</span> no. Competitor rows reflect each vendor&rsquo;s public documentation as of 2026; comparisons are our own.</p>
       <p class="compare-foot">Hive now closes what used to be the one gap: general-purpose <strong>plan decomposition with a review-before-execution gate</strong> &mdash; <strong>live today at ACMM levels 5 and 6</strong>. Click <strong>Plan</strong> on any issue (or add the <code>plan</code> label) and Hive breaks an epic into an ordered sub-task DAG, holds it behind a human plan-review gate, and &mdash; when an approved plan stalls &mdash; detects the stall and re-kicks the architect to revise it, bounded by a per-plan replan cap. Devin, Planner, and others plan; Hive plans, reviews, and self-corrects &mdash; and it&rsquo;s the option you own outright.</p>
+    </section>
+
+    <!-- ── Watch: latest presentation ── -->
+    <section class="section-pad video-section" id="watch">
+      <div class="section-heading" style="margin-left:auto;margin-right:auto">
+        <p class="section-label">Watch</p>
+        <h2>How Hive works &mdash; and why not build your own</h2>
+        <p>A walkthrough of the agents, the governor, and the guardrails that make Hive safe to leave running &mdash; and why standing up your own agent loop means re-solving problems Hive already handles.</p>
+      </div>
+      <div class="video-frame">
+        <div class="aspect">
+          <iframe src="https://www.youtube-nocookie.com/embed/_5zt6m4qQnI"
+            title="How Hive works — and why to use it instead of building your own"
+            loading="lazy"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            referrerpolicy="strict-origin-when-cross-origin"
+            allowfullscreen></iframe>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── How it works ── -->
+    <section class="loop section-pad" id="how-it-works">
+      <div class="section-heading">
+        <p class="section-label">How it works</p>
+        <h2>Coverage first, then autonomy</h2>
+        <p>Point a hive at your repository and start at L1, where agents only advise. Strong test coverage is what earns the confidence to go further &mdash; but the autonomy level never rises on its own. You (the admin) choose to raise it, and only then do agents take on more: filing issues, opening hold-gated PRs, and eventually merging on green. Coverage tells you when it's safe to level up; the decision is always yours. A governor decides minute by minute how hard they work based on your queue depth. Hive doesn&rsquo;t replace maintainers; it earns its way into the work.</p>
+      </div>
+      <div class="loop-rail">
+        <div class="loop-step"><span>01</span><h3>Issue filed</h3><p style="font-size:.86rem">A bug report, feature request, or dependency alert lands on the repo.</p></div>
+        <div class="loop-step"><span>02</span><h3>Triage</h3><p style="font-size:.86rem">The scanner agent reads, labels, and assigns the issue within minutes.</p></div>
+        <div class="loop-step"><span>03</span><h3>Fix agent</h3><p style="font-size:.86rem">A specialized agent writes the fix in an isolated worktree, opens a PR.</p></div>
+        <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold. Roughly 1 in 7 agent PRs is rejected here.</p></div>
+        <div class="loop-step"><span>05</span><h3>Review</h3><p style="font-size:.86rem">Reviewer agents check post-merge state, GA4 regressions, and invariant drift.</p></div>
+        <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">PRs merge on green CI at the autonomy level you allow. No human approval needed at L4+.</p></div>
+        <div class="loop-step"><span>07</span><h3>Rerun</h3><p style="font-size:.86rem">The loop restarts. Security patches, dep updates, and test fixes happen continuously.</p></div>
+      </div>
+    </section>
+
+    <!-- ── Proof / Options ── -->
+    <section class="section-pad">
+      <div class="section-heading">
+        <p class="section-label">Why Hive</p>
+        <h2>Automate the mundane, reclaim your time</h2>
+        <p>Hive is not about replacing humans. Security patches, dependency updates, test fixes, and issue triage are essential but repetitive. Hive automates them so maintainers can spend time on outreach, adoption, innovation, and strategy &mdash; the things that are often neglected.</p>
+      </div>
+      <div class="proof-grid">
+        <div class="proof-card">
+          <div class="tag">Hosted</div>
+          <h3>Get a hive for your project</h3>
+          <p>Hosted on our infrastructure &mdash; no Kubernetes, no setup. Request one and invite contributors to run the agents.</p>
+          <div style="margin-top:1rem"><a class="button primary" href="/get-started">Request a Hive</a></div>
+          <p style="font-size:.8rem;margin-top:.8rem"><a href="/get-started#self-host" style="color:var(--blue)">Prefer to self-host? →</a></p>
+        </div>
+        <div class="proof-card">
+          <div class="tag">Community</div>
+          <h3>Contribute compute to a hive</h3>
+          <p>Lend your AI CLI to run agents for a public project. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
+          <div style="margin-top:1rem"><a class="button secondary" href="/get-started#contribute">Start contributing</a></div>
+        </div>
+        <div class="proof-card">
+          <div class="tag">Deterministic</div>
+          <h3>A pipeline, not a prompt</h3>
+          <p>Filtering, classification, and merge-gating are shell scripts that run <em>before</em> any LLM sees the work. Agents only get the judgment calls &mdash; and a coverage threshold decides what actually lands.</p>
+          <div style="margin-top:1rem"><a class="button tertiary" href="/learn">Learn the architecture</a></div>
+        </div>
+      </div>
     </section>
 
     <!-- ── Get started ── -->
