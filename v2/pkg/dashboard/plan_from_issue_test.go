@@ -518,7 +518,7 @@ func TestBuildPlanning_PendingAndPaused(t *testing.T) {
 	}
 
 	// Architect NOT paused → pending counted, ArchitectPaused false.
-	fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false)
+	fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false, 6)
 	if fp.PendingDecompose != 2 {
 		t.Errorf("PendingDecompose = %d, want 2", fp.PendingDecompose)
 	}
@@ -530,7 +530,7 @@ func TestBuildPlanning_PendingAndPaused(t *testing.T) {
 	}
 
 	// Architect paused AND pending>0 → flag set.
-	fpPaused := BuildPlanning(map[string]*beads.Store{"architect": store}, true)
+	fpPaused := BuildPlanning(map[string]*beads.Store{"architect": store}, true, 6)
 	if !fpPaused.ArchitectPaused {
 		t.Error("ArchitectPaused should be true when architect paused with pending work")
 	}
@@ -541,7 +541,7 @@ func TestBuildPlanning_PausedButNoPendingIsQuiet(t *testing.T) {
 	// A decomposed (non-pending) epic; architect paused but nothing queued.
 	epic, _ := store.Create("done", beads.TypeEpic, beads.PriorityHigh, "architect", "")
 	planning.DecomposeFromOutput(store, epic, "1. [T1] a [agent_suitable]\n", planning.Options{})
-	fp := BuildPlanning(map[string]*beads.Store{"architect": store}, true)
+	fp := BuildPlanning(map[string]*beads.Store{"architect": store}, true, 6)
 	if fp.ArchitectPaused {
 		t.Error("no pending work → ArchitectPaused must stay false even if paused")
 	}

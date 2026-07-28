@@ -128,21 +128,21 @@ func BuildFrontendStatus(
 	issueToMerge := buildIssueToMerge(metricsCollector)
 
 	payload := &StatusPayload{
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-		HiveID:       cfg.HiveID,
-		Agents:       buildAgents(agentStatuses, cfg, govState),
-		Governor:     buildGovernor(govState, cfg),
-		Tokens:       buildTokens(tokenCollector),
-		Repos:        buildRepos(cfg, actionable),
-		Beads:        BuildBeadsFromConfig(beadStores, cfg),
-		Planning:     BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses)),
-		Health:       buildHealth(ghClient, ctx),
-		Budget:       buildBudget(gov, tokenCollector),
-		CadenceMatrix: buildCadenceMatrix(cfg, agentStatuses),
-		GHRateLimits: buildGHRateLimits(ghClient, ctx, cfg),
-		AgentMetrics: agentMetrics,
-		Hold:         buildHold(actionable),
-		IssueToMerge: issueToMerge,
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		HiveID:          cfg.HiveID,
+		Agents:          buildAgents(agentStatuses, cfg, govState),
+		Governor:        buildGovernor(govState, cfg),
+		Tokens:          buildTokens(tokenCollector),
+		Repos:           buildRepos(cfg, actionable),
+		Beads:           BuildBeadsFromConfig(beadStores, cfg),
+		Planning:        BuildPlanning(beadStores, architectPausedFromStatuses(agentStatuses), detectACMMLevel(cfg)),
+		Health:          buildHealth(ghClient, ctx),
+		Budget:          buildBudget(gov, tokenCollector),
+		CadenceMatrix:   buildCadenceMatrix(cfg, agentStatuses),
+		GHRateLimits:    buildGHRateLimits(ghClient, ctx, cfg),
+		AgentMetrics:    agentMetrics,
+		Hold:            buildHold(actionable),
+		IssueToMerge:    issueToMerge,
 		ACMMLevel:       detectACMMLevel(cfg),
 		ACMMPackAgents:  buildACMMPackAgents(cfg),
 		SystemResources: collectSystemResources(),
@@ -698,12 +698,12 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 	// Per-agent breakdown with full detail
 	for agentName, detail := range summary.ByAgentDetail {
 		bucket := FrontendTokenBucket{
-			Input:     detail.Input,
-			Output:    detail.Output,
-			CacheRead: detail.CacheRead,
+			Input:       detail.Input,
+			Output:      detail.Output,
+			CacheRead:   detail.CacheRead,
 			CacheCreate: detail.CacheCreate,
-			Messages:  detail.Messages,
-			Sessions:  detail.Sessions,
+			Messages:    detail.Messages,
+			Sessions:    detail.Sessions,
 		}
 		if detail.Sessions > 0 {
 			totalForAgent := detail.Input + detail.Output + detail.CacheRead + detail.CacheCreate
@@ -715,12 +715,12 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 	// Per-model breakdown with full detail
 	for modelName, detail := range summary.ByModelDetail {
 		bucket := FrontendTokenBucket{
-			Input:     detail.Input,
-			Output:    detail.Output,
-			CacheRead: detail.CacheRead,
+			Input:       detail.Input,
+			Output:      detail.Output,
+			CacheRead:   detail.CacheRead,
 			CacheCreate: detail.CacheCreate,
-			Messages:  detail.Messages,
-			Sessions:  detail.Sessions,
+			Messages:    detail.Messages,
+			Sessions:    detail.Sessions,
 		}
 		if detail.Sessions > 0 {
 			totalForModel := detail.Input + detail.Output + detail.CacheRead + detail.CacheCreate
@@ -804,14 +804,14 @@ func buildBeads(stores map[string]*beads.Store) FrontendBeads {
 // PendingDecompose (Phase 4) counts issue-sourced epics not yet built by the
 // architect; architectPaused says whether that queue is blocked on a paused
 // architect (so the tile can show the "resume the architect" message).
-func BuildPlanning(stores map[string]*beads.Store, architectPaused bool) FrontendPlanning {
-	return buildPlanningAt(stores, architectPaused, time.Now())
+func BuildPlanning(stores map[string]*beads.Store, architectPaused bool, acmmLevel int) FrontendPlanning {
+	return buildPlanningAt(stores, architectPaused, acmmLevel, time.Now())
 }
 
 // buildPlanningAt is BuildPlanning with an injected `now`, so the replans_24h
 // window is unit-testable with backdated last_replan_at timestamps.
-func buildPlanningAt(stores map[string]*beads.Store, architectPaused bool, now time.Time) FrontendPlanning {
-	fp := FrontendPlanning{}
+func buildPlanningAt(stores map[string]*beads.Store, architectPaused bool, acmmLevel int, now time.Time) FrontendPlanning {
+	fp := FrontendPlanning{Available: planning.PlanningAllowedAtLevel(acmmLevel)}
 	cutoff := now.Add(-planningReplanWindow)
 	for _, store := range stores {
 		all := store.List(beads.ListFilter{})

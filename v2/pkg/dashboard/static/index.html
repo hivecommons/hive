@@ -838,6 +838,9 @@
     .gov-stat .val.active { color: var(--green); }
     .gov-stat .val.dead { color: var(--red); }
     .gov-stat .val.starting { color: var(--yellow); }
+    /* planning-alert: plans awaiting human review — amber, to draw the eye like
+       the "N Issues" / on-hold indicators. */
+    .gov-stat .val.planning-alert { color: var(--yellow); }
 
     /* Repos */
     .repos { margin-bottom: 24px; }
@@ -3241,6 +3244,9 @@
           <div class="gov-metric" title="${esc((window._lastStatus?.hold?.items || []).map(h => (h.type === 'pr' ? 'PR' : 'Issue') + ' ' + h.repo + '#' + h.number + ': ' + h.title).join('\n') || 'No items on hold')}"><span class="gm-label">on hold</span><span class="gm-val">${window._lastStatus?.hold?.total || 0}</span></div>
           ${(() => {
             const plan = window._lastStatus?.planning || {};
+            // Planning only runs at ACMM >= 5 (architect scheduled); hide the tile
+            // entirely below that so it never shows a misleading empty state.
+            if (!plan.available) return '';
             const active = plan.active_plans || 0;
             const awaiting = plan.awaiting_review || 0;
             const pending = plan.pending_decompose || 0;
@@ -5045,6 +5051,23 @@
           <div class="gov-stat" title="Number of open pull requests across all monitored repositories."><div class="label">PRs</div><div class="spark-row"><span class="val">${gov.prs}</span>${prsSpark}</div></div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
+          ${(() => {
+            // Planning tile: active plan-trees, with plans-awaiting-review highlighted
+            // amber (human-action-required, like on-hold). Reads /api/status planning
+            // block. Hidden entirely when planning is unavailable (ACMM < 5, where the
+            // architect isn't scheduled) so it never shows a misleading 0.
+            const plan = (data && data.planning) || {};
+            if (!plan.available) return '';
+            const active = plan.active_plans || 0;
+            const awaiting = plan.awaiting_review || 0;
+            const pending = plan.decomposing || 0;
+            const alertCls = awaiting > 0 ? ' planning-alert' : '';
+            const tip = awaiting > 0
+              ? `${awaiting} plan(s) awaiting your review — approve them in the plan view before agents start the work`
+              : `${active} active plan-tree(s)` + (pending ? `, ${pending} decomposing` : '');
+            const valTxt = awaiting > 0 ? `${awaiting} to review` : String(active);
+            return `<div class="gov-stat" title="${escapeHtml(tip)}"><div class="label">planning</div><div class="val${alertCls}">${escapeHtml(valTxt)}${pending > 0 ? ` <span style="opacity:.6;font-size:.7em">+${pending}</span>` : ''}</div></div>`;
+          })()}
           <div class="gov-stat" title="When the governor will next evaluate mode and kick agents based on cadence schedules."><div class="label">next run</div><div class="val">${escapeHtml(gov.nextKick || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" onclick="openConfigDialog('governor',null,'Thresholds')" title="Click to adjust governor thresholds">

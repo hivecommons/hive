@@ -310,7 +310,7 @@ func TestBuildPlanning(t *testing.T) {
 	// A plain epic never decomposed → not counted.
 	store.Create("plain", beads.TypeEpic, beads.PriorityHigh, "architect", "")
 
-	fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false)
+	fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false, 6)
 	if fp.ActivePlans != 2 {
 		t.Errorf("ActivePlans: want 2, got %d", fp.ActivePlans)
 	}
@@ -344,14 +344,29 @@ func TestBuildPlanning_Replans24h(t *testing.T) {
 	planning.DecomposeFromOutput(store, bad, "1. [T1] c [agent_suitable]\n", planning.Options{AutoApprove: true})
 	store.SetMetadata(bad.ID, planning.MetaLastReplanAt, "not-a-timestamp")
 
-	fp := buildPlanningAt(map[string]*beads.Store{"architect": store}, false, now)
+	fp := buildPlanningAt(map[string]*beads.Store{"architect": store}, false, 6, now)
 	if fp.Replans24h != 1 {
 		t.Errorf("Replans24h: want 1 (only the 2h-ago replan), got %d", fp.Replans24h)
 	}
 }
 
+func TestBuildPlanning_AvailableGate(t *testing.T) {
+	store, _ := beads.NewStore(t.TempDir())
+	// L4: planning not available (architect not scheduled) -> Available false.
+	if fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false, 4); fp.Available {
+		t.Errorf("Available should be false at ACMM L4")
+	}
+	// L5 and L6: available.
+	if fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false, 5); !fp.Available {
+		t.Errorf("Available should be true at ACMM L5")
+	}
+	if fp := BuildPlanning(map[string]*beads.Store{"architect": store}, false, 6); !fp.Available {
+		t.Errorf("Available should be true at ACMM L6")
+	}
+}
+
 func TestBuildPlanning_Empty(t *testing.T) {
-	fp := BuildPlanning(map[string]*beads.Store{}, false)
+	fp := BuildPlanning(map[string]*beads.Store{}, false, 6)
 	if fp.ActivePlans != 0 || fp.AwaitingReview != 0 {
 		t.Errorf("empty stores should yield zero planning metric, got %+v", fp)
 	}

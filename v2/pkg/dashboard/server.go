@@ -323,6 +323,11 @@ type FrontendBeads struct {
 // planning intelligence). It is computed from bead metadata (parent_epic +
 // plan_status) across all bead stores.
 type FrontendPlanning struct {
+	// Available is true only when planning is usable at the current ACMM level
+	// (>= 5, where the architect that decomposes plans is scheduled). The
+	// governor PLANNING tile renders only when this is true, so it never shows a
+	// misleading "0 plans" at levels where planning can't run at all.
+	Available bool `json:"available"`
 	// ActivePlans counts epics that have been decomposed (carry a plan_status),
 	// i.e. plans currently in flight (draft or approved).
 	ActivePlans int `json:"active_plans"`
