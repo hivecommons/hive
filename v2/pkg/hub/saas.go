@@ -4447,7 +4447,20 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 			sameStringSliceFold(curRepos, h.Repos) &&
 			strings.EqualFold(curPrimary, primary))
 	needURLPush := h.VanityURL != "" && curURL != h.VanityURL
-	if !needClaimPush && !needURLPush {
+	// A spoke reporting a repo that fails isValidRepoRef is wedged: the hub 400s
+	// its every heartbeat ("invalid repo name"), /api/livez then fails on the
+	// stale heartbeat and the kubelet crash-loops the pod. Push a corrected
+	// project even when the claim was already delivered — otherwise the guard
+	// above ("nothing left to push") leaves the hive broken forever, since a
+	// wedged spoke can never report anything the hub will accept.
+	needRepoRepair := false
+	for _, r := range append(append([]string{}, curRepos...), curPrimary) {
+		if r != "" && !isValidRepoRef(r) {
+			needRepoRepair = true
+			break
+		}
+	}
+	if !needClaimPush && !needURLPush && !needRepoRepair {
 		return nil // nothing left to push
 	}
 	// Sanitize before pushing. A repo pasted as a URL
