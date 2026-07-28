@@ -1656,6 +1656,7 @@ func main() {
 			return &hub.HeartbeatPayload{
 				HiveID:      cfg.HiveID,
 				Org:         cfg.Project.Org,
+				AIAuthor:    cfg.Project.AIAuthor,
 				Repos:       cfg.Project.Repos,
 				PrimaryRepo: cfg.Project.PrimaryRepo,
 				ACMMLevel:   acmmLvl,
@@ -1941,10 +1942,12 @@ func main() {
 			// host). Track it in the already-reconciled check so a URL-only change
 			// still gets applied and persisted.
 			vanityMatched := pc.DashboardURL == "" || cfg.Hub.DashboardURL == pc.DashboardURL
+			authorMatched := pc.AIAuthor == "" || cfg.Project.AIAuthor == pc.AIAuthor
 			if cfg.Project.Org == pc.Org &&
 				sameStringSlice(cfg.Project.Repos, pc.Repos) &&
 				cfg.Project.PrimaryRepo == pc.PrimaryRepo &&
 				curACMM == pc.ACMMLevel &&
+				authorMatched &&
 				vanityMatched {
 				return // already reconciled
 			}
@@ -1960,6 +1963,13 @@ func main() {
 			cfg.Project.Org = pc.Org
 			cfg.Project.Repos = pc.Repos
 			cfg.Project.PrimaryRepo = pc.PrimaryRepo
+			// Only adopt a non-empty author. The hub echoes this struct back on
+			// every beat, so assigning unconditionally would reset a locally
+			// configured ai_author to "" each time — which is precisely what
+			// kept the fleet-stats collector disabled on every hive.
+			if pc.AIAuthor != "" {
+				cfg.Project.AIAuthor = pc.AIAuthor
+			}
 			level := pc.ACMMLevel
 			cfg.ACMMLevel = &level
 
