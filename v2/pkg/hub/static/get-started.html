@@ -575,8 +575,11 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
 
       var v = raw.replace(/^https?:\/\//, '').replace(/\/+$/, '').replace(/\.git$/, '');
       var parts = v.split('/').filter(function(p) { return p.length; });
-      // Drop a leading hostname (anything with a dot) so host/org/repo -> org/repo.
-      if (parts.length > 2 && parts[0].indexOf('.') !== -1) parts = parts.slice(1);
+      // Split off a leading hostname (anything with a dot) so host/org/repo ->
+      // org/repo, but KEEP the host: a GitHub Enterprise repo is only reachable
+      // if the request records which instance it lives on.
+      var ghHost = '';
+      if (parts.length > 2 && parts[0].indexOf('.') !== -1) { ghHost = parts[0]; parts = parts.slice(1); }
       if (parts.length < 2) {
         err.textContent = 'Enter a repository URL or org/repo — for example https://github.ibm.com/my-org/my-repo';
         err.style.display = 'block';
@@ -588,7 +591,7 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
         err.style.display = 'block';
         return;
       }
-      _selectedRepos.push({full_name: fullName, name: name});
+      _selectedRepos.push({full_name: fullName, name: name, github_host: ghHost});
       input.value = '';
       renderManualRepos();
       document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
@@ -628,11 +631,33 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       btn.disabled = true;
       btn.textContent = 'Submitting...';
       try {
-        var resp = await fetch('/api/saas/request-hive', {
+        // POST /api/saas/request-provision — the route is request-provision, not
+        // request-hive (which 405s), and the handler wants an org plus a
+        // comma-separated repos STRING, not an array. The old body sent neither,
+        // so every submit failed at the last step of the wizard.
+        //
+        // _selectedRepos entries are "org/repo" (picked) or "org/repo" parsed
+        // from a pasted URL, so derive the org from the first entry and send
+        // bare repo names alongside it.
+        var firstFull = (_selectedRepos[0] && _selectedRepos[0].full_name) || '';
+        var reqOrg = firstFull.indexOf('/') !== -1 ? firstFull.split('/')[0] : '';
+        var reqRepos = _selectedRepos.map(function(r) {
+          var fn = r.full_name || r.name || '';
+          var parts = fn.split('/');
+          // Keep a cross-org entry qualified; strip the org when it matches.
+          return (parts.length > 1 && parts[0] === reqOrg) ? parts.slice(1).join('/') : fn;
+        }).join(',');
+        var resp = await fetch('/api/saas/request-provision', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
-            repos: _selectedRepos.map(function(r) { return r.full_name; }),
+            org: reqOrg,
+            // Carry the GHE host when a pasted URL supplied one, so the admin
+            // sees which instance the request targets and the spoke can later
+            // be pointed at the right API.
+            github_host: (_selectedRepos.find(function(r) { return r.github_host; }) || {}).github_host || '',
+            repos: reqRepos,
+            primary_repo: reqRepos.split(',')[0],
             acmm_level: _selectedAcmm
           })
         });
