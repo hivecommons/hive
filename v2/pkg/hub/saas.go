@@ -1273,6 +1273,14 @@ type MyHiveEntry struct {
 	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
 	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
 
+	// Access lists who can sign in to this hive and with what role, so My Hives
+	// can show it on hover without a per-row API call. Same data as
+	// GET /hives/{id}/access, and populated under the same authorization rule:
+	// only for rows the caller owns (or admin). Nil on rows the caller merely
+	// has delegated access to — knowing who else shares a hive is the owner's
+	// information, not every reader's.
+	Access []HiveAccessEntry `json:"access,omitempty"`
+
 	// Assigning is true while a freshly-assigned placeholder's spoke has not yet
 	// reported the real project via heartbeat: the meta.json already records the
 	// real project (org/repos/ACMM set, status no longer "available") but the live
@@ -1476,10 +1484,27 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		saveSaaSUser(user)
 	}
 
+	// Read the user roster ONCE for the access hover rather than per row —
+	// listAllSaaSUsers hits the filesystem for every user record, and My Hives
+	// can carry dozens of rows.
+	var allSaaSUsers []SaaSUser
+	for _, h := range result {
+		if h.Role == "owner" || isAdmin {
+			allSaaSUsers = listAllSaaSUsers()
+			break
+		}
+	}
+
 	saasCount := 0
 	for i, h := range result {
 		if strings.HasPrefix(h.ID, "hosted-") || strings.HasPrefix(h.ID, "saas-") {
 			saasCount++
+		}
+		// Who-has-access is shown only to owners (and admin), matching
+		// handleAccessList's rule. A read/read-write member is deliberately not
+		// told who else shares the hive.
+		if h.Role == "owner" || isAdmin {
+			result[i].Access = accessForHive(h.ID, allSaaSUsers)
 		}
 		if h.Role == "owner" || h.Role == "read-write" || isAdmin {
 			reqs := loadAccessRequests(h.ID)
@@ -3487,6 +3512,35 @@ func authorizedUsersForHiveID(hiveID string) []string {
 	return out
 }
 
+// HiveAccessEntry is one user's access to a hive.
+type HiveAccessEntry struct {
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+// accessForHive returns who can sign in to a hive, newest-role-agnostic and
+// sorted for a stable render. Access is derived by scanning user records rather
+// than reading h.Owner: a user's Hives map is the authoritative grant (see
+// handleApproveProvision / handleAssignHive, which write it), and an owner who
+// is missing from it genuinely cannot sign in.
+func accessForHive(hiveID string, users []SaaSUser) []HiveAccessEntry {
+	access := make([]HiveAccessEntry, 0)
+	for _, u := range users {
+		if role, ok := u.Hives[hiveID]; ok {
+			access = append(access, HiveAccessEntry{Username: u.GitHubUsername, Role: role})
+		}
+	}
+	sort.Slice(access, func(i, j int) bool {
+		// Owners first, then alphabetical — the owner is the useful line to read
+		// first when scanning a hover with several users on it.
+		if (access[i].Role == "owner") != (access[j].Role == "owner") {
+			return access[i].Role == "owner"
+		}
+		return access[i].Username < access[j].Username
+	})
+	return access
+}
+
 func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
@@ -3499,13 +3553,7 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"only the owner can view access"}`, http.StatusForbidden)
 		return
 	}
-	users := listAllSaaSUsers()
-	var access []map[string]string
-	for _, u := range users {
-		if role, ok := u.Hives[hiveID]; ok {
-			access = append(access, map[string]string{"username": u.GitHubUsername, "role": role})
-		}
-	}
+	access := accessForHive(hiveID, listAllSaaSUsers())
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"access": access})
 }
@@ -5123,6 +5171,13 @@ const dashboardHTML = `<!DOCTYPE html>
     .hive-confirm-btns { display: flex; gap: 8px; justify-content: flex-end; }
     .empty-state { text-align: center; padding: 48px; color: var(--muted); }
     .dash-link { color: var(--blue); font-size: 0.8rem; }
+    /* Access hover panel on the My Hives status dot. Guarded by hover:hover so
+       touch devices don't latch it open with no way to dismiss — the row's own
+       Manage Access dialog is the path there. */
+    @media (hover: hover) {
+      .hive-access-wrap:hover .hive-access-pop,
+      .hive-access-wrap:focus-within .hive-access-pop { display: block !important; }
+    }
     .repo-link { color: var(--blue); font-size: 0.8rem; }
     .hive-name-link { color: #58a6ff; font-weight: 700; text-decoration: none; }
     .hive-name-link:hover { color: #79c0ff; text-decoration: underline; }
@@ -5417,7 +5472,32 @@ const dashboardHTML = `<!DOCTYPE html>
           }
         }
       }
-      return '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span></span>';
+      // The status dot keeps its native title tooltip (plain text, works
+      // everywhere). Access is layered on as a real hover panel because a title
+      // attribute cannot render avatars. Access is present only on rows the
+      // viewer owns — see the my-hives handler.
+      var badge = '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span></span>';
+      var access = h.access || [];
+      if (!access.length) return badge;
+      var rows = access.map(function(a) {
+        var rc = a.role === 'owner' ? '#d29922' : (a.role === 'read-write' ? '#3fb950' : '#6b7280');
+        return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">' +
+          '<img src="https://github.com/' + esc(a.username) + '.png?size=40" alt="" ' +
+          'style="width:18px;height:18px;border-radius:50%;flex:0 0 auto" ' +
+          'onerror="this.style.visibility=\'hidden\'">' +
+          '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.username) + '</span>' +
+          '<span style="color:' + rc + ';font-size:0.62rem;font-weight:600;white-space:nowrap">' + esc(a.role) + '</span>' +
+          '</div>';
+      }).join('');
+      var heading = access.length === 1 ? '1 user with access' : access.length + ' users with access';
+      // Panel is positioned by the .hive-access-wrap:hover rule; it renders
+      // above the row so it is not clipped by the table's scroll container.
+      return '<span class="hive-access-wrap" style="position:relative;display:inline-flex">' + badge +
+        '<span class="hive-access-pop" style="display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:60;' +
+        'min-width:190px;max-width:280px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);' +
+        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400">' +
+        '<span style="display:block;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">' + esc(heading) + '</span>' +
+        rows + '</span></span>';
     }
     function dashboardLink(h) {
       var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
