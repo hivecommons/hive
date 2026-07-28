@@ -13490,12 +13490,15 @@ function burnAreaChart() {
         return {name: name, full: r, enabled: enabled};
       });
       const tiers = ['newcomer', 'contributor', 'trusted', 'advisor'];
-      const allowLabels = (hub.contribute_allow_labels || []);
       const denyLabels = (hub.contribute_deny_labels || []);
       const denyTitles = (hub.contribute_deny_titles || []);
       const denyAuthors = (hub.contribute_deny_authors || []);
       const allowModels = (hub.contribute_allow_models || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
+      // Filter modes: 'allow' = only matching pass; 'deny' (default) = matching skipped.
+      const titlesMode = (hub.contribute_titles_mode === 'allow') ? 'allow' : 'deny';
+      const authorsMode = (hub.contribute_authors_mode === 'allow') ? 'allow' : 'deny';
+      const labelsMode = (hub.contribute_labels_mode === 'allow') ? 'allow' : 'deny';
       return `
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="enabled"></div>
@@ -13533,17 +13536,19 @@ function burnAreaChart() {
           <span class="config-toggle-label" style="${hub.contribute_suspended ? 'color:var(--red);font-weight:600' : ''}">Suspend Contributions <span class="config-info">i<span class="config-tooltip">Temporarily stop assigning tasks to contributors. Connected contributors stay online but idle.</span></span></span>
         </div>
 
-        <div class="config-field">
-          <label>Deny Titles <span class="config-info">i<span class="config-tooltip">Issues matching these title patterns are excluded. Supports wildcards (*) and regex (/pattern/).</span></span></label>
-          <div id="hub-deny-titles" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${denyTitles.map(function(t) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(248,81,73,0.15);color:var(--red);border:1px solid rgba(248,81,73,0.3)">' + esc(t) + ' <span onclick="removeHubFilter(\'contribute_deny_titles\',\'' + esc(t).replace(/'/g,"\\'") + '\')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-deny-title-input" placeholder="e.g. *dashboard*, epic:*, /renovate/i" style="flex:1" onkeydown="if(event.key==='Enter'){addHubFilter('contribute_deny_titles','hub-deny-title-input');event.preventDefault()}"><button onclick="addHubFilter('contribute_deny_titles','hub-deny-title-input')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
+        ${renderFilterWithMode({
+          label: 'Titles', noun: 'title', unit: 'issue',
+          modeKey: 'contribute_titles_mode', listKey: 'contribute_deny_titles',
+          mode: titlesMode, list: denyTitles, inputId: 'hub-deny-title-input',
+          placeholder: 'e.g. *dashboard*, epic:*, /renovate/i'
+        })}
 
-        <div class="config-field">
-          <label>Deny Authors <span class="config-info">i<span class="config-tooltip">Issues from these authors are excluded. Supports wildcards (*) and regex (/pattern/).</span></span></label>
-          <div id="hub-deny-authors" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${denyAuthors.map(function(a) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(248,81,73,0.15);color:var(--red);border:1px solid rgba(248,81,73,0.3)">' + esc(a) + ' <span onclick="removeHubFilter(\'contribute_deny_authors\',\'' + esc(a).replace(/'/g,"\\'") + '\')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-deny-author-input" placeholder="e.g. renovate[bot], dependabot*" style="flex:1" onkeydown="if(event.key==='Enter'){addHubFilter('contribute_deny_authors','hub-deny-author-input');event.preventDefault()}"><button onclick="addHubFilter('contribute_deny_authors','hub-deny-author-input')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
+        ${renderFilterWithMode({
+          label: 'Authors', noun: 'author', unit: 'issue',
+          modeKey: 'contribute_authors_mode', listKey: 'contribute_deny_authors',
+          mode: authorsMode, list: denyAuthors, inputId: 'hub-deny-author-input',
+          placeholder: 'e.g. renovate[bot], dependabot*'
+        })}
 
         <hr style="border-color:var(--border);margin:16px 0">
         <h4 style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">Model Filter ${allowModels.length === 0 ? '<span style="font-weight:400;color:var(--green);margin-left:8px">All models accepted</span>' : '<span style="font-weight:400;color:var(--blue);margin-left:8px">' + allowModels.length + ' pattern' + (allowModels.length > 1 ? 's' : '') + '</span>'}</h4>
@@ -13569,17 +13574,12 @@ function burnAreaChart() {
 
         <hr style="border-color:var(--border);margin:16px 0">
 
-        <div class="config-field">
-          <label>Allow Labels <span class="config-info">i<span class="config-tooltip">Only issues with these labels will be queued for contributors. Leave empty to allow all.</span></span></label>
-          <div id="hub-allow-labels" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${allowLabels.map(function(l) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(34,197,94,0.15);color:var(--green);border:1px solid rgba(34,197,94,0.3)">' + esc(l) + ' <span onclick="removeHubLabel(\'allow\',' + "'" + esc(l) + "'" + ')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-allow-label-input" placeholder="e.g. good-first-issue, help-wanted" style="flex:1" onkeydown="if(event.key==='Enter'){addHubLabel('allow');event.preventDefault()}"><button onclick="addHubLabel('allow')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
-
-        <div class="config-field">
-          <label>Deny Labels <span class="config-info">i<span class="config-tooltip">Issues with these labels will never be queued for contributors.</span></span></label>
-          <div id="hub-deny-labels" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${denyLabels.map(function(l) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(248,81,73,0.15);color:var(--red);border:1px solid rgba(248,81,73,0.3)">' + esc(l) + ' <span onclick="removeHubLabel(\'deny\',' + "'" + esc(l) + "'" + ')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-deny-label-input" placeholder="e.g. hold, wontfix, duplicate" style="flex:1" onkeydown="if(event.key==='Enter'){addHubLabel('deny');event.preventDefault()}"><button onclick="addHubLabel('deny')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
+        ${renderFilterWithMode({
+          label: 'Labels', noun: 'label', unit: 'issue', perLabel: true,
+          modeKey: 'contribute_labels_mode', listKey: 'contribute_deny_labels',
+          mode: labelsMode, list: denyLabels, inputId: 'hub-deny-label-input',
+          placeholder: 'e.g. good-first-issue, help-wanted'
+        })}
 
         <div class="config-field">
           <label>Repos for Contribute <span class="config-info">i<span class="config-tooltip">Toggle which repos serve work to contributors. New repos default to on.</span></span></label>
@@ -13637,26 +13637,57 @@ function burnAreaChart() {
       }
     }
 
-    function addHubLabel(type) {
-      var input = document.getElementById('hub-' + type + '-label-input');
-      var val = (input.value || '').trim();
-      if (!val) return;
-      var key = type === 'allow' ? 'contribute_allow_labels' : 'contribute_deny_labels';
-      if (!_configState.data.hub) _configState.data.hub = {};
-      if (!_configState.data.hub[key]) _configState.data.hub[key] = [];
-      if (_configState.data.hub[key].indexOf(val) === -1) {
-        _configState.data.hub[key].push(val);
-        markDirty('hub', key, _configState.data.hub[key]);
+    // renderFilterWithMode renders one contribute filter as a mode toggle
+    // (Allow only / Deny) plus a single list of patterns — the well-known
+    // allowlist/denylist pattern. cfg: {label, noun, unit, modeKey, listKey,
+    // mode, list, inputId, placeholder, perLabel}. In allow mode the chips are
+    // green and the helper says only-these pass; in deny mode they're red and
+    // the helper says these-are-skipped. perLabel tweaks the copy for labels
+    // (a set) vs a scalar title/author.
+    function renderFilterWithMode(cfg) {
+      var isAllow = cfg.mode === 'allow';
+      var chipBg = isAllow ? 'rgba(34,197,94,0.15)' : 'rgba(248,81,73,0.15)';
+      var chipColor = isAllow ? 'var(--green)' : 'var(--red)';
+      var chipBorder = isAllow ? 'rgba(34,197,94,0.3)' : 'rgba(248,81,73,0.3)';
+      var help;
+      if (isAllow) {
+        help = cfg.perLabel
+          ? 'Only ' + cfg.unit + 's carrying one of these labels are worked; everything else is skipped.'
+          : 'Only ' + cfg.unit + 's whose ' + cfg.noun + ' matches are worked; everything else is skipped.';
+        if ((cfg.list || []).length === 0) help += ' (List is empty — filter is off until you add a pattern.)';
+      } else {
+        help = cfg.perLabel
+          ? cfg.unit.charAt(0).toUpperCase() + cfg.unit.slice(1) + 's carrying any of these labels are skipped; everything else is worked.'
+          : cfg.unit.charAt(0).toUpperCase() + cfg.unit.slice(1) + 's whose ' + cfg.noun + ' matches are skipped; everything else is worked.';
       }
-      input.value = '';
-      renderConfigTab('Hub');
+      function seg(m, text) {
+        var on = cfg.mode === m;
+        return '<button onclick="setHubFilterMode(\'' + cfg.modeKey + '\',\'' + m + '\')" ' +
+          'style="padding:3px 12px;border:1px solid var(--border);cursor:pointer;font-size:0.72rem;' +
+          (m === 'allow' ? 'border-radius:6px 0 0 6px;' : 'border-radius:0 6px 6px 0;border-left:none;') +
+          (on ? 'background:' + (m === 'allow' ? 'var(--green)' : 'var(--red)') + ';color:#fff;font-weight:600;' : 'background:var(--bg);color:var(--muted);') +
+          '">' + text + '</button>';
+      }
+      var chips = (cfg.list || []).map(function(v) {
+        return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:' + chipBg + ';color:' + chipColor + ';border:1px solid ' + chipBorder + '">' +
+          esc(v) + ' <span onclick="removeHubFilter(\'' + cfg.listKey + '\',\'' + esc(v).replace(/'/g, "\\'") + '\')" style="cursor:pointer;opacity:0.7">✕</span></span>';
+      }).join('');
+      return '<div class="config-field">' +
+        '<label>' + cfg.label + ' <span class="config-info">i<span class="config-tooltip">Choose a mode, then add patterns. Supports wildcards (*) and regex (/pattern/).</span></span></label>' +
+        '<div style="display:inline-flex;margin-bottom:6px">' + seg('allow', 'Allow only these') + seg('deny', 'Deny these') + '</div>' +
+        '<div style="font-size:0.68rem;color:var(--muted);margin-bottom:6px">' + help + '</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">' + chips + '</div>' +
+        '<div style="display:flex;gap:4px"><input type="text" id="' + cfg.inputId + '" placeholder="' + cfg.placeholder + '" style="flex:1" ' +
+          'onkeydown="if(event.key===\'Enter\'){addHubFilter(\'' + cfg.listKey + '\',\'' + cfg.inputId + '\');event.preventDefault()}">' +
+          '<button onclick="addHubFilter(\'' + cfg.listKey + '\',\'' + cfg.inputId + '\')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>' +
+        '</div>';
     }
 
-    function removeHubLabel(type, label) {
-      var key = type === 'allow' ? 'contribute_allow_labels' : 'contribute_deny_labels';
-      if (!_configState.data.hub || !_configState.data.hub[key]) return;
-      _configState.data.hub[key] = _configState.data.hub[key].filter(function(l) { return l !== label; });
-      markDirty('hub', key, _configState.data.hub[key]);
+    // setHubFilterMode switches a filter between allow and deny mode.
+    function setHubFilterMode(modeKey, mode) {
+      if (!_configState.data.hub) _configState.data.hub = {};
+      _configState.data.hub[modeKey] = mode;
+      markDirty('hub', modeKey, mode);
       renderConfigTab('Hub');
     }
 
