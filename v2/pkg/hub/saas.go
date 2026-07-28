@@ -4138,14 +4138,27 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Ensure the user record exists and count this owned hive against a quota.
+	// Ensure the user record exists, grant them owner access, and count this
+	// owned hive against a quota.
+	//
+	// Granting Hives[hiveID] is what actually puts the requester on the hive's
+	// permissions: handleAccessList builds the access list by scanning every
+	// user record for Hives[hiveID], NOT from h.Owner. Without this the
+	// assignment set h.Owner correctly but the new owner never appeared under
+	// Manage Access — only the admin who provisioned the placeholder did — and
+	// on a heartbeat-only cluster (vllm-d) that stale list is what gets
+	// delivered to the spoke.
 	user := loadSaaSUser(targetUsername)
 	if user == nil {
 		user = ensureSaaSUser(targetUsername)
 	}
+	if user.Hives == nil {
+		user.Hives = map[string]string{}
+	}
+	user.Hives[hiveID] = "owner"
 	user.SaaSQuota++
 	if err := saveSaaSUser(user); err != nil {
-		s.logger.Warn("assigned placeholder but failed to update user quota", "user", targetUsername, "error", err)
+		s.logger.Warn("assigned placeholder but failed to grant owner access", "user", targetUsername, "hive", hiveID, "error", err)
 	}
 
 	// Mark the request fulfilled.
@@ -4559,6 +4572,26 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	if err := saveSaaSHive(h); err != nil {
 		http.Error(w, `{"error":"failed to save hive assignment"}`, http.StatusInternalServerError)
 		return
+	}
+
+	// Grant the assignee owner access. handleAccessList builds a hive's access
+	// list by scanning every user record for Hives[hiveID], NOT from h.Owner —
+	// so without this the assignment set h.Owner correctly while Manage Access
+	// still showed only the admin who provisioned the placeholder. On a
+	// heartbeat-only cluster (vllm-d) that stale list is what reaches the spoke.
+	assignee := loadSaaSUser(body.Owner)
+	if assignee == nil {
+		assignee = ensureSaaSUser(body.Owner)
+	}
+	if assignee.Hives == nil {
+		assignee.Hives = map[string]string{}
+	}
+	if assignee.Hives[hiveID] != "owner" {
+		assignee.Hives[hiveID] = "owner"
+		assignee.SaaSQuota++
+		if err := saveSaaSUser(assignee); err != nil {
+			s.logger.Warn("assigned hive but failed to grant owner access", "user", body.Owner, "hive", hiveID, "error", err)
+		}
 	}
 
 	// Deliver GitHub App creds (if supplied) via the SAME heartbeat channel the
