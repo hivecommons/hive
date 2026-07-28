@@ -2033,12 +2033,13 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 
 	// If enabling and hub is behind, trigger immediately
 	if body.AutoUpgrade {
-		latestSHA := getLatestSHA()
-		if latestSHA != "" && latestSHA != s.hubGitHash {
+		latestSHA := getLatestSHAForBranch(s.hubGitBranch)
+		if latestSHA != "" && !sameCommit(latestSHA, s.hubGitHash) {
 			s.logger.Info("audit: hub auto-upgrade initial trigger", "from", s.hubGitHash, "to", latestSHA)
-			cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
-			if out, err := cmd.CombinedOutput(); err != nil {
-				s.logger.Warn("hub auto-upgrade failed", "output", string(out))
+			// Route through rolloutHubToSHA so this shares the hub-image gate and
+			// the SHA-pin (avoids a stale cached v2-latest) with the poller path.
+			if err := s.rolloutHubToSHA(latestSHA); err != nil {
+				s.logger.Warn("hub auto-upgrade skipped", "to", latestSHA, "reason", err)
 			}
 		}
 	}
@@ -2066,7 +2067,7 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 	}
 	image := fmt.Sprintf("ghcr.io/%s:%s", ghcrRepoHub, sha)
 	cmd := kubectlForCluster(s.hubCluster(), "set", "image",
-		"deployment/hive-hub", "hive-hub="+image, "-n", "hive-hub")
+		"deployment/"+hubDeploymentName, hubContainerName+"="+image, "-n", hubNamespace)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("kubectl set image failed: %s", strings.TrimSpace(string(out)))
 	}
@@ -2545,6 +2546,14 @@ var (
 const (
 	ghcrRepoSpoke = "kubestellar/hive"
 	ghcrRepoHub   = "kubestellar/hive-hub"
+
+	// hubDeploymentName / hubContainerName / hubNamespace identify the hub's own
+	// Kubernetes objects for self-upgrade. NOTE the container is named "hub", not
+	// "hive-hub" — a `kubectl set image` that names the wrong container silently
+	// no-ops the target (or errors), so pin the image against hubContainerName.
+	hubDeploymentName = "hive-hub"
+	hubContainerName  = "hub"
+	hubNamespace      = "hive-hub"
 )
 
 // hubImageExists reports whether the hub's own container image is published on
