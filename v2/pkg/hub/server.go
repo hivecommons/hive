@@ -441,6 +441,11 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
 	s.mux.HandleFunc("GET /{$}", s.serveStatic("static/index.html"))
+	// Open Graph preview image for shared links. Registered here rather than in
+	// registerOAuth because that function returns early when OAuth is
+	// unconfigured, which would leave the image 404ing and every unfurled Hive
+	// link showing a blank card.
+	s.mux.HandleFunc("GET /og-card.png", s.handleOGCard)
 	s.mux.Handle("GET /", http.FileServerFS(staticFS))
 
 	s.registerOAuth()

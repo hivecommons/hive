@@ -1840,6 +1840,16 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid hive id"}`, http.StatusBadRequest)
 		return
 	}
+	// /open is the link people actually paste into Slack, so serve the Hive
+	// preview card to crawlers here rather than letting them follow the 303 to
+	// /login. Short-circuiting is the robust option: an unfurler that caps or
+	// skips redirects would otherwise never reach the card, and one that follows
+	// the chain unauthenticated lands on GitHub's OAuth page and scrapes GitHub's
+	// Open Graph tags — which is exactly the bug.
+	if isLinkPreviewCrawler(r) {
+		writeLinkPreview(w)
+		return
+	}
 	username := s.getAuthUser(r)
 	if username == "" {
 		// Not logged in — this is a browser navigation, so send the user through
