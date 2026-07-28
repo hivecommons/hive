@@ -349,7 +349,23 @@
         <div id="repo-loading" style="color:var(--muted);padding:24px;text-align:center">Loading your repositories...</div>
         <div id="repo-list" class="repo-list" style="display:none"></div>
         <div id="repo-none" style="display:none;padding:24px;text-align:center;color:var(--muted)">
-          <p>No repositories found. Make sure the <a href="https://github.com/apps/kubestellar-hive" target="_blank" style="color:var(--blue)">Hive GitHub App</a> is installed on your org.</p>
+          <p>No repositories found. Install the <a href="https://github.com/apps/kubestellar-hive" target="_blank" style="color:var(--blue)">Hive GitHub App</a> on the account or org that owns them &mdash; or add a repo URL below.</p>
+        </div>
+        <!-- Manual entry. Repo discovery uses the github.com OAuth token, so a
+             GitHub Enterprise repo (github.ibm.com, github.cisco.com, …) can
+             never appear in the list above. Typing the URL is the only way to
+             request one, and it also covers a repo the App has not been
+             installed on yet. -->
+        <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line)">
+          <label for="repo-manual" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Or add a repository by URL &mdash; required for GitHub Enterprise (github.ibm.com and similar), which cannot be listed above
+          </label>
+          <div style="display:flex;gap:8px">
+            <input type="text" id="repo-manual" placeholder="https://github.ibm.com/my-org/my-repo"
+              style="flex:1;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+            <button class="btn-secondary" type="button" onclick="addManualRepo()">Add</button>
+          </div>
+          <div id="repo-manual-err" style="display:none;margin-top:6px;font-size:0.8rem;color:var(--red)"></div>
         </div>
         <div style="display:flex;gap:12px;margin-top:16px">
           <button class="btn-secondary" onclick="goToStep(2)">← Back</button>
@@ -543,6 +559,67 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
         el.classList.add('selected');
         cb.checked = true;
       }
+      document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
+    }
+
+    // Add a repo the picker cannot show. Repo discovery runs on the github.com
+    // OAuth token, so GitHub Enterprise repos (github.ibm.com and friends) never
+    // appear in the list — typing the URL is the only way to request one.
+    // Accepts a full URL, "host/org/repo", or "org/repo".
+    function addManualRepo() {
+      var input = document.getElementById('repo-manual');
+      var err = document.getElementById('repo-manual-err');
+      var raw = (input.value || '').trim();
+      err.style.display = 'none';
+      if (!raw) return;
+
+      var v = raw.replace(/^https?:\/\//, '').replace(/\/+$/, '').replace(/\.git$/, '');
+      var parts = v.split('/').filter(function(p) { return p.length; });
+      // Drop a leading hostname (anything with a dot) so host/org/repo -> org/repo.
+      if (parts.length > 2 && parts[0].indexOf('.') !== -1) parts = parts.slice(1);
+      if (parts.length < 2) {
+        err.textContent = 'Enter a repository URL or org/repo — for example https://github.ibm.com/my-org/my-repo';
+        err.style.display = 'block';
+        return;
+      }
+      var org = parts[0], name = parts[1], fullName = org + '/' + name;
+      if (_selectedRepos.some(function(r) { return r.full_name === fullName; })) {
+        err.textContent = fullName + ' is already selected';
+        err.style.display = 'block';
+        return;
+      }
+      _selectedRepos.push({full_name: fullName, name: name});
+      input.value = '';
+      renderManualRepos();
+      document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
+    }
+
+    // Show manually added repos (they have no checkbox row in the picker list).
+    function renderManualRepos() {
+      var host = document.getElementById('repo-manual-added');
+      if (!host) {
+        host = document.createElement('div');
+        host.id = 'repo-manual-added';
+        host.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:6px';
+        document.getElementById('repo-manual').parentNode.parentNode.appendChild(host);
+      }
+      var listed = {};
+      document.querySelectorAll('#repo-list .repo-item').forEach(function(el) {
+        var n = el.querySelector('.repo-name');
+        if (n) listed[n.textContent] = true;
+      });
+      var manual = _selectedRepos.filter(function(r) { return !listed[r.full_name]; });
+      host.innerHTML = manual.map(function(r) {
+        return '<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:0.8rem">' +
+          esc(r.full_name) +
+          '<a href="#" onclick="removeManualRepo(\'' + esc(r.full_name) + '\');return false" style="color:var(--muted);text-decoration:none" title="Remove">&times;</a></span>';
+      }).join('');
+    }
+
+    function removeManualRepo(fullName) {
+      var i = _selectedRepos.findIndex(function(r) { return r.full_name === fullName; });
+      if (i >= 0) _selectedRepos.splice(i, 1);
+      renderManualRepos();
       document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
     }
 
