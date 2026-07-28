@@ -3899,8 +3899,13 @@ const (
 const maxProvisionRequestBodyBytes = 4 * 1024
 
 type ProvisionRequest struct {
-	Username    string `json:"username"`
-	Org         string `json:"org"`
+	Username string `json:"username"`
+	// GitHubHost is the GitHub instance the org lives on — empty means public
+	// github.com, otherwise a GitHub Enterprise host (github.ibm.com,
+	// github.cisco.com, …). Captured so an admin can see which instance a
+	// request targets before deciding where to place the hive.
+	GitHubHost string `json:"github_host,omitempty"`
+	Org        string `json:"org"`
 	Repos       string `json:"repos"`
 	PrimaryRepo string `json:"primary_repo"`
 	ACMMLevel   int    `json:"acmm_level"`
@@ -3982,6 +3987,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	r.Body = http.MaxBytesReader(w, r.Body, maxProvisionRequestBodyBytes)
 	var body struct {
 		Org         string `json:"org"`
+		GitHubHost  string `json:"github_host"`
 		Repos       string `json:"repos"`
 		PrimaryRepo string `json:"primary_repo"`
 		ACMMLevel   int    `json:"acmm_level"`
@@ -3995,8 +4001,32 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":"org and repos are required"}`, http.StatusBadRequest)
 		return
 	}
+	// Accept a pasted org/repo URL, not just a bare name. Users read
+	// "GitHub Organization" and paste the org's URL; the old validator rejected
+	// ":" and "/" and returned a bare "invalid org name" that explained nothing.
+	// The host is kept so the admin can see whether a request is for github.com
+	// or a GitHub Enterprise instance before placing the hive.
+	ghHost, orgName := normalizeOrgRef(body.Org)
+	body.Org = orgName
+	if ghHost != "" {
+		body.GitHubHost = ghHost
+	}
+	{
+		var cleaned []string
+		for _, repo := range strings.Split(body.Repos, ",") {
+			if r := normalizeRepoRef(repo); r != "" {
+				cleaned = append(cleaned, r)
+			}
+		}
+		body.Repos = strings.Join(cleaned, ",")
+		body.PrimaryRepo = normalizeRepoRef(body.PrimaryRepo)
+	}
 	if !isValidName(body.Org) {
-		http.Error(w, `{"error":"invalid org name"}`, http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf(`{"error":"invalid org name %q — use the org name or its URL (e.g. github.ibm.com/my-org)"}`, body.Org), http.StatusBadRequest)
+		return
+	}
+	if body.GitHubHost != "" && !isValidName(body.GitHubHost) {
+		http.Error(w, `{"error":"invalid github host"}`, http.StatusBadRequest)
 		return
 	}
 	for _, repo := range strings.Split(body.Repos, ",") {
@@ -4023,6 +4053,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 
 	pr := &ProvisionRequest{
 		Username:    username,
+		GitHubHost:  body.GitHubHost,
 		Org:         body.Org,
 		Repos:       body.Repos,
 		PrimaryRepo: primaryRepo,
@@ -4452,6 +4483,10 @@ func sameStringSliceFold(a, b []string) bool {
 type AssignHiveRequest struct {
 	Owner          string `json:"owner"`
 	Org            string `json:"org"`
+	// GitHubHost is the GitHub instance the org lives on ("" = public
+	// github.com, otherwise a GHE host). Parsed from a pasted org URL when the
+	// caller does not send it explicitly.
+	GitHubHost     string `json:"github_host,omitempty"`
 	Repos          string `json:"repos"`
 	PrimaryRepo    string `json:"primary_repo"`
 	ProjectName    string `json:"project_name"`
@@ -4500,13 +4535,37 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid owner"}`, http.StatusBadRequest)
 		return
 	}
+	// Accept a pasted org/repo URL here too — an admin assigning a hive reaches
+	// for the same paste the requester did.
+	if h, o := normalizeOrgRef(body.Org); o != "" {
+		body.Org = o
+		if h != "" && body.GitHubHost == "" {
+			body.GitHubHost = h
+		}
+	}
 	if body.Org == "" || !isValidName(body.Org) {
-		http.Error(w, `{"error":"invalid org name"}`, http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf(`{"error":"invalid org name %q — use the org name or its URL (e.g. github.ibm.com/my-org)"}`, body.Org), http.StatusBadRequest)
+		return
+	}
+	if body.GitHubHost != "" && !isValidName(body.GitHubHost) {
+		http.Error(w, `{"error":"invalid github host"}`, http.StatusBadRequest)
 		return
 	}
 	if body.Repos == "" {
 		http.Error(w, `{"error":"repos are required"}`, http.StatusBadRequest)
 		return
+	}
+	{
+		var cleaned []string
+		for _, r := range strings.Split(body.Repos, ",") {
+			if rr := normalizeRepoRef(r); rr != "" {
+				cleaned = append(cleaned, rr)
+			}
+		}
+		body.Repos = strings.Join(cleaned, ",")
+		if body.PrimaryRepo != "" {
+			body.PrimaryRepo = normalizeRepoRef(body.PrimaryRepo)
+		}
 	}
 	var repos []string
 	for _, repo := range strings.Split(body.Repos, ",") {
@@ -4566,7 +4625,23 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// registry's dashboardUrl becomes the vanity URL and stays that way.
 	if h.VanityURL == "" {
 		if cluster := s.clusterForHive(h); cluster != nil && cluster.Domain != "" {
-			h.VanityURL = "https://" + generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
+			vanityHost := generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
+			// Only adopt the vanity hostname once the spoke's Ingress actually
+			// serves it. Nothing else creates a route for this host: provisioning
+			// templates a single DashboardHost, so a vanity URL minted here
+			// resolves to no backend and every hub link to it — including the SSO
+			// handoff — returns 503, while the raw placeholder host works fine.
+			// Create the route FIRST, then adopt the URL. VanityURL doubles as
+			// the "placeholder is claimed" marker (projectConfigForHiveID keeps
+			// pushing until the spoke reports it back), so it is always set —
+			// but a failed route is logged at Warn rather than swallowed, since
+			// the symptom is a 503 on every hub link to this hive.
+			if err := s.addVanityHostToIngress(hiveID, vanityHost, cluster); err != nil {
+				s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
+					"hub links to this hive will 503 until it is added by hand",
+					"hive", hiveID, "host", vanityHost, "error", err)
+			}
+			h.VanityURL = "https://" + vanityHost
 		}
 	}
 	if err := saveSaaSHive(h); err != nil {
@@ -6187,6 +6262,10 @@ const dashboardHTML = `<!DOCTYPE html>
           '<div>' +
           '<span style="font-size:0.85rem;font-weight:600">' + esc(pr.username) + '</span>' +
           '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' + esc(pr.org) + '/' + esc(pr.primary_repo || pr.repos) + '</span>' +
+          // Show which GitHub instance the request targets. Blank github_host
+          // means public github.com; a GHE host (github.ibm.com, …) is called
+          // out so the admin can place the hive on a cluster that can reach it.
+          ' <span style="font-size:0.68rem;padding:1px 7px;border-radius:999px;border:1px solid ' + (pr.github_host ? 'var(--accent);color:var(--accent)' : 'var(--border);color:var(--muted)') + '">' + esc(pr.github_host || 'github.com') + '</span>' +
           ' ' + acmmBadge(pr.acmm_level) +
           '<div style="font-size:0.7rem;color:var(--muted)">' + esc((pr.requested_at || '').substring(0, 10)) + '</div>' +
           '</div></div>' +

@@ -1499,3 +1499,125 @@ spec:
     insecureEdgeTerminationPolicy: Redirect
 {{- end}}
 `
+
+// addVanityHostToIngress makes the spoke actually serve a second, friendlier
+// hostname. Provisioning templates exactly one DashboardHost, so a vanity URL
+// derived from the claimed org/repo has no backend until something creates a
+// route for it — and every hub link to that host (including the /open SSO
+// handoff) returns 503 while the raw placeholder host works fine.
+//
+// nginx clusters: patch the existing Ingresses, appending the vanity host as an
+// extra rule (copied from the placeholder rule) and adding it to the TLS block
+// so cert-manager issues for it.
+// OpenShift clusters: a Route carries a single host, so add parallel
+// "<name>-vanity" Routes instead.
+//
+// Returns an error when the host could not be made servable; the caller then
+// leaves VanityURL empty so the hive keeps its working placeholder host.
+func (s *HubServer) addVanityHostToIngress(hiveID, vanityHost string, cluster *ClusterConfig) error {
+	if cluster == nil || vanityHost == "" {
+		return fmt.Errorf("no cluster or vanity host")
+	}
+	ns := "hive-hosted-" + hiveID
+	placeholderHost := hiveID + "." + cluster.Domain
+
+	if cluster.IngressType == ingressTypeOpenShiftRoute {
+		for _, base := range []string{"hive-dashboard", "hive-terminal"} {
+			out, err := kubectlForCluster(cluster, "-n", ns, "get", "route", base,
+				"-o", "jsonpath={.spec.port.targetPort}|{.spec.path}").Output()
+			if err != nil {
+				continue // route absent on this spoke — nothing to mirror
+			}
+			parts := strings.SplitN(string(out), "|", 2)
+			targetPort := parts[0]
+			path := "/"
+			if len(parts) == 2 && parts[1] != "" {
+				path = parts[1]
+			}
+			manifest := fmt.Sprintf(`apiVersion: route.openshift.io/v1
+kind: Route
+metadata: { name: %s-vanity, namespace: %s, labels: { app: hive } }
+spec:
+  host: %s
+  path: %s
+  port: { targetPort: %s }
+  tls: { termination: edge, insecureEdgeTerminationPolicy: Redirect }
+  to: { kind: Service, name: hive, weight: 100 }
+  wildcardPolicy: None
+`, base, ns, vanityHost, path, targetPort)
+			cmd := kubectlForCluster(cluster, "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(manifest)
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("applying %s-vanity route: %w", base, err)
+			}
+		}
+		return nil
+	}
+
+	// nginx: append a rule + TLS host to each existing Ingress via a JSON patch.
+	patched := 0
+	for _, ing := range []string{"hive", "hive-contribute", "hive-terminal"} {
+		raw, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", ing, "-o", "json").Output()
+		if err != nil {
+			continue // not every spoke has all three
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			continue
+		}
+		spec, _ := obj["spec"].(map[string]any)
+		if spec == nil {
+			continue
+		}
+		rules, _ := spec["rules"].([]any)
+		var base map[string]any
+		for _, r := range rules {
+			rm, _ := r.(map[string]any)
+			if rm == nil {
+				continue
+			}
+			if h, _ := rm["host"].(string); h == vanityHost {
+				base = nil // already present
+				goto tls
+			} else if h == placeholderHost {
+				base = rm
+			}
+		}
+		if base != nil {
+			clone := map[string]any{"host": vanityHost, "http": base["http"]}
+			spec["rules"] = append(rules, clone)
+		}
+	tls:
+		if tlsList, ok := spec["tls"].([]any); ok {
+			for _, t := range tlsList {
+				tm, _ := t.(map[string]any)
+				if tm == nil {
+					continue
+				}
+				hosts, _ := tm["hosts"].([]any)
+				found := false
+				for _, h := range hosts {
+					if hs, _ := h.(string); hs == vanityHost {
+						found = true
+					}
+				}
+				if !found {
+					tm["hosts"] = append(hosts, vanityHost)
+				}
+			}
+		}
+		patchBody, err := json.Marshal(map[string]any{"spec": spec})
+		if err != nil {
+			continue
+		}
+		cmd := kubectlForCluster(cluster, "-n", ns, "patch", "ingress", ing, "--type", "merge", "-p", string(patchBody))
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("patching ingress %s: %w", ing, err)
+		}
+		patched++
+	}
+	if patched == 0 {
+		return fmt.Errorf("no ingress found in %s to add %s to", ns, vanityHost)
+	}
+	return nil
+}

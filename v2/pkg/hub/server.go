@@ -129,6 +129,59 @@ func isValidName(s string) bool {
 	return safeNamePattern.MatchString(s) && len(s) <= 100
 }
 
+// normalizeOrgRef accepts what a user actually pastes into an "org" field and
+// splits it into a GitHub host and a bare org name.
+//
+// The field is labelled "GitHub Organization", but pasting the org's URL is the
+// obvious reading, and safeNamePattern rejects ":" and "/" — so a paste like
+// "https://github.ibm.com/z-aiops-unite" failed with a bare "invalid org name"
+// that named neither the problem nor the fix.
+//
+// Any GitHub Enterprise host is accepted (github.ibm.com, github.cisco.com, …),
+// not a fixed allow-list. Returns (host, org); host is "" when the input was a
+// bare org name, which callers should read as public github.com.
+//
+//	https://github.ibm.com/z-aiops-unite  -> ("github.ibm.com", "z-aiops-unite")
+//	github.ibm.com/z-aiops-unite          -> ("github.ibm.com", "z-aiops-unite")
+//	z-aiops-unite                         -> ("",               "z-aiops-unite")
+func normalizeOrgRef(s string) (host, org string) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	if s == "" {
+		return "", ""
+	}
+	parts := strings.Split(s, "/")
+	// A leading segment containing a dot is a hostname (github.com,
+	// github.ibm.com). A bare org can also contain dots, so only treat the
+	// first segment as a host when something follows it.
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		return parts[0], parts[1]
+	}
+	return "", parts[0]
+}
+
+// normalizeRepoRef strips a GitHub URL or "org/repo" prefix down to the bare
+// repo name, so users can paste a repo URL into the repos field. Returns the
+// repo name; the org is already carried separately.
+//
+//	https://github.ibm.com/z-aiops-unite/ui -> "ui"
+//	z-aiops-unite/ui                        -> "ui"
+//	ui                                      -> "ui"
+func normalizeRepoRef(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	return parts[len(parts)-1]
+}
+
 // isValidRepoRef validates a repo entry, which may be a bare name ("repo")
 // or a cross-org "owner/repo" reference. Both segments must be safe names
 // (no path traversal); at most one slash is allowed. Cross-org repos are a
