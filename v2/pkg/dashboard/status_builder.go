@@ -677,6 +677,7 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 		Sessions:      []FrontendSession{},
 		ByAgent:       make(map[string]FrontendTokenBucket),
 		ByModel:       make(map[string]FrontendTokenBucket),
+		ByAgentModel:  make(map[string]string),
 	}
 
 	if collector == nil {
@@ -729,10 +730,57 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 		ft.ByModel[modelName] = bucket
 	}
 
+	// Per-agent RESOLVED model: the model of each agent's most recently active
+	// session. Config models that are routing aliases ("auto"/"default") only
+	// name a concrete model at runtime, and that resolved id is what the session
+	// logs record. Exposing it lets the frontend attribute an auto-mode agent's
+	// live badge to the row where its tokens actually land.
+	ft.ByAgentModel = resolveAgentModels(summary.Sessions)
+
 	// Individual sessions are omitted from the status payload to reduce size
 	// (~70% savings). Use GET /api/tokens for the full session list.
 
 	return ft
+}
+
+// aliasModels are model ids that are routing aliases, not concrete models. A
+// session logged under one of these carries no resolved-model information, so
+// it must not be used as an agent's resolved model.
+var aliasModels = map[string]bool{
+	"":        true,
+	"unknown": true,
+	"auto":    true,
+	"default": true,
+}
+
+// resolveAgentModels maps each agent to the concrete model of its most recently
+// active session. Sessions whose Model is empty/"unknown"/an alias ("auto",
+// "default") are skipped, since they carry no resolved-model signal. When two
+// qualifying sessions exist for an agent, the one with the greater LastActive
+// wins (ties keep the first seen). Agents with no qualifying session are absent
+// from the result.
+func resolveAgentModels(sessions []tokens.SessionSummary) map[string]string {
+	type pick struct {
+		model      string
+		lastActive int64
+	}
+	best := make(map[string]pick)
+	for _, s := range sessions {
+		if s.Agent == "" {
+			continue
+		}
+		if aliasModels[strings.ToLower(strings.TrimSpace(s.Model))] {
+			continue
+		}
+		if cur, ok := best[s.Agent]; !ok || s.LastActive > cur.lastActive {
+			best[s.Agent] = pick{model: s.Model, lastActive: s.LastActive}
+		}
+	}
+	out := make(map[string]string, len(best))
+	for agent, p := range best {
+		out[agent] = p.model
+	}
+	return out
 }
 
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []FrontendRepo {

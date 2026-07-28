@@ -4086,8 +4086,12 @@
       // the actual spend from the noisy counter. (Also immune to price-table
       // shifts, which move the cumulative $ but not the token increments.)
       const rate = costPriceMap(hist);
+      // Ceiling derived once from the full history so every bucket judges a
+      // one-time re-seed jump against the same baseline (a bucket holding only
+      // the spike has no local typical of its own).
+      const ceiling = costDiscontinuityCeiling(hist, rate);
       for (const b of buckets) {
-        const s = costSpendBetween(hist, rate, b.start, b.end);
+        const s = costSpendBetween(hist, rate, b.start, b.end, ceiling);
         if (s != null) { b.spend = s; b.hasData = true; }
       }
       return buckets;
@@ -4145,39 +4149,84 @@
       return rate;
     }
 
-    // costSpendBetween: estimated $ spent in [t0, t1], summed from the POSITIVE
-    // step-to-step token increments priced at the current rate. The token
-    // "cumulative" counter is NOT truly monotonic — after a pod roll or when old
-    // sessions age out of the scanner window it drops — so a plain end−start
-    // delta goes negative and (wrongly) reads as $0. Summing only the positive
-    // increments recovers the real spend from that noisy counter.
-    function costSpendBetween(hist, rate, t0, t1) {
+    // Multiple of the median positive increment above which a single step is
+    // treated as a data correction (re-seed / regression-fix restore), not real
+    // spend. Chosen high enough that bursty-but-real hours (a few× the median)
+    // are always kept, low enough to catch a restore that dwarfs every normal
+    // step. The absolute floor below keeps a tiny median from nuking legit spend.
+    const COST_DISCONTINUITY_MULT = 20;
+    // Absolute-$ floor: an increment is only ever discarded as a discontinuity
+    // if it also exceeds this many dollars in a single step. No plausible run
+    // rate spends this within one snapshot interval (~30s–few min), so real
+    // spend never trips it, while a ~$18k all-time restore obviously does.
+    const COST_DISCONTINUITY_FLOOR_USD = 500;
+
+    // costPositiveIncrements: the list of POSITIVE step-to-step increments over
+    // [t0, t1], differenced only within a like measure (see costSpendBetween).
+    // Shared by the spend sum and the discontinuity ceiling so both judge the
+    // same series.
+    function costPositiveIncrements(hist, rate, t0, t1) {
       const pricedTok = (models) => {
         let s = 0;
         for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
         return s;
       };
-      // Prefer the per-model token measure (immune to price-table shifts and to
-      // the non-monotonic cumulative counter). But snapshots recorded before the
-      // `models` field existed only carry a cumulative `usd` — those must NOT be
-      // skipped, or every hour older than the field's introduction renders blank
-      // (the "recent hours only" gap). For a legacy entry, fall back to the
-      // cumulative usd and count its positive step-to-step increases the same way.
-      // The two measures live on different scales (priced-token sum vs. cumulative
-      // usd), so a delta must never be taken ACROSS a measure change. Reset prev
-      // whenever the entry's measure type flips, so we only ever difference like
-      // with like — legacy usd runs and new models runs each contribute their own
-      // positive increments to the bucket total.
-      let spend = 0, prev = null, prevKind = null, sawWindow = false;
+      const incs = [];
+      let prev = null, prevKind = null, sawWindow = false;
       for (const e of hist) {
         if (e.timestamp < t0 || e.timestamp > t1) { if (e.timestamp > t1) break; continue; }
         const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
         if (kind == null) continue;
         const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
         sawWindow = true;
-        if (prev != null && kind === prevKind && cur > prev) spend += (cur - prev);
+        if (prev != null && kind === prevKind && cur > prev) incs.push(cur - prev);
         prev = cur; prevKind = kind;
       }
+      return { incs, sawWindow };
+    }
+
+    // costDiscontinuityCeiling: the $ threshold above which a single positive
+    // increment is a data correction, not spend. Derived from the FULL history
+    // (not one bucket) so it's stable: a per-hour window that happens to contain
+    // ONLY the re-seed spike has no local "typical" to compare against, so the
+    // ceiling must come from the whole series. Returns Infinity (no cap) when
+    // there aren't enough normal increments to establish a median, so we never
+    // drop real spend on thin data. The median is computed over increments BELOW
+    // the absolute floor, so the outlier itself can't inflate the baseline.
+    function costDiscontinuityCeiling(hist, rate) {
+      if (!hist || hist.length < 2) return Infinity;
+      const { incs } = costPositiveIncrements(hist, rate, -Infinity, Infinity);
+      const normal = incs.filter(v => v < COST_DISCONTINUITY_FLOOR_USD).sort((a, b) => a - b);
+      if (normal.length < 2) return Infinity;
+      const mid = Math.floor(normal.length / 2);
+      const median = normal.length % 2 ? normal[mid] : (normal[mid - 1] + normal[mid]) / 2;
+      if (!(median > 0)) return Infinity;
+      // Cap at whichever bound is LARGER so an increment must beat BOTH the
+      // relative (20× median) and the absolute ($500) test to be discarded.
+      return Math.max(COST_DISCONTINUITY_MULT * median, COST_DISCONTINUITY_FLOOR_USD);
+    }
+
+    // costSpendBetween: estimated $ spent in [t0, t1], summed from the POSITIVE
+    // step-to-step token increments priced at the current rate. The token
+    // "cumulative" counter is NOT truly monotonic — after a pod roll or when old
+    // sessions age out of the scanner window it drops — so a plain end−start
+    // delta goes negative and (wrongly) reads as $0. Summing only the positive
+    // increments recovers the real spend from that noisy counter.
+    //
+    // Discontinuity guard: a positive counter can ALSO jump by a huge one-time
+    // step when the counter is re-seeded — a pod restart re-seeding per-agent
+    // totals, or a regression fix restoring an all-time count (observed: a lone
+    // ~$394 → ~$18,350 step). That single jump is a data correction, not spend,
+    // yet the positive-increment sum would bill it into one hourly bucket,
+    // producing a bogus giant bar and an inflated window-spend + run-rate. So an
+    // increment above the discontinuity ceiling (see above) is skipped. `ceiling`
+    // is derived once from the full history and passed in; omit it to disable the
+    // guard (kept optional so callers without full history stay correct).
+    function costSpendBetween(hist, rate, t0, t1, ceiling) {
+      const cap = (typeof ceiling === 'number') ? ceiling : Infinity;
+      const { incs, sawWindow } = costPositiveIncrements(hist, rate, t0, t1);
+      let spend = 0;
+      for (const inc of incs) { if (inc <= cap) spend += inc; }
       return sawWindow ? spend : null;
     }
 
@@ -4193,7 +4242,10 @@
       for (const e of hist) { if (e.models && e.timestamp >= start) { anchorTs = e.timestamp; break; } }
       if (anchorTs == null) { for (const e of hist) { if (e.models) { anchorTs = e.timestamp; break; } } }
       if (anchorTs == null || anchorTs >= latest.timestamp) return null;
-      const spend = costSpendBetween(hist, rate, anchorTs, latest.timestamp);
+      // Same discontinuity ceiling as the hourly buckets so a one-time re-seed
+      // jump can't inflate the run-rate either.
+      const ceiling = costDiscontinuityCeiling(hist, rate);
+      const spend = costSpendBetween(hist, rate, anchorTs, latest.timestamp, ceiling);
       const dMs = latest.timestamp - anchorTs;
       if (spend == null || !(dMs > 0) || !(spend > 0)) return null;
       return spend / dMs; // $ per ms
@@ -6363,6 +6415,13 @@ function burnAreaChart() {
       // matches an agent whose model reads "claude-opus-4-7". Paused/off agents
       // are excluded — this is "using now", not "assigned".
       const normModel = (s) => (s || '').toLowerCase().replace(/\./g, '-').replace(/^.*\//, '');
+      // Routing aliases: a config model that only names a concrete model at
+      // runtime. An agent set to one of these accrues its tokens under the
+      // RESOLVED model (e.g. copilot "auto" → gpt-5.3-codex), so its live badge
+      // must be keyed on the resolved model, not the alias, or it lands on no
+      // visible row. The backend supplies the resolution via tokens.byAgentModel.
+      const aliasModels = new Set(['auto', 'default', '']);
+      const byAgentModel = (window._lastStatus?.tokens?.byAgentModel) || {};
       const liveAgentCounts = (() => {
         const counts = {};
         for (const a of (window._lastAgents || [])) {
@@ -6370,7 +6429,16 @@ function burnAreaChart() {
           // Exclude agents that aren't actually running (same predicate the
           // agent cards use): paused, off-by-cadence, or stopped.
           if (a.paused === true || a.offByCadence === true || a.stopped === true) continue;
-          const k = normModel(a.model);
+          let model = a.model;
+          // When the config model is a routing alias, prefer the resolved model
+          // parsed from this agent's session logs so the badge lands on the row
+          // where the tokens actually accrued. Falls back to the alias if no
+          // resolved model is known yet (no sessions scanned).
+          if (aliasModels.has(normModel(a.model))) {
+            const resolved = byAgentModel[a.name];
+            if (resolved) model = resolved;
+          }
+          const k = normModel(model);
           if (!counts[k]) counts[k] = [];
           counts[k].push(a.displayName || a.name);
         }
