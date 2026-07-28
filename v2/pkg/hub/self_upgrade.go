@@ -103,6 +103,107 @@ func SwitchImageSelf(logger *slog.Logger, image string) error {
 	return nil
 }
 
+// mutableTagSuffix marks image tags that CI republishes in place (v2-latest,
+// v3-latest, mk-latest, ...). A restart re-pulls those and lands on the new
+// build; any other tag is an immutable SHA pin where a restart is a no-op.
+const mutableTagSuffix = "-latest"
+
+// imageTagIsMutable reports whether restarting the pod can pick up new code for
+// this image reference. Digest pins (@sha256:...) and SHA tags never can.
+func imageTagIsMutable(image string) bool {
+	if image == "" || strings.Contains(image, "@") {
+		return false
+	}
+	// Only the part after the LAST colon is a tag, and only if it has no slash
+	// after it — otherwise it's a registry port (host:5000/repo).
+	idx := strings.LastIndex(image, ":")
+	if idx < 0 || strings.Contains(image[idx+1:], "/") {
+		return false // no tag at all — implicitly :latest, but don't guess
+	}
+	return strings.HasSuffix(image[idx+1:], mutableTagSuffix)
+}
+
+// UpgradeSelfToSHA moves this pod onto targetSHA and returns whether a restart
+// still has to be triggered by the caller.
+//
+// A `rollout restart` only picks up new code when the deployment tracks a
+// MUTABLE tag (v2-latest and friends), because the restart re-pulls the same
+// tag. A hive pinned to an immutable SHA tag restarts straight back onto the
+// identical image, reports the same git hash, and gets told to upgrade again on
+// the next heartbeat — an endless restart loop that never advances. torch-spyre
+// sat on 63d8902 cycling pods this way while the hub re-sent e4506c4 every beat.
+//
+// So: patch the image when pinned, restart when mutable. Returns needsRestart
+// false when the image patch itself rolls the deployment.
+func UpgradeSelfToSHA(logger *slog.Logger, targetSHA string) (needsRestart bool, err error) {
+	current, err := selfDeploymentImage()
+	if err != nil {
+		// Can't tell which kind of tag we're on. A restart is the safe default:
+		// it is correct for mutable tags (the common case) and merely useless —
+		// never harmful — on a pin.
+		logger.Warn("could not read own deployment image, defaulting to rollout restart",
+			"error", err)
+		return true, nil
+	}
+	if imageTagIsMutable(current) {
+		return true, nil
+	}
+	// Pinned. Rewrite the tag in place so the registry/repo (which may be a
+	// mirror or a private registry) is preserved — only the tag changes.
+	idx := strings.LastIndex(current, ":")
+	if idx < 0 {
+		return true, nil
+	}
+	newImage := current[:idx+1] + targetSHA
+	if newImage == current {
+		return false, nil // already there; nothing to do
+	}
+	logger.Info("upgrading a SHA-pinned deployment by image patch, not restart",
+		"from", current, "to", newImage)
+	if err := SwitchImageSelf(logger, newImage); err != nil {
+		return false, fmt.Errorf("patching pinned image to %s: %w", newImage, err)
+	}
+	// SwitchImageSelf's patch changes the pod template, which rolls the
+	// deployment on its own — a restart on top would be redundant.
+	return false, nil
+}
+
+// selfDeploymentImage returns the image of this pod's own Deployment's first
+// container, via the in-cluster API.
+func selfDeploymentImage() (string, error) {
+	ns, err := os.ReadFile(k8sNamespacePath)
+	if err != nil {
+		return "", fmt.Errorf("reading namespace: %w", err)
+	}
+	namespace := strings.TrimSpace(string(ns))
+	if namespace == "" {
+		return "", fmt.Errorf("empty namespace from %s", k8sNamespacePath)
+	}
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
+	body, err := k8sAPIGet(path)
+	if err != nil {
+		return "", err
+	}
+	var dep struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Image string `json:"image"`
+					} `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(body, &dep); err != nil {
+		return "", err
+	}
+	if len(dep.Spec.Template.Spec.Containers) == 0 {
+		return "", fmt.Errorf("deployment %s/%s has no containers", namespace, selfUpgradeDeployName)
+	}
+	return dep.Spec.Template.Spec.Containers[0].Image, nil
+}
+
 type deploymentContainerNames struct {
 	containers     []string
 	initContainers []string

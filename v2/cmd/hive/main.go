@@ -1838,11 +1838,24 @@ func main() {
 				}
 			}, targetSHA, logger)
 
-			if err := hub.RolloutRestartSelf(logger); err != nil {
-				logger.Warn("rolling restart failed, falling back to os.Exit",
-					"error", err,
-				)
-				os.Exit(0)
+			// A plain rollout restart only advances a deployment tracking a
+			// MUTABLE tag. On a SHA-pinned deployment it relaunches the very
+			// same image, so the hive reports the old hash and the hub re-sends
+			// this upgrade every heartbeat — a restart loop that never lands.
+			// UpgradeSelfToSHA patches the image instead when we are pinned.
+			needsRestart, err := hub.UpgradeSelfToSHA(logger, targetSHA)
+			if err != nil {
+				logger.Warn("pinned-image upgrade failed, falling back to rolling restart",
+					"target", targetSHA, "error", err)
+				needsRestart = true
+			}
+			if needsRestart {
+				if err := hub.RolloutRestartSelf(logger); err != nil {
+					logger.Warn("rolling restart failed, falling back to os.Exit",
+						"error", err,
+					)
+					os.Exit(0)
+				}
 			}
 			// Rolling restart initiated — K8s will start a new pod and
 			// send SIGTERM to this one once the replacement is Ready.
