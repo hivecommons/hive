@@ -151,6 +151,11 @@ type HeartbeatPayload struct {
 	Org                     string                        `json:"org"`
 	Repos                   []string                      `json:"repos"`
 	PrimaryRepo             string                        `json:"primary_repo"`
+	// AIAuthor is the GitHub account this hive's agents open PRs as. Reported
+	// so the hub can echo it back in HeartbeatProjectConfig rather than
+	// blanking it, and so the registry knows each hive's author without any
+	// spoke-side token lookup (which does not work on App-authenticated hives).
+	AIAuthor                string                        `json:"ai_author,omitempty"`
 	ACMMLevel               int                           `json:"acmm_level"`
 	Agents                  []AgentSummary                `json:"agents"`
 	Governor                GovernorSummary               `json:"governor"`
@@ -470,6 +475,14 @@ type HeartbeatProjectConfig struct {
 	Repos       []string `json:"repos"`
 	PrimaryRepo string   `json:"primary_repo,omitempty"`
 	ACMMLevel   int      `json:"acmm_level"`
+	// AIAuthor is the GitHub account the agents open PRs as. It rides the same
+	// channel as org/repos because it is part of the same project identity, and
+	// because without it the hub's echo of this struct silently reset the
+	// spoke's project.ai_author to "" on every beat — which disabled the
+	// fleet-stats collector fleet-wide (Start() returns early on an empty
+	// author) and left the public landing page's stats strip blank. Empty =
+	// leave the spoke's configured author unchanged.
+	AIAuthor string `json:"ai_author,omitempty"`
 	// DashboardURL is the claimed hive's vanity URL. The spoke adopts it as its
 	// hub.dashboard_url and reports it in subsequent heartbeats, so the hub
 	// registry's dashboardUrl becomes the vanity URL (rather than the raw
