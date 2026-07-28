@@ -17,6 +17,7 @@ type normalVisualRuntimeStopper struct {
 	cancel           context.CancelFunc
 	done             <-chan struct{}
 	manager          specialistChildShutdowner
+	resetSpecialists func() error
 	releaseOwnership func()
 	logger           *slog.Logger
 	cancelRequested  bool
@@ -53,6 +54,11 @@ func (stopper *normalVisualRuntimeStopper) Stop(ctx context.Context) error {
 	}
 	if err := shutdownOrdinarySpecialistChildren(stopper.manager, stopper.logger); err != nil {
 		return err
+	}
+	if stopper.resetSpecialists != nil {
+		if err := stopper.resetSpecialists(); err != nil {
+			return err
+		}
 	}
 
 	stopper.mu.Lock()

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -46,6 +47,13 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HIVE_STATE_DIR", stateDir)
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualContract(t, stateDir), exists: true}
+	runtimeManager, factoryCalls, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		return &fakeNormalVisualRuntime{binding: binding}
+	})
+	originalRuntime := dashboardNormalVisualRuntime.Load()
+	dashboardNormalVisualRuntime.Store(runtimeManager)
+	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(originalRuntime) })
 	planBytes := []byte("{\"applied\":false}\n")
 	var calls [][]string
 	dashboardSetupCLIRunner = func(_ context.Context, args []string, token string) (map[string]any, []byte, error) {
@@ -73,7 +81,8 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result["plan_sha256"] != planDigest || len(calls) != 2 {
+	activation, _ := result["visual_runtime_activation"].(map[string]any)
+	if result["plan_sha256"] != planDigest || activation["state"] != "ready" || len(calls) != 2 {
 		t.Fatalf("result=%v calls=%v", result, calls)
 	}
 	wantBase := []string{
@@ -86,7 +95,9 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		t.Fatalf("unexpected setup arguments: %v", calls)
 	}
 	replay, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
-	if err != nil || replay["idempotent_replay"] != true || len(calls) != 2 {
+	replayActivation, _ := replay["visual_runtime_activation"].(map[string]any)
+	if err != nil || replay["idempotent_replay"] != true || replayActivation["state"] != "ready" ||
+		len(calls) != 2 || factoryCalls.Load() != 1 {
 		t.Fatalf("replay=%v err=%v calls=%v", replay, err, calls)
 	}
 }
@@ -155,6 +166,13 @@ func TestDashboardIntegratedSetupRejectsPlanDriftBeforeApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("HIVE_STATE_DIR", stateDir)
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualContract(t, stateDir), exists: true}
+	runtimeManager, factoryCalls, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		return &fakeNormalVisualRuntime{binding: binding}
+	})
+	originalRuntime := dashboardNormalVisualRuntime.Load()
+	dashboardNormalVisualRuntime.Store(runtimeManager)
+	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(originalRuntime) })
 	calls := 0
 	dashboardSetupCLIRunner = func(context.Context, []string, string) (map[string]any, []byte, error) {
 		calls++
@@ -165,7 +183,67 @@ func TestDashboardIntegratedSetupRejectsPlanDriftBeforeApply(t *testing.T) {
 		Repository: "owner/repository", Coverage: "essential", Automation: "repair-pr",
 		Provider: "codex", VisualHiveRef: strings.Repeat("a", 40), ExpectedPlanSHA256: strings.Repeat("0", 64),
 	}, "owner-token")
-	if err == nil || !strings.Contains(err.Error(), "plan changed") || calls != 1 {
-		t.Fatalf("err=%v calls=%d", err, calls)
+	if err == nil || !strings.Contains(err.Error(), "plan changed") || calls != 1 || factoryCalls.Load() != 0 {
+		t.Fatalf("err=%v calls=%d factory=%d", err, calls, factoryCalls.Load())
+	}
+}
+
+func TestDashboardIntegratedSetupPersistsSuccessAndRetriesOnlyRuntimeActivation(t *testing.T) {
+	originalRunner := dashboardSetupCLIRunner
+	t.Cleanup(func() { dashboardSetupCLIRunner = originalRunner })
+	stateDir := filepath.Join(t.TempDir(), "repository-state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualContract(t, stateDir), exists: true}
+	var runtimeAttempts int
+	runtimeManager, factoryCalls, _ := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		runtimeAttempts++
+		instance := &fakeNormalVisualRuntime{binding: binding}
+		if runtimeAttempts == 1 {
+			instance.startErr = errors.New("dashboard readiness is not yet available")
+		}
+		return instance
+	})
+	originalRuntime := dashboardNormalVisualRuntime.Load()
+	dashboardNormalVisualRuntime.Store(runtimeManager)
+	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(originalRuntime) })
+
+	planBytes := []byte("{\"applied\":false}\n")
+	calls := 0
+	dashboardSetupCLIRunner = func(_ context.Context, args []string, _ string) (map[string]any, []byte, error) {
+		calls++
+		if args[len(args)-1] == "--plan" {
+			return map[string]any{"applied": false}, planBytes, nil
+		}
+		return map[string]any{"applied": true}, []byte("{\"applied\":true}\n"), nil
+	}
+	request := dashboard.IntegratedSetupRequest{
+		RequestID: "setup-runtime-retry-001", Repository: "owner/repository",
+		Coverage: "essential", Automation: "repair-pr", Provider: "codex",
+		VisualHiveRef: strings.Repeat("a", 40),
+	}
+	planDigest, err := dashboardSetupPlanDigest(request, planBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedPlanSHA256 = planDigest
+	first, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstActivation, _ := first["visual_runtime_activation"].(map[string]any)
+	if firstActivation["state"] != "pending" || firstActivation["error_reference"] == "" {
+		t.Fatalf("first activation=%v", firstActivation)
+	}
+	replay, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayActivation, _ := replay["visual_runtime_activation"].(map[string]any)
+	if replay["idempotent_replay"] != true || replayActivation["state"] != "ready" ||
+		calls != 2 || factoryCalls.Load() != 2 {
+		t.Fatalf("replay=%v calls=%d factory=%d", replay, calls, factoryCalls.Load())
 	}
 }
