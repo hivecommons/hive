@@ -5061,6 +5061,17 @@ const dashboardHTML = `<!DOCTYPE html>
     .subtitle { color: var(--muted); font-size: 1.02rem; line-height: 1.7; margin-bottom: 32px; }
 
     /* ── Table ── */
+    /* Status filter chips above the My Hives table. --chip-color is set inline
+       per chip so one rule serves every state colour. */
+    #hive-filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .filter-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 9999px; font-size: 0.72rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: all .15s; }
+    .filter-chip:hover { border-color: var(--chip-color, var(--muted)); color: var(--text); }
+    .filter-chip.on { color: var(--chip-color); border-color: var(--chip-color); background: rgba(255,255,255,0.06); }
+    .filter-chip-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; flex: none; }
+    .filter-chip-count { font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+    .filter-chip-clear { color: var(--muted); }
+    .filter-summary { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
     .table-wrap { overflow: visible; margin: 0 auto; position: relative; }
     .hive-menu-cell:hover .hive-menu-dropdown { display: block !important; }
     .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: rgba(244,199,95,0.08); border-radius: 4px; }
@@ -5207,6 +5218,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div id="admin-provision-list"></div>
     </div>
 
+    <div id="hive-filter-bar" style="display:none"></div>
     <div id="hives-container"><div class="loading">Loading your hives...</div></div>
 
     <div id="public-hives-section" style="display:none;margin-top:48px">
@@ -5375,6 +5387,46 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       return '<span title="' + m + '" style="display:inline-flex;align-items:center;gap:4px"><svg width="24" height="20" viewBox="0 0 24 20">' + bars + '</svg><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + m + '</span></span>';
     }
+    /* Status-filter keys for the My Hives list. Kept as named constants so the
+       filter chips, the classifier and the persisted selection can never drift
+       apart on a typo'd string literal. */
+    var HIVE_FILTER_APP_MISSING = 'app-missing';
+    var HIVE_FILTER_NO_TOKENS = 'no-tokens';
+    var HIVE_FILTER_DEGRADED = 'degraded';
+    var HIVE_FILTER_OK = 'ok';
+
+    /* A hive has "used no tokens" when its last heartbeat reported a cumulative
+       token total of zero — the same value the Tokens column renders as "—". */
+    var NO_TOKENS_THRESHOLD = 0;
+
+    /* hiveStatusFlags derives the four filterable states from data the hub
+       ALREADY has per hive (all reported over the spoke heartbeat):
+         - githubAppRequired / githubAppPermIssue  (RegistryEntry, server.go)
+         - health.status                            (RegistryEntry.Health)
+         - totalTokens24h                           (RegistryEntry)
+         - online                                   (RegistryEntry)
+       The GitHub-App and degraded rules deliberately mirror healthBadge()
+       exactly, so a row's dot and the chip it matches can never disagree. */
+    function hiveStatusFlags(h) {
+      h = h || {};
+      var hp = h.health || {};
+      var st = hp.status || 'unknown';
+      /* githubAppRequired means the spoke wants the App but it is not usable:
+         with a perm issue it is installed-but-insufficient, without one it is
+         not installed at all. healthBadge() forces "degraded" in both cases. */
+      var appMissing = !!h.githubAppRequired && !h.githubAppPermIssue;
+      var degraded = !!h.githubAppRequired || st === 'degraded' || st === 'critical';
+      /* An offline hive has no live reading at all, so it is not "OK" even if
+         its last stored health snapshot said ok. */
+      var ok = !degraded && st === 'ok' && !!h.online;
+      return {
+        appMissing: appMissing,
+        noTokens: (Number(h.totalTokens24h) || 0) <= NO_TOKENS_THRESHOLD,
+        degraded: degraded,
+        ok: ok
+      };
+    }
+
     function healthBadge(h) {
       var hp = h.health || {};
       var st = hp.status || 'unknown';
@@ -5488,6 +5540,94 @@ const dashboardHTML = `<!DOCTYPE html>
     var _hivesLoading = false;
     var _lastHivesJSON = '';
     var _lastUsersJSON = '';
+
+    /* Active status filters, keyed by HIVE_FILTER_*. Multi-select: several may
+       be on at once and a hive matches if it satisfies ANY active one (OR), so
+       turning on more chips widens the list rather than narrowing it to nothing
+       — "Degraded" and "OK" are mutually exclusive and an AND would always be
+       empty. Empty object = no filtering, show everything. */
+    var _dashStatusFilters = {};
+
+    /* Chip definitions, in display order. Colours reuse the health palette from
+       healthBadge() so a chip reads as the same state as the row dot. */
+    var HIVE_FILTER_CHIPS = [
+      {key: HIVE_FILTER_APP_MISSING, label: 'GitHub App not installed', color: '#f85149'},
+      {key: HIVE_FILTER_NO_TOKENS, label: 'No tokens used', color: '#6b7280'},
+      {key: HIVE_FILTER_DEGRADED, label: 'Degraded', color: '#f85149'},
+      {key: HIVE_FILTER_OK, label: 'OK', color: '#3fb950'}
+    ];
+
+    /* hiveMatchesFilters answers whether a hive survives the active chips. */
+    function hiveMatchesFilters(h) {
+      var active = Object.keys(_dashStatusFilters || {}).filter(function(k) { return _dashStatusFilters[k]; });
+      if (!active.length) return true;
+      var f = hiveStatusFlags(h);
+      var byKey = {};
+      byKey[HIVE_FILTER_APP_MISSING] = f.appMissing;
+      byKey[HIVE_FILTER_NO_TOKENS] = f.noTokens;
+      byKey[HIVE_FILTER_DEGRADED] = f.degraded;
+      byKey[HIVE_FILTER_OK] = f.ok;
+      for (var i = 0; i < active.length; i++) {
+        if (byKey[active[i]]) return true;
+      }
+      return false;
+    }
+
+    /* applyDashFilters filters the hives the caller wants rendered. */
+    function applyDashFilters(hives) {
+      return (hives || []).filter(hiveMatchesFilters);
+    }
+
+    /* toggleStatusFilter flips one chip and re-renders from the unfiltered
+       cache, so chips compose with whatever sort is currently applied. */
+    function toggleStatusFilter(key) {
+      _dashStatusFilters[key] = !_dashStatusFilters[key];
+      if (!_dashStatusFilters[key]) delete _dashStatusFilters[key];
+      renderHives(_allDashHives, true);
+    }
+
+    function clearStatusFilters() {
+      _dashStatusFilters = {};
+      renderHives(_allDashHives, true);
+    }
+
+    /* renderStatusFilterBar draws the chip row plus the match count. Counts are
+       computed over the FULL hive list (not the filtered one) so each chip
+       always advertises how many hives it would show. */
+    function renderStatusFilterBar(allHives, shownCount) {
+      var bar = document.getElementById('hive-filter-bar');
+      if (!bar) return;
+      var counts = {};
+      counts[HIVE_FILTER_APP_MISSING] = 0;
+      counts[HIVE_FILTER_NO_TOKENS] = 0;
+      counts[HIVE_FILTER_DEGRADED] = 0;
+      counts[HIVE_FILTER_OK] = 0;
+      (allHives || []).forEach(function(h) {
+        var f = hiveStatusFlags(h);
+        if (f.appMissing) counts[HIVE_FILTER_APP_MISSING]++;
+        if (f.noTokens) counts[HIVE_FILTER_NO_TOKENS]++;
+        if (f.degraded) counts[HIVE_FILTER_DEGRADED]++;
+        if (f.ok) counts[HIVE_FILTER_OK]++;
+      });
+      var chips = (HIVE_FILTER_CHIPS || []).map(function(c) {
+        var on = !!_dashStatusFilters[c.key];
+        var cls = on ? 'filter-chip on' : 'filter-chip';
+        return '<button type="button" class="' + cls + '" aria-pressed="' + (on ? 'true' : 'false') +
+          '" onclick="toggleStatusFilter(\'' + esc(c.key) + '\')" style="--chip-color:' + c.color + '">' +
+          '<span class="filter-chip-dot" style="background:' + c.color + '"></span>' +
+          esc(c.label) + '<span class="filter-chip-count">' + counts[c.key] + '</span></button>';
+      }).join('');
+      var anyActive = Object.keys(_dashStatusFilters || {}).length > 0;
+      var total = (allHives || []).length;
+      var summary = anyActive
+        ? 'Showing ' + shownCount + ' of ' + total + ' hives'
+        : total + (total === 1 ? ' hive' : ' hives');
+      var clearBtn = anyActive
+        ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearStatusFilters()">Clear filters</button>'
+        : '';
+      bar.innerHTML = '<div class="filter-chips">' + chips + clearBtn + '</div>' +
+        '<span class="filter-summary">' + summary + '</span>';
+    }
 
     function sortDashHives(key) {
       if (_dashSortKey === key) { _dashSortAsc = !_dashSortAsc; } else { _dashSortKey = key; _dashSortAsc = true; }
@@ -5709,15 +5849,33 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
-    function renderHives(hives, force) {
-      var sig = JSON.stringify(hives);
+    function renderHives(allHives, force) {
+      allHives = allHives || [];
+      /* The signature must include the active filters, otherwise toggling a
+         chip while the hive data is unchanged would be treated as a no-op. */
+      var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters);
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
-      if (!hives.length) {
+      var hives = applyDashFilters(allHives);
+      var filterBar = document.getElementById('hive-filter-bar');
+      if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
+      renderStatusFilterBar(allHives, hives.length);
+      if (!allHives.length) {
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives yet</p>' +
           '<p>Log in to a local hive dashboard to see it here, or create a hosted hive.</p>' +
+          '</div>';
+        return;
+      }
+      if (!hives.length) {
+        /* Hives exist, but every one was filtered out — say so, and offer the
+           way back rather than looking like the list failed to load. */
+        document.getElementById('hives-container').innerHTML =
+          '<div class="empty-state">' +
+          '<p style="font-size:1.2rem;margin-bottom:8px">No hives match these filters</p>' +
+          '<p>' + allHives.length + (allHives.length === 1 ? ' hive is' : ' hives are') + ' hidden by the status filters above.</p>' +
+          '<p style="margin-top:12px"><button type="button" class="filter-chip filter-chip-clear" onclick="clearStatusFilters()">Clear filters</button></p>' +
           '</div>';
         return;
       }
