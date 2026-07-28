@@ -665,26 +665,47 @@ func main() {
 	// and caches them, so each heartbeat can attach a fresh-but-cheap snapshot
 	// the hub aggregates into the public landing page's live fleet-stats strip.
 	// ai_author is optional config and hosted hives are provisioned without it,
-	// so most spokes had an empty author — which silently disabled the collector
-	// entirely (Start() returns early) and left the public fleet-stats strip
-	// blank. Fall back to the bot token's own GitHub login: that IS the account
-	// the agents open PRs as, so it is the correct author to count. Never fall
-	// back to an org-wide search with no author filter — that would sweep in
-	// human PRs and overstate what the fleet's agents actually did.
+	// so most spokes have an empty author — which silently disables the
+	// collector (Start() returns early) and leaves the public fleet-stats strip
+	// blank. Resolve an author from what the spoke actually has, in order:
+	//
+	//  1. project.ai_author — explicit config always wins.
+	//  2. /data/gh-user-token — the logged-in user. On a hosted hive this is
+	//     the maintainer whose account the agents open PRs as, so it matches
+	//     the PR author. Works on BOTH auth paths.
+	//  3. github.token / HIVE_GITHUB_TOKEN — a PAT hive's own identity.
+	//
+	// The App-installation token is deliberately NOT used: its login is a
+	// bot (…[bot]), which never matches the human account the agents author
+	// PRs as, so it would resolve an author that counts zero. And never fall
+	// back to an org-wide search with no author filter — that sweeps in human
+	// PRs and overstates what the fleet's agents actually did.
 	fleetStatsAuthor := cfg.Project.AIAuthor
-	fleetStatsToken := cfg.GitHub.Token
-	if fleetStatsToken == "" {
-		fleetStatsToken = os.Getenv("HIVE_GITHUB_TOKEN")
+	if fleetStatsAuthor == "" {
+		if tokenData, err := os.ReadFile("/data/gh-user-token"); err == nil {
+			if userToken := strings.TrimSpace(string(tokenData)); userToken != "" {
+				if u, err := github.ValidateToken(userToken, cfg.GitHub.ResolvedAPIURL()); err == nil && u.Login != "" {
+					fleetStatsAuthor = u.Login
+					logger.Info("fleet stats: ai_author unset, using logged-in user identity",
+						"author", fleetStatsAuthor)
+				}
+			}
+		}
 	}
-	if fleetStatsAuthor == "" && fleetStatsToken != "" {
-		if botUser, err := github.ValidateToken(fleetStatsToken, cfg.GitHub.ResolvedAPIURL()); err == nil && botUser.Login != "" {
-			fleetStatsAuthor = botUser.Login
-			logger.Info("fleet stats: ai_author unset, using bot token identity",
-				"author", fleetStatsAuthor)
-		} else if err != nil {
-			logger.Warn("fleet stats: ai_author unset and bot identity lookup failed; "+
-				"this hive will not contribute to the public fleet-stats total",
-				"error", err)
+	if fleetStatsAuthor == "" {
+		fleetStatsToken := cfg.GitHub.Token
+		if fleetStatsToken == "" {
+			fleetStatsToken = os.Getenv("HIVE_GITHUB_TOKEN")
+		}
+		if fleetStatsToken != "" {
+			if u, err := github.ValidateToken(fleetStatsToken, cfg.GitHub.ResolvedAPIURL()); err == nil && u.Login != "" {
+				fleetStatsAuthor = u.Login
+				logger.Info("fleet stats: ai_author unset, using hive token identity",
+					"author", fleetStatsAuthor)
+			} else if err != nil {
+				logger.Warn("fleet stats: ai_author unset and token identity lookup failed",
+					"error", err)
+			}
 		}
 	}
 	if fleetStatsAuthor == "" || cfg.Project.Org == "" {
