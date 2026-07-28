@@ -337,7 +337,7 @@ func finalizeUninstall(ctx context.Context, options ManagementOptions, store *St
 	if err != nil {
 		return err
 	}
-	if err := VerifyUninstalledSetupAtCommit(ctx, options.GitHub, config, currentHead); err != nil {
+	if err := verifyUninstalledSetupOrPendingProposalAtCommit(ctx, options.GitHub, config, currentHead); err != nil {
 		return err
 	}
 	if err := verifyUninstallQuiescence(options.StateDir, store); err != nil {
@@ -982,6 +982,80 @@ func currentDefaultBranchHead(ctx context.Context, client *hivegithub.Client, co
 		return "", fmt.Errorf("current default branch returned no immutable commit")
 	}
 	return sha, nil
+}
+
+// verifyUninstalledSetupOrPendingProposalAtCommit preserves the normal
+// byte-for-byte preimage proof while allowing one narrower recovery case: the
+// exact Hive-owned setup PR never merged and the target commit still has no
+// installed Hive markers. This avoids restoring stale preimages captured by an
+// interrupted pre-publication setup transaction.
+func verifyUninstalledSetupOrPendingProposalAtCommit(ctx context.Context, client *hivegithub.Client, config Config, commitSHA string) error {
+	if err := VerifyUninstalledSetupAtCommit(ctx, client, config, commitSHA); err == nil {
+		return nil
+	} else {
+		recoverable, recoveryErr := unmergedSetupProposalLeavesTargetUninstalled(ctx, client, config, commitSHA)
+		if recoveryErr != nil {
+			return fmt.Errorf("verify managed-path restoration: %w; verify exact unmerged setup recovery: %v", err, recoveryErr)
+		}
+		if !recoverable {
+			return err
+		}
+	}
+	return nil
+}
+
+// unmergedSetupProposalLeavesTargetUninstalled proves that Hive's exact setup
+// proposal is still unmerged and that its target commit never acquired the
+// authoritative installation markers. It never infers repository cleanliness
+// from local state or from the potentially stale preimage ledger.
+func unmergedSetupProposalLeavesTargetUninstalled(ctx context.Context, client *hivegithub.Client, config Config, commitSHA string) (bool, error) {
+	commitSHA = strings.ToLower(strings.TrimSpace(commitSHA))
+	if client == nil || client.GoGitHub() == nil || !immutableCommit.MatchString(commitSHA) {
+		return false, fmt.Errorf("GitHub client and exact target commit are required")
+	}
+	owner, repo, ok := strings.Cut(config.Repository, "/")
+	if !ok || owner == "" || repo == "" {
+		return false, fmt.Errorf("repository identity is invalid")
+	}
+	markers := []string{".hive/integrated.json"}
+	if config.VisualHive {
+		markers = append(markers, visualHiveProductionWorkflowPath)
+	}
+	for _, relative := range markers {
+		content, directory, response, err := client.GoGitHub().Repositories.GetContents(
+			ctx, owner, repo, relative, &gh.RepositoryContentGetOptions{Ref: commitSHA},
+		)
+		if err == nil || content != nil || len(directory) != 0 {
+			return false, nil
+		}
+		if response == nil || response.StatusCode != http.StatusNotFound {
+			return false, fmt.Errorf("verify absence of installation marker %s: %w", relative, err)
+		}
+	}
+	expectedBranch := managedOperationBranch("setup", config.RepositoryID)
+	if config.SetupPRNumber <= 0 || strings.TrimSpace(config.SetupPRURL) == "" ||
+		config.SetupBranch != expectedBranch || !immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(config.SetupHeadSHA))) {
+		return false, fmt.Errorf("target lacks installation markers but setup proposal identity is incomplete")
+	}
+	marker := "<!-- hive-setup: " + strings.ToLower(strings.TrimSpace(config.Repository)) + " -->"
+	snapshot, err := client.InspectManagedPullRequestExact(
+		ctx, config.Repository, config.RepositoryID, config.SetupPRNumber,
+		marker, config.SetupBranch, config.SetupHeadSHA, config.DefaultBranch,
+	)
+	if err != nil {
+		return false, err
+	}
+	if snapshot.URL != config.SetupPRURL || snapshot.Merged ||
+		(snapshot.State != "open" && snapshot.State != "closed") {
+		return false, fmt.Errorf("setup proposal is not the exact unmerged Hive-owned pull request")
+	}
+	if !strings.EqualFold(snapshot.BaseSHA, commitSHA) {
+		return false, fmt.Errorf("setup proposal base %s does not match target commit %s", snapshot.BaseSHA, commitSHA)
+	}
+	if strings.EqualFold(snapshot.HeadSHA, snapshot.BaseSHA) {
+		return false, fmt.Errorf("setup proposal has no distinct managed head")
+	}
+	return true, nil
 }
 
 // VerifyUninstalledSetupAtCommit is the inverse of installed setup

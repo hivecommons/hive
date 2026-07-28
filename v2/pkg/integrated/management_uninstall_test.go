@@ -2,6 +2,8 @@ package integrated
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -622,6 +624,67 @@ func TestAlreadyCleanUninstallAcceptsLaterStillCleanDefaultHead(t *testing.T) {
 	}
 }
 
+func TestUninstallRetiresExactUnmergedSetupWithoutRestoringStalePreimages(t *testing.T) {
+	fixture := newUninstallFixtureWithManagedSetup(t, false)
+	defer fixture.server.Close()
+	seedStaleUnmergedSetupPreimages(t, fixture)
+	originalMain := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+	prepared, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prepared.FinalizationPending || prepared.PRNumber != 0 || !strings.EqualFold(prepared.CommitSHA, originalMain) {
+		t.Fatalf("unmerged setup retirement preparation=%+v", prepared)
+	}
+	if current := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main")); current != originalMain {
+		t.Fatalf("preparation changed default branch from %s to %s", originalMain, current)
+	}
+	fixture.mu.Lock()
+	setupOpen, closeCalls, deleteCalls := fixture.setupOpen, fixture.setupCloseCalls, fixture.setupDeleteCalls
+	fixture.mu.Unlock()
+	if !setupOpen || closeCalls != 0 || deleteCalls != 0 {
+		t.Fatalf("preparation retired setup too early: open=%t close=%d delete=%d", setupOpen, closeCalls, deleteCalls)
+	}
+	finalized, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !finalized.StateDeleted || finalized.FinalizationPending || !finalized.CleanupVerified {
+		t.Fatalf("unmerged setup retirement finalization=%+v", finalized)
+	}
+	fixture.mu.Lock()
+	setupOpen, closeCalls, deleteCalls = fixture.setupOpen, fixture.setupCloseCalls, fixture.setupDeleteCalls
+	fixture.mu.Unlock()
+	if setupOpen || closeCalls != 1 || deleteCalls != 1 {
+		t.Fatalf("exact setup identity was not retired once: open=%t close=%d delete=%d", setupOpen, closeCalls, deleteCalls)
+	}
+	if current := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main")); current != originalMain {
+		t.Fatalf("finalization changed default branch from %s to %s", originalMain, current)
+	}
+}
+
+func TestUninstallRejectsStalePreimageRecoveryForMergedSetupProposal(t *testing.T) {
+	fixture := newUninstallFixtureWithManagedSetup(t, false)
+	defer fixture.server.Close()
+	seedStaleUnmergedSetupPreimages(t, fixture)
+	fixture.mu.Lock()
+	fixture.setupOpen, fixture.setupMerged = false, true
+	fixture.mu.Unlock()
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "not the exact unmerged Hive-owned pull request") || result.StateDeleted {
+		t.Fatalf("merged setup proposal bypassed stale preimage protection: result=%+v err=%v", result, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(fixture.stateDir, "integrated", "config.json")); statErr != nil {
+		t.Fatalf("rejected recovery discarded state: %v", statErr)
+	}
+}
+
 func TestUninstallCancelRecoversStrictBaseAndDescendantHeadDriftThenRestarts(t *testing.T) {
 	fixture := newUninstallFixture(t)
 	defer fixture.server.Close()
@@ -828,10 +891,37 @@ func newUninstallFixture(t *testing.T) *uninstallFixture {
 	return newUninstallFixtureWithManagedSetup(t, true)
 }
 
+func seedStaleUnmergedSetupPreimages(t *testing.T, fixture *uninstallFixture) {
+	t.Helper()
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ManagedPreimagesVersion = managedPreimagesVersion
+	config.ManagedPathPreimages = make(map[string]ManagedPathPreimage, len(fixture.files))
+	for _, relative := range fixture.files {
+		content := []byte("stale preimage for " + relative + "\n")
+		digest := sha256.Sum256(content)
+		config.ManagedPathPreimages[relative] = ManagedPathPreimage{
+			Existed: true, GitMode: "100644", Content: content, ContentSHA256: hex.EncodeToString(digest[:]),
+		}
+	}
+	if err := store.Save(config); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newUninstallFixtureWithManagedSetup(t *testing.T, seedManagedSetup bool) *uninstallFixture {
 	t.Helper()
 	root := t.TempDir()
-	fixture := &uninstallFixture{stateDir: filepath.Join(root, "state"), remote: filepath.Join(root, "remote.git"), files: sortedUniquePaths(managedSetupFiles(true)), diff: "exact cleanup diff\n"}
+	fixture := &uninstallFixture{
+		stateDir: filepath.Join(root, "state"), remote: filepath.Join(root, "remote.git"),
+		files: sortedUniquePaths(managedSetupFiles(true)), diff: "exact cleanup diff\n", managedPathPresent: seedManagedSetup,
+	}
 	bindTestRepositoryCloneURL(t, fixture.remote)
 	runIntegratedGit(t, root, "init", "--bare", fixture.remote)
 	seed := filepath.Join(root, "seed")
@@ -897,7 +987,7 @@ func (fixture *uninstallFixture) merge(t *testing.T, cleanupSHA string) {
 	t.Helper()
 	runIntegratedGit(t, fixture.remote, "update-ref", "refs/heads/main", cleanupSHA)
 	fixture.mu.Lock()
-	fixture.merged, fixture.mergeSHA = true, cleanupSHA
+	fixture.merged, fixture.mergeSHA, fixture.managedPathPresent = true, cleanupSHA, false
 	fixture.mu.Unlock()
 }
 
