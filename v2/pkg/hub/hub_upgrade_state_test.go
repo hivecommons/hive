@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,5 +92,44 @@ func TestRolloutHubToSHAEmpty(t *testing.T) {
 	s := &HubServer{logger: slog.Default(), hubGitBranch: "v2"}
 	if err := s.rolloutHubToSHA(""); err == nil {
 		t.Error("empty SHA should error")
+	}
+}
+
+// TestRolloutHubToSHAContainerName verifies `kubectl set image` targets the
+// hub's ACTUAL container name ("hub"), not the deployment name ("hive-hub").
+// Naming the wrong container makes set image a no-op/error, so a regression here
+// silently breaks every hub self-upgrade.
+func TestRolloutHubToSHAContainerName(t *testing.T) {
+	// Fake kubectl that records its args, so we can assert the container= arg.
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args.txt")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + argsFile + "\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	// Stub the GHCR check so the roll proceeds to kubectl.
+	oldImg := hubImageExists
+	hubImageExists = func(string, *slog.Logger) bool { return true }
+	t.Cleanup(func() { hubImageExists = oldImg })
+
+	s := &HubServer{logger: slog.Default(), hubGitBranch: "v2",
+		clusters: map[string]ClusterConfig{defaultClusterID: {ID: defaultClusterID, InCluster: true}}}
+	if err := s.rolloutHubToSHA("abc1234"); err != nil {
+		t.Fatalf("rolloutHubToSHA: %v", err)
+	}
+
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("kubectl not invoked: %v", err)
+	}
+	args := string(got)
+	wantContainer := hubContainerName + "=ghcr.io/" + ghcrRepoHub + ":abc1234"
+	if !strings.Contains(args, wantContainer) {
+		t.Errorf("set image args = %q, want container arg %q", strings.TrimSpace(args), wantContainer)
+	}
+	if strings.Contains(args, hubDeploymentName+"=ghcr.io/") {
+		t.Errorf("set image wrongly used the DEPLOYMENT name as the container: %q", strings.TrimSpace(args))
 	}
 }
