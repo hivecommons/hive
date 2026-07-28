@@ -12880,10 +12880,17 @@ function burnAreaChart() {
     }
 
     async function loadAuthorizedUsers() {
-      const listEl = document.getElementById('access-users-list');
-      const statusEl = document.getElementById('access-users-status');
+      // Resolve the targets AFTER the first await, never before. The caller does
+      // `body.innerHTML = renderGovernorTab(tab)`, so renderGovAccess() — and this
+      // function with it — runs while the PREVIOUS tab is still mounted. Looking
+      // the elements up synchronously captured null every time, so both the success
+      // and the catch branch wrote into nothing and the panel sat on "Loading…"
+      // forever regardless of what the API returned.
+      let listEl = null, statusEl = null;
       try {
         const r = await fetch('/api/config/authorized-users');
+        listEl = document.getElementById('access-users-list');
+        statusEl = document.getElementById('access-users-status');
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (statusEl) {
@@ -12905,7 +12912,11 @@ function burnAreaChart() {
             '</div>';
         }).join('');
       } catch (e) {
-        if (listEl) listEl.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">Could not load authorized users.</div>';
+        // fetch() itself can reject before the lookups above ran, so re-resolve
+        // here rather than trusting listEl to be set — otherwise a network failure
+        // is indistinguishable from a hang.
+        const el = listEl || document.getElementById('access-users-list');
+        if (el) el.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">Could not load authorized users.</div>';
       }
     }
 
@@ -12998,10 +13009,13 @@ function burnAreaChart() {
     }
 
     async function loadVariables() {
-      const listEl = document.getElementById('variables-list');
-      const statusEl = document.getElementById('variables-status');
+      // Same ordering hazard as loadAuthorizedUsers(): renderGovVariables() calls
+      // this before its markup is assigned into the DOM, so resolve after the await.
+      let listEl = null, statusEl = null;
       try {
         const r = await fetch('/api/config/variables');
+        listEl = document.getElementById('variables-list');
+        statusEl = document.getElementById('variables-status');
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (statusEl) {
