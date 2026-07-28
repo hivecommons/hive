@@ -33,6 +33,18 @@ const hubAdminUsername = "clubanderson"
 // reports the new hash. One cycle plus rollout headroom.
 const hubUpgradeDebounce = 4 * time.Minute
 
+// upgradeKubectlTimeout bounds a single auto-upgrade kubectl call. kubectl's own
+// default retries an unreachable API server for ~2 minutes before giving up;
+// paying that per hive serialized the upgrade loop and starved the hub's own
+// upgrade check that runs after it. The heartbeat fallback is the real delivery
+// path for unreachable clusters, so failing fast costs nothing.
+const upgradeKubectlTimeout = 15 * time.Second
+
+// clusterUnreachableTTL is how long the hub skips kubectl for a cluster after a
+// dial failure. Long enough that one poll cycle probes a firewalled cluster at
+// most once, short enough that a cluster coming back online is picked up soon.
+const clusterUnreachableTTL = 10 * time.Minute
+
 type SaaSUser struct {
 	GitHubUsername string            `json:"github_username"`
 	CreatedAt      string            `json:"created_at"`
@@ -3048,6 +3060,69 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	}
 }
 
+// clusterRecentlyUnreachable reports whether the hub failed to reach this
+// cluster recently enough that another kubectl attempt would just burn the
+// timeout again. Callers should go straight to the heartbeat fallback instead.
+func (s *HubServer) clusterRecentlyUnreachable(clusterID string) bool {
+	if clusterID == "" {
+		return false
+	}
+	s.clusterUnreachableMu.Lock()
+	defer s.clusterUnreachableMu.Unlock()
+	until, ok := s.clusterUnreachableUntil[clusterID]
+	return ok && time.Now().Before(until)
+}
+
+// markClusterUnreachable starts (or extends) the kubectl suppression window for
+// a cluster the hub just failed to dial.
+func (s *HubServer) markClusterUnreachable(clusterID string) {
+	if clusterID == "" {
+		return
+	}
+	s.clusterUnreachableMu.Lock()
+	defer s.clusterUnreachableMu.Unlock()
+	s.clusterUnreachableUntil[clusterID] = time.Now().Add(clusterUnreachableTTL)
+}
+
+// markClusterReachable clears any suppression after a kubectl call succeeds, so
+// a cluster that recovers is used immediately rather than waiting out the TTL.
+func (s *HubServer) markClusterReachable(clusterID string) {
+	if clusterID == "" {
+		return
+	}
+	s.clusterUnreachableMu.Lock()
+	defer s.clusterUnreachableMu.Unlock()
+	delete(s.clusterUnreachableUntil, clusterID)
+}
+
+// rolloutRestartHive issues the auto-upgrade `kubectl rollout restart` for one
+// hive under a bounded timeout, honouring and maintaining the unreachable-cluster
+// cache. It returns false when kubectl did not deliver the restart — the caller
+// must then arm the heartbeat fallback, which is the ONLY path that works for
+// firewalled clusters. Skipping is reported as a plain failure (not an error) so
+// callers treat "known unreachable" and "just failed" identically.
+func (s *HubServer) rolloutRestartHive(cluster *ClusterConfig, hiveID string) bool {
+	if s.clusterRecentlyUnreachable(cluster.ID) {
+		s.logger.Debug("auto-upgrade kubectl skipped — cluster known unreachable, using heartbeat",
+			"hive", hiveID, "cluster", cluster.ID)
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), upgradeKubectlTimeout)
+	defer cancel()
+	ns := "hive-hosted-" + hiveID
+	cmd := kubectlForClusterContext(ctx, cluster, "rollout", "restart", "deployment/hive", "-n", ns)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		s.markClusterUnreachable(cluster.ID)
+		s.logger.Warn("auto-upgrade kubectl failed, falling back to heartbeat",
+			"hive", hiveID, "cluster", cluster.ID,
+			"timeout", upgradeKubectlTimeout, "output", strings.TrimSpace(string(out)))
+		return false
+	}
+	s.markClusterReachable(cluster.ID)
+	return true
+}
+
 func (s *HubServer) triggerAutoUpgrades() {
 	hives := listSaaSHives()
 	for _, h := range hives {
@@ -3124,14 +3199,13 @@ func (s *HubServer) triggerAutoUpgrades() {
 					s.mu.Unlock()
 					hiveCluster := s.clusterForHive(&h)
 					if hiveCluster != nil && !hiveCluster.InCluster {
-						ns := "hive-hosted-" + h.ID
-						cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
-						if out, err := cmd.CombinedOutput(); err != nil {
-							// Expected when the hub can't reach the hive's
-							// cluster — the heartbeat fallback above handles it.
-							s.logger.Warn("stale upgrade kubectl restart failed (heartbeat fallback armed)",
-								"hive", h.ID, "output", string(out))
-						}
+						// Failure here is expected when the hub can't reach the
+						// hive's cluster; the heartbeat fallback armed above is
+						// what actually delivers the upgrade. rolloutRestartHive
+						// bounds the attempt and skips it entirely for clusters
+						// already known unreachable, so this recovery path can't
+						// re-introduce the per-hive timeout stall either.
+						s.rolloutRestartHive(hiveCluster, h.ID)
 					}
 					continue
 				}
@@ -3177,11 +3251,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 			}
 		}
 		s.mu.Unlock()
-		ns := "hive-hosted-" + h.ID
-		cmd := kubectlForCluster(hiveCluster, "rollout", "restart", "deployment/hive", "-n", ns)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			s.logger.Warn("auto-upgrade kubectl failed, falling back to heartbeat",
-				"hive", h.ID, "cluster", hiveCluster.ID, "target", latestSHA, "output", string(out))
+		if !s.rolloutRestartHive(hiveCluster, h.ID) {
 			// kubectl can't reach the cluster — fall back to heartbeat-based
 			// upgrade (path 3). The next heartbeat from this hive will include
 			// UpgradeTo, causing the spoke to self-restart.

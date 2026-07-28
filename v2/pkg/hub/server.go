@@ -252,6 +252,16 @@ type HubServer struct {
 	// Key: hive ID, value: target SHA.  Cleared when the spoke reports the
 	// target SHA, proving the upgrade completed.
 	heartbeatUpgrade map[string]string
+
+	// clusterUnreachableUntil suppresses kubectl against clusters the hub has
+	// just proven it cannot route to (firewalled GPU clusters like vllm-d).
+	// Without this, triggerAutoUpgrades() paid a full dial timeout PER HIVE PER
+	// CYCLE — 15 vllm-d hives serialized into ~30 minutes of blocking, which
+	// starved the hub's own auto-upgrade check at the end of the same loop and
+	// left the hub pinned to an old SHA indefinitely. Key: cluster ID, value:
+	// the time after which kubectl may be retried.
+	clusterUnreachableUntil map[string]time.Time
+	clusterUnreachableMu    sync.Mutex
 	// heartbeatSwitchTag tracks hives that should switch their deployment
 	// image to a specific tag (branch switch) via heartbeat, for clusters
 	// the hub can't reach over kubectl. Cleared once the spoke reports it.
@@ -403,6 +413,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
 		heartbeatUpgrade:        make(map[string]string),
 		heartbeatSwitchTag:      make(map[string]string),
+		clusterUnreachableUntil: make(map[string]time.Time),
 		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
 		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
