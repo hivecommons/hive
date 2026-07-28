@@ -159,8 +159,14 @@ type HubServer struct {
 	hubSecret    string
 	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
 	// every-cycle behind-latest check doesn't re-restart while a rollout is still
-	// in flight. See the auto-upgrade block in the SHA-poll loop.
+	// in flight. See the auto-upgrade block in the SHA-poll loop. It also marks
+	// the START of an in-flight roll: for hubUpgradeDebounce after a trigger the
+	// hub reports upgrade state "upgrading", so the dashboard shows "Upgrading"
+	// (not a misleading "queued") while the new pod rolls — for BOTH the auto and
+	// the admin-triggered path. hubUpgradeTarget is the SHA being rolled to.
 	lastHubUpgradeTrigger time.Time
+	hubUpgradeTarget      string
+	hubUpgradeMu          sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget
 	httpServer            *http.Server
 	httpMu                sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
 	clusters              map[string]ClusterConfig
@@ -1041,10 +1047,11 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
-		"git_hash":    s.hubGitHash,
-		"git_branch":  s.hubGitBranch,
-		"latest_sha":  getLatestSHA(),
-		"latest_shas": getLatestSHAs(),
+		"git_hash":      s.hubGitHash,
+		"git_branch":    s.hubGitBranch,
+		"latest_sha":    getLatestSHA(),
+		"latest_shas":   getLatestSHAs(),
+		"upgrade_state": s.hubUpgradeState(),
 	}
 	cookie, _ := r.Cookie("hive_hub_user")
 	if cookie != nil && cookie.Value == hubAdminUsername {

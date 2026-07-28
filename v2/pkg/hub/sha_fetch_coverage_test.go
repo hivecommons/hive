@@ -113,7 +113,7 @@ func TestGhcrTagExists(t *testing.T) {
 		w.Write([]byte(`{"token":"anon-token"}`))
 	}))
 	defer srv.Close()
-	if !ghcrTagExists(clientTo(t, srv), "deadbee", slog.Default()) {
+	if !ghcrTagExists(clientTo(t, srv), ghcrRepoHub, "deadbee", slog.Default()) {
 		t.Error("expected tag to exist (HEAD 200)")
 	}
 
@@ -126,7 +126,7 @@ func TestGhcrTagExists(t *testing.T) {
 		w.Write([]byte(`{"token":"anon-token"}`))
 	}))
 	defer srv404.Close()
-	if ghcrTagExists(clientTo(t, srv404), "deadbee", slog.Default()) {
+	if ghcrTagExists(clientTo(t, srv404), ghcrRepoHub, "deadbee", slog.Default()) {
 		t.Error("expected tag NOT to exist (HEAD 404)")
 	}
 }
@@ -134,7 +134,7 @@ func TestGhcrTagExists(t *testing.T) {
 func TestGhcrTagExistsErrors(t *testing.T) {
 	// Token request connection error -> false.
 	c := &http.Client{Transport: &rewriteTransport{target: mustURL(t, "http://127.0.0.1:1")}}
-	if ghcrTagExists(c, "deadbee", slog.Default()) {
+	if ghcrTagExists(c, ghcrRepoHub, "deadbee", slog.Default()) {
 		t.Error("conn error should return false")
 	}
 
@@ -143,7 +143,7 @@ func TestGhcrTagExistsErrors(t *testing.T) {
 		w.Write([]byte(`{not json`))
 	}))
 	defer srv.Close()
-	if ghcrTagExists(clientTo(t, srv), "deadbee", slog.Default()) {
+	if ghcrTagExists(clientTo(t, srv), ghcrRepoHub, "deadbee", slog.Default()) {
 		t.Error("bad token json should return false")
 	}
 }

@@ -1511,6 +1511,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"hub_git_branch":          s.hubGitBranch,
 		"tracked_branches":        s.trackedBranchList(),
 		"hub_auto_upgrade":        isHubAutoUpgrade(),
+		"hub_upgrade_state":       s.hubUpgradeState(),
 		"show_my_hives":           true,
 	}
 
@@ -2036,13 +2037,75 @@ func (s *HubServer) handleHubAutoUpgrade(w http.ResponseWriter, r *http.Request)
 	fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
 }
 
+// rolloutHubToSHA upgrades the hub deployment to a specific v2 SHA. It first
+// verifies the hub's OWN image (ghcrRepoHub) exists for that SHA on GHCR — a
+// separate build job from the spoke image, so a failed hive-hub build must not
+// trigger a doomed rollout — then pins the deployment to the immutable
+// hive-hub:<sha> tag via `kubectl set image`. Pinning (rather than
+// `rollout restart` of the mutable v2-latest tag) forces the node to pull that
+// exact image and stops a stale cached v2-latest digest from coming back up
+// (the "rolled but still on the old hash" failure). On success it records the
+// in-flight state so the dashboard shows "Upgrading". Returns an error the
+// caller surfaces; safe to call from both the poller and the admin handler.
+func (s *HubServer) rolloutHubToSHA(sha string) error {
+	if sha == "" {
+		return fmt.Errorf("empty target SHA")
+	}
+	if !hubImageExists(sha, s.logger) {
+		return fmt.Errorf("hub image %s:%s not published yet", ghcrRepoHub, sha)
+	}
+	image := fmt.Sprintf("ghcr.io/%s:%s", ghcrRepoHub, sha)
+	cmd := kubectlForCluster(s.hubCluster(), "set", "image",
+		"deployment/hive-hub", "hive-hub="+image, "-n", "hive-hub")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("kubectl set image failed: %s", strings.TrimSpace(string(out)))
+	}
+	s.hubUpgradeMu.Lock()
+	s.lastHubUpgradeTrigger = time.Now()
+	s.hubUpgradeTarget = sha
+	s.hubUpgradeMu.Unlock()
+	return nil
+}
+
+// hubUpgradeState reports the hub's own upgrade status for the dashboard badge:
+//   - "current"   — running the latest v2 SHA
+//   - "upgrading" — a rollout we triggered is in flight (within the debounce
+//     window after the trigger, before the new pod reports the new hash)
+//   - "queued"    — behind latest, auto-upgrade ON, no rollout in flight yet
+//     (the poller will trigger one shortly)
+//   - "behind"    — behind latest, auto-upgrade OFF (admin must click Upgrade)
+//   - "unknown"   — latest SHA not resolved yet
+//
+// This is the field the badge needs: previously the frontend could only tell an
+// admin-clicked rollout ("upgrading") from everything else ("queued"), so an
+// AUTO rollout in progress showed a misleading "queued".
+func (s *HubServer) hubUpgradeState() string {
+	latest := getLatestSHAForBranch(s.hubGitBranch)
+	if latest == "" {
+		return "unknown"
+	}
+	if sameCommit(latest, s.hubGitHash) {
+		return "current"
+	}
+	s.hubUpgradeMu.Lock()
+	inFlight := s.hubUpgradeTarget != "" &&
+		time.Since(s.lastHubUpgradeTrigger) < hubUpgradeDebounce
+	s.hubUpgradeMu.Unlock()
+	if inFlight {
+		return "upgrading"
+	}
+	if isHubAutoUpgrade() {
+		return "queued"
+	}
+	return "behind"
+}
+
 func (s *HubServer) handleHubSelfUpgrade(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
-	s.logger.Info("audit: hub self-upgrade triggered", "by", username)
-	cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		s.logger.Warn("hub self-upgrade failed", "output", string(out))
+	target := getLatestSHAForBranch(s.hubGitBranch)
+	s.logger.Info("audit: hub self-upgrade triggered", "by", username, "to", target)
+	if err := s.rolloutHubToSHA(target); err != nil {
+		s.logger.Warn("hub self-upgrade failed", "error", err)
 		http.Error(w, `{"error":"hub upgrade failed — check logs"}`, http.StatusInternalServerError)
 		return
 	}
@@ -2461,6 +2524,26 @@ var (
 	githubAPIBase = "https://api.github.com"
 	ghcrBase      = "https://ghcr.io"
 )
+
+// GHCR image repositories built by .github/workflows/docker.yml. Each is a
+// SEPARATE build job tagged with the short git SHA, so one can succeed while
+// another fails for the same commit. The hub runs ghcrRepoHub; spokes run
+// ghcrRepoSpoke. The hub self-upgrade MUST verify ghcrRepoHub (not ghcrRepoSpoke)
+// before targeting a SHA — otherwise a failed hive-hub build leaves the hub
+// chasing a SHA whose hub image was never pushed, and the rollout falls back to
+// a stale cached image.
+const (
+	ghcrRepoSpoke = "kubestellar/hive"
+	ghcrRepoHub   = "kubestellar/hive-hub"
+)
+
+// hubImageExists reports whether the hub's own container image is published on
+// GHCR for the given SHA. A var (not a plain call) so tests can stub the GHCR
+// round-trip; production checks ghcrRepoHub over the network.
+var hubImageExists = func(sha string, logger *slog.Logger) bool {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return ghcrTagExists(client, ghcrRepoHub, sha, logger)
+}
 
 var (
 	latestSHAMu sync.RWMutex
@@ -2939,13 +3022,17 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		// restart is already rolling out (the new pod reports the new hash, which
 		// clears the condition, but the poll can fire before the rollout lands).
 		hubBranchSHA := getLatestSHAForBranch("v2")
-		if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) &&
-			time.Since(s.lastHubUpgradeTrigger) > hubUpgradeDebounce {
-			s.lastHubUpgradeTrigger = time.Now()
+		s.hubUpgradeMu.Lock()
+		debounced := time.Since(s.lastHubUpgradeTrigger) > hubUpgradeDebounce
+		s.hubUpgradeMu.Unlock()
+		if isHubAutoUpgrade() && hubBranchSHA != "" && !sameCommit(hubBranchSHA, s.hubGitHash) && debounced {
 			s.logger.Info("audit: hub auto-upgrade triggered", "from", s.hubGitHash, "to", hubBranchSHA)
-			cmd := kubectlForCluster(s.hubCluster(), "rollout", "restart", "deployment/hive-hub", "-n", "hive-hub")
-			if out, err := cmd.CombinedOutput(); err != nil {
-				s.logger.Warn("hub auto-upgrade failed", "output", string(out))
+			// rolloutHubToSHA verifies the hub image exists (skips a doomed roll
+			// when the hive-hub build for this SHA failed) and pins the SHA so a
+			// stale cached v2-latest can't come back up. It records the in-flight
+			// state on success so the dashboard shows "Upgrading", not "queued".
+			if err := s.rolloutHubToSHA(hubBranchSHA); err != nil {
+				s.logger.Warn("hub auto-upgrade skipped", "to", hubBranchSHA, "reason", err)
 			}
 		}
 	}
@@ -3157,7 +3244,7 @@ func fetchBranchSHA(logger *slog.Logger, branch string) {
 		return
 	}
 
-	if ghcrTagExists(client, candidateSHA, logger) {
+	if ghcrTagExists(client, ghcrRepoSpoke, candidateSHA, logger) {
 		// If commit message is empty (rate-limited or missing), fetch it separately
 		// from the commits API using the full SHA (one-shot, only on new SHAs).
 		if commitMsg == "" {
@@ -3292,13 +3379,16 @@ func backfillCommitMessage(client *http.Client, branch string, logger *slog.Logg
 	logger.Info("SHA poll: backfilled commit message", "branch", branch, "sha", info.SHA, "message", msg)
 }
 
-// ghcrTagExists checks whether a container tag exists on ghcr.io/kubestellar/hive.
-// Uses an anonymous token (public package) and a HEAD on the manifest endpoint.
-func ghcrTagExists(client *http.Client, tag string, logger *slog.Logger) bool {
+// ghcrTagExists checks whether a container tag exists on ghcr.io/<repo> (e.g.
+// ghcrRepoSpoke or ghcrRepoHub). Uses an anonymous token (public package) and a
+// HEAD on the manifest endpoint. The repo is a parameter because the hub and the
+// spoke are DIFFERENT images built by separate jobs — verifying the wrong one
+// lets the hub target a SHA whose own image was never published.
+func ghcrTagExists(client *http.Client, repo, tag string, logger *slog.Logger) bool {
 	// Get anonymous pull token
-	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:kubestellar/hive:pull")
+	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:" + repo + ":pull")
 	if err != nil {
-		logger.Warn("SHA poll: GHCR token request failed", "error", err)
+		logger.Warn("SHA poll: GHCR token request failed", "repo", repo, "error", err)
 		return false
 	}
 	defer tokenResp.Body.Close()
@@ -3309,7 +3399,7 @@ func ghcrTagExists(client *http.Client, tag string, logger *slog.Logger) bool {
 		return false
 	}
 
-	manifestURL := fmt.Sprintf("%s/v2/kubestellar/hive/manifests/%s", ghcrBase, tag)
+	manifestURL := fmt.Sprintf("%s/v2/%s/manifests/%s", ghcrBase, repo, tag)
 	req, _ := http.NewRequest("HEAD", manifestURL, nil)
 	req.Header.Set("Authorization", "Bearer "+tok.Token)
 	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
@@ -5298,13 +5388,18 @@ const dashboardHTML = `<!DOCTYPE html>
             // Distinguish two states, matching the per-hive badges:
             //   - "queued"    = behind latest with auto-upgrade ON, but the
             //     rollout hasn't started yet (auto-upgrade will apply shortly).
-            //   - "Upgrading" = a rollout is ACTUALLY in progress (admin clicked
-            //     Upgrade, so _hubUpgrading is true).
-            // Previously the auto-pending case was mislabeled "Upgrading", which
-            // was inconsistent with the hive rows that say "queued" for the same
-            // pending state and implied the hub was mid-upgrade when it wasn't.
-            var hubQueued = !_hubUpgrading && !isCurrent && hubBranchLatest && _hubAutoUpgrade;
-            var hubIsUpgrading = _hubUpgrading;
+            //   - "Upgrading" = a rollout is ACTUALLY in progress (auto OR admin).
+            // The server now tells us which via hub_upgrade_state, so an AUTO
+            // rollout in progress shows "Upgrading" too — previously it was
+            // mislabeled "queued" because the frontend could only see the
+            // admin-click flag (_hubUpgrading) and had no signal for an auto roll.
+            var hubState = data.hub_upgrade_state || '';
+            // Trust the server state; fall back to the optimistic admin-click flag
+            // so the badge flips to "Upgrading" immediately on click, before the
+            // next /api/saas/my-hives poll reports "upgrading".
+            var hubIsUpgrading = hubState === 'upgrading' || _hubUpgrading;
+            var hubQueued = !hubIsUpgrading && (hubState === 'queued' ||
+              (hubState === '' && !isCurrent && hubBranchLatest && _hubAutoUpgrade));
             if (!isCurrent && hubBranchLatest && _isAdmin && !hubIsUpgrading && !hubQueued) {
               hubUpgradeBtn = ' <button id="hub-upgrade-btn" onclick="upgradeHub(\'' + esc(hubHash) + '\')" style="padding:2px 8px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.65rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
             } else if (hubIsUpgrading) {
