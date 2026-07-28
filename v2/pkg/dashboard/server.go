@@ -278,6 +278,14 @@ type FrontendTokens struct {
 	Totals        FrontendTokenTotals            `json:"totals"`
 	ByAgent       map[string]FrontendTokenBucket `json:"byAgent"`
 	ByModel       map[string]FrontendTokenBucket `json:"byModel"`
+	// ByAgentModel maps an agent name to the RESOLVED model of its most
+	// recently active session. An agent whose config model is a routing alias
+	// ("auto"/"default") resolves at runtime to a concrete model (e.g. copilot
+	// "auto" → gpt-5.3-codex); the resolved id is parsed from session logs into
+	// SessionSummary.Model. The frontend uses this so an auto-mode agent's
+	// "running agents" badge lands on the resolved-model row where its tokens
+	// actually accrue, instead of showing nothing on that row.
+	ByAgentModel map[string]string `json:"byAgentModel"`
 }
 
 type FrontendTokenTotals struct {
