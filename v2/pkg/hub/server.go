@@ -1485,3 +1485,34 @@ func sanitizeHeartbeatField(s string) string {
 	}
 	return b.String()
 }
+
+// sanitizeRepoEntry makes a repo entry satisfy isValidRepoRef.
+//
+// A repo may legitimately be a bare name ("cuga-agent") or a cross-org
+// reference ("laredo/cuga-agent") — both are supported config. What is NOT
+// valid is a pasted URL ("github.ibm.com/enricom-ibm/jackrabbit"), which has
+// two slashes: the hub rejects the spoke's heartbeat with "invalid repo name",
+// /api/livez then fails on the stale heartbeat, and the pod crash-loops.
+//
+// Strip the scheme and a leading hostname (a first segment containing a dot),
+// then keep at most the last two segments so a valid cross-org ref survives.
+func sanitizeRepoEntry(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	// Drop a leading hostname: "github.ibm.com/org/repo" -> "org/repo".
+	if len(parts) > 2 && strings.Contains(parts[0], ".") {
+		parts = parts[1:]
+	}
+	// Anything still deeper than owner/repo keeps only its last two segments.
+	if len(parts) > 2 {
+		parts = parts[len(parts)-2:]
+	}
+	return strings.Join(parts, "/")
+}

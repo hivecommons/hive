@@ -4450,10 +4450,31 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	if !needClaimPush && !needURLPush {
 		return nil // nothing left to push
 	}
+	// Sanitize before pushing. A repo pasted as a URL
+	// ("github.ibm.com/enricom-ibm/jackrabbit") has two slashes, which
+	// isValidRepoRef rejects — so the hub 400s the spoke's every heartbeat
+	// ("invalid repo name"), /api/livez then fails on the stale heartbeat, and
+	// the kubelet restarts the pod in a loop. Normalizing here repairs an
+	// already-broken hive over the heartbeat, which is the only channel that
+	// reaches a firewalled cluster (vllm-d).
+	pushRepos := make([]string, 0, len(h.Repos))
+	for _, r := range h.Repos {
+		if rr := sanitizeRepoEntry(r); rr != "" {
+			pushRepos = append(pushRepos, rr)
+		}
+	}
+	if len(pushRepos) == 0 {
+		pushRepos = h.Repos
+	}
+	pushPrimary := sanitizeRepoEntry(primary)
+	if pushPrimary == "" {
+		pushPrimary = primary
+	}
+
 	return &HeartbeatProjectConfig{
 		Org:          h.Org,
-		Repos:        h.Repos,
-		PrimaryRepo:  primary,
+		Repos:        pushRepos,
+		PrimaryRepo:  pushPrimary,
 		ACMMLevel:    h.ACMMLevel,
 		DashboardURL: h.VanityURL,
 		// AIAuthor is deliberately left empty here. Provisioning state never
