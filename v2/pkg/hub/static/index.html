@@ -160,7 +160,10 @@
     }
     .hero-slide.is-active { opacity: 1; visibility: visible; }
     .hero-slide-spacer { visibility: hidden; }
-    .hero-slide h1, .hero-slide-spacer h1 { margin: 0; }
+    /* Slides and the spacer must measure identically or the crossfade jumps —
+       but zeroing the margin let the h1's descenders (line-height .92) collide
+       with the lede below. Keep them equal, just not zero. */
+    .hero-slide h1, .hero-slide-spacer h1 { margin: 0 0 1.15rem; }
     @media (prefers-reduced-motion: reduce) {
       .hero-slide { transition: none; }
     }
@@ -1224,7 +1227,10 @@
     // build clickable dot indicators, and pause auto-rotation for users who
     // prefer reduced motion (they still get working dots to page manually). ──
     (function heroRotator() {
-      var HERO_ROTATE_MS = 6000;
+      // 6s was not enough to read a headline plus a three-line lede before the
+      // slide changed out from under you. 11s reads comfortably; the dots stay
+      // available to page manually at any time.
+      var HERO_ROTATE_MS = 11000;
       var rotator = document.getElementById('hero-rotator');
       var dotsWrap = document.getElementById('hero-dots');
       if (!rotator || !dotsWrap) return;
