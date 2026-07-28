@@ -5665,14 +5665,30 @@ const dashboardHTML = `<!DOCTYPE html>
           }
         }
       }
-      // The status dot keeps its native title tooltip (plain text, works
-      // everywhere). Access is layered on as a real hover panel because a title
-      // attribute cannot render avatars. Access is present only on rows the
-      // viewer owns — see the my-hives handler.
-      var badge = '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span><span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span></span>';
       var access = h.access || [];
-      if (!access.length) return badge;
-      var rows = access.map(function(a) {
+      var dotMarkup = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span>' +
+        '<span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span>';
+
+      // No access list (not an owner of this row): nothing to render beyond the
+      // health lines, so the native title tooltip is enough and cheapest.
+      if (!access.length) {
+        return '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line">' + dotMarkup + '</span>';
+      }
+
+      // ONE panel holding health AND access. Setting a title attribute here too
+      // would make the browser draw its own tooltip on top of this panel — two
+      // overlapping boxes saying different things, which is exactly what the
+      // first cut of this did.
+      var healthRows = (lines || []).map(function(l, i) {
+        // lines[0] is the status word ("Warning", "Degraded", ...); render it as
+        // the panel's title in the status colour, the rest as check lines.
+        if (i === 0) {
+          return '<span style="display:block;color:' + c + ';font-weight:600;margin-bottom:4px">' + esc(l) + '</span>';
+        }
+        return '<div style="padding:1px 0;color:var(--muted)">' + esc(l) + '</div>';
+      }).join('');
+
+      var accessRows = access.map(function(a) {
         var rc = a.role === 'owner' ? '#d29922' : (a.role === 'read-write' ? '#3fb950' : '#6b7280');
         return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">' +
           '<img src="https://github.com/' + esc(a.username) + '.png?size=40" alt="" ' +
@@ -5683,14 +5699,15 @@ const dashboardHTML = `<!DOCTYPE html>
           '</div>';
       }).join('');
       var heading = access.length === 1 ? '1 user with access' : access.length + ' users with access';
-      // Panel is positioned by the .hive-access-wrap:hover rule; it renders
-      // above the row so it is not clipped by the table's scroll container.
-      return '<span class="hive-access-wrap" style="position:relative;display:inline-flex">' + badge +
+
+      return '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help">' + dotMarkup +
         '<span class="hive-access-pop" style="display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:60;' +
-        'min-width:190px;max-width:280px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);' +
-        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400">' +
+        'min-width:210px;max-width:300px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);' +
+        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;white-space:normal">' +
+        healthRows +
+        '<span style="display:block;border-top:1px solid var(--border);margin:6px 0 4px"></span>' +
         '<span style="display:block;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">' + esc(heading) + '</span>' +
-        rows + '</span></span>';
+        accessRows + '</span></span>';
     }
     function dashboardLink(h) {
       var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
