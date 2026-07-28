@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -249,7 +250,11 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			}
 			args := []string{"uninstall", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN"}
 			if request.Action != "uninstall-cancel" {
-				for _, dir := range dashboardLifecycleNormalBeadsDirs {
+				beadDirs := append([]string(nil), dashboardLifecycleNormalBeadsDirs...)
+				if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); normalVisualRuntime != nil {
+					beadDirs = normalVisualRuntime.BeadDirs()
+				}
+				for _, dir := range beadDirs {
 					if strings.TrimSpace(dir) != "" {
 						args = append(args, "--beads-dir", dir)
 					}
@@ -262,6 +267,14 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 				args = append(args, "--cancel")
 			}
 			result, _, runErr := dashboardLifecycleCLIRunner(ctx, args, token, false)
+			if normalVisualRuntime := dashboardNormalVisualRuntime.Load(); runErr != nil && normalVisualRuntime != nil {
+				if _, resumeErr := normalVisualRuntime.ResumeReconciliation(ctx); resumeErr != nil {
+					slog.Default().Warn("restore normal Visual Hive runtime after failed uninstall mutation", "error", resumeErr)
+				}
+			}
+			if runErr == nil && request.Action == "uninstall-cancel" {
+				result = reconcileDashboardSetupRuntime(ctx, result)
+			}
 			return result, runErr
 		default:
 			return nil, fmt.Errorf("unsupported integrated control action %q", request.Action)
@@ -296,12 +309,13 @@ func runDashboardBaselineApproval(ctx context.Context, stateDir string, request 
 }
 
 func triggerDashboardVisualCycle(ctx context.Context) error {
-	if normalVisualWorkRunner == nil {
+	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
+	if normalVisualRuntime == nil {
 		return errors.New("normal Visual Hive service is not running in this dashboard process")
 	}
 	triggerCtx, cancel := context.WithTimeout(ctx, 2*time.Hour)
 	defer cancel()
-	return normalVisualWorkRunner.Trigger(triggerCtx)
+	return normalVisualRuntime.Trigger(triggerCtx)
 }
 
 func isBoundedDashboardTriggerOutcome(err error) bool {

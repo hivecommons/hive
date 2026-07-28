@@ -23,11 +23,6 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/visualhive/normalservice"
 )
 
-var (
-	normalVisualWorkRunner       *normalservice.Service
-	normalVisualWorkHealthWriter *normalVisualServiceHealthReporter
-)
-
 const (
 	normalVisualArtifactFetchTimeout = 45 * time.Minute
 	normalVisualRepairModelTimeout   = 20 * time.Minute
@@ -286,11 +281,6 @@ func configureNormalVisualWorkRunner(
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := manager.ConfigureSpecialistChildDispatcher(agent.SpecialistChildDispatcherOptions{
-		RepairStateRoot: filepath.Join(installed.StateDir, "repair"), Executor: executor,
-	}); err != nil {
-		return nil, nil, err
-	}
 	loader := func() (integrated.Config, int, error) {
 		current, exists, err := loadAuthoritativeVisualWorkContract()
 		if err != nil {
@@ -352,6 +342,14 @@ func configureNormalVisualWorkRunner(
 		Verdict: verdict, Logger: logger, OnCycleStart: health.StartCycle, OnCycle: health.RecordCycle, OnInactive: health.RecordInactive,
 	})
 	if err != nil {
+		return nil, nil, err
+	}
+	// Configure the ordinary Manager only after every other fallible runtime
+	// dependency has been constructed. A failed hot activation must not leave
+	// a half-installed specialist dispatcher behind.
+	if err := manager.ConfigureSpecialistChildDispatcher(agent.SpecialistChildDispatcherOptions{
+		RepairStateRoot: filepath.Join(installed.StateDir, "repair"), Executor: executor,
+	}); err != nil {
 		return nil, nil, err
 	}
 	return service, health, nil

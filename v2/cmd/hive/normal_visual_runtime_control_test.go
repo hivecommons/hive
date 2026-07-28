@@ -26,11 +26,15 @@ func TestNormalVisualRuntimeStopperStopsBeforeReleasingAndIsIdempotent(t *testin
 		<-runContext.Done()
 	}()
 	manager := &runtimeStopTestManager{}
-	releases := 0
+	releases, resets := 0, 0
 	stopper := &normalVisualRuntimeStopper{
 		cancel:  cancelRun,
 		done:    done,
 		manager: manager,
+		resetSpecialists: func() error {
+			resets++
+			return nil
+		},
 		releaseOwnership: func() {
 			select {
 			case <-done:
@@ -49,7 +53,7 @@ func TestNormalVisualRuntimeStopperStopsBeforeReleasingAndIsIdempotent(t *testin
 	manager.mu.Lock()
 	shutdownCalls := manager.calls
 	manager.mu.Unlock()
-	if shutdownCalls != 1 || releases != 1 {
-		t.Fatalf("shutdownCalls=%d releases=%d", shutdownCalls, releases)
+	if shutdownCalls != 1 || resets != 1 || releases != 1 {
+		t.Fatalf("shutdownCalls=%d resets=%d releases=%d", shutdownCalls, resets, releases)
 	}
 }
