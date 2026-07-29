@@ -5461,8 +5461,13 @@ const dashboardHTML = `<!DOCTYPE html>
     <div id="admin-provision-requests" style="display:none;margin-bottom:24px">
       <h3 style="font-size:1rem;color:var(--accent);margin-bottom:12px">Pending Provision Requests</h3>
       <div id="admin-provision-list"></div>
-      <h3 style="font-size:1rem;color:var(--accent);margin:20px 0 10px">Request History</h3>
-      <div style="overflow-x:auto"><div id="admin-request-history"></div></div>
+      <h3 id="past-requests-header" role="button" tabindex="0" aria-expanded="false" aria-controls="past-requests-body"
+          onclick="togglePastRequests()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();togglePastRequests();}"
+          style="font-size:1rem;color:var(--accent);margin:20px 0 10px;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px">
+        <span id="past-requests-toggle" aria-hidden="true">&#9656;</span><span>Past Requests</span>
+        <span id="past-requests-count" style="font-size:0.7rem;color:var(--muted);font-weight:400"></span>
+      </h3>
+      <div id="past-requests-body" style="display:none;overflow-x:auto"><div id="admin-request-history"></div></div>
     </div>
 
     <div id="hive-filter-bar" style="display:none"></div>
@@ -6791,6 +6796,42 @@ const dashboardHTML = `<!DOCTYPE html>
         '</div>';
     }
 
+    // normalizeProvisionStatus trims and lowercases a request status so the
+    // pending/decided split cannot be defeated by casing or stray whitespace in
+    // a stored record. Returns '' for a missing status, which legacy records
+    // written before the field existed have — those are treated as pending.
+    function normalizeProvisionStatus(status) {
+      return String(status == null ? '' : status).trim().toLowerCase();
+    }
+
+    // --- Past Requests (decided provision requests) ---
+    // Collapsed by default: this is an audit trail, not a work queue, so it
+    // should never push the pending action cards off the fold. The choice is
+    // remembered per browser under the same 'hive-*-collapsed' key convention
+    // used by the cluster health panel.
+    var PAST_REQUESTS_COLLAPSED_KEY = 'hive-past-requests-collapsed';
+    // Absent key means collapsed; only an explicit 'false' expands the section.
+    var _pastRequestsCollapsed = localStorage.getItem(PAST_REQUESTS_COLLAPSED_KEY) !== 'false';
+
+    // applyPastRequestsCollapsed pushes _pastRequestsCollapsed onto the DOM.
+    // Split out from the toggle so the initial render can restore the persisted
+    // state without duplicating the show/hide and aria bookkeeping.
+    function applyPastRequestsCollapsed() {
+      var body = document.getElementById('past-requests-body');
+      var toggle = document.getElementById('past-requests-toggle');
+      var header = document.getElementById('past-requests-header');
+      if (body) body.style.display = _pastRequestsCollapsed ? 'none' : '';
+      // ▸ collapsed / ▾ expanded
+      if (toggle) toggle.innerHTML = _pastRequestsCollapsed ? '&#9656;' : '&#9662;';
+      if (header) header.setAttribute('aria-expanded', _pastRequestsCollapsed ? 'false' : 'true');
+    }
+
+    function togglePastRequests() {
+      _pastRequestsCollapsed = !_pastRequestsCollapsed;
+      localStorage.setItem(PAST_REQUESTS_COLLAPSED_KEY, _pastRequestsCollapsed ? 'true' : 'false');
+      applyPastRequestsCollapsed();
+    }
+
     // renderRequestHistory renders every already-decided request as a table:
     // who asked, for what, what was decided, by whom, and — for an approval —
     // which hive they actually got. Pending requests stay as action cards above;
@@ -6800,10 +6841,15 @@ const dashboardHTML = `<!DOCTYPE html>
       var host = document.getElementById('admin-request-history');
       if (!host) return;
       var decided = (requests || []).filter(function(pr) {
-        return pr && pr.status && pr.status !== 'pending';
+        return pr && normalizeProvisionStatus(pr.status) !== '' && normalizeProvisionStatus(pr.status) !== 'pending';
       });
+      // Restore the persisted collapse state on every render — the section is
+      // rebuilt on each dashboard poll, so applying it once at load is not enough.
+      applyPastRequestsCollapsed();
+      var countEl = document.getElementById('past-requests-count');
+      if (countEl) countEl.textContent = decided.length ? '(' + decided.length + ')' : '';
       if (!decided.length) {
-        host.innerHTML = '<div style="color:var(--muted);font-size:0.75rem;padding:6px 0">No decided requests yet.</div>';
+        host.innerHTML = '<div style="color:var(--muted);font-size:0.75rem;padding:6px 0">No past requests yet.</div>';
         return;
       }
       // Most recently decided first; fall back to requested_at on legacy records
@@ -6853,13 +6899,21 @@ const dashboardHTML = `<!DOCTYPE html>
       // this before the pending early-return, or the history disappears the
       // moment the queue empties — which is exactly when it matters most.
       renderRequestHistory(requests);
+      // Only genuinely pending requests get Approve/Deny cards. Anything already
+      // approved or denied belongs in Past Requests, never in the action queue.
       var pending = (requests || []).filter(function(pr) {
-        return pr && (!pr.status || pr.status === 'pending');
+        if (!pr) return false;
+        var st = normalizeProvisionStatus(pr.status);
+        return st === '' || st === 'pending';
       });
       if (!pending.length) {
         // Keep the section visible when there is history to show, so the table
         // does not vanish along with the empty queue.
-        var anyDecided = (requests || []).some(function(pr) { return pr && pr.status && pr.status !== 'pending'; });
+        var anyDecided = (requests || []).some(function(pr) {
+          if (!pr) return false;
+          var st = normalizeProvisionStatus(pr.status);
+          return st !== '' && st !== 'pending';
+        });
         list.innerHTML = '<div style="color:var(--muted);font-size:0.75rem;padding:6px 0">No pending requests.</div>';
         section.style.display = anyDecided ? '' : 'none';
         return;
