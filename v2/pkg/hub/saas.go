@@ -151,6 +151,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}/access/{username}", s.requireAuth(s.handleAccessRemove))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/request-access", s.requireAuth(s.handleRequestAccess))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/requests", s.requireAuth(s.handleGetRequests))
+	s.mux.HandleFunc("GET /api/saas/hives/{id}/timeline", s.requireAuth(s.handleHiveTimeline))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/requests/{username}/approve", s.requireAuth(s.handleApproveRequest))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/requests/{username}/deny", s.requireAuth(s.handleDenyRequest))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/approve-access/{username}", s.requireAuth(s.handleApproveAccess))
@@ -1321,10 +1322,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	user := ensureSaaSUser(username)
 
 	s.mu.Lock()
-	s.markStaleHives()
+	offlineEvents := s.markStaleHives()
 	allHives := make([]RegistryEntry, len(s.registry.Hives))
 	copy(allHives, s.registry.Hives)
 	s.mu.Unlock()
+	s.flushOfflineEvents(offlineEvents)
 
 	var result []MyHiveEntry
 
@@ -1590,10 +1592,11 @@ func (s *HubServer) handleAccessStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
-	s.markStaleHives()
+	offlineEvents := s.markStaleHives()
 	allHives := make([]RegistryEntry, len(s.registry.Hives))
 	copy(allHives, s.registry.Hives)
 	s.mu.Unlock()
+	s.flushOfflineEvents(offlineEvents)
 
 	type hiveAccessInfo struct {
 		Role   string `json:"role"`
@@ -2203,6 +2206,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Info("audit: hosted hive upgraded", "hive_id", id, "by", username, "cluster", cluster.ID)
+	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard", username)
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
@@ -2326,6 +2330,8 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("rollout restart after branch switch failed", "hive", id, "output", string(restartOut))
 	}
 	s.logger.Info("audit: hive branch switched", "hive_id", id, "branch", body.Branch, "image", image, "by", username)
+	s.recordTimeline(id, TimelineBranchChanged,
+		fmt.Sprintf("branch switch to %s requested (image %s)", body.Branch, image), username)
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
@@ -3301,6 +3307,8 @@ func (s *HubServer) triggerAutoUpgrades() {
 			continue
 		}
 		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID)
+		s.recordTimeline(h.ID, TimelineUpgradeStarted,
+			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")
 		s.mu.Lock()
 		for i := range s.registry.Hives {
 			if s.registry.Hives[i].ID == h.ID {
@@ -3737,6 +3745,8 @@ func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 	target.Hives[hiveID] = body.Role
 	saveSaaSUser(target)
 	s.logger.Info("audit: access granted", "hive", hiveID, "target", body.Username, "role", body.Role, "by", username)
+	s.recordTimeline(hiveID, TimelineAccess,
+		fmt.Sprintf("access granted to %s as %s", body.Username, body.Role), username)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "granted"})
 }
@@ -3774,6 +3784,8 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 	delete(target.Hives, hiveID)
 	saveSaaSUser(target)
 	s.logger.Info("audit: access revoked", "hive", hiveID, "target", targetUsername, "by", username)
+	s.recordTimeline(hiveID, TimelineAccess,
+		fmt.Sprintf("access revoked from %s", targetUsername), username)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
 }
@@ -3968,6 +3980,8 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	saveAccessRequests(hiveID, reqs)
 
 	s.logger.Info("audit: access request approved", "hive", hiveID, "target", targetUsername, "role", body.Role, "by", approver)
+	s.recordTimeline(hiveID, TimelineAccess,
+		fmt.Sprintf("access request from %s approved as %s", targetUsername, body.Role), approver)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "approved"})
 }
@@ -4003,6 +4017,8 @@ func (s *HubServer) handleDenyRequest(w http.ResponseWriter, r *http.Request) {
 	saveAccessRequests(hiveID, reqs)
 
 	s.logger.Info("audit: access request denied", "hive", hiveID, "target", targetUsername, "by", denier)
+	s.recordTimeline(hiveID, TimelineAccess,
+		fmt.Sprintf("access request from %s denied", targetUsername), denier)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "denied"})
 }
@@ -4992,6 +5008,9 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		"cluster", clusterIDForHive(h),
 		"app_creds_delivered", appDelivered,
 	)
+	s.recordTimeline(hiveID, TimelineOwnership,
+		fmt.Sprintf("hive assigned to %s (%s/%s, ACMM %d)", h.Owner, h.Org, h.PrimaryRepo, h.ACMMLevel),
+		s.getAuthUser(r))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -5574,6 +5593,8 @@ const dashboardHTML = `<!DOCTYPE html>
       if (requestModal && requestModal.style.display === 'flex') { requestModal.style.display = 'none'; return; }
       var accessOverlay = document.querySelector('.hive-confirm-overlay');
       if (accessOverlay) { accessOverlay.remove(); return; }
+      var timelineModal = document.getElementById('timeline-modal');
+      if (timelineModal && timelineModal.style.display === 'flex') { timelineModal.style.display = 'none'; return; }
       var accessModal = document.getElementById('access-modal');
       if (accessModal && accessModal.style.display === 'flex') { accessModal.style.display = 'none'; }
     });
@@ -6271,6 +6292,8 @@ const dashboardHTML = `<!DOCTYPE html>
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" style="' + mi + '">Convert to Hosted</div>');
         if (isHosted && (h.role === 'owner' || h.role === 'read-write')) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" style="' + mi + '">Permissions</div>');
+        /* Timeline is owner-or-admin, matching the API's authorization. */
+        if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Activity Timeline</div>');
         if (h.role === 'owner' || h.role === 'read-write' || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
         if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
@@ -8004,6 +8027,19 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </div>
 
+  <div id="timeline-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:640px;width:92%;max-height:82vh;display:flex;flex-direction:column">
+      <h2 style="font-size:1.3rem;padding:32px 32px 8px;margin:0;color:var(--accent);flex-shrink:0">Activity Timeline</h2>
+      <p style="font-size:0.8rem;color:var(--muted);margin:0;padding:0 32px 16px;flex-shrink:0" id="timeline-hive-label"></p>
+      <div style="flex:1;overflow-y:auto;padding:0 32px 24px">
+        <div id="timeline-list"><div class="loading">Loading...</div></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
+        <button onclick="document.getElementById('timeline-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="request-access-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:480px;width:90%;display:flex;flex-direction:column">
       <h2 style="font-size:1.3rem;padding:32px 32px 8px;margin:0;color:var(--accent)">Request Access</h2>
@@ -8057,6 +8093,85 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <script>
     var _accessHiveId = '';
+    var _timelineHiveId = '';
+
+    /* Per-event presentation: a colour and a short label per event kind, so the
+       timeline is scannable rather than a wall of text. Kinds come from the
+       Timeline* constants in timeline.go; unknown kinds fall through to a
+       neutral default so an older dashboard never renders a blank row. */
+    var TIMELINE_KINDS = {
+      version_changed:   { label: 'Version',    color: '#3fb950' },
+      branch_changed:    { label: 'Branch',     color: '#60a5fa' },
+      went_offline:      { label: 'Offline',    color: '#f85149' },
+      came_online:       { label: 'Online',     color: '#3fb950' },
+      health_changed:    { label: 'Health',     color: '#f59e0b' },
+      upgrade_started:   { label: 'Upgrade',    color: '#60a5fa' },
+      upgrade_completed: { label: 'Upgraded',   color: '#3fb950' },
+      upgrade_stale:     { label: 'Stuck',      color: '#f85149' },
+      restarted:         { label: 'Restart',    color: '#f59e0b' },
+      acmm_changed:      { label: 'ACMM',       color: '#a371f7' },
+      agents_changed:    { label: 'Agents',     color: '#a371f7' },
+      github_app_changed:{ label: 'GitHub App', color: '#f59e0b' },
+      access:            { label: 'Access',     color: '#60a5fa' },
+      ownership:         { label: 'Ownership',  color: '#60a5fa' },
+      admin:             { label: 'Admin',      color: '#8b949e' }
+    };
+
+    /* Relative time, coarse on purpose: "what happened to this hive" is
+       answered by ordering and rough age, not by seconds. */
+    var TIMELINE_MS_PER_MIN = 60000;
+    var TIMELINE_MIN_PER_HOUR = 60;
+    var TIMELINE_HOURS_PER_DAY = 24;
+    function timelineAgo(ts) {
+      var t = Date.parse(ts);
+      if (isNaN(t)) return '';
+      var mins = Math.floor((Date.now() - t) / TIMELINE_MS_PER_MIN);
+      if (mins < 1) return 'just now';
+      if (mins < TIMELINE_MIN_PER_HOUR) return mins + 'm ago';
+      var hours = Math.floor(mins / TIMELINE_MIN_PER_HOUR);
+      if (hours < TIMELINE_HOURS_PER_DAY) return hours + 'h ago';
+      return Math.floor(hours / TIMELINE_HOURS_PER_DAY) + 'd ago';
+    }
+
+    async function openTimelineModal(hiveId, hiveName) {
+      _timelineHiveId = hiveId;
+      document.getElementById('timeline-hive-label').textContent = hiveName || hiveId;
+      document.getElementById('timeline-list').innerHTML = '<div class="loading">Loading...</div>';
+      document.getElementById('timeline-modal').style.display = 'flex';
+      await loadTimeline();
+    }
+
+    async function loadTimeline() {
+      var el = document.getElementById('timeline-list');
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(_timelineHiveId) + '/timeline');
+        if (!resp.ok) {
+          el.innerHTML = '<div style="color:var(--red);font-size:0.85rem">Could not load this hive\'s timeline.</div>';
+          return;
+        }
+        var data = await resp.json();
+        var events = (data && data.events) || [];
+        if (events.length === 0) {
+          el.innerHTML = '<div style="color:var(--muted);font-size:0.85rem">No recorded activity yet. Events appear here when something actually changes — a version lands, health flips, the hive restarts or goes offline.</div>';
+          return;
+        }
+        /* Server returns newest first; render in that order. */
+        el.innerHTML = events.map(function(ev) {
+          var kind = TIMELINE_KINDS[ev.kind] || { label: ev.kind || 'Event', color: '#8b949e' };
+          var actor = ev.actor
+            ? '<span style="color:var(--muted);font-size:0.7rem;margin-left:6px">by ' + esc(ev.actor) + '</span>'
+            : '';
+          return '<div style="display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">' +
+            '<div style="flex-shrink:0;width:84px"><span style="display:inline-block;padding:2px 7px;border-radius:9999px;font-size:0.62rem;font-weight:600;white-space:nowrap;background:' + kind.color + '22;color:' + kind.color + ';border:1px solid ' + kind.color + '55">' + esc(kind.label) + '</span></div>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:0.82rem;color:var(--text);word-break:break-word">' + esc(ev.detail || '') + actor + '</div>' +
+              '<div style="font-size:0.68rem;color:var(--muted);margin-top:2px" title="' + esc(ev.ts || '') + '">' + esc(timelineAgo(ev.ts)) + '</div>' +
+            '</div></div>';
+        }).join('');
+      } catch(e) {
+        el.innerHTML = '<div style="color:var(--red);font-size:0.85rem">Failed to load timeline: ' + esc(e.message) + '</div>';
+      }
+    }
 
     async function openAccessModal(hiveId, dashUrl) {
       _accessHiveId = hiveId;

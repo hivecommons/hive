@@ -294,6 +294,13 @@ type HubServer struct {
 	// (single-use state → verifier/hive/model). Lazily initialized.
 	openRouterStateOnce  sync.Once
 	openRouterStateStore *openrouter.StateStore
+
+	// timeline is the append-only per-hive activity event store. It records
+	// state TRANSITIONS observed on the heartbeat (version, health, upgrade,
+	// restart, …) plus human-initiated actions, so "why is hive X stuck?" is
+	// answerable from the hub instead of `kubectl logs`. It carries its own
+	// leaf mutex and is never guarded by s.mu. See timeline.go.
+	timeline *timelineStore
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -418,10 +425,12 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
 		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
+		timeline:                newTimelineStore(),
 	}
 
 	s.loadRegistry()
 	s.loadHubBanners()
+	s.timeline.load()
 
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)
@@ -675,10 +684,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.Upgrading = true
 	}
 
+	// Timeline: capture the pre-heartbeat entry inside the lock (it is the only
+	// place old and new coexist), but diff and persist AFTER unlocking —
+	// s.mu is a write lock held across the whole registry scan, so a file
+	// write under it would serialize every heartbeat in the fleet.
+	var prevEntry RegistryEntry
+	hadPrev := false
+
 	s.mu.Lock()
 	found := false
 	for i, h := range s.registry.Hives {
 		if h.ID == payload.HiveID {
+			// `h` is a value copy from the range, so it already snapshots the
+			// scalar fields the timeline compares. Health is a map that the
+			// new entry never mutates in place, so aliasing it is safe here.
+			prevEntry, hadPrev = h, true
 			entry.RegisteredAt = h.RegisteredAt
 			if entry.SnapshotURL == "" {
 				entry.SnapshotURL = h.SnapshotURL
@@ -771,6 +791,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	s.mu.Unlock()
+
+	// Timeline: record whatever changed on this beat. Nothing is written when
+	// nothing changed, which is the common case — at ~2 min per beat and 42
+	// hives, an event per beat would be pure noise.
+	if hadPrev {
+		s.recordHeartbeatTransitions(&prevEntry, &entry)
+	} else {
+		s.recordTimeline(entry.ID, TimelineCameOnline, "hive registered with the hub for the first time", "")
+	}
 
 	s.requestSave()
 
@@ -976,8 +1005,9 @@ func (s *HubServer) consumePendingGitHubAppConfig(hiveID string) *HeartbeatGitHu
 
 func (s *HubServer) handleRegistry(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	s.markStaleHives()
+	offlineEvents := s.markStaleHives()
 	s.mu.Unlock()
+	s.flushOfflineEvents(offlineEvents)
 	s.mu.RLock()
 	hostedNames := make(map[string]bool)
 	for _, h := range s.registry.Hives {
@@ -1162,8 +1192,9 @@ func (s *HubServer) computeFleetStats() FleetStats {
 
 func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	s.markStaleHives()
+	offlineEvents := s.markStaleHives()
 	s.mu.Unlock()
+	s.flushOfflineEvents(offlineEvents)
 
 	s.mu.RLock()
 	fs := s.computeFleetStats()
@@ -1232,8 +1263,16 @@ func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (s *HubServer) markStaleHives() {
+// markStaleHives flips Online off for hives that stopped beating and evicts
+// ones silent past staleRemoveAge.
+//
+// It runs with s.mu held, so it does no I/O: online→offline transitions are
+// COLLECTED and returned, and the caller appends them to the timeline after
+// unlocking (see flushOfflineEvents). This is the only place a hive going
+// offline can be observed — a silent hive by definition sends no heartbeat.
+func (s *HubServer) markStaleHives() []offlineSweepEvent {
 	now := time.Now()
+	var offline []offlineSweepEvent
 	kept := s.registry.Hives[:0]
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].LastHeartbeat == "" {
@@ -1252,10 +1291,15 @@ func (s *HubServer) markStaleHives() {
 			s.logger.Info("removing stale hive", "id", s.registry.Hives[i].ID, "last_heartbeat", s.registry.Hives[i].LastHeartbeat)
 			continue
 		}
+		wasOnline := s.registry.Hives[i].Online
 		s.registry.Hives[i].Online = age <= maxHeartbeatAge
+		if wasOnline && !s.registry.Hives[i].Online {
+			offline = append(offline, offlineEventFor(&s.registry.Hives[i], age))
+		}
 		kept = append(kept, s.registry.Hives[i])
 	}
 	s.registry.Hives = kept
+	return offline
 }
 
 func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
