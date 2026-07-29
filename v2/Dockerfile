@@ -116,9 +116,15 @@ RUN ARCH=$(uname -m) && \
 # invokes (manager.go maps "bob" -> "bob"). No symlink is required.
 ARG BOBSHELL_VERSION=1.0.6
 ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
+# Deliberately NOT tolerant of failure, unlike the copilot/goose layers above.
+# A hive configured with backend "bob" passes config validation (validBackends
+# in pkg/config) and then fails at launch with "agent scanner not running" —
+# a silent trap that cost real debugging time. If this download breaks, the
+# build must break loudly rather than ship an image that reproduces that bug.
+# The `which bob` check turns a partial install into a build failure too.
 RUN npm install -g "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
-    npm cache clean --force || \
-    echo "WARN: Bob CLI install failed — skipping"
+    npm cache clean --force && \
+    which bob
 
 # --- Application layers ---
 ENV HOME=/home/dev
