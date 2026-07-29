@@ -1146,6 +1146,14 @@ type DashboardConfig struct {
 const (
 	RoleOwner = "owner"
 	RoleRead  = "read"
+	// RoleReadWrite is granted by the hub's Manage Access screen (see the role
+	// validation in hub.handleAccessAdd, which accepts read / read-write /
+	// owner). It was missing here, so splitAuthorizedEntry treated
+	// "user:read-write" as an unknown suffix and folded the whole string into
+	// the username — the allowlist then contained a user literally named
+	// "cbrooker27:read-write", no lookup could ever match, and every login was
+	// rejected as unauthorized despite the grant being present and correct.
+	RoleReadWrite = "read-write"
 )
 
 // AuthorizedRole resolves a GitHub username against the spoke's authorized-users
@@ -1204,7 +1212,7 @@ func splitAuthorizedEntry(entry string) (name, role string) {
 	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
 		name = strings.TrimSpace(entry[:idx])
 		role = strings.ToLower(strings.TrimSpace(entry[idx+1:]))
-		if role != RoleOwner && role != RoleRead {
+		if role != RoleOwner && role != RoleRead && role != RoleReadWrite {
 			// Unknown role suffix — treat the whole thing as a bare username so
 			// a stray colon can never silently downgrade or escalate access.
 			return strings.TrimSpace(entry), ""
