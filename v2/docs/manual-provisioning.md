@@ -400,9 +400,18 @@ spec:
         # OFFLINE forever (see the gotcha below). HIVE_HUB_URL points at the hub.
         - { name: HIVE_HUB_SECRET, value: "${HUB_SECRET}" }
         - { name: HIVE_HUB_URL,    value: "https://hive.kubestellar.io" }
+        # startupProbe keeps the liveness clock from starting until boot
+        # finishes, so a slow start can't race liveness into a restart loop.
+        startupProbe:
+          httpGet: { path: /api/health, port: 3002 }
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 30
         livenessProbe:
-          # /api/livez (NOT /api/health) — it also fails on a stale heartbeat,
-          # so a wedged/dead heartbeat goroutine gets the pod auto-restarted.
+          # /api/livez (NOT /api/health) — it also fails when the heartbeat
+          # loop stops *attempting* sends, so a wedged/dead heartbeat
+          # goroutine gets the pod auto-restarted. It does NOT fail merely
+          # because the hub is unreachable (see the gotcha below).
           httpGet: { path: /api/livez, port: 3002 }
           periodSeconds: 30
           failureThreshold: 3
@@ -447,11 +456,21 @@ YAML
 > `/api/health` only checks the HTTP server is up, so a pod whose heartbeat
 > goroutine has silently died still passes it and is never restarted — the hive
 > shows a persistent "offline" dot while `1/1 Running`. `/api/livez` additionally
-> fails (503) when the last successful heartbeat is stale, so the kubelet
+> fails (503) when the heartbeat loop stops *attempting* to send, so the kubelet
 > restarts the pod and the heartbeat revives. It returns 200 unauthenticated
 > once healthy. Existing deployments provisioned before this note still point at
 > `/api/health` — migrate them:
 > `kubectl -n <ns> patch deploy hive --type json -p '[{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/httpGet/path","value":"/api/livez"}]'`
+
+> **Note — `/api/livez` does not fail on an unreachable hub.** It keys off
+> heartbeat *attempts*, not successes. A hub that is down, firewalled, or
+> rejecting beats leaves the process perfectly healthy, and restarting it
+> cannot fix a network partition — an earlier version gated liveness on
+> heartbeat freshness and crash-looped healthy spokes on firewalled clusters
+> (vllm-d). Heartbeat freshness is reported by `/api/health/deep` under the
+> `hub_heartbeat` check, and the hub greys the hive's dot on its own.
+> Spokes deployed before this fix need a redeploy (or a probe patch) to stop
+> restarting on hub outages.
 
 > **Gotcha — some clusters enforce an `owner` label.** A `ValidatingAdmissionPolicy`
 > on vllm-d requires an `owner` label on `PersistentVolumeClaim`, `ConfigMap`,
@@ -649,6 +668,7 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 | `Config save failed ... open /etc/hive/hive.yaml: read-only file system` (ACMM/App-auth lost on restart) | ConfigMap mounted DIRECTLY at `/etc/hive` (read-only) | Mount ConfigMap at `/etc/hive-seed` + a writable emptyDir at `/etc/hive` + the `copy-config` init container (see B.8) |
 | Pod `1/1 Running` but hive shows **offline**; spoke logs `hub heartbeat rejected status=401` | No `HIVE_HUB_SECRET` in the deployment env | Add `HIVE_HUB_SECRET` (+ `HIVE_HUB_URL`) env from a working hive; the pod rolls and heartbeats |
 | Pod `1/1 Running` but hive shows **offline**; no 401, heartbeat just stopped | Heartbeat goroutine died; liveness probe on `/api/health` can't detect it | Point livenessProbe at `/api/livez`; restart to revive now |
+| Pod restarting repeatedly (`RESTARTS` climbing) while the app looks fine; hub unreachable/firewalled | Old liveness probe failed on stale *heartbeat success* — a connectivity condition a restart can't fix | Redeploy to pick up the attempt-based `/api/livez` (+ `startupProbe`); check `/api/health/deep` → `hub_heartbeat` for the real connectivity state |
 | Pod `CrashLoopBackOff` exit 255, SCC `restricted-v2` | `hive-anyuid` RoleBinding subject points at the wrong namespace | Set `subjects[].namespace` to the hive's own `$NS`, delete the pod |
 | Pod won't boot: `github.token or github.app_id is required` | `github.app_id` empty in the seed | Set a placeholder `app_id` (e.g. `999999999`) |
 | Dashboard sign-in redirect loop (vllm-d) | `hub_proxied: true` on a cluster with no hub auth proxy | Set `hub_proxied: false` on the PVC overlay |

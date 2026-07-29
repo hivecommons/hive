@@ -65,17 +65,29 @@ spec:
               readOnly: true
             - name: data
               mountPath: /data
+          # startupProbe holds the liveness clock off until the process has
+          # finished booting, so a slow start can never race the liveness
+          # timer into a restart loop. failureThreshold x periodSeconds
+          # (30 x 5s = 150s) is the boot budget.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: api
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
           livenessProbe:
-            # /api/livez includes a heartbeat-staleness check (in addition to
-            # everything /api/health checks) so a heartbeat goroutine that
-            # dies silently while the HTTP server stays up gets caught and
-            # the pod restarted, instead of staying 1/1 Running forever with
-            # the hub showing it offline. See pkg/dashboard/server.go
-            # handleLivez. Hives with no hub configured are unaffected.
+            # /api/livez checks that the HTTP server responds AND that the
+            # heartbeat loop is still *attempting* sends — i.e. it only fails
+            # when the process is genuinely wedged, which a restart fixes.
+            # It deliberately does NOT fail on a stale heartbeat: an
+            # unreachable hub is a connectivity problem no restart can fix,
+            # and gating liveness on it crash-loops healthy pods on
+            # firewalled clusters. That signal lives in /api/health/deep.
+            # See pkg/dashboard/server.go handleLivez.
             httpGet:
               path: /api/livez
               port: api
-            initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 5
           readinessProbe:

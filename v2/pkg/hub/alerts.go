@@ -1,0 +1,980 @@
+package hub
+
+import (
+	"encoding/json"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+// alertProvStatusError is the SaaS provisioning status that means the provision
+// failed outright. handleMyHives sets ProvStatus from the same value (and sets
+// GovernorMode "ERROR" alongside it).
+const alertProvStatusError = "error"
+
+// Fleet alerts — "what needs a human RIGHT NOW".
+//
+// This is deliberately a different question from config drift (branch
+// feat-config-drift), which answers "how does this hive's CONFIGURATION diverge
+// from the fleet norm" (version behind, branch mismatch, ACMM 0, zero agents,
+// App missing). Drift is about steady-state configuration; alerts are about
+// OPERATIONAL conditions that are transient, time-bounded, and actionable:
+// a hive that keeps restarting, one that has gone quiet, an upgrade that never
+// finished, a named health check that is failing, an anomalous token burn, a
+// provision that errored out.
+//
+// The two are designed to compose rather than compete: evaluateAlerts takes a
+// []Alert of externally-sourced signals (see EvaluateFleetAlerts' driftAlerts
+// parameter) and merges them through the same severity ordering,
+// acknowledgement and counting pipeline. When drift lands, its signals become
+// one more SOURCE feeding this model — no rule here needs to be rewritten, and
+// nothing here recomputes a drift signal itself.
+
+// alertAcksPath is the on-disk file where admin alert acknowledgements are
+// persisted so a silenced alert stays silenced across a hub restart or upgrade.
+// A var (not a const) so tests can point it at a temp dir.
+var alertAcksPath = "/data/saas/hub-alert-acks.json"
+
+// Alert severities, ordered most- to least-urgent. Kept as named constants so
+// the evaluator, the sort order and the dashboard chips can never drift apart
+// on a typo'd string literal.
+const (
+	// AlertSeverityCritical means the hive is not doing its job at all and a
+	// human should look now (crash-looping, offline, provisioning errored).
+	AlertSeverityCritical = "critical"
+	// AlertSeverityWarning means the hive is degraded or stuck but may still be
+	// making progress (failing health check, upgrade overrunning).
+	AlertSeverityWarning = "warning"
+	// AlertSeverityInfo means something is anomalous but not obviously broken
+	// (token burn far off the fleet median).
+	AlertSeverityInfo = "info"
+)
+
+// alertSeverityRank orders severities for sorting. Lower sorts first (more
+// urgent first). An unknown severity sorts last rather than panicking.
+var alertSeverityRank = map[string]int{
+	AlertSeverityCritical: 0,
+	AlertSeverityWarning:  1,
+	AlertSeverityInfo:     2,
+}
+
+// alertSeverityRankUnknown is the sort rank given to a severity string the hub
+// does not recognise, so such an alert lands at the end of the list instead of
+// silently sorting as "critical".
+const alertSeverityRankUnknown = 99
+
+// Alert type identifiers. These are the keys the UI filters by, so they are
+// constants shared between the evaluator and the rendered chips.
+const (
+	// AlertTypeCrashLoop — the spoke's reported process start time keeps moving
+	// forward, i.e. the pod is restarting repeatedly rather than running.
+	AlertTypeCrashLoop = "crash-loop"
+	// AlertTypeOffline — no heartbeat for longer than alertOfflineThreshold.
+	AlertTypeOffline = "offline"
+	// AlertTypeStuckUpgrade — Upgrading has been true past staleUpgradeTimeout.
+	AlertTypeStuckUpgrade = "stuck-upgrade"
+	// AlertTypeHealthCheckFailing — a named check inside Health reports "fail".
+	AlertTypeHealthCheckFailing = "health-check-failing"
+	// AlertTypeTokenBurn — token consumption is anomalous versus the fleet
+	// median (either far above it, or zero on a claimed, online hive).
+	AlertTypeTokenBurn = "token-burn"
+	// AlertTypeProvisionError — the SaaS provisioning record is in "error".
+	AlertTypeProvisionError = "provision-error"
+)
+
+// --- Thresholds. Every one is a named constant with a rationale. ---
+
+const (
+	// alertOfflineThreshold is how long a hive may go without a heartbeat
+	// before it is alerted on. Deliberately well above maxHeartbeatAge (which
+	// merely flips the Online flag) so a single missed beat or a brief pod
+	// reschedule does not page anyone — this is "it has actually gone away".
+	alertOfflineThreshold = 30 * time.Minute
+
+	// alertCrashLoopUptimeCeiling is the process uptime below which a restart
+	// is considered "recent". A hive whose uptime keeps resetting below this
+	// is not settling.
+	alertCrashLoopUptimeCeiling = 15 * time.Minute
+
+	// alertCrashLoopMinRestarts is how many DISTINCT start times the hub must
+	// have observed inside alertCrashLoopWindow before calling it a crash loop.
+	// Two would fire on any single ordinary restart (old start + new start), so
+	// three is the first count that actually means "it keeps happening".
+	alertCrashLoopMinRestarts = 3
+
+	// alertCrashLoopWindow is the trailing window over which restarts are
+	// counted. Long enough to catch a slow crash loop (a pod dying every few
+	// minutes), short enough that yesterday's incident does not still fire.
+	alertCrashLoopWindow = 2 * time.Hour
+
+	// alertTokenBurnMedianMultiple is how many times the fleet median 24h token
+	// spend a hive must exceed before its burn is called anomalous. A runaway
+	// agent typically lands an order of magnitude out; 5x is well clear of the
+	// normal spread between a quiet hive and a busy one.
+	alertTokenBurnMedianMultiple = 5
+
+	// alertTokenBurnMinFleetSize is the smallest number of claimed, online
+	// hives from which a median is meaningful. Below this the "median" is
+	// dominated by one or two hives, so the burn rule is skipped entirely
+	// rather than firing on noise.
+	alertTokenBurnMinFleetSize = 5
+
+	// alertTokenBurnMinMedian is the floor the fleet median must clear before
+	// the multiple is applied. Without it, a fleet median of 1 token would make
+	// any hive above 5 tokens "anomalous".
+	alertTokenBurnMinMedian = int64(1000)
+
+	// alertZeroTokenMinAge is how long a claimed hive must have been registered
+	// before zero token spend is alerted on. A freshly assigned hive legitimately
+	// has not spent anything yet; this gives it a full day to get going.
+	alertZeroTokenMinAge = 24 * time.Hour
+
+	// alertAckMaxAge bounds how long an acknowledgement is honored, regardless
+	// of whether the condition persists. An alert silenced a week ago should
+	// resurface — a permanent mute is how a real problem gets forgotten.
+	alertAckMaxAge = 7 * 24 * time.Hour
+
+	// alertStartTimesRetained caps how many distinct start times are kept per
+	// hive. Only the trailing window matters, so this is a memory bound on a
+	// hive that flaps continuously, not a tuning knob.
+	alertStartTimesRetained = 16
+)
+
+// Alert is one condition on one hive that a human should act on.
+type Alert struct {
+	HiveID string `json:"hiveId"`
+	// HiveName is carried so the panel can name the hive without the client
+	// re-joining against the hive list.
+	HiveName string `json:"hiveName,omitempty"`
+	Type     string `json:"type"`
+	Severity string `json:"severity"`
+	// Reason is a human-readable sentence explaining what is wrong. It may
+	// embed spoke-reported strings (a failing check name, a provisioning error)
+	// and is therefore escaped with esc() on render — never interpolated raw.
+	Reason string `json:"reason"`
+	// FirstSeen is when the hub first observed this (hive, type) pair
+	// continuously. It resets once the condition clears, so a re-occurrence
+	// reads as new rather than inheriting the original timestamp.
+	FirstSeen time.Time `json:"firstSeen"`
+	// Acknowledged is true when an admin has silenced this alert and the
+	// acknowledgement is still valid (see alertAckMaxAge).
+	Acknowledged bool `json:"acknowledged,omitempty"`
+	// AckBy / AckAt record who silenced it and when, so the panel can say so.
+	// AckAt is a POINTER because `omitempty` does not elide a zero time.Time —
+	// as a value it would serialise a bogus "0001-01-01T00:00:00Z" onto every
+	// unacknowledged alert, which the client would have to special-case.
+	AckBy string     `json:"ackBy,omitempty"`
+	AckAt *time.Time `json:"ackAt,omitempty"`
+}
+
+// AlertSummary is the whole fleet's alert state, shaped for a single render
+// with no follow-up round-trips: the alert list already sorted, counts by
+// severity, and counts by type for the filter chips.
+type AlertSummary struct {
+	Alerts           []Alert        `json:"alerts"`
+	CountsBySeverity map[string]int `json:"countsBySeverity"`
+	CountsByType     map[string]int `json:"countsByType"`
+	// Total counts only UNACKNOWLEDGED alerts — it is what decides whether the
+	// panel is prominent or collapsed, and an acknowledged alert must not keep
+	// the panel shouting.
+	Total int `json:"total"`
+	// AcknowledgedTotal is shown as a muted "N acknowledged" affordance so
+	// silenced problems remain discoverable.
+	AcknowledgedTotal int `json:"acknowledgedTotal"`
+}
+
+// alertAck is a persisted acknowledgement of one (hive, alert type) pair.
+//
+// ConditionFirstSeen is the FirstSeen of the alert instance that was
+// acknowledged. It is the mechanism that makes an ack clear when the underlying
+// condition resolves: FirstSeen resets whenever the condition goes away and
+// comes back, so a re-occurrence carries a different FirstSeen and no longer
+// matches the stored ack. Without it, silencing "offline" once would silence
+// every future outage on that hive forever.
+type alertAck struct {
+	HiveID             string    `json:"hiveId"`
+	Type               string    `json:"type"`
+	By                 string    `json:"by"`
+	At                 time.Time `json:"at"`
+	ConditionFirstSeen time.Time `json:"conditionFirstSeen"`
+}
+
+// alertAckKey is the map key for an acknowledgement: one per (hive, type).
+func alertAckKey(hiveID, alertType string) string {
+	return hiveID + "\x00" + alertType
+}
+
+// alertState is the hub's observation memory for alert evaluation. Alerts are
+// computed from a point-in-time registry snapshot, but two rules need history:
+// crash-loop needs the sequence of observed start times, and FirstSeen needs to
+// know when a condition began. This holds both.
+//
+// All fields are guarded by mu. mu is a leaf lock: nothing here calls back into
+// HubServer, so it is never held while acquiring s.mu (a past incident
+// deadlocked hub startup by re-locking a non-reentrant mutex from the launch
+// path; the rule is that this lock is taken and released within one function).
+type alertState struct {
+	mu sync.Mutex
+	// startTimes records the distinct StartedAt values observed per hive, with
+	// the observation time. Key: hive ID.
+	startTimes map[string][]alertStartObservation
+	// firstSeen records when each (hive, type) condition was first observed
+	// continuously. Key: alertAckKey(hiveID, type).
+	firstSeen map[string]time.Time
+	// acks holds acknowledgements. Key: alertAckKey(hiveID, type).
+	acks map[string]alertAck
+}
+
+// alertStartObservation is one observed spoke process start time.
+type alertStartObservation struct {
+	// StartedAt is the spoke-reported process start (parsed from RFC3339).
+	StartedAt time.Time `json:"startedAt"`
+	// ObservedAt is when the hub first saw this start time. Restarts are
+	// counted by ObservedAt so a spoke reporting a bogus clock cannot forge a
+	// long history.
+	ObservedAt time.Time `json:"observedAt"`
+}
+
+func newAlertState() *alertState {
+	return &alertState{
+		startTimes: make(map[string][]alertStartObservation),
+		firstSeen:  make(map[string]time.Time),
+		acks:       make(map[string]alertAck),
+	}
+}
+
+// observeStart records a spoke-reported start time and returns how many
+// distinct restarts have been observed inside alertCrashLoopWindow.
+//
+// Returns 0 for an unparseable or zero start time — an unknown uptime is not
+// evidence of a crash loop.
+func (a *alertState) observeStart(hiveID, startedAt string, now time.Time) int {
+	if a == nil || hiveID == "" || strings.TrimSpace(startedAt) == "" {
+		return 0
+	}
+	st, err := time.Parse(time.RFC3339, strings.TrimSpace(startedAt))
+	if err != nil || st.IsZero() {
+		return 0
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	obs := a.startTimes[hiveID]
+	// Drop observations that have aged out of the counting window.
+	kept := obs[:0]
+	seen := false
+	for _, o := range obs {
+		if now.Sub(o.ObservedAt) > alertCrashLoopWindow {
+			continue
+		}
+		if o.StartedAt.Equal(st) {
+			seen = true
+		}
+		kept = append(kept, o)
+	}
+	if !seen {
+		kept = append(kept, alertStartObservation{StartedAt: st, ObservedAt: now})
+	}
+	// Bound memory for a hive that flaps continuously: keep the most recent.
+	if len(kept) > alertStartTimesRetained {
+		kept = kept[len(kept)-alertStartTimesRetained:]
+	}
+	// Copy out of the shared backing array so a later append cannot alias it.
+	final := make([]alertStartObservation, len(kept))
+	copy(final, kept)
+	a.startTimes[hiveID] = final
+	return len(final)
+}
+
+// markCondition records that a condition is currently true and returns when it
+// was first observed continuously. Repeated calls while the condition holds
+// return the original timestamp.
+func (a *alertState) markCondition(hiveID, alertType string, now time.Time) time.Time {
+	key := alertAckKey(hiveID, alertType)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if t, ok := a.firstSeen[key]; ok && !t.IsZero() {
+		return t
+	}
+	a.firstSeen[key] = now
+	return now
+}
+
+// retainConditions drops firstSeen entries (and any acknowledgement attached to
+// them) for conditions that are no longer firing. This is what makes an
+// acknowledgement clear when the underlying problem resolves: once the
+// condition goes away its FirstSeen is forgotten, so when it returns it gets a
+// fresh FirstSeen that no stored ack matches.
+//
+// active is the set of currently-firing alertAckKey values.
+func (a *alertState) retainConditions(active map[string]bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for key := range a.firstSeen {
+		if !active[key] {
+			delete(a.firstSeen, key)
+			delete(a.acks, key)
+		}
+	}
+}
+
+// ackFor returns the acknowledgement for a (hive, type) pair if it is still
+// valid: it must not have expired (alertAckMaxAge) and it must have been made
+// against THIS occurrence of the condition (matching ConditionFirstSeen).
+func (a *alertState) ackFor(hiveID, alertType string, firstSeen, now time.Time) (alertAck, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ack, ok := a.acks[alertAckKey(hiveID, alertType)]
+	if !ok {
+		return alertAck{}, false
+	}
+	if now.Sub(ack.At) > alertAckMaxAge {
+		return alertAck{}, false
+	}
+	if !ack.ConditionFirstSeen.Equal(firstSeen) {
+		// The condition cleared and came back — this ack belongs to the old
+		// occurrence and must not silence the new one.
+		return alertAck{}, false
+	}
+	return ack, true
+}
+
+// setAck stores an acknowledgement against the condition's current FirstSeen.
+// Returns false when there is no such live condition to acknowledge, so a
+// client cannot pre-silence an alert that has not fired.
+func (a *alertState) setAck(hiveID, alertType, by string, now time.Time) bool {
+	key := alertAckKey(hiveID, alertType)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	fs, ok := a.firstSeen[key]
+	if !ok || fs.IsZero() {
+		return false
+	}
+	a.acks[key] = alertAck{
+		HiveID:             hiveID,
+		Type:               alertType,
+		By:                 by,
+		At:                 now,
+		ConditionFirstSeen: fs,
+	}
+	return true
+}
+
+// clearAck removes an acknowledgement (the "un-silence" action).
+func (a *alertState) clearAck(hiveID, alertType string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.acks, alertAckKey(hiveID, alertType))
+}
+
+// snapshotAcks copies the acknowledgement map for persistence.
+func (a *alertState) snapshotAcks() map[string]alertAck {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make(map[string]alertAck, len(a.acks))
+	for k, v := range a.acks {
+		out[k] = v
+	}
+	return out
+}
+
+// loadAcks replaces the acknowledgement map, dropping entries that have already
+// expired. Returns true if anything was dropped, so the caller can rewrite the
+// pruned file.
+func (a *alertState) loadAcks(stored map[string]alertAck, now time.Time) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	pruned := false
+	for k, v := range stored {
+		if v.HiveID == "" || v.Type == "" {
+			pruned = true
+			continue
+		}
+		if now.Sub(v.At) > alertAckMaxAge {
+			pruned = true
+			continue
+		}
+		a.acks[k] = v
+		// Restore the condition's FirstSeen too. Without this, the first
+		// evaluation after a restart would mint a fresh FirstSeen that no
+		// longer matches the stored ack, and every acknowledgement would be
+		// silently voided by an ordinary hub upgrade.
+		if !v.ConditionFirstSeen.IsZero() {
+			a.firstSeen[k] = v.ConditionFirstSeen
+		}
+	}
+	return pruned
+}
+
+// --- Evaluation ---
+
+// alertHive is the minimal per-hive view the evaluator needs. It is built from
+// MyHiveEntry so the evaluator can be unit-tested without constructing a whole
+// HubServer, and so the rules never reach for fields they should not use.
+type alertHive struct {
+	ID   string
+	Name string
+	// IsPlaceholder marks an UNASSIGNED pool slot. Placeholders are excluded
+	// from every rule that only makes sense for a CLAIMED hive (no tokens, no
+	// GitHub App, ACMM 0, zero agents) — an idle pool slot legitimately has
+	// none of those and flagging it would bury the real problems. Mirrors the
+	// dashboard's isPlaceholderHive() exactly.
+	IsPlaceholder    bool
+	Online           bool
+	LastHeartbeat    string
+	StartedAt        string
+	RegisteredAt     string
+	Upgrading        bool
+	UpgradeStartedAt time.Time
+	UpgradeTarget    string
+	TotalTokens24h   int64
+	Health           map[string]any
+	ProvStatus       string
+	ProvError        string
+}
+
+// alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
+func alertHiveFromEntry(h MyHiveEntry) alertHive {
+	return alertHive{
+		ID:               h.ID,
+		Name:             h.Name,
+		IsPlaceholder:    isPlaceholderEntry(h),
+		Online:           h.Online,
+		LastHeartbeat:    h.LastHeartbeat,
+		StartedAt:        h.StartedAt,
+		RegisteredAt:     h.RegisteredAt,
+		Upgrading:        h.Upgrading,
+		UpgradeStartedAt: h.UpgradeStartedAt,
+		UpgradeTarget:    h.UpgradeTarget,
+		TotalTokens24h:   h.TotalTokens24h,
+		Health:           h.Health,
+		ProvStatus:       h.ProvStatus,
+		ProvError:        h.ProvError,
+	}
+}
+
+// placeholderOrgPrefix is the org-name prefix a pre-provisioned pool slot
+// carries before it is claimed.
+const placeholderOrgPrefix = "available-"
+
+// isPlaceholderEntry lives in drift.go — it is the Go mirror of the dashboard's
+// isPlaceholderHive() and is shared by drift and alerts so the two can never
+// disagree about what counts as a claimed hive.
+
+// failingHealthChecks extracts the names of checks reporting "fail" from the
+// spoke-reported Health map.
+//
+// Health arrives off the wire as map[string]any and its shape is NOT
+// guaranteed. The shape the heartbeat actually carries today is built by the
+// spoke's HealthSummary() (pkg/dashboard/server.go): "checks" is an ARRAY of
+// {name, status, detail} objects, and that is the primary branch here — the
+// hub dashboard's healthBadge() already reads it that way.
+//
+// A SECOND, different shape exists in the same spoke package:
+// handleHealthDeep() builds "checks" as a map of name→object (with the "agents"
+// check nested one level as a map of per-agent objects). That one serves
+// /api/health/deep and is NOT what the hub receives — but the field is an
+// untyped passthrough all the way into RegistryEntry.Health, so a spoke on a
+// different version could send either. Both are handled, and anything else
+// yields no names.
+//
+// Every access uses the two-value type assertion and every iteration is
+// nil-guarded, so a malformed payload yields no names rather than a panic in
+// the hub's request path.
+//
+// Returns names sorted, so the generated reason string is stable across polls
+// (Go map iteration order is randomised, and an unstable Reason would make the
+// alert look like it kept changing).
+func failingHealthChecks(health map[string]any) []string {
+	if health == nil {
+		return nil
+	}
+	raw, ok := health["checks"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	var names []string
+	// collect walks one check entry, recording its name if it reports "fail".
+	// nested is true when this entry came from inside a parent check, so a
+	// failing per-agent check is reported as "agents/scanner" rather than a
+	// bare, ambiguous "scanner".
+	var collect func(name string, v any, prefix string)
+	collect = func(name string, v any, prefix string) {
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return
+		}
+		full := name
+		if prefix != "" {
+			full = prefix + "/" + name
+		}
+		if st, ok := obj["status"].(string); ok && st == healthCheckStatusFail {
+			names = append(names, full)
+			return
+		}
+		// No status of its own: it may be a container of sub-checks (the
+		// "agents" check is a map of per-agent objects). Recurse one level.
+		if _, hasStatus := obj["status"]; hasStatus {
+			return
+		}
+		if prefix != "" {
+			// Already one level deep — do not recurse unboundedly into
+			// arbitrary spoke-supplied nesting.
+			return
+		}
+		for subName, subV := range obj {
+			collect(subName, subV, full)
+		}
+	}
+
+	switch checks := raw.(type) {
+	case []any:
+		// The shape the heartbeat actually carries: each element names itself.
+		for _, v := range checks {
+			obj, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			st, ok := obj["status"].(string)
+			if !ok || st != healthCheckStatusFail {
+				continue
+			}
+			name, _ := obj["name"].(string)
+			if name == "" {
+				name = unnamedHealthCheck
+			}
+			names = append(names, name)
+		}
+	case map[string]any:
+		// The /api/health/deep shape, handled defensively (see doc comment).
+		for name, v := range checks {
+			collect(name, v, "")
+		}
+	default:
+		return nil
+	}
+
+	sort.Strings(names)
+	return names
+}
+
+const (
+	// healthCheckStatusFail is the status value the spoke's deep health
+	// endpoint writes for a check that is failing ("pass"/"warn"/"skip" are the
+	// others; only "fail" is alert-worthy).
+	healthCheckStatusFail = "fail"
+	// unnamedHealthCheck labels a failing check that arrived without a name, so
+	// the reason string still says something rather than rendering blank.
+	unnamedHealthCheck = "unnamed check"
+	// maxNamedFailingChecks bounds how many check names are listed in a single
+	// reason string. A hive with everything failing should not produce a
+	// paragraph; the count still reflects the true total.
+	maxNamedFailingChecks = 3
+)
+
+// fleetMedianTokens returns the median TotalTokens24h across claimed, online
+// hives, and how many hives contributed. Placeholders are excluded — an idle
+// pool slot at zero would drag the median down and make ordinary hives look
+// like runaways.
+func fleetMedianTokens(hives []alertHive) (int64, int) {
+	var vals []int64
+	for _, h := range hives {
+		if h.IsPlaceholder || !h.Online {
+			continue
+		}
+		vals = append(vals, h.TotalTokens24h)
+	}
+	if len(vals) == 0 {
+		return 0, 0
+	}
+	sort.Slice(vals, func(i, j int) bool { return vals[i] < vals[j] })
+	mid := len(vals) / 2
+	if len(vals)%2 == 1 {
+		return vals[mid], len(vals)
+	}
+	// Even count: mean of the two middle values.
+	return (vals[mid-1] + vals[mid]) / 2, len(vals)
+}
+
+// evaluateAlerts applies every alert rule to a fleet snapshot and returns the
+// summary. driftAlerts carries alerts produced by another source (the
+// config-drift evaluator, when it lands) — they are merged into the same
+// ordering, acknowledgement and counting pipeline rather than recomputed here.
+//
+// now is injected so the rules are testable at boundary conditions.
+func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, now time.Time) AlertSummary {
+	summary := AlertSummary{
+		CountsBySeverity: map[string]int{},
+		CountsByType:     map[string]int{},
+	}
+	if state == nil {
+		return summary
+	}
+
+	medianTokens, fleetSize := fleetMedianTokens(hives)
+
+	var alerts []Alert
+	// active tracks every condition firing this pass, so retainConditions can
+	// forget (and un-acknowledge) the ones that have cleared.
+	active := make(map[string]bool)
+
+	add := func(hiveID, hiveName, alertType, severity, reason string) {
+		firstSeen := state.markCondition(hiveID, alertType, now)
+		active[alertAckKey(hiveID, alertType)] = true
+		a := Alert{
+			HiveID:    hiveID,
+			HiveName:  hiveName,
+			Type:      alertType,
+			Severity:  severity,
+			Reason:    reason,
+			FirstSeen: firstSeen,
+		}
+		if ack, ok := state.ackFor(hiveID, alertType, firstSeen, now); ok {
+			a.Acknowledged = true
+			a.AckBy = ack.By
+			ackAt := ack.At
+			a.AckAt = &ackAt
+		}
+		alerts = append(alerts, a)
+	}
+
+	for _, h := range hives {
+		if h.ID == "" {
+			continue
+		}
+
+		// --- Rule: provisioning errored. Applies to placeholders too: a pool
+		// slot that failed to provision is exactly the admin's problem. ---
+		if h.ProvStatus == alertProvStatusError {
+			reason := "Provisioning failed"
+			if e := strings.TrimSpace(h.ProvError); e != "" {
+				reason = "Provisioning failed: " + e
+			}
+			add(h.ID, h.Name, AlertTypeProvisionError, AlertSeverityCritical, reason)
+		}
+
+		// --- Rule: crash-looping. Distinct start times observed inside the
+		// window, with the current uptime still below the ceiling (a hive that
+		// restarted a few times and has now been up for hours has recovered
+		// and should not keep alerting). ---
+		restarts := state.observeStart(h.ID, h.StartedAt, now)
+		if restarts >= alertCrashLoopMinRestarts && recentlyStarted(h.StartedAt, now) {
+			add(h.ID, h.Name, AlertTypeCrashLoop, AlertSeverityCritical,
+				"Restarted "+itoa(restarts)+" times in the last "+
+					alertCrashLoopWindow.String()+" and has been up under "+
+					alertCrashLoopUptimeCeiling.String())
+		}
+
+		// --- Rule: offline beyond the threshold. Checked for placeholders too:
+		// a pool slot that has stopped heartbeating is genuinely broken, not
+		// merely idle. ---
+		if !h.Online {
+			if age, ok := heartbeatAge(h.LastHeartbeat, now); ok && age > alertOfflineThreshold {
+				add(h.ID, h.Name, AlertTypeOffline, AlertSeverityCritical,
+					"No heartbeat for "+roundedDuration(age))
+			}
+		}
+
+		// --- Rule: upgrade in flight past staleUpgradeTimeout. Reuses the
+		// EXISTING constant rather than introducing a second, divergent notion
+		// of "stuck upgrade". ---
+		if h.Upgrading && !h.UpgradeStartedAt.IsZero() {
+			if age := now.Sub(h.UpgradeStartedAt); age > staleUpgradeTimeout {
+				reason := "Upgrade in flight for " + roundedDuration(age) +
+					" (limit " + staleUpgradeTimeout.String() + ")"
+				if t := strings.TrimSpace(h.UpgradeTarget); t != "" {
+					reason += ", target " + t
+				}
+				add(h.ID, h.Name, AlertTypeStuckUpgrade, AlertSeverityWarning, reason)
+			}
+		}
+
+		// --- Rule: a named health check is failing. ---
+		if failing := failingHealthChecks(h.Health); len(failing) > 0 {
+			shown := failing
+			suffix := ""
+			if len(shown) > maxNamedFailingChecks {
+				shown = shown[:maxNamedFailingChecks]
+				suffix = " (+" + itoa(len(failing)-maxNamedFailingChecks) + " more)"
+			}
+			noun := "check"
+			if len(failing) != 1 {
+				noun = "checks"
+			}
+			add(h.ID, h.Name, AlertTypeHealthCheckFailing, AlertSeverityWarning,
+				itoa(len(failing))+" health "+noun+" failing: "+strings.Join(shown, ", ")+suffix)
+		}
+
+		// --- Rule: token burn anomaly. Claimed hives only — an unassigned
+		// placeholder has no agents and therefore legitimately spends nothing. ---
+		if !h.IsPlaceholder {
+			if fleetSize >= alertTokenBurnMinFleetSize && medianTokens >= alertTokenBurnMinMedian &&
+				h.TotalTokens24h > medianTokens*alertTokenBurnMedianMultiple {
+				add(h.ID, h.Name, AlertTypeTokenBurn, AlertSeverityInfo,
+					"Burned "+itoa64(h.TotalTokens24h)+" tokens in 24h, over "+
+						itoa(alertTokenBurnMedianMultiple)+"x the fleet median of "+itoa64(medianTokens))
+			} else if h.Online && h.TotalTokens24h <= 0 && registeredLongerThan(h.RegisteredAt, alertZeroTokenMinAge, now) {
+				add(h.ID, h.Name, AlertTypeTokenBurn, AlertSeverityInfo,
+					"Online but has spent no tokens in 24h")
+			}
+		}
+	}
+
+	// Merge externally-sourced alerts (config drift) through the same pipeline.
+	for _, d := range driftAlerts {
+		if d.HiveID == "" || d.Type == "" {
+			continue
+		}
+		add(d.HiveID, d.HiveName, d.Type, d.Severity, d.Reason)
+	}
+
+	// Conditions that did not fire this pass are forgotten, which also clears
+	// their acknowledgement so a re-occurrence is not permanently silenced.
+	state.retainConditions(active)
+
+	// Most urgent first; within a severity, group by type then hive so the list
+	// is stable across polls.
+	sort.SliceStable(alerts, func(i, j int) bool {
+		ri, rj := severityRank(alerts[i].Severity), severityRank(alerts[j].Severity)
+		if ri != rj {
+			return ri < rj
+		}
+		if alerts[i].Type != alerts[j].Type {
+			return alerts[i].Type < alerts[j].Type
+		}
+		return alerts[i].HiveID < alerts[j].HiveID
+	})
+
+	for _, a := range alerts {
+		if a.Acknowledged {
+			summary.AcknowledgedTotal++
+			continue
+		}
+		summary.CountsBySeverity[a.Severity]++
+		summary.CountsByType[a.Type]++
+		summary.Total++
+	}
+	summary.Alerts = alerts
+	return summary
+}
+
+// severityRank orders a severity for sorting, with unknown values last.
+func severityRank(s string) int {
+	if r, ok := alertSeverityRank[s]; ok {
+		return r
+	}
+	return alertSeverityRankUnknown
+}
+
+// recentlyStarted reports whether the spoke's process uptime is below
+// alertCrashLoopUptimeCeiling. An unparseable or future start time returns
+// false — unknown uptime is not evidence of a crash loop.
+func recentlyStarted(startedAt string, now time.Time) bool {
+	st, err := time.Parse(time.RFC3339, strings.TrimSpace(startedAt))
+	if err != nil {
+		return false
+	}
+	age := now.Sub(st)
+	if age < 0 {
+		return false
+	}
+	return age < alertCrashLoopUptimeCeiling
+}
+
+// heartbeatAge parses LastHeartbeat and returns its age. ok is false when the
+// value is missing or unparseable — a hive that has never reported a heartbeat
+// is not alerted on as "offline for N", because there is no N.
+func heartbeatAge(lastHeartbeat string, now time.Time) (time.Duration, bool) {
+	hb, err := time.Parse(time.RFC3339, strings.TrimSpace(lastHeartbeat))
+	if err != nil {
+		return 0, false
+	}
+	age := now.Sub(hb)
+	if age < 0 {
+		return 0, false
+	}
+	return age, true
+}
+
+// registeredLongerThan reports whether a hive was registered more than d ago.
+// An unparseable RegisteredAt returns false, so a hive with unknown age is
+// given the benefit of the doubt rather than alerted on immediately.
+func registeredLongerThan(registeredAt string, d time.Duration, now time.Time) bool {
+	rt, err := time.Parse(time.RFC3339, strings.TrimSpace(registeredAt))
+	if err != nil {
+		return false
+	}
+	return now.Sub(rt) > d
+}
+
+// roundedDuration formats a duration for a human-readable reason string,
+// rounded to the minute so the text does not churn every poll.
+func roundedDuration(d time.Duration) string {
+	return d.Round(time.Minute).String()
+}
+
+// itoa / itoa64 avoid pulling strconv into every call site's readability.
+func itoa(n int) string { return itoa64(int64(n)) }
+func itoa64(n int64) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	var buf [20]byte
+	i := len(buf)
+	// Accumulate negatively so math.MinInt64 does not overflow on negation.
+	if !neg {
+		n = -n
+	}
+	for n != 0 {
+		i--
+		buf[i] = byte('0' - n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+// --- HubServer integration ---
+
+// fleetAlerts evaluates alerts for the hives the caller can see.
+//
+// It takes NO HubServer lock: the caller passes an already-copied snapshot, and
+// alertState has its own leaf mutex. This keeps the evaluator off the s.mu
+// critical path entirely.
+func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
+	if s == nil || s.alerts == nil {
+		return AlertSummary{CountsBySeverity: map[string]int{}, CountsByType: map[string]int{}}
+	}
+	hives := make([]alertHive, 0, len(entries))
+	for _, e := range entries {
+		hives = append(hives, alertHiveFromEntry(e))
+	}
+	// driftAlerts is nil today. When the config-drift evaluator lands, its
+	// signals are passed here and flow through the same ordering, ack and
+	// counting pipeline — see the file header.
+	return evaluateAlerts(s.alerts, hives, nil, time.Now())
+}
+
+// saveAlertAcks persists acknowledgements to the PVC so a silenced alert stays
+// silenced across a hub restart or upgrade. Mirrors saveHubBanners: atomic
+// tmp+rename, failures logged not fatal (a lost ack merely un-silences an
+// alert, which is the safe direction).
+func (s *HubServer) saveAlertAcks() {
+	if s == nil || s.alerts == nil {
+		return
+	}
+	snapshot := s.alerts.snapshotAcks()
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		s.logger.Error("failed to marshal alert acks for persistence", "error", err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(alertAcksPath), 0o755); err != nil {
+		s.logger.Error("failed to create alert acks dir", "error", err)
+		return
+	}
+	tmpPath := alertAcksPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		s.logger.Error("failed to write alert acks tmp file", "error", err)
+		return
+	}
+	if err := os.Rename(tmpPath, alertAcksPath); err != nil {
+		s.logger.Error("failed to rename alert acks file", "error", err)
+	}
+}
+
+// loadAlertAcks reads persisted acknowledgements on startup, dropping expired
+// ones and rewriting the file if any were pruned. A missing file is normal.
+func (s *HubServer) loadAlertAcks() {
+	if s == nil || s.alerts == nil {
+		return
+	}
+	data, err := os.ReadFile(alertAcksPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			s.logger.Error("failed to read persisted alert acks", "error", err)
+		}
+		return
+	}
+	var stored map[string]alertAck
+	if err := json.Unmarshal(data, &stored); err != nil {
+		s.logger.Error("failed to parse persisted alert acks", "error", err)
+		return
+	}
+	if s.alerts.loadAcks(stored, time.Now()) {
+		s.saveAlertAcks()
+	}
+}
+
+// alertAckRequest is the POST body for acknowledging or un-acknowledging.
+type alertAckRequest struct {
+	HiveID string `json:"hiveId"`
+	Type   string `json:"type"`
+	// Clear un-silences instead of silencing.
+	Clear bool `json:"clear"`
+}
+
+// handleAlertAck acknowledges (or clears) one alert for one hive. Admin-only:
+// silencing a fleet-wide signal is an operator action, not something a hive
+// owner should be able to do to the admin's view.
+func (s *HubServer) handleAlertAck(w http.ResponseWriter, r *http.Request) {
+	var req alertAckRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPayloadBytes)).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		return
+	}
+	req.HiveID = strings.TrimSpace(req.HiveID)
+	req.Type = strings.TrimSpace(req.Type)
+	if req.HiveID == "" || req.Type == "" {
+		http.Error(w, `{"error":"hiveId and type are required"}`, http.StatusBadRequest)
+		return
+	}
+	if !isKnownAlertType(req.Type) {
+		http.Error(w, `{"error":"unknown alert type"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.Clear {
+		s.alerts.clearAck(req.HiveID, req.Type)
+		s.saveAlertAcks()
+		writeAlertAckOK(w, false)
+		return
+	}
+
+	// Acknowledging requires a LIVE condition. Refusing otherwise prevents a
+	// client from pre-silencing an alert that has not fired yet.
+	if !s.alerts.setAck(req.HiveID, req.Type, s.getAuthUser(r), time.Now()) {
+		http.Error(w, `{"error":"no active alert of that type for this hive"}`, http.StatusConflict)
+		return
+	}
+	s.saveAlertAcks()
+	writeAlertAckOK(w, true)
+}
+
+func writeAlertAckOK(w http.ResponseWriter, acked bool) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true, "acknowledged": acked})
+}
+
+// knownAlertTypes is the closed set of types the ack endpoint accepts, so a
+// client cannot wedge arbitrary keys into the persisted ack map.
+var knownAlertTypes = map[string]bool{
+	AlertTypeCrashLoop:          true,
+	AlertTypeOffline:            true,
+	AlertTypeStuckUpgrade:       true,
+	AlertTypeHealthCheckFailing: true,
+	AlertTypeTokenBurn:          true,
+	AlertTypeProvisionError:     true,
+}
+
+func isKnownAlertType(t string) bool { return knownAlertTypes[t] }

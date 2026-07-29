@@ -136,26 +136,26 @@ func TestProjectConfigForHiveID(t *testing.T) {
 	defer cleanup()
 
 	// No such hive -> nil.
-	if got := projectConfigForHiveID("missing", "", nil, "", 0, ""); got != nil {
+	if got := projectConfigForHiveID("missing", "", nil, "", 0, "", ""); got != nil {
 		t.Errorf("missing hive -> %+v, want nil", got)
 	}
 
 	// Available placeholder -> nil (not yet claimed).
 	saveSaaSHive(&SaaSHive{ID: "ph", Status: statusAvailable})
-	if got := projectConfigForHiveID("ph", "", nil, "", 0, ""); got != nil {
+	if got := projectConfigForHiveID("ph", "", nil, "", 0, "", ""); got != nil {
 		t.Errorf("placeholder -> %+v, want nil", got)
 	}
 
 	// Incomplete claim (no ACMM) -> nil.
 	saveSaaSHive(&SaaSHive{ID: "inc", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 0})
-	if got := projectConfigForHiveID("inc", "", nil, "", 0, ""); got != nil {
+	if got := projectConfigForHiveID("inc", "", nil, "", 0, "", ""); got != nil {
 		t.Errorf("incomplete claim -> %+v, want nil", got)
 	}
 
 	// Freshly-claimed hive (ClaimDelivered=false), spoke still reporting a stale
 	// placeholder project -> hub PUSHES the real claim until the spoke reports it.
 	saveSaaSHive(&SaaSHive{ID: "fresh", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3})
-	if got := projectConfigForHiveID("fresh", "placeholder", nil, "old", 0, ""); got == nil || got.Org != "acme" {
+	if got := projectConfigForHiveID("fresh", "placeholder", nil, "old", 0, "", ""); got == nil || got.Org != "acme" {
 		t.Errorf("undelivered claim, stale spoke -> %+v, want claim pushed (org=acme)", got)
 	}
 
@@ -163,23 +163,23 @@ func TestProjectConfigForHiveID(t *testing.T) {
 	// and adopted by the caller, not pushed here — so projectConfigForHiveID
 	// returns nil regardless of what the spoke reports (nothing to push).
 	saveSaaSHive(&SaaSHive{ID: "full", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3, ClaimDelivered: true})
-	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 3, ""); got != nil {
+	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 3, "", ""); got != nil {
 		t.Errorf("delivered claim -> %+v, want nil (org/repos/ACMM are adopted, not pushed)", got)
 	}
 	// Even a spoke reporting a different level -> still nil (no push; adopt path handles it).
-	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 2, ""); got != nil {
+	if got := projectConfigForHiveID("full", "acme", []string{"r"}, "r", 2, "", ""); got != nil {
 		t.Errorf("differing ACMM -> %+v, want nil (adopted, not pushed)", got)
 	}
 
 	// Vanity URL set but spoke hasn't adopted it -> keep sending (with the URL),
 	// even though the claim is delivered and org/repos/acmm already match.
 	saveSaaSHive(&SaaSHive{ID: "van", Status: "running", Org: "acme", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3, ClaimDelivered: true, VanityURL: "https://vanity.example/"})
-	got := projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "")
+	got := projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "", "")
 	if got == nil || got.DashboardURL != "https://vanity.example/" {
 		t.Errorf("vanity not yet adopted -> %+v, want DashboardURL set", got)
 	}
 	// Spoke has now adopted the vanity URL -> stop sending.
-	if got := projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "https://vanity.example/"); got != nil {
+	if got := projectConfigForHiveID("van", "acme", []string{"r"}, "r", 3, "https://vanity.example/", ""); got != nil {
 		t.Errorf("vanity adopted -> %+v, want nil", got)
 	}
 }

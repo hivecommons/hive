@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -57,37 +58,49 @@ type Registry struct {
 }
 
 type RegistryEntry struct {
-	ID                        string             `json:"id"`
-	Name                      string             `json:"name"`
-	Org                       string             `json:"org"`
-	Repos                     []string           `json:"repos"`
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Org   string   `json:"org"`
+	Repos []string `json:"repos"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as, as
 	// reported by the spoke. The hub needs it to echo project config back
 	// without blanking it, and it is the author the fleet-stats counts are
 	// scoped to.
-	AIAuthor                  string             `json:"aiAuthor,omitempty"`
-	PrimaryRepo               string             `json:"primaryRepo"`
-	DashboardURL              string             `json:"dashboardUrl"`
-	SnapshotURL               string             `json:"snapshotUrl,omitempty"`
-	ACMMLevel                 int                `json:"acmmLevel"`
-	AgentCount                int                `json:"agentCount"`
-	GovernorMode              string             `json:"governorMode"`
-	TotalTokens24h            int64              `json:"totalTokens24h"`
-	ActionableIssues          int                `json:"actionableIssues"`
-	ActionablePRs             int                `json:"actionablePRs"`
-	ContributorCount          int                `json:"contributorCount"`
-	ActiveContributors        int                `json:"activeContributors"`
-	Owner                     string             `json:"owner,omitempty"`
-	ClusterID                 string             `json:"clusterId,omitempty"`
-	ClusterName               string             `json:"clusterName,omitempty"`
-	HiveType                  string             `json:"hiveType,omitempty"`
-	IsPublic                  bool               `json:"isPublic"`
-	RegisteredAt              string             `json:"registeredAt"`
-	LastHeartbeat             string             `json:"lastHeartbeat"`
-	Health                    map[string]any     `json:"health"`
-	Version                   string             `json:"version"`
-	GitHash                   string             `json:"gitHash,omitempty"`
-	GitBranch                 string             `json:"gitBranch,omitempty"`
+	AIAuthor string `json:"aiAuthor,omitempty"`
+	// StartedAt is the spoke process start time, reported over the heartbeat.
+	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
+	StartedAt          string         `json:"startedAt,omitempty"`
+	PrimaryRepo        string         `json:"primaryRepo"`
+	DashboardURL       string         `json:"dashboardUrl"`
+	SnapshotURL        string         `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int            `json:"acmmLevel"`
+	AgentCount         int            `json:"agentCount"`
+	GovernorMode       string         `json:"governorMode"`
+	TotalTokens24h     int64          `json:"totalTokens24h"`
+	ActionableIssues   int            `json:"actionableIssues"`
+	ActionablePRs      int            `json:"actionablePRs"`
+	ContributorCount   int            `json:"contributorCount"`
+	ActiveContributors int            `json:"activeContributors"`
+	Owner              string         `json:"owner,omitempty"`
+	ClusterID          string         `json:"clusterId,omitempty"`
+	ClusterName        string         `json:"clusterName,omitempty"`
+	HiveType           string         `json:"hiveType,omitempty"`
+	IsPublic           bool           `json:"isPublic"`
+	RegisteredAt       string         `json:"registeredAt"`
+	LastHeartbeat      string         `json:"lastHeartbeat"`
+	Health             map[string]any `json:"health"`
+	Version            string         `json:"version"`
+	GitHash            string         `json:"gitHash,omitempty"`
+	GitBranch          string         `json:"gitBranch,omitempty"`
+	// ImageRef is the container image this spoke's own Deployment runs, as
+	// read in-cluster by the spoke and reported over the heartbeat. The hub
+	// cannot see it any other way for firewalled/heartbeat-only spokes, and
+	// without it there is no way to tell a hive pinned to an immutable
+	// ghcr.io/kubestellar/hive:<sha> tag — which can never receive a rolling
+	// upgrade — from one riding <branch>-latest. Empty on spokes that are not
+	// in-cluster or predate this field; drift detection skips the signal
+	// rather than guessing.
+	ImageRef                  string             `json:"imageRef,omitempty"`
 	Agents                    []AgentSummary     `json:"agents,omitempty"`
 	Leaderboard               []LeaderboardEntry `json:"leaderboard,omitempty"`
 	Online                    bool               `json:"online"`
@@ -107,11 +120,57 @@ type RegistryEntry struct {
 	PRsMerged90d   *int `json:"prsMerged90d,omitempty"`
 	PRsRejected90d *int `json:"prsRejected90d,omitempty"`
 	CVEsClosed     *int `json:"cvesClosed,omitempty"`
+	// AgentsWithModel is the spoke-reported count of agents that have a method
+	// (backend) or model assigned. nil = the spoke is too old to report it, so
+	// journey stage 2 is treated as unknown rather than unsatisfied.
+	AgentsWithModel *int `json:"agentsWithModel,omitempty"`
+	// Journey is the computed user-journey status (which adoption stage this
+	// hive is stalled on, how hard it is being nudged, and whether stage 2 is
+	// satisfied via the contributor relay). Computed on read from the journey
+	// state store — never persisted on the registry entry itself.
+	Journey *JourneyStatus `json:"journey,omitempty"`
 }
 
 type SparkPoint struct {
 	T int64 `json:"t"`
 	V int   `json:"v"`
+}
+
+// sparkWirePoints is how many history points /api/saas/my-hives ships per
+// series. The registry keeps the full 7-day, 15-minute series (sparkMaxPoints
+// = 672), but the dashboard renders it into a 50x14 px SVG polyline — at 672
+// points that is ~13 points per horizontal pixel, so all but a handful are
+// invisible. 48 points keeps the shape of the trend at roughly one point per
+// pixel while cutting the two history arrays from ~755 KB to ~54 KB across a
+// 42-hive fleet (they were 92% of an 818 KB payload).
+const sparkWirePoints = 48
+
+// downsampleSpark reduces a stored series to at most sparkWirePoints for the
+// wire. It keeps the FIRST and LAST samples exactly (the sparkline's endpoints
+// are what the eye anchors on, and the last point is the current value shown
+// next to it) and picks evenly spaced samples in between. Series already at or
+// under the cap are returned unchanged, so short histories keep full detail.
+//
+// Returning a fresh slice matters: the input aliases the registry's stored
+// history, and callers marshal the result while other goroutines may append.
+func downsampleSpark(points []SparkPoint, max int) []SparkPoint {
+	if max <= 0 {
+		return nil
+	}
+	if len(points) <= max {
+		return points
+	}
+	out := make([]SparkPoint, 0, max)
+	// Spread max samples across the series, inclusive of both endpoints.
+	step := float64(len(points)-1) / float64(max-1)
+	for i := 0; i < max; i++ {
+		idx := int(math.Round(float64(i) * step))
+		if idx >= len(points) {
+			idx = len(points) - 1
+		}
+		out = append(out, points[idx])
+	}
+	return out
 }
 
 var safeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
@@ -127,6 +186,59 @@ func sanitizeField(s string) string {
 
 func isValidName(s string) bool {
 	return safeNamePattern.MatchString(s) && len(s) <= 100
+}
+
+// normalizeOrgRef accepts what a user actually pastes into an "org" field and
+// splits it into a GitHub host and a bare org name.
+//
+// The field is labelled "GitHub Organization", but pasting the org's URL is the
+// obvious reading, and safeNamePattern rejects ":" and "/" — so a paste like
+// "https://github.ibm.com/z-aiops-unite" failed with a bare "invalid org name"
+// that named neither the problem nor the fix.
+//
+// Any GitHub Enterprise host is accepted (github.ibm.com, github.cisco.com, …),
+// not a fixed allow-list. Returns (host, org); host is "" when the input was a
+// bare org name, which callers should read as public github.com.
+//
+//	https://github.ibm.com/z-aiops-unite  -> ("github.ibm.com", "z-aiops-unite")
+//	github.ibm.com/z-aiops-unite          -> ("github.ibm.com", "z-aiops-unite")
+//	z-aiops-unite                         -> ("",               "z-aiops-unite")
+func normalizeOrgRef(s string) (host, org string) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	if s == "" {
+		return "", ""
+	}
+	parts := strings.Split(s, "/")
+	// A leading segment containing a dot is a hostname (github.com,
+	// github.ibm.com). A bare org can also contain dots, so only treat the
+	// first segment as a host when something follows it.
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		return parts[0], parts[1]
+	}
+	return "", parts[0]
+}
+
+// normalizeRepoRef strips a GitHub URL or "org/repo" prefix down to the bare
+// repo name, so users can paste a repo URL into the repos field. Returns the
+// repo name; the org is already carried separately.
+//
+//	https://github.ibm.com/z-aiops-unite/ui -> "ui"
+//	z-aiops-unite/ui                        -> "ui"
+//	ui                                      -> "ui"
+func normalizeRepoRef(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	return parts[len(parts)-1]
 }
 
 // isValidRepoRef validates a repo entry, which may be a bare name ("repo")
@@ -191,11 +303,29 @@ type HubServer struct {
 	heartbeatHealth       map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
 	heartbeatHealthMu     sync.RWMutex
 
+	// usageHistory is the sampled fleet-total token trend, appended on
+	// heartbeat at usageSnapshotInterval and bounded to
+	// usageSnapshotMaxPoints (see usage.go). Guarded by usageMu rather than
+	// s.mu: the heartbeat path already holds s.mu when it samples, and
+	// re-locking a held non-reentrant mutex would deadlock the hub.
+	usageHistory []UsageSnapshot
+	usageMu      sync.RWMutex
+
 	// heartbeatUpgrade tracks hives that should be upgraded via heartbeat
 	// UpgradeTo because kubectl rollout restart failed (cluster unreachable).
 	// Key: hive ID, value: target SHA.  Cleared when the spoke reports the
 	// target SHA, proving the upgrade completed.
 	heartbeatUpgrade map[string]string
+
+	// clusterUnreachableUntil suppresses kubectl against clusters the hub has
+	// just proven it cannot route to (firewalled GPU clusters like vllm-d).
+	// Without this, triggerAutoUpgrades() paid a full dial timeout PER HIVE PER
+	// CYCLE — 15 vllm-d hives serialized into ~30 minutes of blocking, which
+	// starved the hub's own auto-upgrade check at the end of the same loop and
+	// left the hub pinned to an old SHA indefinitely. Key: cluster ID, value:
+	// the time after which kubectl may be retried.
+	clusterUnreachableUntil map[string]time.Time
+	clusterUnreachableMu    sync.Mutex
 	// heartbeatSwitchTag tracks hives that should switch their deployment
 	// image to a specific tag (branch switch) via heartbeat, for clusters
 	// the hub can't reach over kubectl. Cleared once the spoke reports it.
@@ -228,6 +358,23 @@ type HubServer struct {
 	// (single-use state → verifier/hive/model). Lazily initialized.
 	openRouterStateOnce  sync.Once
 	openRouterStateStore *openrouter.StateStore
+
+	// timeline is the append-only per-hive activity event store. It records
+	// state TRANSITIONS observed on the heartbeat (version, health, upgrade,
+	// restart, …) plus human-initiated actions, so "why is hive X stuck?" is
+	// answerable from the hub instead of `kubectl logs`. It carries its own
+	// leaf mutex and is never guarded by s.mu. See timeline.go.
+	timeline *timelineStore
+
+	// journey holds per-hive user-journey nudge state: which banner each owner
+	// was last sent and when, plus admin snoozes. Persisted to the PVC.
+	journey *journeyStore
+
+	// alerts holds the fleet-alert observation memory (restart history,
+	// per-condition first-seen timestamps, admin acknowledgements). It carries
+	// its own leaf mutex and is never touched while s.mu is held — see
+	// alerts.go.
+	alerts *alertState
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -347,14 +494,25 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		heartbeatHealth:         make(map[string]*HeartbeatHealthEntry),
 		heartbeatUpgrade:        make(map[string]string),
 		heartbeatSwitchTag:      make(map[string]string),
+		clusterUnreachableUntil: make(map[string]time.Time),
 		pendingWebhooks:         make(map[string]*pendingWebhookEntry),
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
 		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
+		timeline:                newTimelineStore(),
+		journey:                 newJourneyStore(),
+		alerts:                  newAlertState(),
 	}
 
 	s.loadRegistry()
 	s.loadHubBanners()
+	s.timeline.load()
+	if err := s.journey.load(time.Now()); err != nil {
+		// Losing journey state is a soft failure: the worst case is that a few
+		// owners get one duplicate nudge. Never block hub startup on it.
+		logger.Error("failed to load journey nudge state", "error", err)
+	}
+	s.loadAlertAcks()
 
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)
@@ -374,6 +532,11 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
 	s.mux.HandleFunc("GET /{$}", s.serveStatic("static/index.html"))
+	// Open Graph preview image for shared links. Registered here rather than in
+	// registerOAuth because that function returns early when OAuth is
+	// unconfigured, which would leave the image 404ing and every unfurled Hive
+	// link showing a blank card.
+	s.mux.HandleFunc("GET /og-card.png", s.handleOGCard)
 	s.mux.Handle("GET /", http.FileServerFS(staticFS))
 
 	s.registerOAuth()
@@ -512,6 +675,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}(),
 		PrimaryRepo:  safePrimary,
 		AIAuthor:     sanitizeField(payload.AIAuthor),
+		StartedAt:    sanitizeField(payload.StartedAt),
 		DashboardURL: payload.DashboardURL,
 		SnapshotURL:  payload.SnapshotURL,
 		ACMMLevel:    clampInt(payload.ACMMLevel, 0, 6),
@@ -546,6 +710,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Version:       sanitizeHeartbeatField(payload.Version),
 		GitHash:       shortSHA(sanitizeHeartbeatField(payload.GitHash)),
 		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
+		ImageRef:      sanitizeImageRef(payload.ImageRef),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
@@ -580,6 +745,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		PRsMerged90d:   clampFleetCount(payload.PRsMerged90d),
 		PRsRejected90d: clampFleetCount(payload.PRsRejected90d),
 		CVEsClosed:     clampFleetCount(payload.CVEsClosed),
+		// Preserve nil (old spoke, unknown) vs a real count — journey stage
+		// detection depends on telling those two apart.
+		AgentsWithModel: clampFleetCount(payload.AgentsWithModel),
 	}
 
 	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
@@ -602,10 +770,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.Upgrading = true
 	}
 
+	// Timeline: capture the pre-heartbeat entry inside the lock (it is the only
+	// place old and new coexist), but diff and persist AFTER unlocking —
+	// s.mu is a write lock held across the whole registry scan, so a file
+	// write under it would serialize every heartbeat in the fleet.
+	var prevEntry RegistryEntry
+	hadPrev := false
+
 	s.mu.Lock()
 	found := false
 	for i, h := range s.registry.Hives {
 		if h.ID == payload.HiveID {
+			// `h` is a value copy from the range, so it already snapshots the
+			// scalar fields the timeline compares. Health is a map that the
+			// new entry never mutates in place, so aliasing it is safe here.
+			prevEntry, hadPrev = h, true
 			entry.RegisteredAt = h.RegisteredAt
 			if entry.SnapshotURL == "" {
 				entry.SnapshotURL = h.SnapshotURL
@@ -699,6 +878,21 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	s.registry.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	s.mu.Unlock()
 
+	// Timeline: record whatever changed on this beat. Nothing is written when
+	// nothing changed, which is the common case — at ~2 min per beat and 42
+	// hives, an event per beat would be pure noise.
+	if hadPrev {
+		s.recordHeartbeatTransitions(&prevEntry, &entry)
+	} else {
+		s.recordTimeline(entry.ID, TimelineCameOnline, "hive registered with the hub for the first time", "")
+	}
+
+	// Sample the fleet-total token trend. Deliberately AFTER s.mu.Unlock():
+	// sampleUsageHistory takes s.mu.RLock itself, and s.mu is a
+	// non-reentrant sync.RWMutex, so calling it while the write lock is held
+	// would deadlock every heartbeat.
+	s.sampleUsageHistory(time.Now())
+
 	s.requestSave()
 
 	// Store heartbeat-reported cluster health so the hub can use it as a
@@ -768,7 +962,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// bug. (No-op for unclaimed placeholders and for empty/zero reported values.)
 	s.adoptSpokeProjectConfig(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, clampInt(payload.ACMMLevel, 0, 6))
 
-	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL); projCfg != nil {
+	// Retroactively fill a blank github_host from this hive's cluster BEFORE
+	// building the project config, so a hive assigned before assign-time
+	// backfill existed starts receiving its GitHub Enterprise API URL on this
+	// very beat. No-op (and silent) for every hive that already has a host, is
+	// an unclaimed placeholder, or sits on a non-GHE cluster.
+	s.repairGitHubHostForHive(payload.HiveID)
+
+	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL, payload.GitHubAPIURL); projCfg != nil {
 		resp.ProjectConfig = projCfg
 		s.logger.Info("heartbeat: delivering claimed project config to spoke",
 			"hive_id", payload.HiveID,
@@ -867,6 +1068,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"app_id", ghCfg.AppID,
 			"installation_id", ghCfg.InstallationID,
 		)
+	} else if keyCfg := s.appKeySyncForHeartbeat(&payload); keyCfg != nil {
+		// No one-shot config queued (webhook install, manual push), so fall
+		// through to the standing per-cluster reconcile: a spoke holding the
+		// wrong App key — or none — is corrected onto its cluster's key. This is
+		// deliberately the LOWER-priority branch: a config queued for a specific
+		// hive is a targeted operator/webhook action and must not be displaced
+		// by the fleet-wide default.
+		resp.GitHubAppConfig = keyCfg
 	}
 
 	s.hubBannersMu.RLock()
@@ -878,6 +1087,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.hubBannersMu.RUnlock()
+
+	// User-journey nudge. An admin-sent banner always wins: a human took the
+	// trouble to target this hive, so an automated reminder must not displace
+	// it. Journey nudges therefore only fill an empty slot (or replace a
+	// previous journey banner, which is this subsystem's own to update).
+	if resp.HubBanner == nil || isJourneyBanner(resp.HubBanner.ID) {
+		if jb := s.journeyBannerFor(payload.HiveID, time.Now()); jb != nil {
+			resp.HubBanner = jb
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	data, _ := json.Marshal(resp)
@@ -903,8 +1122,9 @@ func (s *HubServer) consumePendingGitHubAppConfig(hiveID string) *HeartbeatGitHu
 
 func (s *HubServer) handleRegistry(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	s.markStaleHives()
+	offlineEvents := s.markStaleHives()
 	s.mu.Unlock()
+	s.flushOfflineEvents(offlineEvents)
 	s.mu.RLock()
 	hostedNames := make(map[string]bool)
 	for _, h := range s.registry.Hives {
@@ -1089,8 +1309,9 @@ func (s *HubServer) computeFleetStats() FleetStats {
 
 func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	s.markStaleHives()
+	offlineEvents := s.markStaleHives()
 	s.mu.Unlock()
+	s.flushOfflineEvents(offlineEvents)
 
 	s.mu.RLock()
 	fs := s.computeFleetStats()
@@ -1159,8 +1380,16 @@ func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (s *HubServer) markStaleHives() {
+// markStaleHives flips Online off for hives that stopped beating and evicts
+// ones silent past staleRemoveAge.
+//
+// It runs with s.mu held, so it does no I/O: online→offline transitions are
+// COLLECTED and returned, and the caller appends them to the timeline after
+// unlocking (see flushOfflineEvents). This is the only place a hive going
+// offline can be observed — a silent hive by definition sends no heartbeat.
+func (s *HubServer) markStaleHives() []offlineSweepEvent {
 	now := time.Now()
+	var offline []offlineSweepEvent
 	kept := s.registry.Hives[:0]
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].LastHeartbeat == "" {
@@ -1179,10 +1408,15 @@ func (s *HubServer) markStaleHives() {
 			s.logger.Info("removing stale hive", "id", s.registry.Hives[i].ID, "last_heartbeat", s.registry.Hives[i].LastHeartbeat)
 			continue
 		}
+		wasOnline := s.registry.Hives[i].Online
 		s.registry.Hives[i].Online = age <= maxHeartbeatAge
+		if wasOnline && !s.registry.Hives[i].Online {
+			offline = append(offline, offlineEventFor(&s.registry.Hives[i], age))
+		}
 		kept = append(kept, s.registry.Hives[i])
 	}
 	s.registry.Hives = kept
+	return offline
 }
 
 func (s *HubServer) mergeLeaderboards() []LeaderboardEntry {
@@ -1431,4 +1665,84 @@ func sanitizeHeartbeatField(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// sanitizeImageRef sanitizes a container image reference reported by a spoke.
+//
+// This is DELIBERATELY separate from sanitizeHeartbeatField rather than a
+// widening of it. That allowlist is applied to roughly a dozen fields — hive
+// IDs, versions, branches, governor mode, owner, agent names and states,
+// leaderboard usernames — none of which may legally contain a colon, so
+// admitting one globally would loosen all of them at once to fix a single
+// field.
+//
+// An image ref is the one heartbeat field where a colon is structural: it
+// separates repo from tag ("hive:v2-latest"), introduces a digest algorithm
+// ("@sha256:..."), and delimits a registry port ("registry:5000/..."). The
+// shared sanitizer stripped it, turning "ghcr.io/kubestellar/hive:v2-latest"
+// into "ghcr.io/kubestellar/hivev2-latest" — a ref with no tag separator,
+// which the pinned-image drift rule then reported as a CRITICAL pin on eleven
+// perfectly healthy rolling hives.
+//
+// The allowlist is exactly the character set legal in an OCI reference:
+// alphanumerics plus the "-_./" of a repository path, ":" for tag/port/digest
+// algorithm, and "@" for a digest. Everything else — quotes, angle brackets,
+// whitespace, control characters — is still dropped, so a hostile spoke cannot
+// inject markup into a hub-rendered string.
+func sanitizeImageRef(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '/' || c == ':' || c == '@' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// sanitizeRepoEntry makes a repo entry satisfy isValidRepoRef.
+//
+// A repo may legitimately be a bare name ("cuga-agent") or a cross-org
+// reference ("laredo/cuga-agent") — both are supported config. What is NOT
+// valid is a pasted URL ("github.ibm.com/enricom-ibm/jackrabbit"), which has
+// two slashes: the hub rejects the spoke's heartbeat with "invalid repo name",
+// /api/livez then fails on the stale heartbeat, and the pod crash-loops.
+//
+// Strip the scheme and a leading hostname (a first segment containing a dot),
+// then keep at most the last two segments so a valid cross-org ref survives.
+func sanitizeRepoEntry(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	// Drop a leading hostname: "github.ibm.com/org/repo" -> "org/repo".
+	if len(parts) > 2 && strings.Contains(parts[0], ".") {
+		parts = parts[1:]
+	}
+	// Anything still deeper than owner/repo keeps only its last two segments.
+	if len(parts) > 2 {
+		parts = parts[len(parts)-2:]
+	}
+	return strings.Join(parts, "/")
+}
+
+// gheAPIURLForHost turns a GitHub host into the API base URL the spoke should
+// use. GitHub Enterprise serves its v3 API at https://<host>/api/v3 — the
+// working reference is hosted-open-source-osscar, which runs against
+// github.ibm.com with exactly that value.
+//
+// Public github.com (and an empty host) return "", meaning "leave the spoke's
+// github.api_url alone" — its own default is already https://api.github.com,
+// and pushing a value here would overwrite a hand-tuned config.
+func gheAPIURLForHost(host string) string {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "" || host == "github.com" || host == "api.github.com" {
+		return ""
+	}
+	return "https://" + host + "/api/v3"
 }
