@@ -500,6 +500,84 @@ func verifyUninstallQuiescence(stateDir string, store *Store) error {
 	return nil
 }
 
+// restoreSetupBaselinePreimages returns the exact baseline paths that uninstall
+// must stage. New baselines are removed; repository-owned baselines are
+// restored from the immutable base of the exact managed setup PR. The durable
+// initial inventory is verified before any worktree mutation.
+func restoreSetupBaselinePreimages(ctx context.Context, client *hivegithub.Client, checkout string, config Config) ([]string, error) {
+	initialDigest := strings.ToLower(strings.TrimSpace(config.SetupBaselineInitialDigest))
+	if initialDigest == "" {
+		// Legacy installations did not record a baseline inventory. Preserve
+		// their historical behavior rather than guessing ownership.
+		return nil, nil
+	}
+	recomputed, err := setupBaselineCandidateDigest(config.SetupBaselineInitialCandidates)
+	if err != nil || !strings.EqualFold(recomputed, initialDigest) {
+		return nil, fmt.Errorf("durable initial baseline inventory is invalid")
+	}
+	currentSHA, err := git(ctx, checkout, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("resolve current baseline inventory commit: %w", err)
+	}
+	currentCandidates, _, err := setupBaselineInventoryAtCommit(ctx, checkout, strings.ToLower(strings.TrimSpace(currentSHA)))
+	if err != nil {
+		return nil, fmt.Errorf("inspect current baseline inventory: %w", err)
+	}
+	initialByPath := make(map[string]SetupBaselineCandidate, len(config.SetupBaselineInitialCandidates))
+	paths := make([]string, 0, len(currentCandidates)+len(config.SetupBaselineInitialCandidates))
+	for _, candidate := range config.SetupBaselineInitialCandidates {
+		initialByPath[candidate.Path] = candidate
+		paths = append(paths, candidate.Path)
+	}
+	for _, candidate := range currentCandidates {
+		paths = append(paths, candidate.Path)
+	}
+	paths = sortedUniquePaths(paths)
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	preinstallSHA := ""
+	if len(config.SetupBaselineInitialCandidates) > 0 {
+		if client == nil || config.SetupPRNumber <= 0 || strings.TrimSpace(config.SetupPRURL) == "" ||
+			!immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(config.SetupHeadSHA))) {
+			return nil, fmt.Errorf("repository-owned baseline restoration requires the exact managed setup PR binding")
+		}
+		marker := "<!-- hive-setup: " + strings.ToLower(strings.TrimSpace(config.Repository)) + " -->"
+		snapshot, inspectErr := client.InspectManagedPullRequestExact(
+			ctx, config.Repository, config.RepositoryID, config.SetupPRNumber,
+			marker, config.SetupBranch, config.SetupHeadSHA, config.DefaultBranch,
+		)
+		if inspectErr != nil {
+			return nil, fmt.Errorf("inspect exact setup PR baseline preimage: %w", inspectErr)
+		}
+		if snapshot.URL != config.SetupPRURL || !immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(snapshot.BaseSHA))) {
+			return nil, fmt.Errorf("managed setup PR baseline preimage binding is invalid")
+		}
+		preinstallSHA = strings.ToLower(snapshot.BaseSHA)
+		preinstallCandidates, preinstallDigest, inventoryErr := setupBaselineInventoryAtCommit(ctx, checkout, preinstallSHA)
+		if inventoryErr != nil {
+			return nil, fmt.Errorf("inspect setup PR base baseline inventory: %w", inventoryErr)
+		}
+		if !strings.EqualFold(preinstallDigest, initialDigest) || !equalSetupBaselineCandidates(preinstallCandidates, config.SetupBaselineInitialCandidates) {
+			return nil, fmt.Errorf("setup PR base no longer matches the durable initial baseline inventory")
+		}
+	}
+
+	for _, relative := range paths {
+		if _, existed := initialByPath[relative]; existed {
+			if _, err := git(ctx, checkout, "restore", "--source="+preinstallSHA, "--staged", "--worktree", "--", relative); err != nil {
+				return nil, fmt.Errorf("restore repository-owned baseline %s: %w", relative, err)
+			}
+			continue
+		}
+		if err := os.Remove(filepath.Join(checkout, filepath.FromSlash(relative))); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("remove Hive-created baseline %s: %w", relative, err)
+		}
+	}
+	return paths, nil
+}
+
 func verifyUninstallRecoveryState(store *Store) error {
 	for name, state := range rangeIntegratedRecoveryState(store) {
 		if state.err != nil {
@@ -1098,6 +1176,19 @@ func VerifyUninstalledSetupAtCommit(ctx context.Context, client *hivegithub.Clie
 		}
 		if response == nil || response.StatusCode != http.StatusNotFound {
 			return fmt.Errorf("verify absence of managed setup path %s: %w", relative, err)
+		}
+	}
+	if initialDigest := strings.ToLower(strings.TrimSpace(config.SetupBaselineInitialDigest)); initialDigest != "" {
+		expectedDigest, digestErr := setupBaselineCandidateDigest(config.SetupBaselineInitialCandidates)
+		if digestErr != nil || !strings.EqualFold(expectedDigest, initialDigest) {
+			return fmt.Errorf("uninstall verification refuses an invalid initial baseline inventory")
+		}
+		liveCandidates, liveDigest, inventoryErr := setupBaselineInventoryAtCommit(ctx, config.CheckoutDir, commitSHA)
+		if inventoryErr != nil {
+			return fmt.Errorf("verify restored baseline inventory at target commit %s: %w", commitSHA, inventoryErr)
+		}
+		if !strings.EqualFold(liveDigest, initialDigest) || !equalSetupBaselineCandidates(liveCandidates, config.SetupBaselineInitialCandidates) {
+			return fmt.Errorf("baseline inventory was not restored byte-for-byte at target commit %s", commitSHA)
 		}
 	}
 	return nil

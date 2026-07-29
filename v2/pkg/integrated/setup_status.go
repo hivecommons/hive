@@ -77,7 +77,10 @@ func authorizeManagedSetupPullRequest(ctx context.Context, store *Store, client 
 		allowed[candidate] = true
 	}
 	for _, changed := range diff.ChangedPaths {
-		baselineAllowed := operation != string(OperationUninstall) && setupBaselineAuthorizationPath.MatchString(changed)
+		// Baseline PNGs are allowed for uninstall only because the exact
+		// out-of-band status binds every changed path and blob, while final
+		// verification independently requires the pre-install inventory.
+		baselineAllowed := setupBaselineAuthorizationPath.MatchString(changed)
 		if !allowed[changed] && !baselineAllowed {
 			return result, fmt.Errorf("setup authorization refuses unmanaged changed path %s", changed)
 		}

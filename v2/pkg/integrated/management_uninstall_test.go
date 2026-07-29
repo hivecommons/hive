@@ -1,6 +1,7 @@
 package integrated
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -197,6 +198,173 @@ func TestUninstallFinalizationDeletesOnlyAfterMergedCleanQuiescentTarget(t *test
 	}
 	if _, err := integratedGitOutputError(fixture.remote, "rev-parse", "refs/heads/"+prepared.Branch); err == nil {
 		t.Fatalf("finalized uninstall cleanup branch %s still exists", prepared.Branch)
+	}
+}
+
+func TestUninstallRemovesHiveCreatedBaselinesAndRestoresEmptyInventory(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+
+	const baselinePath = ".visual-hive/snapshots/linux/new-install.png"
+	clone := filepath.Join(filepath.Dir(fixture.remote), "baseline-install")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, clone)
+	baseline := append([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, []byte("hive-created-baseline")...)
+	writeFixtureBytes(t, clone, baselinePath, baseline)
+	runIntegratedGit(t, clone, "add", "-f", baselinePath)
+	runIntegratedGit(t, clone, "-c", "user.name=Hive Setup", "-c", "user.email=hive-setup@example.test", "commit", "-m", "approve baseline")
+	runIntegratedGit(t, clone, "push", "origin", "main")
+	fixture.mu.Lock()
+	fixture.baseSHA = strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+	fixture.cleanupFiles = sortedUniquePaths(append(fixture.cleanupFiles, baselinePath))
+	fixture.mu.Unlock()
+
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetupBaselineInitialDigest, err = setupBaselineCandidateDigest(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetupBaselineInitialCandidates = nil
+	if err := store.Save(config); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intentStore, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent, exists, err := intentStore.LoadUninstallIntent()
+	if err != nil || !exists {
+		t.Fatalf("load uninstall intent: exists=%t err=%v", exists, err)
+	}
+	baselineChanged := false
+	for _, changed := range intent.ChangedFiles {
+		if changed == baselinePath {
+			baselineChanged = true
+			break
+		}
+	}
+	if !baselineChanged {
+		t.Fatalf("cleanup omitted Hive-created baseline: %v", intent.ChangedFiles)
+	}
+	checkout := filepath.Join(filepath.Dir(fixture.remote), "inspect-baseline-cleanup")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, checkout)
+	if _, err := integratedGitOutputError(checkout, "cat-file", "-e", prepared.CommitSHA+":"+baselinePath); err == nil {
+		t.Fatalf("cleanup commit %s retained Hive-created baseline %s", prepared.CommitSHA, baselinePath)
+	}
+
+	fixture.merge(t, prepared.CommitSHA)
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.CleanupVerified || !result.StateDeleted {
+		t.Fatalf("baseline-restoring uninstall result = %+v", result)
+	}
+}
+
+func TestUninstallRestoresRepositoryOwnedBaselineFromExactSetupBase(t *testing.T) {
+	fixture := newUninstallFixtureWithManagedSetup(t, false)
+	defer fixture.server.Close()
+
+	const baselinePath = ".visual-hive/snapshots/linux/repository-owned.png"
+	originalBaseline := append([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, []byte("repository-owned-baseline")...)
+	approvedBaseline := append([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, []byte("hive-approved-replacement")...)
+	preinstall := filepath.Join(filepath.Dir(fixture.remote), "baseline-preinstall")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, preinstall)
+	writeFixtureBytes(t, preinstall, baselinePath, originalBaseline)
+	runIntegratedGit(t, preinstall, "add", "-f", baselinePath)
+	runIntegratedGit(t, preinstall, "-c", "user.name=Repository Owner", "-c", "user.email=owner@example.test", "commit", "-m", "add repository baseline")
+	runIntegratedGit(t, preinstall, "push", "origin", "main")
+	preinstallSHA := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+
+	setup := filepath.Join(filepath.Dir(fixture.remote), "baseline-setup")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, setup)
+	runIntegratedGit(t, setup, "switch", "-C", "hive/setup-123", "origin/main")
+	for _, relative := range fixture.files {
+		writeFixture(t, setup, relative, "managed "+relative+"\n")
+	}
+	runIntegratedGit(t, setup, "add", ".")
+	runIntegratedGit(t, setup, "-c", "user.name=Hive Setup", "-c", "user.email=hive-setup@example.test", "commit", "-m", "install")
+	runIntegratedGit(t, setup, "push", "--force", "origin", "hive/setup-123")
+	setupHead := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/hive/setup-123"))
+	runIntegratedGit(t, fixture.remote, "update-ref", "refs/heads/main", setupHead)
+
+	approved := filepath.Join(filepath.Dir(fixture.remote), "baseline-approved")
+	runIntegratedGit(t, filepath.Dir(fixture.remote), "clone", fixture.remote, approved)
+	writeFixtureBytes(t, approved, baselinePath, approvedBaseline)
+	runIntegratedGit(t, approved, "add", "-f", baselinePath)
+	runIntegratedGit(t, approved, "-c", "user.name=Hive Setup", "-c", "user.email=hive-setup@example.test", "commit", "-m", "approve replacement baseline")
+	runIntegratedGit(t, approved, "push", "origin", "main")
+	approvedHead := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+
+	fixture.mu.Lock()
+	fixture.setupBaseSHA = preinstallSHA
+	fixture.setupHead = setupHead
+	fixture.setupOpen, fixture.setupMerged, fixture.setupBranchExists = false, true, true
+	fixture.managedPathPresent = true
+	fixture.baseSHA = approvedHead
+	fixture.cleanupFiles = sortedUniquePaths(append(fixture.cleanupFiles, baselinePath))
+	fixture.mu.Unlock()
+
+	store, err := NewStore(filepath.Join(fixture.stateDir, "integrated"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(originalBaseline)
+	config.SetupHeadSHA = setupHead
+	config.SetupBaselineInitialCandidates = []SetupBaselineCandidate{{
+		Path: baselinePath, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(originalBaseline)),
+	}}
+	config.SetupBaselineInitialDigest, err = setupBaselineCandidateDigest(config.SetupBaselineInitialCandidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(config); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoredOID := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", prepared.CommitSHA+":"+baselinePath))
+	restored, err := readSetupBaselineBlob(context.Background(), fixture.remote, restoredOID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(restored, originalBaseline) {
+		t.Fatalf("cleanup restored baseline hash %x, want %x", sha256.Sum256(restored), sha256.Sum256(originalBaseline))
+	}
+	fixture.merge(t, prepared.CommitSHA)
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.CleanupVerified || !result.StateDeleted {
+		t.Fatalf("repository-baseline-restoring uninstall result = %+v", result)
 	}
 }
 
@@ -885,6 +1053,8 @@ type uninstallFixture struct {
 	setupBranchExists  bool
 	setupCloseCalls    int
 	setupDeleteCalls   int
+	setupBaseSHA       string
+	cleanupFiles       []string
 }
 
 func newUninstallFixture(t *testing.T) *uninstallFixture {
@@ -922,6 +1092,7 @@ func newUninstallFixtureWithManagedSetup(t *testing.T, seedManagedSetup bool) *u
 		stateDir: filepath.Join(root, "state"), remote: filepath.Join(root, "remote.git"),
 		files: sortedUniquePaths(managedSetupFiles(true)), diff: "exact cleanup diff\n", managedPathPresent: seedManagedSetup,
 	}
+	fixture.cleanupFiles = append([]string(nil), fixture.files...)
 	bindTestRepositoryCloneURL(t, fixture.remote)
 	runIntegratedGit(t, root, "init", "--bare", fixture.remote)
 	seed := filepath.Join(root, "seed")
@@ -938,6 +1109,7 @@ func newUninstallFixtureWithManagedSetup(t *testing.T, seedManagedSetup bool) *u
 	runIntegratedGit(t, seed, "push", "-u", "origin", "main")
 	runIntegratedGit(t, fixture.remote, "symbolic-ref", "HEAD", "refs/heads/main")
 	fixture.baseSHA = strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"))
+	fixture.setupBaseSHA = fixture.baseSHA
 	fixture.setupOpen, fixture.setupMerged, fixture.setupBranchExists = !seedManagedSetup, seedManagedSetup, true
 	if seedManagedSetup {
 		fixture.setupHead = fixture.baseSHA
@@ -1088,8 +1260,8 @@ func (fixture *uninstallFixture) serve(t *testing.T, writer http.ResponseWriter,
 		fixture.cleanupClosed = true
 		writeUninstallJSON(t, writer, fixture.pullJSON(t))
 	case request.Method == http.MethodGet && path == "/repos/owner/repo/pulls/17/files":
-		files := make([]map[string]any, 0, len(fixture.files))
-		for _, relative := range fixture.files {
+		files := make([]map[string]any, 0, len(fixture.cleanupFiles))
+		for _, relative := range fixture.cleanupFiles {
 			files = append(files, map[string]any{"filename": relative, "status": "removed"})
 		}
 		writeUninstallJSON(t, writer, files)
@@ -1234,7 +1406,7 @@ func (fixture *uninstallFixture) setupPullJSON() map[string]any {
 		"merge_commit_sha": fixture.baseSHA, "title": "Install Hive + Visual Hive production automation",
 		"body": "<!-- hive-setup: owner/repo -->\nsetup", "changed_files": len(fixture.files),
 		"head": map[string]any{"ref": "hive/setup-123", "sha": fixture.setupHead, "repo": repository},
-		"base": map[string]any{"ref": "main", "sha": fixture.baseSHA, "repo": repository},
+		"base": map[string]any{"ref": "main", "sha": fixture.setupBaseSHA, "repo": repository},
 	}
 }
 
@@ -1256,7 +1428,7 @@ func (fixture *uninstallFixture) pullJSON(t *testing.T) map[string]any {
 	repository := map[string]any{"id": 123, "full_name": "owner/repo"}
 	return map[string]any{
 		"number": 17, "html_url": "https://example.test/owner/repo/pull/17", "state": state, "merged": fixture.merged,
-		"merge_commit_sha": fixture.mergeSHA, "title": fixture.title, "body": fixture.body, "changed_files": len(fixture.files),
+		"merge_commit_sha": fixture.mergeSHA, "title": fixture.title, "body": fixture.body, "changed_files": len(fixture.cleanupFiles),
 		"head": map[string]any{"ref": branch, "sha": head, "repo": repository},
 		"base": map[string]any{"ref": "main", "sha": fixture.baseSHA, "repo": repository},
 	}

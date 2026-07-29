@@ -286,6 +286,13 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 				}
 			}
 		}
+		if !unmergedSetupTargetClean {
+			baselinePaths, restoreErr := restoreSetupBaselinePreimages(ctx, options.GitHub, config.CheckoutDir, config)
+			if restoreErr != nil {
+				return result, fmt.Errorf("restore setup baseline preimages during uninstall: %w", restoreErr)
+			}
+			managed = sortedUniquePaths(append(managed, baselinePaths...))
+		}
 		title = uninstallTitle()
 	}
 	if err := authorizeSetup(store, policy, config.Repository, automation.ActionSetupCommit); err != nil {
