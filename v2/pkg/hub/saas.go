@@ -176,6 +176,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/admin/hub-banner", s.requireAdmin(s.handleSendHubBanner))
 	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
 	s.mux.HandleFunc("GET /api/saas/admin/hub-banner", s.requireAdmin(s.handleGetHubBanner))
+	s.registerBulkRoutes()
 
 	// Under `go test` these long-lived pollers leak across test cases: they
 	// immediately hit the GitHub API and read the package-level saas path
@@ -5509,6 +5510,7 @@ const dashboardHTML = `<!DOCTYPE html>
     <div id="hive-drift-summary" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
     <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
+    <div id="bulk-action-bar" style="display:none"></div>
     <div id="hives-container"><div class="loading">Loading your hives...</div></div>
 
     <div id="public-hives-section" style="display:none;margin-top:48px">
@@ -6742,6 +6744,233 @@ const dashboardHTML = `<!DOCTYPE html>
       return h.provStatus === 'available' || (!!h.org && h.org.indexOf('available-') === 0);
     }
 
+    /* ---------- Bulk multi-select actions ----------
+       _bulkSelected is the authoritative selection, keyed by hive id, so it
+       survives re-render, re-sort and filter changes: the checkbox state is
+       derived from this map on every render rather than read back out of the
+       DOM. Ids that are no longer visible are pruned in syncBulkSelection so a
+       hidden hive can never be swept into a bulk action the user cannot see. */
+    var _bulkSelected = {};
+
+    /* Client-side mirror of the server's maxBulkHivesPerRequest. The server is
+       the enforcing authority; this only gives a better message than a 400. */
+    var BULK_MAX_HIVES = 100;
+
+    /* Actions that disrupt a running hive and therefore require confirmation
+       naming the count. Auto-upgrade toggles only change a stored preference,
+       so they are not in this set. */
+    var BULK_DISRUPTIVE_ACTIONS = {'restart': 1, 'upgrade': 1, 'switch-branch': 1};
+
+    /* Only hosted hives the user owns (or any hosted hive, for the hub admin)
+       can be targeted — the same predicate the single-hive buttons use. Local
+       hives have no hub-managed deployment to restart, and unassigned
+       placeholders have nothing running yet. */
+    function isBulkEligible(h) {
+      if (!h || !h.id) return false;
+      if (isPlaceholderHive(h)) return false;
+      var isHosted = h.hiveType === 'hosted' || (h.id.indexOf('hosted-') === 0 || h.id.indexOf('saas-') === 0);
+      if (!isHosted) return false;
+      return h.role === 'owner' || _isAdmin;
+    }
+
+    function bulkSelectedIds() {
+      var out = [];
+      for (var k in _bulkSelected) { if (_bulkSelected[k]) out.push(k); }
+      return out;
+    }
+
+    /* Drop selections for hives that are no longer present/eligible in the
+       current view. Called at the top of every render so the count in the bulk
+       bar always matches what is actually on screen. */
+    function syncBulkSelection(visibleHives) {
+      var live = {};
+      var list = visibleHives || [];
+      for (var i = 0; i < list.length; i++) {
+        if (isBulkEligible(list[i])) live[list[i].id] = true;
+      }
+      for (var k in _bulkSelected) {
+        if (!live[k]) delete _bulkSelected[k];
+      }
+    }
+
+    function toggleBulkHive(id, checked) {
+      if (checked) _bulkSelected[id] = true; else delete _bulkSelected[id];
+      renderBulkBar();
+      syncBulkSectionHeaderBoxes();
+    }
+
+    /* Select-all is per section (Assigned / Unassigned) so an admin cannot
+       accidentally sweep the whole page from one box. section is the key used
+       by the header checkbox id. */
+    function toggleBulkSection(section, checked) {
+      var boxes = document.querySelectorAll('input[type=checkbox][data-bulk-section="' + section + '"]');
+      for (var i = 0; i < boxes.length; i++) {
+        var id = boxes[i].getAttribute('data-bulk-id');
+        if (!id) continue;
+        boxes[i].checked = checked;
+        if (checked) _bulkSelected[id] = true; else delete _bulkSelected[id];
+      }
+      renderBulkBar();
+    }
+
+    /* Put each section header box into checked / indeterminate / unchecked to
+       match its rows. */
+    function syncBulkSectionHeaderBoxes() {
+      var heads = document.querySelectorAll('input[type=checkbox][data-bulk-section-head]');
+      for (var i = 0; i < heads.length; i++) {
+        var section = heads[i].getAttribute('data-bulk-section-head');
+        var boxes = document.querySelectorAll('input[type=checkbox][data-bulk-section="' + section + '"]');
+        var total = boxes.length, sel = 0;
+        for (var j = 0; j < boxes.length; j++) {
+          if (_bulkSelected[boxes[j].getAttribute('data-bulk-id')]) sel++;
+        }
+        heads[i].checked = total > 0 && sel === total;
+        heads[i].indeterminate = sel > 0 && sel < total;
+      }
+    }
+
+    function clearBulkSelection() {
+      _bulkSelected = {};
+      var boxes = document.querySelectorAll('input[type=checkbox][data-bulk-id]');
+      for (var i = 0; i < boxes.length; i++) { boxes[i].checked = false; }
+      renderBulkBar();
+      syncBulkSectionHeaderBoxes();
+    }
+
+    /* Row checkbox markup. section scopes it to a select-all group. */
+    function bulkCheckboxCell(h, section) {
+      if (!isBulkEligible(h)) {
+        return '<td style="width:26px;text-align:center"></td>';
+      }
+      var checked = _bulkSelected[h.id] ? ' checked' : '';
+      return '<td style="width:26px;text-align:center">' +
+        '<input type="checkbox" data-bulk-id="' + esc(h.id) + '" data-bulk-section="' + esc(section) + '"' + checked +
+        ' onclick="event.stopPropagation()" onchange="toggleBulkHive(\'' + esc(h.id) + '\',this.checked)"' +
+        ' title="Select for bulk actions" style="cursor:pointer"></td>';
+    }
+
+    function bulkSectionCheckbox(section) {
+      return '<input type="checkbox" data-bulk-section-head="' + esc(section) + '"' +
+        ' onchange="toggleBulkSection(\'' + esc(section) + '\',this.checked)"' +
+        ' title="Select all in this section" style="cursor:pointer;margin-right:8px;vertical-align:middle">';
+    }
+
+    function renderBulkBar() {
+      var bar = document.getElementById('bulk-action-bar');
+      if (!bar) return;
+      var ids = bulkSelectedIds();
+      if (!ids.length) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+      var btn = 'padding:5px 12px;border-radius:4px;cursor:pointer;font-size:0.72rem;white-space:nowrap;border:1px solid var(--border);background:var(--surface);color:var(--text)';
+      var over = ids.length > BULK_MAX_HIVES;
+      var branchOpts = '';
+      var branches = _trackedBranchesList.length > 0 ? _trackedBranchesList : Object.keys(_latestSHAs);
+      for (var bi = 0; bi < branches.length; bi++) {
+        branchOpts += '<option value="' + esc(branches[bi]) + '">' + esc(branches[bi]) + '</option>';
+      }
+      var branchPicker = branches.length > 0
+        ? '<select id="bulk-branch-select" style="' + btn + ';padding:4px 8px"><option value="">Switch branch…</option>' + branchOpts + '</select>'
+        : '';
+      bar.innerHTML =
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;' +
+        'background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.3);border-radius:8px">' +
+        '<strong style="font-size:0.8rem;color:#60a5fa">' + ids.length + (ids.length === 1 ? ' hive' : ' hives') + ' selected</strong>' +
+        (over ? '<span style="font-size:0.72rem;color:var(--red)">Over the ' + BULK_MAX_HIVES + '-hive limit — deselect some.</span>' : '') +
+        '<span style="flex:1"></span>' +
+        '<button type="button" onclick="runBulkAction(\'restart\')" style="' + btn + '">Restart</button>' +
+        '<button type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
+        '<button type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto-upgrade on</button>' +
+        '<button type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
+        branchPicker +
+        '<button type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
+        '</div>';
+      bar.style.display = '';
+      var sel = document.getElementById('bulk-branch-select');
+      if (sel) {
+        sel.onchange = function() {
+          var b = sel.value;
+          sel.value = '';
+          if (b) runBulkAction('switch-branch', b);
+        };
+      }
+    }
+
+    var BULK_ACTION_LABELS = {
+      'restart': 'Restart',
+      'upgrade': 'Upgrade to latest',
+      'enable-auto-upgrade': 'Enable auto-upgrade on',
+      'disable-auto-upgrade': 'Disable auto-upgrade on',
+      'switch-branch': 'Switch branch for'
+    };
+
+    async function runBulkAction(action, branch) {
+      var ids = bulkSelectedIds();
+      if (!ids.length) { hiveToast('No hives selected', 'error'); return; }
+      if (ids.length > BULK_MAX_HIVES) {
+        hiveToast('Select at most ' + BULK_MAX_HIVES + ' hives per bulk action', 'error');
+        return;
+      }
+      var label = BULK_ACTION_LABELS[action] || action;
+      var noun = ids.length === 1 ? 'hive' : 'hives';
+      /* Confirmation names BOTH the action and the count — restarting a batch
+         of live hives must never be one misclick. Disruptive actions also list
+         the hives so the user can see exactly what is in the batch. */
+      if (BULK_DISRUPTIVE_ACTIONS[action]) {
+        var names = ids.slice(0, 10).map(function(i) { return esc(i); }).join('<br>');
+        if (ids.length > 10) names += '<br>… and ' + (ids.length - 10) + ' more';
+        var msg = '<strong>' + esc(label) + (branch ? ' ' + esc(branch) : '') + '</strong> on <strong>' +
+          ids.length + ' ' + noun + '</strong>?<br><br>' +
+          '<div style="font-family:monospace;font-size:0.75rem;color:var(--muted);text-align:left;max-height:180px;overflow:auto">' + names + '</div>';
+        if (!await hiveConfirm(msg, true)) return;
+      }
+      hiveToast(label + ' — ' + ids.length + ' ' + noun + '…', 'info');
+      try {
+        var resp = await fetch('/api/saas/hives/bulk', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: action, hive_ids: ids, branch: branch || ''})
+        });
+        var data = await resp.json();
+        if (!resp.ok) { hiveToast((data && data.error) || 'Bulk action failed', 'error'); return; }
+        showBulkResults(label, data);
+        clearBulkSelection();
+        loadHives();
+        setTimeout(loadHives, 10000);
+        setTimeout(loadHives, 30000);
+        setTimeout(loadHives, 60000);
+      } catch(e) {
+        hiveToast('Error: ' + e.message, 'error');
+      }
+    }
+
+    /* Partial failure is the normal case, so always show the per-hive
+       breakdown rather than a single success toast: the user needs to know
+       WHICH hives failed and why. */
+    function showBulkResults(label, data) {
+      var results = (data && data.results) || [];
+      var ok = data.succeeded || 0, failed = data.failed || 0;
+      var failedRows = '';
+      var heartbeatCount = 0;
+      for (var i = 0; i < results.length; i++) {
+        var r = results[i] || {};
+        if (r.ok) { if (r.via === 'heartbeat') heartbeatCount++; continue; }
+        failedRows += '<div style="display:flex;gap:8px;padding:3px 0;font-size:0.72rem">' +
+          '<span style="font-family:monospace;color:var(--red);flex:none">' + esc(r.hive_id || '?') + '</span>' +
+          '<span style="color:var(--muted)">' + esc(r.error || 'failed') + '</span></div>';
+      }
+      if (!failed) {
+        var extra = heartbeatCount
+          ? ' (' + heartbeatCount + ' queued for delivery on next check-in)'
+          : '';
+        hiveToast(label + ': ' + ok + ' succeeded' + extra, 'success');
+        return;
+      }
+      hiveConfirm('<strong>' + esc(label) + '</strong><br><br>' +
+        '<span style="color:var(--green)">' + ok + ' succeeded</span>' +
+        (heartbeatCount ? ' <span style="color:var(--muted);font-size:0.75rem">(' + heartbeatCount + ' via heartbeat)</span>' : '') +
+        ' &nbsp; <span style="color:var(--red)">' + failed + ' failed</span>' +
+        '<div style="margin-top:10px;text-align:left;max-height:220px;overflow:auto">' + failedRows + '</div>', true);
+    }
+
     function renderHives(allHives, force) {
       allHives = allHives || [];
       /* The signature must include the active filters, otherwise toggling a
@@ -6762,6 +6991,12 @@ const dashboardHTML = `<!DOCTYPE html>
       var hives = applyDashFilters(assignedAll).concat(unassignedAll);
       var filterBar = document.getElementById('hive-filter-bar');
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
+      /* Nothing renderable below means no rows to act on — drop the selection
+         so the bulk bar can't linger over an empty or fully-filtered table. */
+      if (!allHives.length || !hives.length) {
+        _bulkSelected = {};
+        renderBulkBar();
+      }
       /* Counts are over the assigned set only, matching what the chips filter. */
       renderStatusFilterBar(assignedAll, hives.length - unassignedAll.length);
       /* Drift exceptions are scoped to assigned hives for the same reason: a
@@ -6789,8 +7024,11 @@ const dashboardHTML = `<!DOCTYPE html>
           '</div>';
         return;
       }
+      /* Prune selections for hives that are no longer visible BEFORE building
+         rows, so the checkbox state and the bulk bar's count agree. */
+      syncBulkSelection(hives);
       var repoPath = function(h) { return h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : h.primaryRepo || ''; };
-      var buildRow = function(h, i) {
+      var buildRow = function(h, i, section) {
         var dot = h.online ? healthBadge(h) : '<span class="online-dot off"></span>';
         var rp = repoPath(h);
         var repoLink = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '';
@@ -6916,8 +7154,10 @@ const dashboardHTML = `<!DOCTYPE html>
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write')) {
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
-        // 14 = the 13 original columns plus Uptime.
-        var TOTAL_COLUMNS = 15;
+        // 16 = the 13 original columns, plus Uptime, plus Drift, plus the
+        // bulk-select column. Counted against the <th> cells in the header and
+        // the <td> cells emitted below (bulkCheckboxCell contributes one).
+        var TOTAL_COLUMNS = 16;
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
@@ -6937,6 +7177,7 @@ const dashboardHTML = `<!DOCTYPE html>
           pendingExpandRow = '<tr id="pending-row-' + esc(h.id) + '" style="display:none"><td colspan="' + TOTAL_COLUMNS + '"><div style="padding:8px 16px;background:rgba(59,130,246,0.05);border-radius:6px;margin:4px 0">' + prItems + '</div></td></tr>';
         }
         return '<tr>' +
+          bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
           '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + fcPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + fcPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + (isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName)) + '</td>' +
@@ -6958,13 +7199,16 @@ const dashboardHTML = `<!DOCTYPE html>
          match the table's muted uppercase heading treatment (see .hive-table th). */
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
-         and the table visibly ragged. Bumped from 14 when the Drift column
-         was added. */
-      var TOTAL_COLUMNS_HEADER = 15;
-      var sectionHeader = function(label, count) {
+         and the table visibly ragged. 15 with the Drift column, plus one more
+         for the bulk-select column added here. */
+      var TOTAL_COLUMNS_HEADER = 16;
+      /* section, when given, adds a select-all checkbox scoped to THIS
+         section's rows only (Assigned and Unassigned select independently). */
+      var sectionHeader = function(label, count, section) {
         return '<tr class="hive-section-head"><td colspan="' + TOTAL_COLUMNS_HEADER + '" ' +
           'style="padding:14px 12px 6px;color:var(--muted);font-weight:600;font-size:0.75rem;' +
           'text-transform:uppercase;letter-spacing:0.5px;text-align:left">' +
+          (section ? bulkSectionCheckbox(section) : '') +
           esc(label) + ' (' + count + ')</td></tr>';
       };
       var rows;
@@ -6984,22 +7228,31 @@ const dashboardHTML = `<!DOCTYPE html>
         var _idx = 0;
         rows = '';
         if (assigned.length > 0) {
-          rows += sectionHeader('Assigned hives', assigned.length);
-          for (var _ai = 0; _ai < assigned.length; _ai++) { rows += buildRow(assigned[_ai], _idx++); }
+          rows += sectionHeader('Assigned hives', assigned.length, 'assigned');
+          for (var _ai = 0; _ai < assigned.length; _ai++) { rows += buildRow(assigned[_ai], _idx++, 'assigned'); }
         }
         if (unassigned.length > 0) {
+          /* Unassigned placeholders are never bulk-eligible (nothing is
+             running yet), so the section gets no select-all box. */
           rows += sectionHeader('Unassigned hives', unassigned.length);
-          for (var _ui = 0; _ui < unassigned.length; _ui++) { rows += buildRow(unassigned[_ui], _idx++); }
+          for (var _ui = 0; _ui < unassigned.length; _ui++) { rows += buildRow(unassigned[_ui], _idx++, 'unassigned'); }
         }
       } else {
         /* Non-admin: single flat list, exactly as before. */
-        rows = hives.map(buildRow).join('');
+        rows = hives.map(function(h, i) { return buildRow(h, i, 'all'); }).join('');
       }
       document.getElementById('hives-container').innerHTML =
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
+        /* Non-admin lists have no section headers, so the flat list's
+           select-all lives in the table head instead. */
+        '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
         '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '<th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      /* Re-derive the bar and the select-all tri-state from _bulkSelected now
+         that the fresh checkboxes exist in the DOM. */
+      renderBulkBar();
+      syncBulkSectionHeaderBoxes();
       setTimeout(function() {
         var tw = document.querySelector('.table-wrap');
         if (tw && tw.scrollWidth > tw.clientWidth) tw.classList.add('has-scroll');
