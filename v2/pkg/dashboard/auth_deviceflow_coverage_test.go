@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,7 @@ func dfServer(t *testing.T, tokenStatus, login string) (*Server, *Dependencies, 
 	t.Helper()
 	mock := deviceFlowMock(t, tokenStatus, login)
 	s := NewServerWithAuth(0, "authsecret", dfLogger())
+	s.userTokenPath = filepath.Join(t.TempDir(), "gh-user-token")
 	deps := testDeps(t)
 	deps.Config.GitHub.OAuthClientID = "Ov23liTest"
 	deps.Config.GitHub.BaseURL = mock.URL

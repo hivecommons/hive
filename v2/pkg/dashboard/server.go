@@ -122,6 +122,10 @@ type Server struct {
 
 	deviceFlowMu    sync.Mutex
 	deviceFlowState *github.DeviceFlowState
+	// userTokenPath is empty in production, which selects the durable default.
+	// Tests set a per-server path so authentication cases cannot share or
+	// overwrite a process-global credential file.
+	userTokenPath string
 
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.

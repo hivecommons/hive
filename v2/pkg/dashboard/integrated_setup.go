@@ -100,7 +100,7 @@ func (s *Server) authorizeIntegratedOwner(w http.ResponseWriter, r *http.Request
 		return "", "", false
 	}
 	tokenLoader := func() (string, error) {
-		tokenData, err := os.ReadFile(userTokenPath)
+		tokenData, err := os.ReadFile(s.resolvedUserTokenPath())
 		return strings.TrimSpace(string(tokenData)), err
 	}
 	if s.deps.IntegratedSetupTokenFunc != nil {
