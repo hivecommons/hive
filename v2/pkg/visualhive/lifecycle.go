@@ -2,6 +2,7 @@ package visualhive
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -116,6 +117,85 @@ type RetiredRepair struct {
 	VerdictReceipt        json.RawMessage `json:"verdict_receipt"`
 	VerdictReceiptSHA256  string          `json:"verdict_receipt_sha256"`
 	RetiredAt             time.Time       `json:"retired_at"`
+}
+
+// MarshalJSON stores the canonical failed-verdict receipt as an escaped JSON
+// string. The lifecycle envelope is written with json.MarshalIndent, which
+// otherwise rewrites whitespace inside json.RawMessage and invalidates the
+// digest that binds the receipt's exact bytes.
+func (retired RetiredRepair) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		PullRequestNumber     int       `json:"pull_request_number"`
+		PullRequestURL        string    `json:"pull_request_url"`
+		Branch                string    `json:"branch"`
+		HeadSHA               string    `json:"head_sha"`
+		BaseBranch            string    `json:"base_branch"`
+		BaseSHA               string    `json:"base_sha"`
+		CurrentDefaultHeadSHA string    `json:"current_default_head_sha"`
+		VerdictReceipt        string    `json:"verdict_receipt"`
+		VerdictReceiptSHA256  string    `json:"verdict_receipt_sha256"`
+		RetiredAt             time.Time `json:"retired_at"`
+	}{
+		PullRequestNumber:     retired.PullRequestNumber,
+		PullRequestURL:        retired.PullRequestURL,
+		Branch:                retired.Branch,
+		HeadSHA:               retired.HeadSHA,
+		BaseBranch:            retired.BaseBranch,
+		BaseSHA:               retired.BaseSHA,
+		CurrentDefaultHeadSHA: retired.CurrentDefaultHeadSHA,
+		VerdictReceipt:        string(retired.VerdictReceipt),
+		VerdictReceiptSHA256:  retired.VerdictReceiptSHA256,
+		RetiredAt:             retired.RetiredAt,
+	})
+}
+
+// UnmarshalJSON accepts both the exact-string encoding and the object encoding
+// emitted by the pre-fix candidate. The latter is compacted before validation
+// so an already-retired proposal can be recovered without direct state edits.
+func (retired *RetiredRepair) UnmarshalJSON(data []byte) error {
+	var encoded struct {
+		PullRequestNumber     int             `json:"pull_request_number"`
+		PullRequestURL        string          `json:"pull_request_url"`
+		Branch                string          `json:"branch"`
+		HeadSHA               string          `json:"head_sha"`
+		BaseBranch            string          `json:"base_branch"`
+		BaseSHA               string          `json:"base_sha"`
+		CurrentDefaultHeadSHA string          `json:"current_default_head_sha"`
+		VerdictReceipt        json.RawMessage `json:"verdict_receipt"`
+		VerdictReceiptSHA256  string          `json:"verdict_receipt_sha256"`
+		RetiredAt             time.Time       `json:"retired_at"`
+	}
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		return err
+	}
+	var receipt json.RawMessage
+	trimmedReceipt := bytes.TrimSpace(encoded.VerdictReceipt)
+	if len(trimmedReceipt) > 0 && trimmedReceipt[0] == '"' {
+		var exact string
+		if err := json.Unmarshal(trimmedReceipt, &exact); err != nil {
+			return fmt.Errorf("decode retired repair verdict receipt: %w", err)
+		}
+		receipt = json.RawMessage(exact)
+	} else {
+		var compacted bytes.Buffer
+		if err := json.Compact(&compacted, trimmedReceipt); err != nil {
+			return fmt.Errorf("compact legacy retired repair verdict receipt: %w", err)
+		}
+		receipt = json.RawMessage(compacted.String())
+	}
+	*retired = RetiredRepair{
+		PullRequestNumber:     encoded.PullRequestNumber,
+		PullRequestURL:        encoded.PullRequestURL,
+		Branch:                encoded.Branch,
+		HeadSHA:               encoded.HeadSHA,
+		BaseBranch:            encoded.BaseBranch,
+		BaseSHA:               encoded.BaseSHA,
+		CurrentDefaultHeadSHA: encoded.CurrentDefaultHeadSHA,
+		VerdictReceipt:        receipt,
+		VerdictReceiptSHA256:  encoded.VerdictReceiptSHA256,
+		RetiredAt:             encoded.RetiredAt,
+	}
+	return nil
 }
 
 type failedPullRequestReceiptIdentity struct {

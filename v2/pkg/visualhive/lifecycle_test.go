@@ -2,6 +2,7 @@ package visualhive
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -252,7 +253,8 @@ func TestLifecycleIssuePRMergeCloseAndRecurrence(t *testing.T) {
 func TestLifecycleRetiredRepairRequiresFreshAuthoritativeAbsence(t *testing.T) {
 	root := t.TempDir()
 	beadStore := newTestBeadStore(t, filepath.Join(root, "beads"))
-	lifecycle, err := NewLifecycleStore(filepath.Join(root, "lifecycle"))
+	lifecyclePath := filepath.Join(root, "lifecycle")
+	lifecycle, err := NewLifecycleStore(lifecyclePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,6 +293,10 @@ func TestLifecycleRetiredRepairRequiresFreshAuthoritativeAbsence(t *testing.T) {
 	}
 	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err != nil {
 		t.Fatalf("exact retirement replay was not idempotent: %v", err)
+	}
+	lifecycle, err = NewLifecycleStore(lifecyclePath)
+	if err != nil {
+		t.Fatalf("reload exact retired repair history: %v", err)
 	}
 	finding, _ := lifecycle.Finding(fingerprint)
 	if finding.Status != StatusIssueOpen || finding.IssueNumber != 101 || finding.RepairAttempts != 1 ||
@@ -357,6 +363,47 @@ func TestLifecycleRepairRetirementFailsClosedOnWrongReceiptOrUnchangedHead(t *te
 	finding, _ := lifecycle.Finding(fingerprint)
 	if finding.Status != StatusNeedsRevision || finding.PRNumber != 8 {
 		t.Fatalf("denied retirement mutated lifecycle: %+v", finding)
+	}
+}
+
+func TestRetiredRepairExactReceiptSurvivesIndentedPersistenceAndLegacyReload(t *testing.T) {
+	finding := FindingLifecycle{Repository: "owner/repo", RepositoryID: "123"}
+	retired := RetiredRepair{
+		PullRequestNumber: 8, PullRequestURL: "https://example.test/pull/8", Branch: "hive/repair-proof",
+		HeadSHA: strings.Repeat("b", 40), BaseBranch: "main", BaseSHA: strings.Repeat("c", 40),
+		CurrentDefaultHeadSHA: strings.Repeat("d", 40), RetiredAt: time.Unix(1, 0).UTC(),
+	}
+	retired.VerdictReceipt, retired.VerdictReceiptSHA256 = failedRetirementReceipt(t, finding, retired)
+
+	current, err := json.MarshalIndent(retired, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(current, []byte(`"verdict_receipt": "{\"schema_version\"`)) {
+		t.Fatalf("exact receipt was not persisted as an escaped byte-preserving string: %s", current)
+	}
+	var currentReload RetiredRepair
+	if err := json.Unmarshal(current, &currentReload); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRetiredRepairHistory(currentReload); err != nil {
+		t.Fatalf("current exact receipt did not survive indented persistence: %v", err)
+	}
+
+	type legacyRetiredRepair RetiredRepair
+	legacy, err := json.MarshalIndent(legacyRetiredRepair(retired), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(legacy, []byte(`"verdict_receipt": {`)) {
+		t.Fatalf("legacy fixture did not reproduce the indented object encoding: %s", legacy)
+	}
+	var legacyReload RetiredRepair
+	if err := json.Unmarshal(legacy, &legacyReload); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRetiredRepairHistory(legacyReload); err != nil {
+		t.Fatalf("legacy indented receipt was not recovered to its exact canonical bytes: %v", err)
 	}
 }
 
