@@ -342,6 +342,13 @@ if [ "$(id -u)" = "0" ]; then
   # codex backend fails with "Permission denied" initializing state_N.sqlite.
   chmod 2775 /data/home/.codex 2>/dev/null || true
   chown -R dev:node /data/home/.codex 2>/dev/null || true
+  # A persisted `codex login` writes auth.json with mode 0600. Per-agent
+  # CODEX_HOME directories symlink to this shared credential, so normalize an
+  # existing ordinary file before isolated agent UIDs can start.
+  if [ -f /data/home/.codex/auth.json ] && [ ! -L /data/home/.codex/auth.json ]; then
+    chown dev:node /data/home/.codex/auth.json 2>/dev/null || true
+    chmod 0660 /data/home/.codex/auth.json 2>/dev/null || true
+  fi
   # The dashboard process keeps HOME=/home/dev, while authenticated CLI state
   # lives on the persistent volume. Give controller-owned Codex health checks
   # the explicit bounded home instead of symlinking credential directories or

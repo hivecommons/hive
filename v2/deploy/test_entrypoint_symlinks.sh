@@ -49,6 +49,12 @@ assert_contains "$ENTRYPOINT" \
 assert_contains "$ENTRYPOINT" \
   'export CODEX_HOME="${CODEX_HOME:-/data/home/.codex}"' \
   "Codex controller health uses persistent bounded auth home"
+assert_contains "$ENTRYPOINT" \
+  'chmod 0660 /data/home/.codex/auth.json' \
+  "persisted Codex login remains readable by isolated agent UIDs"
+assert_contains "$ENTRYPOINT" \
+  '[ ! -L /data/home/.codex/auth.json ]' \
+  "Codex credential normalization rejects linked auth paths"
 
 # 4. ~/.config/github-copilot symlink must still exist (pre-existing)
 assert_contains "$ENTRYPOINT" \
