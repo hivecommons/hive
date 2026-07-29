@@ -429,11 +429,11 @@ func newManagerWithUIDMap(agents map[string]config.AgentConfig, logger *slog.Log
 			}
 		}
 		m.agents[name] = &AgentProcess{
-			Name:         name,
-			ID:           agentID,
-			Config:       cfg,
-			State:        StateStopped,
-			UID:          agentUID,
+			Name:   name,
+			ID:     agentID,
+			Config: cfg,
+			State:  StateStopped,
+			UID:    agentUID,
 			// Restore a persisted operator pause so a restart/upgrade
 			// doesn't silently un-pause the agent.
 			Paused:       cfg.Paused,

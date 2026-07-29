@@ -1333,6 +1333,57 @@ func TestHandleSaaSAuthCheckWithFilesystem(t *testing.T) {
 	}
 }
 
+// TestHandleSaaSAuthCheckProxyAuthHeader asserts the F2 hub-half proof header:
+// on the authenticated SUCCESS path the hub sets X-Hive-Proxy-Auth to the
+// hive's dashboard token (the spoke's own authToken), and it is NEVER set on
+// the unauthenticated (401) path.
+func TestHandleSaaSAuthCheckProxyAuthHeader(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	// Fake kubectl so loadSpokeAuthToken resolves the dashboard token.
+	const wantToken = "proxy-auth-dash-token"
+	installSecretKubectl(t, "-----BEGIN X-----", wantToken)
+
+	authCleanup := helperSetupAuthUser(t, "ghp_proxyauth", "proxyauth-user")
+	defer authCleanup()
+
+	u := ensureSaaSUser("proxyauth-user")
+	u.Hives["proxy-hive"] = "admin"
+	saveSaaSUser(u)
+
+	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	// The hive must be in the registry with a known cluster so the hub can
+	// resolve its dashboard token in the auth-check handler.
+	srv.registry.Hives = []RegistryEntry{{ID: "proxy-hive", ClusterID: "hive-oke"}}
+	srv.clusters = map[string]ClusterConfig{"hive-oke": {ID: "hive-oke"}}
+
+	// SUCCESS path: header set to the dashboard token.
+	req := httptest.NewRequest("GET", "/api/saas/auth-check?hive=proxy-hive", nil)
+	req.Header.Set("Authorization", "Bearer ghp_proxyauth")
+	w := httptest.NewRecorder()
+	srv.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if got := w.Header().Get("X-Hive-Proxy-Auth"); got != wantToken {
+		t.Errorf("X-Hive-Proxy-Auth = %q, want %q", got, wantToken)
+	}
+
+	// FAILURE path: no credentials → 401 and NO proof header.
+	reqNoAuth := httptest.NewRequest("GET", "/api/saas/auth-check?hive=proxy-hive", nil)
+	wNoAuth := httptest.NewRecorder()
+	srv.mux.ServeHTTP(wNoAuth, reqNoAuth)
+
+	if wNoAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", wNoAuth.Code)
+	}
+	if got := wNoAuth.Header().Get("X-Hive-Proxy-Auth"); got != "" {
+		t.Errorf("X-Hive-Proxy-Auth set on 401 path = %q, want empty", got)
+	}
+}
+
 func TestHandleSaaSAuthCheckNoAccess(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
