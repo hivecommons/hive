@@ -5896,10 +5896,13 @@ const dashboardHTML = `<!DOCTYPE html>
           esc(c.label) + '<span class="filter-chip-count">' + counts[c.key] + '</span></button>';
       }).join('');
       var anyActive = Object.keys(_dashStatusFilters || {}).length > 0;
+      /* allHives here is the ASSIGNED set — the caller scopes it, because the
+         chips never filter unassigned placeholders. Say "assigned" so the count
+         is not read as the whole fleet. */
       var total = (allHives || []).length;
       var summary = anyActive
-        ? 'Showing ' + shownCount + ' of ' + total + ' hives'
-        : total + (total === 1 ? ' hive' : ' hives');
+        ? 'Showing ' + shownCount + ' of ' + total + ' assigned hives'
+        : total + (total === 1 ? ' assigned hive' : ' assigned hives');
       var clearBtn = anyActive
         ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearStatusFilters()">Clear filters</button>'
         : '';
@@ -6127,6 +6130,16 @@ const dashboardHTML = `<!DOCTYPE html>
       }
     }
 
+    /* isPlaceholderHive identifies an UNASSIGNED pool slot: provStatus
+       'available' is authoritative, with an 'available-*' org prefix as the
+       fallback for placeholders that have not reported provStatus yet. Shared by
+       the status-filter scoping and the Assigned/Unassigned section split so the
+       two can never disagree about what counts as a placeholder. */
+    function isPlaceholderHive(h) {
+      if (!h) return false;
+      return h.provStatus === 'available' || (!!h.org && h.org.indexOf('available-') === 0);
+    }
+
     function renderHives(allHives, force) {
       allHives = allHives || [];
       /* The signature must include the active filters, otherwise toggling a
@@ -6134,10 +6147,21 @@ const dashboardHTML = `<!DOCTYPE html>
       var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters);
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
-      var hives = applyDashFilters(allHives);
+      /* Status filters describe ASSIGNED hives only. An unassigned placeholder
+         has no GitHub App, no tokens and no real health to speak of, so every
+         chip would appear to "hide" the whole pool — and filtering to e.g.
+         Degraded made the Unassigned section vanish, which reads as the
+         placeholders having been deleted. Split first, filter only the assigned
+         side, and leave the pool alone. */
+      var assignedAll = [], unassignedAll = [];
+      for (var _si = 0; _si < allHives.length; _si++) {
+        (isPlaceholderHive(allHives[_si]) ? unassignedAll : assignedAll).push(allHives[_si]);
+      }
+      var hives = applyDashFilters(assignedAll).concat(unassignedAll);
       var filterBar = document.getElementById('hive-filter-bar');
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
-      renderStatusFilterBar(allHives, hives.length);
+      /* Counts are over the assigned set only, matching what the chips filter. */
+      renderStatusFilterBar(assignedAll, hives.length - unassignedAll.length);
       if (!allHives.length) {
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
@@ -6148,11 +6172,12 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       if (!hives.length) {
         /* Hives exist, but every one was filtered out — say so, and offer the
-           way back rather than looking like the list failed to load. */
+           way back rather than looking like the list failed to load. Only
+           assigned hives can be hidden, so report that count, not the total. */
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives match these filters</p>' +
-          '<p>' + allHives.length + (allHives.length === 1 ? ' hive is' : ' hives are') + ' hidden by the status filters above.</p>' +
+          '<p>' + assignedAll.length + (assignedAll.length === 1 ? ' hive is' : ' hives are') + ' hidden by the status filters above.</p>' +
           '<p style="margin-top:12px"><button type="button" class="filter-chip filter-chip-clear" onclick="clearStatusFilters()">Clear filters</button></p>' +
           '</div>';
         return;
@@ -6338,9 +6363,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var assigned = [], unassigned = [];
         for (var _hi = 0; _hi < hives.length; _hi++) {
           var _h = hives[_hi];
-          var _isPlaceholder = _h.provStatus === 'available' ||
-            (_h.org && _h.org.indexOf('available-') === 0);
-          if (_isPlaceholder) unassigned.push(_h); else assigned.push(_h);
+          if (isPlaceholderHive(_h)) unassigned.push(_h); else assigned.push(_h);
         }
         /* Global running index across BOTH groups so menu ids (hive-menu-<i>)
            never collide between sections and the ⋮ dropdowns keep working. */
