@@ -174,13 +174,16 @@ func TestHoverPanelReusesSharedRoleColor(t *testing.T) {
 }
 
 // TestHiveTableColumnCountUnchanged asserts the inline avatars did NOT add a
-// column. They live inside the existing name cell precisely so the 17-column
+// column. They live inside the existing name cell precisely so the 16-column
 // header, the section-header colspan and the pending-expand colspan all stay
 // correct; a stale count leaves the table visibly ragged.
+//
+// 16, not 17: the standalone Public column was folded into Location, where
+// visibility now stacks beneath the location badge.
 func TestHiveTableColumnCountUnchanged(t *testing.T) {
 	for _, snippet := range []string{
-		"var TOTAL_COLUMNS = 17;",
-		"var TOTAL_COLUMNS_HEADER = 17;",
+		"var TOTAL_COLUMNS = 16;",
+		"var TOTAL_COLUMNS_HEADER = 16;",
 	} {
 		if !strings.Contains(dashboardHTML, snippet) {
 			t.Errorf("dashboardHTML is missing %q — did the hive table gain or lose a column?", snippet)

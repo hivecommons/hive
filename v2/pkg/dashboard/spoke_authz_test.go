@@ -177,6 +177,54 @@ func TestMiddleware_HubProxiedHeadersStillTrusted(t *testing.T) {
 	}
 }
 
+// TestMiddleware_F2ProxyProof covers the F2 proof-of-proxy header enforcement on
+// a hub-proxied spoke: a valid proof is trusted; a WRONG proof is always
+// rejected; a MISSING proof is trusted only in the fail-open rollout default and
+// rejected once strict enforcement is enabled.
+func TestMiddleware_F2ProxyProof(t *testing.T) {
+	newReq := func(proof string) *http.Request {
+		r := httptest.NewRequest("GET", "/api/config", nil)
+		r.Header.Set("X-Hive-User", "clubanderson")
+		r.Header.Set("X-Hive-Role", "owner")
+		if proof != "" {
+			r.Header.Set(proxyAuthHeader, proof)
+		}
+		return r
+	}
+	run := func(t *testing.T, strict bool, proof string) int {
+		s := newFullServer(t)
+		s.authToken = "shared-secret-token"
+		old := proxyProofRequired
+		proxyProofRequired = strict
+		t.Cleanup(func() { proxyProofRequired = old })
+		w := httptest.NewRecorder()
+		s.authenticate(recordingHandler(nil, nil)).ServeHTTP(w, newReq(proof))
+		return w.Code
+	}
+
+	// Valid proof header (matches authToken) -> trusted, both modes.
+	if c := run(t, false, "shared-secret-token"); c != http.StatusOK {
+		t.Errorf("valid proof (fail-open) = %d, want 200", c)
+	}
+	if c := run(t, true, "shared-secret-token"); c != http.StatusOK {
+		t.Errorf("valid proof (strict) = %d, want 200", c)
+	}
+	// Wrong proof header -> ALWAYS rejected (forged proxy).
+	if c := run(t, false, "wrong-token"); c == http.StatusOK {
+		t.Error("wrong proof must be rejected even in fail-open mode")
+	}
+	if c := run(t, true, "wrong-token"); c == http.StatusOK {
+		t.Error("wrong proof must be rejected in strict mode")
+	}
+	// Missing proof: trusted in fail-open (rollout), rejected in strict.
+	if c := run(t, false, ""); c != http.StatusOK {
+		t.Errorf("missing proof (fail-open) = %d, want 200 (rollout safety)", c)
+	}
+	if c := run(t, true, ""); c == http.StatusOK {
+		t.Error("missing proof must be rejected in strict mode")
+	}
+}
+
 func TestMiddleware_SharedCookieNoLongerAuthenticates(t *testing.T) {
 	// The old vulnerability: the shared s.authToken placed in the session cookie
 	// granted access. It must no longer be accepted as a session id.
