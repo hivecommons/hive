@@ -190,6 +190,34 @@ func (a *AppAuth) APIURL() string { return a.apiURL }
 // not App-authenticated and must be skipped rather than treated as failing.
 func (a *AppAuth) HasKey() bool { return a != nil && a.key != nil }
 
+// DropCachedToken discards the installation token this auth is holding, in
+// memory and on disk.
+//
+// Call it when the SIGNING KEY changes. A token is minted by presenting a JWT
+// signed with the old key; once the key is replaced that token is a dead
+// credential, and it is not enough to rebuild the AppAuth in memory — the
+// on-disk cache at cachePath is read directly by agent processes, so a stale
+// token there keeps being handed out until it expires. Dropping it forces the
+// next caller to mint a fresh token under the new key.
+//
+// A missing cache file is the normal case, not an error.
+func (a *AppAuth) DropCachedToken() {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cachedToken = ""
+	a.tokenExpiry = time.Time{}
+	if a.cachePath == "" {
+		return
+	}
+	if err := os.Remove(a.cachePath); err != nil && !os.IsNotExist(err) && a.logger != nil {
+		a.logger.Warn("failed to drop stale app token cache after key change",
+			"path", a.cachePath, "error", err)
+	}
+}
+
 // AdoptInstallationID switches this auth to a different installation and
 // drops the cached installation token (which was minted for the OLD, wrong
 // installation and would keep 403ing on writes).

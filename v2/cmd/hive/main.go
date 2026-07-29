@@ -65,13 +65,16 @@ var (
 //   - spokeAppKeyPath is on the PVC and is where a hub-delivered (cluster
 //     default) key lands. It is also what cfg.GitHub.KeyFile is repointed at
 //     once the hub delivers one, so it takes effect over the provisioned mount.
-const (
+// Vars rather than consts so tests can point them at a temp dir and exercise
+// the real resolution order; production never reassigns them.
+var (
 	spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"
 	spokeAppKeyPath            = "/data/gh-app-key.pem"
-	// spokeAppKeyFileMode is rw------- : signing material must never be
-	// readable by anything else sharing the PVC or the pod.
-	spokeAppKeyFileMode = 0o600
 )
+
+// spokeAppKeyFileMode is rw------- : signing material must never be readable by
+// anything else sharing the PVC or the pod.
+const spokeAppKeyFileMode = 0o600
 
 // reportedAppKeyFingerprint returns the non-secret fingerprint of the App key
 // this spoke is ACTUALLY using, for the heartbeat payload. It fingerprints the
@@ -83,7 +86,12 @@ const (
 // cannot authenticate") and are repaired identically. The private key itself is
 // never returned, and never enters the payload.
 func reportedAppKeyFingerprint(keyFile string) string {
-	candidates := []string{keyFile, spokeAppKeyPath, spokeProvisionedAppKeyPath}
+	// Lead with the same path resolveAppKeyFile would sign with, so the hub is
+	// told about the key actually in effect and never about a shadowed one.
+	candidates := []string{
+		resolveAppKeyFile(keyFile, os.Getenv("GH_APP_KEY_FILE")),
+		keyFile, spokeAppKeyPath, spokeProvisionedAppKeyPath,
+	}
 	for _, p := range candidates {
 		if strings.TrimSpace(p) == "" {
 			continue
@@ -109,8 +117,46 @@ func hasPerHiveAppKey(keyFile string) bool {
 		return false
 	}
 	// The provisioned key exists. It is the effective credential only if the
-	// resolved key file still points at it.
-	return strings.TrimSpace(keyFile) == "" || keyFile == spokeProvisionedAppKeyPath
+	// resolved key file still points at it — resolveAppKeyFile is the single
+	// authority on that, so an unconfigured hive that has already taken delivery
+	// of a /data key correctly stops claiming a per-hive override.
+	return resolveAppKeyFile(keyFile, os.Getenv("GH_APP_KEY_FILE")) == spokeProvisionedAppKeyPath
+}
+
+// resolveAppKeyFile picks which App private key this process will actually sign
+// with, given the configured key_file and the GH_APP_KEY_FILE env override.
+//
+// WHY THE /data PREFERENCE MATTERS
+//
+// A hub-delivered key lands at spokeAppKeyPath (/data, on the PVC) and the
+// heartbeat callback repoints cfg.GitHub.KeyFile at it — but only in memory, for
+// the life of that process. A hive whose config carries NO key_file (which is
+// the state of the three live GHE hives this repairs) used to fall straight
+// through to the read-only /secrets provisioning mount. That mount holds the
+// stale, wrong key, and the spoke cannot write to it. So on every restart the
+// hive would silently go back to signing with the key that cannot work, and the
+// hub — seeing the wrong fingerprint reported again — would redeliver forever.
+// The key would be delivered and never used: a fault that reads as fixed.
+//
+// So when nothing is explicitly configured, a key already present on the PVC is
+// preferred over the provisioning mount. An EXPLICIT key_file or env override
+// still wins outright: those are deliberate, and this must not silently redirect
+// an operator who named a path.
+func resolveAppKeyFile(configured, envOverride string) string {
+	if v := strings.TrimSpace(envOverride); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(configured); v != "" {
+		return v
+	}
+	// Nothing configured. Prefer a usable hub-delivered key on the PVC; fall
+	// back to the provisioning mount only when /data has no parseable key. The
+	// fingerprint check (not mere existence) keeps an empty or truncated /data
+	// file from shadowing a good provisioned key.
+	if fp, err := config.AppKeyFingerprintFromFile(spokeAppKeyPath); err == nil && fp != "" {
+		return spokeAppKeyPath
+	}
+	return spokeProvisionedAppKeyPath
 }
 
 // processStartedAt is when this hive process began. Reported over the heartbeat
@@ -204,13 +250,7 @@ func main() {
 	var ghClient *github.Client
 	var appAuth *github.AppAuth
 	if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 {
-		keyFile := cfg.GitHub.KeyFile
-		if envKey := os.Getenv("GH_APP_KEY_FILE"); envKey != "" {
-			keyFile = envKey
-		}
-		if keyFile == "" {
-			keyFile = "/secrets/gh-app-key.pem"
-		}
+		keyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"))
 		var err error
 		appAuth, err = github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyFile, logger, cfg.GitHub.ResolvedAPIURL())
 		if err != nil {
@@ -1845,6 +1885,10 @@ func main() {
 				// nothing and a spoke holding the wrong one self-heals.
 				GitHubAppKeyFingerprint: reportedAppKeyFingerprint(cfg.GitHub.KeyFile),
 				GitHubAppKeyPerHive:     hasPerHiveAppKey(cfg.GitHub.KeyFile),
+				// Report the App this hive believes it authenticates as. The hub
+				// pairs it with the fingerprint above to tell a per-hive key that
+				// is WRONG for this App from one that is deliberately for another.
+				GitHubAppID: cfg.GitHub.AppID,
 			}
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
@@ -1967,6 +2011,11 @@ func main() {
 			)
 
 			keyPath := spokeAppKeyPath
+			// keyChanged gates dropping the cached installation token below: a
+			// token minted under the previous key is invalid the moment the key
+			// is replaced, but a redelivery of the SAME key must not throw away a
+			// perfectly good token every heartbeat.
+			keyChanged := false
 			if ghCfg.PrivateKey != "" {
 				// Fingerprint before and after so the key rotation is auditable
 				// from the spoke's own logs. Fingerprints only — the key itself
@@ -1984,11 +2033,19 @@ func main() {
 					logger.Warn("could not tighten github app key permissions", "path", keyPath, "error", err)
 				}
 				afterFP, _ := config.AppKeyFingerprintFromFile(keyPath)
+				keyChanged = afterFP != "" && afterFP != beforeFP
 				logger.Info("github app private key written via heartbeat",
 					"path", keyPath,
 					"from_fingerprint", beforeFP,
 					"to_fingerprint", afterFP,
+					"key_changed", keyChanged,
 				)
+				if keyChanged {
+					// Invalidate before the new client is built, so nothing can
+					// read the dead token out of the shared on-disk cache in
+					// between. Agents read that file directly.
+					appAuth.DropCachedToken()
+				}
 			}
 
 			if ghCfg.AppID != 0 {
