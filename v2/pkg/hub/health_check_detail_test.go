@@ -97,8 +97,16 @@ func TestSingleHoverPanelInvariant(t *testing.T) {
 	}
 	// The panel is built as one concatenated return expression; scan to the end
 	// of that statement.
+	//
+	// The end is anchored on the statement TERMINATOR rather than on whichever
+	// variable happens to be rendered last. An earlier version matched
+	// "accessRows + '</span></span>';", so appending another section to the
+	// panel (recent activity) silently moved the marker and the guard stopped
+	// finding the expression at all. Matching the closing tags + ';' keeps this
+	// test working as the panel gains sections — which is exactly when the
+	// title-attribute regression is most likely to be reintroduced.
 	rest := dashboardHTML[idx:]
-	end := strings.Index(rest, "accessRows + '</span></span>';")
+	end := strings.Index(rest, "'</span></span>';")
 	if end < 0 {
 		t.Fatalf("could not find the end of the consolidated hover panel expression")
 	}

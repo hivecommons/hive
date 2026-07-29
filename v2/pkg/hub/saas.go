@@ -1326,7 +1326,38 @@ type MyHiveEntry struct {
 	// so the My Hives table can render the badge and the fleet-exceptions
 	// summary from data it already has.
 	Drift DriftReport `json:"drift"`
+
+	// RecentEvents carries the newest few timeline events so the My Hives
+	// status hover can show recent activity WITHOUT a per-row fetch.
+	//
+	// Embedding rather than lazy-fetching is deliberate. The hover is a
+	// transient, high-frequency interaction: sweeping the pointer down a
+	// 42-row table would fire 42 requests, each of which hits the filesystem
+	// via loadSaaSHive in handleHiveTimeline. No debounce or TTL cache removes
+	// that — scanning the list IS the normal way the table is read, so the
+	// requests are the common case, not the edge case.
+	//
+	// The cost of embedding was measured rather than guessed: at
+	// myHivesRecentEventCount events per row a typical fleet of 42 hives adds
+	// ~14 KB, and ~50 KB in the pathological case where every event carries a
+	// maxed-out timelineMaxDetailRunes detail. That is small beside what a row
+	// already ships (health map, drift report, access list, agents,
+	// leaderboard and the issue/PR spark histories), and the events are
+	// already in memory hub-side, so serving them costs no extra I/O.
+	//
+	// Populated under the SAME authorization as Access — owner or admin only —
+	// because it is the same per-hive operational detail handleHiveTimeline
+	// guards. The full 200-event history stays behind that endpoint and its
+	// modal; this is only the hover preview.
+	RecentEvents []TimelineEvent `json:"recentEvents,omitempty"`
 }
+
+// myHivesRecentEventCount is how many timeline events ride the My Hives
+// payload for the status hover. The hover panel already carries a status word,
+// the per-check health lines, the relay line and the user list; three events
+// is enough to answer "what just happened to this hive?" without turning a
+// transient tooltip into a scrolling log. "See all" opens the full modal.
+const myHivesRecentEventCount = 3
 
 func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	username := s.getAuthUser(r)
@@ -1536,6 +1567,13 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// told who else shares the hive.
 		if h.Role == "owner" || isAdmin {
 			result[i].Access = accessForHive(h.ID, allSaaSUsers)
+			// Recent activity for the status hover, same owner/admin rule as
+			// the access list and as handleHiveTimeline itself. s.timeline is
+			// nil in tests that construct a bare HubServer, and recent() is a
+			// read under the store's own leaf mutex — no s.mu is held here.
+			if s.timeline != nil {
+				result[i].RecentEvents = s.timeline.recent(h.ID, myHivesRecentEventCount)
+			}
 		}
 		if h.Role == "owner" || h.Role == "read-write" || isAdmin {
 			reqs := loadAccessRequests(h.ID)
@@ -5515,6 +5553,16 @@ const dashboardHTML = `<!DOCTYPE html>
       .hive-access-wrap:hover .hive-access-pop,
       .hive-access-wrap:focus-within .hive-access-pop { display: block !important; }
     }
+    /* The panel is offset 6px below the dot. That gap is outside both the dot
+       and the panel, so travelling to the panel's "View all activity" button
+       would drop :hover and close it mid-move. This pseudo-element bridges the
+       gap with a transparent strip so the pointer never leaves the wrapper.
+       Height matches the 6px offset in the panel's inline top. */
+    .hive-access-pop::before { content: ''; position: absolute; left: 0; right: 0; top: -6px; height: 6px; }
+    /* The wrapper is cursor:help; the one thing inside that is genuinely
+       clickable says so. */
+    .hover-view-timeline { cursor: pointer; }
+    .hover-view-timeline:hover { color: #79c0ff !important; }
     .repo-link { color: var(--blue); font-size: 0.8rem; }
     .hive-name-link { color: #58a6ff; font-weight: 700; text-decoration: none; }
     .hive-name-link:hover { color: #79c0ff; text-decoration: underline; }
@@ -5690,6 +5738,15 @@ const dashboardHTML = `<!DOCTYPE html>
         .replace(/\n/g, '\\n') + "'";
       return esc(lit);
     }
+
+    // escAttr escapes for a QUOTED ATTRIBUTE value. esc() goes through
+    // textContent -> innerHTML, which per spec escapes & < > but NOT quotes, so
+    // esc() alone is unsafe between double quotes: a hive name containing a '"'
+    // closes the attribute and everything after it is parsed as markup, which
+    // is enough to inject an event handler. Hive names and org/repo strings are
+    // spoke-reported, i.e. untrusted. Use escAttr for anything interpolated
+    // into an attribute; esc() remains correct for text nodes.
+    function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
     // sameShaJS: two git SHAs are the same commit even if one is a short
     // prefix of the other. The hub stores 7-char short SHAs while a spoke may
@@ -6011,6 +6068,95 @@ const dashboardHTML = `<!DOCTYPE html>
         esc(label) + '</span>';
     }
 
+    /* ---- Contributor relay (hover panel) ------------------------------
+       The relay is a first-class SUBSTITUTE for assigning a method/model:
+       when humans are picking up this hive's tasks through /contribute, the
+       "tokens for an agent" requirement is satisfied. The product rule is
+       that this must read as its OWN state — never silently folded into
+       "assigned"/"OK" — so an operator can see the requirement is being met
+       *via the relay*.
+
+       The signal is h.journey.viaRelay, computed on the hub by relayInUse()
+       (pkg/hub/journey.go) and already shipped on every My Hives row for the
+       Journey column's "relay" badge. Reading the SAME field here is what
+       keeps the two surfaces from ever disagreeing about one hive — there is
+       no second, browser-side relay rule to drift out of sync. */
+
+    /* Teal, matching the .journey-relay badge, so "relay" reads as the same
+       thing in the Journey column and in this panel. */
+    var RELAY_COLOR = '#2dd4bf';
+
+    /* relayLine renders the relay state plus how many contributors are behind
+       it. ContributorCount is the durable registered-profile count; active is
+       the live-WebSocket count, which legitimately drops to zero when nobody
+       is connected right now — so the registered count is what's headlined and
+       the active count is only added when it is non-zero. */
+    function relayLine(h) {
+      var j = h.journey || {};
+      if (!j.viaRelay) return '';
+      var registered = h.contributorCount || 0;
+      var active = h.activeContributors || 0;
+      var who;
+      if (registered > 0) {
+        who = registered === 1 ? '1 contributor' : registered + ' contributors';
+        if (active > 0) who += ', ' + active + ' active';
+      } else if (active > 0) {
+        who = active === 1 ? '1 active contributor' : active + ' active contributors';
+      } else {
+        /* viaRelay with no counts means the signal came from a leaderboard
+           entry with a task in flight; say so rather than printing "0". */
+        who = 'task in progress';
+      }
+      return '<div style="padding:1px 0;color:' + RELAY_COLOR + '">' +
+        esc('◆ Contributor relay · ' + who) + '</div>' +
+        '<div style="padding:0 0 1px 12px;color:var(--muted);font-size:0.65rem">' +
+        esc('satisfies the method/model requirement') + '</div>';
+    }
+
+    /* ---- Recent activity (hover panel) --------------------------------
+       Events ride the My Hives payload as h.recentEvents (owner/admin only,
+       see MyHiveEntry.RecentEvents) rather than being fetched on hover, so
+       sweeping the pointer down the table costs zero requests. The full
+       history stays in the timeline modal. */
+
+    /* How many events the panel renders. The server already trims to
+       myHivesRecentEventCount; this is the browser-side guard so an older or
+       hand-crafted payload can never stretch the panel. */
+    var HOVER_EVENT_COUNT = 3;
+
+    /* An event detail is a full sentence; the panel is 300px wide at most, so
+       long details are clipped to keep one event on one line. */
+    var HOVER_EVENT_DETAIL_MAXLEN = 48;
+
+    function hoverEventRows(h) {
+      var events = (h.recentEvents || []).slice(0, HOVER_EVENT_COUNT);
+      if (!events.length) return '';
+      var rows = events.map(function(ev) {
+        var kind = TIMELINE_KINDS[ev.kind] || { label: ev.kind || 'Event', color: '#8b949e' };
+        var detail = ev.detail || '';
+        if (detail.length > HOVER_EVENT_DETAIL_MAXLEN) {
+          detail = detail.substring(0, HOVER_EVENT_DETAIL_MAXLEN - 1) + '…';
+        }
+        return '<div style="display:flex;gap:6px;align-items:baseline;padding:1px 0">' +
+          '<span style="flex:0 0 auto;color:' + kind.color + ';font-size:0.6rem;font-weight:600">' + esc(kind.label) + '</span>' +
+          '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)">' + esc(detail) + '</span>' +
+          '<span style="flex:0 0 auto;color:var(--muted);font-size:0.6rem">' + esc(timelineAgo(ev.ts)) + '</span>' +
+          '</div>';
+      }).join('');
+      /* "View all" opens the existing 200-event modal. It is a data-attribute
+         button read by a delegated listener, NOT an inline onclick: a hive name
+         is spoke-reported and esc() escapes neither quotes nor apostrophes, so
+         building a handler string from it would be an injection. The values
+         land in quoted attributes, so they go through escAttr(), not esc(). */
+      var viewAll = '<div style="padding:3px 0 0"><button type="button" class="hover-view-timeline" ' +
+        'data-hive-id="' + escAttr(h.id) + '" data-hive-name="' + escAttr(h.name || h.id) + '" ' +
+        'style="background:none;border:none;padding:0;color:var(--blue);font-size:0.62rem;cursor:pointer;text-decoration:underline">' +
+        'View all activity</button></div>';
+      return '<span style="display:block;border-top:1px solid var(--border);margin:6px 0 4px"></span>' +
+        '<span style="display:block;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Recent activity</span>' +
+        rows + viewAll;
+    }
+
     function healthBadge(h) {
       var hp = h.health || {};
       var st = hp.status || 'unknown';
@@ -6065,8 +6211,18 @@ const dashboardHTML = `<!DOCTYPE html>
 
       // No access list (not an owner of this row): nothing to render beyond the
       // health lines, so the native title tooltip is enough and cheapest.
+      //
+      // recentEvents is populated under the SAME owner/admin rule as access, so
+      // a row without an access list has no events either — there is nothing to
+      // consolidate here and this branch stays a plain title. The relay state is
+      // carried as a text line so this branch still reports it, rather than the
+      // relay being visible only to owners.
       if (!access.length) {
-        return '<span title="' + esc(lines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line">' + dotMarkup + '</span>';
+        var plainLines = lines.slice();
+        if ((h.journey || {}).viaRelay) {
+          plainLines.push('◆ Contributor relay in use — satisfies the method/model requirement');
+        }
+        return '<span title="' + esc(plainLines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line">' + dotMarkup + '</span>';
       }
 
       // ONE panel holding health AND access. Setting a title attribute here too
@@ -6105,9 +6261,11 @@ const dashboardHTML = `<!DOCTYPE html>
         'min-width:210px;max-width:300px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);' +
         'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;white-space:normal">' +
         healthRows +
+        relayLine(h) +
         '<span style="display:block;border-top:1px solid var(--border);margin:6px 0 4px"></span>' +
         '<span style="display:block;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">' + esc(heading) + '</span>' +
-        accessRows + '</span></span>';
+        accessRows +
+        hoverEventRows(h) + '</span></span>';
     }
     /* ---- Config drift -------------------------------------------------
        The server computes drift signals per hive (pkg/hub/drift.go) and ships
@@ -9589,6 +9747,17 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!e.target.closest('[id^="hive-menu-"]') && !e.target.closest('[onclick*="toggleHiveMenu"]')) {
         document.querySelectorAll('[id^="hive-menu-"]').forEach(function(m) { m.style.display = 'none'; });
       }
+    });
+
+    /* "View all activity" in the status hover panel. Delegated rather than an
+       inline onclick because the hive name is user-controlled and esc() does
+       not escape apostrophes — a name containing one would break out of an
+       inline handler string. The values are read back from data attributes,
+       where esc() IS sufficient. */
+    document.addEventListener('click', function(e) {
+      var btn = e.target.closest ? e.target.closest('.hover-view-timeline') : null;
+      if (!btn) return;
+      openTimelineModal(btn.getAttribute('data-hive-id') || '', btn.getAttribute('data-hive-name') || '');
     });
 
     function openMigrateModal(hiveId, currentClusterId) {
