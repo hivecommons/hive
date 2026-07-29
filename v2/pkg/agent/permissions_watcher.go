@@ -35,6 +35,19 @@ var WatchedHomeDirs = []string{
 	"/data/home/.cache",
 	"/data/home/.config",
 	"/data/home/.local",
+	// bobshell writes its installation-id file and chat-recording tree under
+	// $HOME/.bob (verified in bobshell 1.0.6 bundle/bob.js: the state dir is
+	// path.join(os.homedir(), ".bob")). Agents run with HOME=/data/home, which
+	// the entrypoint creates as root, so without this entry every launch logs
+	// "EACCES: permission denied, mkdir '/data/home/.bob'" and bob falls back
+	// to an ephemeral installation ID with chat recording disabled.
+	//
+	// The nested tree (.bob/tmp/<uuid>/chats) needs no separate entries: bob
+	// creates those with mkdirSync({recursive:true}) as the AGENT's own uid
+	// once .bob itself is traversable+writable by the node group, and
+	// fixPermissions walks each root recursively (filepath.Walk) so anything
+	// created root-owned underneath is corrected on the next tick anyway.
+	"/data/home/.bob",
 	"/data/agents",
 }
 

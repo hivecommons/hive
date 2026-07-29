@@ -539,8 +539,9 @@ func TestHandleHiveTimelineAuthorization(t *testing.T) {
 	}
 
 	s := &HubServer{
-		logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
-		timeline: newTimelineStore(),
+		logger:    slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+		hubSecret: testHubSecret,
+		timeline:  newTimelineStore(),
 	}
 	s.timeline.append(hiveID, TimelineRestarted, "process restarted", "")
 
@@ -563,7 +564,7 @@ func TestHandleHiveTimelineAuthorization(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/api/saas/hives/"+tc.hiveID+"/timeline", nil)
 			req.SetPathValue("id", tc.hiveID)
 			if tc.user != "" {
-				req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: tc.user})
+				req.AddCookie(testAuthCookie(tc.user))
 			}
 			rec := httptest.NewRecorder()
 			s.handleHiveTimeline(rec, req)
@@ -598,8 +599,9 @@ func TestRecordHeartbeatTransitionsNilStore(t *testing.T) {
 
 func TestMarkStaleHivesReportsOfflineOnce(t *testing.T) {
 	s := &HubServer{
-		logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
-		timeline: newTimelineStore(),
+		logger:    slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
+		hubSecret: testHubSecret,
+		timeline:  newTimelineStore(),
 	}
 	stale := time.Now().Add(-maxHeartbeatAge - time.Minute).UTC().Format(time.RFC3339)
 	s.registry.Hives = []RegistryEntry{

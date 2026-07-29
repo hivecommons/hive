@@ -62,7 +62,7 @@ func TestHandleSwitchBranchUnknownBranch(t *testing.T) {
 	})
 	resetSHACaches(t)
 
-	s := &HubServer{logger: slog.Default(), clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}}}
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser(http.MethodPost, "/sw", `{"branch":"nonexistent-branch"}`, "alice"), "id", "h1")
 	s.handleSwitchBranch(rec, req)
@@ -78,7 +78,7 @@ func TestHandleSwitchBranchUnknownBranch(t *testing.T) {
 func TestHandleDenyRequestBranches(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	// Hive not found -> 404.
 	rec := httptest.NewRecorder()
@@ -102,7 +102,7 @@ func TestHandleDenyRequestBranches(t *testing.T) {
 func TestHandleDenyAccessNotOwner(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	saveSaaSUser(&SaaSUser{GitHubUsername: "notowner", Hives: map[string]string{}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "someone"})
@@ -120,7 +120,7 @@ func TestHandleDenyAccessNotOwner(t *testing.T) {
 // ============================================================
 
 func TestHandleHubOpenRouterQRLongData(t *testing.T) {
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	// Valid prefix but an absurdly long payload -> QR encoder returns an error.
 	longData := "https://openrouter.ai/auth?x=" + strings.Repeat("a", 5000)
 	// Ensure the prefix matches the accepted authorize URL.

@@ -227,6 +227,16 @@ if [ "$(id -u)" = "0" ]; then
   # a different UID with mode 600, making them unreadable by dev/UID 1001)
   chown dev:node /secrets/*.pem 2>/dev/null || true
   chmod 644 /secrets/*.pem 2>/dev/null || true
+  # API-key files are not .pem, so they need the same treatment. Without this
+  # a host-side mode-600 file owned by a foreign UID reads as EACCES from the
+  # Go binary (uid 1001), and every key-file read swallows the error — the key
+  # silently resolves to "" and the backend looks unconfigured. Mode 400:
+  # owner-read only (stricter than the .pem files, which ttyd/git also read).
+  for key_file in /secrets/bob_api_key /secrets/litellm_api_key; do
+    [ -f "$key_file" ] || continue
+    chown dev:node "$key_file" 2>/dev/null || true
+    chmod 400 "$key_file" 2>/dev/null || true
+  done
 
   # Copy read-only mounted secrets so dev user can read them
   if [ -f /etc/hive/gh-app-key.pem ]; then

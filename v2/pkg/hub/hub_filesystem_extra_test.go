@@ -614,7 +614,7 @@ func TestHandleAuthUserWithFileUser(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/auth-user", nil)
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "file-auth-user"})
+	req.AddCookie(testAuthCookie("file-auth-user"))
 	w := httptest.NewRecorder()
 	srv.handleAuthUser(w, req)
 
@@ -637,7 +637,7 @@ func TestHandleAuthUserAdmin(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/auth-user", nil)
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: hubAdminUsername})
+	req.AddCookie(testAuthCookie(hubAdminUsername))
 	w := httptest.NewRecorder()
 	srv.handleAuthUser(w, req)
 
@@ -657,7 +657,7 @@ func TestGetAuthUserWithCookieAndFile(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("GET", "/test", nil)
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "cookie-user"})
+	req.AddCookie(testAuthCookie("cookie-user"))
 	user := srv.getAuthUser(req)
 
 	if user != "cookie-user" {

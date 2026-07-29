@@ -18,13 +18,15 @@ import (
 func newORHub() *HubServer {
 	return &HubServer{
 		logger:          slog.Default(),
+		hubSecret:       testHubSecret,
 		pendingGateways: make(map[string]*HeartbeatGatewayConfig),
 	}
 }
 
-// withCookieUser sets the hive_hub_user cookie to a user that exists on disk.
+// withCookieUser sets a signed hive_hub_user cookie for a user that exists on
+// disk.
 func withCookieUser(req *http.Request, username string) {
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: username})
+	req.AddCookie(testAuthCookie(username))
 }
 
 func TestPendingGatewayLifecycle(t *testing.T) {

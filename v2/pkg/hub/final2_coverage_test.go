@@ -27,7 +27,7 @@ func TestTriggerAutoUpgradesRemoteStale(t *testing.T) {
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "newsha7"}
 	latestSHAMu.Unlock()
 
-	s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
 	s.registry.Hives = []RegistryEntry{{
 		ID: "h1", GitBranch: "v2", GitHash: "old", Upgrading: true,
 		UpgradeTarget: "oldtarget", UpgradeStartedAt: time.Now().Add(-2 * time.Hour),
@@ -42,7 +42,7 @@ func TestTriggerAutoUpgradesRemoteNotStale(t *testing.T) {
 	remote := ClusterConfig{ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Context: "ctx"}
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", AutoUpgrade: true, Status: "running", ClusterID: "remote"})
 
-	s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
 	// Upgrading, recent timestamp -> not stale -> re-arm heartbeat target.
 	s.registry.Hives = []RegistryEntry{{
 		ID: "h1", GitBranch: "v2", GitHash: "old", Upgrading: true,
@@ -68,7 +68,7 @@ func TestTriggerAutoUpgradesNoClusterSkip(t *testing.T) {
 	latestSHAMu.Unlock()
 
 	// Not upgrading, behind latest, but no cluster config -> skip branch.
-	s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{}}
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2", GitHash: "old"}}
 	s.triggerAutoUpgrades()
 }
@@ -109,7 +109,7 @@ func TestHandleHubOpenRouterStartOwner(t *testing.T) {
 	saveSaaSUser(&SaaSUser{GitHubUsername: "alice", Hives: map[string]string{}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice"})
 
-	s := &HubServer{logger: slog.Default(), pendingGateways: make(map[string]*HeartbeatGatewayConfig)}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, pendingGateways: make(map[string]*HeartbeatGatewayConfig)}
 	rec := httptest.NewRecorder()
 	req := reqWithUser(http.MethodGet, "/api/openrouter/connect/start?hive_id=h1", "", "alice")
 	s.handleHubOpenRouterStart(rec, req)
