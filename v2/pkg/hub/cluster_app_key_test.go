@@ -70,6 +70,7 @@ func TestDecideAppKeySync(t *testing.T) {
 		name        string
 		spokeFP     string
 		perHive     bool
+		spokeAppID  int64
 		cluster     *clusterAppIdentity
 		wantPush    bool
 		wantReason  string
@@ -133,15 +134,16 @@ func TestDecideAppKeySync(t *testing.T) {
 			description: "nothing to push means nothing happens, not an empty push",
 		},
 		{
-			name:        "per-hive key wins over cluster default even on mismatch",
+			name:        "per-hive key, spoke app_id unknown - no push",
 			spokeFP:     wrongFP,
 			perHive:     true,
+			spokeAppID:  0,
 			cluster:     identity,
 			wantPush:    false,
 			wantReason:  appKeyReasonPerHiveOverride,
 			wantFromFP:  wrongFP,
 			wantToFP:    clusterFP,
-			description: "a deliberate per-hive credential is never overwritten",
+			description: "a spoke too old to report app_id must not be assumed broken",
 		},
 		{
 			name:        "per-hive key with no key reported still wins",
@@ -151,13 +153,85 @@ func TestDecideAppKeySync(t *testing.T) {
 			wantPush:    false,
 			wantReason:  appKeyReasonPerHiveOverride,
 			wantToFP:    clusterFP,
-			description: "the override is unconditional; operator intent is respected",
+			description: "no fingerprint is no proof of a wrong key; stay conservative",
+		},
+
+		// --- THE FIX: a per-hive key that provably cannot work ---
+		{
+			name:        "per-hive key wrong for the app_id the hive claims - PUSH",
+			spokeFP:     wrongFP,
+			perHive:     true,
+			spokeAppID:  5686,
+			cluster:     identity,
+			wantPush:    true,
+			wantReason:  appKeyReasonPerHiveUnusable,
+			wantFromFP:  wrongFP,
+			wantToFP:    clusterFP,
+			description: "vllmd-01..03: claims GHE app 5686 but holds the public github.com key — cannot sign a valid JWT, so this is a fault and not a choice",
+		},
+		{
+			name:        "per-hive key for a deliberately DIFFERENT app - no push",
+			spokeFP:     wrongFP,
+			perHive:     true,
+			spokeAppID:  99999,
+			cluster:     identity,
+			wantPush:    false,
+			wantReason:  appKeyReasonDifferentApp,
+			wantFromFP:  wrongFP,
+			wantToFP:    clusterFP,
+			description: "a hive pinned to its own App keeps its own key; the cluster key would break it",
+		},
+		{
+			name:        "per-hive key already matches the cluster key - no push",
+			spokeFP:     clusterFP,
+			perHive:     true,
+			spokeAppID:  5686,
+			cluster:     identity,
+			wantPush:    false,
+			wantReason:  appKeyReasonMatch,
+			wantFromFP:  clusterFP,
+			wantToFP:    clusterFP,
+			description: "idempotence: once repaired the push must stop, per-hive flag or not",
+		},
+		{
+			name:        "per-hive, matching app_id, no fingerprint reported - no push",
+			spokeFP:     "",
+			perHive:     true,
+			spokeAppID:  5686,
+			cluster:     identity,
+			wantPush:    false,
+			wantReason:  appKeyReasonPerHiveOverride,
+			wantToFP:    clusterFP,
+			description: "the exception needs a fingerprint that provably differs, not an absent one",
+		},
+		{
+			name:        "cluster app_id unset cannot make a positive match",
+			spokeFP:     wrongFP,
+			perHive:     true,
+			spokeAppID:  5686,
+			cluster:     &clusterAppIdentity{AppID: 0, Fingerprint: clusterFP},
+			wantPush:    false,
+			wantReason:  appKeyReasonDifferentApp,
+			wantFromFP:  wrongFP,
+			wantToFP:    clusterFP,
+			description: "no cluster app_id means no proof of a conflict",
+		},
+		{
+			name:        "non-per-hive mismatch on a matching app_id still pushes",
+			spokeFP:     wrongFP,
+			spokeAppID:  5686,
+			cluster:     identity,
+			wantPush:    true,
+			wantReason:  appKeyReasonMismatch,
+			wantFromFP:  wrongFP,
+			wantToFP:    clusterFP,
+			description: "reporting app_id must not change the pre-existing non-per-hive path",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideAppKeySync(tc.spokeFP, tc.perHive, tc.cluster)
+			got := decideAppKeySync(tc.spokeFP, tc.perHive, tc.spokeAppID, tc.cluster)
 			if got.Push != tc.wantPush {
 				t.Errorf("Push = %v, want %v (%s)", got.Push, tc.wantPush, tc.description)
 			}
@@ -192,7 +266,7 @@ func TestDecideAppKeySyncIsIdempotent(t *testing.T) {
 	identity := &clusterAppIdentity{AppID: 5686, PrivateKey: keyPEM, Fingerprint: fp}
 
 	// Beat 1: spoke has nothing → push.
-	first := decideAppKeySync("", false, identity)
+	first := decideAppKeySync("", false, 0, identity)
 	if !first.Push {
 		t.Fatal("first beat should push to a spoke with no key")
 	}
@@ -204,7 +278,7 @@ func TestDecideAppKeySyncIsIdempotent(t *testing.T) {
 	}
 	// Beat 2: spoke now reports the delivered key → no push, forever after.
 	for beat := 2; beat <= 5; beat++ {
-		d := decideAppKeySync(delivered, false, identity)
+		d := decideAppKeySync(delivered, false, 0, identity)
 		if d.Push {
 			t.Fatalf("beat %d re-pushed a key the spoke already holds", beat)
 		}
@@ -537,7 +611,7 @@ func TestClusterKeyNeverSerializedIntoAPIPayload(t *testing.T) {
 			Fingerprint: identity.Fingerprint,
 		},
 		// The decision record that feeds every log line.
-		"appKeySyncDecision": decideAppKeySync("sha256:00000000000000000000000000000000", false, identity),
+		"appKeySyncDecision": decideAppKeySync("sha256:00000000000000000000000000000000", false, 0, identity),
 	}
 
 	for name, payload := range payloads {
