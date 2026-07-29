@@ -346,6 +346,14 @@ type HubServer struct {
 	hubBanners   map[string]*HubBannerEntry
 	hubBannersMu sync.RWMutex
 
+	// spokeProxyAuthCache memoizes each hive's dashboard token (the shared
+	// secret the spoke holds as DASHBOARD_AUTH_TOKEN) so the auth-check
+	// subrequest — which fires on EVERY hub-proxied request — does not pay a
+	// kubectl exec per call. Key: hive ID → cached token + expiry. Guarded by
+	// spokeProxyAuthMu. See handleSaaSAuthCheck / spokeProxyAuthToken.
+	spokeProxyAuthCache map[string]spokeProxyAuthEntry
+	spokeProxyAuthMu    sync.Mutex
+
 	// pendingGateways stores OpenRouter gateways funded via the hub's
 	// scan-to-fund flow, to deliver to firewalled/heartbeat-only spokes via the
 	// heartbeat response. Key: hive ID → gateway (carries the secret key VALUE,
@@ -499,6 +507,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		pendingGitHubAppConfigs: make(map[string]*HeartbeatGitHubAppConfig),
 		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
+		spokeProxyAuthCache:     make(map[string]spokeProxyAuthEntry),
 		timeline:                newTimelineStore(),
 		journey:                 newJourneyStore(),
 		alerts:                  newAlertState(),

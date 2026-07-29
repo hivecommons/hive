@@ -4408,8 +4408,8 @@ type ProvisionRequest struct {
 	// github.com, otherwise a GitHub Enterprise host (github.ibm.com,
 	// github.cisco.com, …). Captured so an admin can see which instance a
 	// request targets before deciding where to place the hive.
-	GitHubHost string `json:"github_host,omitempty"`
-	Org        string `json:"org"`
+	GitHubHost  string `json:"github_host,omitempty"`
+	Org         string `json:"org"`
 	Repos       string `json:"repos"`
 	PrimaryRepo string `json:"primary_repo"`
 	ACMMLevel   int    `json:"acmm_level"`
@@ -5222,8 +5222,8 @@ func sameStringSliceFold(a, b []string) bool {
 // the real project the placeholder is being claimed for, plus optional GitHub
 // App credentials to deliver to the spoke via the heartbeat channel.
 type AssignHiveRequest struct {
-	Owner          string `json:"owner"`
-	Org            string `json:"org"`
+	Owner string `json:"owner"`
+	Org   string `json:"org"`
 	// GitHubHost is the GitHub instance the org lives on ("" = public
 	// github.com, otherwise a GHE host). Parsed from a pasted org URL when the
 	// caller does not send it explicitly.
@@ -5543,6 +5543,79 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 
 var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute"}
 
+// proxyAuthHeader is the response header the hub sets on a successful
+// auth-check subrequest to PROVE to the spoke that the request was
+// authenticated by the hub's nginx auth-proxy (not spoofed by a client that
+// merely supplied X-Hive-User/X-Hive-Role directly). nginx is configured to
+// copy this header onto the upstream request via the auth-response-headers
+// annotation (see saas_provision.go). Its value is the spoke's own dashboard
+// token, so the spoke can constant-time-compare it against its authToken.
+//
+// CONTRACT (spoke half, separate v3 PR must verify EXACTLY this):
+//   - Header name: "X-Hive-Proxy-Auth"
+//   - Value: the hive's dashboard token — the raw value stored in the spoke's
+//     "hive-secrets" k8s secret under key "dashboard-token", i.e. the same
+//     string the spoke reads from DASHBOARD_AUTH_TOKEN into its authToken.
+//   - Set ONLY on the authenticated success path; NEVER on public-path,
+//     unfurl-bot, unauthenticated (401), or no-access (403) responses.
+const proxyAuthHeader = "X-Hive-Proxy-Auth"
+
+// spokeProxyAuthCacheTTL bounds how long a hive's dashboard token is memoized
+// so the per-request auth-check subrequest avoids a kubectl exec on every call
+// while still picking up a re-provisioned token within a bounded window.
+const spokeProxyAuthCacheTTL = 5 * time.Minute
+
+// spokeProxyAuthEntry is a cached dashboard token with its expiry.
+type spokeProxyAuthEntry struct {
+	token   string
+	expires time.Time
+}
+
+// spokeProxyAuthToken returns the given hive's dashboard token — the shared
+// secret the spoke holds as its authToken (DASHBOARD_AUTH_TOKEN / the
+// "dashboard-token" key of the "hive-secrets" k8s secret). It memoizes the
+// value for spokeProxyAuthCacheTTL so the hot auth-check path does not exec
+// kubectl on every proxied request. Returns "" if the token cannot be
+// resolved (e.g. the hive isn't in the registry or its cluster is unreachable);
+// callers must then omit the proof header rather than send an empty one.
+func (s *HubServer) spokeProxyAuthToken(hiveID string) string {
+	now := time.Now()
+
+	s.spokeProxyAuthMu.Lock()
+	if entry, ok := s.spokeProxyAuthCache[hiveID]; ok && now.Before(entry.expires) {
+		tok := entry.token
+		s.spokeProxyAuthMu.Unlock()
+		return tok
+	}
+	s.spokeProxyAuthMu.Unlock()
+
+	// Resolve the registry entry (ID + ClusterID) that loadSpokeAuthToken needs.
+	var hive *RegistryEntry
+	s.mu.RLock()
+	for i := range s.registry.Hives {
+		if s.registry.Hives[i].ID == hiveID {
+			h := s.registry.Hives[i]
+			hive = &h
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if hive == nil {
+		return ""
+	}
+
+	token := s.loadSpokeAuthToken(hive)
+	if token == "" {
+		return ""
+	}
+
+	s.spokeProxyAuthMu.Lock()
+	s.spokeProxyAuthCache[hiveID] = spokeProxyAuthEntry{token: token, expires: now.Add(spokeProxyAuthCacheTTL)}
+	s.spokeProxyAuthMu.Unlock()
+
+	return token
+}
+
 func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.URL.Query().Get("hive")
 	if hiveID == "" {
@@ -5593,6 +5666,16 @@ func (s *HubServer) handleSaaSAuthCheck(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("X-Hive-User", username)
 	w.Header().Set("X-Hive-Role", role)
+	// Prove to the spoke that this request really passed through the hub's
+	// auth-proxy: set X-Hive-Proxy-Auth to the hive's own dashboard token so
+	// the spoke can constant-time-compare it against its authToken. Only set on
+	// this authenticated success path; a client hitting the spoke directly
+	// cannot forge it because it never learns the token. If the token can't be
+	// resolved, omit the header (backward-compatible: the spoke half must fail
+	// open only until it is deployed — see the v3 spoke PR).
+	if proxyAuth := s.spokeProxyAuthToken(hiveID); proxyAuth != "" {
+		w.Header().Set(proxyAuthHeader, proxyAuth)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
