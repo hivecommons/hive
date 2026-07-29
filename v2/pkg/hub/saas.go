@@ -6546,7 +6546,7 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     /* Faces shown inline before collapsing the rest into a "+N" chip. The hive
-       table is 17 columns and already dense; four 16px faces plus the chip fit
+       table is 16 columns and already dense; four 16px faces plus the chip fit
        beside the role badge without widening the name column, and a hive with
        a dozen members must not push the row wide. The full list stays one
        hover away on the status dot. */
@@ -9601,7 +9601,25 @@ const dashboardHTML = `<!DOCTYPE html>
             autoUpgradeCheck = ' ' + d.outerHTML;
           }
           var shaMsg = _commitMessages[sha] || _latestSHAMessages[branchName] || '';
-          versionCell = branch + '<span style="font-family:monospace;color:var(--muted)" title="' + esc(shaMsg) + '">' + esc(sha) + '</span>' + status + upgradeIcon + autoUpgradeCheck;
+          /* Three stacked lines, grouped by what each thing IS — not split
+             arbitrarily to reach three:
+               1. the branch, which the owner can CHANGE (the pill is a
+                  switcher, so it owns a line and stays a full tap target);
+               2. the SHA and its current/behind glyph, which are two views of
+                  the same immutable fact — "what commit is this hive on";
+               3. what happens NEXT: the upgrade affordance (Upgrade button /
+                  "queued · 5pm ET" / in-flight spinner) beside the
+                  auto-upgrade mode select. These are the two tallest items,
+                  so pairing them costs one line instead of two.
+             Every fragment below is embedded verbatim, so ids, onclick/onchange
+             handlers and title tooltips are all preserved exactly. */
+          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + esc(shaMsg) + '">' + esc(sha) + '</span>' + status;
+          var nextLine = upgradeIcon + autoUpgradeCheck;
+          versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
+            '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
+            '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
+            (nextLine ? '<div style="' + STACKED_LINE_STYLE + '">' + nextLine + '</div>' : '') +
+            '</div>';
         } else { versionCell = '<span style="color:var(--muted)">—</span>'; }
         var pendingBadge = (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write'))
           ? '<span style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:0.6rem;display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
@@ -9610,11 +9628,62 @@ const dashboardHTML = `<!DOCTYPE html>
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write')) {
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
-        // 17 = the 13 original columns, plus Uptime, plus Drift, plus the
-        // bulk-select column, plus Journey. Counted against the <th> cells in
-        // the header and the <td> cells emitted below (bulkCheckboxCell
-        // contributes one).
-        var TOTAL_COLUMNS = 17;
+        // 16 = the 13 original columns, plus Uptime, plus Drift, plus the
+        // bulk-select column, plus Journey, MINUS Public — visibility now
+        // stacks under Location instead of owning a column. Counted against
+        // the <th> cells in the header and the <td> cells emitted below
+        // (bulkCheckboxCell contributes one).
+        var TOTAL_COLUMNS = 16;
+        /* Visibility moved OUT of its own column and under Location: "where
+           does this hive run" and "who can see it" are both facts about the
+           hive's placement, so they read as one cell, and folding them saves a
+           whole column in a table that had 17.
+
+           All THREE original branches survive unchanged — the owner toggle
+           (with its 'vis-<id>' element id and onchange handler), the local
+           link into Governor Config, and the read-only ✓/— for everyone else.
+           They are deliberately NOT flattened: each answers a different
+           question about who may change the setting. */
+        var visibilityCell = (function() {
+          var pub = !!h.isPublic;
+          /* escAttr, not esc: this id lands inside a quoted attribute and a
+             hive id carrying a quote would otherwise break out of it. Still
+             'vis-' + the hive id, so it stays unique per row exactly as before. */
+          var tid = 'vis-' + escAttr(h.id);
+          /* Branch 1 — hosted hive the viewer OWNS: a live toggle. The owner is
+             the only person who may change listing, so they get the control. */
+          if (isHosted && h.role === 'owner') {
+            return '<label style="position:relative;display:inline-block;width:' + VIS_SWITCH_W_PX + 'px;height:' + VIS_SWITCH_H_PX + 'px;cursor:pointer">' +
+              '<input type="checkbox" id="' + tid + '"' + (pub ? ' checked' : '') +
+              /* jsArg (not esc) for the handler argument: esc leaves an
+                 apostrophe intact, which would close the attribute quote early.
+                 jsArg supplies its own surrounding quotes. */
+              ' onchange="toggleVisibility(' + jsArg(h.id) + ',this.checked)" style="opacity:0;width:0;height:0">' +
+              '<span style="position:absolute;inset:0;background:' + (pub ? 'var(--green)' : 'var(--border)') + ';border-radius:' + VIS_SWITCH_RADIUS_PX + 'px;transition:background 0.2s"></span>' +
+              '<span style="position:absolute;top:' + VIS_KNOB_INSET_PX + 'px;left:' + (pub ? VIS_KNOB_ON_LEFT_PX : VIS_KNOB_INSET_PX) + 'px;width:' + VIS_KNOB_PX + 'px;height:' + VIS_KNOB_PX + 'px;background:#fff;border-radius:50%;transition:left 0.2s"></span>' +
+              '</label>';
+          }
+          /* Branch 2 — LOCAL hive: the hub cannot write its config, so this is
+             a signpost to where the setting actually lives (Governor → Hub),
+             not a control. Falls back to a plain badge with no dashboard URL. */
+          if (isLocal) {
+            var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : '';
+            var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>';
+            return dh
+              ? '<a href="' + escAttr(dh) + '#config/governor/Hub" target="_blank" title="Change in Governor Config → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>'
+              : badge;
+          }
+          /* Branch 3 — everyone else: read-only state, no affordance implied. */
+          return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>';
+        })();
+        var locationBadge = isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName);
+        /* Location on top, visibility beneath — two stacked lines, matching the
+           three-line Version treatment. The owner toggle is a 36x20 switch and
+           keeps its own box on its own line, so it stays an easy tap target. */
+        var locationCell = '<div style="' + STACKED_CELL_STYLE + '">' +
+          '<div style="' + STACKED_LINE_STYLE + '">' + locationBadge + '</div>' +
+          '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
+          '</div>';
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
@@ -9637,17 +9706,20 @@ const dashboardHTML = `<!DOCTYPE html>
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
           '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
-          '<td>' + (isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName)) + '</td>' +
+          '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
-          '<td>' + (function() { var pub = !!h.isPublic; var tid = 'vis-' + esc(h.id); if (isHosted && h.role === 'owner') { return '<label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer"><input type="checkbox" id="' + tid + '" ' + (pub ? 'checked' : '') + ' onchange="toggleVisibility(\'' + esc(h.id) + '\',this.checked)" style="opacity:0;width:0;height:0"><span style="position:absolute;inset:0;background:' + (pub ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;transition:background 0.2s"></span><span style="position:absolute;top:2px;left:' + (pub ? '18px' : '2px') + ';width:16px;height:16px;background:#fff;border-radius:50%;transition:left 0.2s"></span></label>'; } if (isLocal) { var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : ''; var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>'; return dh ? '<a href="' + esc(dh) + '#config/governor/Hub" target="_blank" title="Change in Governor Config → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>' : badge; } return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>'; })() + '</td>' +
-          '<td style="font-size:0.7rem;white-space:nowrap">' + versionCell + '</td>' +
+          /* No white-space:nowrap on the cell itself: the stacked lines each
+             carry their own nowrap, so the SHA still never breaks mid-hash,
+             but the COLUMN is no longer forced to the width of every part laid
+             end to end. That nowrap was the main reason this column was wide. */
+          '<td style="font-size:0.7rem">' + versionCell + '</td>' +
           '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
           '<td>' + journeyBadge(h.journey) + '</td>' +
           /* Drift sits immediately right of Journey: both answer "how healthy
              is this hive's configuration", so they read as one pair rather
              than being separated by nine metric columns. Header index and body
-             index are both 11 of 17 — keep them in lockstep. */
+             index are both 10 of 16 — keep them in lockstep. */
           '<td style="white-space:nowrap;text-align:right">' + driftBadge(h) + '</td>' +
           '<td title="' + esc((h.agents || []).map(function(a){ var label = a.name + ' (' + a.state + ')'; if (a.mode === 'on_demand') label += ' — on demand'; return label; }).join('\n')) + '" style="cursor:' + ((h.agentCount || 0) > 0 ? 'help' : 'default') + '">' + (h.agentCount || 0) + '</td>' +
           '<td title="Cumulative tokens consumed, as of the last heartbeat" style="white-space:nowrap;cursor:help">' + fmtTokens(h.totalTokens24h || 0) + '</td>' +
@@ -9662,8 +9734,9 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
          and the table visibly ragged. 15 with the Drift column, plus the
-         bulk-select column, plus the Journey column. */
-      var TOTAL_COLUMNS_HEADER = 17;
+         bulk-select column, plus the Journey column, minus Public (visibility
+         is stacked under Location). Must stay equal to TOTAL_COLUMNS. */
+      var TOTAL_COLUMNS_HEADER = 16;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -9798,7 +9871,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
@@ -9926,6 +9999,56 @@ const dashboardHTML = `<!DOCTYPE html>
     var _upgradingHives = {};
     var _switchStartedAt = {}; // hiveId → ms timestamp the switch was initiated
     var SWITCH_STALE_MS = 8 * 60 * 1000; // warn if a switch hasn't landed in 8 min
+
+    /* Version and Location cells stack their contents vertically so neither
+       column is forced as wide as the sum of its parts. The Version cell used
+       to lay branch pill + SHA + status + upgrade affordance + auto-upgrade
+       select on ONE nowrap line, which made it the widest column in a table
+       that already carries 16 of them.
+
+       STACKED_LINE_HEIGHT is deliberately tighter than the table's default so
+       the stack stays as short as three lines can be. The honest arithmetic, at
+       0.7rem on a 16px root:
+         plain text line          = 0.7*16*1.15            = 12.9px
+         line 3 (Upgrade button)  = 12.9 + 3px pad*2 + 1px border*2 = 20.9px
+         three lines + 2 gaps     = 12.9 + 12.9 + 20.9 + 2*1 = 48.7px
+       The two-line name cell (1rem + 0.8rem at line-height 1.4) is 40.3px, so
+       an OWNER row — the only variant that gets all three lines, because only
+       an owner sees the Upgrade button and the auto-upgrade select — grows from
+       40.3px to ~48.7px, about 8px. Rows for non-owners keep at most two
+       stacked lines (25.8px) and are unchanged, since the name cell still sets
+       their height. That is the deliberate trade: ~8px on owner rows in
+       exchange for dropping a whole column and a much narrower Version column.
+       Loosening either constant is what would make it materially worse.
+
+       STACKED_ROW_GAP_PX separates the stacked lines without adding a full line
+       box. 1px, not more, precisely because line 3 is a button whose own padding
+       already supplies visual separation. */
+    var STACKED_LINE_HEIGHT = 1.15;
+    var STACKED_ROW_GAP_PX = 1;
+    /* Shared style for a stacked cell: a vertical flex column, centred to match
+       the table's default text-align:center for non-first cells. */
+    var STACKED_CELL_STYLE = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:' + STACKED_ROW_GAP_PX + 'px;line-height:' + STACKED_LINE_HEIGHT;
+    /* Horizontal gap between the items that share one stacked line (e.g. the
+       SHA and its current/behind glyph). Small enough that a line stays visibly
+       one group rather than reading as separate columns. */
+    var STACKED_ITEM_GAP_PX = 4;
+    /* One line inside a stacked cell. Items within a line stay on one row (the
+       SHA must never wrap mid-hash) but the LINES themselves are what narrow
+       the column. */
+    var STACKED_LINE_STYLE = 'display:flex;align-items:center;justify-content:center;gap:' + STACKED_ITEM_GAP_PX + 'px;white-space:nowrap';
+
+    /* Visibility toggle switch geometry, used by the Location cell's owner
+       branch. A 36x20 track with a 16px knob inset 2px is the standard iOS-style
+       switch proportion: the knob travels W - knob - 2*inset = 18px, which is
+       why the "on" position is 18px from the left. Keeping these as constants
+       means the track, the knob and the travel distance can never drift apart. */
+    var VIS_SWITCH_W_PX = 36;
+    var VIS_SWITCH_H_PX = 20;
+    var VIS_KNOB_PX = 16;
+    var VIS_KNOB_INSET_PX = 2;
+    var VIS_SWITCH_RADIUS_PX = VIS_SWITCH_H_PX / 2; // fully rounded track
+    var VIS_KNOB_ON_LEFT_PX = VIS_SWITCH_W_PX - VIS_KNOB_PX - VIS_KNOB_INSET_PX;
 
     /* Prefix marking a client-side branch-switch sentinel in _upgradingHives.
        The intended target branch follows the prefix (e.g. "switch:v3") so the
@@ -11308,8 +11431,12 @@ const dashboardHTML = `<!DOCTYPE html>
         // title= carries the full note on hover, so it needs attribute escaping.
         bits.push('<span title="' + escAttr(u.notes) + '" style="font-size:0.7rem;color:var(--muted);font-style:italic">' + esc(preview) + '</span>');
       }
+      // align-items:flex-start + text-align:left keep the contact lines
+      // left-justified. Without them the cell inherits the users table's
+      // centred alignment, so name/slack/notes rendered ragged-centre — each
+      // line a different width, which is hard to scan down a column.
       var summary = bits.length
-        ? '<div style="display:flex;flex-direction:column;gap:1px;max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
+        ? '<div style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1px;max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
         : '<span style="color:var(--muted);font-size:0.72rem">—</span>';
       var btn = '<button type="button" data-contact-toggle="' + escAttr(u.github_username) + '"' +
         ' style="margin-top:2px;padding:1px 7px;background:none;border:1px solid var(--border);border-radius:4px;' +
@@ -11503,7 +11630,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
-          '<td>' + renderContactCell(u) + '</td>' +
+          '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
           '<td>' + blocked + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
