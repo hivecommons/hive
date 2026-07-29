@@ -1737,7 +1737,12 @@ func main() {
 					}
 					return ""
 				}(),
-				Health: dashSrv.HealthSummary(),
+				// Report the API URL we are actually running against so the hub
+				// can see whether a GitHub Enterprise API URL it delivered has
+				// landed. Resolved (never empty) so the hub can distinguish
+				// "public github.com" from "spoke too old to report this".
+				GitHubAPIURL: cfg.GitHub.ResolvedAPIURL(),
+				Health:       dashSrv.HealthSummary(),
 				DashboardURL: func() string {
 					if cfg.Hub.DashboardURL != "" {
 						return cfg.Hub.DashboardURL

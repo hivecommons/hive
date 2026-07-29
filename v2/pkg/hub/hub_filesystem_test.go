@@ -1137,13 +1137,13 @@ func TestHandleAssignHiveWithFilesystem(t *testing.T) {
 	// pushed), so the ONLY thing projectConfigForHiveID still delivers is the
 	// vanity URL — until the spoke reports it back, then it goes quiet.
 	// URL not yet adopted -> still delivering (carries the vanity URL).
-	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, ""); pc == nil {
+	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, "", ""); pc == nil {
 		t.Error("expected non-nil config while spoke has not yet adopted the vanity URL")
 	} else if pc.DashboardURL != h.VanityURL {
 		t.Errorf("project config DashboardURL = %q, want the vanity URL %q", pc.DashboardURL, h.VanityURL)
 	}
 	// Spoke now reports the vanity URL -> nothing left to push -> nil.
-	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, h.VanityURL); pc != nil {
+	if pc := projectConfigForHiveID("hosted-assign-fs", "neworg", []string{"repoa", "repob"}, "repoa", 3, h.VanityURL, ""); pc != nil {
 		t.Errorf("expected nil project config once spoke reports the vanity URL, got %+v", pc)
 	}
 

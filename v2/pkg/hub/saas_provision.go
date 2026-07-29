@@ -411,6 +411,99 @@ func backfillGitHubHostFromCluster(h *SaaSHive, cluster *ClusterConfig) string {
 	return githubHostLabel(base)
 }
 
+// repairGitHubHostsFromClusters retroactively fills in a blank GitHubHost on
+// hives that were ALREADY assigned, using their cluster's GHE defaults.
+//
+// backfillGitHubHostFromCluster only runs at assign time, so every hive claimed
+// before that fix keeps GitHubHost == "" forever — and with it an empty
+// github_api_url pushed on every heartbeat, which the spoke reads as "leave
+// mine alone". Those hives sit on a github.ibm.com cluster while talking to
+// api.github.com (hosted-available-vllmd-01 in org "katamari" is the live
+// example). Nothing else ever repairs them.
+//
+// It is deliberately conservative and idempotent:
+//   - It only ever fills a BLANK GitHubHost. An explicitly set host is never
+//     overwritten, and neither is an explicit "public" override — that resolves
+//     to an empty effective base URL, which backfillGitHubHostFromCluster
+//     already refuses to record.
+//   - It changes nothing when the hive's cluster has no GHE host configured.
+//   - Unclaimed placeholders are skipped: assign owns those, and it now
+//     backfills the host itself.
+//   - Every change is logged with before/after.
+//
+// Returns the number of hives changed.
+//
+// It runs LAZILY, per hive, from the heartbeat path (repairGitHubHostForHive)
+// rather than as a startup sweep. A goroutine at hub start would walk the hive
+// directory concurrently with the first heartbeats already writing to it, for
+// no benefit: a hive that never beats does not need repairing, and one that
+// does gets repaired on its very next beat.
+//
+// NOTE: this repairs the HOST only. A hive that also carries the public
+// app_id/installation_id is NOT fixed by this — the GitHub App still has to be
+// installed on the target org before installation auto-discovery can self-heal
+// it. See gitHubAppStillRequiredNote.
+func (s *HubServer) repairGitHubHostsFromClusters() int {
+	repaired := 0
+	for _, h := range listSaaSHives() {
+		if s.repairGitHubHostForHive(h.ID) {
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		s.logger.Info("github host repair: complete", "hives_repaired", repaired,
+			"note", gitHubAppStillRequiredNote)
+	}
+	return repaired
+}
+
+// repairGitHubHostForHive applies the retroactive host repair to a SINGLE hive,
+// reporting whether it changed anything. Called on each heartbeat, so it must
+// be cheap and silent in the overwhelmingly common no-op case — every guard
+// below returns before any write.
+func (s *HubServer) repairGitHubHostForHive(hiveID string) bool {
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		return false
+	}
+	if h.Status == statusAvailable {
+		return false // unclaimed placeholder — assign backfills it at claim time
+	}
+	if h.GitHubHost != "" {
+		return false // explicitly set — never clobber
+	}
+	// backfillGitHubHostFromCluster also returns "" for an explicit "public"
+	// override (effectiveGitHubBaseURL resolves the sentinel to public) and for
+	// a cluster with no GHE host, so both are covered by this one check.
+	host := backfillGitHubHostFromCluster(h, s.clusterForHive(h))
+	if host == "" {
+		return false
+	}
+	h.GitHubHost = host
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("github host repair: failed to save hive",
+			"hive", hiveID, "error", err)
+		return false
+	}
+	s.logger.Info("github host repair: filled blank github_host from cluster defaults",
+		"hive", hiveID,
+		"cluster", clusterIDForHive(h),
+		"org", h.Org,
+		"github_host_before", "",
+		"github_host_after", host,
+		"github_api_url_after", gheAPIURLForHost(host),
+		"note", gitHubAppStillRequiredNote)
+	return true
+}
+
+// gitHubAppStillRequiredNote is the operator-facing caveat attached to a host
+// repair. Filling in the host points the spoke at the right GitHub API, but it
+// does NOT change the hive's app_id/installation_id: a hive provisioned with
+// the PUBLIC App credentials still needs the GitHub Enterprise App installed on
+// its org before installation auto-discovery can find an installation to adopt.
+// Until a human does that, the hive authenticates as nothing on its GHE host.
+const gitHubAppStillRequiredNote = "github_host repaired; a hive still carrying the public app_id also needs the GitHub Enterprise App installed on its org before its installation can be auto-discovered"
+
 func generateHiveID(org, repo string) string {
 	short := repo
 	if len(short) > 12 {

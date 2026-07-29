@@ -924,7 +924,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// bug. (No-op for unclaimed placeholders and for empty/zero reported values.)
 	s.adoptSpokeProjectConfig(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, clampInt(payload.ACMMLevel, 0, 6))
 
-	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL); projCfg != nil {
+	// Retroactively fill a blank github_host from this hive's cluster BEFORE
+	// building the project config, so a hive assigned before assign-time
+	// backfill existed starts receiving its GitHub Enterprise API URL on this
+	// very beat. No-op (and silent) for every hive that already has a host, is
+	// an unclaimed placeholder, or sits on a non-GHE cluster.
+	s.repairGitHubHostForHive(payload.HiveID)
+
+	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL, payload.GitHubAPIURL); projCfg != nil {
 		resp.ProjectConfig = projCfg
 		s.logger.Info("heartbeat: delivering claimed project config to spoke",
 			"hive_id", payload.HiveID,

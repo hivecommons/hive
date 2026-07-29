@@ -1563,7 +1563,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		//     restarted / hasn't beaten yet — not a fresh assignment).
 		spokeReportsDifferentProject := entry.Org != "" && !strings.EqualFold(entry.Org, sh.Org)
 		if !entry.Upgrading && spokeReportsDifferentProject &&
-			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel, entry.DashboardURL) != nil {
+			// Empty curAPIURL deliberately: a GHE API-URL-only push is a config
+			// repair, not an assignment, and must never light "Assigning to <org>".
+			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel, entry.DashboardURL, "") != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
 		}
@@ -4689,6 +4691,11 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 // absent HiveID preserves the historical auto-pick behavior.
 type ApproveProvisionRequest struct {
 	HiveID string `json:"hive_id"`
+	// GitHubHost is the admin's explicit choice of GitHub instance for this
+	// hive, overriding the one on the provision request. "public" forces public
+	// github.com even on a GitHub Enterprise cluster; empty means "use the
+	// request's host, else the cluster default".
+	GitHubHost string `json:"github_host,omitempty"`
 }
 
 func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Request) {
@@ -4775,6 +4782,38 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	h.ACMMLevel = acmm
 	h.Status = ""
 	h.Error = ""
+	// The requester already told us which GitHub their org lives on (parsed
+	// from the org URL they pasted, or picked explicitly), so honour it. Before
+	// this, approve dropped github_host entirely — only the manual assign path
+	// ever set it — and a GHE request approved through this path produced a
+	// hive with a blank host talking to api.github.com. An override the admin
+	// chose in the approve modal arrives on the request body below and wins.
+	if host := strings.TrimSpace(approveBody.GitHubHost); host != "" {
+		if !isValidName(host) && !strings.EqualFold(host, githubHostPublic) {
+			http.Error(w, `{"error":"invalid github host"}`, http.StatusBadRequest)
+			return
+		}
+		// An explicit "public" choice means public github.com. Record it as a
+		// blank host so gheAPIURLForHost pushes nothing and the spoke keeps its
+		// own api.github.com default — and so the cluster backfill below, which
+		// only ever fills a blank, does not silently re-GHE it.
+		if strings.EqualFold(host, githubHostPublic) {
+			h.GitHubHost = ""
+			h.GitHubBaseURL = githubHostPublic
+		} else {
+			h.GitHubHost = host
+		}
+	} else if pr.GitHubHost != "" {
+		h.GitHubHost = pr.GitHubHost
+	}
+	// Same cluster backfill the manual assign path does: when neither the admin
+	// nor the request named a host, inherit the cluster's GHE default rather
+	// than leaving a blank that pushes an empty API URL forever.
+	if host := backfillGitHubHostFromCluster(h, s.clusterForHive(h)); host != "" {
+		h.GitHubHost = host
+		s.logger.Info("backfilled hive github host from cluster defaults",
+			"hive", hiveID, "github_host", host)
+	}
 	if err := saveSaaSHive(h); err != nil {
 		http.Error(w, `{"error":"failed to assign placeholder hive"}`, http.StatusInternalServerError)
 		return
@@ -5040,7 +5079,10 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 		"acmm_was", prevLevel, "acmm_now", h.ACMMLevel)
 }
 
-func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int, curURL string) *HeartbeatProjectConfig {
+// curAPIURL is the GitHub API base URL the spoke reports it is CURRENTLY using
+// (HeartbeatPayload.GitHubAPIURL). Empty means the spoke is too old to report
+// it — treated as UNKNOWN, never as a mismatch.
+func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary string, curACMM int, curURL, curAPIURL string) *HeartbeatProjectConfig {
 	h := loadSaaSHive(hiveID)
 	if h == nil {
 		return nil
@@ -5094,7 +5136,20 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 			break
 		}
 	}
-	if !needClaimPush && !needURLPush && !needRepoRepair {
+	// A hive whose GitHubHost was filled in AFTER its claim was delivered —
+	// the retroactive repair, or an admin editing the host later — has
+	// ClaimDelivered == true and a matching vanity URL, so every gate above is
+	// false and the reconcile returns nil forever. The spoke would then keep
+	// talking to api.github.com against a GitHub Enterprise org (the vllm-d /
+	// hosted-available-vllmd-01 failure). Push whenever we have a GHE API URL
+	// to deliver and the spoke reports a DIFFERENT one.
+	//
+	// Deliberately conservative: an empty curAPIURL means the spoke is too old
+	// to report its API URL, which is UNKNOWN, not a mismatch — pushing on it
+	// would re-send on every beat with no read-back to ever stop it.
+	wantAPIURL := gheAPIURLForHost(h.GitHubHost)
+	needGHEAPIPush := wantAPIURL != "" && curAPIURL != "" && curAPIURL != wantAPIURL
+	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush {
 		return nil // nothing left to push
 	}
 	// Sanitize before pushing. A repo pasted as a URL
@@ -5221,7 +5276,9 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":"invalid org name %q — use the org name or its URL (e.g. github.ibm.com/my-org)"}`, body.Org), http.StatusBadRequest)
 		return
 	}
-	if body.GitHubHost != "" && !isValidName(body.GitHubHost) {
+	// "public" is the sentinel that forces public github.com even on a GHE
+	// cluster; it is not a hostname, so exempt it from the hostname validator.
+	if body.GitHubHost != "" && !isValidName(body.GitHubHost) && !strings.EqualFold(body.GitHubHost, githubHostPublic) {
 		http.Error(w, `{"error":"invalid github host"}`, http.StatusBadRequest)
 		return
 	}
@@ -5280,7 +5337,18 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.Org = body.Org
 	// Record the GHE host (if any) so the heartbeat can point this spoke at the
 	// right GitHub API. Never blank an existing value with an empty one.
-	if body.GitHubHost != "" {
+	//
+	// "public" is an explicit choice of public github.com on a cluster whose
+	// defaults point at GHE. Record it as a blank host (so gheAPIURLForHost
+	// pushes nothing and the spoke keeps api.github.com) PLUS the
+	// GitHubBaseURL sentinel, which is what makes effectiveGitHubBaseURL
+	// resolve to "" and therefore makes the cluster backfill below decline to
+	// re-GHE the hive. Without the sentinel a blank host would simply be
+	// refilled from the cluster on the very next line.
+	if strings.EqualFold(body.GitHubHost, githubHostPublic) {
+		h.GitHubHost = ""
+		h.GitHubBaseURL = githubHostPublic
+	} else if body.GitHubHost != "" {
 		h.GitHubHost = body.GitHubHost
 	}
 	// Backfill the host from the hive's cluster when neither the request nor
@@ -9853,12 +9921,20 @@ const dashboardHTML = `<!DOCTYPE html>
         '<div><span style="color:var(--muted)">Repos:</span> ' + esc(pr.repos || '') + '</div>' +
         '<div><span style="color:var(--muted)">Primary:</span> ' + esc(pr.primary_repo || '') + '</div>' +
         '<div><span style="color:var(--muted)">ACMM:</span> ' + (pr.acmm_level != null ? pr.acmm_level : '—') + '</div>' +
+        '<div><span style="color:var(--muted)">GitHub:</span> ' + esc(pr.github_host || PUBLIC_GITHUB_HOST) + '</div>' +
         '</div>';
+      /* The requester's own github_host pre-fills the picker — they already
+         told us which GitHub their org lives on. It is only the cluster
+         default when the request carries none. The cluster is unknown until a
+         placeholder is picked (auto-pick resolves it server-side), so the
+         picker opens on "Cluster default" and the note fills in on selection. */
+      var approveRequestHost = pr.github_host || '';
       var content =
         summary +
         '<label style="' + lbl + '">Placeholder to assign</label>' +
         '<select id="approve-hive" style="' + fld + '"><option value="">Loading placeholders…</option></select>' +
         '<div style="font-size:0.72rem;color:var(--muted);margin-top:6px">Auto-pick chooses an available placeholder from the request&#39;s pool.</div>' +
+        githubHostChoiceMarkup('approve', '', approveRequestHost, fld, lbl) +
         '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
         '<button onclick="closeApproveModal()" style="padding:6px 16px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;cursor:pointer">Cancel</button>' +
         '<button id="approve-submit" onclick="confirmApprove(\'' + esc(username) + '\')" style="padding:6px 16px;background:#3fb950;color:#000;border:none;border-radius:6px;cursor:pointer;font-weight:600">Approve</button>' +
@@ -9870,17 +9946,35 @@ const dashboardHTML = `<!DOCTYPE html>
         '<h3 style="margin:0 0 12px 0;font-size:1rem">Approve &amp; assign placeholder</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeApproveModal(); });
       document.body.appendChild(overlay);
+      /* No cluster is known yet (auto-pick is the default selection), so the
+         "Cluster default" note stays generic until a placeholder is chosen. */
+      wireGitHubHostChoice('approve', '');
       // Populate the dropdown with available placeholders (auto-pick default).
+      var _approvePlaceholders = [];
       try {
         var resp = await fetch('/api/saas/admin/available-placeholders');
         var data = await resp.json();
         var sel = document.getElementById('approve-hive');
         if (!sel) return;
+        _approvePlaceholders = data.placeholders || [];
         var opts = '<option value="">Auto-pick</option>';
-        (data.placeholders || []).forEach(function(p) {
+        _approvePlaceholders.forEach(function(p) {
           opts += '<option value="' + esc(p.id) + '">' + esc(p.id) + '  (' + esc(p.cluster_id || 'default') + ')</option>';
         });
         sel.innerHTML = opts;
+        /* Picking a concrete placeholder reveals its cluster, so the "Cluster
+           default" option can finally name the GitHub instance the hive will
+           land on. Auto-pick ('') leaves it unnamed — the server resolves the
+           cluster and backfills the host itself. */
+        sel.addEventListener('change', function() {
+          var ph = (_approvePlaceholders || []).reduce(function(m, p) { return (p && p.id === sel.value) ? p : m; }, null);
+          var host = ph ? clusterGitHubHost(ph.cluster_id || '') : '';
+          var hostSel = document.getElementById('approve-ghhost');
+          if (hostSel && hostSel.options && hostSel.options.length) {
+            hostSel.options[0].textContent = host ? 'Cluster default — ' + host : 'Cluster default';
+          }
+          wireGitHubHostChoice('approve', host);
+        });
       } catch(e) {
         var sel2 = document.getElementById('approve-hive');
         if (sel2) sel2.innerHTML = '<option value="">Auto-pick</option>';
@@ -9901,7 +9995,9 @@ const dashboardHTML = `<!DOCTYPE html>
         var resp = await fetch('/api/saas/approve-provision/' + encodeURIComponent(username), {
           method: 'PUT',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({hive_id: hiveId})
+          /* github_host: '' = use the request's host, else the cluster
+             default (server-side); 'public' = force public github.com. */
+          body: JSON.stringify({hive_id: hiveId, github_host: githubHostChoiceValue('approve')})
         });
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Assign failed', 'error'); if (submit) { submit.disabled = false; submit.textContent = 'Approve'; } return; }
@@ -10169,6 +10265,123 @@ const dashboardHTML = `<!DOCTYPE html>
         if (list[i] && list[i].id === sel.value) return list[i];
       }
       return null;
+    }
+
+    /* PUBLIC_GITHUB_SENTINEL is the value the assign/approve APIs accept to
+       FORCE public github.com on a cluster whose defaults point at a GitHub
+       Enterprise instance. It mirrors githubHostPublic on the server, where
+       effectiveGitHubBaseURL resolves it to "" (public). It is deliberately
+       NOT a hostname — the server exempts it from the hostname validator. */
+    var PUBLIC_GITHUB_SENTINEL = 'public';
+
+    /* clusterEntryById returns the ClusterListEntry for a cluster id, or null
+       when the cluster list has not loaded (or the id is unknown). An empty id
+       is how the hub records "the default cluster", so fall through to a
+       lookup rather than guessing a host. */
+    function clusterEntryById(clusterId) {
+      if (!clusterId) return null;
+      var list = _clusterList || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === clusterId) return list[i];
+      }
+      return null;
+    }
+
+    /* clusterGitHubHost returns the bare GitHub host a cluster's hives default
+       to ('github.com' for public GitHub), or '' when the cluster is unknown /
+       the list has not loaded yet. Never guess github.com for an unknown
+       cluster: silently claiming "public" is the exact bug this control
+       exists to surface. */
+    function clusterGitHubHost(clusterId) {
+      var c = clusterEntryById(clusterId);
+      return (c && c.github_host) || '';
+    }
+
+    /* githubHostChoiceMarkup renders the GitHub-instance picker shared by the
+       assign and approve modals.
+
+       Options are: the cluster's own host (the default, and the right answer
+       in almost every case), explicit public github.com, and a free-text host
+       for the rare cross-instance assignment. clusterHost may be '' when the
+       cluster list has not loaded — the control then opens on "Use cluster
+       default", which submits nothing and lets the SERVER's cluster backfill
+       decide, exactly as if the control did not exist. */
+    function githubHostChoiceMarkup(idPrefix, clusterHost, requestHost, fld, lbl) {
+      var isGHE = clusterHost && clusterHost !== PUBLIC_GITHUB_HOST;
+      var defaultLabel = clusterHost
+        ? 'Cluster default — ' + esc(clusterHost)
+        : 'Cluster default';
+      /* A provision request's github_host, when present, is what the REQUESTER
+         told us their org lives on. Prefer it over the cluster default: they
+         know which GitHub their org is on and we should not silently override
+         them. */
+      var preselectCustom = !!(requestHost && requestHost !== clusterHost && requestHost !== PUBLIC_GITHUB_HOST);
+      var opts =
+        '<option value="">' + defaultLabel + '</option>' +
+        '<option value="' + esc(PUBLIC_GITHUB_SENTINEL) + '">Public github.com' + (isGHE ? ' (override)' : '') + '</option>' +
+        '<option value="__custom__"' + (preselectCustom ? ' selected' : '') + '>Other GitHub Enterprise host…</option>';
+      return '<label style="' + lbl + '">GitHub instance</label>' +
+        '<select id="' + esc(idPrefix) + '-ghhost" style="' + fld + '">' + opts + '</select>' +
+        '<input id="' + esc(idPrefix) + '-ghhost-custom" style="' + fld + ';margin-top:6px;display:' + (preselectCustom ? 'block' : 'none') + '" ' +
+          'placeholder="github.example.com" value="' + esc(preselectCustom ? requestHost : '') + '">' +
+        '<div id="' + esc(idPrefix) + '-ghhost-note" style="font-size:0.72rem;color:var(--muted);margin-top:6px"></div>';
+    }
+
+    /* wireGitHubHostChoice attaches the behaviour for a picker rendered by
+       githubHostChoiceMarkup: show the free-text box only for "Other", and
+       keep a live note of exactly which GitHub instance the hive will target.
+       Uses addEventListener rather than inline handlers because the values
+       involved (hosts, org names) are user-controlled. */
+    function wireGitHubHostChoice(idPrefix, clusterHost) {
+      var sel = document.getElementById(idPrefix + '-ghhost');
+      var custom = document.getElementById(idPrefix + '-ghhost-custom');
+      var note = document.getElementById(idPrefix + '-ghhost-note');
+      if (!sel) return;
+      function render() {
+        var isCustom = sel.value === '__custom__';
+        if (custom) custom.style.display = isCustom ? 'block' : 'none';
+        if (!note) return;
+        var target;
+        if (isCustom) {
+          target = (custom && custom.value.trim()) || '';
+        } else if (sel.value === PUBLIC_GITHUB_SENTINEL) {
+          target = PUBLIC_GITHUB_HOST;
+        } else {
+          target = clusterHost || '';
+        }
+        if (!target) {
+          note.textContent = 'This hive will use its cluster’s GitHub instance.';
+          note.style.color = 'var(--muted)';
+          return;
+        }
+        var ghe = target !== PUBLIC_GITHUB_HOST;
+        note.textContent = 'This hive will target ' + target + '.' +
+          (ghe ? ' The GitHub App must be installed on the org on ' + target + ' — a public github.com App will not authenticate there.' : '');
+        note.style.color = ghe ? 'var(--accent, #58a6ff)' : 'var(--muted)';
+      }
+      /* Idempotent: this is re-invoked when the assign modal's placeholder
+         picker changes the cluster, and binding a second listener each time
+         would leave a stale closure (holding the OLD clusterHost) racing the
+         new one. Store the current renderer and swap it out. */
+      if (sel._ghHostRender) {
+        sel.removeEventListener('change', sel._ghHostRender);
+        if (custom) custom.removeEventListener('input', sel._ghHostRender);
+      }
+      sel._ghHostRender = render;
+      sel.addEventListener('change', render);
+      if (custom) custom.addEventListener('input', render);
+      render();
+    }
+
+    /* githubHostChoiceValue returns what to send as github_host: '' for
+       "cluster default" (the server backfills), the 'public' sentinel, or a
+       typed GHE hostname. */
+    function githubHostChoiceValue(idPrefix) {
+      var sel = document.getElementById(idPrefix + '-ghhost');
+      if (!sel) return '';
+      if (sel.value !== '__custom__') return sel.value;
+      var custom = document.getElementById(idPrefix + '-ghhost-custom');
+      return (custom && custom.value.trim()) || '';
     }
 
     /* syncCreateModalInstallLinks points every "install the app" link in the
@@ -10709,12 +10922,23 @@ const dashboardHTML = `<!DOCTYPE html>
       } else {
         hiveField = '<div style="margin-bottom:4px;font-size:0.8rem;color:var(--muted)">Claim placeholder <strong style="color:var(--fg)">' + esc(hiveId) + '</strong> for a real project.</div>';
       }
+      /* The GitHub instance defaults to the SELECTED placeholder's cluster.
+         With a picker the selection can change, so resolve the cluster of the
+         initially-selected placeholder and re-resolve on change below. */
+      function clusterIdForSelection(id) {
+        var fromList = (placeholders || []).reduce(function(m, p) { return (p && p.id === id) ? p : m; }, null);
+        if (fromList) return fromList.cluster_id || '';
+        var fromDash = (_allDashHives || []).reduce(function(m, x) { return (x && x.id === id) ? x : m; }, null);
+        return (fromDash && fromDash.clusterId) || '';
+      }
+      var assignClusterHost = clusterGitHubHost(clusterIdForSelection(hiveId));
       var content =
         hiveField +
         '<label style="' + lbl + '">Owner (GitHub login) *</label>' +
         '<input id="assign-owner" style="' + fld + '" value="' + esc(prefillOwner || '') + '" placeholder="octocat">' +
         '<label style="' + lbl + '">Org *</label>' +
         '<input id="assign-org" style="' + fld + '" value="' + orgVal + '" placeholder="my-org">' +
+        githubHostChoiceMarkup('assign', assignClusterHost, '', fld, lbl) +
         '<label style="' + lbl + '">Repos * (comma-separated)</label>' +
         '<input id="assign-repos" style="' + fld + '" value="' + reposVal + '" placeholder="repo-a, repo-b">' +
         '<label style="' + lbl + '">Primary repo (optional, defaults to first)</label>' +
@@ -10745,6 +10969,25 @@ const dashboardHTML = `<!DOCTYPE html>
         '<h3 style="margin:0 0 12px 0;font-size:1rem">Assign placeholder hive</h3>' + content + '</div>';
       overlay.addEventListener('click', function(e) { if (e.target === overlay) closeAssignModal(); });
       document.body.appendChild(overlay);
+      wireGitHubHostChoice('assign', assignClusterHost);
+      /* Retargeting the placeholder can change the cluster, and with it the
+         default GitHub instance. Re-resolve so the note never claims the
+         previous cluster's host. An explicit override the admin already made
+         (public / a typed host) is left alone — only the "cluster default"
+         label and note follow the selection. */
+      var phPick = document.getElementById('assign-hive-pick');
+      if (phPick) {
+        phPick.addEventListener('change', function() {
+          assignClusterHost = clusterGitHubHost(clusterIdForSelection(phPick.value));
+          var sel = document.getElementById('assign-ghhost');
+          if (sel && sel.options && sel.options.length) {
+            sel.options[0].textContent = assignClusterHost
+              ? 'Cluster default — ' + assignClusterHost
+              : 'Cluster default';
+          }
+          wireGitHubHostChoice('assign', assignClusterHost);
+        });
+      }
     }
     function toggleAssignAdvanced() {
       var adv = document.getElementById('assign-adv');
@@ -10782,7 +11025,9 @@ const dashboardHTML = `<!DOCTYPE html>
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/assign', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({owner: owner, org: org, repos: repos, primary_repo: primary, project_name: name, acmm_level: acmm, is_public: isPublic, app_id: appId, installation_id: installId, app_private_key: appKey})
+          /* github_host: '' = let the server backfill from the cluster,
+             'public' = force public github.com, otherwise a GHE hostname. */
+          body: JSON.stringify({owner: owner, org: org, github_host: githubHostChoiceValue('assign'), repos: repos, primary_repo: primary, project_name: name, acmm_level: acmm, is_public: isPublic, app_id: appId, installation_id: installId, app_private_key: appKey})
         });
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Assignment failed', 'error'); if (submit) { submit.disabled = false; submit.textContent = 'Assign'; } return; }

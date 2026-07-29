@@ -205,7 +205,19 @@ type HeartbeatPayload struct {
 	// so the hub can echo it back in HeartbeatProjectConfig rather than
 	// blanking it, and so the registry knows each hive's author without any
 	// spoke-side token lookup (which does not work on App-authenticated hives).
-	AIAuthor     string             `json:"ai_author,omitempty"`
+	AIAuthor string `json:"ai_author,omitempty"`
+	// GitHubAPIURL is the GitHub API base URL this spoke is CURRENTLY running
+	// against (its resolved value, so a public-GitHub spoke reports
+	// https://api.github.com rather than ""). Reported so the hub can tell
+	// whether a GitHub Enterprise API URL it wants to deliver has actually
+	// landed. Without it the hub has no read-back for this field: the claim
+	// reconcile in projectConfigForHiveID stops sending anything once
+	// ClaimDelivered is set, so a hive whose GitHubHost is filled in AFTER
+	// assignment (the retroactive repair) would never receive its GHE API URL.
+	//
+	// Empty means "spoke too old to report it" — the hub must treat that as
+	// UNKNOWN, never as a genuine mismatch, or it would re-push forever.
+	GitHubAPIURL string             `json:"github_api_url,omitempty"`
 	ACMMLevel    int                `json:"acmm_level"`
 	Agents       []AgentSummary     `json:"agents"`
 	Governor     GovernorSummary    `json:"governor"`
