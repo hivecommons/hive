@@ -8,14 +8,15 @@ org_logo_filename: images/hive.svg
 contact: Andy Anderson
 email: # optional — add if you want it listed publicly
 org_description: |
-  Hive is an open-source, self-hostable system that runs a fleet of AI coding
-  agents to autonomously maintain software repositories — triaging issues,
-  writing fixes, opening pull requests, and merging on green CI, all under
-  human-controlled, technically-enforced guardrails. It runs as a cloud-native
-  workload on Kubernetes with a hub-and-spoke model: a hosted hub coordinates a
-  fleet of self-hosted spoke hives. End users today include the KubeStellar
-  Console team (kubestellar/console) and Project Bluefin (projectbluefin), each
-  running a hive against their own repositories.
+  Hive is an open-source, self-hostable system (part of the KubeStellar org,
+  github.com/kubestellar/hive) that runs a fleet of AI coding agents to
+  autonomously maintain software repositories — triaging issues, writing fixes,
+  opening pull requests, and merging on green CI, all under human-controlled,
+  technically-enforced guardrails. It runs as a cloud-native workload on
+  Kubernetes with a hub-and-spoke model: a hosted hub coordinates a fleet of
+  self-hosted spoke hives. End users today include the KubeStellar Console team
+  (kubestellar/console) and Project Bluefin (projectbluefin), each running a hive
+  against their own repositories.
 org_size: Open-source community project
 user_size: The maintainers and contributors of every repository a hive maintains
 industries:
@@ -55,7 +56,7 @@ reference_architectures:
   {{< /card >}}
 
   {{< card header="KubeStellar" >}}
-  [![kubestellar logo](https://raw.githubusercontent.com/kubestellar/kubestellar/main/docs/overrides/images/KubeStellar-with-Logo.png)](https://kubestellar.io/)
+  [![kubestellar logo](https://raw.githubusercontent.com/cncf/landscape/master/hosted_logos/kubestellar.svg)](https://kubestellar.io/)
   - **Using since:** 2024 (CNCF Sandbox)
   - **Current version:** 0.2x
 
