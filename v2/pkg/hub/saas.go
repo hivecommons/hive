@@ -9521,8 +9521,8 @@ const dashboardHTML = `<!DOCTYPE html>
             }
           }
           var branch = canSwitchBranch
-            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px;cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
-            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(branchName) + '</span>';
+            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
+            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(branchName) + '</span>';
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sameShaJS(sha, branchLatest);
           /* Branch switch in flight: the hive still reports the OLD branch
@@ -9553,7 +9553,10 @@ const dashboardHTML = `<!DOCTYPE html>
             var switchStale = isSwitching && _switchStartedAt[h.id] && (Date.now() - _switchStartedAt[h.id] > SWITCH_STALE_MS);
             var progressLabel = isSwitching ? (switchStale ? 'Switching to ' + esc(targetBranch) + ' — taking longer than expected' : 'Switching to ' + esc(targetBranch)) : 'Upgrading';
             var progressTitle = isSwitching ? (switchStale ? 'The hive has not reported branch ' + esc(targetBranch) + ' yet — it may be offline or its build predates in-cluster switch support. It will apply on its next successful check-in.' : 'Rolling out ' + esc(h.upgradeTarget || '') + ' — the pill updates when the hive reports the new branch') : 'Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?');
-            upgradeIcon = ' <span title="' + progressTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
+            /* In-flight state is not clickable, so it loses the box entirely:
+               a border around a non-target was the padding that made this the
+               tall line. The spinner is the affordance-free progress signal. */
+            upgradeIcon = '<span title="' + progressTitle + '" style="font-size:0.7rem;white-space:nowrap;opacity:0.8;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:currentColor;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
             /* A daily-mode hive is NOT upgrading "shortly" — saying so would be
                a lie the operator would notice hours later. Name the window and
@@ -9564,11 +9567,23 @@ const dashboardHTML = `<!DOCTYPE html>
             var queuedTitle = queuedDaily
               ? 'Auto-upgrade will apply ' + esc(branchLatest) + ' at the next 5pm ET window — click to upgrade now' + esc(buildingHint)
               : 'Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint);
-            upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="' + queuedTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">' + queuedLabel + '</span>';
+            /* escAttr, not esc, for the title: esc() leaves quotes intact and a
+               branch name or commit subject carrying one would break out of the
+               attribute. jsArg supplies its own quotes for the handler args. */
+            upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
+              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
+              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
+              ' title="' + escAttr(queuedTitle) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--muted);font-size:0.7rem;text-decoration-style:dashed">' + esc(queuedLabel) + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
-            upgradeIcon = ' <button id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Current: ' + esc(sha) + ' → Latest: ' + esc(branchLatest) + esc(buildingHint) + '" style="padding:3px 10px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
+            /* Text-with-an-underline rather than a filled button: on its own
+               line the padding bought no extra affordance and cost 8px of row
+               height. Green still marks it as the go-forward action. */
+            upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
+              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
+              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
+              ' title="' + escAttr('Current: ' + sha + ' → Latest: ' + branchLatest + buildingHint) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade</span>';
           } else if (latestUnknown && isHosted && h.role === 'owner') {
-            upgradeIcon = ' <button disabled title="Waiting for latest version…" style="padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
+            upgradeIcon = '<span title="Waiting for latest version…" style="font-size:0.7rem;color:var(--muted);white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</span>';
           }
           /* Auto-upgrade control: a single select replaces the old checkbox.
              The dense table has no room for a checkbox PLUS a mode dropdown,
@@ -9586,35 +9601,46 @@ const dashboardHTML = `<!DOCTYPE html>
             var opts = '';
             for (var oi = 0; oi < AUTO_UPGRADE_OPTIONS.length; oi++) {
               var opt = AUTO_UPGRADE_OPTIONS[oi];
-              opts += '<option value="' + esc(opt.value) + '"' + (mode === opt.value ? ' selected' : '') + '>' + esc(opt.label) + '</option>';
+              /* Each OPTION carries its own full-meaning title too, so opening
+                 the list explains the three icons without a legend elsewhere. */
+              opts += '<option value="' + escAttr(opt.value) + '" title="' + escAttr(opt.ariaLabel) + '"' + (mode === opt.value ? ' selected' : '') + '>' + esc(opt.label) + '</option>';
             }
             var d = document.createElement('select');
             d.className = 'auto-upgrade-select';
             d.setAttribute('data-hive-id', h.id);
-            d.title = AUTO_UPGRADE_TITLE;
-            d.setAttribute('style', 'margin-left:8px;font-size:0.65rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 3px;cursor:pointer;vertical-align:middle');
+            /* The label is now icons only, so the meaning has to live in the
+               accessible name and the tooltip or it is simply lost. aria-label
+               names the CURRENT mode; title explains what the modes are. */
+            d.setAttribute('aria-label', autoUpgradeAriaLabel(mode));
+            d.title = autoUpgradeAriaLabel(mode) + ' — ' + AUTO_UPGRADE_TITLE;
+            d.setAttribute('style', 'font-size:0.65rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;' +
+              'height:' + AUTO_SELECT_H_PX + 'px;min-width:' + AUTO_SELECT_MIN_W_PX + 'px;padding:0 ' + AUTO_SELECT_PAD_X_PX + 'px;cursor:pointer;vertical-align:middle;line-height:' + AUTO_SELECT_H_PX + 'px');
             d.innerHTML = opts;
-            autoUpgradeCheck = ' ' + d.outerHTML;
+            autoUpgradeCheck = d.outerHTML;
           }
           var shaMsg = _commitMessages[sha] || _latestSHAMessages[branchName] || '';
-          /* Three stacked lines, grouped by what each thing IS — not split
-             arbitrarily to reach three:
-               1. the branch, which the owner can CHANGE (the pill is a
-                  switcher, so it owns a line and stays a full tap target);
-               2. the SHA and its current/behind glyph, which are two views of
-                  the same immutable fact — "what commit is this hive on";
-               3. what happens NEXT: the upgrade affordance (Upgrade button /
-                  "queued · 5pm ET" / in-flight spinner) beside the
-                  auto-upgrade mode select. These are the two tallest items,
-                  so pairing them costs one line instead of two.
-             Every fragment below is embedded verbatim, so ids, onclick/onchange
-             handlers and title tooltips are all preserved exactly. */
-          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + esc(shaMsg) + '">' + esc(sha) + '</span>' + status;
-          var nextLine = upgradeIcon + autoUpgradeCheck;
+          /* FOUR stacked lines, ONE element per line. The column is as wide as
+             its widest LINE, so as long as no two controls share a line the
+             width collapses to the widest single element — which, now that the
+             select is icon-only, is the 56px select rather than the ~150px
+             "[queued · 5pm ET] [Auto: daily 5pm ET]" pair that used to set it.
+               1. the branch pill, which the owner can CHANGE (it is a switcher,
+                  so it owns a line and stays a full tap target);
+               2. the SHA and its current/behind glyph — two views of the same
+                  immutable fact, "what commit is this hive on". These are one
+                  element for width purposes: the glyph is 10px and rides
+                  alongside the hash rather than setting the line's width.
+               3. what happens NEXT: the upgrade affordance alone;
+               4. the icon-only auto-upgrade mode select alone.
+             Lines 3 and 4 are omitted entirely when empty — a read-only viewer
+             gets two lines, not four with two blanks. Every fragment below is
+             embedded verbatim, so ids, handlers and tooltips are preserved. */
+          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status;
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
             '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
             '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
-            (nextLine ? '<div style="' + STACKED_LINE_STYLE + '">' + nextLine + '</div>' : '') +
+            (upgradeIcon ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + '</div>' : '') +
+            (autoUpgradeCheck ? '<div style="' + STACKED_LINE_STYLE + '">' + autoUpgradeCheck + '</div>' : '') +
             '</div>';
         } else { versionCell = '<span style="color:var(--muted)">—</span>'; }
         var pendingBadge = (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write'))
@@ -9906,11 +9932,42 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Copy is framed around DISRUPTION, not cron mechanics: the operator is
        choosing when it is acceptable to interrupt a hive that is working. */
     var AUTO_UPGRADE_TITLE = 'When to apply new versions. Instant restarts the hive as soon as a new version lands; Daily restarts it at most once a day, after hours, so a stable hive is not disturbed mid-work.';
+    /* Icon-only labels. The "Auto:" prefix repeated on every row was the widest
+       single element in the Version column and said nothing a scanning operator
+       did not already know from the column it sits in — so it is carried by the
+       title/aria-label instead of being spelled out on every line.
+
+       The three glyphs are chosen to be DISTINCT SHAPES, not intensities of one
+       shape: 'off' must not read as a greyed-out 'instant'.
+         ⦸  off     — a struck-through circle: the universal "disabled" mark,
+                      and the only glyph here with a diagonal stroke.
+         ⚡ instant  — a bolt: applies the moment a version lands.
+         🕔 5p      — a clock face, plus the literal window "5p", because the
+                      hour is the whole point of the mode and no icon conveys it.
+       All three are plain text glyphs rather than SVG or background images, so
+       they inherit the select's currentColor. The hub renders on one dark
+       surface today, but nothing here hard-codes a fill or stroke colour, so a
+       light surface would not make any of the three vanish. The label text
+       after the glyph is the shortest string that still disambiguates — and it
+       is there precisely so the control never degrades to "a picture only":
+       ⚡ and 🕔 are emoji whose rendering varies by platform, so the word
+       carries the meaning if the glyph renders as a box.
+
+       ariaLabel carries the FULL meaning for screen readers and for the
+       per-option tooltip, so nothing is lost by dropping the inline words. */
     var AUTO_UPGRADE_OPTIONS = [
-      {value: AUTO_UPGRADE_OFF, label: 'Auto: off'},
-      {value: AUTO_UPGRADE_INSTANT, label: 'Auto: instant'},
-      {value: AUTO_UPGRADE_DAILY, label: 'Auto: daily 5pm ET'}
+      {value: AUTO_UPGRADE_OFF, label: '⦸ off', ariaLabel: 'Auto-upgrade: off'},
+      {value: AUTO_UPGRADE_INSTANT, label: '⚡ instant', ariaLabel: 'Auto-upgrade: instantly when a new version lands'},
+      {value: AUTO_UPGRADE_DAILY, label: '🕔 5p', ariaLabel: 'Auto-upgrade: daily at 5pm ET'}
     ];
+    /* Accessible name for the select itself, resolved from the CURRENT mode so
+       the control announces what it is set to rather than only what it does. */
+    function autoUpgradeAriaLabel(mode) {
+      for (var ai = 0; ai < AUTO_UPGRADE_OPTIONS.length; ai++) {
+        if (AUTO_UPGRADE_OPTIONS[ai].value === mode) return AUTO_UPGRADE_OPTIONS[ai].ariaLabel;
+      }
+      return 'Auto-upgrade';
+    }
 
     /* One delegated listener on the container, bound once at startup, so every
        re-render of the table keeps working without rebinding per row. */
@@ -10003,23 +10060,44 @@ const dashboardHTML = `<!DOCTYPE html>
        that already carries 16 of them.
 
        STACKED_LINE_HEIGHT is deliberately tighter than the table's default so
-       the stack stays as short as three lines can be. The honest arithmetic, at
-       0.7rem on a 16px root:
-         plain text line          = 0.7*16*1.15            = 12.9px
-         line 3 (Upgrade button)  = 12.9 + 3px pad*2 + 1px border*2 = 20.9px
-         three lines + 2 gaps     = 12.9 + 12.9 + 20.9 + 2*1 = 48.7px
-       The two-line name cell (1rem + 0.8rem at line-height 1.4) is 40.3px, so
-       an OWNER row — the only variant that gets all three lines, because only
-       an owner sees the Upgrade button and the auto-upgrade select — grows from
-       40.3px to ~48.7px, about 8px. Rows for non-owners keep at most two
-       stacked lines (25.8px) and are unchanged, since the name cell still sets
-       their height. That is the deliberate trade: ~8px on owner rows in
-       exchange for dropping a whole column and a much narrower Version column.
-       Loosening either constant is what would make it materially worse.
+       the stack stays as short as four lines can be.
+
+       ONE ELEMENT PER LINE. The three-line arrangement did not actually narrow
+       the column, because its last line carried TWO controls side by side (the
+       upgrade affordance and the auto-upgrade select). A column is as wide as
+       its widest line, so that pair — not the short lines above it — set the
+       width, and the stacking bought nothing. Splitting them onto their own
+       lines is what makes the widest line a single element.
+
+       THE HONEST NUMBERS — do not "simplify" these away and do not restate
+       them from arithmetic alone. A previous change to this cell shipped a
+       claim of height-neutrality that was false. These were MEASURED in
+       Chromium on the rendered cell (getBoundingClientRect), for an owner row
+       that is behind latest with auto-upgrade set to daily — the widest and
+       tallest variant:
+         column width   266.4px -> 110.4px   (-156.0px, -58.6%)
+         cell height     66.8px ->  79.8px   (+13.0px)
+         stack height    50.8px ->  63.8px   (+13.0px)
+       The four lines measure 15.0 / 12.9 / 12.9 / 20.0 px plus 3 gaps of
+       STACKED_ROW_GAP_PX. So ROWS DO GROW, by 13px on owner rows. That is the
+       price of the width win and it is stated rather than hidden. Two things
+       hold it down: the upgrade affordance is now text-with-an-underline rather
+       than a padded button (8px of padding and border removed), and the select
+       is pinned to AUTO_SELECT_H_PX rather than left to the UA's default
+       control height, which is taller.
+
+       What actually sets the width now is the LONGEST upgrade label,
+       "queued · 5pm ET" at 90.4px — not the select, which measures 77px. The
+       old width was set by that label and the "Auto: daily 5pm ET" select
+       sitting on ONE line together.
+
+       Non-owner rows are UNCHANGED: they still get at most two lines (28.9px),
+       under the two-line name cell's 40.3px, which continues to set their
+       height. Only owner rows pay.
 
        STACKED_ROW_GAP_PX separates the stacked lines without adding a full line
-       box. 1px, not more, precisely because line 3 is a button whose own padding
-       already supplies visual separation. */
+       box. 1px, not more, precisely because the last line is a control whose own
+       border already supplies visual separation. */
     var STACKED_LINE_HEIGHT = 1.15;
     var STACKED_ROW_GAP_PX = 1;
     /* Shared style for a stacked cell: a vertical flex column, centred to match
@@ -10033,6 +10111,27 @@ const dashboardHTML = `<!DOCTYPE html>
        SHA must never wrap mid-hash) but the LINES themselves are what narrow
        the column. */
     var STACKED_LINE_STYLE = 'display:flex;align-items:center;justify-content:center;gap:' + STACKED_ITEM_GAP_PX + 'px;white-space:nowrap';
+
+    /* Icon-only auto-upgrade select geometry. The control lost its "Auto:"
+       prefix, so its box must be sized deliberately rather than left to shrink
+       to a glyph: 20px tall and at least 56px wide keeps it a comfortable
+       pointer and touch target (the row is 63.8px tall, so 20px is roughly a
+       third of it — visibly a control, not a decoration) while still being far
+       narrower than the "Auto: daily 5pm ET" string it replaces. Widening it
+       would give back the column width this change exists to reclaim; making it
+       smaller would make it fiddly to hit. */
+    var AUTO_SELECT_H_PX = 20;
+    var AUTO_SELECT_MIN_W_PX = 56;
+    /* Horizontal padding inside the select. 4px, not the previous 3px, because
+       an icon needs a little breathing room from the border to read as a glyph
+       rather than as part of the frame. */
+    var AUTO_SELECT_PAD_X_PX = 4;
+    /* The upgrade affordance is text-with-an-underline, not a padded button:
+       on its own line a button's 3px padding and 1px border added 8px of row
+       height for no extra affordance, since the whole line is already the
+       click target. The underline plus the pointer cursor is what says
+       "clickable"; colour alone would not, and would fail in one theme. */
+    var UPGRADE_LINK_STYLE = 'cursor:pointer;text-decoration:underline;text-underline-offset:2px;white-space:nowrap';
 
     /* Visibility toggle switch geometry, used by the Location cell's owner
        branch. A 36x20 track with a 16px knob inset 2px is the standard iOS-style
