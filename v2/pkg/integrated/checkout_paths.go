@@ -144,6 +144,21 @@ func validateSetupStateRoot(stateDir, repository string) error {
 	if len(entries) == 0 {
 		return ensureOrdinaryDirectoryChain(filepath.Join(absolute, "integrated"), 0o700)
 	}
+	// A running ordinary Hive process prepares this exact empty directory before
+	// a dashboard setup is applied so it can observe a newly installed contract.
+	// Treat only that single ordinary, empty scaffold as fresh state. Any other
+	// entry still requires an ownership marker or an exact durable legacy config.
+	if len(entries) == 1 && entries[0].Name() == "integrated" {
+		integratedDir := filepath.Join(absolute, "integrated")
+		integratedInfo, integratedStatErr := os.Lstat(integratedDir)
+		if integratedStatErr == nil && integratedInfo.IsDir() && integratedInfo.Mode()&os.ModeSymlink == 0 && !deletionPathIsReparsePoint(integratedDir) {
+			if realIntegrated, evalErr := filepath.EvalSymlinks(integratedDir); evalErr == nil && filepath.Clean(realIntegrated) == filepath.Clean(integratedDir) {
+				if integratedEntries, readErr := os.ReadDir(integratedDir); readErr == nil && len(integratedEntries) == 0 {
+					return nil
+				}
+			}
+		}
+	}
 	// Migrate a legacy Hive root only when its durable config positively binds
 	// this exact repository. Arbitrary nonempty directories are never adopted.
 	integratedDir := filepath.Join(absolute, "integrated")
