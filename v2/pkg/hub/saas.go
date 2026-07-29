@@ -5392,6 +5392,31 @@ const dashboardHTML = `<!DOCTYPE html>
     .alert-ack-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: 1px 8px; font-size: 0.66rem; font-family: inherit; cursor: pointer; }
     .alert-ack-btn:hover { color: var(--text); border-color: var(--muted); }
     .alert-panel-more { margin-top: 8px; font-size: 0.7rem; color: var(--muted); background: none; border: none; font-family: inherit; cursor: pointer; text-decoration: underline; padding: 0; }
+
+    /* ── Hive search + facets ──
+       The My Hives area is a two-column shell: a narrow facet rail on the left
+       and the search box + table on the right. Both collapse to a single stacked
+       column at the 900px breakpoint used elsewhere in this sheet. */
+    #hive-search-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    #hive-search { flex: 1; min-width: 0; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.85rem; font-family: inherit; }
+    #hive-search:focus { outline: none; border-color: var(--accent); }
+    #hive-search-clear { flex: none; }
+    .hive-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; }
+    .facet-rail { min-width: 0; }
+    .facet-group { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+    .facet-group-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 8px 10px; background: none; border: none; color: var(--muted); font: inherit; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; text-align: left; }
+    .facet-group-head:hover { color: var(--text); }
+    .facet-values { padding: 2px 6px 8px; }
+    .facet-value { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 4px 6px; background: none; border: none; border-radius: 4px; color: var(--muted); font: inherit; font-size: 0.74rem; cursor: pointer; text-align: left; }
+    .facet-value:hover { background: rgba(255,255,255,0.05); color: var(--text); }
+    .facet-value.on { color: var(--accent); font-weight: 700; background: rgba(244,199,95,0.08); }
+    .facet-value-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .facet-value-count { flex: none; font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
+    /* Section headers double as expand/collapse buttons for the admin
+       assigned/unassigned groups. */
+    .hive-section-head td { cursor: pointer; user-select: none; }
+    .hive-section-head td:hover { color: var(--text) !important; }
+    .hive-section-caret { display: inline-block; width: 12px; margin-right: 4px; }
     .table-wrap { overflow: visible; margin: 0 auto; position: relative; }
     .hive-menu-cell:hover .hive-menu-dropdown { display: block !important; }
     .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: rgba(244,199,95,0.08); border-radius: 4px; }
@@ -5494,6 +5519,10 @@ const dashboardHTML = `<!DOCTYPE html>
       .site-header { grid-template-columns: 1fr; position: static; }
       .site-header nav { flex-wrap: wrap; gap: .85rem; }
       .header-link { justify-self: start; }
+      /* Stack the facet rail above the table instead of squeezing the grid. */
+      .hive-layout { grid-template-columns: minmax(0, 1fr); }
+      .facet-rail { display: flex; flex-wrap: wrap; gap: 10px; }
+      .facet-group { flex: 1 1 160px; margin-bottom: 0; }
     }
     @media (max-width: 600px) {
       .content { padding: 1.5rem 12px 32px; }
@@ -5572,7 +5601,16 @@ const dashboardHTML = `<!DOCTYPE html>
     <div id="hive-filter-bar" style="display:none"></div>
     <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="bulk-action-bar" style="display:none"></div>
-    <div id="hives-container"><div class="loading">Loading your hives...</div></div>
+    <div class="hive-layout">
+      <div class="facet-rail" id="hive-facet-rail"></div>
+      <div>
+        <div id="hive-search-row" style="display:none">
+          <input type="text" id="hive-search" placeholder="Search hives — org, repo, cluster, branch, user… (space = OR)" oninput="onHiveSearchInput()" autocomplete="off">
+          <button type="button" id="hive-search-clear" class="filter-chip filter-chip-clear" onclick="clearHiveSearch()">Clear</button>
+        </div>
+        <div id="hives-container"><div class="loading">Loading your hives...</div></div>
+      </div>
+    </div>
 
     <div id="public-hives-section" style="display:none;margin-top:48px">
       <h2 style="font-size:1.3rem;color:var(--accent);margin-bottom:16px">Public Hives</h2>
@@ -6290,17 +6328,6 @@ const dashboardHTML = `<!DOCTYPE html>
       return false;
     }
 
-    /* applyDashFilters filters the hives the caller wants rendered. It applies
-       the status chips AND, independently, the active alert-type filter — the
-       two compose as an AND (chips narrow by state, the alert filter narrows to
-       the hives carrying that alert), which is what "click an alert type to see
-       those hives" has to mean when a chip is already on. */
-    function applyDashFilters(hives) {
-      return (hives || []).filter(function(h) {
-        return hiveMatchesFilters(h) && hiveMatchesAlertFilter(h);
-      });
-    }
-
     /* ── Fleet alerts ("Attention needed") ────────────────────────────────
        Server-evaluated (see alerts.go); the client only renders and filters.
        Deliberately NOT recomputed here: a second, drifting implementation of
@@ -6377,11 +6404,20 @@ const dashboardHTML = `<!DOCTYPE html>
       renderHives(_allDashHives, true);
     }
 
-    /* clearAllHiveFilters resets BOTH filter mechanisms at once. The empty-state
-       escape hatch uses it, because either one alone can empty the list. */
+    /* clearAllHiveFilters resets EVERY narrowing control at once — status chips,
+       the failing-check and drift filters, the alert-type filter, the search box
+       and the facets. The empty-state escape hatch uses it, because any one of
+       them alone can empty the list and the user usually cannot tell which is
+       responsible. */
     function clearAllHiveFilters() {
       _dashStatusFilters = {};
+      _dashFailingCheckFilter = '';
+      _dashDriftFilter = '';
       _alertTypeFilter = '';
+      _dashFacets = {};
+      _dashSearchQuery = '';
+      var searchEl = document.getElementById('hive-search');
+      if (searchEl) searchEl.value = '';
       renderHives(_allDashHives, true);
     }
 
@@ -6577,6 +6613,239 @@ const dashboardHTML = `<!DOCTYPE html>
           (rows.length - ALERT_ROWS_SHOWN) + ' more</div>'
         : '';
       return '<div class="alert-rows">' + html + more + '</div>';
+
+    /* ── Free-text search over the hive list ──
+       OR semantics: whitespace-separated terms, a hive matches if ANY term is a
+       case-insensitive substring of its searchable text. Like the status chips,
+       search only narrows ASSIGNED hives — the unassigned placeholder pool is
+       inventory, not a search result, and making it vanish as an admin types
+       would hide the very slots they are about to assign. See _dashSearchQuery
+       and hiveMatchesSearch below. */
+
+    /* ── Collapsible admin sections ──
+       Keys follow the 'hive-*' localStorage convention already used by
+       hive-dismissed-banners / hive-cluster-health-collapsed. */
+    var HIVE_SECTION_ASSIGNED = 'assigned';
+    var HIVE_SECTION_UNASSIGNED = 'unassigned';
+    var LS_SECTION_ASSIGNED_COLLAPSED = 'hive-section-assigned-collapsed';
+    var LS_SECTION_UNASSIGNED_COLLAPSED = 'hive-section-unassigned-collapsed';
+
+    /* Defaults: Assigned EXPANDED (the hives you actually operate), Unassigned
+       COLLAPSED (a pool that can run to dozens of identical slots). Stored as
+       the string 'true'/'false'; anything else falls back to the default, so a
+       first visit and a corrupted value behave the same. */
+    var _dashSectionCollapsed = {};
+    _dashSectionCollapsed[HIVE_SECTION_ASSIGNED] =
+      localStorage.getItem(LS_SECTION_ASSIGNED_COLLAPSED) === 'true';
+    _dashSectionCollapsed[HIVE_SECTION_UNASSIGNED] =
+      localStorage.getItem(LS_SECTION_UNASSIGNED_COLLAPSED) !== 'false';
+
+    function toggleHiveSection(sectionKey) {
+      _dashSectionCollapsed[sectionKey] = !_dashSectionCollapsed[sectionKey];
+      var lsKey = sectionKey === HIVE_SECTION_ASSIGNED
+        ? LS_SECTION_ASSIGNED_COLLAPSED : LS_SECTION_UNASSIGNED_COLLAPSED;
+      try {
+        localStorage.setItem(lsKey, _dashSectionCollapsed[sectionKey] ? 'true' : 'false');
+      } catch(e) {} /* private-browsing quota — collapse still works in-session */
+      renderHives(_allDashHives, true);
+    }
+
+    var _dashSearchQuery = '';
+    /* Debounce keystrokes so a large hive list is not re-rendered per character.
+       120ms is below the ~200ms threshold where typing starts to feel laggy. */
+    var HIVE_SEARCH_DEBOUNCE_MS = 120;
+    var _hiveSearchTimer = null;
+
+    /* hiveSearchText flattens a hive's user-visible metadata into one lowercase
+       haystack. Includes the access list usernames so an admin can find "which
+       hive did I grant octocat?" — access is only populated on owned rows. */
+    function hiveSearchText(h) {
+      if (!h) return '';
+      var parts = [
+        h.id, h.name, h.org, h.primaryRepo, h.clusterId, h.clusterName,
+        h.role, h.gitBranch, h.gitHash, h.dashboardUrl
+      ];
+      (h.repos || []).forEach(function(r) { parts.push(r); });
+      (h.access || []).forEach(function(a) {
+        if (!a) return;
+        parts.push(a.username);
+        parts.push(a.role);
+      });
+      return parts.filter(function(p) { return p; }).join(' ').toLowerCase();
+    }
+
+    /* hiveMatchesSearch answers whether a hive survives the search box. */
+    function hiveMatchesSearch(h) {
+      var terms = (_dashSearchQuery || '').toLowerCase().split(/\s+/).filter(function(t) { return t; });
+      if (!terms.length) return true;
+      var hay = hiveSearchText(h);
+      for (var i = 0; i < terms.length; i++) {
+        if (hay.indexOf(terms[i]) !== -1) return true; /* OR */
+      }
+      return false;
+    }
+
+    /* onHiveSearchInput debounces then re-renders from the unfiltered cache so
+       search composes with the chips, the facets and the current sort. */
+    function onHiveSearchInput() {
+      var el = document.getElementById('hive-search');
+      var next = el ? el.value : '';
+      if (_hiveSearchTimer) clearTimeout(_hiveSearchTimer);
+      _hiveSearchTimer = setTimeout(function() {
+        _dashSearchQuery = next;
+        renderHives(_allDashHives, true);
+      }, HIVE_SEARCH_DEBOUNCE_MS);
+    }
+
+    function clearHiveSearch() {
+      var el = document.getElementById('hive-search');
+      if (el) el.value = '';
+      _dashSearchQuery = '';
+      renderHives(_allDashHives, true);
+    }
+
+    /* ── Faceted search ──
+       Facet groups are derived from the assigned hives themselves, so a group
+       only appears when the data has something to offer. Within one group the
+       selected values are OR'd (pick two clusters => hives in either); across
+       groups they are AND'd (that cluster AND that role), which is the standard
+       faceted-search contract users expect from e-commerce-style filters. */
+    var FACET_CLUSTER = 'cluster';
+    var FACET_ACMM = 'acmm';
+    var FACET_ROLE = 'role';
+    var FACET_STATUS = 'status';
+    var FACET_BRANCH = 'branch';
+
+    /* Value shown when a hive has no value for a facet, so those rows stay
+       reachable instead of silently dropping out of every facet count. */
+    var FACET_UNKNOWN = '—';
+
+    var HIVE_FACET_GROUPS = [
+      {key: FACET_CLUSTER, label: 'Location'},
+      {key: FACET_ACMM, label: 'ACMM level'},
+      {key: FACET_ROLE, label: 'Your role'},
+      {key: FACET_STATUS, label: 'Status'},
+      {key: FACET_BRANCH, label: 'Branch'}
+    ];
+
+    /* Selected facet values: {facetKey: {value: true}}. */
+    var _dashFacets = {};
+    /* Collapsed facet GROUPS (chrome only, not a filter): {facetKey: true}. */
+    var _dashFacetCollapsed = {};
+
+    /* hiveFacetValues returns the facet values a single hive belongs to. A hive
+       contributes at most one value per group. */
+    function hiveFacetValues(h) {
+      h = h || {};
+      var f = {};
+      f[FACET_CLUSTER] = h.clusterName || h.clusterId || 'local';
+      f[FACET_ACMM] = (h.acmmLevel != null && h.acmmLevel !== '') ? ('L' + h.acmmLevel) : FACET_UNKNOWN;
+      f[FACET_ROLE] = h.role || FACET_UNKNOWN;
+      f[FACET_BRANCH] = h.gitBranch || FACET_UNKNOWN;
+      var flags = hiveStatusFlags(h);
+      f[FACET_STATUS] = flags.degraded ? 'Degraded' : (h.online ? 'Online' : 'Offline');
+      return f;
+    }
+
+    /* hiveMatchesFacets: OR within a group, AND across groups. */
+    function hiveMatchesFacets(h) {
+      var vals = hiveFacetValues(h);
+      var groups = Object.keys(_dashFacets || {});
+      for (var g = 0; g < groups.length; g++) {
+        var picked = Object.keys(_dashFacets[groups[g]] || {}).filter(function(v) { return _dashFacets[groups[g]][v]; });
+        if (!picked.length) continue;
+        if (picked.indexOf(String(vals[groups[g]])) === -1) return false;
+      }
+      return true;
+    }
+
+    function toggleFacetValue(facetKey, value) {
+      if (!_dashFacets[facetKey]) _dashFacets[facetKey] = {};
+      if (_dashFacets[facetKey][value]) {
+        delete _dashFacets[facetKey][value];
+        if (!Object.keys(_dashFacets[facetKey]).length) delete _dashFacets[facetKey];
+      } else {
+        _dashFacets[facetKey][value] = true;
+      }
+      renderHives(_allDashHives, true);
+    }
+
+    function clearHiveFacets() {
+      _dashFacets = {};
+      renderHives(_allDashHives, true);
+    }
+
+    function toggleFacetGroup(facetKey) {
+      _dashFacetCollapsed[facetKey] = !_dashFacetCollapsed[facetKey];
+      renderHives(_allDashHives, true);
+    }
+
+    /* renderFacetRail draws the left rail. Counts are computed over the assigned
+       hives after the chips and the search box, but BEFORE the facets in the
+       same group are applied — so a group keeps showing its alternatives once
+       you pick one, rather than collapsing to the single value you chose. */
+    function renderFacetRail(assignedAll) {
+      var rail = document.getElementById('hive-facet-rail');
+      if (!rail) return;
+      var base = (assignedAll || []).filter(hiveMatchesFilters).filter(hiveMatchesSearch);
+      if (!base.length && !Object.keys(_dashFacets || {}).length) { rail.innerHTML = ''; return; }
+      var html = '';
+      (HIVE_FACET_GROUPS || []).forEach(function(grp) {
+        /* Count within this group ignoring this group's own selections. */
+        var others = {};
+        Object.keys(_dashFacets || {}).forEach(function(k) { if (k !== grp.key) others[k] = _dashFacets[k]; });
+        var saved = _dashFacets;
+        _dashFacets = others;
+        var pool = base.filter(hiveMatchesFacets);
+        _dashFacets = saved;
+
+        var counts = {};
+        pool.forEach(function(h) {
+          var v = String(hiveFacetValues(h)[grp.key]);
+          counts[v] = (counts[v] || 0) + 1;
+        });
+        /* Always surface a currently-selected value, even at count 0, so the
+           user can always click it off again. */
+        Object.keys((_dashFacets[grp.key] || {})).forEach(function(v) { if (counts[v] == null) counts[v] = 0; });
+        var values = Object.keys(counts).sort();
+        if (!values.length) return;
+        var collapsed = !!_dashFacetCollapsed[grp.key];
+        var valuesHTML = '';
+        if (!collapsed) {
+          valuesHTML = '<div class="facet-values">' + values.map(function(v) {
+            var on = !!(_dashFacets[grp.key] && _dashFacets[grp.key][v]);
+            return '<button type="button" class="facet-value' + (on ? ' on' : '') + '" aria-pressed="' + (on ? 'true' : 'false') +
+              '" onclick="toggleFacetValue(\'' + esc(grp.key) + '\',\'' + esc(v).replace(/'/g, '&#39;') + '\')" title="' + esc(v) + '">' +
+              '<span class="facet-value-label">' + esc(v) + '</span>' +
+              '<span class="facet-value-count">' + counts[v] + '</span></button>';
+          }).join('') + '</div>';
+        }
+        html += '<div class="facet-group">' +
+          '<button type="button" class="facet-group-head" aria-expanded="' + (collapsed ? 'false' : 'true') +
+          '" onclick="toggleFacetGroup(\'' + esc(grp.key) + '\')">' +
+          '<span>' + esc(grp.label) + '</span><span>' + (collapsed ? '▸' : '▾') + '</span></button>' + valuesHTML +
+          '</div>';
+      });
+      if (Object.keys(_dashFacets || {}).length) {
+        html += '<button type="button" class="filter-chip filter-chip-clear" onclick="clearHiveFacets()">Clear facets</button>';
+      }
+      rail.innerHTML = html;
+    }
+
+    /* applyDashFilters filters the hives the caller wants rendered.
+       Placeholder (unassigned) rows bypass every filter — see isPlaceholderHive.
+       For assigned rows all four narrowing mechanisms compose as an AND: the
+       status chips (by state), the alert-type filter (hives carrying that
+       alert), the search box and the facets. That is what "click an alert type
+       to see those hives" has to mean when a chip or a search term is already
+       active. */
+    function applyDashFilters(hives) {
+      return (hives || []).filter(function(h) {
+        if (isPlaceholderHive(h)) return true;
+        return hiveMatchesFilters(h) && hiveMatchesAlertFilter(h) &&
+          hiveMatchesSearch(h) && hiveMatchesFacets(h);
+      });
+    }
     }
 
     /* toggleStatusFilter flips one chip and re-renders from the unfiltered
@@ -6690,11 +6959,14 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     /* renderStatusFilterBar draws the chip row plus the match count. Counts are
-       computed over the FULL hive list (not the filtered one) so each chip
-       always advertises how many hives it would show. */
-    function renderStatusFilterBar(allHives, shownCount) {
+       computed over the FULL assigned hive list (not the filtered one) so each
+       chip always advertises how many hives it would show. Unassigned
+       placeholders are excluded — they are inventory, and a pool of dozens of
+       "no tokens used" slots would drown the real signal. */
+    function renderStatusFilterBar(allHivesIn, shownCount) {
       var bar = document.getElementById('hive-filter-bar');
       if (!bar) return;
+      var allHives = (allHivesIn || []).filter(function(h) { return !isPlaceholderHive(h); });
       var counts = {};
       counts[HIVE_FILTER_APP_MISSING] = 0;
       counts[HIVE_FILTER_NO_TOKENS] = 0;
@@ -7260,7 +7532,11 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     function bulkSectionCheckbox(section) {
+      /* stopPropagation because the section-header row is itself a click target
+         that expands/collapses the section — without this, ticking select-all
+         would also collapse the very rows it just selected. */
       return '<input type="checkbox" data-bulk-section-head="' + esc(section) + '"' +
+        ' onclick="event.stopPropagation()"' +
         ' onchange="toggleBulkSection(\'' + esc(section) + '\',this.checked)"' +
         ' title="Select all in this section" style="cursor:pointer;margin-right:8px;vertical-align:middle">';
     }
@@ -7383,16 +7659,16 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function renderHives(allHives, force) {
       allHives = allHives || [];
-      /* The signature must include the active filters, otherwise toggling a
-         chip while the hive data is unchanged would be treated as a no-op. */
-      /* The alert state joins the signature for the same reason the status
-         filters do: drilling into an alert type (or expanding the acknowledged
-         list) changes what renders while the hive data is unchanged, and would
-         otherwise be treated as a no-op. EVERY piece of render-affecting state
-         must appear here — a missing one silently makes its toggle a no-op. */
+      /* The signature must include EVERY piece of render-affecting view state,
+         otherwise changing it while the hive data is unchanged is silently a
+         no-op — toggling a chip, drilling into an alert type, expanding the
+         acknowledged list, typing in the search box, picking a facet, or
+         collapsing a section would all appear to do nothing. */
       var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) +
         '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter +
-        '|' + _alertTypeFilter + '|' + _alertShowAcked + '|' + JSON.stringify(_fleetAlerts);
+        '|' + _alertTypeFilter + '|' + _alertShowAcked + '|' + JSON.stringify(_fleetAlerts) +
+        '|' + _dashSearchQuery + '|' + JSON.stringify(_dashFacets) +
+        '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed);
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status filters describe ASSIGNED hives only. An unassigned placeholder
@@ -7408,6 +7684,8 @@ const dashboardHTML = `<!DOCTYPE html>
       var hives = applyDashFilters(assignedAll).concat(unassignedAll);
       var filterBar = document.getElementById('hive-filter-bar');
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
+      var searchRow = document.getElementById('hive-search-row');
+      if (searchRow) searchRow.style.display = allHives.length ? '' : 'none';
       /* Nothing renderable below means no rows to act on — drop the selection
          so the bulk bar can't linger over an empty or fully-filtered table. */
       if (!allHives.length || !hives.length) {
@@ -7416,6 +7694,9 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       /* Counts are over the assigned set only, matching what the chips filter. */
       renderStatusFilterBar(assignedAll, hives.length - unassignedAll.length);
+      /* Facets are offered over the assigned set for the same reason the chips
+         are: a placeholder carries no cluster, role or branch worth faceting. */
+      renderFacetRail(assignedAll);
       /* Drift exceptions are scoped to assigned hives for the same reason: a
          placeholder is never flagged for claimed-hive concerns server-side. */
       renderDriftSummary(assignedAll);
@@ -7440,10 +7721,11 @@ const dashboardHTML = `<!DOCTYPE html>
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives match these filters</p>' +
-          '<p>' + assignedAll.length + (assignedAll.length === 1 ? ' hive is' : ' hives are') + ' hidden by the filters above.</p>' +
-          /* clearAllHiveFilters, not clearStatusFilters: an alert drill-down can
-             empty the list too, and a button that only clears the chips would
-             leave the operator stuck looking at an empty table. */
+          '<p>' + assignedAll.length + (assignedAll.length === 1 ? ' hive is' : ' hives are') + ' hidden by the search, facets or status filters.</p>' +
+          /* clearAllHiveFilters, not clearStatusFilters: a search term, a facet
+             or an alert drill-down can empty the list too, and a button that
+             only clears the chips would leave the operator stuck looking at an
+             empty table. */
           '<p style="margin-top:12px"><button type="button" class="filter-chip filter-chip-clear" onclick="clearAllHiveFilters()">Clear filters</button></p>' +
           '</div>';
         return;
@@ -7626,42 +7908,62 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
          and the table visibly ragged. 15 with the Drift column, plus the
-         bulk-select column, plus the Journey column added here. */
+         bulk-select column, plus the Journey column. */
       var TOTAL_COLUMNS_HEADER = 17;
-      /* section, when given, adds a select-all checkbox scoped to THIS
-         section's rows only (Assigned and Unassigned select independently). */
-      var sectionHeader = function(label, count, section) {
-        return '<tr class="hive-section-head"><td colspan="' + TOTAL_COLUMNS_HEADER + '" ' +
+      /* The header is a click target that expands/collapses its section. The
+         caret mirrors aria-expanded so the affordance and the a11y state can
+         never disagree. sectionKey also scopes the select-all checkbox to THIS
+         section's rows only (Assigned and Unassigned select independently);
+         the checkbox stops propagation so selecting does not also collapse.
+         selectable=false suppresses the box for sections whose rows are never
+         bulk-eligible (unassigned placeholders), where it would be a control
+         that visibly does nothing. */
+      var sectionHeader = function(label, count, sectionKey, selectable) {
+        var collapsed = !!_dashSectionCollapsed[sectionKey];
+        return '<tr class="hive-section-head" role="button" tabindex="0" aria-expanded="' + (collapsed ? 'false' : 'true') + '" ' +
+          'onclick="toggleHiveSection(\'' + esc(sectionKey) + '\')" ' +
+          'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();toggleHiveSection(\'' + esc(sectionKey) + '\')}" ' +
+          'title="Click to ' + (collapsed ? 'expand' : 'collapse') + '">' +
+          '<td colspan="' + TOTAL_COLUMNS_HEADER + '" ' +
           'style="padding:14px 12px 6px;color:var(--muted);font-weight:600;font-size:0.75rem;' +
           'text-transform:uppercase;letter-spacing:0.5px;text-align:left">' +
-          (section ? bulkSectionCheckbox(section) : '') +
+          '<span class="hive-section-caret" aria-hidden="true">' + (collapsed ? '▸' : '▾') + '</span>' +
+          (sectionKey && selectable !== false ? bulkSectionCheckbox(sectionKey) : '') +
           esc(label) + ' (' + count + ')</td></tr>';
       };
       var rows;
       if (_isAdmin) {
         /* Admin-only organizational aid: split into assigned (real, claimed)
-           hives and unassigned placeholders. A placeholder is signalled by
-           provStatus === 'available' (primary), with an org 'available-*'
-           prefix as a fallback for placeholders that have not yet reported
-           provStatus. Preserve incoming order so each section stays sorted. */
+           hives and unassigned placeholders — see isPlaceholderHive. Preserve
+           incoming order so each section stays sorted. */
         var assigned = [], unassigned = [];
         for (var _hi = 0; _hi < hives.length; _hi++) {
           var _h = hives[_hi];
           if (isPlaceholderHive(_h)) unassigned.push(_h); else assigned.push(_h);
         }
         /* Global running index across BOTH groups so menu ids (hive-menu-<i>)
-           never collide between sections and the ⋮ dropdowns keep working. */
+           never collide between sections and the ⋮ dropdowns keep working.
+           It advances over EVERY row, including rows in a collapsed section, so
+           collapsing one section never renumbers the other's menus. */
         var _idx = 0;
         rows = '';
         if (assigned.length > 0) {
-          rows += sectionHeader('Assigned hives', assigned.length, 'assigned');
-          for (var _ai = 0; _ai < assigned.length; _ai++) { rows += buildRow(assigned[_ai], _idx++, 'assigned'); }
+          rows += sectionHeader('Assigned hives', assigned.length, HIVE_SECTION_ASSIGNED);
+          var _assignedOpen = !_dashSectionCollapsed[HIVE_SECTION_ASSIGNED];
+          for (var _ai = 0; _ai < assigned.length; _ai++) {
+            var _arow = buildRow(assigned[_ai], _idx++, HIVE_SECTION_ASSIGNED);
+            if (_assignedOpen) rows += _arow;
+          }
         }
         if (unassigned.length > 0) {
-          /* Unassigned placeholders are never bulk-eligible (nothing is
-             running yet), so the section gets no select-all box. */
-          rows += sectionHeader('Unassigned hives', unassigned.length);
-          for (var _ui = 0; _ui < unassigned.length; _ui++) { rows += buildRow(unassigned[_ui], _idx++, 'unassigned'); }
+          /* Unassigned placeholders are never bulk-eligible (nothing is running
+             yet), so the section collapses but gets no select-all box. */
+          rows += sectionHeader('Unassigned hives', unassigned.length, HIVE_SECTION_UNASSIGNED, false);
+          var _unassignedOpen = !_dashSectionCollapsed[HIVE_SECTION_UNASSIGNED];
+          for (var _ui = 0; _ui < unassigned.length; _ui++) {
+            var _urow = buildRow(unassigned[_ui], _idx++, HIVE_SECTION_UNASSIGNED);
+            if (_unassignedOpen) rows += _urow;
+          }
         }
       } else {
         /* Non-admin: single flat list, exactly as before. */
@@ -8195,6 +8497,34 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _provisionRequestsByUser = {};
+
+    /* openAssignForUser is the entry point from a click on a user in the admin
+       users table. It routes to whichever existing flow fits, rather than adding
+       a third assign path:
+         - the user has a PENDING provision request  → openApproveModal, which
+           approves the request AND assigns a placeholder in one step;
+         - otherwise → openAssignModal on an available placeholder, pre-filled
+           with the user as owner. openAssignModal needs a concrete placeholder
+           id, so we ask the same endpoint the approve picker uses.
+       Authorization is unchanged: both modals post to admin-only endpoints
+       (/api/saas/approve-provision, /api/saas/hives/{id}/assign), which
+       re-check the caller server-side, so this is purely a UI shortcut. */
+    async function openAssignForUser(username) {
+      if (!_isAdmin) return;
+      if (_provisionRequestsByUser[username]) { openApproveModal(username); return; }
+      try {
+        var resp = await fetch('/api/saas/admin/available-placeholders');
+        if (!resp.ok) { hiveToast('Could not load available placeholders', 'error'); return; }
+        var data = await resp.json();
+        var placeholders = data.placeholders || [];
+        if (!placeholders.length) {
+          hiveToast('No available placeholder hives to assign — provision one first.', 'error');
+          return;
+        }
+        openAssignModal(placeholders[0].id, username, placeholders);
+      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+    }
+
     async function openApproveModal(username) {
       var pr = _provisionRequestsByUser[username] || {username: username};
       var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
@@ -8656,8 +8986,21 @@ const dashboardHTML = `<!DOCTYPE html>
           hiveRows += '</tbody></table></div></td></tr>';
         }
 
+        /* Clicking the name opens the assign flow for this user (admin-only, and
+           the underlying endpoints re-check that server-side). The GitHub
+           profile stays reachable via the avatar, so one click is not overloaded
+           with two destinations. A pending provision request is called out
+           because the click then approves it rather than assigning a bare
+           placeholder. */
+        var hasPendingReq = !!_provisionRequestsByUser[u.github_username];
+        var nameCell = avatar +
+          '<a href="https://github.com/' + esc(u.github_username) + '" target="_blank" title="GitHub profile" style="color:var(--muted);font-size:0.65rem;margin-right:4px">↗</a>' +
+          '<a href="#" onclick="openAssignForUser(\'' + esc(u.github_username) + '\');return false" ' +
+          'title="' + (hasPendingReq ? 'Approve this user&#39;s pending request and assign a hive' : 'Assign an available hive to this user') + '" ' +
+          'style="color:var(--blue);cursor:pointer">' + esc(u.github_username) + '</a>' +
+          (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem" title="Has a pending provision request">&#9679; request</span>' : '');
         return '<tr>' +
-          '<td>' + avatar + '<a href="https://github.com/' + esc(u.github_username) + '" target="_blank">' + esc(u.github_username) + '</a>' + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
+          '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td>' + blocked + '</td>' +
@@ -8780,7 +9123,13 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var ASSIGN_DEFAULT_ACMM = 2;
-    function openAssignModal(hiveId) {
+    /* openAssignModal claims one placeholder for a real project.
+       prefillOwner (optional) pre-fills the Owner field — used when the flow is
+       started by clicking a user in the admin users table.
+       placeholders (optional) turns the fixed hive id into a dropdown, so that
+       user-first entry point can retarget without backing out to the hive list.
+       Both are omitted by the original ⋮ → "Assign / Claim" call site. */
+    function openAssignModal(hiveId, prefillOwner, placeholders) {
       var h = (_allDashHives || []).reduce(function(m, x) { return x.id === hiveId ? x : m; }, null) || {};
       var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
       var lbl = 'display:block;font-size:0.75rem;color:var(--muted);margin:10px 0 4px';
@@ -8788,10 +9137,26 @@ const dashboardHTML = `<!DOCTYPE html>
       for (var lv = 0; lv <= 6; lv++) { acmmOpts += '<option value="' + lv + '"' + (lv === ASSIGN_DEFAULT_ACMM ? ' selected' : '') + '>' + lv + '</option>'; }
       var orgVal = esc(h.org || '');
       var reposVal = esc((h.repos || []).join(', '));
+      /* With a placeholder list, let the admin retarget in place; without one,
+         keep the original fixed-hive wording. */
+      var hasPicker = !!(placeholders && placeholders.length);
+      var hiveField;
+      if (hasPicker) {
+        var phOpts = (placeholders || []).map(function(p) {
+          return '<option value="' + esc(p.id) + '"' + (p.id === hiveId ? ' selected' : '') + '>' +
+            esc(p.id) + '  (' + esc(p.cluster_id || 'default') + ')</option>';
+        }).join('');
+        hiveField =
+          '<div style="margin-bottom:4px;font-size:0.8rem;color:var(--muted)">Claim an available placeholder for a real project.</div>' +
+          '<label style="' + lbl + '">Placeholder to assign *</label>' +
+          '<select id="assign-hive-pick" style="' + fld + '">' + phOpts + '</select>';
+      } else {
+        hiveField = '<div style="margin-bottom:4px;font-size:0.8rem;color:var(--muted)">Claim placeholder <strong style="color:var(--fg)">' + esc(hiveId) + '</strong> for a real project.</div>';
+      }
       var content =
-        '<div style="margin-bottom:4px;font-size:0.8rem;color:var(--muted)">Claim placeholder <strong style="color:var(--fg)">' + esc(hiveId) + '</strong> for a real project.</div>' +
+        hiveField +
         '<label style="' + lbl + '">Owner (GitHub login) *</label>' +
-        '<input id="assign-owner" style="' + fld + '" placeholder="octocat">' +
+        '<input id="assign-owner" style="' + fld + '" value="' + esc(prefillOwner || '') + '" placeholder="octocat">' +
         '<label style="' + lbl + '">Org *</label>' +
         '<input id="assign-org" style="' + fld + '" value="' + orgVal + '" placeholder="my-org">' +
         '<label style="' + lbl + '">Repos * (comma-separated)</label>' +
@@ -8838,6 +9203,10 @@ const dashboardHTML = `<!DOCTYPE html>
       if (ov) ov.remove();
     }
     async function confirmAssign(hiveId) {
+      /* When the modal was opened with a placeholder picker, the dropdown — not
+         the id baked into this onclick — is the authority on the target. */
+      var pick = document.getElementById('assign-hive-pick');
+      if (pick && pick.value) hiveId = pick.value;
       var owner = document.getElementById('assign-owner').value.trim();
       var org = document.getElementById('assign-org').value.trim();
       var repos = document.getElementById('assign-repos').value.trim();
