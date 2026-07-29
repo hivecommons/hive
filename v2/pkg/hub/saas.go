@@ -5704,6 +5704,85 @@ const dashboardHTML = `<!DOCTYPE html>
         : 'Process uptime since the last restart';
       return '<span title="' + esc(title) + '" style="font-size:0.72rem;color:' + c + ';cursor:help">' + esc(label) + '</span>';
     }
+    /* ---- Per-check health detail -------------------------------------------
+       Health.checks[] arrives over the heartbeat as free-form JSON decoded into
+       map[string]any on the hub (RegistryEntry.Health, server.go). It may be
+       absent, null, an empty array, or hold entries missing name/status/detail.
+       Every accessor below therefore guards each field individually: one
+       malformed spoke payload must never blank the whole table. */
+
+    /* Check statuses that count as a FAILURE for the inline row summary, the
+       hover grouping and the per-check filter. 'warn' is included because an
+       operator scanning for "what is wrong here" wants warnings surfaced too;
+       'skip' is not a problem and 'pass' obviously is not. */
+    var FAILING_CHECK_STATUSES = {fail: true, warn: true, critical: true, error: true};
+
+    /* How many failing check NAMES to spell out inline in the row before
+       collapsing to a bare count. The name column is already three lines deep,
+       so one name is all that fits without pushing the row taller. */
+    var INLINE_FAILING_CHECK_NAMES = 1;
+
+    /* Longest failing-check name rendered inline before it is ellipsised.
+       Check names are spoke-supplied and unbounded. */
+    var INLINE_CHECK_NAME_MAXLEN = 22;
+
+    /* healthChecks returns the hive's checks as a clean array of
+       {name, status, detail} strings — never null, never holding non-objects. */
+    function healthChecks(h) {
+      var hp = (h && h.health) || {};
+      var raw = hp.checks;
+      if (!raw || !raw.length) return [];
+      var out = [];
+      for (var i = 0; i < raw.length; i++) {
+        var ck = raw[i];
+        if (!ck || typeof ck !== 'object') continue;
+        var nm = typeof ck.name === 'string' ? ck.name : '';
+        if (!nm) continue;   /* an unnamed check cannot be shown or filtered on */
+        out.push({
+          name: nm,
+          status: typeof ck.status === 'string' ? ck.status : 'unknown',
+          detail: typeof ck.detail === 'string' ? ck.detail : ''
+        });
+      }
+      return out;
+    }
+
+    /* failingChecks returns only the checks in a failing/warning state. */
+    function failingChecks(h) {
+      return healthChecks(h).filter(function(ck) { return !!FAILING_CHECK_STATUSES[ck.status]; });
+    }
+
+    /* failingCheckSummary renders the compact in-row failure summary: the name
+       of the single failing check, or "N checks failing" when there are more.
+       Returns '' when nothing is failing, so healthy rows stay exactly as
+       dense as they are today. */
+    function failingCheckSummary(h) {
+      var bad = failingChecks(h);
+      if (!bad.length) return '';
+      var label;
+      if (bad.length <= INLINE_FAILING_CHECK_NAMES) {
+        var nm = bad[0].name;
+        if (nm.length > INLINE_CHECK_NAME_MAXLEN) nm = nm.substring(0, INLINE_CHECK_NAME_MAXLEN - 1) + '…';
+        label = nm;
+      } else {
+        label = bad.length + ' checks failing';
+      }
+      /* Any 'fail'-class check is red; a row that is only warning stays amber so
+         the pill colour agrees with the row dot. */
+      var anyHard = bad.some(function(ck) { return ck.status !== 'warn'; });
+      var col = anyHard ? '#f85149' : '#d29922';
+      var full = bad.map(function(ck) {
+        return ck.name + (ck.detail ? ': ' + ck.detail : '');
+      }).join('\n');
+      /* One element, one tooltip source: this pill owns a plain title and never
+         also carries a custom panel (that is healthBadge()'s job). */
+      return '<span title="' + esc(full) + '" style="display:inline-block;margin-left:6px;padding:0 6px;' +
+        'border-radius:9999px;font-size:0.62rem;font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
+        'color:' + col + ';background:' + (anyHard ? 'rgba(248,81,73,0.12)' : 'rgba(210,153,34,0.12)') + ';' +
+        'border:1px solid ' + (anyHard ? 'rgba(248,81,73,0.35)' : 'rgba(210,153,34,0.35)') + '">' +
+        esc(label) + '</span>';
+    }
+
     function healthBadge(h) {
       var hp = h.health || {};
       var st = hp.status || 'unknown';
@@ -5714,7 +5793,13 @@ const dashboardHTML = `<!DOCTYPE html>
       var ic = icons[st] || '?';
       var isUpgrading = _upgradingHives[h.id];
       var statusLabel = isUpgrading ? 'Starting up after upgrade' : st.charAt(0).toUpperCase() + st.slice(1);
-      var checks = hp.checks || [];
+      /* Checks, failures first, so the reason for a bad status reads before the
+         wall of passing checks. Stable within each group (spoke report order). */
+      var checks = healthChecks(h).slice().sort(function(a, b) {
+        var fa = FAILING_CHECK_STATUSES[a.status] ? 0 : 1;
+        var fb = FAILING_CHECK_STATUSES[b.status] ? 0 : 1;
+        return fa - fb;
+      });
       var lines = [statusLabel];
       for (var i = 0; i < checks.length; i++) {
         var ck = checks[i];
@@ -5766,7 +5851,13 @@ const dashboardHTML = `<!DOCTYPE html>
         if (i === 0) {
           return '<span style="display:block;color:' + c + ';font-weight:600;margin-bottom:4px">' + esc(l) + '</span>';
         }
-        return '<div style="padding:1px 0;color:var(--muted)">' + esc(l) + '</div>';
+        /* Failing check lines (built above with ✕/⚠ icons) are lifted out of the
+           muted grey so the reason for the status is the first thing read. The
+           lines are already sorted failures-first. */
+        var lc = 'var(--muted)';
+        if (l.indexOf('✕') === 0) lc = '#f85149';
+        else if (l.indexOf('⚠') === 0) lc = '#d29922';
+        return '<div style="padding:1px 0;color:' + lc + '">' + esc(l) + '</div>';
       }).join('');
 
       var accessRows = access.map(function(a) {
@@ -5876,8 +5967,49 @@ const dashboardHTML = `<!DOCTYPE html>
       {key: HIVE_FILTER_OK, label: 'OK', color: '#3fb950'}
     ];
 
+    /* Active failing-check-name filter: '' = off, otherwise a check name that a
+       hive must be FAILING for it to be shown. This is an AND against the status
+       chips (chips OR among themselves), because "degraded hives" and
+       "github_auth is failing" are two different questions and the useful answer
+       is their intersection. */
+    var _dashFailingCheckFilter = '';
+
+    /* Max distinct failing check names offered in the picker. Names come from
+       spokes, so an unbounded fleet could otherwise produce a huge menu. */
+    var MAX_FAILING_CHECK_FILTER_OPTIONS = 12;
+
+    /* If a single check is failing on at least this many hives, it is called out
+       as a fleet-wide signal rather than reading as per-hive noise. */
+    var FLEET_CHECK_SIGNAL_MIN_HIVES = 2;
+
+    /* failingCheckCounts tallies, over the hives given, how many have each check
+       in a failing state — {name: hiveCount}. Callers pass the ASSIGNED set so
+       placeholders never contribute. */
+    function failingCheckCounts(hives) {
+      var counts = {};
+      (hives || []).forEach(function(h) {
+        var seen = {};
+        failingChecks(h).forEach(function(ck) {
+          if (seen[ck.name]) return;   /* count each hive once per check name */
+          seen[ck.name] = true;
+          counts[ck.name] = (counts[ck.name] || 0) + 1;
+        });
+      });
+      return counts;
+    }
+
+    /* setFailingCheckFilter selects (or clears, with '') the check-name filter. */
+    function setFailingCheckFilter(name) {
+      _dashFailingCheckFilter = name || '';
+      renderHives(_allDashHives, true);
+    }
+
     /* hiveMatchesFilters answers whether a hive survives the active chips. */
     function hiveMatchesFilters(h) {
+      if (_dashFailingCheckFilter) {
+        var hit = failingChecks(h).some(function(ck) { return ck.name === _dashFailingCheckFilter; });
+        if (!hit) return false;
+      }
       var active = Object.keys(_dashStatusFilters || {}).filter(function(k) { return _dashStatusFilters[k]; });
       if (!active.length) return true;
       var f = hiveStatusFlags(h);
@@ -5907,6 +6039,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function clearStatusFilters() {
       _dashStatusFilters = {};
+      _dashFailingCheckFilter = '';
       renderHives(_allDashHives, true);
     }
 
@@ -5936,7 +6069,35 @@ const dashboardHTML = `<!DOCTYPE html>
           '<span class="filter-chip-dot" style="background:' + c.color + '"></span>' +
           esc(c.label) + '<span class="filter-chip-count">' + counts[c.key] + '</span></button>';
       }).join('');
-      var anyActive = Object.keys(_dashStatusFilters || {}).length > 0;
+      /* Failing-check chips, most-affected first. Each doubles as the fleet
+         signal: the count IS "github_auth failing on 6 hives". Only names
+         actually failing somewhere in the assigned set appear, so the row is
+         empty (and takes no space) on a healthy fleet. */
+      var fcCounts = failingCheckCounts(allHives);
+      var fcNames = Object.keys(fcCounts).sort(function(a, b) {
+        return fcCounts[b] - fcCounts[a] || a.localeCompare(b);
+      }).slice(0, MAX_FAILING_CHECK_FILTER_OPTIONS);
+      var checkChips = '';
+      if (fcNames.length) {
+        checkChips = '<div class="filter-chips" style="margin-top:6px">' +
+          '<span style="align-self:center;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-right:2px">Failing check</span>' +
+          fcNames.map(function(nm) {
+            var on = _dashFailingCheckFilter === nm;
+            var n = fcCounts[nm];
+            /* A check failing across several hives is a fleet problem, not a
+               hive problem — say so in the tooltip. */
+            var tip = n >= FLEET_CHECK_SIGNAL_MIN_HIVES
+              ? nm + ' failing on ' + n + ' hives — likely fleet-wide'
+              : nm + ' failing on 1 hive';
+            return '<button type="button" class="' + (on ? 'filter-chip on' : 'filter-chip') + '"' +
+              ' aria-pressed="' + (on ? 'true' : 'false') + '" title="' + esc(tip) + '"' +
+              ' onclick="setFailingCheckFilter(' + (on ? "''" : "'" + esc(nm).replace(/'/g, '&#39;') + "'") + ')"' +
+              ' style="--chip-color:#f85149">' +
+              '<span class="filter-chip-dot" style="background:#f85149"></span>' +
+              esc(nm) + '<span class="filter-chip-count">' + n + '</span></button>';
+          }).join('') + '</div>';
+      }
+      var anyActive = Object.keys(_dashStatusFilters || {}).length > 0 || !!_dashFailingCheckFilter;
       /* allHives here is the ASSIGNED set — the caller scopes it, because the
          chips never filter unassigned placeholders. Say "assigned" so the count
          is not read as the whole fleet. */
@@ -5948,6 +6109,7 @@ const dashboardHTML = `<!DOCTYPE html>
         ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearStatusFilters()">Clear filters</button>'
         : '';
       bar.innerHTML = '<div class="filter-chips">' + chips + clearBtn + '</div>' +
+        checkChips +
         '<span class="filter-summary">' + summary + '</span>';
     }
 
@@ -6185,7 +6347,7 @@ const dashboardHTML = `<!DOCTYPE html>
       allHives = allHives || [];
       /* The signature must include the active filters, otherwise toggling a
          chip while the hive data is unchanged would be treated as a no-op. */
-      var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters);
+      var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) + '|' + _dashFailingCheckFilter;
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status filters describe ASSIGNED hives only. An unassigned placeholder
@@ -6370,7 +6532,7 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         return '<tr>' +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + fcPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + fcPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + (isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName)) + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
           '<td>' + (function() { var pub = !!h.isPublic; var tid = 'vis-' + esc(h.id); if (isHosted && h.role === 'owner') { return '<label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer"><input type="checkbox" id="' + tid + '" ' + (pub ? 'checked' : '') + ' onchange="toggleVisibility(\'' + esc(h.id) + '\',this.checked)" style="opacity:0;width:0;height:0"><span style="position:absolute;inset:0;background:' + (pub ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;transition:background 0.2s"></span><span style="position:absolute;top:2px;left:' + (pub ? '18px' : '2px') + ';width:16px;height:16px;background:#fff;border-radius:50%;transition:left 0.2s"></span></label>'; } if (isLocal) { var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : ''; var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>'; return dh ? '<a href="' + esc(dh) + '#config/governor/Hub" target="_blank" title="Change in Governor Config → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>' : badge; } return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>'; })() + '</td>' +
