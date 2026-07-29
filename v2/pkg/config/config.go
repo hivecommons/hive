@@ -1068,16 +1068,31 @@ type DiscordConfig struct {
 }
 
 type HubConfig struct {
-	Enabled                       bool                `yaml:"enabled"`
-	URL                           string              `yaml:"url"`
-	IsPublic                      bool                `yaml:"is_public"`
-	SnapshotURL                   string              `yaml:"snapshot_url"`
-	DashboardURL                  string              `yaml:"dashboard_url"`
-	HiveType                      string              `yaml:"hive_type"`
-	ClusterID                     string              `yaml:"cluster_id"`
-	AutoSnapshot                  bool                `yaml:"auto_snapshot"`
-	AutoUpgrade                   bool                `yaml:"auto_upgrade"`
-	ContributeSuspended           bool                `yaml:"contribute_suspended"`
+	Enabled             bool   `yaml:"enabled"`
+	URL                 string `yaml:"url"`
+	IsPublic            bool   `yaml:"is_public"`
+	SnapshotURL         string `yaml:"snapshot_url"`
+	DashboardURL        string `yaml:"dashboard_url"`
+	HiveType            string `yaml:"hive_type"`
+	ClusterID           string `yaml:"cluster_id"`
+	AutoSnapshot        bool   `yaml:"auto_snapshot"`
+	AutoUpgrade         bool   `yaml:"auto_upgrade"`
+	ContributeSuspended bool   `yaml:"contribute_suspended"`
+	// Contribute title/author/label filters use a single list plus a mode:
+	//   - FilterModeAllow ("allow"): allowlist — an item passes ONLY if it
+	//     matches the list (a non-empty list is required for the filter to gate;
+	//     an empty allow list means "no items pass" is intentionally avoided —
+	//     see passesContributeFilter, where an empty allow list is treated as
+	//     "filter off" so a half-configured filter never silently blocks all).
+	//   - FilterModeDeny ("deny", default): denylist — an item is skipped if it
+	//     matches the list; everything else passes.
+	// The *DenyTitles/*DenyAuthors/*DenyLabels fields hold the LIST for each
+	// filter regardless of mode (names kept for backward compatibility with
+	// existing on-disk config; the mode decides allow vs deny). ContributeAllowLabels
+	// is retained only for one-time migration into DenyLabels+LabelsMode.
+	ContributeTitlesMode          string              `yaml:"contribute_titles_mode,omitempty"`
+	ContributeAuthorsMode         string              `yaml:"contribute_authors_mode,omitempty"`
+	ContributeLabelsMode          string              `yaml:"contribute_labels_mode,omitempty"`
 	ContributeAllowLabels         []string            `yaml:"contribute_allow_labels"`
 	ContributeDenyLabels          []string            `yaml:"contribute_deny_labels"`
 	ContributeDenyTitles          []string            `yaml:"contribute_deny_titles"`
@@ -1131,6 +1146,14 @@ type DashboardConfig struct {
 const (
 	RoleOwner = "owner"
 	RoleRead  = "read"
+	// RoleReadWrite is granted by the hub's Manage Access screen (see the role
+	// validation in hub.handleAccessAdd, which accepts read / read-write /
+	// owner). It was missing here, so splitAuthorizedEntry treated
+	// "user:read-write" as an unknown suffix and folded the whole string into
+	// the username — the allowlist then contained a user literally named
+	// "cbrooker27:read-write", no lookup could ever match, and every login was
+	// rejected as unauthorized despite the grant being present and correct.
+	RoleReadWrite = "read-write"
 )
 
 // AuthorizedRole resolves a GitHub username against the spoke's authorized-users
@@ -1189,7 +1212,7 @@ func splitAuthorizedEntry(entry string) (name, role string) {
 	if idx := strings.LastIndex(entry, ":"); idx >= 0 {
 		name = strings.TrimSpace(entry[:idx])
 		role = strings.ToLower(strings.TrimSpace(entry[idx+1:]))
-		if role != RoleOwner && role != RoleRead {
+		if role != RoleOwner && role != RoleRead && role != RoleReadWrite {
 			// Unknown role suffix — treat the whole thing as a bare username so
 			// a stray colon can never silently downgrade or escalate access.
 			return strings.TrimSpace(entry), ""
@@ -1665,6 +1688,23 @@ func (c *Config) applyDefaults() {
 			"dependabot[bot]",
 			"mergeraptor[bot]",
 		}
+	}
+
+	// Contribute filter modes: default to deny (the pre-mode behavior — the
+	// *Deny* lists were always deny lists). Normalize any stored value.
+	c.Hub.ContributeTitlesMode = NormalizeFilterMode(c.Hub.ContributeTitlesMode)
+	c.Hub.ContributeAuthorsMode = NormalizeFilterMode(c.Hub.ContributeAuthorsMode)
+	c.Hub.ContributeLabelsMode = NormalizeFilterMode(c.Hub.ContributeLabelsMode)
+
+	// One-time migration of the old dual label lists into the single list+mode.
+	// If a legacy allow list was set (and no new label list/mode has been chosen
+	// yet), adopt it as an allow filter. Otherwise the deny list (if any) stands.
+	// After migration the allow list is cleared so it isn't re-applied.
+	if len(c.Hub.ContributeAllowLabels) > 0 && len(c.Hub.ContributeDenyLabels) == 0 &&
+		c.Hub.ContributeLabelsMode == FilterModeDeny {
+		c.Hub.ContributeDenyLabels = c.Hub.ContributeAllowLabels
+		c.Hub.ContributeLabelsMode = FilterModeAllow
+		c.Hub.ContributeAllowLabels = nil
 	}
 
 	if len(c.Hub.TierLimits) == 0 {
@@ -2354,4 +2394,76 @@ func MatchesAny(text string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+// Contribute filter modes for title/author/label gating.
+const (
+	// FilterModeDeny (the default) skips items that MATCH the list; everything
+	// else passes.
+	FilterModeDeny = "deny"
+	// FilterModeAllow passes ONLY items that MATCH the list; everything else is
+	// skipped. An EMPTY allow list is treated as "filter off" (see
+	// FilterPasses) so a half-configured allow filter never silently blocks
+	// every item.
+	FilterModeAllow = "allow"
+)
+
+// NormalizeFilterMode returns a valid mode, defaulting to deny for empty/unknown
+// values (backward compatible: existing config has no mode field, and its lists
+// were always deny lists).
+func NormalizeFilterMode(mode string) string {
+	if mode == FilterModeAllow {
+		return FilterModeAllow
+	}
+	return FilterModeDeny
+}
+
+// FilterPasses reports whether a single value (an issue/PR title, author, or one
+// of its labels) passes a mode+list filter.
+//
+//   - deny  mode: pass unless value matches the list.
+//   - allow mode: pass only if value matches the list; BUT an empty allow list
+//     means "not configured" → pass (never block everything on an empty list).
+//
+// Patterns use the same wildcard/regex syntax as MatchesAny.
+func FilterPasses(value string, list []string, mode string) bool {
+	switch NormalizeFilterMode(mode) {
+	case FilterModeAllow:
+		if len(list) == 0 {
+			return true // allow filter not configured → don't gate
+		}
+		return MatchesAny(value, list)
+	default: // deny
+		return !MatchesAny(value, list)
+	}
+}
+
+// LabelsFilterPasses applies a label filter across ALL of an item's labels.
+//
+//   - deny  mode: pass unless ANY label matches the deny list.
+//   - allow mode: pass only if AT LEAST ONE label matches the allow list; an
+//     empty allow list means "not configured" → pass.
+//
+// This is the label-specific counterpart to FilterPasses (labels are a set, not
+// a single scalar, so the allow/deny quantifiers differ).
+func LabelsFilterPasses(labels []string, list []string, mode string) bool {
+	switch NormalizeFilterMode(mode) {
+	case FilterModeAllow:
+		if len(list) == 0 {
+			return true // allow filter not configured → don't gate
+		}
+		for _, l := range labels {
+			if MatchesAny(l, list) {
+				return true
+			}
+		}
+		return false
+	default: // deny
+		for _, l := range labels {
+			if MatchesAny(l, list) {
+				return false
+			}
+		}
+		return true
+	}
 }

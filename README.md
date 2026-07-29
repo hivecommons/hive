@@ -254,13 +254,27 @@ Each level defines per-agent **policy modes**: advisory (observe only), measured
 
 ## Architecture
 
-Hive runs as a single container with three processes:
+Hive runs as a single container with three long-lived processes:
 
-- **Go binary** (`hive`) — orchestrates agent tmux sessions, runs the governor eval loop, serves the dashboard API, manages health checks and token tracking
-- **Node.js proxy** — reverse proxy for the dashboard frontend with SSE streaming
-- **ttyd** — web terminal for remote access to agent tmux sessions
+- **Go binary** (`hive`, `:3002`) — the brain. Runs the governor eval loop, the agent manager (tmux sessions), the dashboard API, an in-process MITM GitHub proxy, the hub heartbeat, and token tracking — all as goroutines.
+- **Node.js proxy** (`:3001`) — the public front door. Reverse-proxies to the Go API with auth and path-rewrite, and streams SSE/WebSocket to the dashboard and web terminal.
+- **ttyd** (`:7681`) — web terminal onto the agent tmux sessions.
 
-Agents run inside tmux sessions managed by the Go binary. The governor evaluates queue depth on a configurable interval and switches between four modes (SURGE, BUSY, QUIET, IDLE), each with per-agent cadences. A deterministic pipeline of shell scripts pre-processes all GitHub data before agents are kicked.
+The governor evaluates queue depth on a configurable interval and switches between four modes (`SURGE`, `BUSY`, `QUIET`, `IDLE`), each with per-agent cadences. A deterministic pipeline (Go + shell) filters, classifies, and merge-gates all GitHub work before any agent is kicked, and three independent layers — CLI tool denial, least-privilege scoped tokens, and a network-level MITM proxy — enforce what each agent may do, keyed off its ACMM-assigned mode.
+
+```mermaid
+flowchart LR
+    github["GitHub<br/>issues · PRs"] --> gov["Governor<br/>(queue depth → mode → kick)"]
+    gov --> pipe["Deterministic pipeline<br/>classify · merge-gate · enforce"]
+    pipe --> agents["AI agents (tmux)<br/>Claude · Copilot · Gemini · Goose"]
+    agents --> guard["Guardrails<br/>tool deny · scoped token · MITM proxy"]
+    guard -->|"gated writes"| github
+    agents -.-> beads["Beads ledger<br/>(git-backed work items)"]
+    gov -.->|"heartbeat"| hub["Hive Hub<br/>registry · leaderboard"]
+    dash["Dashboard :3001"] -.->|"SSE"| gov
+```
+
+**See [v2/docs/architecture.md](v2/docs/architecture.md) for the full reference architecture** — process model, the governor loop, the deterministic pipeline, layered guardrails, ACMM, beads, hub & spoke, and an end-to-end walkthrough, with Mermaid diagrams throughout.
 
 ## Contribute to a Hive
 

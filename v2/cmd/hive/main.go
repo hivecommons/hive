@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -53,6 +54,69 @@ var (
 	gitShort  = "unknown"
 	gitBranch = "unknown"
 )
+
+// GitHub App private-key locations on a spoke, and how the two differ.
+//
+//   - spokeProvisionedAppKeyPath is a read-only Kubernetes Secret mount, written
+//     at PROVISIONING time from a key an operator supplied for THIS hive
+//     specifically. Its presence is the marker of a deliberate per-hive
+//     credential, which the hub's cluster-wide reconcile must never overwrite.
+//   - spokeAppKeyPath is on the PVC and is where a hub-delivered (cluster
+//     default) key lands. It is also what cfg.GitHub.KeyFile is repointed at
+//     once the hub delivers one, so it takes effect over the provisioned mount.
+const (
+	spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"
+	spokeAppKeyPath            = "/data/gh-app-key.pem"
+	// spokeAppKeyFileMode is rw------- : signing material must never be
+	// readable by anything else sharing the PVC or the pod.
+	spokeAppKeyFileMode = 0o600
+)
+
+// reportedAppKeyFingerprint returns the non-secret fingerprint of the App key
+// this spoke is ACTUALLY using, for the heartbeat payload. It fingerprints the
+// resolved key file rather than a hard-coded path so the hub compares against
+// the key that would really sign a JWT.
+//
+// Returns "" whenever there is no usable key — no file, empty file, or
+// unparseable contents. All three mean the same thing to the hub ("this spoke
+// cannot authenticate") and are repaired identically. The private key itself is
+// never returned, and never enters the payload.
+func reportedAppKeyFingerprint(keyFile string) string {
+	candidates := []string{keyFile, spokeAppKeyPath, spokeProvisionedAppKeyPath}
+	for _, p := range candidates {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
+			return fp
+		}
+	}
+	return ""
+}
+
+// hasPerHiveAppKey reports whether this spoke's key came from a per-hive
+// provisioning secret rather than the cluster default. The provisioned mount is
+// read-only, so its mere existence with real PEM content is the signal — a
+// hub-delivered key can never create or alter it.
+//
+// When BOTH exist the hub-delivered PVC key is the one in effect (the callback
+// repoints cfg.GitHub.KeyFile at it), so this only claims an override while the
+// provisioned key is genuinely the one being used.
+func hasPerHiveAppKey(keyFile string) bool {
+	fp, err := config.AppKeyFingerprintFromFile(spokeProvisionedAppKeyPath)
+	if err != nil || fp == "" {
+		return false
+	}
+	// The provisioned key exists. It is the effective credential only if the
+	// resolved key file still points at it.
+	return strings.TrimSpace(keyFile) == "" || keyFile == spokeProvisionedAppKeyPath
+}
+
+// processStartedAt is when this hive process began. Reported over the heartbeat
+// so the hub can show an uptime pill — a hive that is 1/1 Running but restarting
+// every couple of minutes looks healthy in a pod listing and in My Hives, and a
+// short uptime that keeps resetting is the only visible tell.
+var processStartedAt = time.Now()
 
 func main() {
 	startTime := time.Now()
@@ -153,6 +217,10 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
+		// Correct a stale/wrong installation_id BEFORE building the client, so
+		// the very first token this process mints is scoped to the right org
+		// rather than 403ing on every write until the self-heal tick runs.
+		healGitHubAppInstallation(ctx, appAuth, cfg, logger)
 		ghClient = github.NewClientFromApp(appAuth, cfg.Project.Org, cfg.Project.Repos, logger)
 
 		if cfg.GitHub.DocsInstallationID != 0 {
@@ -1126,6 +1194,10 @@ func main() {
 				// wrong installation). Verify write capability before letting
 				// the handler clear the banner, so Re-check can't produce a
 				// clears-then-returns flip-flop.
+				// Before reporting a wrong-account installation, try to fix it:
+				// this is the exact case rediscovery exists for. Cached by TTL,
+				// so a repeated re-check does not re-hit the API.
+				healGitHubAppInstallation(ctx, ghClient.AppAuth(), cfg, logger)
 				if diag := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
 					dashSrv.SetGitHubAppPermIssue(diag)
 					logger.Warn("github app recheck: app detected but write not verified", "repo", recheckRepo, "detail", diag)
@@ -1368,6 +1440,12 @@ func main() {
 		}
 		_ = changed
 	})
+
+	// Persist the fully-expanded prompt text of every kick so owners can review
+	// what their agents were actually told, over a day/week window, in the
+	// per-agent "Prompts" tab. Redaction and truncation happen inside the
+	// store, before anything is written to the PVC.
+	agentMgr.SetRecordPromptCallback(dashSrv.RecordPrompt)
 
 	// Register custom GHE hostnames with the proxy allowlist so mode
 	// enforcement applies to GitHub Enterprise API and web requests.
@@ -1652,15 +1730,22 @@ func main() {
 				m, rj, cv := fc.PRsMerged, fc.PRsRejected, fc.CVEsClosed
 				prsMerged, prsRejected, cvesClosed = &m, &rj, &cv
 			}
+			// Count agents with a method/model assigned for the hub's
+			// user-journey stage detection. Always a non-nil pointer from a
+			// spoke new enough to compute it, so the hub can distinguish
+			// "genuinely zero agents configured" from "old spoke, unknown".
+			agentsWithModel := agentMgr.CountAgentsWithModel()
 			return &hub.HeartbeatPayload{
-				HiveID:      cfg.HiveID,
-				Org:         cfg.Project.Org,
-				AIAuthor:    cfg.Project.AIAuthor,
-				Repos:       cfg.Project.Repos,
-				PrimaryRepo: cfg.Project.PrimaryRepo,
-				ACMMLevel:   acmmLvl,
-				Agents:      agents,
-				Governor:    hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				AgentsWithModel: &agentsWithModel,
+				HiveID:          cfg.HiveID,
+				Org:             cfg.Project.Org,
+				AIAuthor:        cfg.Project.AIAuthor,
+				StartedAt:       processStartedAt.UTC().Format(time.RFC3339),
+				Repos:           cfg.Project.Repos,
+				PrimaryRepo:     cfg.Project.PrimaryRepo,
+				ACMMLevel:       acmmLvl,
+				Agents:          agents,
+				Governor:        hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -1709,7 +1794,12 @@ func main() {
 					}
 					return ""
 				}(),
-				Health: dashSrv.HealthSummary(),
+				// Report the API URL we are actually running against so the hub
+				// can see whether a GitHub Enterprise API URL it delivered has
+				// landed. Resolved (never empty) so the hub can distinguish
+				// "public github.com" from "spoke too old to report this".
+				GitHubAPIURL: cfg.GitHub.ResolvedAPIURL(),
+				Health:       dashSrv.HealthSummary(),
 				DashboardURL: func() string {
 					if cfg.Hub.DashboardURL != "" {
 						return cfg.Hub.DashboardURL
@@ -1721,13 +1811,19 @@ func main() {
 					}
 					return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 				}(),
-				SnapshotURL:             cfg.Hub.SnapshotURL,
-				HiveType:                cfg.Hub.HiveType,
-				ClusterID:               cfg.Hub.ClusterID,
-				IsPublic:                cfg.Hub.IsPublic,
-				Version:                 "3.0.0",
-				GitHash:                 gitShort,
-				GitBranch:               gitBranch,
+				SnapshotURL: cfg.Hub.SnapshotURL,
+				HiveType:    cfg.Hub.HiveType,
+				ClusterID:   cfg.Hub.ClusterID,
+				IsPublic:    cfg.Hub.IsPublic,
+				Version:     "3.0.0",
+				GitHash:     gitShort,
+				GitBranch:   gitBranch,
+				// The image ref the Deployment tracks, read in-cluster and
+				// cached. The hub cannot see it for firewalled spokes, and it
+				// is the only way to distinguish a hive pinned to an immutable
+				// SHA tag (which can never receive a rolling upgrade) from one
+				// riding <branch>-latest. Empty off-cluster — never guessed.
+				ImageRef:                hub.SelfDeploymentImage(),
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
 				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
@@ -1741,6 +1837,12 @@ func main() {
 				PRsMerged90d:   prsMerged,
 				PRsRejected90d: prsRejected,
 				CVEsClosed:     cvesClosed,
+				// Report WHICH App key we hold, never the key. The hub compares
+				// this against its per-cluster key and pushes a correction only
+				// on a mismatch, so a spoke already holding the right key costs
+				// nothing and a spoke holding the wrong one self-heals.
+				GitHubAppKeyFingerprint: reportedAppKeyFingerprint(cfg.GitHub.KeyFile),
+				GitHubAppKeyPerHive:     hasPerHiveAppKey(cfg.GitHub.KeyFile),
 			}
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
@@ -1831,11 +1933,24 @@ func main() {
 				}
 			}, targetSHA, logger)
 
-			if err := hub.RolloutRestartSelf(logger); err != nil {
-				logger.Warn("rolling restart failed, falling back to os.Exit",
-					"error", err,
-				)
-				os.Exit(0)
+			// A plain rollout restart only advances a deployment tracking a
+			// MUTABLE tag. On a SHA-pinned deployment it relaunches the very
+			// same image, so the hive reports the old hash and the hub re-sends
+			// this upgrade every heartbeat — a restart loop that never lands.
+			// UpgradeSelfToSHA patches the image instead when we are pinned.
+			needsRestart, err := hub.UpgradeSelfToSHA(logger, targetSHA)
+			if err != nil {
+				logger.Warn("pinned-image upgrade failed, falling back to rolling restart",
+					"target", targetSHA, "error", err)
+				needsRestart = true
+			}
+			if needsRestart {
+				if err := hub.RolloutRestartSelf(logger); err != nil {
+					logger.Warn("rolling restart failed, falling back to os.Exit",
+						"error", err,
+					)
+					os.Exit(0)
+				}
 			}
 			// Rolling restart initiated — K8s will start a new pod and
 			// send SIGTERM to this one once the replacement is Ready.
@@ -1849,20 +1964,51 @@ func main() {
 				"has_key", ghCfg.PrivateKey != "",
 			)
 
-			keyPath := "/data/gh-app-key.pem"
+			keyPath := spokeAppKeyPath
 			if ghCfg.PrivateKey != "" {
-				const keyFileMode = 0o600
-				if err := os.WriteFile(keyPath, []byte(ghCfg.PrivateKey), keyFileMode); err != nil {
+				// Fingerprint before and after so the key rotation is auditable
+				// from the spoke's own logs. Fingerprints only — the key itself
+				// is never logged.
+				beforeFP, _ := config.AppKeyFingerprintFromFile(keyPath)
+				if err := os.WriteFile(keyPath, []byte(ghCfg.PrivateKey), spokeAppKeyFileMode); err != nil {
 					logger.Error("failed to write github app key from heartbeat", "error", err)
 					return
 				}
-				logger.Info("github app private key written via heartbeat", "path", keyPath)
+				// os.WriteFile does NOT re-apply the mode to a file that already
+				// exists, so a key written by an older build (or restored from a
+				// looser-moded source) would keep its old permissions forever.
+				// Chmod unconditionally so every path converges on 0600.
+				if err := os.Chmod(keyPath, spokeAppKeyFileMode); err != nil {
+					logger.Warn("could not tighten github app key permissions", "path", keyPath, "error", err)
+				}
+				afterFP, _ := config.AppKeyFingerprintFromFile(keyPath)
+				logger.Info("github app private key written via heartbeat",
+					"path", keyPath,
+					"from_fingerprint", beforeFP,
+					"to_fingerprint", afterFP,
+				)
 			}
 
-			cfg.GitHub.AppID = ghCfg.AppID
-			cfg.GitHub.InstallationID = ghCfg.InstallationID
+			if ghCfg.AppID != 0 {
+				cfg.GitHub.AppID = ghCfg.AppID
+			}
+			// A zero installation_id means "the hub is not speaking to this
+			// field", not "clear it". The cluster-wide key reconcile repairs the
+			// KEY on hives whose installation_id is already correct (and which
+			// the hub does not track); assigning zero here would blank a working
+			// value and turn a key-only fault into a total auth outage.
+			if ghCfg.InstallationID != 0 {
+				cfg.GitHub.InstallationID = ghCfg.InstallationID
+			}
 			if ghCfg.PrivateKey != "" {
 				cfg.GitHub.KeyFile = keyPath
+			}
+			// Same "empty means unchanged" contract as installation_id: adopting
+			// an empty slug would blank a working install link.
+			if ghCfg.AppSlug != "" && cfg.GitHub.AppSlug != ghCfg.AppSlug {
+				logger.Info("adopting github app slug from hub",
+					"was", cfg.GitHub.AppSlug, "now", ghCfg.AppSlug)
+				cfg.GitHub.AppSlug = ghCfg.AppSlug
 			}
 
 			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
@@ -1871,6 +2017,10 @@ func main() {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
 					return
 				}
+				// Hub-delivered creds can carry a wrong installation_id just as
+				// easily as a hand-edited config; correct (and persist) it
+				// before building a client that would 403 on every write.
+				healGitHubAppInstallation(ctx, newAppAuth, cfg, logger)
 				newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
@@ -1942,11 +2092,13 @@ func main() {
 			// still gets applied and persisted.
 			vanityMatched := pc.DashboardURL == "" || cfg.Hub.DashboardURL == pc.DashboardURL
 			authorMatched := pc.AIAuthor == "" || cfg.Project.AIAuthor == pc.AIAuthor
+			apiURLMatched := pc.GitHubAPIURL == "" || cfg.GitHub.APIURL == pc.GitHubAPIURL
 			if cfg.Project.Org == pc.Org &&
 				sameStringSlice(cfg.Project.Repos, pc.Repos) &&
 				cfg.Project.PrimaryRepo == pc.PrimaryRepo &&
 				curACMM == pc.ACMMLevel &&
 				authorMatched &&
+				apiURLMatched &&
 				vanityMatched {
 				return // already reconciled
 			}
@@ -1968,6 +2120,14 @@ func main() {
 			// kept the fleet-stats collector disabled on every hive.
 			if pc.AIAuthor != "" {
 				cfg.Project.AIAuthor = pc.AIAuthor
+			}
+			// Adopt a GitHub Enterprise API URL when the hub sends one. Empty
+			// means "leave mine alone" — the spoke's own default is already
+			// api.github.com, so this never clobbers a working config.
+			if pc.GitHubAPIURL != "" && cfg.GitHub.APIURL != pc.GitHubAPIURL {
+				logger.Info("adopting GitHub API URL from hub heartbeat",
+					"was", cfg.GitHub.APIURL, "now", pc.GitHubAPIURL)
+				cfg.GitHub.APIURL = pc.GitHubAPIURL
 			}
 			level := pc.ACMMLevel
 			cfg.ACMMLevel = &level
@@ -2185,6 +2345,50 @@ func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions,
 // that produce identical 403s: an installation_id pointing at a different
 // org's installation, and a permission update the org owner hasn't approved
 // yet. A nil appAuth (token-authenticated hive) yields "" — nothing to check.
+// healGitHubAppInstallation self-heals a hive whose github.installation_id
+// points at the WRONG account — the failure mode diagnoseGitHubAppWrite
+// already detects and reports ("installation N belongs to 'X', not 'Y'"). It
+// asks pkg/github to rediscover the installation covering cfg.Project.Org via
+// the App JWT and, only on an unambiguous match, adopts it in place and
+// persists it so the fix survives a pod restart.
+//
+// Every failure path is soft and silent-ish: a hive with no App key is not
+// App-authenticated (skip), an API error or an ambiguous/absent discovery
+// result leaves installation_id exactly as configured so the existing
+// "check github.installation_id" banner still stands. It never returns an
+// error to the caller and never blocks startup or a heartbeat.
+//
+// Rediscovery is rate-limited by pkg/github's discovery cache
+// (github.InstallationDiscoveryTTL), so calling this from the self-heal tick
+// is cheap even when the App is genuinely not installed on the org.
+func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg *config.Config, logger *slog.Logger) {
+	if appAuth == nil || !appAuth.HasKey() || cfg == nil {
+		return
+	}
+	org := cfg.Project.Org
+	if org == "" {
+		return
+	}
+	newID, err := appAuth.RediscoverAndAdopt(ctx, org, logger)
+	if err != nil {
+		logger.Debug("github app installation rediscovery did not adopt a new id",
+			"org", org, "error", err)
+		return
+	}
+	if newID == 0 {
+		return // already correct, or nothing safe to adopt
+	}
+	cfg.GitHub.InstallationID = newID
+	if err := cfg.Save(); err != nil {
+		logger.Error("adopted rediscovered installation_id but failed to persist it — "+
+			"it will revert on the next pod restart",
+			"installation_id", newID, "error", err)
+		return
+	}
+	logger.Info("persisted rediscovered github app installation_id",
+		"installation_id", newID, "org", org)
+}
+
 func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
 	if appAuth == nil {
 		return ""
@@ -2250,6 +2454,14 @@ func runEvalCycle(
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+
+	// Duplicate-PR guard: drop issues an open hive-authored PR already claims,
+	// before the governor counts the queue or the scheduler builds kicks. A
+	// restart storm otherwise re-offers the same issue on every fresh agent
+	// start, and the agent — having no memory of the PR it just filed — files
+	// another. Backed by a PVC ledger so it survives those restarts, and fails
+	// closed (keeps the last known claims) when the GitHub API is unavailable.
+	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
 	lastActionable.Store(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
@@ -2876,6 +3088,54 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
+
+// claimLedger holds the duplicate-PR guard's persisted issue→PR claim mapping
+// across eval cycles. It is loaded lazily on first use (and retried on a load
+// failure) rather than at startup, so a missing or corrupt /data ledger can
+// never block the hive from booting.
+var (
+	claimLedgerOnce sync.Once
+	claimLedger     *github.ClaimLedger
+)
+
+// hiveIdentity determines which PR authors count as "this hive", so only our
+// own PRs suppress work. Two accounts can open PRs on our behalf:
+//   - project.ai_author — the account agents push and open PRs as
+//   - the GitHub App bot login ("<app-slug>[bot]") when the hive authenticates
+//     as an installation, which is what actually authors PRs in that mode
+func hiveIdentity(cfg *config.Config) github.HiveIdentity {
+	id := github.HiveIdentity{AIAuthor: cfg.Project.AIAuthor}
+	if slug := cfg.GitHub.ResolvedAppSlug(); slug != "" {
+		id.AppLogin = slug + "[bot]"
+	}
+	return id
+}
+
+// applyDuplicatePRGuard filters issues already claimed by an open hive-authored
+// PR out of the actionable set. Failures are logged, never fatal: the guard is
+// a safety net, and a broken net must not take the hive down with it.
+func applyDuplicatePRGuard(
+	ctx context.Context,
+	cfg *config.Config,
+	ghClient *github.Client,
+	actionable *github.ActionableResult,
+	logger *slog.Logger,
+) {
+	claimLedgerOnce.Do(func() {
+		ledger, err := github.LoadClaimLedger(github.ClaimLedgerPath, logger)
+		if err != nil {
+			// LoadClaimLedger always returns a usable (possibly empty) ledger
+			// alongside the error, so we keep it and just report the problem.
+			logger.Warn("duplicate-PR guard: could not load persisted claim ledger, starting empty",
+				"path", github.ClaimLedgerPath, "error", err)
+		}
+		claimLedger = ledger
+	})
+	if claimLedger == nil {
+		return
+	}
+	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, logger)
+}
 
 func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, logger *slog.Logger) {
 	holdSet := make(map[string]bool)

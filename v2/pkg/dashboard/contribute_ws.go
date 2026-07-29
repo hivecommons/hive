@@ -41,16 +41,16 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 type ContributorConnection struct {
-	ws           *websocket.Conn
-	profile      *ContributorProfile
-	cliBackend   string
-	model        string
-	role         string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
-	connectedAt  time.Time
-	currentTask  *WSTaskAssign
-	lastPong     time.Time
-	tmuxOutput   []string
-	mu           sync.Mutex
+	ws          *websocket.Conn
+	profile     *ContributorProfile
+	cliBackend  string
+	model       string
+	role        string // empty = task-driven mode, "scanner"/"reviewer"/etc. = role mode
+	connectedAt time.Time
+	currentTask *WSTaskAssign
+	lastPong    time.Time
+	tmuxOutput  []string
+	mu          sync.Mutex
 }
 
 type WSMessage struct {
@@ -105,12 +105,12 @@ type ActivityEntry struct {
 }
 
 type ContributeWSHub struct {
-	connections map[string]*ContributorConnection
-	mu          sync.RWMutex
-	logger      *slog.Logger
-	seq         int
-	activityMu  sync.RWMutex
-	activity    []ActivityEntry
+	connections    map[string]*ContributorConnection
+	mu             sync.RWMutex
+	logger         *slog.Logger
+	seq            int
+	activityMu     sync.RWMutex
+	activity       []ActivityEntry
 	server         *Server
 	completedTasks map[string]time.Time
 	completedMu    sync.Mutex
@@ -210,9 +210,13 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
 	data, err := os.ReadFile(completedTasksFile)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	var saved map[string]string
-	if json.Unmarshal(data, &saved) != nil { return }
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
 	for k, v := range saved {
 		if t, err := time.Parse(time.RFC3339, v); err == nil {
 			if time.Since(t) < completedTaskCooldownHours*time.Hour {
@@ -226,7 +230,9 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 func (h *ContributeWSHub) saveCompletedTasks() {
 	h.completedMu.Lock()
 	saved := make(map[string]string, len(h.completedTasks))
-	for k, t := range h.completedTasks { saved[k] = t.Format(time.RFC3339) }
+	for k, t := range h.completedTasks {
+		saved[k] = t.Format(time.RFC3339)
+	}
 	h.completedMu.Unlock()
 	data, err := json.Marshal(saved)
 	if err != nil {
@@ -845,14 +851,18 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
+			labels := stringSliceFromAny(issue["labels"])
 
-			var denyTitles, denyAuthors []string
+			// Apply the title / author / label contribute filters. Each is a
+			// single list plus a mode (allow = only matching pass; deny = matching
+			// skipped). Labels were previously not enforced at all.
 			if h.server.deps != nil && h.server.deps.Config != nil {
-				denyTitles = h.server.deps.Config.Hub.ContributeDenyTitles
-				denyAuthors = h.server.deps.Config.Hub.ContributeDenyAuthors
-			}
-			if config.MatchesAny(title, denyTitles) || config.MatchesAny(author, denyAuthors) {
-				continue
+				hub := h.server.deps.Config.Hub
+				if !config.FilterPasses(title, hub.ContributeDenyTitles, hub.ContributeTitlesMode) ||
+					!config.FilterPasses(author, hub.ContributeDenyAuthors, hub.ContributeAuthorsMode) ||
+					!config.LabelsFilterPasses(labels, hub.ContributeDenyLabels, hub.ContributeLabelsMode) {
+					continue
+				}
 			}
 
 			ghToken := ""
@@ -915,7 +925,23 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	return nil
 }
 
+// stringSliceFromAny coerces a JSON-decoded value (from an issue map marshaled
+// via encoding/json) into a []string. Labels arrive as []any of strings; any
+// non-string elements are skipped. Returns nil for a missing/other-typed value.
+func stringSliceFromAny(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if s, ok := it.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func sendJSON(conn *websocket.Conn, msg WSMessage) error {
 	return conn.WriteJSON(msg)
 }
-

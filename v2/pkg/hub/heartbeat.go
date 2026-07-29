@@ -38,8 +38,58 @@ var lastHeartbeatSuccessUnix atomic.Int64
 // liveness forever. Set once at startup; read from the HTTP handler.
 var heartbeatLoopStarted atomic.Bool
 
+// lastHeartbeatAttemptUnix holds the unix-seconds timestamp of the most
+// recent heartbeat the loop *tried* to send, regardless of whether the hub
+// accepted it, rejected it (4xx/5xx), or was unreachable entirely.
+//
+// This is the signal that separates the two failure modes a stale
+// lastHeartbeatSuccessUnix otherwise conflates:
+//
+//   - Attempts advancing but successes not: the goroutine is alive and doing
+//     its job; the *hub* is unreachable or rejecting. Restarting the pod
+//     cannot fix a network partition or a hub outage, so liveness must not
+//     fail — this is routine on firewalled clusters that can only reach the
+//     hub intermittently.
+//   - Attempts themselves not advancing: the loop is genuinely wedged (dead
+//     goroutine, deadlock, permanently stuck HTTP call). A restart is the
+//     only remedy, so this is what liveness should catch.
+//
+// Same atomic rationale as lastHeartbeatSuccessUnix: written by the heartbeat
+// goroutine, read by the dashboard's HTTP handler goroutine.
+var lastHeartbeatAttemptUnix atomic.Int64
+
+// storeUnixOrZero stores t as unix seconds, or 0 for the zero time so it
+// reads back as "never happened" through the Last* accessors.
+func storeUnixOrZero(dst *atomic.Int64, t time.Time) {
+	if t.IsZero() {
+		dst.Store(0)
+		return
+	}
+	dst.Store(t.Unix())
+}
+
 func recordHeartbeatSuccess() {
 	lastHeartbeatSuccessUnix.Store(time.Now().Unix())
+}
+
+// recordHeartbeatAttempt marks that the heartbeat loop reached the top of a
+// send. Called unconditionally before each attempt so a hub that is down,
+// unreachable, or rejecting every beat still counts as "the loop is alive".
+func recordHeartbeatAttempt() {
+	lastHeartbeatAttemptUnix.Store(time.Now().Unix())
+}
+
+// LastHeartbeatAttempt returns the time the heartbeat loop last tried to
+// send, and whether it has ever tried. Unlike LastHeartbeatSuccess this
+// advances even while the hub is unreachable, so liveness checks can tell a
+// wedged goroutine (no attempts) from a partitioned network (attempts, no
+// successes).
+func LastHeartbeatAttempt() (t time.Time, ok bool) {
+	sec := lastHeartbeatAttemptUnix.Load()
+	if sec == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
 }
 
 // LastHeartbeatSuccess returns the time of the last heartbeat the hub
@@ -147,31 +197,57 @@ type HeartbeatGPUSummary struct {
 }
 
 type HeartbeatPayload struct {
-	HiveID                  string                        `json:"hive_id"`
-	Org                     string                        `json:"org"`
-	Repos                   []string                      `json:"repos"`
-	PrimaryRepo             string                        `json:"primary_repo"`
+	HiveID      string   `json:"hive_id"`
+	Org         string   `json:"org"`
+	Repos       []string `json:"repos"`
+	PrimaryRepo string   `json:"primary_repo"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as. Reported
 	// so the hub can echo it back in HeartbeatProjectConfig rather than
 	// blanking it, and so the registry knows each hive's author without any
 	// spoke-side token lookup (which does not work on App-authenticated hives).
-	AIAuthor                string                        `json:"ai_author,omitempty"`
-	ACMMLevel               int                           `json:"acmm_level"`
-	Agents                  []AgentSummary                `json:"agents"`
-	Governor                GovernorSummary               `json:"governor"`
-	Tokens24h               int64                         `json:"tokens_24h"`
-	Contributors            ContributorSummary            `json:"contributors"`
-	Leaderboard             []LeaderboardEntry            `json:"leaderboard"`
-	Health                  map[string]any                `json:"health"`
-	DashboardURL            string                        `json:"dashboard_url"`
-	SnapshotURL             string                        `json:"snapshot_url"`
-	Owner                   string                        `json:"owner,omitempty"`
-	HiveType                string                        `json:"hive_type,omitempty"`
-	ClusterID               string                        `json:"cluster_id,omitempty"`
-	IsPublic                bool                          `json:"is_public"`
-	Version                 string                        `json:"version"`
-	GitHash                 string                        `json:"git_hash"`
-	GitBranch               string                        `json:"git_branch,omitempty"`
+	AIAuthor string `json:"ai_author,omitempty"`
+	// GitHubAPIURL is the GitHub API base URL this spoke is CURRENTLY running
+	// against (its resolved value, so a public-GitHub spoke reports
+	// https://api.github.com rather than ""). Reported so the hub can tell
+	// whether a GitHub Enterprise API URL it wants to deliver has actually
+	// landed. Without it the hub has no read-back for this field: the claim
+	// reconcile in projectConfigForHiveID stops sending anything once
+	// ClaimDelivered is set, so a hive whose GitHubHost is filled in AFTER
+	// assignment (the retroactive repair) would never receive its GHE API URL.
+	//
+	// Empty means "spoke too old to report it" — the hub must treat that as
+	// UNKNOWN, never as a genuine mismatch, or it would re-push forever.
+	GitHubAPIURL string             `json:"github_api_url,omitempty"`
+	ACMMLevel    int                `json:"acmm_level"`
+	Agents       []AgentSummary     `json:"agents"`
+	Governor     GovernorSummary    `json:"governor"`
+	Tokens24h    int64              `json:"tokens_24h"`
+	Contributors ContributorSummary `json:"contributors"`
+	Leaderboard  []LeaderboardEntry `json:"leaderboard"`
+	// StartedAt is the spoke process start time (RFC3339). The hub renders it
+	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
+	// but restarted 35 times — is visible in My Hives instead of looking
+	// healthy. A short uptime that keeps resetting is the tell.
+	StartedAt    string         `json:"started_at,omitempty"`
+	Health       map[string]any `json:"health"`
+	DashboardURL string         `json:"dashboard_url"`
+	SnapshotURL  string         `json:"snapshot_url"`
+	Owner        string         `json:"owner,omitempty"`
+	HiveType     string         `json:"hive_type,omitempty"`
+	ClusterID    string         `json:"cluster_id,omitempty"`
+	IsPublic     bool           `json:"is_public"`
+	Version      string         `json:"version"`
+	GitHash      string         `json:"git_hash"`
+	GitBranch    string         `json:"git_branch,omitempty"`
+	// ImageRef is the container image this spoke's own Deployment runs, read
+	// in-cluster from the Deployment spec. GitHash says which commit the
+	// BINARY was built from; ImageRef says which TAG the deployment tracks —
+	// and only the tag reveals a hive pinned to an immutable
+	// ghcr.io/kubestellar/hive:<sha> that can never receive a rolling upgrade.
+	// The hub cannot read this itself for firewalled spokes it reaches only by
+	// heartbeat, which is why it rides the payload. Empty when the spoke is
+	// not running in-cluster or the read failed — never a guess.
+	ImageRef                string                        `json:"image_ref,omitempty"`
 	Timestamp               string                        `json:"timestamp"`
 	GitHubAppRequired       bool                          `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue      string                        `json:"github_app_perm_issue,omitempty"`
@@ -190,6 +266,34 @@ type HeartbeatPayload struct {
 	PRsMerged90d   *int `json:"prs_merged_90d,omitempty"`
 	PRsRejected90d *int `json:"prs_rejected_90d,omitempty"`
 	CVEsClosed     *int `json:"cves_closed,omitempty"`
+	// AgentsWithModel counts this hive's agents that have an effective method
+	// (backend) or model assigned — override first, then agent config, exactly
+	// as the launcher resolves it. The hub uses it for user-journey stage
+	// detection: a hive with zero configured agents has not yet completed the
+	// "assign a method/model to an agent" step.
+	//
+	// A pointer for the same reason as the fleet counts above: a spoke too old
+	// to report this sends nil, which the hub must read as "unknown, do not
+	// nudge", NOT as a genuine zero. Never threaten a hive over a signal that
+	// was never sent.
+	AgentsWithModel *int `json:"agents_with_model,omitempty"`
+	// GitHubAppKeyFingerprint is a NON-SECRET identifier for the GitHub App
+	// private key this spoke currently holds — "sha256:<hex>" over the DER
+	// public key derived from it (config.AppKeyFingerprint). It exists so the
+	// hub can tell a spoke carrying the WRONG key apart from one carrying the
+	// right one, without the private key ever travelling spoke → hub. The
+	// private key is never placed in this payload, in any field, ever.
+	//
+	// Empty means the spoke has no key, could not parse the one it has, or is
+	// too old to report this. All three are repaired the same way: the hub
+	// pushes its cluster key, and the spoke starts reporting a fingerprint that
+	// matches, at which point pushing stops.
+	GitHubAppKeyFingerprint string `json:"github_app_key_fingerprint,omitempty"`
+	// GitHubAppKeyPerHive is true when this spoke's key was supplied
+	// specifically for THIS hive at provisioning time, rather than adopted from
+	// its cluster. The hub honours it as an override: a deliberate per-hive
+	// credential is never overwritten by the cluster default.
+	GitHubAppKeyPerHive bool `json:"github_app_key_per_hive,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload
@@ -330,6 +434,12 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) *HeartbeatResponse {
+	// Record the attempt before anything that can bail out early (including a
+	// nil payload from collect): reaching this point proves the loop goroutine
+	// is still running its schedule, which is exactly what liveness needs to
+	// know. Success is tracked separately, further down, on hub acceptance.
+	recordHeartbeatAttempt()
+
 	payload := collect()
 	if payload == nil {
 		return nil
@@ -459,6 +569,15 @@ type HeartbeatGitHubAppConfig struct {
 	AppID          int64  `json:"app_id"`
 	InstallationID int64  `json:"installation_id"`
 	PrivateKey     string `json:"private_key,omitempty"`
+	// AppSlug is the App's URL slug on this cluster's GitHub host. It is only
+	// set at PROVISIONING time today, so a hive provisioned before its cluster's
+	// slug was configured shows an install link pointing at an app that does not
+	// exist on that GitHub Enterprise host — and no code path ever corrects it.
+	// Riding it alongside the key lets the same reconcile repair both.
+	//
+	// Empty means "leave the spoke's slug unchanged" — never a way to blank a
+	// working value.
+	AppSlug string `json:"app_slug,omitempty"`
 }
 
 // HeartbeatProjectConfig carries a claimed project's real org/repos/ACMM from
@@ -489,6 +608,15 @@ type HeartbeatProjectConfig struct {
 	// placeholder subdomain) — and stays that way, since it's now the value the
 	// heartbeat carries. Empty = leave the spoke's dashboard URL unchanged.
 	DashboardURL string `json:"dashboard_url,omitempty"`
+	// GitHubAPIURL points the spoke at a GitHub Enterprise API when the request
+	// named a GHE org (github.ibm.com/my-org). Without it a GHE hive silently
+	// talks to api.github.com and 404s on every repo call, which is what drove
+	// users to paste the host into the repo field instead — the malformed value
+	// then failed heartbeat validation and crash-looped the pod.
+	//
+	// Empty = leave the spoke's github.api_url unchanged (public github.com is
+	// the spoke's own default), so this never blanks a working config.
+	GitHubAPIURL string `json:"github_api_url,omitempty"`
 }
 
 // HeartbeatGatewayConfig carries an OpenRouter model gateway (funded via the

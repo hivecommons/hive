@@ -41,7 +41,126 @@ func (s *HubServer) registerOAuth() {
 	s.logger.Info("hub OAuth enabled", "client_id", clientID)
 }
 
+// linkPreviewUserAgents are the crawlers that fetch a URL purely to build a
+// preview card. They never carry a session, so every authenticated hub link
+// (/login, and anything that redirects there like /api/saas/hives/{id}/open)
+// bounced them to GitHub's OAuth page — and they scraped GITHUB's Open Graph
+// tags. Shared Hive links unfurled as "GitHub — Build software better,
+// together" with the GitHub logo.
+//
+// Matched case-insensitively as substrings of the User-Agent.
+var linkPreviewUserAgents = []string{
+	"slackbot",         // Slack
+	"twitterbot",       // X/Twitter
+	"facebookexternal", // Facebook / Messenger / WhatsApp
+	"linkedinbot",      // LinkedIn
+	"discordbot",       // Discord
+	"telegrambot",      // Telegram
+	"whatsapp",         // WhatsApp (older UA)
+	"skypeuripreview",  // Skype
+	"embedly",          // generic embed service
+	"redditbot",        // Reddit
+	"mattermost",       // Mattermost
+	"googlebot",        // search snippet
+	"bingbot",
+}
+
+// isLinkPreviewCrawler reports whether this request is a preview bot rather than
+// a person. Deliberately conservative: a false positive only means a crawler
+// sees a preview card instead of a redirect, while a false negative just
+// restores the old (wrong) unfurl. It must never affect real sign-in traffic.
+func isLinkPreviewCrawler(r *http.Request) bool {
+	ua := strings.ToLower(r.Header.Get("User-Agent"))
+	if ua == "" {
+		return false
+	}
+	for _, bot := range linkPreviewUserAgents {
+		if strings.Contains(ua, bot) {
+			return true
+		}
+	}
+	return false
+}
+
+// hubPublicURL is the canonical public origin used to build absolute Open Graph
+// URLs. Unfurlers require absolute image URLs — a relative path is ignored — and
+// they fetch the image without a session, so this must be the externally
+// reachable host.
+const hubPublicURL = "https://hive.kubestellar.io"
+
+// linkPreviewMaxAge is how long an unfurler may cache the preview HTML. Short,
+// because the copy may be reworded on any deploy; the image is cached far longer.
+const linkPreviewMaxAge = 5 * time.Minute
+
+// writeLinkPreview serves Hive's own Open Graph card. Status 200 with no
+// redirect, so the crawler stops here instead of following through to GitHub.
+//
+// The meta tags are kept at the very top of <head>: Slackbot reads only the
+// first 32KB of a response, so anything below that is invisible to it.
+func writeLinkPreview(w http.ResponseWriter) {
+	const previewHTML = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Hive — AI agents that maintain your repo</title>
+<meta name="description" content="Hive — the AI maintainer you own outright. AI agents triage issues, write fixes, patch CVEs, and merge on green behind six autonomy levels.">
+<meta property="og:site_name" content="Hive">
+<meta property="og:title" content="Hive — AI agents that maintain your repo">
+<meta property="og:description" content="Put your repo on autopilot. Hive runs a fleet of AI agents on your backlog behind six autonomy levels — test coverage earns the confidence to raise a level, and you (the admin) choose when to raise it.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="` + hubPublicURL + `">
+<meta property="og:image" content="` + hubPublicURL + `/og-card.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Hive — AI agents that maintain your repo">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Hive — AI agents that maintain your repo">
+<meta name="twitter:description" content="Put your repo on autopilot. AI agents on your backlog behind six autonomy levels.">
+<meta name="twitter:image" content="` + hubPublicURL + `/og-card.png">
+</head><body>
+<h1>Hive</h1>
+<p>AI agents that maintain your repo. <a href="` + hubPublicURL + `">Sign in to continue.</a></p>
+</body></html>`
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Preview cards are identical for every link and change only on deploy.
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(linkPreviewMaxAge.Seconds())))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(previewHTML))
+}
+
+// ogCardPath is the pre-rendered preview image inside staticFS. It is a real
+// PNG, not an SVG: no major unfurler (Slack, X/Twitter, Facebook, LinkedIn,
+// Discord) renders an SVG og:image — they show a blank placeholder instead — so
+// an SVG card would leave the preview image broken. It is 1200x630, the size
+// every platform crops from, and ~93KB, comfortably under Slack's 1MB limit
+// above which images are silently dropped.
+const ogCardPath = "static/og-card.png"
+
+// ogCardMaxAge is how long unfurlers and CDNs may cache the preview image. The
+// card only changes on deploy, and crawlers re-fetch it for every shared link,
+// so a long TTL costs nothing.
+const ogCardMaxAge = 24 * time.Hour
+
+// handleOGCard serves the Open Graph preview image. Registered outside
+// registerOAuth so it stays reachable even when OAuth is unconfigured —
+// otherwise the image 404s and the card renders blank.
+func (s *HubServer) handleOGCard(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFS.ReadFile(ogCardPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(ogCardMaxAge.Seconds())))
+	w.Write(data)
+}
+
 func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
+	// Serve Hive's own card to preview crawlers instead of redirecting them into
+	// GitHub's OAuth page, whose Open Graph tags they would otherwise scrape.
+	if isLinkPreviewCrawler(r) {
+		writeLinkPreview(w)
+		return
+	}
 	clientID := os.Getenv("HIVE_HUB_OAUTH_CLIENT_ID")
 	redirect := r.URL.Query().Get("redirect")
 	if redirect == "" {

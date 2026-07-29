@@ -139,7 +139,24 @@ type ClusterConfig struct {
 	InferenceEndpoint           string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
 	GitHubBaseURL               string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
 	GitHubAPIURL                string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
-	OAuthClientID               string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+	// GitHubAppSlug is the GitHub App's URL slug on THIS cluster's GitHub
+	// host. A GitHub Enterprise instance hosts its own App registration,
+	// which is rarely named "kubestellar-hive" — without this the spoke's
+	// install link points at an app that does not exist on that GHE host.
+	// Empty falls back to config.DefaultGitHubAppSlug.
+	GitHubAppSlug string `json:"github_app_slug,omitempty" yaml:"github_app_slug,omitempty"`
+	// GitHubAppID is the numeric App ID registered on THIS cluster's GitHub
+	// host. It is the non-secret half of the cluster's App identity — the
+	// matching PRIVATE KEY is deliberately NOT a field here, because this struct
+	// is parsed from clusters.json and flows along operator-facing paths. The
+	// key lives in its own 0600 file keyed by cluster ID (see
+	// cluster_app_key.go); this field is what tells the hub such a key is
+	// expected and which App it belongs to.
+	//
+	// Zero means "this cluster has no hub-managed App identity" — the hub then
+	// changes nothing about its spokes' credentials.
+	GitHubAppID   int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 	ClusterHealthTimeoutSeconds int    `json:"cluster_health_timeout_seconds,omitempty" yaml:"cluster_health_timeout_seconds,omitempty"`
 }
 
@@ -249,6 +266,11 @@ type SaaSHive struct {
 	Owner       string   `json:"owner"`
 	ProjectName string   `json:"project_name"`
 	Org         string   `json:"org"`
+	// GitHubHost is the GitHub instance this project lives on — empty means
+	// public github.com, otherwise a GitHub Enterprise host (github.ibm.com,
+	// github.cisco.com, …). Recorded at assign time from the requested org so
+	// the spoke can be pointed at the right API over the heartbeat.
+	GitHubHost  string   `json:"github_host,omitempty"`
 	Repos       []string `json:"repos"`
 	PrimaryRepo string   `json:"primary_repo"`
 	ACMMLevel   int      `json:"acmm_level"`
@@ -276,6 +298,23 @@ type SaaSHive struct {
 	OCIFileSystemID string                 `json:"oci_file_system_id,omitempty"`
 	OCIExportID     string                 `json:"oci_export_id,omitempty"`
 	ClusterID       string                 `json:"cluster_id,omitempty"`
+
+	// AutoUpgradeMode gates WHEN an enabled auto-upgrade may fire:
+	// AutoUpgradeModeInstant (or empty) upgrades as soon as the hive is seen
+	// behind latest; AutoUpgradeModeDaily upgrades at most once per ET calendar
+	// day, at or after autoUpgradeDailyHour. omitempty keeps existing meta.json
+	// records byte-identical until the operator actually picks a mode, and an
+	// absent field reads as instant — so the ~42 records already on the PVC keep
+	// today's behaviour exactly.
+	AutoUpgradeMode string `json:"auto_upgrade_mode,omitempty"`
+	// AutoUpgradeLastFired is the ET calendar day (autoUpgradeDateFormat) on
+	// which the daily schedule last triggered an upgrade for this hive. It lives
+	// here, in the hive's own meta.json on the PVC, for two reasons: it is
+	// per-hive state that belongs with the rest of the hive's upgrade
+	// preferences, and persisting it means a hub restart at 17:03 cannot re-fire
+	// an upgrade that already went out at 17:01. Empty for instant-mode hives,
+	// which are never gated and never record a date.
+	AutoUpgradeLastFired string `json:"auto_upgrade_last_fired,omitempty"`
 
 	// GitHubBaseURL / GitHubAPIURL pin this hive's GitHub host. The GitHub
 	// host is a property of the HIVE (where its org/repos live), not the
@@ -356,6 +395,125 @@ func effectiveGitHubAPIURL(h *SaaSHive, cluster *ClusterConfig) string {
 		return h.GitHubAPIURL
 	}
 }
+
+// backfillGitHubHostFromCluster returns the GitHub host a hive should inherit
+// from its cluster, or "" when there is nothing to fill in.
+//
+// A hive's GitHubHost is otherwise only ever set from an explicitly pasted
+// org URL at assign time. Placeholders provisioned BEFORE their cluster gained
+// github_base_url/github_api_url therefore keep GitHubHost == "" forever, and
+// projectConfigForHiveID pushes gheAPIURLForHost("") == "" on every heartbeat
+// — which the spoke reads as "leave mine alone". The result is a hive on a GHE
+// cluster still pointing at api.github.com with the public app_id (observed on
+// vllm-d: hosted-available-vllmd-01 in org "katamari" has base_url: "",
+// api_url: "", app_id: 3568013 against a github.ibm.com cluster).
+//
+// This only ever fills a blank: a hive that already carries a host — including
+// an explicit "public" override, which effectiveGitHubBaseURL resolves to ""
+// — is returned unchanged.
+func backfillGitHubHostFromCluster(h *SaaSHive, cluster *ClusterConfig) string {
+	if h == nil || h.GitHubHost != "" || cluster == nil {
+		return ""
+	}
+	base := effectiveGitHubBaseURL(h, cluster)
+	if base == "" {
+		return "" // public github.com — nothing to record
+	}
+	return githubHostLabel(base)
+}
+
+// repairGitHubHostsFromClusters retroactively fills in a blank GitHubHost on
+// hives that were ALREADY assigned, using their cluster's GHE defaults.
+//
+// backfillGitHubHostFromCluster only runs at assign time, so every hive claimed
+// before that fix keeps GitHubHost == "" forever — and with it an empty
+// github_api_url pushed on every heartbeat, which the spoke reads as "leave
+// mine alone". Those hives sit on a github.ibm.com cluster while talking to
+// api.github.com (hosted-available-vllmd-01 in org "katamari" is the live
+// example). Nothing else ever repairs them.
+//
+// It is deliberately conservative and idempotent:
+//   - It only ever fills a BLANK GitHubHost. An explicitly set host is never
+//     overwritten, and neither is an explicit "public" override — that resolves
+//     to an empty effective base URL, which backfillGitHubHostFromCluster
+//     already refuses to record.
+//   - It changes nothing when the hive's cluster has no GHE host configured.
+//   - Unclaimed placeholders are skipped: assign owns those, and it now
+//     backfills the host itself.
+//   - Every change is logged with before/after.
+//
+// Returns the number of hives changed.
+//
+// It runs LAZILY, per hive, from the heartbeat path (repairGitHubHostForHive)
+// rather than as a startup sweep. A goroutine at hub start would walk the hive
+// directory concurrently with the first heartbeats already writing to it, for
+// no benefit: a hive that never beats does not need repairing, and one that
+// does gets repaired on its very next beat.
+//
+// NOTE: this repairs the HOST only. A hive that also carries the public
+// app_id/installation_id is NOT fixed by this — the GitHub App still has to be
+// installed on the target org before installation auto-discovery can self-heal
+// it. See gitHubAppStillRequiredNote.
+func (s *HubServer) repairGitHubHostsFromClusters() int {
+	repaired := 0
+	for _, h := range listSaaSHives() {
+		if s.repairGitHubHostForHive(h.ID) {
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		s.logger.Info("github host repair: complete", "hives_repaired", repaired,
+			"note", gitHubAppStillRequiredNote)
+	}
+	return repaired
+}
+
+// repairGitHubHostForHive applies the retroactive host repair to a SINGLE hive,
+// reporting whether it changed anything. Called on each heartbeat, so it must
+// be cheap and silent in the overwhelmingly common no-op case — every guard
+// below returns before any write.
+func (s *HubServer) repairGitHubHostForHive(hiveID string) bool {
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		return false
+	}
+	if h.Status == statusAvailable {
+		return false // unclaimed placeholder — assign backfills it at claim time
+	}
+	if h.GitHubHost != "" {
+		return false // explicitly set — never clobber
+	}
+	// backfillGitHubHostFromCluster also returns "" for an explicit "public"
+	// override (effectiveGitHubBaseURL resolves the sentinel to public) and for
+	// a cluster with no GHE host, so both are covered by this one check.
+	host := backfillGitHubHostFromCluster(h, s.clusterForHive(h))
+	if host == "" {
+		return false
+	}
+	h.GitHubHost = host
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("github host repair: failed to save hive",
+			"hive", hiveID, "error", err)
+		return false
+	}
+	s.logger.Info("github host repair: filled blank github_host from cluster defaults",
+		"hive", hiveID,
+		"cluster", clusterIDForHive(h),
+		"org", h.Org,
+		"github_host_before", "",
+		"github_host_after", host,
+		"github_api_url_after", gheAPIURLForHost(host),
+		"note", gitHubAppStillRequiredNote)
+	return true
+}
+
+// gitHubAppStillRequiredNote is the operator-facing caveat attached to a host
+// repair. Filling in the host points the spoke at the right GitHub API, but it
+// does NOT change the hive's app_id/installation_id: a hive provisioned with
+// the PUBLIC App credentials still needs the GitHub Enterprise App installed on
+// its org before installation auto-discovery can find an installation to adopt.
+// Until a human does that, the hive authenticates as nothing on its GHE host.
+const gitHubAppStillRequiredNote = "github_host repaired; a hive still carrying the public app_id also needs the GitHub Enterprise App installed on its org before its installation can be auto-discovered"
 
 func generateHiveID(org, repo string) string {
 	short := repo
@@ -620,6 +778,10 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"HasGHE":            effectiveGitHubBaseURL(h, cluster) != "",
 		"GitHubBaseURL":     effectiveGitHubBaseURL(h, cluster),
 		"GitHubAPIURL":      effectiveGitHubAPIURL(h, cluster),
+		// Only emit app_slug when the cluster names one. Leaving it out lets
+		// config.ResolvedAppSlug() supply the public default, so public-GitHub
+		// hives are unaffected.
+		"GitHubAppSlug": cluster.GitHubAppSlug,
 		"OAuthClientID": func() string {
 			// Follow the hive's EFFECTIVE GitHub host, not the cluster
 			// default — a public-GitHub hive on a GHE-defaulted cluster
@@ -1085,6 +1247,9 @@ data:
       base_url: {{.GitHubBaseURL}}
       api_url: {{.GitHubAPIURL}}
 {{- end}}
+{{- if .GitHubAppSlug}}
+      app_slug: {{.GitHubAppSlug}}
+{{- end}}
 {{- if .OAuthClientID}}
       oauth_client_id: {{.OAuthClientID}}
 {{- end}}
@@ -1280,13 +1445,18 @@ spec:
           # /api/livez (not /api/health) so a heartbeat goroutine that dies
           # silently while the HTTP server stays up still gets caught and the
           # pod restarted. /api/health only proves the dashboard's HTTP
-          # server is responsive; it does not check heartbeat freshness, so
-          # a hive with a dead heartbeat goroutine but a live server would
-          # otherwise stay 1/1 Running forever while the hub shows it
-          # offline (gray dot) with nothing to recover it. See
-          # pkg/dashboard/server.go handleLivez for the staleness threshold
-          # and startup-grace handling; hives without a hub configured are
-          # exempt (guarded by hub.HeartbeatEnabled()).
+          # server is responsive; it does not check that the heartbeat loop is
+          # still running, so a hive with a wedged loop but a live server
+          # would otherwise stay 1/1 Running forever while the hub shows it
+          # offline (gray dot) with nothing to recover it.
+          #
+          # /api/livez keys off heartbeat *attempts*, not successes, so an
+          # unreachable or rejecting hub never kills the pod — a restart
+          # cannot fix a network partition, and gating on it crash-looped
+          # healthy spokes on firewalled clusters. Heartbeat freshness is
+          # reported via /api/health/deep instead. See
+          # pkg/dashboard/server.go handleLivez; hives without a hub
+          # configured are exempt (guarded by hub.HeartbeatEnabled()).
           httpGet:
             path: /api/livez
             port: {{.DashboardPort}}
@@ -1499,3 +1669,125 @@ spec:
     insecureEdgeTerminationPolicy: Redirect
 {{- end}}
 `
+
+// addVanityHostToIngress makes the spoke actually serve a second, friendlier
+// hostname. Provisioning templates exactly one DashboardHost, so a vanity URL
+// derived from the claimed org/repo has no backend until something creates a
+// route for it — and every hub link to that host (including the /open SSO
+// handoff) returns 503 while the raw placeholder host works fine.
+//
+// nginx clusters: patch the existing Ingresses, appending the vanity host as an
+// extra rule (copied from the placeholder rule) and adding it to the TLS block
+// so cert-manager issues for it.
+// OpenShift clusters: a Route carries a single host, so add parallel
+// "<name>-vanity" Routes instead.
+//
+// Returns an error when the host could not be made servable; the caller then
+// leaves VanityURL empty so the hive keeps its working placeholder host.
+func (s *HubServer) addVanityHostToIngress(hiveID, vanityHost string, cluster *ClusterConfig) error {
+	if cluster == nil || vanityHost == "" {
+		return fmt.Errorf("no cluster or vanity host")
+	}
+	ns := "hive-hosted-" + hiveID
+	placeholderHost := hiveID + "." + cluster.Domain
+
+	if cluster.IngressType == ingressTypeOpenShiftRoute {
+		for _, base := range []string{"hive-dashboard", "hive-terminal"} {
+			out, err := kubectlForCluster(cluster, "-n", ns, "get", "route", base,
+				"-o", "jsonpath={.spec.port.targetPort}|{.spec.path}").Output()
+			if err != nil {
+				continue // route absent on this spoke — nothing to mirror
+			}
+			parts := strings.SplitN(string(out), "|", 2)
+			targetPort := parts[0]
+			path := "/"
+			if len(parts) == 2 && parts[1] != "" {
+				path = parts[1]
+			}
+			manifest := fmt.Sprintf(`apiVersion: route.openshift.io/v1
+kind: Route
+metadata: { name: %s-vanity, namespace: %s, labels: { app: hive } }
+spec:
+  host: %s
+  path: %s
+  port: { targetPort: %s }
+  tls: { termination: edge, insecureEdgeTerminationPolicy: Redirect }
+  to: { kind: Service, name: hive, weight: 100 }
+  wildcardPolicy: None
+`, base, ns, vanityHost, path, targetPort)
+			cmd := kubectlForCluster(cluster, "apply", "-f", "-")
+			cmd.Stdin = strings.NewReader(manifest)
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("applying %s-vanity route: %w", base, err)
+			}
+		}
+		return nil
+	}
+
+	// nginx: append a rule + TLS host to each existing Ingress via a JSON patch.
+	patched := 0
+	for _, ing := range []string{"hive", "hive-contribute", "hive-terminal"} {
+		raw, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", ing, "-o", "json").Output()
+		if err != nil {
+			continue // not every spoke has all three
+		}
+		var obj map[string]any
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			continue
+		}
+		spec, _ := obj["spec"].(map[string]any)
+		if spec == nil {
+			continue
+		}
+		rules, _ := spec["rules"].([]any)
+		var base map[string]any
+		for _, r := range rules {
+			rm, _ := r.(map[string]any)
+			if rm == nil {
+				continue
+			}
+			if h, _ := rm["host"].(string); h == vanityHost {
+				base = nil // already present
+				goto tls
+			} else if h == placeholderHost {
+				base = rm
+			}
+		}
+		if base != nil {
+			clone := map[string]any{"host": vanityHost, "http": base["http"]}
+			spec["rules"] = append(rules, clone)
+		}
+	tls:
+		if tlsList, ok := spec["tls"].([]any); ok {
+			for _, t := range tlsList {
+				tm, _ := t.(map[string]any)
+				if tm == nil {
+					continue
+				}
+				hosts, _ := tm["hosts"].([]any)
+				found := false
+				for _, h := range hosts {
+					if hs, _ := h.(string); hs == vanityHost {
+						found = true
+					}
+				}
+				if !found {
+					tm["hosts"] = append(hosts, vanityHost)
+				}
+			}
+		}
+		patchBody, err := json.Marshal(map[string]any{"spec": spec})
+		if err != nil {
+			continue
+		}
+		cmd := kubectlForCluster(cluster, "-n", ns, "patch", "ingress", ing, "--type", "merge", "-p", string(patchBody))
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("patching ingress %s: %w", ing, err)
+		}
+		patched++
+	}
+	if patched == 0 {
+		return fmt.Errorf("no ingress found in %s to add %s to", ns, vanityHost)
+	}
+	return nil
+}
