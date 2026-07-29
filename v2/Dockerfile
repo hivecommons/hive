@@ -101,6 +101,25 @@ RUN ARCH=$(uname -m) && \
     chmod +x /usr/local/bin/goose || \
     echo "WARN: Goose CLI install failed — skipping"
 
+# --- Layer 9: Bob CLI (IBM bobshell — backend: bob) ---
+# bobshell is NOT published to the public npm registry; it is distributed as a
+# tarball from IBM Cloud Object Storage. The vendor's documented host install is
+# `curl https://bob.ibm.com/download/bobshell.sh | bash`, but that script merely
+# resolves the latest version and npm-installs the same tarball. We install the
+# tarball directly at a pinned version instead: piping a remote script into the
+# build would be unpinned and unauditable, and inconsistent with the copilot /
+# claude / goose layers above.
+# The package is pure JavaScript (no native .node/.so payloads, no os/cpu
+# fields), so a single layer serves both linux/amd64 and linux/arm64.
+# package.json declares "bin": {"bob": "bundle/bob.js"} — npm therefore creates
+# /usr/local/bin/bob directly, matching the binary name the agent launcher
+# invokes (manager.go maps "bob" -> "bob"). No symlink is required.
+ARG BOBSHELL_VERSION=1.0.6
+ARG BOBSHELL_BASE_URL=https://s3.us-south.cloud-object-storage.appdomain.cloud/bob-shell
+RUN npm install -g "${BOBSHELL_BASE_URL}/bobshell-${BOBSHELL_VERSION}.tgz" && \
+    npm cache clean --force || \
+    echo "WARN: Bob CLI install failed — skipping"
+
 # --- Application layers ---
 ENV HOME=/home/dev
 
