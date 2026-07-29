@@ -5827,15 +5827,51 @@ const dashboardHTML = `<!DOCTYPE html>
     .alert-panel-more { margin-top: 8px; font-size: 0.7rem; color: var(--muted); background: none; border: none; font-family: inherit; cursor: pointer; text-decoration: underline; padding: 0; }
 
     /* ── Hive search + facets ──
-       The My Hives area is a two-column shell: a narrow facet rail on the left
-       and the search box + table on the right. Both collapse to a single stacked
-       column at the 900px breakpoint used elsewhere in this sheet. */
+       The facet panel is a CLICK-TOGGLED left tray, collapsed by default so the
+       dashboard is uncluttered until the operator asks for filters. Collapsed it
+       is a narrow rail (--facet-rail-w) carrying a filter glyph and, whenever
+       anything is narrowing the list, an active-filter count badge. Clicking the
+       rail expands the tray; clicking again collapses it. The state persists in
+       localStorage (LS_FACET_TRAY_OPEN).
+
+       No hover-reveal: a pointer-only affordance is unreachable on touch and
+       flickers across the gap between rail and panel. A real <button> with
+       aria-expanded works identically with mouse, touch and keyboard.
+
+       Why overlay rather than push: pushing would re-flow the table on every
+       toggle, which re-triggers .table-wrap's horizontal-scroll measurement.
+       Overlaying leaves the scroll container completely untouched.
+
+       Layering: the tray sits at z-index 40, deliberately BELOW the row hover
+       panels (.hive-access-pop / healthBadge's custom panel, z-index 60), so a
+       row's panel always draws above the tray rather than behind it. */
     #hive-search-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
     #hive-search { flex: 1; min-width: 0; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.85rem; font-family: inherit; }
     #hive-search:focus { outline: none; border-color: var(--accent); }
     #hive-search-clear { flex: none; }
-    .hive-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 20px; align-items: start; }
-    .facet-rail { min-width: 0; }
+    /* Collapsed rail width and expanded tray width. The layout grid reserves
+       only the rail; the tray overhangs it. */
+    :root { --facet-rail-w: 34px; --facet-tray-w: 240px; }
+    .hive-layout { display: grid; grid-template-columns: var(--facet-rail-w) minmax(0, 1fr); gap: 12px; align-items: start; }
+    /* The tray's positioning context. position:relative only — no overflow
+       clipping, so the table's own hover panels are never cut off by it. */
+    .facet-shell { position: relative; min-width: 0; }
+    /* Always-visible collapsed affordance. .has-active turns it accent-coloured
+       and reveals the badge, so a filtered list always has a visible cause even
+       with the tray shut. */
+    .facet-rail-tab { display: flex; flex-direction: column; align-items: center; gap: 6px; width: var(--facet-rail-w); padding: 8px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; color: var(--muted); font: inherit; font-size: 0.8rem; cursor: pointer; }
+    .facet-rail-tab:hover, .facet-rail-tab:focus-visible { color: var(--text); border-color: var(--muted); }
+    .facet-rail-tab.has-active { border-color: var(--accent); color: var(--accent); }
+    .facet-rail-word { writing-mode: vertical-rl; letter-spacing: 0.08em; font-size: 0.6rem; text-transform: uppercase; }
+    .facet-active-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9999px; background: var(--accent); color: #000; font-size: 0.62rem; font-weight: 800; font-variant-numeric: tabular-nums; }
+    /* Closed by default; .facet-open (driven entirely by JS from the persisted
+       flag) is the only thing that reveals it. display:none while closed keeps
+       every control inside it out of the tab order. */
+    .facet-tray { display: none; position: absolute; top: 0; left: 0; z-index: 40; width: var(--facet-tray-w); max-height: 70vh; overflow-y: auto; padding: 10px; background: var(--bg-soft, var(--surface)); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,0.5); }
+    .facet-shell.facet-open .facet-tray { display: block; }
+    .facet-tray-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; color: var(--muted); font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+    .facet-tray-close { background: none; border: none; color: var(--muted); font: inherit; font-size: 0.9rem; line-height: 1; cursor: pointer; padding: 2px 4px; }
+    .facet-tray-close:hover { color: var(--text); }
     .facet-group { margin-bottom: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
     .facet-group-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 8px 10px; background: none; border: none; color: var(--muted); font: inherit; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; text-align: left; }
     .facet-group-head:hover { color: var(--text); }
@@ -5982,10 +6018,15 @@ const dashboardHTML = `<!DOCTYPE html>
       .site-header { grid-template-columns: 1fr; position: static; }
       .site-header nav { flex-wrap: wrap; gap: .85rem; }
       .header-link { justify-self: start; }
-      /* Stack the facet rail above the table instead of squeezing the grid. */
+      /* Narrow screens stack the tray above the table instead of squeezing the
+         grid. The tray stops being an overlay and becomes an in-flow
+         disclosure, driven by the same .facet-open class and the same toggle
+         button, so behaviour is identical — only the placement differs. */
       .hive-layout { grid-template-columns: minmax(0, 1fr); }
-      .facet-rail { display: flex; flex-wrap: wrap; gap: 10px; }
-      .facet-group { flex: 1 1 160px; margin-bottom: 0; }
+      .facet-rail-tab { flex-direction: row; width: auto; justify-content: center; gap: 8px; padding: 8px 12px; }
+      .facet-rail-word { writing-mode: horizontal-tb; }
+      .facet-tray { position: static; width: auto; max-height: none; box-shadow: none; margin-top: 8px; }
+      .facet-group { margin-bottom: 10px; }
     }
     @media (max-width: 600px) {
       .content { padding: 1.5rem 12px 32px; }
@@ -6066,7 +6107,23 @@ const dashboardHTML = `<!DOCTYPE html>
     <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="bulk-action-bar" style="display:none"></div>
     <div class="hive-layout">
-      <div class="facet-rail" id="hive-facet-rail"></div>
+      <div class="facet-shell" id="hive-facet-shell">
+        <button type="button" class="facet-rail-tab" id="hive-facet-toggle"
+                aria-expanded="false" aria-controls="hive-facet-tray"
+                title="Show filters">
+          <span aria-hidden="true">&#9776;</span>
+          <span class="facet-rail-word">Filters</span>
+          <span class="facet-active-badge" id="hive-facet-active-badge" style="display:none"></span>
+        </button>
+        <div class="facet-tray" id="hive-facet-tray">
+          <div class="facet-tray-head">
+            <span>Filters</span>
+            <button type="button" class="facet-tray-close" id="hive-facet-close"
+                    title="Hide filters" aria-label="Hide filters">&#10005;</button>
+          </div>
+          <div id="hive-facet-rail"></div>
+        </div>
+      </div>
       <div>
         <div id="hive-search-row" style="display:none">
           <input type="text" id="hive-search" placeholder="Search hives — org, repo, cluster, branch, user… (space = OR)" oninput="onHiveSearchInput()" autocomplete="off">
@@ -7952,6 +8009,14 @@ const dashboardHTML = `<!DOCTYPE html>
        reachable instead of silently dropping out of every facet count. */
     var FACET_UNKNOWN = '—';
 
+    /* Group keys for the two filters moved into the tray from the old chip bar.
+       They are NOT in HIVE_FACET_GROUPS — those are derived from hive fields via
+       hiveFacetValues, whereas these keep their own pre-existing state
+       (_dashStatusFilters / _dashFailingCheckFilter) and matching semantics.
+       They share _dashFacetCollapsed only for the collapse chrome. */
+    var FACET_GROUP_HEALTH = 'health';
+    var FACET_GROUP_FAILING_CHECK = 'failing-check';
+
     var HIVE_FACET_GROUPS = [
       {key: FACET_CLUSTER, label: 'Location'},
       {key: FACET_ACMM, label: 'ACMM level'},
@@ -7964,6 +8029,103 @@ const dashboardHTML = `<!DOCTYPE html>
     var _dashFacets = {};
     /* Collapsed facet GROUPS (chrome only, not a filter): {facetKey: true}. */
     var _dashFacetCollapsed = {};
+
+    /* ── Facet tray open/closed ──
+       Click-toggled, persisted, and COLLAPSED BY DEFAULT so the dashboard is
+       uncluttered until filters are asked for. Key follows the same 'hive-*'
+       localStorage convention as hive-section-assigned-collapsed and
+       hive-cluster-health-collapsed. Open only when explicitly stored 'true',
+       so a first visit and a corrupted value both fall back to closed. */
+    var LS_FACET_TRAY_OPEN = 'hive-facet-tray-open';
+    var _dashFacetTrayOpen = false;
+    try {
+      _dashFacetTrayOpen = localStorage.getItem(LS_FACET_TRAY_OPEN) === 'true';
+    } catch (e) { _dashFacetTrayOpen = false; } /* storage disabled */
+
+    /* applyFacetTrayState paints the DOM from _dashFacetTrayOpen. Split out so
+       the initial paint and every toggle go through exactly one code path and
+       can never disagree about aria-expanded. */
+    function applyFacetTrayState() {
+      var shell = document.getElementById('hive-facet-shell');
+      var toggle = document.getElementById('hive-facet-toggle');
+      if (shell) shell.classList.toggle('facet-open', _dashFacetTrayOpen);
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', _dashFacetTrayOpen ? 'true' : 'false');
+        toggle.title = _dashFacetTrayOpen ? 'Hide filters' : 'Show filters';
+      }
+    }
+
+    function setFacetTrayOpen(open) {
+      _dashFacetTrayOpen = !!open;
+      try {
+        localStorage.setItem(LS_FACET_TRAY_OPEN, _dashFacetTrayOpen ? 'true' : 'false');
+      } catch (e) {} /* private-browsing quota — the toggle still works in-session */
+      applyFacetTrayState();
+    }
+
+    function toggleFacetTray() { setFacetTrayOpen(!_dashFacetTrayOpen); }
+
+    /* activeFilterCount is what the collapsed rail's badge shows. EVERY control
+       that can narrow the list is counted, because the badge is the only thing
+       telling the operator why the table is short while the tray is shut. Each
+       selected facet value counts individually — "3" must mean three choices,
+       not three groups. */
+    function activeFilterCount() {
+      var n = 0;
+      n += Object.keys(_dashStatusFilters || {}).length;
+      if (_dashFailingCheckFilter) n++;
+      if (_dashDriftFilter) n++;
+      if (_alertTypeFilter) n++;
+      if (_dashSearchQuery) n++;
+      var groups = Object.keys(_dashFacets || {});
+      for (var i = 0; i < groups.length; i++) {
+        n += Object.keys(_dashFacets[groups[i]] || {}).length;
+      }
+      return n;
+    }
+
+    /* renderFacetTrayAffordance keeps the collapsed rail honest: accent border
+       plus a count badge whenever anything is filtering. */
+    function renderFacetTrayAffordance() {
+      var toggle = document.getElementById('hive-facet-toggle');
+      var badge = document.getElementById('hive-facet-active-badge');
+      var n = activeFilterCount();
+      if (toggle) toggle.classList.toggle('has-active', n > 0);
+      if (badge) {
+        badge.style.display = n > 0 ? '' : 'none';
+        badge.textContent = n > 0 ? String(n) : '';
+        badge.title = n === 1 ? '1 active filter' : n + ' active filters';
+      }
+      if (toggle) {
+        var base = _dashFacetTrayOpen ? 'Hide filters' : 'Show filters';
+        toggle.title = n > 0 ? base + ' — ' + (n === 1 ? '1 filter active' : n + ' filters active') : base;
+        toggle.setAttribute('aria-label', toggle.title);
+      }
+    }
+
+    /* Bound once at parse time via delegation on document, so the handlers
+       survive every re-render of the tray's contents and no inline onclick has
+       to interpolate anything. */
+    document.addEventListener('click', function(ev) {
+      var t = ev.target;
+      if (!t || !t.closest) return;
+      if (t.closest('#hive-facet-toggle')) { toggleFacetTray(); return; }
+      if (t.closest('#hive-facet-close')) { setFacetTrayOpen(false); return; }
+    });
+    /* Escape closes the tray when focus is inside it, and returns focus to the
+       toggle so the keyboard user is not stranded on a hidden control. */
+    document.addEventListener('keydown', function(ev) {
+      if (ev.key !== 'Escape' || !_dashFacetTrayOpen) return;
+      var tray = document.getElementById('hive-facet-tray');
+      if (!tray || !tray.contains(document.activeElement)) return;
+      setFacetTrayOpen(false);
+      var toggle = document.getElementById('hive-facet-toggle');
+      if (toggle) toggle.focus();
+    });
+    /* Paint the persisted state immediately. This script runs after the tray
+       markup, so the elements already exist and there is no open-then-snap-shut
+       flash on a reload with the tray remembered open. */
+    applyFacetTrayState();
 
     /* hiveFacetValues returns the facet values a single hive belongs to. A hive
        contributes at most one value per group. */
@@ -8012,16 +8174,112 @@ const dashboardHTML = `<!DOCTYPE html>
       renderHives(_allDashHives, true);
     }
 
-    /* renderFacetRail draws the left rail. Counts are computed over the assigned
-       hives after the chips and the search box, but BEFORE the facets in the
-       same group are applied — so a group keeps showing its alternatives once
-       you pick one, rather than collapsing to the single value you chose. */
+    /* facetGroupShell wraps one collapsible group so the status/failing-check
+       groups moved in from the old chip bar are visually and behaviourally
+       identical to the derived facet groups. */
+    function facetGroupShell(key, label, collapsed, bodyHTML) {
+      return '<div class="facet-group">' +
+        '<button type="button" class="facet-group-head" aria-expanded="' + (collapsed ? 'false' : 'true') +
+        '" onclick="toggleFacetGroup(\'' + esc(key) + '\')">' +
+        '<span>' + esc(label) + '</span><span>' + (collapsed ? '▸' : '▾') + '</span></button>' +
+        (collapsed ? '' : bodyHTML) + '</div>';
+    }
+
+    /* renderStatusFacetGroup renders the four health chips — GitHub App not
+       installed / No tokens used / Degraded / OK — as a facet group inside the
+       tray, replacing the old standalone chip row. Semantics are UNCHANGED:
+       these still OR among themselves via _dashStatusFilters and
+       hiveMatchesFilters, exactly like a facet group ORs within itself.
+       Counts are over the FULL assigned set (placeholders already excluded by
+       the caller), matching what the old bar advertised. */
+    function renderStatusFacetGroup(assignedNoPlaceholders) {
+      var counts = {};
+      counts[HIVE_FILTER_APP_MISSING] = 0;
+      counts[HIVE_FILTER_NO_TOKENS] = 0;
+      counts[HIVE_FILTER_DEGRADED] = 0;
+      counts[HIVE_FILTER_OK] = 0;
+      (assignedNoPlaceholders || []).forEach(function(h) {
+        var f = hiveStatusFlags(h);
+        if (f.appMissing) counts[HIVE_FILTER_APP_MISSING]++;
+        if (f.noTokens) counts[HIVE_FILTER_NO_TOKENS]++;
+        if (f.degraded) counts[HIVE_FILTER_DEGRADED]++;
+        if (f.ok) counts[HIVE_FILTER_OK]++;
+      });
+      var body = '<div class="facet-values">' + (HIVE_FILTER_CHIPS || []).map(function(c) {
+        var on = !!_dashStatusFilters[c.key];
+        return '<button type="button" class="facet-value' + (on ? ' on' : '') +
+          '" aria-pressed="' + (on ? 'true' : 'false') +
+          '" onclick="toggleStatusFilter(\'' + esc(c.key) + '\')" title="' + esc(c.label) + '">' +
+          '<span class="facet-value-label">' + esc(c.label) + '</span>' +
+          '<span class="facet-value-count">' + counts[c.key] + '</span></button>';
+      }).join('') +
+      /* Group-scoped reset for the health + failing-check pair, so a user can
+         undo just these without also dropping their search term and facets. */
+      (Object.keys(_dashStatusFilters || {}).length || _dashFailingCheckFilter || _dashDriftFilter
+        ? '<button type="button" class="facet-value" onclick="clearStatusFilters()" title="Clear the health, failing-check and drift filters">' +
+          '<span class="facet-value-label">Clear health filters</span></button>'
+        : '') + '</div>';
+      return facetGroupShell(FACET_GROUP_HEALTH, 'Health',
+        !!_dashFacetCollapsed[FACET_GROUP_HEALTH], body);
+    }
+
+    /* renderFailingCheckFacetGroup renders the failing-check picker as a facet
+       group. Semantics are UNCHANGED: still SINGLE-select and still ANDed
+       against the health chips by hiveMatchesFilters. That is deliberately not
+       the OR-within-group rule the derived facets use — "degraded hives" and
+       "github_auth is failing" are different questions whose useful answer is
+       the intersection — so the group head says so, rather than silently
+       looking like the others. Returns '' on a healthy fleet. */
+    function renderFailingCheckFacetGroup(assignedNoPlaceholders) {
+      var fcCounts = failingCheckCounts(assignedNoPlaceholders);
+      var fcNames = Object.keys(fcCounts).sort(function(a, b) {
+        return fcCounts[b] - fcCounts[a] || a.localeCompare(b);
+      }).slice(0, MAX_FAILING_CHECK_FILTER_OPTIONS);
+      if (!fcNames.length && !_dashFailingCheckFilter) return '';
+      /* Keep a selected check listed even at count 0 so it can be clicked off. */
+      if (_dashFailingCheckFilter && fcNames.indexOf(_dashFailingCheckFilter) === -1) {
+        fcNames.unshift(_dashFailingCheckFilter);
+        if (fcCounts[_dashFailingCheckFilter] == null) fcCounts[_dashFailingCheckFilter] = 0;
+      }
+      var body = '<div class="facet-values">' + fcNames.map(function(nm) {
+        var on = _dashFailingCheckFilter === nm;
+        var n = fcCounts[nm] || 0;
+        var tip = n >= FLEET_CHECK_SIGNAL_MIN_HIVES
+          ? nm + ' failing on ' + n + ' hives — likely fleet-wide'
+          : nm + ' failing on ' + n + (n === 1 ? ' hive' : ' hives');
+        return '<button type="button" class="facet-value' + (on ? ' on' : '') +
+          '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + esc(tip) + '"' +
+          ' onclick="setFailingCheckFilter(' + (on ? "''" : "'" + esc(nm).replace(/'/g, '&#39;') + "'") + ')">' +
+          '<span class="facet-value-label">' + esc(nm) + '</span>' +
+          '<span class="facet-value-count">' + n + '</span></button>';
+      }).join('') + '</div>';
+      return facetGroupShell(FACET_GROUP_FAILING_CHECK, 'Failing check (one at a time)',
+        !!_dashFacetCollapsed[FACET_GROUP_FAILING_CHECK], body);
+    }
+
+    /* renderFacetRail draws the tray's body: the health chips and failing-check
+       picker moved in from the old standalone bar, then the derived facet
+       groups. Derived-group counts are computed over the assigned hives after
+       the chips and the search box, but BEFORE the facets in the same group are
+       applied — so a group keeps showing its alternatives once you pick one,
+       rather than collapsing to the single value you chose. */
     function renderFacetRail(assignedAll) {
       var rail = document.getElementById('hive-facet-rail');
+      /* The rail's affordance reflects filter state even when the rail body
+         itself has nothing to draw, so update it before any early return. */
+      renderFacetTrayAffordance();
       if (!rail) return;
+      /* The health and failing-check groups filter ASSIGNED hives only — the
+         unassigned pool is inventory. The caller already scopes to assigned;
+         strip any placeholder defensively so the counts match the old bar. */
+      var assignedReal = (assignedAll || []).filter(function(h) { return !isPlaceholderHive(h); });
       var base = (assignedAll || []).filter(hiveMatchesFilters).filter(hiveMatchesSearch);
-      if (!base.length && !Object.keys(_dashFacets || {}).length) { rail.innerHTML = ''; return; }
-      var html = '';
+      var head = renderStatusFacetGroup(assignedReal) + renderFailingCheckFacetGroup(assignedReal);
+      if (!base.length && !Object.keys(_dashFacets || {}).length) {
+        rail.innerHTML = head + clearFacetsButton();
+        return;
+      }
+      var html = head;
       (HIVE_FACET_GROUPS || []).forEach(function(grp) {
         /* Count within this group ignoring this group's own selections. */
         var others = {};
@@ -8052,16 +8310,19 @@ const dashboardHTML = `<!DOCTYPE html>
               '<span class="facet-value-count">' + counts[v] + '</span></button>';
           }).join('') + '</div>';
         }
-        html += '<div class="facet-group">' +
-          '<button type="button" class="facet-group-head" aria-expanded="' + (collapsed ? 'false' : 'true') +
-          '" onclick="toggleFacetGroup(\'' + esc(grp.key) + '\')">' +
-          '<span>' + esc(grp.label) + '</span><span>' + (collapsed ? '▸' : '▾') + '</span></button>' + valuesHTML +
-          '</div>';
+        html += facetGroupShell(grp.key, grp.label, collapsed, valuesHTML);
       });
-      if (Object.keys(_dashFacets || {}).length) {
-        html += '<button type="button" class="filter-chip filter-chip-clear" onclick="clearHiveFacets()">Clear facets</button>';
-      }
-      rail.innerHTML = html;
+      rail.innerHTML = html + clearFacetsButton();
+    }
+
+    /* One Clear button for the whole tray. It calls clearAllHiveFilters(), not
+       clearHiveFacets(), because the health chips and the failing-check picker
+       now live in the same tray: a button labelled "Clear" that left two of the
+       three groups still filtering would be a lie. */
+    function clearFacetsButton() {
+      return activeFilterCount() > 0
+        ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearAllHiveFilters()">Clear all filters</button>'
+        : '';
     }
 
     /* applyDashFilters filters the hives the caller wants rendered.
@@ -8189,81 +8450,39 @@ const dashboardHTML = `<!DOCTYPE html>
         '<div class="filter-chips" style="margin-top:8px">' + chips + clearBtn + '</div>';
     }
 
-    /* renderStatusFilterBar draws the chip row plus the match count. Counts are
-       computed over the FULL assigned hive list (not the filtered one) so each
-       chip always advertises how many hives it would show. Unassigned
-       placeholders are excluded — they are inventory, and a pool of dozens of
-       "no tokens used" slots would drown the real signal. */
+    /* renderStatusFilterBar draws the "Showing X of Y" summary and the Clear
+       button. The health chips and the failing-check picker used to live here as
+       standalone chip rows; they now render inside the facet tray
+       (renderStatusFacetGroup / renderFailingCheckFacetGroup). What stays is the
+       one thing that must NOT be hidden behind a collapsed tray: the statement
+       that the list is currently narrowed, and the way back out.
+
+       Unassigned placeholders are excluded from the totals — they are
+       inventory, never filtered by these controls. */
     function renderStatusFilterBar(allHivesIn, shownCount) {
       var bar = document.getElementById('hive-filter-bar');
       if (!bar) return;
       var allHives = (allHivesIn || []).filter(function(h) { return !isPlaceholderHive(h); });
-      var counts = {};
-      counts[HIVE_FILTER_APP_MISSING] = 0;
-      counts[HIVE_FILTER_NO_TOKENS] = 0;
-      counts[HIVE_FILTER_DEGRADED] = 0;
-      counts[HIVE_FILTER_OK] = 0;
-      (allHives || []).forEach(function(h) {
-        var f = hiveStatusFlags(h);
-        if (f.appMissing) counts[HIVE_FILTER_APP_MISSING]++;
-        if (f.noTokens) counts[HIVE_FILTER_NO_TOKENS]++;
-        if (f.degraded) counts[HIVE_FILTER_DEGRADED]++;
-        if (f.ok) counts[HIVE_FILTER_OK]++;
-      });
-      var chips = (HIVE_FILTER_CHIPS || []).map(function(c) {
-        var on = !!_dashStatusFilters[c.key];
-        var cls = on ? 'filter-chip on' : 'filter-chip';
-        return '<button type="button" class="' + cls + '" aria-pressed="' + (on ? 'true' : 'false') +
-          '" onclick="toggleStatusFilter(\'' + esc(c.key) + '\')" style="--chip-color:' + c.color + '">' +
-          '<span class="filter-chip-dot" style="background:' + c.color + '"></span>' +
-          esc(c.label) + '<span class="filter-chip-count">' + counts[c.key] + '</span></button>';
-      }).join('');
-      /* Failing-check chips, most-affected first. Each doubles as the fleet
-         signal: the count IS "github_auth failing on 6 hives". Only names
-         actually failing somewhere in the assigned set appear, so the row is
-         empty (and takes no space) on a healthy fleet. */
-      var fcCounts = failingCheckCounts(allHives);
-      var fcNames = Object.keys(fcCounts).sort(function(a, b) {
-        return fcCounts[b] - fcCounts[a] || a.localeCompare(b);
-      }).slice(0, MAX_FAILING_CHECK_FILTER_OPTIONS);
-      var checkChips = '';
-      if (fcNames.length) {
-        checkChips = '<div class="filter-chips" style="margin-top:6px">' +
-          '<span style="align-self:center;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-right:2px">Failing check</span>' +
-          fcNames.map(function(nm) {
-            var on = _dashFailingCheckFilter === nm;
-            var n = fcCounts[nm];
-            /* A check failing across several hives is a fleet problem, not a
-               hive problem — say so in the tooltip. */
-            var tip = n >= FLEET_CHECK_SIGNAL_MIN_HIVES
-              ? nm + ' failing on ' + n + ' hives — likely fleet-wide'
-              : nm + ' failing on 1 hive';
-            return '<button type="button" class="' + (on ? 'filter-chip on' : 'filter-chip') + '"' +
-              ' aria-pressed="' + (on ? 'true' : 'false') + '" title="' + esc(tip) + '"' +
-              ' onclick="setFailingCheckFilter(' + (on ? "''" : "'" + esc(nm).replace(/'/g, '&#39;') + "'") + ')"' +
-              ' style="--chip-color:#f85149">' +
-              '<span class="filter-chip-dot" style="background:#f85149"></span>' +
-              esc(nm) + '<span class="filter-chip-count">' + n + '</span></button>';
-          }).join('') + '</div>';
-      }
-      /* Every filter that narrows the list must be counted here: it drives both
-         the "Showing X of Y" summary and the Clear button, and clearStatusFilters()
-         resets all of them. Omitting one hides the Clear button while the list is
-         still filtered, which reads as hives having disappeared. */
-      var anyActive = Object.keys(_dashStatusFilters || {}).length > 0 || !!_dashFailingCheckFilter || !!_dashDriftFilter;
-      /* allHives here is the ASSIGNED set — the caller scopes it, because the
-         chips never filter unassigned placeholders. Say "assigned" so the count
-         is not read as the whole fleet. */
+      /* activeFilterCount covers EVERY narrowing control — the health chips,
+         the failing-check picker, drift, the alert drill-down, the search box
+         and the facets. Omitting one would hide the Clear button while the list
+         is still filtered, which reads as hives having disappeared. */
+      var activeN = activeFilterCount();
+      var anyActive = activeN > 0;
       var total = (allHives || []).length;
       var summary = anyActive
-        ? 'Showing ' + shownCount + ' of ' + total + ' assigned hives'
+        ? 'Showing ' + shownCount + ' of ' + total + ' assigned hives' +
+          ' &middot; ' + activeN + (activeN === 1 ? ' filter active' : ' filters active')
         : total + (total === 1 ? ' assigned hive' : ' assigned hives');
       var clearBtn = anyActive
-        ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearStatusFilters()">Clear filters</button>'
+        ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearAllHiveFilters()">Clear filters</button>'
         : '';
-      bar.innerHTML = '<div class="filter-chips">' + chips + clearBtn + '</div>' +
-        checkChips +
-        '<span class="filter-summary">' + summary + '</span>';
+      bar.innerHTML = '<span class="filter-summary">' + summary + '</span>' + clearBtn;
+      /* The bar no longer carries chip rows, so on a fleet with no assigned
+         hives it would render as an empty flex box still claiming its
+         margin-bottom. Collapse it outright in that case rather than leaving a
+         gap above the table. */
+      bar.style.display = total ? '' : 'none';
     }
 
     /* renderViewBar draws the group-by <select> and the saved-view controls.
@@ -9064,7 +9283,8 @@ const dashboardHTML = `<!DOCTYPE html>
         '|' + _dashSearchQuery + '|' + JSON.stringify(_dashFacets) +
         '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed) +
         '|' + _dashGroupBy + '|' + JSON.stringify(_dashGroupCollapsed) +
-        '|' + _dashActiveView + '|' + _dashDefaultView + '|' + JSON.stringify(_dashSavedViews);
+        '|' + _dashActiveView + '|' + _dashDefaultView + '|' + JSON.stringify(_dashSavedViews) +
+        '|' + _dashFacetTrayOpen;
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status filters describe ASSIGNED hives only. An unassigned placeholder
@@ -9327,13 +9547,17 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
           '<td>' + journeyBadge(h.journey) + '</td>' +
+          /* Drift sits immediately right of Journey: both answer "how healthy
+             is this hive's configuration", so they read as one pair rather
+             than being separated by nine metric columns. Header index and body
+             index are both 11 of 17 — keep them in lockstep. */
+          '<td style="white-space:nowrap;text-align:right">' + driftBadge(h) + '</td>' +
           '<td title="' + esc((h.agents || []).map(function(a){ var label = a.name + ' (' + a.state + ')'; if (a.mode === 'on_demand') label += ' — on demand'; return label; }).join('\n')) + '" style="cursor:' + ((h.agentCount || 0) > 0 ? 'help' : 'default') + '">' + (h.agentCount || 0) + '</td>' +
           '<td title="Cumulative tokens consumed, as of the last heartbeat" style="white-space:nowrap;cursor:help">' + fmtTokens(h.totalTokens24h || 0) + '</td>' +
           '<td>' + modeCell + '</td>' +
           '<td>' + sparkline(h.issueHistory, '#f59e0b', 50, 14) + (h.actionableIssues || 0) + '</td>' +
           '<td>' + sparkline(h.prHistory, '#3b82f6', 50, 14) + (h.actionablePRs || 0) + '</td>' +
           '<td>' + (h.activeContributors || 0) + '</td>' +
-          '<td style="white-space:nowrap;text-align:right">' + driftBadge(h) + '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
@@ -9477,8 +9701,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
-        '<th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
