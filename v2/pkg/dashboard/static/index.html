@@ -2540,6 +2540,11 @@
         <div id="oc-gh-user-menu" style="display:none;position:absolute;right:0;top:34px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 0;min-width:160px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
           <div style="padding:8px 16px;border-bottom:1px solid var(--line);color:var(--text);font-weight:600;font-size:0.85rem" id="oc-gh-menu-user"></div>
           <div id="oc-gh-menu-role" style="display:none;padding:2px 16px 6px;border-bottom:1px solid var(--line);font-size:0.72rem;color:var(--muted)"></div>
+          <!-- This nav avatar is NOT a profile link: its click already opens
+               this menu, a different destination, so it keeps that job. The
+               profile gets a menu entry instead, populated by showGHAuthState()
+               once the signed-in login is known. -->
+          <a href="#" id="oc-gh-menu-profile" target="_blank" rel="noopener noreferrer" style="display:none;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">GitHub profile ↗</a>
           <a href="/api/config/download" id="oc-gh-menu-download" style="display:none;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">Download hive.yaml</a>
           <a href="/api/docs" target="_blank" style="display:block;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">API Docs ↗</a>
           <button onclick="ghLogout()" style="display:block;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem">Sign out</button>
@@ -9080,13 +9085,24 @@ function burnAreaChart() {
     const AUDIT_POLL_MS = 30000;
     var _auditEntries = [];
 
+    /* Rendered size of the audit log's actor face, in CSS pixels — the log is
+       the densest table on the dashboard, so its faces are the smallest. */
+    const AUDIT_AVATAR_PX = 16;
+
     function renderAuditRow(e) {
       var t = e.ts ? new Date(e.ts) : null;
       var timeStr = t ? t.toLocaleString() : '—';
-      var user = esc(e.user||'ghost');
+      /* An entry with no actor is attributed to 'ghost', which is a real
+         github.com account and not this person — so the placeholder face is
+         rendered UNLINKED by passing no username, rather than sending the
+         reader to a stranger's profile. */
+      var actor = String(e.user || '');
+      var face = actor
+        ? linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px')
+        : avatarImg(ghProfileURL('ghost') + '.png', AUDIT_AVATAR_PX, 'margin-right:4px');
       return '<tr style="border-bottom:1px solid var(--terminal-line)">' +
         '<td style="padding:4px 8px;white-space:nowrap;color:var(--terminal-muted)">' + timeStr + '</td>' +
-        '<td style="padding:4px 8px"><img src="https://github.com/' + user + '.png?s=32" style="width:16px;height:16px;border-radius:50%;vertical-align:middle;margin-right:4px">' + esc(e.user||'—') + '</td>' +
+        '<td style="padding:4px 8px">' + face + esc(e.user||'—') + '</td>' +
         '<td style="padding:4px 8px;font-weight:600">' + esc(e.action||'—') + '</td>' +
         '<td style="padding:4px 8px">' + esc(e.agent||'—') + '</td>' +
         '<td style="padding:4px 8px;color:var(--terminal-muted)">' + esc(e.detail||'') + '</td>' +
@@ -9189,6 +9205,64 @@ function burnAreaChart() {
     function trustTierBadge(tier) {
       return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.7rem;color:var(--muted);border:1px solid var(--line)">${esc(tier || 'unknown')}</span>`;
     }
+
+    /* ---- Clickable user avatars ---------------------------------------
+       Every face on this dashboard links to that person's GitHub profile, so
+       the avatar itself is the affordance rather than a separate glyph or a
+       second anchor on the username beside it.
+
+       ALWAYS github.com. Contributors, leaderboard entries and allowlisted
+       users are identified by the github.com account that authenticated, even
+       on a hive whose ORG lives on a GitHub Enterprise host — repo links are
+       built from a host field, profile links are not.
+
+       encodeURIComponent for the URL path segment; esc() for the quoted
+       attribute values (this file's esc() does escape " ' and backtick, unlike
+       the hub's, so it is safe in attributes here). */
+    function ghProfileURL(username) {
+      return `https://github.com/${encodeURIComponent(String(username || ''))}`;
+    }
+
+    /* Wrap avatar markup in a profile anchor.
+
+       display:inline-block with line-height:0 stops the anchor contributing a
+       text baseline's worth of height to the table row or flex line that holds
+       it; the avatars are 20-28px inline images that keep their own sizing.
+
+       Returns the markup unwrapped when there is no username — an anchor to a
+       profile that cannot exist is worse than no anchor at all. */
+    function avatarProfileLink(username, label, avatarHTML) {
+      const uname = String(username || '');
+      if (!uname) return avatarHTML;
+      const name = esc(label || uname);
+      return `<a href="${esc(ghProfileURL(uname))}" target="_blank" rel="noopener noreferrer" ` +
+        `title="${name}" aria-label="${name}" ` +
+        `style="display:inline-block;line-height:0;text-decoration:none">${avatarHTML}</a>`;
+    }
+
+    /* Round avatar <img>, at the given rendered size in CSS pixels. src may be
+       an explicit avatar_url from the API (GitHub's CDN URL, not derivable from
+       the login) or, when that is absent, github.com/<login>.png. onerror hides
+       a 404 rather than leaving a broken-image glyph — which would read as a
+       dead control now that the image is inside a link. */
+    function avatarImg(src, px, extraStyle) {
+      return `<img src="${esc(src)}" alt="" width="${px}" height="${px}" ` +
+        `style="width:${px}px;height:${px}px;border-radius:50%;vertical-align:middle;` +
+        `${extraStyle || ''}" onerror="this.style.display='none'">`;
+    }
+
+    /* The common case: a linked, round avatar for a github.com login. avatarURL
+       is optional and wins when present. */
+    function linkedAvatar(username, px, label, avatarURL, extraStyle) {
+      const src = avatarURL || `${ghProfileURL(username)}.png`;
+      return avatarProfileLink(username, label, avatarImg(src, px, extraStyle));
+    }
+
+    /* Rendered avatar sizes, in CSS pixels. The contributor cards and the
+       leaderboard rows share a size because they are the same kind of roster;
+       the Access tab's allowlist is a denser config list. */
+    const CONTRIBUTOR_AVATAR_PX = 28;
+    const ACCESS_LIST_AVATAR_PX = 20;
 
     // Active contributor filter set — empty means "all"
     let _contributorFilters = new Set();
@@ -9310,8 +9384,11 @@ function burnAreaChart() {
         const cards = nonRevoked.map(c => {
           const dotColor = c.active ? 'var(--green)' : 'var(--muted)';
           const dotTitle = c.active ? 'Online' : 'Offline';
-          const ghLink = `https://github.com/${esc(c.github_username)}`;
-          const avatar = c.avatar_url || `https://github.com/${esc(c.github_username)}.png`;
+          // The face is the profile link. The @username beside it used to be a
+          // second anchor to that same profile; it stays as plain text so there
+          // is one control per destination.
+          const avatarHtml = linkedAvatar(c.github_username, CONTRIBUTOR_AVATAR_PX,
+            `@${c.github_username}`, c.avatar_url, 'flex-shrink:0');
           const cliLine = c.cli_backend ? `${esc(c.cli_backend)}${c.model ? ' · ' + esc(c.model) : ''}` : '';
           const roleLine = c.preferred_role ? `role: ${esc(c.preferred_role)}` : '';
           const tierOptions = Object.keys(TRUST_TIER_COLORS).filter(t => t !== 'revoked').map(t =>
@@ -9320,8 +9397,8 @@ function burnAreaChart() {
           return `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0" title="${dotTitle}"></span>
-              <img src="${avatar}" alt="" style="width:28px;height:28px;border-radius:50%;flex-shrink:0" onerror="this.style.display='none'">
-              <a href="${ghLink}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600">@${esc(c.github_username)}</a>
+              ${avatarHtml}
+              <span style="font-weight:600">@${esc(c.github_username)}</span>
               <span style="flex-shrink:0">${trustTierBadge(c.trust_tier)}</span>
             </div>
             ${cliLine ? `<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">${roleLine}</div>` : '')}
@@ -9408,16 +9485,20 @@ function burnAreaChart() {
         setIfChanged(panel, '<div style="color:var(--muted);padding:24px;text-align:center;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">No leaderboard data yet.</div>');
         return;
       }
-      const AVATAR_SIZE_PX = 28;
       const rows = entries.map(e => {
-        const avatarHtml = e.avatar_url
-          ? `<img src="${esc(e.avatar_url)}" width="${AVATAR_SIZE_PX}" height="${AVATAR_SIZE_PX}" style="border-radius:50%;vertical-align:middle" alt="">`
-          : `<span style="display:inline-block;width:${AVATAR_SIZE_PX}px;height:${AVATAR_SIZE_PX}px;border-radius:50%;background:var(--border)"></span>`;
-        const ghLink = `https://github.com/${esc(e.github_username)}`;
+        /* The face links to the profile; the @username beside it is plain text
+           now that the avatar carries the same destination. An entry with no
+           avatar_url still falls back to github.com/<login>.png, so the grey
+           circle is only for entries with no username at all — and that one is
+           deliberately NOT wrapped in an anchor, since there is no profile to
+           point at. */
+        const avatarHtml = e.github_username
+          ? linkedAvatar(e.github_username, CONTRIBUTOR_AVATAR_PX, `@${e.github_username}`, e.avatar_url)
+          : `<span style="display:inline-block;width:${CONTRIBUTOR_AVATAR_PX}px;height:${CONTRIBUTOR_AVATAR_PX}px;border-radius:50%;background:var(--border)"></span>`;
         return `<tr style="border-bottom:1px solid var(--border)">
           <td style="padding:8px 12px;font-weight:600;color:var(--muted)">${e.rank}</td>
           <td style="padding:8px 12px">${avatarHtml}</td>
-          <td style="padding:8px 12px"><a href="${ghLink}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none">@${esc(e.github_username)}</a></td>
+          <td style="padding:8px 12px">@${esc(e.github_username)}</td>
           <td style="padding:8px 12px">${trustTierBadge(e.trust_tier)}</td>
           <td style="padding:8px 12px;text-align:right">${e.tasks_completed || 0}</td>
           <td style="padding:8px 12px;text-align:right;color:${(e.tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--muted)'}">${e.tasks_failed || 0}</td>
@@ -12784,7 +12865,8 @@ function burnAreaChart() {
         listEl.innerHTML = users.map(function(u) {
           var roleCls = u.role === 'owner' ? 'role-owner' : u.role === 'read-write' ? 'role-read-write' : 'role-read';
           return '<div class="config-list-item" style="align-items:center;gap:8px">' +
-            '<img src="https://github.com/' + esc(u.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle" onerror="this.style.display=\'none\'">' +
+            linkedAvatar(u.username, ACCESS_LIST_AVATAR_PX,
+              String(u.username || '') + (u.role ? ' — ' + u.role : ''), '', '') +
             '<span style="flex:1;font-size:0.85rem">' + esc(u.username) + '</span>' +
             '<span class="role-badge ' + roleCls + '" style="font-size:0.7rem">' + esc(u.role) + '</span>' +
             '</div>';
@@ -16143,6 +16225,19 @@ function burnAreaChart() {
             img.alt = username;
           }
           document.getElementById('oc-gh-menu-user').textContent = username;
+          /* Point the menu's profile entry at the signed-in account, and show it
+             only once there is a login to point at. href is assigned as a
+             property (not interpolated into markup), so encodeURIComponent on
+             the path segment is the whole escaping story here. */
+          const profEl = document.getElementById('oc-gh-menu-profile');
+          if (profEl) {
+            if (username) {
+              profEl.href = ghProfileURL(username);
+              profEl.style.display = 'block';
+            } else {
+              profEl.style.display = 'none';
+            }
+          }
           const roleEl = document.getElementById('oc-gh-menu-role');
           if (roleEl && role) {
             roleEl.style.display = '';

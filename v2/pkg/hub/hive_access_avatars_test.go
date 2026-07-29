@@ -24,7 +24,10 @@ func TestInlineAccessAvatarHelpersPresent(t *testing.T) {
 		{"shared role colour helper", "function accessRoleColor(role)"},
 		{"named face cap", "var INLINE_ACCESS_AVATAR_MAX"},
 		{"named rendered size", "var INLINE_ACCESS_AVATAR_PX"},
-		{"named fetch size", "var INLINE_ACCESS_AVATAR_FETCH_PX"},
+		{"named HiDPI fetch scale", "var AVATAR_HIDPI_SCALE"},
+		{"shared profile url helper", "function ghProfileURL(username)"},
+		{"shared profile anchor helper", "function avatarProfileLink(username, label, avatarHTML)"},
+		{"shared linked-avatar helper", "function linkedAvatar(username, px, label, extraStyle)"},
 		{"named role colour map", "var ACCESS_ROLE_COLORS"},
 		{"named role colour fallback", "var ACCESS_ROLE_COLOR_DEFAULT"},
 		{"viewer identity state", "var _currentUser"},
@@ -71,10 +74,15 @@ func TestInlineAccessAvatarEscaping(t *testing.T) {
 		name    string
 		snippet string
 	}{
-		// URL path segment.
-		{"avatar url encodes the username", `'<img src="https://github.com/' + encodeURIComponent(uname) + '.png?size=' + INLINE_ACCESS_AVATAR_FETCH_PX`},
+		// URL path segment. The inline faces now render through the shared
+		// avatar helpers, so the escaping lives there — assert it at the source.
+		{"profile url encodes the username", `return 'https://github.com/' + encodeURIComponent(String(username || ''));`},
+		{"avatar url built from the encoded profile url", `'<img src="' + escAttr(ghProfileURL(username)) + '.png?size='`},
 		// Quoted attribute values.
-		{"title uses escAttr", `'alt="" title="' + escAttr(uname + (role ? ' — ' + role : '')) + '" '`},
+		{"anchor href uses escAttr", `'<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" '`},
+		{"anchor title and aria-label use escAttr", `'title="' + escAttr(label || uname) + '" aria-label="' + escAttr(label || uname) + '" '`},
+		// The inline face still carries the role in its tooltip, via the helper.
+		{"inline face labels username and role", `return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, uname + (role ? ' — ' + role : ''),`},
 		{"overflow chip title uses escAttr", `'<span title="' + escAttr(hiddenNames.join(', ')) + '" '`},
 		{"aria-label uses escAttr", `'<span class="hive-access-faces" aria-label="' + escAttr(label) + '" '`},
 	}

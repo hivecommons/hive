@@ -6067,6 +6067,76 @@ const dashboardHTML = `<!DOCTYPE html>
     // into an attribute; esc() remains correct for text nodes.
     function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
+    /* ---- Clickable user avatars ---------------------------------------
+       Every face in this dashboard is a link to that person's GitHub profile.
+       The avatar IS the affordance: a separate ↗ glyph or a separately-linked
+       username next to it was two controls for one destination, so those are
+       gone and the picture carries the click.
+
+       ALWAYS github.com, never a github_host. The account that signs in to the
+       hub is a github.com account even when the ORG it works on lives on a
+       GitHub Enterprise host — the same reasoning that kept the Past Requests
+       user link on github.com while its REPO link is built from the request's
+       github_host (see ghRepoURL). A profile link is about the person; the
+       repo link is about the instance.
+
+       The username lands in two hostile contexts and gets a different helper in
+       each: encodeURIComponent for the URL path segment, escAttr for quoted
+       attribute values (esc() leaves quotes intact and a crafted login could
+       close the attribute). */
+    function ghProfileURL(username) {
+      return 'https://github.com/' + encodeURIComponent(String(username || ''));
+    }
+
+    /* Wrap avatar markup in a profile anchor.
+
+       display:inline-block with line-height:0 keeps the anchor from adding a
+       text baseline's worth of height to whatever row or cell holds it: a bare
+       inline anchor inherits the line-height of its parent and can push a dense
+       table row taller than its neighbours. The avatars themselves are 16-28px
+       inline images and keep their own vertical-align.
+
+       Returns the avatar unwrapped when there is no username to link to (a
+       placeholder or a malformed record) — an anchor to a profile that does not
+       exist is worse than no anchor.
+
+       label is the accessible name; it also becomes the native tooltip, so any
+       role information the caller already showed there is preserved. */
+    function avatarProfileLink(username, label, avatarHTML) {
+      var uname = String(username || '');
+      if (!uname) return avatarHTML;
+      return '<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" ' +
+        'title="' + escAttr(label || uname) + '" aria-label="' + escAttr(label || uname) + '" ' +
+        'style="display:inline-block;line-height:0;text-decoration:none">' + avatarHTML + '</a>';
+    }
+
+    /* Round avatar <img> for a github.com login, at the given rendered size in
+       CSS pixels. Requests 2x from GitHub so the face stays sharp on HiDPI.
+       onerror hides a 404 avatar rather than leaving a broken-image glyph — an
+       especially important detail now that the image sits inside a link, where
+       a broken icon would read as a dead control. extraStyle appends to the
+       inline style (borders, flex sizing) and defaults to nothing. */
+    var AVATAR_HIDPI_SCALE = 2;
+    function avatarImg(username, px, extraStyle) {
+      return '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
+        'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' +
+        (extraStyle || '') + '" ' +
+        'onerror="this.style.visibility=\'hidden\'">';
+    }
+
+    /* The common case: a linked, round avatar for a github.com login. */
+    function linkedAvatar(username, px, label, extraStyle) {
+      return avatarProfileLink(username, label, avatarImg(username, px, extraStyle));
+    }
+
+    /* Rendered avatar sizes, in CSS pixels, one per surface. They differ because
+       the surfaces differ in density, not arbitrarily: the status-dot hover
+       panel and the compact request/access lists are tight vertical lists; the
+       admin Users table row and the pending provision cards have more room. */
+    var PANEL_ACCESS_AVATAR_PX = 18;   /* rows inside the status-dot hover panel */
+    var LIST_AVATAR_PX = 20;           /* compact request/access lists */
+    var TABLE_AVATAR_PX = 24;          /* admin Users table + provision cards */
+
     // ghRepoURL builds the URL for an org/repo on the RIGHT GitHub instance.
     // Hives are not all on public github.com: a provision request carries a
     // github_host ('' = public github.com, otherwise a GitHub Enterprise host
@@ -6248,9 +6318,9 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Rendered size of an inline face, in CSS pixels — small enough to sit on
        the name cell's second line beside the role badge. */
     var INLINE_ACCESS_AVATAR_PX = 16;
-    /* Pixel size requested from GitHub. 2x the rendered size so the faces stay
-       sharp on HiDPI displays. */
-    var INLINE_ACCESS_AVATAR_FETCH_PX = INLINE_ACCESS_AVATAR_PX * 2;
+    /* The pixel size requested from GitHub is INLINE_ACCESS_AVATAR_PX *
+       AVATAR_HIDPI_SCALE, applied by the shared avatarImg() helper so every
+       face in the dashboard stays sharp on HiDPI by the same rule. */
 
     /* Everyone with access to h EXCEPT the signed-in viewer. Their own
        membership is implied by the row being visible to them, so showing their
@@ -6276,26 +6346,21 @@ const dashboardHTML = `<!DOCTYPE html>
       return out;
     }
 
-    /* One inline face. Carries a native title ONLY — deliberately no custom
-       hover panel on this element. The status dot owns the one custom panel in
-       this row (see healthBadge and TestSingleHoverPanelInvariant); an element
-       with both draws the browser tooltip on top of the panel, which is the
-       overlap bug that was fixed once already.
+    /* One inline face, linked to that user's GitHub profile. Carries a native
+       title ONLY — deliberately no custom hover panel on this element. The
+       status dot owns the one custom panel in this row (see healthBadge and
+       TestSingleHoverPanelInvariant); an element with both draws the browser
+       tooltip on top of the panel, which is the overlap bug that was fixed once
+       already. The title moves to the anchor, which is still a plain native
+       tooltip, not a panel.
 
-       The username lands in two hostile contexts: a URL path segment
-       (encodeURIComponent) and a quoted attribute value (escAttr — esc() alone
-       leaves quotes intact and would let a crafted login close the attribute).
-       onerror hides the image rather than leaving a broken-image glyph, the
-       same pattern the hover panel and the provision tables use. */
+       The role stays in the tooltip so the face still answers "who and at what
+       permission" on hover, exactly as before it became a link. */
     function inlineAccessAvatar(a) {
       var uname = String(a.username || '');
       var role = String(a.role || '');
-      var px = INLINE_ACCESS_AVATAR_PX;
-      return '<img src="https://github.com/' + encodeURIComponent(uname) + '.png?size=' + INLINE_ACCESS_AVATAR_FETCH_PX + '" ' +
-        'alt="" title="' + escAttr(uname + (role ? ' — ' + role : '')) + '" ' +
-        'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' +
-        'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto" ' +
-        'onerror="this.style.visibility=\'hidden\'">';
+      return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, uname + (role ? ' — ' + role : ''),
+        'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto');
     }
 
     /* Inline summary of the OTHER users on this hive, or '' when there are
@@ -6685,10 +6750,14 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Shared with the inline row faces (accessRoleColor) so a face in the
            name cell and its line in this panel read as the same role. */
         var rc = accessRoleColor(a.role);
+        /* The face links to the profile. The title lives on the ANCHOR, which is
+           a plain native tooltip inside the panel — the invariant that matters
+           is that no title sits on the panel's own root element (see
+           TestSingleHoverPanelInvariant), not that the panel's contents are
+           tooltip-free. */
         return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">' +
-          '<img src="https://github.com/' + esc(a.username) + '.png?size=40" alt="" ' +
-          'style="width:18px;height:18px;border-radius:50%;flex:0 0 auto" ' +
-          'onerror="this.style.visibility=\'hidden\'">' +
+          linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,
+            String(a.username || '') + (a.role ? ' — ' + a.role : ''), 'flex:0 0 auto') +
           '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.username) + '</span>' +
           '<span style="color:' + rc + ';font-size:0.62rem;font-weight:600;white-space:nowrap">' + esc(a.role) + '</span>' +
           '</div>';
@@ -6846,8 +6915,15 @@ const dashboardHTML = `<!DOCTYPE html>
              roster and the auth payload can disagree on casing. */
           _currentUser = String(data.login || '').toLowerCase();
           var roleText = data.hub_admin ? 'Hub Admin' : 'User';
+          /* The viewer's own face links to their own profile, like every other
+             face in the dashboard. avatar_url comes from the auth payload (it is
+             GitHub's CDN URL, not derivable from the login), so this one builds
+             its <img> directly rather than via avatarImg — but the anchor and
+             the role tooltip are the shared ones. */
           document.getElementById('nav-user').innerHTML =
-            '<img src="' + esc(data.avatar_url) + '" class="nav-avatar" title="' + esc(data.login) + ' — ' + roleText + '">' +
+            avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
+              '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
+              'onerror="this.style.visibility=\'hidden\'">') +
             '<span style="font-size:0.85rem">' + esc(data.login) + '</span>' +
             '<span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + roleText + '</span>';
         }
@@ -8954,7 +9030,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
-            var avatar = '<img src="https://github.com/' + esc(pr.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">';
+            var avatar = linkedAvatar(pr.username, LIST_AVATAR_PX, pr.username, 'margin-right:6px');
             var note = (pr.note || '').trim();
             var noteHtml = note
               ? '<div style="margin-top:4px;font-size:0.75rem;color:var(--text);white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.15);border-left:2px solid var(--accent);padding:4px 8px;border-radius:2px">' + esc(note) + '</div>'
@@ -9700,10 +9776,14 @@ const dashboardHTML = `<!DOCTYPE html>
         // profile link is about the person, and the account that signed in to
         // the hub is a github.com account even when the ORG they asked for
         // lives on an Enterprise host.
+        //
+        // The AVATAR carries that link now. The username used to be a second
+        // anchor to the same profile; two controls for one destination is noise,
+        // so the name is plain text and the face is the affordance.
         var userCell =
-          '<img src="https://github.com/' + encodeURIComponent(uname) + '.png?size=40" alt="" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:6px" onerror="this.style.visibility=\'hidden\'">' +
+          linkedAvatar(uname, PANEL_ACCESS_AVATAR_PX, uname, 'margin-right:6px') +
           (uname
-            ? '<a href="https://github.com/' + encodeURIComponent(uname) + '" target="_blank" rel="noopener noreferrer" style="color:inherit">' + esc(uname) + '</a>'
+            ? '<span>' + esc(uname) + '</span>'
             : '<span style="color:var(--muted)">—</span>');
         // Repo link, built by the shared provisionRepoLabel(): github_host is
         // empty for public github.com and otherwise a GitHub Enterprise host
@@ -9790,7 +9870,7 @@ const dashboardHTML = `<!DOCTYPE html>
       _provisionRequestsByUser = {};
       pending.forEach(function(pr) { _provisionRequestsByUser[pr.username] = pr; });
       var rows = pending.map(function(pr) {
-        var avatar = '<img src="https://github.com/' + esc(pr.username) + '.png" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:8px">';
+        var avatar = linkedAvatar(pr.username, TABLE_AVATAR_PX, pr.username, 'margin-right:8px');
         return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">' +
           '<div style="display:flex;align-items:center;gap:8px">' +
           avatar +
@@ -10494,7 +10574,8 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!users.length) { document.getElementById('users-container').innerHTML = '<div class="loading">No users found</div>'; return; }
       var rows = users.map(function(u) {
         var blocked = u.blocked ? '<span style="color:var(--red);font-weight:600">BLOCKED</span>' : '<span style="color:var(--green)">active</span>';
-        var avatar = '<img src="https://github.com/' + esc(u.github_username) + '.png" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px">';
+        var avatar = linkedAvatar(u.github_username, TABLE_AVATAR_PX,
+          u.github_username + ' — GitHub profile', 'margin-right:6px');
         var isAdmin = u.github_username === 'clubanderson';
         var hivesObj = u.hives || {};
         var registryIds = new Set((_hiveRegistry || []).map(function(h) { return h.id; }));
@@ -10527,13 +10608,14 @@ const dashboardHTML = `<!DOCTYPE html>
 
         /* Clicking the name opens the assign flow for this user (admin-only, and
            the underlying endpoints re-check that server-side). The GitHub
-           profile stays reachable via the avatar, so one click is not overloaded
-           with two destinations. A pending provision request is called out
-           because the click then approves it rather than assigning a bare
-           placeholder. */
+           profile is reachable via the avatar, so one click is not overloaded
+           with two destinations. The separate ↗ glyph that used to sit between
+           them is gone: it went to the same profile the face now links to, and
+           a 0.65rem arrow was a far smaller click target than the picture. A
+           pending provision request is called out because the click then
+           approves it rather than assigning a bare placeholder. */
         var hasPendingReq = !!_provisionRequestsByUser[u.github_username];
         var nameCell = avatar +
-          '<a href="https://github.com/' + esc(u.github_username) + '" target="_blank" title="GitHub profile" style="color:var(--muted);font-size:0.65rem;margin-right:4px">↗</a>' +
           '<a href="#" onclick="openAssignForUser(\'' + esc(u.github_username) + '\');return false" ' +
           'title="' + (hasPendingReq ? 'Approve this user&#39;s pending request and assign a hive' : 'Assign an available hive to this user') + '" ' +
           'style="color:var(--blue);cursor:pointer">' + esc(u.github_username) + '</a>' +
@@ -11416,7 +11498,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!el) return;
         if (!reqs.length) { el.innerHTML = '<span style="color:var(--muted);font-size:0.8rem">No pending requests</span>'; return; }
         el.innerHTML = reqs.map(function(r) {
-          var avatar = '<img src="https://github.com/' + esc(r.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">';
+          var avatar = linkedAvatar(r.username, LIST_AVATAR_PX, r.username, 'margin-right:6px');
           var note = (r.note || '').trim();
           var noteHtml = note
             ? '<div style="margin-top:4px;font-size:0.75rem;color:var(--text);white-space:pre-wrap;word-break:break-word;background:var(--bg);border-left:2px solid var(--accent);padding:4px 8px;border-radius:2px">' + esc(note) + '</div>'
@@ -11487,7 +11569,8 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         var ownerCount = users.filter(function(u) { return u.role === 'owner'; }).length;
         var rows = users.map(function(u) {
-          var avatar = '<img src="https://github.com/' + esc(u.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:6px">';
+          var avatar = linkedAvatar(u.username, LIST_AVATAR_PX,
+            String(u.username || '') + (u.role ? ' — ' + u.role : ''), 'margin-right:6px');
           // The last owner can be neither removed nor demoted — doing so would
           // orphan the hive with no one able to manage access.
           var isLastOwner = (u.role === 'owner' && ownerCount <= 1);
