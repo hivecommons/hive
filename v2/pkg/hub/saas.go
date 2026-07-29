@@ -1599,7 +1599,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isAdmin {
-		resp["provision_requests"] = listProvisionRequests()
+		// Admin-only: enrichProvisionRequests attaches other users' hive
+		// memberships and roles, so it must stay inside this branch. A non-admin
+		// caller never receives provision_requests at all.
+		resp["provision_requests"] = enrichProvisionRequests(listProvisionRequests())
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -4177,6 +4180,112 @@ type ProvisionRequest struct {
 	// DenyReason is the optional free-text explanation shown back to the
 	// requester when a request is turned down.
 	DenyReason string `json:"deny_reason,omitempty"`
+
+	// --- Derived, never persisted ---
+	// These are filled in on read (see enrichProvisionRequests) so the admin
+	// Past Requests table can show the requester's role on the hive they were
+	// given, plus the rest of their fleet, without one API call per row. They
+	// are omitempty so records written before they existed stay valid and so a
+	// round-trip through saveProvisionRequest never bakes stale roles onto disk.
+	//
+	// AssignedRole is the requester's role on AssignedHive, read from their
+	// SaaSUser.Hives map — the authoritative grant (see accessForHive). Empty
+	// when the request was denied, when no hive was assigned, or when the grant
+	// was since revoked.
+	AssignedRole string `json:"assigned_role,omitempty"`
+	// OtherHives is every OTHER hive the requester can sign in to, with their
+	// role on each — the person's footprint beyond this one request. Sorted
+	// owners-first then by hive ID for a stable render.
+	OtherHives []UserHiveRole `json:"other_hives,omitempty"`
+}
+
+// roleOwner is the role string stored in SaaSUser.Hives for the hive's owner.
+// Named so the owners-first sort below does not repeat a bare literal.
+const roleOwner = "owner"
+
+// UserHiveRole is one hive a user can sign in to and the role they hold on it.
+// The mirror image of HiveAccessEntry: that answers "who is on this hive", this
+// answers "which hives is this user on".
+type UserHiveRole struct {
+	HiveID string `json:"hive_id"`
+	Role   string `json:"role"`
+}
+
+// hivesForUser returns every hive the named user can sign in to, with their
+// role on each, optionally excluding one hive ID (the one already shown in its
+// own column). Access comes from SaaSUser.Hives — the authoritative grant that
+// handleApproveProvision / handleAssignHive write — not from hive.Owner, which
+// can name someone whose grant was revoked.
+//
+// users is passed in rather than read here so a caller enriching many rows can
+// read the roster ONCE: listAllSaaSUsers hits the filesystem per user record.
+func hivesForUser(username string, excludeHiveID string, users []SaaSUser) []UserHiveRole {
+	if username == "" {
+		return nil
+	}
+	out := make([]UserHiveRole, 0)
+	for _, u := range users {
+		if !strings.EqualFold(u.GitHubUsername, username) {
+			continue
+		}
+		for id, role := range u.Hives {
+			if id == "" || id == excludeHiveID {
+				continue
+			}
+			out = append(out, UserHiveRole{HiveID: id, Role: role})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		// Owned hives first — the useful line to read when scanning someone's
+		// footprint — then alphabetical by hive ID for a stable order.
+		if (out[i].Role == roleOwner) != (out[j].Role == roleOwner) {
+			return out[i].Role == roleOwner
+		}
+		return out[i].HiveID < out[j].HiveID
+	})
+	if len(out) == 0 {
+		return nil // omitempty: no cell rather than an empty array
+	}
+	return out
+}
+
+// roleForUserOnHive returns the named user's role on the named hive, or "" if
+// they hold no grant on it. Same roster-passed-in contract as hivesForUser.
+func roleForUserOnHive(username, hiveID string, users []SaaSUser) string {
+	if username == "" || hiveID == "" {
+		return ""
+	}
+	for _, u := range users {
+		if !strings.EqualFold(u.GitHubUsername, username) {
+			continue
+		}
+		if role, ok := u.Hives[hiveID]; ok {
+			return role
+		}
+	}
+	return ""
+}
+
+// enrichProvisionRequests fills in the derived AssignedRole / OtherHives fields
+// on every request in place.
+//
+// ADMIN-ONLY: this exposes other people's hive memberships, so it must only be
+// called on a payload already gated behind requireAdmin (or the isAdmin branch
+// of the dashboard handler). Do not call it on a per-user response.
+//
+// The roster is read once here — O(1) filesystem sweeps for the whole table
+// rather than O(rows) — because listAllSaaSUsers walks and unmarshals every
+// user record on disk.
+func enrichProvisionRequests(requests []ProvisionRequest) []ProvisionRequest {
+	if len(requests) == 0 {
+		return requests
+	}
+	users := listAllSaaSUsers()
+	for i := range requests {
+		requests[i].AssignedRole = roleForUserOnHive(requests[i].Username, requests[i].AssignedHive, users)
+		requests[i].OtherHives = hivesForUser(requests[i].Username, requests[i].AssignedHive, users)
+	}
+	return requests
 }
 
 func loadProvisionRequest(username string) *ProvisionRequest {
@@ -8875,6 +8984,16 @@ const dashboardHTML = `<!DOCTYPE html>
     // remembered per browser under the same 'hive-*-collapsed' key convention
     // used by the cluster health panel.
     var PAST_REQUESTS_COLLAPSED_KEY = 'hive-past-requests-collapsed';
+    // A blank github_host on a request means the public instance; a GitHub
+    // Enterprise request carries its host (github.ibm.com, …). Used both as the
+    // pill label and as the origin for repo links, so Enterprise requesters get
+    // a link that actually resolves instead of a dead github.com URL.
+    var PAST_REQUESTS_DEFAULT_GITHUB_HOST = 'github.com';
+    // Above this many other hives the cell shows a count instead of the full
+    // list, with every hive still readable in the title tooltip. Four keeps a
+    // typical footprint inline while stopping a heavy user from turning one
+    // table cell into a wall of hive IDs.
+    var PAST_REQUESTS_MAX_INLINE_OTHER_HIVES = 4;
     // Absent key means collapsed; only an explicit 'false' expands the section.
     var _pastRequestsCollapsed = localStorage.getItem(PAST_REQUESTS_COLLAPSED_KEY) !== 'false';
 
@@ -8895,6 +9014,48 @@ const dashboardHTML = `<!DOCTYPE html>
       _pastRequestsCollapsed = !_pastRequestsCollapsed;
       localStorage.setItem(PAST_REQUESTS_COLLAPSED_KEY, _pastRequestsCollapsed ? 'true' : 'false');
       applyPastRequestsCollapsed();
+    }
+
+    // githubHostPill renders the GitHub instance a request targets. Blank
+    // github_host means public github.com; a GHE host is called out with the
+    // accent treatment so the admin can place the hive on a cluster that can
+    // reach it. Shared by the pending action cards and the Past Requests table
+    // so the same concept does not drift into two different styles.
+    function githubHostPill(githubHost) {
+      var border = githubHost ? 'var(--accent);color:var(--accent)' : 'var(--border);color:var(--muted)';
+      return '<span style="font-size:0.68rem;padding:1px 7px;border-radius:999px;border:1px solid ' + border + '">' +
+        esc(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST) + '</span>';
+    }
+
+    // otherHivesCell summarises the rest of a requester's fleet: which other
+    // hives they can sign in to and their role on each, so an admin reading one
+    // row sees the person's whole footprint. The list arrives on the payload
+    // (admin-only) so this never costs an API call per row.
+    function otherHivesCell(otherHives) {
+      var list = (otherHives || []).filter(function(e) { return e && e.hive_id; });
+      if (!list.length) return '<span style="color:var(--muted);font-size:0.7rem">—</span>';
+      // Plain text for the tooltip — a title attribute is not HTML, and esc()
+      // does not escape quotes, so nothing user-controlled may be interpolated
+      // into the attribute string. Set it via the DOM instead.
+      var full = list.map(function(e) { return e.hive_id + ' · ' + (e.role || '?'); }).join('\n');
+      var span = document.createElement('span');
+      span.style.fontSize = '0.7rem';
+      if (list.length > PAST_REQUESTS_MAX_INLINE_OTHER_HIVES) {
+        span.textContent = list.length + ' hives';
+        span.style.color = 'var(--muted)';
+        span.style.borderBottom = '1px dotted var(--border)';
+        span.style.cursor = 'help';
+      } else {
+        span.textContent = list.map(function(e) {
+          return e.hive_id + ' · ' + (e.role || '?');
+        }).join(', ');
+        span.style.color = 'var(--muted)';
+        span.style.fontFamily = 'ui-monospace,monospace';
+      }
+      span.title = full;
+      // outerHTML of a textContent-populated node is escaped by the DOM, which
+      // covers quotes and apostrophes that esc() would leave through.
+      return span.outerHTML;
     }
 
     // renderRequestHistory renders every already-decided request as a table:
@@ -8927,32 +9088,64 @@ const dashboardHTML = `<!DOCTYPE html>
       var rows = decided.map(function(pr) {
         var approved = pr.status === 'approved';
         var color = approved ? 'var(--green)' : 'var(--red)';
-        var repoLabel = esc(pr.org || '') + '/' + esc(pr.primary_repo || pr.repos || '');
-        var host_ = pr.github_host || 'github.com';
-        // For an approval the outcome is the hive they received; for a denial it
-        // is the reason, if one was given. Legacy records have neither.
-        var outcome = approved
-          ? (pr.assigned_hive
-              ? '<span style="font-family:ui-monospace,monospace;font-size:0.7rem">' + esc(pr.assigned_hive) + '</span>'
-              : '<span style="color:var(--muted)">—</span>')
-          : (pr.deny_reason
-              ? '<span style="color:var(--muted)">' + esc(pr.deny_reason) + '</span>'
-              : '<span style="color:var(--muted)">—</span>');
+        var uname = pr.username || '';
+        // Link the requester to their GitHub profile. Always github.com: a
+        // profile link is about the person, and the account that signed in to
+        // the hub is a github.com account even when the ORG they asked for
+        // lives on an Enterprise host.
+        var userCell =
+          '<img src="https://github.com/' + encodeURIComponent(uname) + '.png?size=40" alt="" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:6px" onerror="this.style.visibility=\'hidden\'">' +
+          (uname
+            ? '<a href="https://github.com/' + encodeURIComponent(uname) + '" target="_blank" rel="noopener noreferrer" style="color:inherit">' + esc(uname) + '</a>'
+            : '<span style="color:var(--muted)">—</span>');
+        // Repo link. github_host is empty for public github.com and otherwise a
+        // GitHub Enterprise host (github.ibm.com, …) — build the origin from it
+        // rather than hardcoding github.com, which would produce dead links for
+        // every Enterprise requester.
+        var host_ = pr.github_host || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+        var org = pr.org || '';
+        var repo = pr.primary_repo || pr.repos || '';
+        var repoText = org + '/' + repo;
+        var repoCell = (org && repo)
+          ? '<a href="https://' + encodeURIComponent(host_) + '/' + encodeURIComponent(org) + '/' + encodeURIComponent(repo) + '" target="_blank" rel="noopener noreferrer" style="color:inherit">' + esc(repoText) + '</a>'
+          : (repoText.replace('/', '') ? esc(repoText) : '<span style="color:var(--muted)">—</span>');
+        // For an approval the outcome is the hive they received — linked to the
+        // existing SSO handoff endpoint, the same affordance My Hives uses —
+        // plus their role on it. For a denial it is the reason, if one was
+        // given. Legacy records have neither.
+        var outcome;
+        if (approved && pr.assigned_hive) {
+          var roleSuffix = pr.assigned_role
+            ? ' <span style="color:var(--muted);font-size:0.68rem">&middot; ' + esc(pr.assigned_role) + '</span>'
+            : '';
+          outcome =
+            '<a href="/api/saas/hives/' + encodeURIComponent(pr.assigned_hive) + '/open" target="_blank" rel="noopener noreferrer" style="font-family:ui-monospace,monospace;font-size:0.7rem;color:inherit" title="Open dashboard">' +
+            esc(pr.assigned_hive) + '</a>' + roleSuffix;
+        } else if (!approved && pr.deny_reason) {
+          outcome = '<span style="color:var(--muted)">' + esc(pr.deny_reason) + '</span>';
+        } else {
+          outcome = '<span style="color:var(--muted)">—</span>';
+        }
         return '<tr>' +
-          '<td style="white-space:nowrap"><img src="https://github.com/' + esc(pr.username) + '.png?size=40" alt="" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:6px" onerror="this.style.visibility=\'hidden\'">' + esc(pr.username) + '</td>' +
-          '<td>' + repoLabel + ' <span style="font-size:0.65rem;color:var(--muted)">' + esc(host_) + '</span></td>' +
+          '<td style="white-space:nowrap">' + userCell + '</td>' +
+          '<td>' + repoCell + '</td>' +
+          '<td style="white-space:nowrap">' + githubHostPill(pr.github_host) + '</td>' +
           '<td style="white-space:nowrap">' + acmmBadge(pr.acmm_level) + '</td>' +
           '<td style="white-space:nowrap;color:var(--muted);font-size:0.7rem">' + esc((pr.requested_at || '').substring(0, 10)) + '</td>' +
           '<td style="white-space:nowrap"><span style="color:' + color + ';font-weight:600;font-size:0.72rem">' + esc(pr.status) + '</span></td>' +
           '<td style="white-space:nowrap">' + esc(pr.decided_by || '—') + '</td>' +
           '<td style="white-space:nowrap;color:var(--muted);font-size:0.7rem">' + esc((pr.decided_at || '').substring(0, 10) || '—') + '</td>' +
           '<td>' + outcome + '</td>' +
+          '<td>' + otherHivesCell(pr.other_hives) + '</td>' +
           '</tr>';
       }).join('');
+      // Header cells here MUST stay in lockstep with the <td> cells emitted
+      // above — 10 columns: User, Requested, Host, ACMM, On, Decision, By,
+      // When, Assigned / reason, Other hives.
       host.innerHTML =
         '<table class="hive-table" style="width:100%;font-size:0.78rem">' +
-        '<thead><tr><th>User</th><th>Requested</th><th>ACMM</th><th>On</th>' +
-        '<th>Decision</th><th>By</th><th>When</th><th>Assigned / reason</th></tr></thead>' +
+        '<thead><tr><th>User</th><th>Requested</th><th>Host</th><th>ACMM</th><th>On</th>' +
+        '<th>Decision</th><th>By</th><th>When</th><th>Assigned / reason</th><th>Other hives</th></tr></thead>' +
         '<tbody>' + rows + '</tbody></table>';
     }
 
@@ -8996,10 +9189,9 @@ const dashboardHTML = `<!DOCTYPE html>
           '<div>' +
           '<span style="font-size:0.85rem;font-weight:600">' + esc(pr.username) + '</span>' +
           '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' + esc(pr.org) + '/' + esc(pr.primary_repo || pr.repos) + '</span>' +
-          // Show which GitHub instance the request targets. Blank github_host
-          // means public github.com; a GHE host (github.ibm.com, …) is called
-          // out so the admin can place the hive on a cluster that can reach it.
-          ' <span style="font-size:0.68rem;padding:1px 7px;border-radius:999px;border:1px solid ' + (pr.github_host ? 'var(--accent);color:var(--accent)' : 'var(--border);color:var(--muted)') + '">' + esc(pr.github_host || 'github.com') + '</span>' +
+          // Show which GitHub instance the request targets — same pill the Past
+          // Requests table uses, so pending and decided rows read alike.
+          ' ' + githubHostPill(pr.github_host) +
           ' ' + acmmBadge(pr.acmm_level) +
           '<div style="font-size:0.7rem;color:var(--muted)">' + esc((pr.requested_at || '').substring(0, 10)) + '</div>' +
           '</div></div>' +
