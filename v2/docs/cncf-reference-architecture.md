@@ -8,26 +8,27 @@ org_logo_filename: images/hive.svg
 contact: Andy Anderson
 email: # optional — add if you want it listed publicly
 org_description: |
-  Hive is an open-source, self-hostable system that runs a fleet of AI coding
-  agents to autonomously maintain software repositories — triaging issues,
-  writing fixes, opening pull requests, and merging on green CI, all under
-  human-controlled, technically-enforced guardrails. It runs as a cloud-native
-  workload on Kubernetes with a hub-and-spoke model: a hosted hub coordinates a
-  fleet of self-hosted spoke hives. End users today include the KubeStellar
-  Console team (kubestellar/console) and Project Bluefin (projectbluefin), each
-  running a hive against their own repositories.
+  Hive is an open-source, self-hostable system (part of the KubeStellar org,
+  github.com/kubestellar/hive) that runs a fleet of AI coding agents to
+  autonomously maintain software repositories — triaging issues, writing fixes,
+  opening pull requests, and merging on green CI, all under human-controlled,
+  technically-enforced guardrails. It runs as a cloud-native workload on
+  Kubernetes with a hub-and-spoke model: a hosted hub coordinates a fleet of
+  self-hosted spoke hives. End users today include the KubeStellar Console team
+  (kubestellar/console) and Project Bluefin (projectbluefin), each running a hive
+  against their own repositories.
 org_size: Open-source community project
 user_size: The maintainers and contributors of every repository a hive maintains
 industries:
   - Open Source
   - Software
 tags:
-  - kubestellar
   - hive
+  - kubestellar
   - ai-agents
   - autonomous-maintenance
   - platform-engineering
-  - multi-cluster
+  - ci-cd
   - security
 reference_architectures:
   - CI/CD
@@ -40,50 +41,35 @@ reference_architectures:
 {{< cardpane >}}
   {{< card header="Kubernetes" >}}
   [![kubernetes logo](https://raw.githubusercontent.com/cncf/artwork/main/projects/kubernetes/icon/color/kubernetes-icon-color.svg)](https://www.cncf.io/projects/kubernetes/)
-  - **Using since:** 2024
   - **Current version:** 1.24+
 
-  A hive is a single-replica Kubernetes Deployment with a PVC, Service, and Ingress. The hub provisions new spoke hives onto member clusters as native Kubernetes objects.
+  A hive is a single-replica Kubernetes Deployment with a PVC, Service, and Ingress. The hub creates new spoke hives as native Kubernetes objects.
   {{< /card >}}
 
   {{< card header="cert-manager" >}}
   [![cert-manager logo](https://raw.githubusercontent.com/cncf/artwork/main/projects/cert-manager/icon/color/cert-manager-icon-color.svg)](https://www.cncf.io/projects/cert-manager/)
-  - **Using since:** 2024
   - **Current version:** v1.x
 
   Issues and renews the TLS certificates that terminate every hive dashboard and the hosted hub, via a `ClusterIssuer` (Let's Encrypt in production).
   {{< /card >}}
 
-  {{< card header="KubeStellar" >}}
-  [![kubestellar logo](https://raw.githubusercontent.com/kubestellar/kubestellar/main/docs/overrides/images/KubeStellar-with-Logo.png)](https://kubestellar.io/)
-  - **Using since:** 2024 (CNCF Sandbox)
-  - **Current version:** 0.2x
+  {{< card header="containerd" >}}
+  [![containerd logo](https://raw.githubusercontent.com/cncf/artwork/main/projects/containerd/icon/color/containerd-icon-color.svg)](https://www.cncf.io/projects/containerd/)
 
-  KubeStellar provides an optional multi-cluster substrate: the hub can reason about a fleet of clusters (cloud and edge) and place spoke hives onto them. Hive's own hub-and-spoke model is directly inspired by KubeStellar's placement design.
+  The container runtime that runs the single hive image on every node. Each hive is one OCI image bundling the Go orchestrator, agent CLIs, and the dashboard.
   {{< /card >}}
 {{< /cardpane >}}
 
 {{< cardpane >}}
-  {{< card header="containerd" >}}
-  [![containerd logo](https://raw.githubusercontent.com/cncf/artwork/main/projects/containerd/icon/color/containerd-icon-color.svg)](https://www.cncf.io/projects/containerd/)
-  - **Using since:** 2024
-  - **Current version:** (cluster default)
-
-  The container runtime that runs the single hive image on every node. Each hive is one OCI image bundling the Go orchestrator, agent CLIs, and the dashboard.
-  {{< /card >}}
-
   {{< card header="OpenTelemetry / Prometheus" >}}
   [![prometheus logo](https://raw.githubusercontent.com/cncf/artwork/main/projects/prometheus/icon/color/prometheus-icon-color.svg)](https://www.cncf.io/projects/prometheus/)
-  - **Using since:** 2025
-  - **Current version:** exposition format
 
   Each hive exposes `/metrics` in Prometheus format (governor mode, queue depth, per-agent token spend, fleet health) for scraping, alongside a live SSE stream to the dashboard.
   {{< /card >}}
 
   {{< card header="Helm / Kustomize" >}}
   [![helm logo](https://raw.githubusercontent.com/cncf/artwork/main/projects/helm/icon/color/helm-icon-color.svg)](https://www.cncf.io/projects/helm/)
-  - **Using since:** 2024
-  - **Current version:** v3.x / kubectl-native
+  - **Current version:** v3.x
 
   Hive ships a Kustomize base (namespace, Deployment, Service, PVC, ConfigMap, Secret) so an operator applies one overlay per environment.
   {{< /card >}}
@@ -158,9 +144,9 @@ flowchart LR
     gov -.->|"heartbeat / 2 min"| hub["Hive Hub<br/>registry · leaderboard · provisioning"]
 ```
 
-The **hub** is where the cloud-native, multi-cluster story shows: it holds a
-registry of all spoke hives, a cross-hive leaderboard, and — for clusters it can
-reach — provisions new spokes onto them with `kubectl`. Firewalled spokes it
+The **hub** ties the fleet together: it holds a registry of all spoke hives, a
+cross-hive leaderboard, and — for clusters it can reach — provisions new spokes
+onto them with `kubectl`. Firewalled spokes it
 cannot reach directly are still fully managed over the 2-minute heartbeat, whose
 response carries callbacks (self-upgrade to a pinned image SHA, GitHub App
 credential delivery, visibility changes). It is this heartbeat-driven control
@@ -170,7 +156,38 @@ single hub keeps the fleet coherent.
 
 A fuller technical walkthrough (process model, the governor loop, the guardrail
 layers, the beads ledger, and an end-to-end "issue → merged PR" trace) lives in
-the project's [reference architecture](architecture.md).
+the project's [reference architecture](architecture.md). The autonomy framework
+(ACMM) is described in more depth in the paper
+[*An AI-native Capability Maturity Model*](https://arxiv.org/abs/2604.09388).
+
+## Guiding principles
+
+A handful of principles shape every design decision in Hive. They are the reason
+the system can be trusted to run at higher autonomy levels:
+
+- **Earn automation with test coverage.** A repository advances up the ACMM
+  ladder as its safety net grows — the target is **90%+ test coverage** before
+  autonomous merging is on the table. Automation is a privilege the codebase
+  earns, not a switch you flip.
+- **A durable, git-backed work ledger (beads).** Every unit of work is a typed,
+  dependency-aware bead on disk, so agents coordinate without collisions and no
+  work is lost across restarts, crashes, or upgrades.
+- **Reset context between tasks (`/clear`).** Each agent kick starts from a clean
+  slate, so stale context from a previous task can't leak into the next one — a
+  cheap, decisive defense against context drift.
+- **Deterministic vs. non-deterministic — don't ask the model to do "Mad Libs."**
+  Anything that can be decided by rules (filtering, classification, merge-gating,
+  permission enforcement) runs in deterministic Go/shell *before* a model is
+  involved. The LLM is reserved for genuine judgment (reading code, reasoning
+  about a fix), never for fill-in-the-blank mechanics a program should own.
+- **Multi-stage CI — not just a PR-merge gate.** CI is treated as a pipeline that
+  validates work at multiple stages, not a single check that opens the merge
+  door. This is what makes "merge on green" a meaningful signal rather than a
+  rubber stamp.
+- **Issues are prompts — so enrich them.** An issue opened within the project can
+  carry structured context (diagnostics, browser-console errors, OS/browser info,
+  the current running SHA) directly in its description — which *becomes the prompt*
+  the agent works from. Better issues produce better fixes.
 
 ## Can you expand on why you are using those projects/services?
 
@@ -178,9 +195,6 @@ the project's [reference architecture](architecture.md).
   self-hostable anywhere, survive restarts, and be provisioned programmatically.
   Modeling each hive as a Deployment + PVC + Service + Ingress means the hub can
   create, upgrade, and delete a spoke with plain Kubernetes API calls.
-- **KubeStellar** (optional) gives the hub a coherent way to reason about *many*
-  clusters — cloud and edge — as placement targets for spokes when a hive is run
-  across a multi-cluster fleet.
 - **cert-manager** removes TLS toil: every dashboard and the hub get automatic,
   renewing certificates, which matters because agent dashboards stream over
   long-lived SSE connections that must be secured.
