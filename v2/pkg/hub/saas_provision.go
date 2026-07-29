@@ -145,6 +145,17 @@ type ClusterConfig struct {
 	// install link points at an app that does not exist on that GHE host.
 	// Empty falls back to config.DefaultGitHubAppSlug.
 	GitHubAppSlug string `json:"github_app_slug,omitempty" yaml:"github_app_slug,omitempty"`
+	// GitHubAppID is the numeric App ID registered on THIS cluster's GitHub
+	// host. It is the non-secret half of the cluster's App identity — the
+	// matching PRIVATE KEY is deliberately NOT a field here, because this struct
+	// is parsed from clusters.json and flows along operator-facing paths. The
+	// key lives in its own 0600 file keyed by cluster ID (see
+	// cluster_app_key.go); this field is what tells the hub such a key is
+	// expected and which App it belongs to.
+	//
+	// Zero means "this cluster has no hub-managed App identity" — the hub then
+	// changes nothing about its spokes' credentials.
+	GitHubAppID   int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
 	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 	ClusterHealthTimeoutSeconds int    `json:"cluster_health_timeout_seconds,omitempty" yaml:"cluster_health_timeout_seconds,omitempty"`
 }

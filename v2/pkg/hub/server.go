@@ -1068,6 +1068,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"app_id", ghCfg.AppID,
 			"installation_id", ghCfg.InstallationID,
 		)
+	} else if keyCfg := s.appKeySyncForHeartbeat(&payload); keyCfg != nil {
+		// No one-shot config queued (webhook install, manual push), so fall
+		// through to the standing per-cluster reconcile: a spoke holding the
+		// wrong App key — or none — is corrected onto its cluster's key. This is
+		// deliberately the LOWER-priority branch: a config queued for a specific
+		// hive is a targeted operator/webhook action and must not be displaced
+		// by the fleet-wide default.
+		resp.GitHubAppConfig = keyCfg
 	}
 
 	s.hubBannersMu.RLock()

@@ -226,6 +226,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	// view, so it is admin-only (see alerts.go).
 	s.mux.HandleFunc("POST /api/saas/admin/alert-ack", s.requireAdmin(s.handleAlertAck))
 	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAuth(s.handleListClusters))
+	// Per-cluster GitHub App key store. The GET is fingerprints only (never key
+	// material); the PUT is the single write-only entry point for a key.
+	s.mux.HandleFunc("GET /api/saas/admin/cluster-app-keys", s.requireAdmin(s.handleGetClusterAppKeys))
+	s.mux.HandleFunc("PUT /api/saas/admin/cluster-app-keys/{clusterID}", s.requireAdmin(s.handlePutClusterAppKey))
 	s.mux.HandleFunc("POST /api/saas/admin/hub-banner", s.requireAdmin(s.handleSendHubBanner))
 	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
 	s.mux.HandleFunc("GET /api/saas/admin/hub-banner", s.requireAdmin(s.handleGetHubBanner))

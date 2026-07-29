@@ -277,6 +277,23 @@ type HeartbeatPayload struct {
 	// nudge", NOT as a genuine zero. Never threaten a hive over a signal that
 	// was never sent.
 	AgentsWithModel *int `json:"agents_with_model,omitempty"`
+	// GitHubAppKeyFingerprint is a NON-SECRET identifier for the GitHub App
+	// private key this spoke currently holds — "sha256:<hex>" over the DER
+	// public key derived from it (config.AppKeyFingerprint). It exists so the
+	// hub can tell a spoke carrying the WRONG key apart from one carrying the
+	// right one, without the private key ever travelling spoke → hub. The
+	// private key is never placed in this payload, in any field, ever.
+	//
+	// Empty means the spoke has no key, could not parse the one it has, or is
+	// too old to report this. All three are repaired the same way: the hub
+	// pushes its cluster key, and the spoke starts reporting a fingerprint that
+	// matches, at which point pushing stops.
+	GitHubAppKeyFingerprint string `json:"github_app_key_fingerprint,omitempty"`
+	// GitHubAppKeyPerHive is true when this spoke's key was supplied
+	// specifically for THIS hive at provisioning time, rather than adopted from
+	// its cluster. The hub honours it as an override: a deliberate per-hive
+	// credential is never overwritten by the cluster default.
+	GitHubAppKeyPerHive bool `json:"github_app_key_per_hive,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload
@@ -552,6 +569,15 @@ type HeartbeatGitHubAppConfig struct {
 	AppID          int64  `json:"app_id"`
 	InstallationID int64  `json:"installation_id"`
 	PrivateKey     string `json:"private_key,omitempty"`
+	// AppSlug is the App's URL slug on this cluster's GitHub host. It is only
+	// set at PROVISIONING time today, so a hive provisioned before its cluster's
+	// slug was configured shows an install link pointing at an app that does not
+	// exist on that GitHub Enterprise host — and no code path ever corrects it.
+	// Riding it alongside the key lets the same reconcile repair both.
+	//
+	// Empty means "leave the spoke's slug unchanged" — never a way to blank a
+	// working value.
+	AppSlug string `json:"app_slug,omitempty"`
 }
 
 // HeartbeatProjectConfig carries a claimed project's real org/repos/ACMM from

@@ -55,6 +55,63 @@ var (
 	gitBranch = "unknown"
 )
 
+// GitHub App private-key locations on a spoke, and how the two differ.
+//
+//   - spokeProvisionedAppKeyPath is a read-only Kubernetes Secret mount, written
+//     at PROVISIONING time from a key an operator supplied for THIS hive
+//     specifically. Its presence is the marker of a deliberate per-hive
+//     credential, which the hub's cluster-wide reconcile must never overwrite.
+//   - spokeAppKeyPath is on the PVC and is where a hub-delivered (cluster
+//     default) key lands. It is also what cfg.GitHub.KeyFile is repointed at
+//     once the hub delivers one, so it takes effect over the provisioned mount.
+const (
+	spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"
+	spokeAppKeyPath            = "/data/gh-app-key.pem"
+	// spokeAppKeyFileMode is rw------- : signing material must never be
+	// readable by anything else sharing the PVC or the pod.
+	spokeAppKeyFileMode = 0o600
+)
+
+// reportedAppKeyFingerprint returns the non-secret fingerprint of the App key
+// this spoke is ACTUALLY using, for the heartbeat payload. It fingerprints the
+// resolved key file rather than a hard-coded path so the hub compares against
+// the key that would really sign a JWT.
+//
+// Returns "" whenever there is no usable key — no file, empty file, or
+// unparseable contents. All three mean the same thing to the hub ("this spoke
+// cannot authenticate") and are repaired identically. The private key itself is
+// never returned, and never enters the payload.
+func reportedAppKeyFingerprint(keyFile string) string {
+	candidates := []string{keyFile, spokeAppKeyPath, spokeProvisionedAppKeyPath}
+	for _, p := range candidates {
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
+			return fp
+		}
+	}
+	return ""
+}
+
+// hasPerHiveAppKey reports whether this spoke's key came from a per-hive
+// provisioning secret rather than the cluster default. The provisioned mount is
+// read-only, so its mere existence with real PEM content is the signal — a
+// hub-delivered key can never create or alter it.
+//
+// When BOTH exist the hub-delivered PVC key is the one in effect (the callback
+// repoints cfg.GitHub.KeyFile at it), so this only claims an override while the
+// provisioned key is genuinely the one being used.
+func hasPerHiveAppKey(keyFile string) bool {
+	fp, err := config.AppKeyFingerprintFromFile(spokeProvisionedAppKeyPath)
+	if err != nil || fp == "" {
+		return false
+	}
+	// The provisioned key exists. It is the effective credential only if the
+	// resolved key file still points at it.
+	return strings.TrimSpace(keyFile) == "" || keyFile == spokeProvisionedAppKeyPath
+}
+
 // processStartedAt is when this hive process began. Reported over the heartbeat
 // so the hub can show an uptime pill — a hive that is 1/1 Running but restarting
 // every couple of minutes looks healthy in a pod listing and in My Hives, and a
@@ -1780,6 +1837,12 @@ func main() {
 				PRsMerged90d:   prsMerged,
 				PRsRejected90d: prsRejected,
 				CVEsClosed:     cvesClosed,
+				// Report WHICH App key we hold, never the key. The hub compares
+				// this against its per-cluster key and pushes a correction only
+				// on a mismatch, so a spoke already holding the right key costs
+				// nothing and a spoke holding the wrong one self-heals.
+				GitHubAppKeyFingerprint: reportedAppKeyFingerprint(cfg.GitHub.KeyFile),
+				GitHubAppKeyPerHive:     hasPerHiveAppKey(cfg.GitHub.KeyFile),
 			}
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
@@ -1901,20 +1964,51 @@ func main() {
 				"has_key", ghCfg.PrivateKey != "",
 			)
 
-			keyPath := "/data/gh-app-key.pem"
+			keyPath := spokeAppKeyPath
 			if ghCfg.PrivateKey != "" {
-				const keyFileMode = 0o600
-				if err := os.WriteFile(keyPath, []byte(ghCfg.PrivateKey), keyFileMode); err != nil {
+				// Fingerprint before and after so the key rotation is auditable
+				// from the spoke's own logs. Fingerprints only — the key itself
+				// is never logged.
+				beforeFP, _ := config.AppKeyFingerprintFromFile(keyPath)
+				if err := os.WriteFile(keyPath, []byte(ghCfg.PrivateKey), spokeAppKeyFileMode); err != nil {
 					logger.Error("failed to write github app key from heartbeat", "error", err)
 					return
 				}
-				logger.Info("github app private key written via heartbeat", "path", keyPath)
+				// os.WriteFile does NOT re-apply the mode to a file that already
+				// exists, so a key written by an older build (or restored from a
+				// looser-moded source) would keep its old permissions forever.
+				// Chmod unconditionally so every path converges on 0600.
+				if err := os.Chmod(keyPath, spokeAppKeyFileMode); err != nil {
+					logger.Warn("could not tighten github app key permissions", "path", keyPath, "error", err)
+				}
+				afterFP, _ := config.AppKeyFingerprintFromFile(keyPath)
+				logger.Info("github app private key written via heartbeat",
+					"path", keyPath,
+					"from_fingerprint", beforeFP,
+					"to_fingerprint", afterFP,
+				)
 			}
 
-			cfg.GitHub.AppID = ghCfg.AppID
-			cfg.GitHub.InstallationID = ghCfg.InstallationID
+			if ghCfg.AppID != 0 {
+				cfg.GitHub.AppID = ghCfg.AppID
+			}
+			// A zero installation_id means "the hub is not speaking to this
+			// field", not "clear it". The cluster-wide key reconcile repairs the
+			// KEY on hives whose installation_id is already correct (and which
+			// the hub does not track); assigning zero here would blank a working
+			// value and turn a key-only fault into a total auth outage.
+			if ghCfg.InstallationID != 0 {
+				cfg.GitHub.InstallationID = ghCfg.InstallationID
+			}
 			if ghCfg.PrivateKey != "" {
 				cfg.GitHub.KeyFile = keyPath
+			}
+			// Same "empty means unchanged" contract as installation_id: adopting
+			// an empty slug would blank a working install link.
+			if ghCfg.AppSlug != "" && cfg.GitHub.AppSlug != ghCfg.AppSlug {
+				logger.Info("adopting github app slug from hub",
+					"was", cfg.GitHub.AppSlug, "now", ghCfg.AppSlug)
+				cfg.GitHub.AppSlug = ghCfg.AppSlug
 			}
 
 			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
