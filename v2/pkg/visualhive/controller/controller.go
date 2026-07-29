@@ -977,8 +977,37 @@ func (controller *Controller) resumeWorks(packet visualhive.VerifiedPacketIdenti
 			ReproductionSource: "persisted_verified_observation_validation_command", Authority: visualhive.VisualWorkAuthority{ProposalOnly: true},
 		})
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].RepositoryFingerprint < result[j].RepositoryFingerprint })
+	sortVisualAdmissionWorks(result)
 	return result
+}
+
+// sortVisualAdmissionWorks keeps admission deterministic while ensuring a
+// lower-severity advisory cannot consume a role's bounded WIP ahead of a
+// verified higher-severity finding from the same packet. Fingerprints remain
+// the stable tie-breaker, so identical evidence produces identical ordering.
+func sortVisualAdmissionWorks(works []visualhive.AdmittedVisualWork) {
+	sort.Slice(works, func(i, j int) bool {
+		left, right := visualAdmissionSeverityRank(works[i].Severity), visualAdmissionSeverityRank(works[j].Severity)
+		if left != right {
+			return left < right
+		}
+		return works[i].RepositoryFingerprint < works[j].RepositoryFingerprint
+	})
+}
+
+func visualAdmissionSeverityRank(severity string) int {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical":
+		return 0
+	case "high":
+		return 1
+	case "medium":
+		return 2
+	case "low":
+		return 3
+	default:
+		return 4
+	}
 }
 
 func (controller *Controller) existingRoleForExternalRef(externalRef string) string {

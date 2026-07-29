@@ -1481,6 +1481,27 @@ func TestTerminalLifecycleStageRetiresWIPUntilRecurrence(t *testing.T) {
 	}
 }
 
+func TestVisualAdmissionOrdersHigherSeverityBeforeFingerprint(t *testing.T) {
+	works := []visualhive.AdmittedVisualWork{
+		{RepositoryFingerprint: strings.Repeat("0", 64), Severity: "medium"},
+		{RepositoryFingerprint: strings.Repeat("f", 64), Severity: "high"},
+		{RepositoryFingerprint: strings.Repeat("e", 64), Severity: "critical"},
+		{RepositoryFingerprint: strings.Repeat("1", 64), Severity: "high"},
+		{RepositoryFingerprint: strings.Repeat("a", 64), Severity: "unknown"},
+	}
+
+	sortVisualAdmissionWorks(works)
+
+	got := make([]string, 0, len(works))
+	for _, work := range works {
+		got = append(got, work.Severity+":"+work.RepositoryFingerprint[:1])
+	}
+	want := []string{"critical:e", "high:1", "high:f", "medium:0", "unknown:a"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("severity-aware admission order = %v, want %v", got, want)
+	}
+}
+
 func testVisualBatchInput(sourceID, externalRef, role string, dependencies []string) beads.BatchInput {
 	return beads.BatchInput{
 		SourceID: sourceID, Title: sourceID, Type: beads.TypeBug, Status: beads.StatusBlocked, Priority: beads.PriorityHigh,
