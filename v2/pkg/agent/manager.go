@@ -2593,6 +2593,42 @@ func (m *Manager) GetStatus(name string) (*AgentProcess, error) {
 	return &snap, nil
 }
 
+// CountAgentsWithModel returns how many agents have an effective method
+// (backend) or model assigned, resolving overrides ahead of config exactly as
+// the launcher does. Reported to the hub so it can tell whether this hive has
+// completed the "assign a method/model to an agent" adoption step.
+//
+// An agent counts if EITHER a backend or a model is set: "claude with the
+// default model" and "the governor's default backend pinned to a specific
+// model" are both real assignments. Values like "auto" and "default" are
+// deliberate routing selections, not absences, so they count too — only a
+// wholly empty backend AND model reads as unassigned.
+func (m *Manager) CountAgentsWithModel() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, a := range m.agents {
+		if a == nil {
+			continue
+		}
+		backend := a.Config.Backend
+		if a.BackendOverride != "" {
+			backend = a.BackendOverride
+		}
+		model := a.Config.Model
+		if a.ModelOverride != "" {
+			model = a.ModelOverride
+		} else if a.PinnedModel != "" {
+			model = a.PinnedModel
+		}
+		if strings.TrimSpace(backend) != "" || strings.TrimSpace(model) != "" {
+			count++
+		}
+	}
+	return count
+}
+
 func (m *Manager) AllStatuses() map[string]*AgentProcess {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -254,6 +254,17 @@ type HeartbeatPayload struct {
 	PRsMerged90d   *int `json:"prs_merged_90d,omitempty"`
 	PRsRejected90d *int `json:"prs_rejected_90d,omitempty"`
 	CVEsClosed     *int `json:"cves_closed,omitempty"`
+	// AgentsWithModel counts this hive's agents that have an effective method
+	// (backend) or model assigned — override first, then agent config, exactly
+	// as the launcher resolves it. The hub uses it for user-journey stage
+	// detection: a hive with zero configured agents has not yet completed the
+	// "assign a method/model to an agent" step.
+	//
+	// A pointer for the same reason as the fleet counts above: a spoke too old
+	// to report this sends nil, which the hub must read as "unknown, do not
+	// nudge", NOT as a genuine zero. Never threaten a hive over a signal that
+	// was never sent.
+	AgentsWithModel *int `json:"agents_with_model,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload

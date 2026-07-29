@@ -177,6 +177,8 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
 	s.mux.HandleFunc("GET /api/saas/admin/hub-banner", s.requireAdmin(s.handleGetHubBanner))
 	s.registerBulkRoutes()
+	s.mux.HandleFunc("POST /api/saas/admin/journey-snooze", s.requireAdmin(s.handleJourneySnooze))
+	s.mux.HandleFunc("GET /api/saas/admin/journey-status", s.requireAdmin(s.handleJourneyStatus))
 
 	// Under `go test` these long-lived pollers leak across test cases: they
 	// immediately hit the GitHub API and read the package-level saas path
@@ -1554,6 +1556,15 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// been collected and enriched (a row still missing its provStatus would be
 	// misread as a claimed hive and flagged for having no App).
 	annotateDrift(result, getDisplaySHAs(), time.Now())
+
+	// Attach the user-journey stage to every row so the table can show who is
+	// stalled where. Derived on read; never persisted on the registry entry.
+	journeyNow := time.Now()
+	for i := range result {
+		st := s.journey.get(result[i].ID)
+		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
+		result[i].Journey = &status
+	}
 
 	resp := map[string]any{
 		"hives":                   result,
@@ -5391,6 +5402,21 @@ const dashboardHTML = `<!DOCTYPE html>
     .acmm-5 { background: rgba(255,126,126,0.15); color: #ff7e7e; border: 1px solid rgba(255,126,126,0.3); }
     .acmm-6 { background: rgba(180,130,255,0.15); color: #b482ff; border: 1px solid rgba(180,130,255,0.3); }
 
+    /* ── User-journey stage badges ──
+       Severity drives the color so a stalled hive is scannable at a glance:
+       green = nothing outstanding, blue = a gentle nudge, amber = overdue,
+       red = a de-provision warning has been sent. */
+    .journey-badge { display: inline-block; padding: 3px 9px; border-radius: 9999px; font-size: 0.65rem; font-weight: 700; white-space: nowrap; cursor: help; }
+    .journey-none { background: rgba(116,223,154,0.12); color: #74df9a; border: 1px solid rgba(116,223,154,0.28); }
+    .journey-gentle { background: rgba(128,191,255,0.15); color: #80bfff; border: 1px solid rgba(128,191,255,0.3); }
+    .journey-firm { background: rgba(244,199,95,0.15); color: #f4c75f; border: 1px solid rgba(244,199,95,0.3); }
+    .journey-deprovision-warning { background: rgba(255,126,126,0.18); color: #ff7e7e; border: 1px solid rgba(255,126,126,0.4); }
+    .journey-snoozed { background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid rgba(107,114,128,0.3); }
+    /* The relay badge marks a hive satisfying stage 2 through human
+       contributors rather than an assigned method/model — deliberately its own
+       label so such a hive is never silently reported as "assigned". */
+    .journey-relay { display: inline-block; margin-left: 4px; padding: 3px 8px; border-radius: 9999px; font-size: 0.62rem; font-weight: 700; white-space: nowrap; cursor: help; background: rgba(45,212,191,0.15); color: #2dd4bf; border: 1px solid rgba(45,212,191,0.3); }
+
     /* ── Buttons ── */
     .btn-primary { display: inline-flex; align-items: center; justify-content: center; padding: .72rem 1.2rem; background: var(--amber); color: #17110a; font-weight: 800; border-radius: .55rem; border: none; cursor: pointer; font-size: 0.85rem; transition: all .2s; }
     .btn-primary:hover { background: #f8d87a; text-decoration: none; }
@@ -5645,6 +5671,58 @@ const dashboardHTML = `<!DOCTYPE html>
       var l = level || 0;
       var tips = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
       return '<span class="acmm-badge acmm-' + l + '" title="' + esc(tips[l] || '') + '">' + (ACMM_LABELS[l] || 'L' + l) + '</span>';
+    }
+    /* Labels for each journey stage, matching JourneyStage.String() on the hub. */
+    var JOURNEY_STAGE_LABELS = {
+      'none': 'On track',
+      'github-app': 'GitHub App',
+      'method-model': 'Method/model',
+      'acmm-level': 'ACMM',
+    };
+    /* What each stage means, for the hover tooltip. */
+    var JOURNEY_STAGE_TIPS = {
+      'none': 'No outstanding adoption steps.',
+      'github-app': 'Stage 1 — the GitHub App is not installed, so no agent can open issues or PRs.',
+      'method-model': 'Stage 2 — no agent has a method/model assigned and the contributor relay is not in use.',
+      'acmm-level': 'Stage 3 — running steadily; due a gentle suggestion to consider the next ACMM level. Never a de-provision risk.',
+    };
+    /* Rank a journey status for sorting. Snoozed hives rank lowest — an admin
+       has already dealt with them — then on-track, then by escalation. */
+    var JOURNEY_SEVERITY_RANK = {'none': 0, 'gentle': 1, 'firm': 2, 'deprovision-warning': 3};
+    function journeySortValue(j) {
+      if (!j) return -1;
+      if (j.snoozed) return -1;
+      var sev = JOURNEY_SEVERITY_RANK[j.severity || 'none'] || 0;
+      /* SEVERITY_SPAN spaces the stage ranks apart so severity orders within a
+         stage without ever bleeding into the next stage's band. */
+      var SEVERITY_SPAN = 10;
+      return (j.stageNum || 0) * SEVERITY_SPAN + sev;
+    }
+    function journeyBadge(j) {
+      if (!j) return '<span style="color:var(--muted)">—</span>';
+      var stage = j.stage || 'none';
+      var label = JOURNEY_STAGE_LABELS[stage] || stage;
+      var tip = JOURNEY_STAGE_TIPS[stage] || '';
+      if (j.stalledFor && stage !== 'none') tip += ' Stalled for ' + j.stalledFor + '.';
+      /* A snoozed hive shows as snoozed regardless of stage — an admin has
+         exempted it, so it must not read as an active problem. */
+      var cls, text;
+      if (j.snoozed) {
+        cls = 'journey-snoozed';
+        text = label + ' (snoozed)';
+        tip = 'Nudges snoozed by an admin' + (j.snoozedUntil ? ' until ' + j.snoozedUntil : '') + '. ' + tip;
+      } else {
+        var sev = j.severity || 'none';
+        cls = 'journey-' + (sev === 'none' ? 'none' : sev);
+        text = label;
+        if (sev === 'deprovision-warning') text = label + ' ⚠';
+      }
+      var html = '<span class="journey-badge ' + cls + '" title="' + esc(tip) + '">' + esc(text) + '</span>';
+      /* Stage 2 satisfied via the contributor relay gets its own visible badge. */
+      if (j.viaRelay) {
+        html += '<span class="journey-relay" title="' + esc('Stage 2 is satisfied through the contributor relay (human contributors picking up tasks), not by an assigned method/model.') + '">relay</span>';
+      }
+      return html;
     }
     function roleBadge(role) {
       var cls = role === 'owner' ? 'role-owner' : role === 'read-write' ? 'role-read-write' : 'role-read';
@@ -6369,7 +6447,17 @@ const dashboardHTML = `<!DOCTYPE html>
     function sortDashHives(key) {
       if (_dashSortKey === key) { _dashSortAsc = !_dashSortAsc; } else { _dashSortKey = key; _dashSortAsc = true; }
       var sorted = _allDashHives.slice().sort(function(a, b) {
-        var va = a[key] || '', vb = b[key] || '';
+        var va, vb;
+        if (key === 'journey') {
+          /* journey is an object, so sort by how urgent it is rather than by
+             stringifying it. Higher = needs attention sooner, so the default
+             ascending sort puts on-track hives first and the most-escalated
+             last; click again to bring the problems to the top. */
+          va = journeySortValue(a.journey);
+          vb = journeySortValue(b.journey);
+          return _dashSortAsc ? va - vb : vb - va;
+        }
+        va = a[key] || ''; vb = b[key] || '';
         if (typeof va === 'number' && typeof vb === 'number') return _dashSortAsc ? va - vb : vb - va;
         return _dashSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
       });
@@ -7154,10 +7242,11 @@ const dashboardHTML = `<!DOCTYPE html>
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write')) {
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
-        // 16 = the 13 original columns, plus Uptime, plus Drift, plus the
-        // bulk-select column. Counted against the <th> cells in the header and
-        // the <td> cells emitted below (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 16;
+        // 17 = the 13 original columns, plus Uptime, plus Drift, plus the
+        // bulk-select column, plus Journey. Counted against the <th> cells in
+        // the header and the <td> cells emitted below (bulkCheckboxCell
+        // contributes one).
+        var TOTAL_COLUMNS = 17;
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
@@ -7186,6 +7275,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td style="font-size:0.7rem;white-space:nowrap">' + versionCell + '</td>' +
           '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
+          '<td>' + journeyBadge(h.journey) + '</td>' +
           '<td title="' + esc((h.agents || []).map(function(a){ var label = a.name + ' (' + a.state + ')'; if (a.mode === 'on_demand') label += ' — on demand'; return label; }).join('\n')) + '" style="cursor:' + ((h.agentCount || 0) > 0 ? 'help' : 'default') + '">' + (h.agentCount || 0) + '</td>' +
           '<td title="Cumulative tokens consumed, as of the last heartbeat" style="white-space:nowrap;cursor:help">' + fmtTokens(h.totalTokens24h || 0) + '</td>' +
           '<td>' + modeCell + '</td>' +
@@ -7199,9 +7289,9 @@ const dashboardHTML = `<!DOCTYPE html>
          match the table's muted uppercase heading treatment (see .hive-table th). */
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
-         and the table visibly ragged. 15 with the Drift column, plus one more
-         for the bulk-select column added here. */
-      var TOTAL_COLUMNS_HEADER = 16;
+         and the table visibly ragged. 15 with the Drift column, plus the
+         bulk-select column, plus the Journey column added here. */
+      var TOTAL_COLUMNS_HEADER = 17;
       /* section, when given, adds a select-all checkbox scoped to THIS
          section's rows only (Assigned and Unassigned select independently). */
       var sectionHeader = function(label, count, section) {
@@ -7246,7 +7336,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '<th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Re-derive the bar and the select-all tri-state from _bulkSelected now

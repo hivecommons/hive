@@ -119,6 +119,15 @@ type RegistryEntry struct {
 	PRsMerged90d   *int `json:"prsMerged90d,omitempty"`
 	PRsRejected90d *int `json:"prsRejected90d,omitempty"`
 	CVEsClosed     *int `json:"cvesClosed,omitempty"`
+	// AgentsWithModel is the spoke-reported count of agents that have a method
+	// (backend) or model assigned. nil = the spoke is too old to report it, so
+	// journey stage 2 is treated as unknown rather than unsatisfied.
+	AgentsWithModel *int `json:"agentsWithModel,omitempty"`
+	// Journey is the computed user-journey status (which adoption stage this
+	// hive is stalled on, how hard it is being nudged, and whether stage 2 is
+	// satisfied via the contributor relay). Computed on read from the journey
+	// state store — never persisted on the registry entry itself.
+	Journey *JourneyStatus `json:"journey,omitempty"`
 }
 
 type SparkPoint struct {
@@ -318,6 +327,10 @@ type HubServer struct {
 	// answerable from the hub instead of `kubectl logs`. It carries its own
 	// leaf mutex and is never guarded by s.mu. See timeline.go.
 	timeline *timelineStore
+
+	// journey holds per-hive user-journey nudge state: which banner each owner
+	// was last sent and when, plus admin snoozes. Persisted to the PVC.
+	journey *journeyStore
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -443,11 +456,17 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		pendingGateways:         make(map[string]*HeartbeatGatewayConfig),
 		hubBanners:              make(map[string]*HubBannerEntry),
 		timeline:                newTimelineStore(),
+		journey:                 newJourneyStore(),
 	}
 
 	s.loadRegistry()
 	s.loadHubBanners()
 	s.timeline.load()
+	if err := s.journey.load(time.Now()); err != nil {
+		// Losing journey state is a soft failure: the worst case is that a few
+		// owners get one duplicate nudge. Never block hub startup on it.
+		logger.Error("failed to load journey nudge state", "error", err)
+	}
 
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)
@@ -680,6 +699,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		PRsMerged90d:   clampFleetCount(payload.PRsMerged90d),
 		PRsRejected90d: clampFleetCount(payload.PRsRejected90d),
 		CVEsClosed:     clampFleetCount(payload.CVEsClosed),
+		// Preserve nil (old spoke, unknown) vs a real count — journey stage
+		// detection depends on telling those two apart.
+		AgentsWithModel: clampFleetCount(payload.AgentsWithModel),
 	}
 
 	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
@@ -1004,6 +1026,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.hubBannersMu.RUnlock()
+
+	// User-journey nudge. An admin-sent banner always wins: a human took the
+	// trouble to target this hive, so an automated reminder must not displace
+	// it. Journey nudges therefore only fill an empty slot (or replace a
+	// previous journey banner, which is this subsystem's own to update).
+	if resp.HubBanner == nil || isJourneyBanner(resp.HubBanner.ID) {
+		if jb := s.journeyBannerFor(payload.HiveID, time.Now()); jb != nil {
+			resp.HubBanner = jb
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	data, _ := json.Marshal(resp)

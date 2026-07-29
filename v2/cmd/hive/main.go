@@ -1658,7 +1658,13 @@ func main() {
 				m, rj, cv := fc.PRsMerged, fc.PRsRejected, fc.CVEsClosed
 				prsMerged, prsRejected, cvesClosed = &m, &rj, &cv
 			}
+			// Count agents with a method/model assigned for the hub's
+			// user-journey stage detection. Always a non-nil pointer from a
+			// spoke new enough to compute it, so the hub can distinguish
+			// "genuinely zero agents configured" from "old spoke, unknown".
+			agentsWithModel := agentMgr.CountAgentsWithModel()
 			return &hub.HeartbeatPayload{
+				AgentsWithModel: &agentsWithModel,
 				HiveID:      cfg.HiveID,
 				Org:         cfg.Project.Org,
 				AIAuthor:    cfg.Project.AIAuthor,
