@@ -22,7 +22,7 @@ func setPathValues(r *http.Request, kv map[string]string) *http.Request {
 func TestAccessRequestLifecycle(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	// Owner + hive.
 	saveSaaSUser(&SaaSUser{GitHubUsername: "owner", Hives: map[string]string{"h1": "owner"}})
@@ -98,7 +98,7 @@ func TestAccessRequestLifecycle(t *testing.T) {
 func TestHandleApproveRequestRoleGuard(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	// read-write approver cannot grant owner.
 	saveSaaSUser(&SaaSUser{GitHubUsername: "rw", Hives: map[string]string{"h1": "read-write"}})
@@ -116,7 +116,7 @@ func TestHandleApproveRequestRoleGuard(t *testing.T) {
 func TestHandleDenyRequest(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	saveSaaSUser(&SaaSUser{GitHubUsername: "owner", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
@@ -133,7 +133,7 @@ func TestHandleDenyRequest(t *testing.T) {
 func TestHandleAccessAddListRemove(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	saveSaaSUser(&SaaSUser{GitHubUsername: "owner", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
@@ -191,6 +191,7 @@ func TestHandleToggleAutoUpgradeSuccess(t *testing.T) {
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice"})
 
 	s := &HubServer{
+		hubSecret:        testHubSecret,
 		logger:           slog.Default(),
 		heartbeatUpgrade: make(map[string]string),
 	}

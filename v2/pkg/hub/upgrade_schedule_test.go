@@ -308,7 +308,7 @@ func TestHandleToggleAutoUpgradeModePersistence(t *testing.T) {
 			defer cleanup()
 			mkUser(t, "alice")
 			saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice"})
-			s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string)}
+			s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string)}
 
 			rec := httptest.NewRecorder()
 			req := setPathValue(reqWithUser(http.MethodPut, "/au", tc.body, "alice"), "id", "h1")
@@ -351,7 +351,7 @@ func TestHandleToggleAutoUpgradeClearsLastFired(t *testing.T) {
 		AutoUpgradeMode:      AutoUpgradeModeDaily,
 		AutoUpgradeLastFired: "2026-07-15",
 	})
-	s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string)}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string)}
 
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser(http.MethodPut,
@@ -385,7 +385,7 @@ func TestManualUpgradeUnaffectedByMode(t *testing.T) {
 		AutoUpgrade:     true,
 		AutoUpgradeMode: AutoUpgradeModeDaily,
 	})
-	s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string)}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string)}
 
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser(http.MethodPost, "/upgrade", `{}`, "alice"), "id", "h1")

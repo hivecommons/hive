@@ -24,7 +24,7 @@ func contactPutRequest(username, body, asUser string) *http.Request {
 	req := httptest.NewRequest("PUT", "/api/saas/admin/users/"+username, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if asUser != "" {
-		req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: asUser})
+		req.AddCookie(testAuthCookie(asUser))
 	}
 	return req
 }

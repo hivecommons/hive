@@ -16,6 +16,20 @@ import (
 // kubectl, exercising the request-handling body without a real cluster.
 // ============================================================
 
+// testHubSecret is the shared hub secret every test signs its session cookie
+// with. Tests that build a HubServer relying on cookie auth set
+// hubSecret: testHubSecret (or arrange for NewHubServer to load it via
+// HIVE_HUB_SECRET, e.g. through helperSetupTempDirs) so the signature the
+// server recomputes matches the one baked into the cookie.
+const testHubSecret = "test-hub-secret-f4"
+
+// testAuthCookie mints a signed hive_hub_user cookie for username using
+// testHubSecret, matching the production cookie format so getAuthUser /
+// handleAuthUser accept it.
+func testAuthCookie(username string) *http.Cookie {
+	return &http.Cookie{Name: "hive_hub_user", Value: mintHubUserCookieValue(testHubSecret, username)}
+}
+
 // mkUser writes a SaaS user to the temp dir so getAuthUser resolves the cookie.
 func mkUser(t *testing.T, username string) {
 	t.Helper()
@@ -32,7 +46,7 @@ func reqWithUser(method, target, body, username string) *http.Request {
 	} else {
 		r = httptest.NewRequest(method, target, nil)
 	}
-	r.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: username})
+	r.AddCookie(testAuthCookie(username))
 	return r
 }
 
@@ -45,6 +59,7 @@ func setPathValue(r *http.Request, key, val string) *http.Request {
 func newHandlerHub() *HubServer {
 	return &HubServer{
 		logger:             slog.Default(),
+		hubSecret:          testHubSecret,
 		hubBanners:         make(map[string]*HubBannerEntry),
 		heartbeatSwitchTag: make(map[string]string),
 		heartbeatUpgrade:   make(map[string]string),
@@ -105,7 +120,9 @@ func TestHandleOpenHive(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	s := newHandlerHub()
-	s.hubSecret = "test-secret"
+	// newHandlerHub already sets hubSecret to testHubSecret, which is what
+	// reqWithUser signs its session cookie with — keep them in sync so the
+	// authenticated open paths below verify.
 
 	// Invalid id.
 	rec := httptest.NewRecorder()

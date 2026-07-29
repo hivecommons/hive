@@ -13,7 +13,7 @@ import (
 // ============================================================
 
 func TestMergeLeaderboards_Cov4(t *testing.T) {
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	s.registry.Hives = []RegistryEntry{
 		{ID: "priv", IsPublic: false, Leaderboard: []LeaderboardEntry{{GitHubUsername: "hidden", TasksCompleted: 5}}},
 		{ID: "pub1", IsPublic: true, Leaderboard: []LeaderboardEntry{
@@ -56,7 +56,7 @@ func TestHandleApproveProvisionExplicitPlaceholder(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	mkUser(t, hubAdminUsername)
-	s := &HubServer{logger: slog.Default(), saveCh: make(chan struct{}, 1), clusters: map[string]ClusterConfig{"hive-oke": *dynamicCluster()}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, saveCh: make(chan struct{}, 1), clusters: map[string]ClusterConfig{"hive-oke": *dynamicCluster()}}
 
 	saveProvisionRequest(&ProvisionRequest{
 		Username: "bob", Org: "acme", Repos: "repo", PrimaryRepo: "repo", ACMMLevel: 2,

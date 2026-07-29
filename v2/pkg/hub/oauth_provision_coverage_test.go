@@ -76,7 +76,8 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	defaultGHUserURL = usr.URL
 	defer func() { defaultGHTokenURL, defaultGHUserURL = oldTok, oldUsr }()
 
-	s := &HubServer{logger: slog.Default()}
+	// A configured secret lets the login path mint a signed session cookie.
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	rec := httptest.NewRecorder()
 	// A safe relative redirect state should be honored.
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc&state=%2Fmy-hives", nil)
@@ -90,6 +91,23 @@ func TestHandleOAuthCallbackSuccess(t *testing.T) {
 	// User should have been created.
 	if loadSaaSUser("octocat") == nil {
 		t.Error("expected octocat user created")
+	}
+	// The login path must re-mint the NEW signed cookie so returning users get a
+	// verifiable session (this is what lets legacy unsigned-cookie users recover).
+	var sessionCookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "hive_hub_user" {
+			sessionCookie = c
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("expected a hive_hub_user session cookie to be set")
+	}
+	if sessionCookie.Value == "octocat" {
+		t.Error("session cookie must be signed, not the raw username")
+	}
+	if user, ok := verifyHubUserCookieValue(testHubSecret, sessionCookie.Value); !ok || user != "octocat" {
+		t.Errorf("minted cookie did not verify: (%q, %v)", user, ok)
 	}
 }
 

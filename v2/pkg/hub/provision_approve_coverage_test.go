@@ -23,13 +23,13 @@ func TestLoadRegistry(t *testing.T) {
 	old := registryPath
 	registryPath = filepath.Join(dir, "missing.json")
 	defer func() { registryPath = old }()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	s.loadRegistry()
 
 	// Valid file -> loads hives.
 	registryPath = filepath.Join(dir, "reg.json")
 	os.WriteFile(registryPath, []byte(`{"hives":[{"id":"h1"},{"id":"h2"}]}`), 0o644)
-	s2 := &HubServer{logger: slog.Default()}
+	s2 := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	s2.loadRegistry()
 	if len(s2.registry.Hives) != 2 {
 		t.Errorf("expected 2 hives loaded, got %d", len(s2.registry.Hives))
@@ -37,7 +37,7 @@ func TestLoadRegistry(t *testing.T) {
 
 	// Bad JSON -> logged, registry left empty.
 	os.WriteFile(registryPath, []byte(`{not json`), 0o644)
-	s3 := &HubServer{logger: slog.Default()}
+	s3 := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	s3.loadRegistry()
 	if len(s3.registry.Hives) != 0 {
 		t.Errorf("bad JSON should leave registry empty, got %d", len(s3.registry.Hives))
@@ -48,7 +48,7 @@ func TestHandleApproveProvision(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	mkUser(t, hubAdminUsername)
-	s := &HubServer{logger: slog.Default(), saveCh: make(chan struct{}, 1), clusters: map[string]ClusterConfig{"hive-oke": *dynamicCluster()}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, saveCh: make(chan struct{}, 1), clusters: map[string]ClusterConfig{"hive-oke": *dynamicCluster()}}
 
 	// No pending request -> 404.
 	rec := httptest.NewRecorder()
@@ -86,7 +86,7 @@ func TestHandleToggleAutoUpgradeHeartbeatOnly(t *testing.T) {
 	mkUser(t, "alice")
 
 	// No SaaS record; only a registry entry (heartbeat-connected hive behind latest).
-	s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string)}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string)}
 	s.registry.Hives = []RegistryEntry{{ID: "hb1", Owner: "alice", GitBranch: "v2", GitHash: "behind0"}}
 	resetSHACaches(t)
 	latestSHAMu.Lock()
@@ -109,7 +109,7 @@ func TestHandleToggleAutoUpgradeUnknownHive(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	mkUser(t, "alice")
-	s := &HubServer{logger: slog.Default(), heartbeatUpgrade: make(map[string]string)}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string)}
 
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser(http.MethodPut, "/au", `{"auto_upgrade":true}`, "alice"), "id", "nope")
@@ -127,7 +127,7 @@ func TestHandleMyHives(t *testing.T) {
 	saveSaaSUser(&SaaSUser{GitHubUsername: "alice", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", Org: "acme", Status: "running"})
 
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	// A registry entry for the same hive to exercise the merge path.
 	s.registry.Hives = []RegistryEntry{{ID: "h1", Owner: "alice", Org: "acme", GitHash: "abc", Online: true}}
 

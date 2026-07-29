@@ -504,6 +504,23 @@ func main() {
 		PolicyDir:  policyDir,
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
+	// Resolve the bob API key at LAUNCH time, not here: cfg is the live config
+	// pointer (the config watcher swaps its contents in place on reload), so a
+	// key added via the Secret mount, the PVC file, or a config edit takes
+	// effect on the next agent launch with no hive restart. Only the key's
+	// LOCATION is ever in cfg; the value is read from file/env on each call and
+	// is never logged.
+	agentMgr.SetBobAPIKeyResolver(func() string {
+		return cfg.Governor.Bob.ResolveAPIKey()
+	})
+	// Log only WHERE the key came from (or that none is set) so a misconfigured
+	// hive is diagnosable without the value ever reaching the logs.
+	if src := cfg.Governor.Bob.ResolveAPIKeySource(); src != "" {
+		logger.Info("bob api key detected", "source", src)
+	} else {
+		logger.Info("no bob api key configured; agents with backend \"bob\" will not launch",
+			"remedy", "set governor.bob.api_key_file or the "+config.DefaultBobAPIKeyEnv+" env var")
+	}
 	if appAuth != nil {
 		agentMgr.SetAppAuth(appAuth)
 		go agentMgr.StartAgentTokenRefresh(ctx)
