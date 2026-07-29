@@ -10,6 +10,7 @@ import (
 	"html"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -133,6 +134,43 @@ type RegistryEntry struct {
 type SparkPoint struct {
 	T int64 `json:"t"`
 	V int   `json:"v"`
+}
+
+// sparkWirePoints is how many history points /api/saas/my-hives ships per
+// series. The registry keeps the full 7-day, 15-minute series (sparkMaxPoints
+// = 672), but the dashboard renders it into a 50x14 px SVG polyline — at 672
+// points that is ~13 points per horizontal pixel, so all but a handful are
+// invisible. 48 points keeps the shape of the trend at roughly one point per
+// pixel while cutting the two history arrays from ~755 KB to ~54 KB across a
+// 42-hive fleet (they were 92% of an 818 KB payload).
+const sparkWirePoints = 48
+
+// downsampleSpark reduces a stored series to at most sparkWirePoints for the
+// wire. It keeps the FIRST and LAST samples exactly (the sparkline's endpoints
+// are what the eye anchors on, and the last point is the current value shown
+// next to it) and picks evenly spaced samples in between. Series already at or
+// under the cap are returned unchanged, so short histories keep full detail.
+//
+// Returning a fresh slice matters: the input aliases the registry's stored
+// history, and callers marshal the result while other goroutines may append.
+func downsampleSpark(points []SparkPoint, max int) []SparkPoint {
+	if max <= 0 {
+		return nil
+	}
+	if len(points) <= max {
+		return points
+	}
+	out := make([]SparkPoint, 0, max)
+	// Spread max samples across the series, inclusive of both endpoints.
+	step := float64(len(points)-1) / float64(max-1)
+	for i := 0; i < max; i++ {
+		idx := int(math.Round(float64(i) * step))
+		if idx >= len(points) {
+			idx = len(points) - 1
+		}
+		out = append(out, points[idx])
+	}
+	return out
 }
 
 var safeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)

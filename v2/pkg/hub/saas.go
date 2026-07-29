@@ -1730,6 +1730,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
 		result[i].Journey = &status
+
+		// Sparkline history dominated this payload: at 42 hives the two series
+		// were ~755 KB of an 818 KB response (92%), yet they are drawn into a
+		// 50 px-wide SVG. Downsample on the WIRE only — the registry keeps the
+		// full 7-day series, so nothing is lost server-side and a future
+		// full-resolution view can still fetch it per hive.
+		result[i].IssueHistory = downsampleSpark(result[i].IssueHistory, sparkWirePoints)
+		result[i].PRHistory = downsampleSpark(result[i].PRHistory, sparkWirePoints)
 	}
 
 	resp := map[string]any{
@@ -6743,6 +6751,82 @@ const dashboardHTML = `<!DOCTYPE html>
     var _lastHivesJSON = '';
     var _lastUsersJSON = '';
 
+    /* ── Instant-paint cache for the hive list ──
+       A returning operator used to stare at "Loading your hives..." for the
+       whole round-trip. We persist the last good list and paint it on load,
+       then reconcile when the fresh payload lands.
+
+       Bounded and versioned on purpose:
+       - HIVES_CACHE_TTL_MS keeps a stale fleet from being presented as current.
+       - HIVES_CACHE_VERSION is bumped whenever the row shape changes, so an
+         old-shaped cache can never be rendered by new code (that would
+         reintroduce exactly the class of render crash this fixes).
+       Reads NEVER throw: storage can be disabled, full, or hold junk, and none
+       of that may block the network path. */
+    var LS_HIVES_CACHE = 'hive-my-hives-cache';
+    /* Bump on ANY change to the hive row shape consumed by renderHives(). */
+    var HIVES_CACHE_VERSION = 1;
+    /* 10 minutes: long enough to cover a reload or a tab restore, short enough
+       that a cached fleet is never wildly out of date before the poll lands. */
+    var HIVES_CACHE_TTL_MS = 10 * 60 * 1000;
+    /* Cap what we persist. Only the fields renderHives() needs for the first
+       paint are stored, but a huge fleet could still overflow the ~5 MB quota
+       and make every write fail. */
+    var HIVES_CACHE_MAX_ROWS = 200;
+
+    function readHivesCache() {
+      try {
+        var raw = window.localStorage.getItem(LS_HIVES_CACHE);
+        if (!raw) return null;
+        var c = JSON.parse(raw);
+        if (!c || c.version !== HIVES_CACHE_VERSION) return null;
+        if (!c.savedAt || (Date.now() - c.savedAt) > HIVES_CACHE_TTL_MS) return null;
+        if (!Array.isArray(c.hives) || !c.hives.length) return null;
+        return c;
+      } catch (e) {
+        /* Disabled/!full/corrupt storage must never break the load path. */
+        console.warn('[hive] hive cache read failed, using network only:', e);
+        return null;
+      }
+    }
+
+    function writeHivesCache(hives) {
+      try {
+        var rows = (hives || []).slice(0, HIVES_CACHE_MAX_ROWS);
+        window.localStorage.setItem(LS_HIVES_CACHE, JSON.stringify({
+          version: HIVES_CACHE_VERSION,
+          savedAt: Date.now(),
+          hives: rows
+        }));
+      } catch (e) {
+        /* Quota errors are expected on large fleets — caching is best-effort. */
+        console.warn('[hive] hive cache write failed:', e);
+      }
+    }
+
+    /* Paint the cached fleet before the first request returns. Guarded so any
+       failure (including a stale-shaped row slipping past the version check)
+       falls back to the normal spinner + network path rather than killing
+       init(). */
+    function paintCachedHives() {
+      var c = readHivesCache();
+      if (!c) return false;
+      try {
+        _allDashHives = c.hives;
+        _hiveRegistry = c.hives;
+        renderHives(sortedDashHives(), true);
+        return true;
+      } catch (e) {
+        console.error('[hive] cached render failed, falling back to network:', e);
+        _allDashHives = [];
+        _hiveRegistry = [];
+        _lastHivesJSON = '';
+        var container = document.getElementById('hives-container');
+        if (container) container.innerHTML = '<div class="loading">Loading your hives...</div>';
+        return false;
+      }
+    }
+
     /* Active status filters, keyed by HIVE_FILTER_*. Multi-select: several may
        be on at once and a hive matches if it satisfies ANY active one (OR), so
        turning on more chips widens the list rather than narrowing it to nothing
@@ -7480,6 +7564,7 @@ const dashboardHTML = `<!DOCTYPE html>
           (rows.length - ALERT_ROWS_SHOWN) + ' more</div>'
         : '';
       return '<div class="alert-rows">' + html + more + '</div>';
+    }
 
     /* ── Free-text search over the hive list ──
        OR semantics: whitespace-separated terms, a hive matches if ANY term is a
@@ -7712,7 +7797,6 @@ const dashboardHTML = `<!DOCTYPE html>
         return hiveMatchesFilters(h) && hiveMatchesAlertFilter(h) &&
           hiveMatchesSearch(h) && hiveMatchesFacets(h);
       });
-    }
     }
 
     /* toggleStatusFilter flips one chip and re-renders from the unfiltered
@@ -8216,6 +8300,10 @@ const dashboardHTML = `<!DOCTYPE html>
            back to server order every REFRESH cycle. With no sort key set this
            returns _allDashHives unchanged, i.e. the previous behaviour. */
         renderHives(sortedDashHives());
+        /* Persist AFTER a successful render: a payload we could not render must
+           never be cached, or the next page load would replay the same crash
+           from localStorage before the network could correct it. */
+        writeHivesCache(data.hives || []);
         renderPendingBanner(data.hives || []);
         renderUserAccessBanner();
         renderProvisionRequestBanner(data.my_provision_request || null);
@@ -8224,12 +8312,65 @@ const dashboardHTML = `<!DOCTYPE html>
         loadPublicHives(data.hives || []);
         loadUsage();
       } catch(e) {
-        if (!_allDashHives.length) {
-          document.getElementById('hives-container').innerHTML = '<div class="loading">Failed to load hives</div>';
-        }
+        /* Surface EVERY failure in the load→render path, not just fetch errors.
+           The old guard only painted a message when _allDashHives was empty —
+           but _allDashHives is assigned from the payload BEFORE renderHives()
+           runs, so a throw inside rendering left the container showing
+           "Loading your hives..." forever with nothing in the console. That is
+           how an unbalanced brace in the inline JS (which silently nested a
+           third of the dashboard's top-level declarations inside
+           renderAlertRows) reached production unnoticed. Never swallow: log the
+           real error AND give the operator a way to retry. */
+        console.error('[hive] my-hives load/render failed:', e);
+        renderHivesError(e);
       } finally {
         _hivesLoading = false;
       }
+    }
+
+    /* renderHivesError replaces the eternal spinner with an actionable message.
+       Written with DOM APIs + addEventListener rather than innerHTML with an
+       inline handler so the error text can never be interpreted as markup. */
+    function renderHivesError(err) {
+      var container = document.getElementById('hives-container');
+      if (!container) return;
+      /* Keep a good list on screen if we already have one — a failed refresh
+         should not blank out the fleet the operator is looking at. */
+      if (_allDashHives.length && !/Loading your hives/.test(container.innerHTML) &&
+          !container.querySelector('.hives-load-error')) {
+        return;
+      }
+      var box = document.createElement('div');
+      box.className = 'empty-state hives-load-error';
+      var title = document.createElement('p');
+      title.style.cssText = 'font-size:1.1rem;margin-bottom:8px;color:var(--red)';
+      title.textContent = 'Could not load your hives';
+      var detail = document.createElement('p');
+      detail.style.cssText = 'font-size:0.8rem;color:var(--muted);word-break:break-word';
+      detail.textContent = (err && (err.message || String(err))) || 'Unknown error';
+      var hint = document.createElement('p');
+      hint.style.cssText = 'font-size:0.75rem;color:var(--muted);opacity:0.8;margin-top:6px';
+      hint.textContent = 'Details were logged to the browser console.';
+      var wrap = document.createElement('p');
+      wrap.style.marginTop = '12px';
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'filter-chip filter-chip-clear';
+      btn.textContent = 'Retry';
+      btn.addEventListener('click', function() {
+        container.innerHTML = '<div class="loading">Loading your hives...</div>';
+        /* Force the next render past the signature short-circuit — the cached
+           signature may still match the payload that failed to render. */
+        _lastHivesJSON = '';
+        loadHives();
+      });
+      wrap.appendChild(btn);
+      box.appendChild(title);
+      box.appendChild(detail);
+      box.appendChild(hint);
+      box.appendChild(wrap);
+      container.innerHTML = '';
+      container.appendChild(box);
     }
 
     async function loadPublicHives(myHives) {
@@ -10111,6 +10252,12 @@ const dashboardHTML = `<!DOCTYPE html>
          already reflects the operator's view rather than flashing the ungrouped
          list and then rearranging. */
       loadDashViewPrefs();
+      /* Progressive paint: put the last known fleet on screen immediately so a
+         returning operator sees their hives instead of a spinner. The network
+         path below still runs unconditionally and reconciles the list; this
+         only changes what fills the gap while it is in flight. Must come after
+         loadDashViewPrefs() so the cached rows honour the active view. */
+      paintCachedHives();
       await loadUser();
       await autoRequestAccessFromUrl();
       await loadHives();
