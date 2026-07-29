@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -1665,15 +1666,15 @@ func main() {
 			agentsWithModel := agentMgr.CountAgentsWithModel()
 			return &hub.HeartbeatPayload{
 				AgentsWithModel: &agentsWithModel,
-				HiveID:      cfg.HiveID,
-				Org:         cfg.Project.Org,
-				AIAuthor:    cfg.Project.AIAuthor,
-				StartedAt:   processStartedAt.UTC().Format(time.RFC3339),
-				Repos:       cfg.Project.Repos,
-				PrimaryRepo: cfg.Project.PrimaryRepo,
-				ACMMLevel:   acmmLvl,
-				Agents:      agents,
-				Governor:    hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				HiveID:          cfg.HiveID,
+				Org:             cfg.Project.Org,
+				AIAuthor:        cfg.Project.AIAuthor,
+				StartedAt:       processStartedAt.UTC().Format(time.RFC3339),
+				Repos:           cfg.Project.Repos,
+				PrimaryRepo:     cfg.Project.PrimaryRepo,
+				ACMMLevel:       acmmLvl,
+				Agents:          agents,
+				Governor:        hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -2292,6 +2293,14 @@ func runEvalCycle(
 	}
 
 	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+
+	// Duplicate-PR guard: drop issues an open hive-authored PR already claims,
+	// before the governor counts the queue or the scheduler builds kicks. A
+	// restart storm otherwise re-offers the same issue on every fresh agent
+	// start, and the agent — having no memory of the PR it just filed — files
+	// another. Backed by a PVC ledger so it survives those restarts, and fails
+	// closed (keeps the last known claims) when the GitHub API is unavailable.
+	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)
 
 	lastActionable.Store(actionable)
 	if data, err := json.Marshal(actionable); err == nil {
@@ -2918,6 +2927,54 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
+
+// claimLedger holds the duplicate-PR guard's persisted issue→PR claim mapping
+// across eval cycles. It is loaded lazily on first use (and retried on a load
+// failure) rather than at startup, so a missing or corrupt /data ledger can
+// never block the hive from booting.
+var (
+	claimLedgerOnce sync.Once
+	claimLedger     *github.ClaimLedger
+)
+
+// hiveIdentity determines which PR authors count as "this hive", so only our
+// own PRs suppress work. Two accounts can open PRs on our behalf:
+//   - project.ai_author — the account agents push and open PRs as
+//   - the GitHub App bot login ("<app-slug>[bot]") when the hive authenticates
+//     as an installation, which is what actually authors PRs in that mode
+func hiveIdentity(cfg *config.Config) github.HiveIdentity {
+	id := github.HiveIdentity{AIAuthor: cfg.Project.AIAuthor}
+	if slug := cfg.GitHub.ResolvedAppSlug(); slug != "" {
+		id.AppLogin = slug + "[bot]"
+	}
+	return id
+}
+
+// applyDuplicatePRGuard filters issues already claimed by an open hive-authored
+// PR out of the actionable set. Failures are logged, never fatal: the guard is
+// a safety net, and a broken net must not take the hive down with it.
+func applyDuplicatePRGuard(
+	ctx context.Context,
+	cfg *config.Config,
+	ghClient *github.Client,
+	actionable *github.ActionableResult,
+	logger *slog.Logger,
+) {
+	claimLedgerOnce.Do(func() {
+		ledger, err := github.LoadClaimLedger(github.ClaimLedgerPath, logger)
+		if err != nil {
+			// LoadClaimLedger always returns a usable (possibly empty) ledger
+			// alongside the error, so we keep it and just report the problem.
+			logger.Warn("duplicate-PR guard: could not load persisted claim ledger, starting empty",
+				"path", github.ClaimLedgerPath, "error", err)
+		}
+		claimLedger = ledger
+	})
+	if claimLedger == nil {
+		return
+	}
+	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, logger)
+}
 
 func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
