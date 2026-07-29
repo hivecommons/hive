@@ -385,6 +385,32 @@ func effectiveGitHubAPIURL(h *SaaSHive, cluster *ClusterConfig) string {
 	}
 }
 
+// backfillGitHubHostFromCluster returns the GitHub host a hive should inherit
+// from its cluster, or "" when there is nothing to fill in.
+//
+// A hive's GitHubHost is otherwise only ever set from an explicitly pasted
+// org URL at assign time. Placeholders provisioned BEFORE their cluster gained
+// github_base_url/github_api_url therefore keep GitHubHost == "" forever, and
+// projectConfigForHiveID pushes gheAPIURLForHost("") == "" on every heartbeat
+// — which the spoke reads as "leave mine alone". The result is a hive on a GHE
+// cluster still pointing at api.github.com with the public app_id (observed on
+// vllm-d: hosted-available-vllmd-01 in org "katamari" has base_url: "",
+// api_url: "", app_id: 3568013 against a github.ibm.com cluster).
+//
+// This only ever fills a blank: a hive that already carries a host — including
+// an explicit "public" override, which effectiveGitHubBaseURL resolves to ""
+// — is returned unchanged.
+func backfillGitHubHostFromCluster(h *SaaSHive, cluster *ClusterConfig) string {
+	if h == nil || h.GitHubHost != "" || cluster == nil {
+		return ""
+	}
+	base := effectiveGitHubBaseURL(h, cluster)
+	if base == "" {
+		return "" // public github.com — nothing to record
+	}
+	return githubHostLabel(base)
+}
+
 func generateHiveID(org, repo string) string {
 	short := repo
 	if len(short) > 12 {

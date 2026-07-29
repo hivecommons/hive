@@ -160,6 +160,10 @@ func main() {
 			os.Exit(1)
 		}
 		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
+		// Correct a stale/wrong installation_id BEFORE building the client, so
+		// the very first token this process mints is scoped to the right org
+		// rather than 403ing on every write until the self-heal tick runs.
+		healGitHubAppInstallation(ctx, appAuth, cfg, logger)
 		ghClient = github.NewClientFromApp(appAuth, cfg.Project.Org, cfg.Project.Repos, logger)
 
 		if cfg.GitHub.DocsInstallationID != 0 {
@@ -1133,6 +1137,10 @@ func main() {
 				// wrong installation). Verify write capability before letting
 				// the handler clear the banner, so Re-check can't produce a
 				// clears-then-returns flip-flop.
+				// Before reporting a wrong-account installation, try to fix it:
+				// this is the exact case rediscovery exists for. Cached by TTL,
+				// so a repeated re-check does not re-hit the API.
+				healGitHubAppInstallation(ctx, ghClient.AppAuth(), cfg, logger)
 				if diag := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
 					dashSrv.SetGitHubAppPermIssue(diag)
 					logger.Warn("github app recheck: app detected but write not verified", "repo", recheckRepo, "detail", diag)
@@ -1904,6 +1912,10 @@ func main() {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
 					return
 				}
+				// Hub-delivered creds can carry a wrong installation_id just as
+				// easily as a hand-edited config; correct (and persist) it
+				// before building a client that would 403 on every write.
+				healGitHubAppInstallation(ctx, newAppAuth, cfg, logger)
 				newClient := github.NewClientFromApp(newAppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
 				if len(cfg.Governor.Labels.Exempt) > 0 {
 					newClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
@@ -2228,6 +2240,50 @@ func applyBudgetAlerts(gov *governor.Governor, trans governor.BudgetTransitions,
 // that produce identical 403s: an installation_id pointing at a different
 // org's installation, and a permission update the org owner hasn't approved
 // yet. A nil appAuth (token-authenticated hive) yields "" — nothing to check.
+// healGitHubAppInstallation self-heals a hive whose github.installation_id
+// points at the WRONG account — the failure mode diagnoseGitHubAppWrite
+// already detects and reports ("installation N belongs to 'X', not 'Y'"). It
+// asks pkg/github to rediscover the installation covering cfg.Project.Org via
+// the App JWT and, only on an unambiguous match, adopts it in place and
+// persists it so the fix survives a pod restart.
+//
+// Every failure path is soft and silent-ish: a hive with no App key is not
+// App-authenticated (skip), an API error or an ambiguous/absent discovery
+// result leaves installation_id exactly as configured so the existing
+// "check github.installation_id" banner still stands. It never returns an
+// error to the caller and never blocks startup or a heartbeat.
+//
+// Rediscovery is rate-limited by pkg/github's discovery cache
+// (github.InstallationDiscoveryTTL), so calling this from the self-heal tick
+// is cheap even when the App is genuinely not installed on the org.
+func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg *config.Config, logger *slog.Logger) {
+	if appAuth == nil || !appAuth.HasKey() || cfg == nil {
+		return
+	}
+	org := cfg.Project.Org
+	if org == "" {
+		return
+	}
+	newID, err := appAuth.RediscoverAndAdopt(ctx, org, logger)
+	if err != nil {
+		logger.Debug("github app installation rediscovery did not adopt a new id",
+			"org", org, "error", err)
+		return
+	}
+	if newID == 0 {
+		return // already correct, or nothing safe to adopt
+	}
+	cfg.GitHub.InstallationID = newID
+	if err := cfg.Save(); err != nil {
+		logger.Error("adopted rediscovered installation_id but failed to persist it — "+
+			"it will revert on the next pod restart",
+			"installation_id", newID, "error", err)
+		return
+	}
+	logger.Info("persisted rediscovered github app installation_id",
+		"installation_id", newID, "org", org)
+}
+
 func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
 	if appAuth == nil {
 		return ""

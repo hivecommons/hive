@@ -5283,6 +5283,20 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	if body.GitHubHost != "" {
 		h.GitHubHost = body.GitHubHost
 	}
+	// Backfill the host from the hive's cluster when neither the request nor
+	// the placeholder carries one. Placeholders provisioned BEFORE their
+	// cluster gained github_base_url/github_api_url have GitHubHost == "", and
+	// nothing else ever fills it in: projectConfigForHiveID pushes
+	// gheAPIURLForHost(h.GitHubHost), which is empty for those hives, so the
+	// spoke keeps api.github.com and the public app_id even though the cluster
+	// is a GHE cluster (observed on vllm-d: hosted-available-vllmd-01 has
+	// base_url: "" / api_url: "" against a github.ibm.com cluster). The hive's
+	// own value always wins; this only fills a blank.
+	if host := backfillGitHubHostFromCluster(h, s.clusterForHive(h)); host != "" {
+		h.GitHubHost = host
+		s.logger.Info("backfilled hive github host from cluster defaults",
+			"hive", hiveID, "github_host", host)
+	}
 	h.Repos = repos
 	h.PrimaryRepo = primaryRepo
 	if body.ProjectName != "" {
