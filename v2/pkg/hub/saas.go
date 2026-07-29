@@ -11215,8 +11215,12 @@ const dashboardHTML = `<!DOCTYPE html>
         // title= carries the full note on hover, so it needs attribute escaping.
         bits.push('<span title="' + escAttr(u.notes) + '" style="font-size:0.7rem;color:var(--muted);font-style:italic">' + esc(preview) + '</span>');
       }
+      // align-items:flex-start + text-align:left keep the contact lines
+      // left-justified. Without them the cell inherits the users table's
+      // centred alignment, so name/slack/notes rendered ragged-centre — each
+      // line a different width, which is hard to scan down a column.
       var summary = bits.length
-        ? '<div style="display:flex;flex-direction:column;gap:1px;max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
+        ? '<div style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1px;max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
         : '<span style="color:var(--muted);font-size:0.72rem">—</span>';
       var btn = '<button type="button" data-contact-toggle="' + escAttr(u.github_username) + '"' +
         ' style="margin-top:2px;padding:1px 7px;background:none;border:1px solid var(--border);border-radius:4px;' +
@@ -11410,7 +11414,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
-          '<td>' + renderContactCell(u) + '</td>' +
+          '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
           '<td>' + blocked + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
