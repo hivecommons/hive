@@ -178,6 +178,18 @@ governor:
   #   local_proxy: false                      # run the bundled litellm binary locally
   #                                           # (config at /data/litellm/config.yaml)
 
+  # IBM bobshell ("bob") backend credentials. REQUIRED for agents with
+  # backend: bob — bob's default IBMid/W3ID auth opens a browser and waits on a
+  # localhost callback, which no pod can satisfy, so it fails after a 3-minute
+  # timeout. With a key, hive launches bob with --auth-method api-key and it
+  # authenticates headlessly (interactive tmux use still works).
+  # SECURITY: store only the env var NAME or a key file path, never the value.
+  # Both defaults below are consulted automatically, so if you mount the key at
+  # /secrets/bob_api_key or set HIVE_BOB_API_KEY, this block can stay commented.
+  # bob:
+  #   api_key_env: HIVE_BOB_API_KEY       # env var NAME holding the key (default)
+  #   api_key_file: /secrets/bob_api_key  # or a mounted key file (default path)
+
 # GitHub authentication — use ONE of these methods
 github:
   # Option 1: Personal access token (simplest)

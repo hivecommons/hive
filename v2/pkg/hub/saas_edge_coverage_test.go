@@ -15,6 +15,7 @@ import (
 // nil and the "no cluster config" error branches run.
 func noClusterHub() *HubServer {
 	return &HubServer{
+		hubSecret:          testHubSecret,
 		logger:             slog.Default(),
 		saveCh:             make(chan struct{}, 1),
 		heartbeatUpgrade:   make(map[string]string),
@@ -45,7 +46,7 @@ func TestHandleUpgradeHiveRegistryUpdate(t *testing.T) {
 	mkUser(t, "alice")
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke"})
 
-	s := &HubServer{logger: slog.Default(), clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}}}
 	// A matching registry entry so the post-upgrade registry-update loop runs.
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
 	resetSHACaches(t)
@@ -94,6 +95,7 @@ func TestHandleHubAutoUpgradeSuccess(t *testing.T) {
 	latestSHAMu.Unlock()
 
 	s := &HubServer{
+		hubSecret:  testHubSecret,
 		logger:     slog.Default(),
 		hubGitHash: "oldhubsha",
 		clusters:   map[string]ClusterConfig{defaultClusterID: {ID: defaultClusterID, InCluster: true}},
@@ -127,7 +129,7 @@ func TestHandleHubSelfUpgrade_Edge(t *testing.T) {
 	t.Cleanup(func() { hubImageExists = oldImgCheck })
 
 	// Failure path: fail-fast fake kubectl (exit 1) -> 500.
-	s := &HubServer{logger: slog.Default(), hubGitBranch: "v2", clusters: map[string]ClusterConfig{defaultClusterID: {ID: defaultClusterID, InCluster: true}}}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, hubGitBranch: "v2", clusters: map[string]ClusterConfig{defaultClusterID: {ID: defaultClusterID, InCluster: true}}}
 	rec := httptest.NewRecorder()
 	req := reqWithUser(http.MethodPost, "/hub-self", "", "admin")
 	s.handleHubSelfUpgrade(rec, req)
@@ -162,6 +164,7 @@ func TestHandleClusterHealthBuildError(t *testing.T) {
 	clusterHealthCacheMu.Unlock()
 
 	s := &HubServer{
+		hubSecret:       testHubSecret,
 		logger:          slog.Default(),
 		clusters:        map[string]ClusterConfig{},
 		heartbeatHealth: make(map[string]*HeartbeatHealthEntry),

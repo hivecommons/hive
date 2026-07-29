@@ -148,7 +148,7 @@ func TestVerifySSOTokenBranches(t *testing.T) {
 func TestHandleAuthUserAndLogout(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	// No cookie -> not authenticated.
 	rec := httptest.NewRecorder()
@@ -162,7 +162,7 @@ func TestHandleAuthUserAndLogout(t *testing.T) {
 	mkUser(t, "octocat")
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodGet, "/api/auth/user", nil)
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: "octocat"})
+	req.AddCookie(testAuthCookie("octocat"))
 	s.handleAuthUser(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Errorf("auth user status = %d, want 200", rec.Code)

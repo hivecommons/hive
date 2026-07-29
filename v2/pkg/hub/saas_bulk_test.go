@@ -51,7 +51,7 @@ func bulkPost(t *testing.T, srv *HubServer, user string, body any) (*httptest.Re
 	req := httptest.NewRequest("POST", "/api/saas/hives/bulk", bytes.NewReader(raw))
 	req.Header.Set("Content-Type", "application/json")
 	if user != "" {
-		req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: user})
+		req.AddCookie(testAuthCookie(user))
 	}
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)

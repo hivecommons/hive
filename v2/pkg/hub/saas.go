@@ -322,8 +322,14 @@ func isTrustedOrigin(raw string) bool {
 func (s *HubServer) getAuthUser(r *http.Request) string {
 	cookie, err := r.Cookie("hive_hub_user")
 	if err == nil && cookie.Value != "" {
-		if loadSaaSUser(cookie.Value) != nil {
-			return cookie.Value
+		// The cookie value is only trusted when its HMAC signature verifies
+		// against the hub secret. A legacy unsigned cookie or a forged value
+		// fails here and is treated as logged out, so the user re-authenticates
+		// through the normal login flow (which re-mints a signed cookie).
+		if username, ok := verifyHubUserCookieValue(s.hubSecret, cookie.Value); ok {
+			if loadSaaSUser(username) != nil {
+				return username
+			}
 		}
 	}
 

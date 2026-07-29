@@ -40,6 +40,10 @@ func helperSetupTempDirs(t *testing.T) func() {
 	t.Helper()
 	dir := t.TempDir()
 
+	// Pin a known hub secret so NewHubServer signs/verifies session cookies with
+	// a value the tests can reproduce (see testHubSecret / testAuthCookie).
+	t.Setenv("HIVE_HUB_SECRET", testHubSecret)
+
 	// Async provisioning goroutines from previously-run tests read the
 	// package-level path variables swapped below; drain them first.
 	provisionWG.Wait()
