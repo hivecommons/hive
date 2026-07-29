@@ -40,7 +40,7 @@ func deviceFlowMock(t *testing.T, tokenStatus, login string) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		switch tokenStatus {
 		case "complete":
-			json.NewEncoder(w).Encode(map[string]any{"access_token": "gho_validtoken", "token_type": "bearer"})
+			json.NewEncoder(w).Encode(map[string]any{"access_token": "gho_validtoken", "token_type": "bearer", "scope": "repo workflow"})
 		case "authorization_pending":
 			json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
 		case "slow_down":
