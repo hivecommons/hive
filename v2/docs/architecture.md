@@ -242,8 +242,8 @@ flowchart LR
 |-------|------|------------------|
 | L1 | Assisted | Advisory beads + project inception only |
 | L2 | Instructed | Observe and report findings as beads; no GitHub writes |
-| L3 | Measured | `quality` opens hold-gated PRs; others advisory |
-| L4 | Adaptive | Several agents file issues; a few open hold-gated PRs |
+| L3 | Measured | `quality` opens hold-gated PRs about testing gaps, coverage, and CI health; others advisory. This measurement foundation is what earns automation at higher levels |
+| L4 | Adaptive | All agents file issues (bugs, docs, workflows, vulns); still no PRs |
 | L5 | Semi-Automated | All agents open PRs — every PR carries a `hold` label for human review |
 | L6 | Fully Autonomous | Agents open PRs and **auto-merge on green CI**; no hold required |
 
