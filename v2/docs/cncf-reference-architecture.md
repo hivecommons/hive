@@ -1,22 +1,23 @@
 ---
-title: KubeStellar — Hive, an autonomous cloud-native maintenance platform for open source
+title: Hive — an autonomous cloud-native maintenance platform for open source
 date: 2026-07-29
-org_name: KubeStellar
+org_name: Hive
 org_team: Hive maintainers
-org_url: https://kubestellar.io/
-org_logo_filename: images/kubestellar.svg
+org_url: https://hive.kubestellar.io/
+org_logo_filename: images/hive.svg
 contact: Andy Anderson
 email: # optional — add if you want it listed publicly
 org_description: |
-  KubeStellar is a CNCF Sandbox project for multi-cluster configuration
-  management and workload placement across Kubernetes clusters, from cloud to
-  edge. Hive is a KubeStellar sub-project: an open-source, self-hostable system
-  that runs a fleet of AI coding agents to autonomously maintain software
-  repositories — triaging issues, writing fixes, opening pull requests, and
-  merging on green CI, all under human-controlled, technically-enforced
-  guardrails.
+  Hive is an open-source, self-hostable system that runs a fleet of AI coding
+  agents to autonomously maintain software repositories — triaging issues,
+  writing fixes, opening pull requests, and merging on green CI, all under
+  human-controlled, technically-enforced guardrails. It runs as a cloud-native
+  workload on Kubernetes with a hub-and-spoke model: a hosted hub coordinates a
+  fleet of self-hosted spoke hives. End users today include the KubeStellar
+  Console team (kubestellar/console) and Project Bluefin (projectbluefin), each
+  running a hive against their own repositories.
 org_size: Open-source community project
-user_size: Maintainers and contributors of the repositories each hive maintains
+user_size: The maintainers and contributors of every repository a hive maintains
 industries:
   - Open Source
   - Software
@@ -58,7 +59,7 @@ reference_architectures:
   - **Using since:** 2024 (CNCF Sandbox)
   - **Current version:** 0.2x
 
-  KubeStellar provides the multi-cluster substrate: the hub reasons about a fleet of clusters (cloud and edge) and places spoke hives onto them, mirroring KubeStellar's own hub-and-spoke placement model.
+  KubeStellar provides an optional multi-cluster substrate: the hub can reason about a fleet of clusters (cloud and edge) and place spoke hives onto them. Hive's own hub-and-spoke model is directly inspired by KubeStellar's placement design.
   {{< /card >}}
 {{< /cardpane >}}
 
@@ -90,26 +91,30 @@ reference_architectures:
 
 ## Describe your organisation
 
-[KubeStellar](https://kubestellar.io/) is a CNCF Sandbox project for multi-cluster
-configuration management and workload placement — spreading Kubernetes
-workloads across many clusters, from centralized cloud to the edge, from a single
-control point. The project is maintained by an open community and used by teams
-that need to treat a fleet of clusters as one placement surface.
+**Hive** is an open-source, self-hostable platform that keeps software
+repositories maintained by running a fleet of AI coding agents — triaging issues,
+writing fixes, opening pull requests, and merging on green CI — under a
+human-controlled autonomy dial and permissions enforced in depth. It is built as
+a cloud-native workload: each hive is a Kubernetes deployment, and a hosted hub
+coordinates a fleet of self-hosted spoke hives.
 
-**Hive** is a KubeStellar sub-project that applies the same hub-and-spoke,
-declarative, cloud-native philosophy to a different problem: **keeping software
-repositories maintained**. Instead of placing application workloads across
-clusters, Hive places *maintenance agents* — and governs what they are allowed to
-do with the same rigor a platform team applies to production workloads.
+Hive is used in production today by more than one open-source community:
+
+- The **KubeStellar Console** team ([`kubestellar/console`](https://github.com/kubestellar/console)) runs a hive against the console's repositories — the flagship end user, where Hive is dogfooded daily.
+- **Project Bluefin** ([`projectbluefin`](https://github.com/ublue-os)) runs its own hive (`projectbluefin/knuckle` and related repos) at a measured ACMM level.
+
+This is the point of the hub-and-spoke design: independent teams each self-host a
+spoke hive against their own repositories, while a shared hub gives them a
+registry, a cross-hive leaderboard, and — where reachable — provisioning.
 
 ## Describe your entity and/or team
 
-Hive is built and operated by the KubeStellar maintainers as an open-source
-project. There is no separate commercial entity: the same people who maintain
-KubeStellar run production hives against the KubeStellar repositories themselves
-(the project dogfoods its own tool), and offer a hosted hub
-([hive.kubestellar.io](https://hive.kubestellar.io)) so other open-source
-projects and contributors can register a hive or donate compute to one.
+Hive is built and operated by an open-source community as a standalone project.
+There is no separate commercial entity: the maintainers run production hives
+against their own repositories (the project dogfoods its own tool) and operate a
+hosted hub ([hive.kubestellar.io](https://hive.kubestellar.io)) so other
+open-source projects and individual contributors can register a spoke hive or
+donate compute to an existing one.
 
 ## Brief overview of your architecture and any potential goals you are trying to achieve with it?
 
@@ -158,8 +163,10 @@ registry of all spoke hives, a cross-hive leaderboard, and — for clusters it c
 reach — provisions new spokes onto them with `kubectl`. Firewalled spokes it
 cannot reach directly are still fully managed over the 2-minute heartbeat, whose
 response carries callbacks (self-upgrade to a pinned image SHA, GitHub App
-credential delivery, visibility changes). This is the same control pattern
-KubeStellar uses for placing workloads across a heterogeneous fleet.
+credential delivery, visibility changes). It is this heartbeat-driven control
+plane that lets independent teams — the KubeStellar Console team and Project
+Bluefin among them — each run a spoke against their own repositories while a
+single hub keeps the fleet coherent.
 
 A fuller technical walkthrough (process model, the governor loop, the guardrail
 layers, the beads ledger, and an end-to-end "issue → merged PR" trace) lives in
@@ -171,9 +178,9 @@ the project's [reference architecture](architecture.md).
   self-hostable anywhere, survive restarts, and be provisioned programmatically.
   Modeling each hive as a Deployment + PVC + Service + Ingress means the hub can
   create, upgrade, and delete a spoke with plain Kubernetes API calls.
-- **KubeStellar** gives the hub a coherent way to reason about *many* clusters —
-  cloud and edge — as placement targets for spokes, which is exactly its
-  multi-cluster configuration-and-placement wheelhouse.
+- **KubeStellar** (optional) gives the hub a coherent way to reason about *many*
+  clusters — cloud and edge — as placement targets for spokes when a hive is run
+  across a multi-cluster fleet.
 - **cert-manager** removes TLS toil: every dashboard and the hub get automatic,
   renewing certificates, which matters because agent dashboards stream over
   long-lived SSE connections that must be secured.
@@ -199,8 +206,9 @@ the project's [reference architecture](architecture.md).
   count (idle → quiet → busy → surge) keeps a quiet repository nearly free and
   gives a flooded one the full fleet — without a human tuning schedules.
 - **Hub-and-spoke over heartbeat.** Managing spokes we can't reach directly
-  (firewalled clusters) purely through the heartbeat response has been robust and
-  is the same shape as KubeStellar's own placement model.
+  (firewalled clusters) purely through the heartbeat response has been robust —
+  and it is what lets separate end users (KubeStellar Console, Project Bluefin)
+  each self-host a spoke under one shared hub.
 
 ## What has not worked well?
 
@@ -264,8 +272,6 @@ in-memory coordination lost work across restarts.
   automatic decomposition of a high-level goal into a tree of child work items,
   with a human "approve the plan" gate before agents execute, and stall-triggered
   re-planning when progress stops.
-- **Deeper multi-cluster placement** through KubeStellar — smarter selection of
-  which cluster a spoke lands on based on cost, locality, and capacity.
 - **Richer fleet observability** — first-class OpenTelemetry traces across the
   governor → pipeline → agent → PR lifecycle so an operator can see exactly why a
   given change was (or wasn't) made.
