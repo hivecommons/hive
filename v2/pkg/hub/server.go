@@ -256,6 +256,14 @@ type HubServer struct {
 	heartbeatHealth       map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
 	heartbeatHealthMu     sync.RWMutex
 
+	// usageHistory is the sampled fleet-total token trend, appended on
+	// heartbeat at usageSnapshotInterval and bounded to
+	// usageSnapshotMaxPoints (see usage.go). Guarded by usageMu rather than
+	// s.mu: the heartbeat path already holds s.mu when it samples, and
+	// re-locking a held non-reentrant mutex would deadlock the hub.
+	usageHistory []UsageSnapshot
+	usageMu      sync.RWMutex
+
 	// heartbeatUpgrade tracks hives that should be upgraded via heartbeat
 	// UpgradeTo because kubectl rollout restart failed (cluster unreachable).
 	// Key: hive ID, value: target SHA.  Cleared when the spoke reports the
@@ -810,6 +818,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.recordTimeline(entry.ID, TimelineCameOnline, "hive registered with the hub for the first time", "")
 	}
+
+	// Sample the fleet-total token trend. Deliberately AFTER s.mu.Unlock():
+	// sampleUsageHistory takes s.mu.RLock itself, and s.mu is a
+	// non-reentrant sync.RWMutex, so calling it while the write lock is held
+	// would deadlock every heartbeat.
+	s.sampleUsageHistory(time.Now())
 
 	s.requestSave()
 

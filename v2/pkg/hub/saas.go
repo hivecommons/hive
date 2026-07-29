@@ -127,6 +127,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("GET /dashboard", s.handleDashboard)
 	s.mux.HandleFunc("GET /access-denied", s.handleAccessDenied)
 	s.mux.HandleFunc("GET /api/saas/my-hives", s.requireAuth(s.handleMyHives))
+	// Token attribution rollups. requireAuth (not requireAdmin) because a
+	// non-admin legitimately sees their OWN hives' usage; the handler scopes
+	// fleet-wide data to admins itself.
+	s.mux.HandleFunc("GET /api/saas/usage", s.requireAuth(s.handleUsage))
 	s.mux.HandleFunc("POST /api/saas/hives", s.requireAuth(s.handleCreateHive))
 	s.mux.HandleFunc("GET /api/saas/hives/{id}/status", s.requireAuth(s.handleHiveStatus))
 	// /open is a browser NAVIGATION endpoint (the SSO handoff), not an API call.
@@ -5504,6 +5508,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
     <div id="hive-drift-summary" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
+    <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="hives-container"><div class="loading">Loading your hives...</div></div>
 
     <div id="public-hives-section" style="display:none;margin-top:48px">
@@ -6369,6 +6374,153 @@ const dashboardHTML = `<!DOCTYPE html>
       renderHives(sorted, true);
     }
 
+    /* ---- Usage attribution panel ----------------------------------------
+       Token rollups by org / owner / cluster. TOKENS ONLY: the hub receives a
+       single blended token total per hive with no per-model split, so no
+       dollar figure is derivable here (see usage.go). The panel shows the
+       server's currencyNote rather than inventing a rate. */
+
+    /* USAGE_TOP_N is how many rollup rows each dimension shows collapsed. At
+       42+ hives the full org/owner lists do not fit on screen; 5 keeps the
+       three tables side-by-side and readable, with "Show all" to expand. */
+    var USAGE_TOP_N = 5;
+    /* USAGE_ZERO_TOP_N bounds the zero-consumption list the same way. Slightly
+       larger than USAGE_TOP_N because this list is the actionable one — these
+       are claimed hives burning nothing, i.e. possibly broken. */
+    var USAGE_ZERO_TOP_N = 8;
+    /* USAGE_SPARK_MIN_POINTS is the minimum sampled points before a trend line
+       is drawn. Two points is the honest minimum for a line — with one sample
+       there is no trend, only a dot, and drawing it would imply history the
+       hub does not have. */
+    var USAGE_SPARK_MIN_POINTS = 2;
+
+    var _usageData = null;
+    var _usageExpanded = {};
+
+    function toggleUsageSection(key) {
+      _usageExpanded[key] = !_usageExpanded[key];
+      renderUsagePanel();
+    }
+
+    /* Renders one rollup dimension as a compact table. rows are already sorted
+       by consumption descending server-side. */
+    function renderUsageSection(title, rows, key) {
+      rows = rows || [];
+      if (!rows.length) {
+        return '<div style="flex:1;min-width:200px">' +
+          '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:6px">' + esc(title) + '</div>' +
+          '<div style="color:var(--muted);font-size:0.75rem;padding:4px 0">No data</div></div>';
+      }
+      var expanded = !!_usageExpanded[key];
+      var shown = expanded ? rows.length : Math.min(rows.length, USAGE_TOP_N);
+      var html = '';
+      for (var i = 0; i < shown; i++) {
+        var r = rows[i] || {};
+        var pct = Number(r.sharePct) || 0;
+        html += '<tr>' +
+          '<td style="padding:2px 6px 2px 0;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(r.key) + '">' + esc(r.key) + '</td>' +
+          '<td style="padding:2px 6px;text-align:right;white-space:nowrap">' + fmtTokens(r.tokens) + '</td>' +
+          '<td style="padding:2px 6px;text-align:right;color:var(--muted);white-space:nowrap">' + (Number(r.hives) || 0) + '</td>' +
+          /* Inline share bar — cheap visual ranking without a chart library. */
+          '<td style="padding:2px 0 2px 6px;width:64px">' +
+            '<div style="position:relative;height:9px;background:var(--surface);border-radius:2px;overflow:hidden" title="' + pct.toFixed(1) + '% of total">' +
+            '<div style="position:absolute;left:0;top:0;bottom:0;width:' + Math.max(0, Math.min(100, pct)).toFixed(1) + '%;background:var(--accent);opacity:0.65"></div>' +
+            '</div></td>' +
+          '<td style="padding:2px 0 2px 6px;text-align:right;color:var(--muted);font-size:0.68rem;white-space:nowrap">' + pct.toFixed(1) + '%</td>' +
+        '</tr>';
+      }
+      var more = '';
+      if (rows.length > USAGE_TOP_N) {
+        more = '<div style="margin-top:4px"><a href="#" onclick="toggleUsageSection(\'' + esc(key) + '\');return false" style="font-size:0.7rem;color:var(--accent);text-decoration:none">' +
+          (expanded ? 'Show top ' + USAGE_TOP_N : 'Show all ' + rows.length) + '</a></div>';
+      }
+      return '<div style="flex:1;min-width:200px">' +
+        '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:6px">' + esc(title) + '</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:0.75rem"><tbody>' + html + '</tbody></table>' + more +
+        '</div>';
+    }
+
+    function renderUsagePanel() {
+      var el = document.getElementById('usage-panel');
+      if (!el) return;
+      var d = _usageData;
+      if (!d) { el.style.display = 'none'; return; }
+      el.style.display = 'block';
+
+      var isFleet = d.scope === 'fleet';
+      var scopeLabel = isFleet
+        ? 'Fleet-wide'
+        : 'Your hives only';
+
+      /* Trend: only drawn from genuinely sampled history. With fewer than
+         USAGE_SPARK_MIN_POINTS points we say so instead of drawing a line. */
+      var hist = d.history || [];
+      var trend = '';
+      if (hist.length >= USAGE_SPARK_MIN_POINTS) {
+        var pts = [];
+        for (var i = 0; i < hist.length; i++) {
+          /* sparkline() reads .v — map the snapshot shape onto it. */
+          pts.push({ t: hist[i].t, v: Number(hist[i].v) || 0 });
+        }
+        trend = '<span title="Fleet total, sampled every 15 min (cumulative)">' + sparkline(pts, '#3fb950', 90, 16) + '</span>';
+      } else if (isFleet) {
+        trend = '<span style="font-size:0.68rem;color:var(--muted)" title="Snapshots are sampled every 15 minutes; a trend line needs at least two.">trend building…</span>';
+      }
+
+      var zero = d.zeroConsumption || [];
+      var zeroHtml = '';
+      if (zero.length) {
+        var zExpanded = !!_usageExpanded['zero'];
+        var zShown = zExpanded ? zero.length : Math.min(zero.length, USAGE_ZERO_TOP_N);
+        var chips = '';
+        for (var z = 0; z < zShown; z++) {
+          var h = zero[z] || {};
+          var dot = h.online
+            ? '<span style="color:#3fb950" title="Online but consuming nothing — idle or stuck">●</span>'
+            : '<span style="color:var(--muted)" title="Offline">○</span>';
+          chips += '<span style="display:inline-block;padding:2px 7px;margin:2px 4px 2px 0;background:var(--surface);border:1px solid var(--border);border-radius:10px;font-size:0.7rem" title="' + esc((h.org || '') + (h.owner ? ' · ' + h.owner : '')) + '">' + dot + ' ' + esc(h.name || h.id) + '</span>';
+        }
+        var zMore = '';
+        if (zero.length > USAGE_ZERO_TOP_N) {
+          zMore = ' <a href="#" onclick="toggleUsageSection(\'zero\');return false" style="font-size:0.7rem;color:var(--accent);text-decoration:none">' +
+            (zExpanded ? 'show fewer' : 'show all ' + zero.length) + '</a>';
+        }
+        zeroHtml = '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">' +
+          '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);margin-bottom:6px" title="Claimed hives reporting no tokens. Unassigned pool slots are excluded — those are supposed to consume nothing.">' +
+          'Zero consumption (' + zero.length + ')</div>' + chips + zMore + '</div>';
+      }
+
+      el.innerHTML =
+        '<div style="background:var(--card,var(--surface));border:1px solid var(--border);border-radius:8px;padding:14px 16px">' +
+          '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">' +
+            '<h3 style="font-size:0.95rem;color:var(--accent);margin:0">Usage</h3>' +
+            '<span style="font-size:0.7rem;color:var(--muted);border:1px solid var(--border);border-radius:10px;padding:1px 7px">' + esc(scopeLabel) + '</span>' +
+            '<span style="flex:1"></span>' +
+            trend +
+            '<span style="font-size:0.8rem;color:var(--text)"><strong>' + fmtTokens(d.totalTokens) + '</strong> tokens' +
+            ' <span style="color:var(--muted);font-size:0.72rem">across ' + (Number(d.hiveCount) || 0) + ' hive' + ((Number(d.hiveCount) || 0) === 1 ? '' : 's') + '</span></span>' +
+          '</div>' +
+          '<div style="display:flex;gap:20px;flex-wrap:wrap">' +
+            renderUsageSection('By org', d.byOrg, 'org') +
+            renderUsageSection('By owner', d.byOwner, 'owner') +
+            renderUsageSection('By cluster', d.byCluster, 'cluster') +
+          '</div>' +
+          zeroHtml +
+          '<div style="margin-top:10px;font-size:0.66rem;color:var(--muted);line-height:1.4">' + esc(d.currencyNote || '') + '</div>' +
+        '</div>';
+    }
+
+    async function loadUsage() {
+      try {
+        var resp = await fetch('/api/saas/usage');
+        if (!resp.ok) { _usageData = null; renderUsagePanel(); return; }
+        _usageData = await resp.json();
+      } catch (e) {
+        _usageData = null;
+      }
+      renderUsagePanel();
+    }
+
     async function loadHives() {
       if (_hivesLoading) return;
       _hivesLoading = true;
@@ -6472,6 +6624,7 @@ const dashboardHTML = `<!DOCTYPE html>
         renderAdminProvisionRequests(data.provision_requests || []);
         renderRequestHiveButton(data);
         loadPublicHives(data.hives || []);
+        loadUsage();
       } catch(e) {
         if (!_allDashHives.length) {
           document.getElementById('hives-container').innerHTML = '<div class="loading">Failed to load hives</div>';
