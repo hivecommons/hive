@@ -124,6 +124,17 @@ type Manager struct {
 	uidMap           *UIDMap
 	appAuth          AppTokenMinter
 
+	// bobAPIKeyResolver resolves the IBM bobshell API key at LAUNCH time (not
+	// boot), so a key an operator adds via a Secret/PVC file or the config UI
+	// takes effect without restarting the hive. Returns "" when unconfigured.
+	//
+	// Stored as an atomic.Pointer, NOT under m.mu, for the same reason as
+	// isGatewayBackend above: it is read from launchInTmux/agentEnvPairs, which
+	// already hold m.mu.Lock(). Re-locking a non-reentrant RWMutex on the same
+	// goroutine would deadlock startup before MarkReady and crash-loop every
+	// spoke. An atomic read is lock-free and safe from any lock context.
+	bobAPIKeyResolver atomic.Pointer[func() string]
+
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 
@@ -241,6 +252,10 @@ func (m *Manager) BackendAuthAvailable(backend string) (available, known bool) {
 			return true, true
 		}
 		return configHasTokens(), true
+	case bobBackend:
+		// bob has exactly one usable credential in a pod: the API key. Its
+		// presence is therefore a complete answer, so report it as known.
+		return m.bobAPIKey() != "", true
 	default:
 		return false, false
 	}
@@ -266,6 +281,27 @@ func (m *Manager) SetGatewayBackendChecker(fn func(backend string) bool) {
 	// Atomic store — no m.mu — so routableBackend can read it lock-free from the
 	// lock-holding launch path without deadlocking (see isGatewayBackend docs).
 	m.isGatewayBackend.Store(&fn)
+}
+
+// SetBobAPIKeyResolver injects the resolver for the IBM bobshell API key.
+// Called from main.go with a closure over the live config, so a key added
+// after boot is picked up on the next agent launch. The resolver must return
+// the key VALUE or "" — the value is never logged.
+func (m *Manager) SetBobAPIKeyResolver(fn func() string) {
+	// Atomic store — no m.mu — so bobAPIKey can be read lock-free from the
+	// lock-holding launch path (see bobAPIKeyResolver docs).
+	m.bobAPIKeyResolver.Store(&fn)
+}
+
+// bobAPIKey returns the configured bobshell API key, or "" when none is
+// configured (or no resolver was injected, as in tests/bare setups).
+// Safe to call while holding m.mu.
+func (m *Manager) bobAPIKey() string {
+	fnp := m.bobAPIKeyResolver.Load()
+	if fnp == nil || *fnp == nil {
+		return ""
+	}
+	return (*fnp)()
 }
 
 // routableBackend reports whether a backend should be routed through the
@@ -714,6 +750,27 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		return nil
 	}
 
+	// bob cannot authenticate without an API key in a pod: its default W3ID SSO
+	// flow opens a browser and polls a localhost callback port, then fails with
+	// "Authentication timeout (3 minutes)". Refuse to launch instead of burning
+	// three minutes per attempt on a flow that cannot succeed here. Mirrors the
+	// missing-binary handling above: mark the agent failed, log actionably, and
+	// return nil so one misconfigured agent never aborts the fleet.
+	// The key VALUE is not bound to a local here — only its presence is checked.
+	// It is delivered to the CLI via tmux set-environment in agentEnvPairs.
+	if backend == bobBackend {
+		if m.bobAPIKey() == "" {
+			agent.State = StateFailed
+			m.logger.Warn("bob requires "+config.BobAPIKeyEnvVar+" for headless operation; ask your hub admin to configure it",
+				"name", agent.Name,
+				"backend", backend,
+				"remedy", "set governor.bob.api_key_file (e.g. "+config.DefaultBobAPIKeyFile+
+					") or the "+config.DefaultBobAPIKeyEnv+" env var on the hive pod",
+			)
+			return nil
+		}
+	}
+
 	launchCmd := binary
 	model := agent.Config.Model
 	if agent.ModelOverride != "" {
@@ -816,8 +873,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			if model != "" {
 				launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
 			}
-		case "bob":
-			launchCmd = binary
+		case bobBackend:
+			launchCmd = bobLaunchCmd(binary, model)
 		default:
 			launchCmd = binary
 		}
@@ -927,6 +984,17 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	}
 
 	m.fixSharedConfigPerms(agent)
+
+	// Re-apply SECRET env vars before every launch. ensureTmuxSession sets the
+	// full env via tmux set-environment, but it returns early when the session
+	// already exists, so on a relaunch (restart, model change, crash recovery)
+	// those values are never refreshed. Non-secret vars survive that because
+	// buildEnvPrefix re-types them on the command line each launch, and
+	// COPILOT_GITHUB_TOKEN survives because it is also in the hive process env
+	// and inherited — but a key resolved from a Secret/PVC FILE is in neither,
+	// so without this it would reach the CLI on a session's first launch only.
+	// set-environment is idempotent and never appears in the pane.
+	m.applySecretEnv(agent)
 
 	envCmd := m.buildEnvPrefix(agent)
 	fullCmd := envCmd + launchCmd
@@ -1418,6 +1486,23 @@ func (m *Manager) readCoveragePreamble() string {
 func shellEnvVar(key, value string) string {
 	quoted := strings.ReplaceAll(value, "'", "'\"'\"'")
 	return fmt.Sprintf("%s='%s'", key, quoted)
+}
+
+// applySecretEnv pushes only the Secret pairs into the agent's tmux session via
+// set-environment. Values are passed as exec args (never through a shell), so
+// they are not word-split and never land in the pane or in bash history.
+// Failures are ignored for the same reason ensureTmuxSession ignores them: a
+// missing session is handled by the launch path, not here.
+func (m *Manager) applySecretEnv(agent *AgentProcess) {
+	if agent == nil || agent.tmuxSession == "" {
+		return
+	}
+	for _, p := range m.agentEnvPairs(agent) {
+		if !p.Secret {
+			continue
+		}
+		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, p.Key, p.Value).Run()
+	}
 }
 
 func (m *Manager) buildEnvPrefix(agent *AgentProcess) string {
@@ -3227,6 +3312,51 @@ func inferenceHomePath(agentName string) string {
 // codexBackend is the backend name for the OpenAI Codex CLI.
 const codexBackend = "codex"
 
+// bobBackend is the backend name for the IBM bobshell ("bob") CLI.
+const bobBackend = "bob"
+
+// bobLaunchCmd builds bob's interactive launch command.
+//
+// The launch stays INTERACTIVE — no -p/--prompt — so the agent drives bob in a
+// tmux pane exactly like every other CLI backend and a human can attach to it.
+// Two flags make that work in a headless pod. Both were verified against the
+// installed bundle (bobshell 1.0.6 bundle/bob.js), not assumed:
+//
+//   - --auth-method api-key: bob computes its default auth type as "if
+//     BOBSHELL_API_KEY is set AND the session is non-interactive then api-key,
+//     else W3ID_SSO". So in interactive mode the env var ALONE is not enough —
+//     bob still selects SSO, opens a browser, and dies on the 3-minute
+//     callback timeout; it merely prints 'Existing API key detected
+//     (BOBSHELL_API_KEY). Select "Bob-Shell API Key" option to use it.' This
+//     flag sets globalThis.authMethodByCliArg, which takes precedence over both
+//     the computed default and the persisted security.auth.selectedType, so an
+//     interactive session authenticates with the key and never reaches the
+//     browser flow. The value is bob's own enum constant USE_BOBSHELL="api-key".
+//     This is why interactive mode remains available rather than being
+//     hard-switched to -p.
+//
+//   - --accept-license: bob hard-errors ("A license agreement is required.
+//     Please accept the license terms before proceeding.") before doing any
+//     work unless licenseConsent is already persisted in its settings. That
+//     consent is normally collected from a human at an interactive prompt that
+//     nobody can answer in an unattended pod, and it is stored under
+//     $HOME/.bob, so it is lost whenever the PVC is reset. Passing it on every
+//     launch is idempotent (it only sets licenseConsent=true) and is the
+//     vendor-documented non-interactive path. An operator configuring an API
+//     key for unattended use is the act of acceptance; the text stays
+//     reviewable via `bob --show-license`.
+//
+// The API key itself is NOT a flag — it is delivered out-of-band via
+// tmux set-environment (see agentEnvPairs) so it never lands in the command
+// line, `ps` output, or pane scrollback.
+func bobLaunchCmd(binary, model string) string {
+	cmd := fmt.Sprintf("%s --auth-method %s --accept-license", binary, config.BobAuthMethodAPIKey)
+	if model != "" {
+		cmd = fmt.Sprintf("%s --model %s", cmd, model)
+	}
+	return cmd
+}
+
 // codexHomePrefix is the per-agent CODEX_HOME directory prefix. Each agent gets
 // its own dir so Codex's owner-gated app-server sees a directory the agent UID
 // actually owns (a shared, merely group-writable dir is not sufficient for
@@ -3754,6 +3884,15 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	}
 	if m.claudeAuthToken != "" && backend == "claude" {
 		vars = append(vars, agentEnvPair{"CLAUDE_CODE_OAUTH_TOKEN", m.claudeAuthToken, true})
+	}
+	// bob reads its key from BOBSHELL_API_KEY. Secret: true keeps the value off
+	// the shell command line (out of `ps`, bash history, and pane scrollback);
+	// it reaches the CLI via tmux set-environment only. Gated on the backend so
+	// no other CLI's environment carries an IBM credential it has no use for.
+	if backend == bobBackend {
+		if key := m.bobAPIKey(); key != "" {
+			vars = append(vars, agentEnvPair{config.BobAPIKeyEnvVar, key, true})
+		}
 	}
 	// BD_DIR tells the `bd` CLI where to read/write beads. Without this,
 	// bd falls back to cwd (/data/agents/<name>) instead of the configured
