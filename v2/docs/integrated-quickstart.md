@@ -117,7 +117,7 @@ Use one exact persistent state directory during setup:
 hive setup --repo OWNER/REPOSITORY --coverage comprehensive --automation repair-pr --provider codex --visual-hive --runtime local --state-dir /exact/hive-state --start --json
 ```
 
-Configure that same ordinary Hive process with the exact `HIVE_STATE_DIR` value, ensure its normal project scope contains `OWNER/REPOSITORY`, and keep its existing dashboard listener HTTP-ready. After the managed setup is installed, restart the existing ordinary Hive/dashboard process through its normal Docker, Kubernetes, or service deployment. Use `hive doctor --state-dir /exact/hive-state --json` and `hive status --state-dir /exact/hive-state --json` to verify it. Do not use `hive run` or `hive start` for normal operation in this ownership mode. Use `hive stop` only when status or doctor directs cleanup of a stale legacy scheduler; it does not stop ordinary Hive/dashboard.
+Configure that same ordinary Hive process with the exact `HIVE_STATE_DIR` value, ensure its normal project scope contains `OWNER/REPOSITORY`, and keep its existing dashboard listener HTTP-ready. After the managed setup is installed, the running dashboard automatically reconciles and activates the installed contract without a restart. Use `hive doctor --state-dir /exact/hive-state --json` and `hive status --state-dir /exact/hive-state --json` to verify it. Do not use `hive run` or `hive start` for normal operation in this ownership mode. Use `hive stop` only when status or doctor directs cleanup of a stale legacy scheduler; it does not stop ordinary Hive/dashboard.
 
 Hosted dashboards keep GitHub credentials out of agent terminals. An authenticated owner can instead use the bounded dashboard control plane:
 
@@ -265,7 +265,7 @@ hive pause --state-dir /exact/hive-state --json
 hive resume --state-dir /exact/hive-state --json
 ```
 
-Restart the existing ordinary Hive/dashboard deployment to start or replace that runtime. Do not use the mutually exclusive legacy `hive run` or `hive start` path. Use `hive stop` only for status-directed stale legacy-scheduler cleanup, not to stop ordinary Hive/dashboard.
+The running ordinary Hive/dashboard automatically reconciles a newly installed matching contract and starts or replaces its Visual Hive runtime without a restart. Restart the deployment only when status or doctor reports that ordinary Hive itself is unavailable or requires service recovery. Do not use the mutually exclusive legacy `hive run` or `hive start` path. Use `hive stop` only for status-directed stale legacy-scheduler cleanup, not to stop ordinary Hive/dashboard.
 
 If GitHub updates the cleanup branch or strict-base snapshot before merge, use the exact `cancel_command` returned by uninstall/status instead of editing local state or weakening checks. Cancellation authenticates the recorded numeric authorizer, closes only the exact unmerged same-repository PR with its recorded number, URL, transaction marker, head branch, and base branch, and deletes the managed ref only when its current head is the original Hive commit or a proven descendant. It is restart-safe after partial API failure, restores the prior setup PR identity, and deliberately leaves automation paused. Run `hive resume` explicitly to resume the old installation, or run `hive uninstall` again to create a fresh cleanup transaction.
 
