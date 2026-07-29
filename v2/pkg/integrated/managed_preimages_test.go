@@ -88,6 +88,57 @@ func TestManagedPathPreimagesRestoreRepositoryOwnedVisualHiveFiles(t *testing.T)
 	}
 }
 
+func TestStageManagedPathsStagesTrackedIgnoredDeletionWithoutBroadeningScope(t *testing.T) {
+	root := t.TempDir()
+	ctx := context.Background()
+	if _, err := git(ctx, root, "init"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(ctx, root, "config", "user.name", "Hive Test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(ctx, root, "config", "user.email", "hive-test@example.invalid"); err != nil {
+		t.Fatal(err)
+	}
+	const baseline = ".visual-hive/snapshots/linux/reviewed.png"
+	const unrelated = ".visual-hive/private/unrelated.txt"
+	for relative, content := range map[string][]byte{
+		".gitignore": []byte(".visual-hive/\n"),
+		baseline:     []byte("reviewed baseline\n"),
+		unrelated:    []byte("must remain outside the managed index\n"),
+	} {
+		if err := writeSetupCheckoutFile(root, relative, content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := git(ctx, root, "add", ".gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(ctx, root, "add", "-f", "--", baseline); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(ctx, root, "commit", "-m", "track reviewed ignored baseline"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(baseline))); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := stageManagedPaths(ctx, root, []string{baseline}); err != nil {
+		t.Fatalf("stage tracked ignored baseline deletion: %v", err)
+	}
+	changed, err := git(ctx, root, "diff", "--cached", "--name-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(changed) != baseline {
+		t.Fatalf("staged paths = %q; want only %q", strings.TrimSpace(changed), baseline)
+	}
+	if _, err := git(ctx, root, "ls-files", "--error-unmatch", "--", unrelated); err == nil {
+		t.Fatalf("unrelated ignored path %s was staged", unrelated)
+	}
+}
+
 func TestManagedPathPreimagesRejectTamperedContent(t *testing.T) {
 	data := []byte("repository config\n")
 	digest := sha256.Sum256(data)

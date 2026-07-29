@@ -3726,7 +3726,13 @@ func stageManagedPaths(ctx context.Context, checkout string, paths []string) err
 	if len(stageable) == 0 {
 		return nil
 	}
-	args := append([]string{"add", "-A", "--"}, stageable...)
+	// Managed setup and reviewed baseline paths may deliberately live below
+	// repository ignore rules (for example .visual-hive snapshots). Every
+	// path here has already been bounded by the caller and filtered to an
+	// existing or tracked entry, so force only those exact pathspecs. Without
+	// -f Git stages tracked deletions but still exits nonzero for the ignored
+	// parent, leaving uninstall in a partially staged, retry-only state.
+	args := append([]string{"add", "-f", "-A", "--"}, stageable...)
 	_, err := git(ctx, checkout, args...)
 	return err
 }
