@@ -163,6 +163,15 @@ type Manager struct {
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.
 	persistPauseCallback func(name string, paused bool)
+
+	// recordPromptCallback, when set, persists the fully-expanded prompt text
+	// delivered to an agent so owners can review it later.
+	//
+	// Held as an atomic.Pointer rather than behind m.mu because the kick path
+	// (deliverKickLocked) already holds m.mu when it fires this. m.mu is a
+	// non-reentrant RWMutex, so reading the callback under a second Lock there
+	// would deadlock the kick path.
+	recordPromptCallback atomic.Pointer[func(agent, trigger, prompt string)]
 }
 
 // SetPersistPauseCallback wires a function that persists an agent's paused
@@ -172,6 +181,25 @@ func (m *Manager) SetPersistPauseCallback(fn func(name string, paused bool)) {
 	m.mu.Lock()
 	m.persistPauseCallback = fn
 	m.mu.Unlock()
+}
+
+// SetRecordPromptCallback wires a function that persists a delivered kick
+// prompt (agent, trigger, full text). Safe to call at any time; a nil fn
+// clears it. Never takes m.mu — see recordPromptCallback.
+func (m *Manager) SetRecordPromptCallback(fn func(agent, trigger, prompt string)) {
+	if fn == nil {
+		m.recordPromptCallback.Store(nil)
+		return
+	}
+	m.recordPromptCallback.Store(&fn)
+}
+
+// recordPrompt fires the record-prompt callback if one is wired. Safe to call
+// with m.mu held.
+func (m *Manager) recordPrompt(agent, trigger, prompt string) {
+	if fn := m.recordPromptCallback.Load(); fn != nil && *fn != nil {
+		(*fn)(agent, trigger, prompt)
+	}
 }
 
 // AppTokenMinter is implemented by github.AppAuth to mint per-agent scoped tokens.
@@ -931,6 +959,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			"preview", snippet,
 			"trigger", "startup",
 		)
+		m.recordPrompt(agent.Name, "startup", bootstrapPrompt)
 
 		// Only goose (and unknown backends, which never embed) reach this
 		// block — claude/copilot/gemini bootstrap prompts were deferred to
@@ -2351,6 +2380,11 @@ func (m *Manager) recordKickLocked(agent *AgentProcess, message, trigger string)
 		"preview", kickPreview,
 		"trigger", trigger,
 	)
+
+	// Persist the FULL prompt text. The log line above and KickRecord.Snippet
+	// only carry a truncated preview, which is not enough to answer "what was
+	// my agent asked to do?".
+	m.recordPrompt(agent.Name, trigger, message)
 }
 
 func backendAllowsInterruptBeforeKick(backend string) bool {
@@ -2875,6 +2909,42 @@ func (m *Manager) GetStatus(name string) (*AgentProcess, error) {
 	}
 	snap := agent.snapshot()
 	return &snap, nil
+}
+
+// CountAgentsWithModel returns how many agents have an effective method
+// (backend) or model assigned, resolving overrides ahead of config exactly as
+// the launcher does. Reported to the hub so it can tell whether this hive has
+// completed the "assign a method/model to an agent" adoption step.
+//
+// An agent counts if EITHER a backend or a model is set: "claude with the
+// default model" and "the governor's default backend pinned to a specific
+// model" are both real assignments. Values like "auto" and "default" are
+// deliberate routing selections, not absences, so they count too — only a
+// wholly empty backend AND model reads as unassigned.
+func (m *Manager) CountAgentsWithModel() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	count := 0
+	for _, a := range m.agents {
+		if a == nil {
+			continue
+		}
+		backend := a.Config.Backend
+		if a.BackendOverride != "" {
+			backend = a.BackendOverride
+		}
+		model := a.Config.Model
+		if a.ModelOverride != "" {
+			model = a.ModelOverride
+		} else if a.PinnedModel != "" {
+			model = a.PinnedModel
+		}
+		if strings.TrimSpace(backend) != "" || strings.TrimSpace(model) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func (m *Manager) AllStatuses() map[string]*AgentProcess {

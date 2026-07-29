@@ -296,6 +296,79 @@ func TestGitHubConfig_AppInstallURL(t *testing.T) {
 	})
 }
 
+// TestGitHubConfig_AppInstallURL_Table locks the exact install URL for every
+// host/slug shape the hub and spoke can hand this function. The regression it
+// guards: a GitHub Enterprise user sent to public github.com never reaches
+// their own org's install flow, so the request silently disappears and their
+// GHE admin sees nothing pending.
+func TestGitHubConfig_AppInstallURL_Table(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		appSlug string
+		want    string
+	}{
+		{
+			name: "public github.com with default slug",
+			want: "https://github.com/apps/" + DefaultGitHubAppSlug + "/installations/new",
+		},
+		{
+			name:    "explicit public base url is not treated as GHE",
+			baseURL: DefaultGitHubBaseURL,
+			want:    "https://github.com/apps/" + DefaultGitHubAppSlug + "/installations/new",
+		},
+		{
+			name:    "public github.com with a custom slug",
+			appSlug: "acme-hive",
+			want:    "https://github.com/apps/acme-hive/installations/new",
+		},
+		{
+			name:    "GHE host uses the enterprise /github-apps/ path",
+			baseURL: "https://github.ibm.com",
+			want:    "https://github.ibm.com/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+		},
+		{
+			name:    "GHE host with a trailing slash does not double up",
+			baseURL: "https://github.cisco.com/",
+			want:    "https://github.cisco.com/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+		},
+		{
+			name:    "GHE host with multiple trailing slashes",
+			baseURL: "https://github.cisco.com///",
+			want:    "https://github.cisco.com/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+		},
+		{
+			name:    "GHE host honours a per-instance app slug",
+			baseURL: "https://github.ibm.com",
+			appSlug: "katamari-hive",
+			want:    "https://github.ibm.com/github-apps/katamari-hive/installations/new",
+		},
+		{
+			name:    "empty base url falls back to public github.com",
+			baseURL: "",
+			appSlug: "acme-hive",
+			want:    "https://github.com/apps/acme-hive/installations/new",
+		},
+		{
+			// A malformed base URL is echoed back rather than silently
+			// rewritten to github.com: sending a GHE user to public GitHub is
+			// the exact failure this function exists to prevent, so a visibly
+			// broken link is the safer outcome than a plausible wrong one.
+			name:    "malformed base url is not rewritten to github.com",
+			baseURL: "not a url",
+			want:    "not a url/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := GitHubConfig{BaseURL: tt.baseURL, AppSlug: tt.appSlug}
+			if got := g.AppInstallURL(); got != tt.want {
+				t.Errorf("AppInstallURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // DashboardConfig.AuthorizedRole / splitAuthorizedEntry
 // ---------------------------------------------------------------------------

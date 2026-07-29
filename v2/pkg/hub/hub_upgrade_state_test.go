@@ -10,15 +10,38 @@ import (
 )
 
 // setV2Latest seeds the verified latest SHA for v2 and restores it afterward.
+// Both the spoke and hub caches are seeded: the spoke cache drives hive upgrade
+// targets, the hub cache drives the hub's own. They are separate because the two
+// images are separate builds, but tests that don't care about that distinction
+// want them in agreement — see setV2HubLatest for the divergent case.
 func setV2Latest(t *testing.T, sha string) {
 	t.Helper()
 	latestSHAMu.Lock()
 	old := latestSHAByBranch["v2"]
+	oldHub := latestHubSHAByBranch["v2"]
 	latestSHAByBranch["v2"] = branchSHAInfo{SHA: sha}
+	latestHubSHAByBranch["v2"] = branchSHAInfo{SHA: sha}
 	latestSHAMu.Unlock()
 	t.Cleanup(func() {
 		latestSHAMu.Lock()
 		latestSHAByBranch["v2"] = old
+		latestHubSHAByBranch["v2"] = oldHub
+		latestSHAMu.Unlock()
+	})
+}
+
+// setV2HubLatest seeds ONLY the hub-image cache for v2, leaving the spoke cache
+// untouched, so a test can reproduce the case this split exists for: the hub
+// image published for a SHA whose spoke image did not.
+func setV2HubLatest(t *testing.T, sha string) {
+	t.Helper()
+	latestSHAMu.Lock()
+	old := latestHubSHAByBranch["v2"]
+	latestHubSHAByBranch["v2"] = branchSHAInfo{SHA: sha}
+	latestSHAMu.Unlock()
+	t.Cleanup(func() {
+		latestSHAMu.Lock()
+		latestHubSHAByBranch["v2"] = old
 		latestSHAMu.Unlock()
 	})
 }
@@ -131,5 +154,33 @@ func TestRolloutHubToSHAContainerName(t *testing.T) {
 	}
 	if strings.Contains(args, hubDeploymentName+"=ghcr.io/") {
 		t.Errorf("set image wrongly used the DEPLOYMENT name as the container: %q", strings.TrimSpace(args))
+	}
+}
+
+// TestHubUpgradeStateUsesHubImageNotSpokeImage pins the split between the two
+// GHCR repos. The hub and spoke images are separate builds that can succeed
+// independently for the same commit; gating the hub's upgrade target on the
+// SPOKE image meant a SHA whose spoke build failed was invisible to the hub,
+// which then reported "current" against a stale target and never rolled.
+func TestHubUpgradeStateUsesHubImageNotSpokeImage(t *testing.T) {
+	setAutoUpgrade(t, false)
+
+	// Spoke image stuck on an older SHA (its build failed for the newer one),
+	// hub image already published for the newer SHA.
+	setV2Latest(t, "aaaaaaa")
+	setV2HubLatest(t, "bbbbbbb")
+
+	// Hub is running the older SHA. It must see itself as behind the SHA whose
+	// HUB image exists, not "current" against the stale spoke-gated value.
+	s := &HubServer{logger: slog.Default(), hubGitBranch: "v2", hubGitHash: "aaaaaaa"}
+	if got := s.hubUpgradeState(); got != "behind" {
+		t.Errorf("hub behind on hub-image SHA -> %q, want behind", got)
+	}
+
+	// And once it is running that SHA, it is current — even though the spoke
+	// cache still trails.
+	s.hubGitHash = "bbbbbbb"
+	if got := s.hubUpgradeState(); got != "current" {
+		t.Errorf("hub at hub-image SHA -> %q, want current", got)
 	}
 }

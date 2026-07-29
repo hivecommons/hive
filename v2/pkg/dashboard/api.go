@@ -44,6 +44,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/variables/{name}", s.handleVariableUpsert)
 	s.mux.HandleFunc("DELETE /api/config/variables/{name}", s.handleVariableDelete)
 	s.mux.HandleFunc("GET /api/audit", s.handleAuditLog)
+	s.mux.HandleFunc("GET /api/prompt-history", s.handlePromptHistory)
 	s.mux.HandleFunc("POST /api/self-upgrade", s.handleSelfUpgrade)
 	s.mux.HandleFunc("POST /api/banner-dismissed", s.handleBannerDismissed)
 	s.mux.HandleFunc("GET /api/snapshot", s.handleSnapshotAPI)
@@ -3410,6 +3411,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"auto_upgrade":                     cfg.Hub.AutoUpgrade,
 			"snapshot_interval_min":            cfg.Hub.SnapshotIntervalMin,
 			"contribute_suspended":             cfg.Hub.ContributeSuspended,
+			"contribute_titles_mode":           cfg.Hub.ContributeTitlesMode,
+			"contribute_authors_mode":          cfg.Hub.ContributeAuthorsMode,
+			"contribute_labels_mode":           cfg.Hub.ContributeLabelsMode,
 			"contribute_allow_labels":          cfg.Hub.ContributeAllowLabels,
 			"contribute_deny_labels":           cfg.Hub.ContributeDenyLabels,
 			"contribute_deny_titles":           cfg.Hub.ContributeDenyTitles,
@@ -3791,6 +3795,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		AutoSnapshot                  *bool                      `json:"auto_snapshot"`
 		AutoUpgrade                   *bool                      `json:"auto_upgrade"`
 		ContributeSuspended           *bool                      `json:"contribute_suspended"`
+		ContributeTitlesMode          *string                    `json:"contribute_titles_mode"`
+		ContributeAuthorsMode         *string                    `json:"contribute_authors_mode"`
+		ContributeLabelsMode          *string                    `json:"contribute_labels_mode"`
 		ContributeAllowLabels         []string                   `json:"contribute_allow_labels"`
 		ContributeDenyLabels          []string                   `json:"contribute_deny_labels"`
 		ContributeDenyTitles          []string                   `json:"contribute_deny_titles"`
@@ -3828,6 +3835,15 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		if body.ContributeSuspended != nil {
 			candidate.Hub.ContributeSuspended = *body.ContributeSuspended
 		}
+		if body.ContributeTitlesMode != nil {
+			candidate.Hub.ContributeTitlesMode = *body.ContributeTitlesMode
+		}
+		if body.ContributeAuthorsMode != nil {
+			candidate.Hub.ContributeAuthorsMode = *body.ContributeAuthorsMode
+		}
+		if body.ContributeLabelsMode != nil {
+			candidate.Hub.ContributeLabelsMode = *body.ContributeLabelsMode
+		}
 		if body.ContributeAllowLabels != nil {
 			candidate.Hub.ContributeAllowLabels = body.ContributeAllowLabels
 		}
@@ -3855,6 +3871,12 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 		if body.TierLimits != nil {
 			candidate.Hub.TierLimits = body.TierLimits
 		}
+		// Normalize any client-supplied filter mode to a valid value (unknown/empty
+		// -> deny), so a bad payload can't leave a mode that silently changes
+		// enforcement in an unexpected way.
+		candidate.Hub.ContributeTitlesMode = config.NormalizeFilterMode(candidate.Hub.ContributeTitlesMode)
+		candidate.Hub.ContributeAuthorsMode = config.NormalizeFilterMode(candidate.Hub.ContributeAuthorsMode)
+		candidate.Hub.ContributeLabelsMode = config.NormalizeFilterMode(candidate.Hub.ContributeLabelsMode)
 		return nil
 	}); err != nil {
 		jsonError(w, "failed to persist hub config: "+err.Error(), http.StatusInternalServerError)
