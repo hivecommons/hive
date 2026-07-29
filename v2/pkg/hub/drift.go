@@ -170,7 +170,7 @@ func isPlaceholderEntry(h MyHiveEntry) bool {
 	if h.ProvStatus == statusAvailable {
 		return true
 	}
-	return strings.HasPrefix(h.Org, "available-")
+	return strings.HasPrefix(h.Org, placeholderOrgPrefix)
 }
 
 // computeFleetNorm derives the baseline from the hives the caller can see.

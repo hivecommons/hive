@@ -118,10 +118,11 @@ func TestFilterComposition(t *testing.T) {
 	}{
 		// The render signature must include the check filter or toggling it on
 		// unchanged data is treated as a no-op and nothing re-renders.
-		// Matched without a trailing ';' so that later filters appending their
-		// own state to the signature do not trip this guard — the invariant is
-		// that the check filter is PART of the signature, not that it is last.
-		{"render signature includes check filter", "+ '|' + _dashFailingCheckFilter"},
+		// Matched on the fragment alone: later filters append their own state to
+		// the signature and may wrap it across source lines, so neither a
+		// trailing ';' nor a leading '+ ' can be relied on. The invariant is
+		// that the check filter is PART of the signature, not where it sits.
+		{"render signature includes check filter", "'|' + _dashFailingCheckFilter"},
 		// Clearing must clear both filter kinds, else "Clear filters" leaves the
 		// list mysteriously short.
 		{"clear resets check filter", "_dashFailingCheckFilter = '';"},

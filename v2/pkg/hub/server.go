@@ -331,6 +331,12 @@ type HubServer struct {
 	// journey holds per-hive user-journey nudge state: which banner each owner
 	// was last sent and when, plus admin snoozes. Persisted to the PVC.
 	journey *journeyStore
+
+	// alerts holds the fleet-alert observation memory (restart history,
+	// per-condition first-seen timestamps, admin acknowledgements). It carries
+	// its own leaf mutex and is never touched while s.mu is held — see
+	// alerts.go.
+	alerts *alertState
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -457,6 +463,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		hubBanners:              make(map[string]*HubBannerEntry),
 		timeline:                newTimelineStore(),
 		journey:                 newJourneyStore(),
+		alerts:                  newAlertState(),
 	}
 
 	s.loadRegistry()
@@ -467,6 +474,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// owners get one duplicate nudge. Never block hub startup on it.
 		logger.Error("failed to load journey nudge state", "error", err)
 	}
+	s.loadAlertAcks()
 
 	s.mux.HandleFunc("POST /api/heartbeat", s.handleHeartbeat)
 	s.mux.HandleFunc("POST /api/task-status", s.handleTaskStatus)

@@ -172,6 +172,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/assign", s.requireAuth(s.handleAssignHive))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/migrate", s.requireAuth(s.handleMigrateHive))
 	s.mux.HandleFunc("GET /api/saas/cluster-health", s.requireAdmin(s.handleClusterHealth))
+	// Acknowledging a fleet alert is an operator action on the operator's own
+	// view, so it is admin-only (see alerts.go).
+	s.mux.HandleFunc("POST /api/saas/admin/alert-ack", s.requireAdmin(s.handleAlertAck))
 	s.mux.HandleFunc("GET /api/hub/clusters", s.requireAuth(s.handleListClusters))
 	s.mux.HandleFunc("POST /api/saas/admin/hub-banner", s.requireAdmin(s.handleSendHubBanner))
 	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
@@ -1582,6 +1585,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		"hub_auto_upgrade":        isHubAutoUpgrade(),
 		"hub_upgrade_state":       s.hubUpgradeState(),
 		"show_my_hives":           true,
+		// Fleet alerts ship WITH the hive list so the "Attention needed" panel
+		// renders in the same paint as the rows it summarises — a second
+		// round-trip would make the panel pop in after the list and shift it.
+		// Scoped to the hives this caller can already see, so it never leaks
+		// the existence of a hive they have no access to.
+		"alerts": s.fleetAlerts(result),
 	}
 
 	myReq := loadProvisionRequest(username)
@@ -5358,6 +5367,31 @@ const dashboardHTML = `<!DOCTYPE html>
     .filter-chip-count { font-size: 0.65rem; opacity: 0.75; font-variant-numeric: tabular-nums; }
     .filter-chip-clear { color: var(--muted); }
     .filter-summary { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+
+    /* ── Attention needed (fleet alerts) ── */
+    /* The panel inverts the default reading of My Hives: instead of scanning 40+
+       rows for problems, the operator reads this and stops. When the fleet is
+       clean it collapses to a single quiet line, so "nothing needs you" is the
+       normal state of the screen rather than an absence the eye has to infer.
+       --alert-color is set inline per severity so one rule serves all three. */
+    #fleet-alerts-panel { margin-bottom: 16px; }
+    .alert-panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 12px 16px; }
+    .alert-panel.has-critical { border-color: rgba(248,81,73,0.45); background: rgba(248,81,73,0.06); }
+    .alert-panel.has-warning { border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.05); }
+    .alert-panel-clean { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--muted); }
+    .alert-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .alert-panel-title { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; font-weight: 700; color: var(--text); }
+    .alert-sev-pill { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 9999px; font-size: 0.68rem; font-weight: 700; background: rgba(255,255,255,0.05); color: var(--alert-color); border: 1px solid var(--alert-color); font-variant-numeric: tabular-nums; }
+    .alert-type-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .alert-rows { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .alert-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 0.74rem; padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,0.03); }
+    .alert-row.acked { opacity: 0.55; }
+    .alert-row-hive { font-weight: 700; color: var(--text); }
+    .alert-row-reason { color: var(--muted); }
+    .alert-row-age { color: var(--muted); font-size: 0.68rem; margin-left: auto; white-space: nowrap; }
+    .alert-ack-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: 1px 8px; font-size: 0.66rem; font-family: inherit; cursor: pointer; }
+    .alert-ack-btn:hover { color: var(--text); border-color: var(--muted); }
+    .alert-panel-more { margin-top: 8px; font-size: 0.7rem; color: var(--muted); background: none; border: none; font-family: inherit; cursor: pointer; text-decoration: underline; padding: 0; }
     .table-wrap { overflow: visible; margin: 0 auto; position: relative; }
     .hive-menu-cell:hover .hive-menu-dropdown { display: block !important; }
     .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: rgba(244,199,95,0.08); border-radius: 4px; }
@@ -5534,6 +5568,7 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
 
     <div id="hive-drift-summary" style="display:none"></div>
+    <div id="fleet-alerts-panel" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
     <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="bulk-action-bar" style="display:none"></div>
@@ -6255,9 +6290,293 @@ const dashboardHTML = `<!DOCTYPE html>
       return false;
     }
 
-    /* applyDashFilters filters the hives the caller wants rendered. */
+    /* applyDashFilters filters the hives the caller wants rendered. It applies
+       the status chips AND, independently, the active alert-type filter — the
+       two compose as an AND (chips narrow by state, the alert filter narrows to
+       the hives carrying that alert), which is what "click an alert type to see
+       those hives" has to mean when a chip is already on. */
     function applyDashFilters(hives) {
-      return (hives || []).filter(hiveMatchesFilters);
+      return (hives || []).filter(function(h) {
+        return hiveMatchesFilters(h) && hiveMatchesAlertFilter(h);
+      });
+    }
+
+    /* ── Fleet alerts ("Attention needed") ────────────────────────────────
+       Server-evaluated (see alerts.go); the client only renders and filters.
+       Deliberately NOT recomputed here: a second, drifting implementation of
+       "what is wrong" is exactly how the panel and the rows start disagreeing. */
+
+    /* EMPTY_ALERT_SUMMARY is the shape every consumer can assume. Frozen so a
+       caller cannot accidentally mutate the shared fallback. */
+    var EMPTY_ALERT_SUMMARY = {alerts: [], countsBySeverity: {}, countsByType: {}, total: 0, acknowledgedTotal: 0};
+
+    var _fleetAlerts = EMPTY_ALERT_SUMMARY;
+    /* Active alert-type filter: '' = no alert filtering. Single-select, unlike
+       the status chips — "show me the crash-looping hives" is a drill-down, and
+       OR-ing several alert types back together just reproduces the full list. */
+    var _alertTypeFilter = '';
+    /* Whether the acknowledged alerts are expanded into view. */
+    var _alertShowAcked = false;
+
+    /* Severity display order + colour, mirroring alerts.go's ranking. */
+    var ALERT_SEVERITIES = [
+      {key: 'critical', label: 'Critical', color: '#f85149'},
+      {key: 'warning', label: 'Warning', color: '#f59e0b'},
+      {key: 'info', label: 'Info', color: '#60a5fa'}
+    ];
+
+    /* Human labels for the alert type chips. Keys MUST match the AlertType*
+       constants in alerts.go; an unknown type falls back to its raw key rather
+       than rendering blank. */
+    var ALERT_TYPE_LABELS = {
+      'crash-loop': 'Crash-looping',
+      'offline': 'Offline',
+      'stuck-upgrade': 'Stuck upgrade',
+      'health-check-failing': 'Health check failing',
+      'token-burn': 'Token burn',
+      'provision-error': 'Provision error'
+    };
+
+    /* How many alert rows are listed before the panel collapses the remainder
+       behind a "show all" affordance. Enough to act on, few enough that the
+       panel never pushes the hive list off the screen. */
+    var ALERT_ROWS_SHOWN = 6;
+
+    function alertTypeLabel(t) { return ALERT_TYPE_LABELS[t] || t || 'Unknown'; }
+
+    /* alertsForType returns the UNACKNOWLEDGED alerts of one type. Acknowledged
+       ones are excluded so filtering by a type never selects hives whose alert
+       the operator has already dealt with. */
+    function alertsForType(t) {
+      return ((_fleetAlerts && _fleetAlerts.alerts) || []).filter(function(a) {
+        return a && !a.acknowledged && a.type === t;
+      });
+    }
+
+    /* hiveMatchesAlertFilter answers whether a hive survives the active alert
+       drill-down. No filter = everything passes. */
+    function hiveMatchesAlertFilter(h) {
+      if (!_alertTypeFilter) return true;
+      if (!h || !h.id) return false;
+      var matches = alertsForType(_alertTypeFilter);
+      for (var i = 0; i < matches.length; i++) {
+        if (matches[i].hiveId === h.id) return true;
+      }
+      return false;
+    }
+
+    /* toggleAlertFilter drills into (or back out of) one alert type. Clicking
+       the active chip again clears it. */
+    function toggleAlertFilter(t) {
+      _alertTypeFilter = (_alertTypeFilter === t) ? '' : t;
+      renderHives(_allDashHives, true);
+    }
+
+    function clearAlertFilter() {
+      _alertTypeFilter = '';
+      renderHives(_allDashHives, true);
+    }
+
+    /* clearAllHiveFilters resets BOTH filter mechanisms at once. The empty-state
+       escape hatch uses it, because either one alone can empty the list. */
+    function clearAllHiveFilters() {
+      _dashStatusFilters = {};
+      _alertTypeFilter = '';
+      renderHives(_allDashHives, true);
+    }
+
+    function toggleAlertAcked() {
+      _alertShowAcked = !_alertShowAcked;
+      renderHives(_allDashHives, true);
+    }
+
+    /* alertAge renders how long a condition has been firing, from the server's
+       firstSeen. Rounded coarsely so it does not churn every poll. */
+    function alertAge(firstSeen) {
+      if (!firstSeen) return '';
+      var ms = Date.now() - new Date(firstSeen).getTime();
+      if (!isFinite(ms) || ms < 0) return '';
+      var MIN = 60000, HOUR = 3600000, DAY = 86400000;
+      if (ms < MIN) return 'just now';
+      if (ms < HOUR) return Math.round(ms / MIN) + 'm';
+      if (ms < DAY) return Math.round(ms / HOUR) + 'h';
+      return Math.floor(ms / DAY) + 'd';
+    }
+
+    /* ackAlert silences (or un-silences) one alert. Admin-only server-side; the
+       button is only rendered for admins, but the server is the real gate. */
+    async function ackAlert(hiveId, type, clear) {
+      try {
+        var resp = await fetch('/api/saas/admin/alert-ack', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({hiveId: hiveId, type: type, clear: !!clear})
+        });
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+          hiveToast(data.error || 'Failed to update alert', 'error');
+          return;
+        }
+        hiveToast(clear ? 'Alert restored' : 'Alert acknowledged', 'success');
+        /* Re-fetch rather than mutating locally: the server owns whether an ack
+           actually applies (it refuses one for a condition that is not live). */
+        loadHives();
+      } catch (e) {
+        hiveToast('Error: ' + e.message, 'error');
+      }
+    }
+
+    /* renderAlertsPanel draws the "Attention needed" panel above the hive list.
+       When the fleet is clean it renders one quiet line instead of hiding
+       entirely, so the operator can trust that the check actually ran. */
+    function renderAlertsPanel() {
+      var panel = document.getElementById('fleet-alerts-panel');
+      if (!panel) return;
+      var summary = _fleetAlerts || EMPTY_ALERT_SUMMARY;
+      var all = summary.alerts || [];
+      var counts = summary.countsBySeverity || {};
+      var byType = summary.countsByType || {};
+      var total = Number(summary.total) || 0;
+      var ackedTotal = Number(summary.acknowledgedTotal) || 0;
+
+      /* Nothing at all to say — and no hives yet — stay out of the way. */
+      if (!total && !ackedTotal && !(_allDashHives || []).length) {
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = '';
+
+      if (!total) {
+        var cleanNote = ackedTotal
+          ? ' <button type="button" class="alert-panel-more" onclick="toggleAlertAcked()">' +
+            ackedTotal + ' acknowledged</button>'
+          : '';
+        var ackedRows = (_alertShowAcked && ackedTotal) ? renderAlertRows(all, true) : '';
+        panel.innerHTML = '<div class="alert-panel">' +
+          '<div class="alert-panel-clean"><span style="color:#3fb950">&#10003;</span>' +
+          '<span>Nothing needs your attention.</span>' + cleanNote + '</div>' +
+          ackedRows + '</div>';
+        return;
+      }
+
+      var cls = 'alert-panel';
+      if (counts.critical) cls += ' has-critical';
+      else if (counts.warning) cls += ' has-warning';
+
+      var pills = (ALERT_SEVERITIES || []).map(function(s) {
+        var n = Number(counts[s.key]) || 0;
+        if (!n) return '';
+        return '<span class="alert-sev-pill" style="--alert-color:' + s.color + '">' +
+          n + ' ' + esc(s.label) + '</span>';
+      }).join('');
+
+      /* Type chips, ordered by the severity of the alerts they represent so the
+         most urgent drill-down is leftmost. */
+      var typeKeys = Object.keys(byType).filter(function(k) { return Number(byType[k]) > 0; });
+      typeKeys.sort(function(a, b) {
+        var ra = alertTypeWorstSeverityRank(a), rb = alertTypeWorstSeverityRank(b);
+        if (ra !== rb) return ra - rb;
+        return a < b ? -1 : (a > b ? 1 : 0);
+      });
+      var chips = typeKeys.map(function(k) {
+        var on = _alertTypeFilter === k;
+        var color = ALERT_SEVERITY_COLORS[alertTypeWorstSeverity(k)] || '#8b949e';
+        return '<button type="button" class="filter-chip' + (on ? ' on' : '') +
+          '" aria-pressed="' + (on ? 'true' : 'false') +
+          '" onclick="toggleAlertFilter(\'' + esc(k) + '\')" style="--chip-color:' + color + '">' +
+          '<span class="filter-chip-dot" style="background:' + color + '"></span>' +
+          esc(alertTypeLabel(k)) +
+          '<span class="filter-chip-count">' + (Number(byType[k]) || 0) + '</span></button>';
+      }).join('');
+      var clearChip = _alertTypeFilter
+        ? '<button type="button" class="filter-chip filter-chip-clear" onclick="clearAlertFilter()">Show all hives</button>'
+        : '';
+
+      var ackNote = ackedTotal
+        ? '<button type="button" class="alert-panel-more" onclick="toggleAlertAcked()">' +
+          (_alertShowAcked ? 'Hide' : 'Show') + ' ' + ackedTotal + ' acknowledged</button>'
+        : '';
+
+      panel.innerHTML = '<div class="' + cls + '">' +
+        '<div class="alert-panel-head">' +
+          '<div class="alert-panel-title"><span>&#9888;</span><span>Attention needed</span></div>' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">' + pills + '</div>' +
+        '</div>' +
+        '<div class="alert-type-chips">' + chips + clearChip + '</div>' +
+        renderAlertRows(all, false) +
+        (_alertShowAcked ? renderAlertRows(all, true) : '') +
+        ackNote +
+      '</div>';
+    }
+
+    /* ALERT_SEVERITY_COLORS maps a severity to its chip colour, derived from
+       ALERT_SEVERITIES so the two can never disagree. */
+    var ALERT_SEVERITY_COLORS = (function() {
+      var m = {};
+      (ALERT_SEVERITIES || []).forEach(function(s) { m[s.key] = s.color; });
+      return m;
+    })();
+
+    /* alertTypeWorstSeverity / ...Rank find the most urgent severity currently
+       present for a type, so a type chip is coloured by the worst thing in it. */
+    function alertTypeWorstSeverity(t) {
+      var worst = '', worstRank = ALERT_SEVERITIES.length;
+      alertsForType(t).forEach(function(a) {
+        var r = alertSeverityRankJS(a.severity);
+        if (r < worstRank) { worstRank = r; worst = a.severity; }
+      });
+      return worst;
+    }
+    function alertTypeWorstSeverityRank(t) {
+      var r = alertSeverityRankJS(alertTypeWorstSeverity(t));
+      return r;
+    }
+    /* alertSeverityRankJS mirrors alerts.go's ordering; unknown sorts last. */
+    function alertSeverityRankJS(sev) {
+      for (var i = 0; i < ALERT_SEVERITIES.length; i++) {
+        if (ALERT_SEVERITIES[i].key === sev) return i;
+      }
+      return ALERT_SEVERITIES.length;
+    }
+
+    /* renderAlertRows lists individual alerts. acked selects which half of the
+       list is drawn: the live alerts, or the acknowledged ones. */
+    function renderAlertRows(all, acked) {
+      var rows = (all || []).filter(function(a) { return a && !!a.acknowledged === !!acked; });
+      /* When a type drill-down is active, the rows follow it too — otherwise the
+         panel would still list alerts for hives the table is no longer showing. */
+      if (_alertTypeFilter) {
+        rows = rows.filter(function(a) { return a.type === _alertTypeFilter; });
+      }
+      if (!rows.length) return '';
+      var shown = rows.slice(0, ALERT_ROWS_SHOWN);
+      var html = shown.map(function(a) {
+        var color = ALERT_SEVERITY_COLORS[a.severity] || '#8b949e';
+        var age = alertAge(a.firstSeen);
+        /* Every interpolated value below is spoke- or admin-supplied and is
+           escaped: hive names, reasons (which embed check names and provision
+           error text), and the acking username. */
+        var ackBtn = '';
+        if (_isAdmin) {
+          ackBtn = acked
+            ? '<button type="button" class="alert-ack-btn" onclick="ackAlert(\'' +
+              esc(a.hiveId) + '\',\'' + esc(a.type) + '\',true)">Restore</button>'
+            : '<button type="button" class="alert-ack-btn" onclick="ackAlert(\'' +
+              esc(a.hiveId) + '\',\'' + esc(a.type) + '\',false)">Acknowledge</button>';
+        }
+        var ackedBy = (acked && a.ackBy) ? '<span class="alert-row-reason">— ack by ' + esc(a.ackBy) + '</span>' : '';
+        return '<div class="alert-row' + (acked ? ' acked' : '') + '">' +
+          '<span class="filter-chip-dot" style="background:' + color + '"></span>' +
+          '<span class="alert-row-hive">' + esc(a.hiveName || a.hiveId) + '</span>' +
+          '<span class="alert-row-reason">' + esc(a.reason) + '</span>' + ackedBy +
+          '<span class="alert-row-age">' + esc(age) + '</span>' + ackBtn +
+        '</div>';
+      }).join('');
+      var more = rows.length > ALERT_ROWS_SHOWN
+        ? '<div class="alert-row-reason" style="font-size:0.7rem;padding-left:8px">+' +
+          (rows.length - ALERT_ROWS_SHOWN) + ' more</div>'
+        : '';
+      return '<div class="alert-rows">' + html + more + '</div>';
     }
 
     /* toggleStatusFilter flips one chip and re-renders from the unfiltered
@@ -6625,6 +6944,9 @@ const dashboardHTML = `<!DOCTYPE html>
         _userUsed = data.saas_used || 0;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
+        /* Alerts ride along on the same payload — see handleMyHives. Normalise
+           to the empty summary so every consumer can iterate without guarding. */
+        _fleetAlerts = data.alerts || EMPTY_ALERT_SUMMARY;
         _latestSHA = data.latest_sha || _latestSHA;
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
@@ -7063,7 +7385,14 @@ const dashboardHTML = `<!DOCTYPE html>
       allHives = allHives || [];
       /* The signature must include the active filters, otherwise toggling a
          chip while the hive data is unchanged would be treated as a no-op. */
-      var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) + '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter;
+      /* The alert state joins the signature for the same reason the status
+         filters do: drilling into an alert type (or expanding the acknowledged
+         list) changes what renders while the hive data is unchanged, and would
+         otherwise be treated as a no-op. EVERY piece of render-affecting state
+         must appear here — a missing one silently makes its toggle a no-op. */
+      var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) +
+        '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter +
+        '|' + _alertTypeFilter + '|' + _alertShowAcked + '|' + JSON.stringify(_fleetAlerts);
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status filters describe ASSIGNED hives only. An unassigned placeholder
@@ -7090,6 +7419,10 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Drift exceptions are scoped to assigned hives for the same reason: a
          placeholder is never flagged for claimed-hive concerns server-side. */
       renderDriftSummary(assignedAll);
+      /* Drawn BEFORE the empty-state early-returns below: a fleet whose every
+         hive is filtered out still has alerts worth showing, and the panel is
+         how the operator gets back out of a drill-down. */
+      renderAlertsPanel();
       if (!allHives.length) {
         var driftEl0 = document.getElementById('hive-drift-summary');
         if (driftEl0) driftEl0.style.display = 'none';
@@ -7107,8 +7440,11 @@ const dashboardHTML = `<!DOCTYPE html>
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives match these filters</p>' +
-          '<p>' + assignedAll.length + (assignedAll.length === 1 ? ' hive is' : ' hives are') + ' hidden by the status filters above.</p>' +
-          '<p style="margin-top:12px"><button type="button" class="filter-chip filter-chip-clear" onclick="clearStatusFilters()">Clear filters</button></p>' +
+          '<p>' + assignedAll.length + (assignedAll.length === 1 ? ' hive is' : ' hives are') + ' hidden by the filters above.</p>' +
+          /* clearAllHiveFilters, not clearStatusFilters: an alert drill-down can
+             empty the list too, and a button that only clears the chips would
+             leave the operator stuck looking at an empty table. */
+          '<p style="margin-top:12px"><button type="button" class="filter-chip filter-chip-clear" onclick="clearAllHiveFilters()">Clear filters</button></p>' +
           '</div>';
         return;
       }
