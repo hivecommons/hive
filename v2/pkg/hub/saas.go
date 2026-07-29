@@ -4112,6 +4112,18 @@ type ProvisionRequest struct {
 	AuthMethod  string `json:"auth_method"`
 	RequestedAt string `json:"requested_at"`
 	Status      string `json:"status"`
+
+	// Decision audit. Previously a request only carried its final Status, so
+	// once it left "pending" there was no record of WHO decided, WHEN, or —
+	// for an approval — which hive the requester actually got. That made the
+	// history unauditable: an approved request and a denied one looked equally
+	// anonymous. Empty on records decided before these fields existed.
+	DecidedBy    string `json:"decided_by,omitempty"`
+	DecidedAt    string `json:"decided_at,omitempty"`
+	AssignedHive string `json:"assigned_hive,omitempty"`
+	// DenyReason is the optional free-text explanation shown back to the
+	// requester when a request is turned down.
+	DenyReason string `json:"deny_reason,omitempty"`
 }
 
 func loadProvisionRequest(username string) *ProvisionRequest {
@@ -4164,7 +4176,10 @@ func listProvisionRequests() []ProvisionRequest {
 		}
 		uname := strings.TrimSuffix(e.Name(), ".json")
 		pr := loadProvisionRequest(uname)
-		if pr != nil && pr.Status == provisionStatusPending {
+		// Return decided requests too, not just pending ones — the admin view
+		// splits them into a pending action queue and a decision-history table,
+		// and filtering here made the history permanently empty.
+		if pr != nil {
 			result = append(result, *pr)
 		}
 	}
@@ -4392,8 +4407,13 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		s.logger.Warn("assigned placeholder but failed to grant owner access", "user", targetUsername, "hive", hiveID, "error", err)
 	}
 
-	// Mark the request fulfilled.
+	// Mark the request fulfilled, recording who approved it and which hive the
+	// requester actually received — that pairing is the whole point of the
+	// history table, and it is unrecoverable after the fact if not stored now.
 	pr.Status = provisionStatusApproved
+	pr.DecidedBy = approver
+	pr.DecidedAt = time.Now().UTC().Format(time.RFC3339)
+	pr.AssignedHive = hiveID
 	if err := saveProvisionRequest(pr); err != nil {
 		s.logger.Warn("assigned placeholder but failed to update provision request", "user", targetUsername, "error", err)
 	}
@@ -4419,7 +4439,26 @@ func (s *HubServer) handleDenyProvision(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	deleteProvisionRequest(targetUsername)
+	// Retain the record instead of deleting it. Deleting made a denial
+	// indistinguishable from a request that was never made — the history table
+	// could only ever show approvals, and an admin had no way to answer "did we
+	// already turn this person down, and why?". The retained record is what
+	// makes a denial re-requestable-but-accountable.
+	const maxDenyRequestBodyBytes = 1 * 1024
+	var denyBody struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, maxDenyRequestBodyBytes)
+		_ = json.NewDecoder(r.Body).Decode(&denyBody) // absent body is fine
+	}
+	pr.Status = provisionStatusDenied
+	pr.DecidedBy = denier
+	pr.DecidedAt = time.Now().UTC().Format(time.RFC3339)
+	pr.DenyReason = strings.TrimSpace(denyBody.Reason)
+	if err := saveProvisionRequest(pr); err != nil {
+		s.logger.Warn("failed to record provision denial", "target", targetUsername, "error", err)
+	}
 
 	s.logger.Info("audit: provision request denied", "target", targetUsername, "by", denier)
 	w.Header().Set("Content-Type", "application/json")
@@ -5422,6 +5461,8 @@ const dashboardHTML = `<!DOCTYPE html>
     <div id="admin-provision-requests" style="display:none;margin-bottom:24px">
       <h3 style="font-size:1rem;color:var(--accent);margin-bottom:12px">Pending Provision Requests</h3>
       <div id="admin-provision-list"></div>
+      <h3 style="font-size:1rem;color:var(--accent);margin:20px 0 10px">Request History</h3>
+      <div style="overflow-x:auto"><div id="admin-request-history"></div></div>
     </div>
 
     <div id="hive-filter-bar" style="display:none"></div>
@@ -6727,17 +6768,85 @@ const dashboardHTML = `<!DOCTYPE html>
         '</div>';
     }
 
+    // renderRequestHistory renders every already-decided request as a table:
+    // who asked, for what, what was decided, by whom, and — for an approval —
+    // which hive they actually got. Pending requests stay as action cards above;
+    // this is the audit trail, not a work queue, so it is deliberately a dense
+    // table rather than more cards.
+    function renderRequestHistory(requests) {
+      var host = document.getElementById('admin-request-history');
+      if (!host) return;
+      var decided = (requests || []).filter(function(pr) {
+        return pr && pr.status && pr.status !== 'pending';
+      });
+      if (!decided.length) {
+        host.innerHTML = '<div style="color:var(--muted);font-size:0.75rem;padding:6px 0">No decided requests yet.</div>';
+        return;
+      }
+      // Most recently decided first; fall back to requested_at on legacy records
+      // that predate decided_at so they still sort somewhere sensible.
+      decided.sort(function(a, b) {
+        var av = a.decided_at || a.requested_at || '';
+        var bv = b.decided_at || b.requested_at || '';
+        return bv.localeCompare(av);
+      });
+      var rows = decided.map(function(pr) {
+        var approved = pr.status === 'approved';
+        var color = approved ? 'var(--green)' : 'var(--red)';
+        var repoLabel = esc(pr.org || '') + '/' + esc(pr.primary_repo || pr.repos || '');
+        var host_ = pr.github_host || 'github.com';
+        // For an approval the outcome is the hive they received; for a denial it
+        // is the reason, if one was given. Legacy records have neither.
+        var outcome = approved
+          ? (pr.assigned_hive
+              ? '<span style="font-family:ui-monospace,monospace;font-size:0.7rem">' + esc(pr.assigned_hive) + '</span>'
+              : '<span style="color:var(--muted)">—</span>')
+          : (pr.deny_reason
+              ? '<span style="color:var(--muted)">' + esc(pr.deny_reason) + '</span>'
+              : '<span style="color:var(--muted)">—</span>');
+        return '<tr>' +
+          '<td style="white-space:nowrap"><img src="https://github.com/' + esc(pr.username) + '.png?size=40" alt="" style="width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-right:6px" onerror="this.style.visibility=\'hidden\'">' + esc(pr.username) + '</td>' +
+          '<td>' + repoLabel + ' <span style="font-size:0.65rem;color:var(--muted)">' + esc(host_) + '</span></td>' +
+          '<td style="white-space:nowrap">' + acmmBadge(pr.acmm_level) + '</td>' +
+          '<td style="white-space:nowrap;color:var(--muted);font-size:0.7rem">' + esc((pr.requested_at || '').substring(0, 10)) + '</td>' +
+          '<td style="white-space:nowrap"><span style="color:' + color + ';font-weight:600;font-size:0.72rem">' + esc(pr.status) + '</span></td>' +
+          '<td style="white-space:nowrap">' + esc(pr.decided_by || '—') + '</td>' +
+          '<td style="white-space:nowrap;color:var(--muted);font-size:0.7rem">' + esc((pr.decided_at || '').substring(0, 10) || '—') + '</td>' +
+          '<td>' + outcome + '</td>' +
+          '</tr>';
+      }).join('');
+      host.innerHTML =
+        '<table class="hive-table" style="width:100%;font-size:0.78rem">' +
+        '<thead><tr><th>User</th><th>Requested</th><th>ACMM</th><th>On</th>' +
+        '<th>Decision</th><th>By</th><th>When</th><th>Assigned / reason</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody></table>';
+    }
+
     function renderAdminProvisionRequests(requests) {
       var section = document.getElementById('admin-provision-requests');
       var list = document.getElementById('admin-provision-list');
       if (!section || !list) return;
-      if (!requests || !requests.length) { section.style.display = 'none'; return; }
+      // History covers decided requests; the cards below cover pending ones. Do
+      // this before the pending early-return, or the history disappears the
+      // moment the queue empties — which is exactly when it matters most.
+      renderRequestHistory(requests);
+      var pending = (requests || []).filter(function(pr) {
+        return pr && (!pr.status || pr.status === 'pending');
+      });
+      if (!pending.length) {
+        // Keep the section visible when there is history to show, so the table
+        // does not vanish along with the empty queue.
+        var anyDecided = (requests || []).some(function(pr) { return pr && pr.status && pr.status !== 'pending'; });
+        list.innerHTML = '<div style="color:var(--muted);font-size:0.75rem;padding:6px 0">No pending requests.</div>';
+        section.style.display = anyDecided ? '' : 'none';
+        return;
+      }
       section.style.display = '';
       // Stash by username so the approve-picker modal can read the full request
       // (org/repos/acmm) without threading every field through an onclick string.
       _provisionRequestsByUser = {};
-      requests.forEach(function(pr) { _provisionRequestsByUser[pr.username] = pr; });
-      var rows = requests.map(function(pr) {
+      pending.forEach(function(pr) { _provisionRequestsByUser[pr.username] = pr; });
+      var rows = pending.map(function(pr) {
         var avatar = '<img src="https://github.com/' + esc(pr.username) + '.png" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:8px">';
         return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">' +
           '<div style="display:flex;align-items:center;gap:8px">' +
