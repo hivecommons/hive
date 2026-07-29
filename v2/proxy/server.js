@@ -165,12 +165,12 @@ function serveIndex(_req, res) {
   if (!indexHtml) {
     try { indexHtml = fs.readFileSync(indexPath, 'utf8'); } catch { /* ignore */ }
   }
-  if (DASHBOARD_TOKEN && indexHtml) {
-    const injection = `<script>if(!localStorage.getItem('hive-token'))localStorage.setItem('hive-token',${JSON.stringify(DASHBOARD_TOKEN)});</script>`;
-    res.type('html').send(indexHtml.replace('</head>', injection + '</head>'));
-  } else {
-    res.sendFile(indexPath);
-  }
+  // SECURITY: never inject the dashboard token into the served HTML. Doing so
+  // handed the only API credential to every visitor who could reach this port,
+  // reducing "authentication" to "can you open the page". The frontend now
+  // obtains the token only from an operator who pastes it (stored in
+  // localStorage), so the served page carries no secret.
+  res.sendFile(indexPath);
 }
 
 const contributeProxy = createProxyMiddleware({

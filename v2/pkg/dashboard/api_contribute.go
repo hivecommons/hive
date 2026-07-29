@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	defaultContributorsDir     = "/data/contributors"
-	contributorAutoPromoteAt   = 5
-	contributorTrustedAt       = 20
-	defaultFederationRegistry  = "/data/federation/registry.json"
+	defaultContributorsDir    = "/data/contributors"
+	contributorAutoPromoteAt  = 5
+	contributorTrustedAt      = 20
+	defaultFederationRegistry = "/data/federation/registry.json"
 )
 
 func getContributorsDir() string {
@@ -42,36 +42,36 @@ func getFederationRegistryPath() string {
 }
 
 type ContributorProfile struct {
-	GitHubUsername      string                `json:"github_username"`
-	ContributorID      string                `json:"contributor_id"`
-	RegistrationToken  string                `json:"registration_token"`
-	TokenPlain         string                `json:"registration_token_plain,omitempty"`
-	TrustTier          string                `json:"trust_tier"`
-	PreferredRole      string                `json:"preferred_role,omitempty"`
-	CLIBackend         string                `json:"cli_backend,omitempty"`
-	Model              string                `json:"model,omitempty"`
-	AvatarURL          string                `json:"avatar_url,omitempty"`
-	RegisteredAt       string                `json:"registered_at"`
-	TasksCompleted     int                   `json:"total_tasks_completed"`
-	TasksFailed        int                   `json:"total_tasks_failed"`
-	LastActive         string                `json:"last_active,omitempty"`
-	LastCompletedTask  *WSTaskAssign         `json:"last_completed_task,omitempty"`
-	RateLimits         ContributorRateLimits `json:"rate_limits"`
-	Active             bool                  `json:"active,omitempty"`
-	CurrentTask        *WSTaskAssign         `json:"current_task,omitempty"`
-	ActiveTasks        []WSTaskAssign        `json:"active_tasks,omitempty"`
-	Sessions           int                   `json:"sessions,omitempty"`
+	GitHubUsername    string                `json:"github_username"`
+	ContributorID     string                `json:"contributor_id"`
+	RegistrationToken string                `json:"registration_token"`
+	TokenPlain        string                `json:"registration_token_plain,omitempty"`
+	TrustTier         string                `json:"trust_tier"`
+	PreferredRole     string                `json:"preferred_role,omitempty"`
+	CLIBackend        string                `json:"cli_backend,omitempty"`
+	Model             string                `json:"model,omitempty"`
+	AvatarURL         string                `json:"avatar_url,omitempty"`
+	RegisteredAt      string                `json:"registered_at"`
+	TasksCompleted    int                   `json:"total_tasks_completed"`
+	TasksFailed       int                   `json:"total_tasks_failed"`
+	LastActive        string                `json:"last_active,omitempty"`
+	LastCompletedTask *WSTaskAssign         `json:"last_completed_task,omitempty"`
+	RateLimits        ContributorRateLimits `json:"rate_limits"`
+	Active            bool                  `json:"active,omitempty"`
+	CurrentTask       *WSTaskAssign         `json:"current_task,omitempty"`
+	ActiveTasks       []WSTaskAssign        `json:"active_tasks,omitempty"`
+	Sessions          int                   `json:"sessions,omitempty"`
 }
 
 type ContributorRateLimits struct {
-	MaxConcurrent  int `json:"max_concurrent_tasks"`
-	MaxPerHour     int `json:"max_tasks_per_hour"`
-	MaxPerDay      int `json:"max_tasks_per_day"`
+	MaxConcurrent int `json:"max_concurrent_tasks"`
+	MaxPerHour    int `json:"max_tasks_per_hour"`
+	MaxPerDay     int `json:"max_tasks_per_day"`
 }
 
 type ContributorPool struct {
-	Active     int                     `json:"active"`
-	Registered int                     `json:"registered"`
+	Active     int `json:"active"`
+	Registered int `json:"registered"`
 	mu         sync.RWMutex
 }
 
@@ -200,7 +200,7 @@ func createContributorProfile(username string) (*ContributorProfile, string) {
 	cid := "c-" + randomHex(6)
 	token := randomHex(32)
 	p := &ContributorProfile{
-		GitHubUsername:     username,
+		GitHubUsername:    username,
 		ContributorID:     cid,
 		RegistrationToken: sha256Hex(token),
 		TokenPlain:        token,
@@ -568,20 +568,16 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 			jsonError(w, "Account revoked — contact the hive administrator to reinstate", http.StatusForbidden)
 			return
 		}
-		if req.Force {
-			// Reissue token: generate a new one and invalidate the old
-			newToken := reissueContributorToken(existing)
-			s.logger.Info("contributor token reissued via force register", "username", username, "id", existing.ContributorID)
-			jsonResponse(w, map[string]string{
-				"contributor_id":     existing.ContributorID,
-				"registration_token": newToken,
-				"message":            "Token reissued — save this new token, it replaces the previous one",
-			})
-			return
-		}
+		// SECURITY: this endpoint is unauthenticated (username is self-asserted),
+		// so it must NEVER reissue and return an existing contributor's token —
+		// that was an account-takeover primitive (POST any known username with
+		// force:true → receive their live token). Reissuing requires proving you
+		// own the GitHub account, which POST /api/contribute/reissue-token does
+		// (it validates a GitHub token). The legacy force:true flag is ignored.
+		_ = req.Force
 		jsonResponse(w, map[string]string{
 			"contributor_id": existing.ContributorID,
-			"message":        "Already registered — use force:true to reissue token, or POST /api/contribute/reissue-token with GitHub auth",
+			"message":        "Already registered — to rotate your token, POST /api/contribute/reissue-token with Authorization: Bearer <your GitHub token>",
 		})
 		return
 	}
@@ -669,7 +665,7 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	s.statusMu.RUnlock()
 	jsonResponse(w, map[string]any{
-		"hub":                  "online",
+		"hub":                 "online",
 		"active_contributors": active,
 		"total_registered":    len(profiles),
 		"actionable_items":    actionable,
@@ -776,7 +772,6 @@ func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request)
 }
 
 // ── Federation registry ────────────────────────────────────────────────────
-
 
 type FederationRegistry struct {
 	Hives []FederationHive `json:"hives"`
@@ -1020,8 +1015,8 @@ func (s *Server) handleLeaderboardAPI(w http.ResponseWriter, _ *http.Request) {
 	contributors := buildLeaderboard()
 	agents := s.buildAgentLeaderboardEntries()
 	jsonResponse(w, map[string]any{
-		"leaderboard":  contributors,
-		"agents":       agents,
+		"leaderboard": contributors,
+		"agents":      agents,
 	})
 }
 
@@ -1156,8 +1151,8 @@ func (s *Server) buildAgentLeaderboardEntries() []LeaderboardEntry {
 
 		entries = append(entries, LeaderboardEntry{
 			GitHubUsername: name,
-			AvatarURL:     fmt.Sprintf(agentAvatarURLTemplate, name),
-			TrustTier:     agentTierLabel,
+			AvatarURL:      fmt.Sprintf(agentAvatarURLTemplate, name),
+			TrustTier:      agentTierLabel,
 			TasksCompleted: tasksCompleted,
 			TasksFailed:    proc.RestartCount,
 			Findings:       totalFindings,
@@ -2066,10 +2061,9 @@ a{color:#58a6ff}
 
 <div class="endpoint">
 <span class="method">POST</span><span class="path">/api/contribute/register</span>
-<div class="desc">Register (or re-register with <code>force:true</code> to reissue token)</div>
-<pre>curl -X POST -d '{"github_username":"you","force":true}' %s/api/contribute/register</pre>
+<div class="desc">Register as a contributor (returns your token once). To rotate a lost token, use the reissue-token endpoint below with your GitHub token — registration cannot reissue.</div>
+<pre>curl -X POST -d '{"github_username":"you"}' %s/api/contribute/register</pre>
 </div>
 
 </body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
 }
-

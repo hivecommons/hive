@@ -22,6 +22,27 @@ spec:
       containers:
         - name: hive
           image: hive:latest
+          # SECURITY: drop the ambient root capability set down to only what the
+          # runtime actually needs, and pin the default seccomp profile. This
+          # container CANNOT run fully unprivileged: it starts as root to set up
+          # the ACMM MITM proxy's iptables (NET_ADMIN) and to switch each agent to
+          # its own UID via su-exec (SETUID/SETGID/SETPCAP), and it writes agent
+          # scratch state to /tmp, /run and /home — so runAsNonRoot and
+          # readOnlyRootFilesystem are intentionally NOT set (they would break
+          # agent launch). Everything else is dropped.
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_ADMIN # ACMM proxy iptables redirect of outbound :443
+                - SETUID # su-exec dev->per-agent UID switch
+                - SETGID
+                - SETPCAP
+                - CHOWN # chown per-agent dirs/beads to the agent UID
+                - DAC_OVERRIDE
           args:
             - "--config"
             - "/etc/hive/hive.yaml"
@@ -32,9 +53,9 @@ spec:
             - name: api
               containerPort: 3002
               protocol: TCP
-            - name: ttyd
-              containerPort: 7681
-              protocol: TCP
+            # ttyd (:7681) is loopback-only inside the pod (reached via the
+            # authenticating /terminal proxy), so it is not declared as a
+            # containerPort — nothing should target it directly.
           env:
             - name: HIVE_GITHUB_TOKEN
               valueFrom:

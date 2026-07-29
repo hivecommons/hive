@@ -394,7 +394,7 @@ func stringField(m map[string]interface{}, key string) string {
 
 var envVarEscapePattern = regexp.MustCompile(`\$\{[^}]*\}`)
 
-var tokenRedactor = regexp.MustCompile(`(ghp_|gho_|ghs_|github_pat_)[A-Za-z0-9_]{10,}`)
+var tokenRedactor = regexp.MustCompile(`(ghp_|gho_|ghs_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}`)
 
 func redactTokensInLine(s string) string {
 	return tokenRedactor.ReplaceAllStringFunc(s, func(m string) string {
@@ -6101,15 +6101,18 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not available on this hive", http.StatusNotFound)
 		return
 	}
+	// SECURITY: never return the token VALUE. On a self-hosted (non-direct-route)
+	// hive the dashboard token IS the API credential, so handing it to any
+	// same-origin caller made "authentication" meaningless (an unauthenticated
+	// visitor could GET it and then mutate). This endpoint now only reports
+	// WHETHER a token is configured; a browser that needs to authenticate an
+	// operator obtains the token by having the operator paste it (see the SPA's
+	// token prompt), never by reading it back from the server.
 	token := s.authToken
 	if token == "" {
 		token = os.Getenv("HIVE_DASHBOARD_TOKEN")
 	}
-	if token == "" {
-		okResponse(w, map[string]string{"token": "(not set)", "configured": "false"})
-		return
-	}
-	okResponse(w, map[string]string{"token": token, "configured": "true"})
+	okResponse(w, map[string]string{"configured": strconv.FormatBool(token != "")})
 }
 
 // maskToken replaces all but the last 4 characters with bullet characters.

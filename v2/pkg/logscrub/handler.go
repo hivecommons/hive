@@ -7,7 +7,7 @@ import (
 )
 
 var tokenPattern = regexp.MustCompile(
-	`(ghs_|ghp_|gho_|github_pat_)[A-Za-z0-9_]{10,}` +
+	`(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}` +
 		`|eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}`,
 )
 

@@ -311,22 +311,22 @@ func TestLeaderboardPageHTML(t *testing.T) {
 
 	body := w.Body.String()
 	checks := map[string]string{
-		"gradient-text":       "animated gradient header text",
-		"Leaderboard":         "page heading",
-		"alice":               "contributor username",
+		"gradient-text":        "animated gradient header text",
+		"Leaderboard":          "page heading",
+		"alice":                "contributor username",
 		"github.com/alice.png": "avatar URL",
-		"github.com/alice":    "GitHub profile link",
-		"search":              "search input",
-		"sort-completed":      "sortable completed column",
-		"Trust Tiers":         "trust tiers reference section",
-		"bg-stars":            "starfield background",
-		"var AGENTS":          "JavaScript agent entries data",
-		"var CONTRIBUTORS":    "JavaScript contributor entries data",
-		"toggleSort":          "sort toggle function",
-		"renderRows":          "row rendering function",
-		"hover-card":          "contributor hover card CSS",
-		"hc-header":           "hover card header",
-		"hc-bar":              "hover card success rate bar",
+		"github.com/alice":     "GitHub profile link",
+		"search":               "search input",
+		"sort-completed":       "sortable completed column",
+		"Trust Tiers":          "trust tiers reference section",
+		"bg-stars":             "starfield background",
+		"var AGENTS":           "JavaScript agent entries data",
+		"var CONTRIBUTORS":     "JavaScript contributor entries data",
+		"toggleSort":           "sort toggle function",
+		"renderRows":           "row rendering function",
+		"hover-card":           "contributor hover card CSS",
+		"hc-header":            "hover card header",
+		"hc-bar":               "hover card success rate bar",
 	}
 	for needle, desc := range checks {
 		if !strings.Contains(body, needle) {
@@ -478,7 +478,7 @@ func TestRegisterForceReissue(t *testing.T) {
 	s.registerContributeRoutes()
 
 	// First registration — should succeed with a token
-	cid, token1 := registerTestUser(t, s, "force-user")
+	_, token1 := registerTestUser(t, s, "force-user")
 	if token1 == "" {
 		t.Fatal("expected token on first register")
 	}
@@ -498,7 +498,11 @@ func TestRegisterForceReissue(t *testing.T) {
 		t.Error("should not return token without force")
 	}
 
-	// Third registration with force — should reissue a new token
+	// SECURITY (F5): the unauthenticated register endpoint must NOT reissue an
+	// existing contributor's token, even with force:true — that was an account
+	// takeover primitive (POST any known username → receive their live token).
+	// force:true is now ignored; no token is returned and the stored token is
+	// unchanged. Rotation requires the authenticated /api/contribute/reissue-token.
 	body = `{"github_username":"force-user","force":true}`
 	req = httptest.NewRequest(http.MethodPost, "/api/contribute/register", bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -508,29 +512,18 @@ func TestRegisterForceReissue(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	token2 := resp["registration_token"]
-	if token2 == "" {
-		t.Fatal("expected new token with force:true")
-	}
-	if token2 == token1 {
-		t.Error("reissued token should differ from original")
-	}
-	if resp["contributor_id"] != cid {
-		t.Error("contributor_id should be preserved on reissue")
+	if resp["registration_token"] != "" {
+		t.Errorf("force:true must NOT return a token (account-takeover fix), got %q", resp["registration_token"])
 	}
 
-	// Verify old token no longer works by checking the stored hash
+	// The stored token hash must still match the ORIGINAL token — force did not
+	// rotate it.
 	profile, _ := loadContributorProfile("force-user")
 	if profile == nil {
 		t.Fatal("profile should exist")
 	}
-	oldHash := sha256Hex(token1)
-	if profile.RegistrationToken == oldHash {
-		t.Error("old token hash should have been replaced")
-	}
-	newHash := sha256Hex(token2)
-	if profile.RegistrationToken != newHash {
-		t.Error("stored hash should match the new token")
+	if profile.RegistrationToken != sha256Hex(token1) {
+		t.Error("force:true must not change the stored token")
 	}
 }
 

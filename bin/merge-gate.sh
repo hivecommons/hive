@@ -100,14 +100,16 @@ else:
         print('unknown')
 " 2>/dev/null || echo "unknown")
 
-      # Get PR metadata (including reviewDecision for community PR approval)
-      pr_info=$(gh pr view "$num" --repo "$repo" --json title,author,isDraft,mergeable,reviewDecision 2>/dev/null || echo '{}')
+      # Get PR metadata (including reviewDecision for community PR approval and
+      # labels for the deterministic hold-gate below).
+      pr_info=$(gh pr view "$num" --repo "$repo" --json title,author,isDraft,mergeable,reviewDecision,labels 2>/dev/null || echo '{}')
       author=$(echo "$pr_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('author',{}).get('login','unknown'))" 2>/dev/null || echo "unknown")
       title=$(echo "$pr_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('title',''))" 2>/dev/null || echo "")
       mergeable=$(echo "$pr_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('mergeable','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
       review=$(echo "$pr_info" | python3 -c "import json,sys; print(json.load(sys.stdin).get('reviewDecision',''))" 2>/dev/null || echo "")
+      labels=$(echo "$pr_info" | python3 -c "import json,sys; print(json.dumps([l.get('name','') for l in json.load(sys.stdin).get('labels',[])]))" 2>/dev/null || echo "[]")
 
-      echo "{\"repo\":\"$repo\",\"number\":$num,\"status\":\"$status\",\"author\":\"$author\",\"title\":$(python3 -c "import json,sys; print(json.dumps(sys.argv[1][:100]))" "$title" 2>/dev/null || echo '""'),\"mergeable\":\"$mergeable\",\"reviewDecision\":\"$review\"}" > "$checks_tmp/${repo//\//_}_${num}.json"
+      echo "{\"repo\":\"$repo\",\"number\":$num,\"status\":\"$status\",\"author\":\"$author\",\"title\":$(python3 -c "import json,sys; print(json.dumps(sys.argv[1][:100]))" "$title" 2>/dev/null || echo '""'),\"mergeable\":\"$mergeable\",\"reviewDecision\":\"$review\",\"labels\":$labels}" > "$checks_tmp/${repo//\//_}_${num}.json"
     fi
   ) &
 done
@@ -136,15 +138,27 @@ for f in sorted(glob.glob(os.path.join(checks_dir, '*.json'))):
     mergeable = pr.get('mergeable', 'UNKNOWN') in ('MERGEABLE', 'UNKNOWN')
     approved = pr.get('reviewDecision', '') == 'APPROVED'
 
+    # Deterministic hold-gate: a PR carrying any hold label is NEVER merge-eligible,
+    # regardless of CI/author. Hold-gating previously lived only in agent prompts
+    # and the enumerator; enforcing it here in code makes it a hard gate the merge
+    # step itself honors. Extra hold labels can be supplied via HOLD_LABELS (comma-
+    # separated); the defaults cover the standard variants.
+    hold_labels = {l.strip().lower() for l in os.environ.get('HOLD_LABELS', 'hold,on-hold,hold/review,do-not-merge,dont-merge,wip').split(',') if l.strip()}
+    pr_labels = {str(l).lower() for l in pr.get('labels', [])}
+    held = bool(pr_labels & hold_labels)
+
     pr['ai_authored'] = is_ai
     pr['ci_pass'] = ci_pass
     pr['approved'] = approved
+    pr['held'] = held
 
-    # Eligible: CI green + mergeable + (AI-authored OR community-approved)
-    if ci_pass and mergeable and (is_ai or approved):
+    # Eligible: CI green + mergeable + not held + (AI-authored OR community-approved)
+    if ci_pass and mergeable and not held and (is_ai or approved):
         eligible.append(pr)
     else:
         reasons = []
+        if held:
+            reasons.append('held (hold label present)')
         if not ci_pass:
             reasons.append(f\"ci={pr.get('status','?')}\")
         if not mergeable:

@@ -125,7 +125,7 @@ fi
 # Scrub GitHub token patterns and JWTs from stderr before writing to disk.
 scrub_tokens() {
   sed -u -E \
-    's/(ghs_|ghp_|gho_|github_pat_)[A-Za-z0-9_]{10,}/[REDACTED]/g;
+    's/(ghs_|ghp_|gho_|ghu_|ghr_|github_pat_)[A-Za-z0-9_]{10,}/[REDACTED]/g;
      s/eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/[REDACTED-JWT]/g'
 }
 

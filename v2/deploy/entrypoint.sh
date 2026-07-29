@@ -628,14 +628,30 @@ cd /opt/hive/proxy && node server.js &
 PROXY_PID=$!
 
 TTYD_PORT="${HIVE_TTYD_PORT:-7681}"
-echo "[entrypoint] Starting ttyd on :${TTYD_PORT}"
+# SECURITY: ttyd is a WRITABLE terminal into the container that holds the GitHub
+# credentials, so :7681 must NEVER be reachable directly — the only path to it is
+# the Node proxy's /terminal route, which authenticates first (cookie on hosted
+# hives, ?token= on self-hosted). It binds to loopback so nothing on the pod
+# network (or a raw nginx stream proxy) can reach it without going through that
+# gate. As defense in depth, ttyd is additionally credentialed when a dashboard
+# token is available.
+TTYD_BIND="${HIVE_TTYD_BIND:-127.0.0.1}"
+TTYD_CRED="${HIVE_TTYD_CREDENTIAL:-}"
+if [ -z "$TTYD_CRED" ] && [ -n "${HIVE_DASHBOARD_TOKEN:-}" ]; then
+  TTYD_CRED="hive:${HIVE_DASHBOARD_TOKEN}"
+fi
+CRED_ARGS="-a"
+if [ -n "$TTYD_CRED" ]; then
+  CRED_ARGS="-c ${TTYD_CRED}"
+fi
+echo "[entrypoint] Starting ttyd on ${TTYD_BIND}:${TTYD_PORT}"
 # Wrap ttyd in a respawn loop: ttyd exits on SIGHUP (its close signal),
 # and orphaned LISTEN sockets block rebind, so we wait before retrying.
 TTYD_RESPAWN_DELAY_SECS=5
 (
   trap '' HUP
   while true; do
-    ttyd -W -a -p "${TTYD_PORT}" -t fontSize=14 -t disableLeaveAlert=true /usr/local/bin/ttyd-tmux.sh
+    ttyd -W ${CRED_ARGS} -i "${TTYD_BIND}" -p "${TTYD_PORT}" -t fontSize=14 -t disableLeaveAlert=true /usr/local/bin/ttyd-tmux.sh
     echo "[entrypoint] ttyd exited (rc=$?), respawning in ${TTYD_RESPAWN_DELAY_SECS}s..."
     sleep "$TTYD_RESPAWN_DELAY_SECS"
   done

@@ -344,7 +344,16 @@ func TestHandleAuthToken_AvailableWithoutAllowlist(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/auth/token", nil)
 	w := httptest.NewRecorder()
 	s.handleAuthToken(w, req)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), s.authToken) {
-		t.Fatalf("auth token must be available on non-allowlist hive, got code=%d", w.Code)
+	// On a non-allowlist (self-hosted) hive the endpoint reports that a token is
+	// configured but must NEVER return its value (F1): returning it let any
+	// visitor read the API credential.
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got code=%d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), s.authToken) {
+		t.Fatalf("auth-token endpoint leaked the token value: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"configured":"true"`) {
+		t.Fatalf("expected configured:true, got %s", w.Body.String())
 	}
 }

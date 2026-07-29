@@ -46,6 +46,11 @@ func newTestBot(ts *httptest.Server, channelID string) *Bot {
 	b := NewBot(Config{
 		Token:     "test-token",
 		ChannelID: channelID,
+		// Test messages are authored as "uid" (makeMsg) or "u1" (poll-loop
+		// fixtures); allowlist both so command-dispatch tests exercise the handler
+		// path. The allowlist gate itself is covered by
+		// TestRouteMessage_NonAllowlistedUserBlocked / _EmptyAllowlistBlocksAll.
+		AllowedUsers: []string{"uid", "u1"},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	b.client = &http.Client{
@@ -477,6 +482,44 @@ func makeMsg(id, content string, isBot bool) discordMessage {
 			ID  string `json:"id"`
 			Bot bool   `json:"bot"`
 		}{ID: "uid", Bot: isBot},
+	}
+}
+
+func TestRouteMessage_NonAllowlistedUserBlocked(t *testing.T) {
+	b, sent := makeBotWithSendCapture(t)
+	called := false
+	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) {
+		called = true
+		return "pong", nil
+	})
+	// A message from a user NOT in the allowlist must be ignored — the command
+	// handler never runs and nothing is sent.
+	msg := makeMsg("1", "!ping", false)
+	msg.Author.ID = "intruder"
+	b.routeMessage(context.Background(), msg)
+	drainQueue(b, sent)
+	if called {
+		t.Error("command handler ran for a non-allowlisted user")
+	}
+	if len(*sent) != 0 {
+		t.Errorf("expected no messages for blocked user, got %v", *sent)
+	}
+}
+
+func TestRouteMessage_EmptyAllowlistAllowsAll(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
+	t.Cleanup(ts.Close)
+	// No AllowedUsers -> opt-in: the allowlist is not enforced, preserving the
+	// prior behavior so an existing Discord workflow is not broken. (Operators
+	// exposing the bot to an untrusted guild opt in by setting allowed_users,
+	// covered by TestRouteMessage_NonAllowlistedUserBlocked.)
+	b := NewBot(Config{Token: "t", ChannelID: "c"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.client = &http.Client{Transport: &redirectTransport{target: ts.URL}, Timeout: httpTimeoutS * time.Second}
+	called := false
+	b.RegisterCommand("ping", func(_ context.Context, _ string) (string, error) { called = true; return "pong", nil })
+	b.routeMessage(context.Background(), makeMsg("1", "!ping", false))
+	if !called {
+		t.Error("empty allowlist should allow commands (opt-in, backward compatible)")
 	}
 }
 

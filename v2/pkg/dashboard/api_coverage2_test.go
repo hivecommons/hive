@@ -117,8 +117,10 @@ func TestHandleAuthToken_NotSet(t *testing.T) {
 	}
 	var body map[string]string
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["token"] != "(not set)" {
-		t.Errorf("token = %q, want (not set)", body["token"])
+	// SECURITY: the endpoint reports only whether a token is configured; it must
+	// never return the token value (that was the F1 credential leak).
+	if _, ok := body["token"]; ok {
+		t.Errorf("response must not include a token field, got %v", body)
 	}
 	if body["configured"] != "false" {
 		t.Errorf("configured = %q, want false", body["configured"])
@@ -135,8 +137,9 @@ func TestHandleAuthToken_FromEnv(t *testing.T) {
 	}
 	var body map[string]string
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["token"] != "secret-token-abc" {
-		t.Errorf("token = %q, want real token", body["token"])
+	// SECURITY: reports configured=true but must NOT leak the token value.
+	if strings.Contains(rec.Body.String(), "secret-token-abc") {
+		t.Errorf("response leaked the token value: %s", rec.Body.String())
 	}
 	if body["configured"] != "true" {
 		t.Errorf("configured = %q, want true", body["configured"])
@@ -150,25 +153,29 @@ func TestHandleAuthToken_FromServer(t *testing.T) {
 	rec := doGet(s, "/api/auth/token")
 	var body map[string]string
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	if body["token"] != "server-token-xyz" {
-		t.Errorf("token = %q, want real token", body["token"])
+	// SECURITY: configured=true, but the token value must never appear.
+	if strings.Contains(rec.Body.String(), "server-token-xyz") {
+		t.Errorf("response leaked the token value: %s", rec.Body.String())
 	}
 	if body["configured"] != "true" {
 		t.Errorf("configured = %q, want true", body["configured"])
 	}
 }
 
-func TestHandleAuthToken_ISO88591Safe(t *testing.T) {
+// TestHandleAuthToken_NeverReturnsValue locks in that the endpoint never
+// discloses the token — the core of the F1 fix — regardless of token content.
+func TestHandleAuthToken_NeverReturnsValue(t *testing.T) {
 	s, _ := apiServer(t)
 	s.authToken = "test-token-for-header-safety"
 
 	rec := doGet(s, "/api/auth/token")
+	if strings.Contains(rec.Body.String(), "test-token-for-header-safety") {
+		t.Fatalf("auth-token endpoint leaked the token value: %s", rec.Body.String())
+	}
 	var body map[string]string
 	json.Unmarshal(rec.Body.Bytes(), &body)
-	for _, r := range body["token"] {
-		if r > 0xFF {
-			t.Fatalf("token contains non-ISO-8859-1 character U+%04X — this breaks HTTP Authorization headers in fetch()", r)
-		}
+	if _, ok := body["token"]; ok {
+		t.Errorf("response must not include a token field, got %v", body)
 	}
 }
 

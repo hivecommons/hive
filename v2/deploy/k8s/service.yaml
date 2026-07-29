@@ -18,7 +18,6 @@ spec:
       port: 3002
       targetPort: api
       protocol: TCP
-    - name: ttyd
-      port: 7681
-      targetPort: ttyd
-      protocol: TCP
+    # SECURITY: the ttyd terminal (:7681) is intentionally NOT exposed as a
+    # Service port. The terminal is reached only through the authenticating proxy
+    # (/terminal on the dashboard port); ttyd binds to loopback inside the pod.

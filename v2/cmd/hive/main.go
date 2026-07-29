@@ -1550,6 +1550,7 @@ func main() {
 			ChannelID:      cfg.Notifications.Discord.ChannelID,
 			DashboardURL:   fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port),
 			DashboardToken: os.Getenv("HIVE_DASHBOARD_TOKEN"),
+			AllowedUsers:   cfg.Notifications.Discord.AllowedUsers,
 		}, logger)
 		var agentNameList []string
 		for name := range cfg.EnabledAgents() {

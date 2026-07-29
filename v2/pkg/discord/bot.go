@@ -74,10 +74,13 @@ func SetAgentAliases(agentAliases map[string]string) {
 type CommandHandler func(ctx context.Context, args string) (string, error)
 
 type Config struct {
-	Token        string
-	ChannelID    string
+	Token          string
+	ChannelID      string
 	DashboardURL   string
 	DashboardToken string
+	// AllowedUsers is the set of Discord user IDs permitted to issue commands.
+	// Empty = commands disabled (fail closed).
+	AllowedUsers []string
 }
 
 type Bot struct {
@@ -85,13 +88,14 @@ type Bot struct {
 	channelID      string
 	dashboardURL   string
 	dashboardToken string
-	commands     map[string]CommandHandler
-	agentNames   []string
-	mu           sync.RWMutex
-	logger       *slog.Logger
-	client       *http.Client
+	allowedUsers   map[string]struct{} // Discord user IDs allowed to issue commands
+	commands       map[string]CommandHandler
+	agentNames     []string
+	mu             sync.RWMutex
+	logger         *slog.Logger
+	client         *http.Client
 
-	msgQueue chan msgItem
+	msgQueue  chan msgItem
 	lastState *statusSnapshot
 	lastTopic string
 }
@@ -129,13 +133,20 @@ type budgetSnapshot struct {
 }
 
 func NewBot(cfg Config, logger *slog.Logger) *Bot {
+	allowed := make(map[string]struct{}, len(cfg.AllowedUsers))
+	for _, id := range cfg.AllowedUsers {
+		if id = strings.TrimSpace(id); id != "" {
+			allowed[id] = struct{}{}
+		}
+	}
 	return &Bot{
 		token:          cfg.Token,
 		channelID:      cfg.ChannelID,
 		dashboardURL:   cfg.DashboardURL,
 		dashboardToken: cfg.DashboardToken,
-		commands:     make(map[string]CommandHandler),
-		logger:       logger,
+		allowedUsers:   allowed,
+		commands:       make(map[string]CommandHandler),
+		logger:         logger,
 		client: &http.Client{
 			Timeout: httpTimeoutS * time.Second,
 		},
@@ -708,6 +719,20 @@ func (b *Bot) routeMessage(ctx context.Context, msg discordMessage) {
 	if !strings.HasPrefix(content, "!") {
 		return
 	}
+
+	// SECURITY: when an allowlist is configured, only those Discord user IDs may
+	// drive the agents (!kick / agent commands inject prompts). This is OPT-IN to
+	// avoid breaking an existing Discord workflow that relies on the bot: an empty
+	// allowlist preserves the prior behavior (any channel member can command).
+	// Operators exposing the bot to an untrusted guild should set allowed_users.
+	if len(b.allowedUsers) > 0 {
+		if _, ok := b.allowedUsers[msg.Author.ID]; !ok {
+			b.logger.Warn("discord: ignoring command from non-allowlisted user",
+				"user_id", msg.Author.ID, "content", content)
+			return
+		}
+	}
+
 	content = content[1:]
 
 	parts := strings.SplitN(content, " ", 2)

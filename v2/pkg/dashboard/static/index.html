@@ -2776,20 +2776,41 @@
   <script>
     // Wrap fetch to inject auth token for mutation requests (PUT/POST/PATCH/DELETE)
     (function() {
-      let _authToken = null;
+      // Token acquisition for the self-hosted (token-only) mode. The dashboard
+      // token is the API credential here — so it is NEVER fetched from the
+      // server (that would let any visitor read it). It is stored in
+      // localStorage by the operator pasting it once. On a hosted/hub-proxied
+      // hive there is no token at all (identity comes from the hub login), so
+      // this path simply never triggers a prompt.
+      let _authToken = localStorage.getItem('hive-token') || null;
+      let _authConfigured = null; // null=unknown, true/false once checked
+      async function _ensureAuthToken() {
+        if (_authToken) return _authToken;
+        if (_authConfigured === null) {
+          try {
+            const r = await _origFetch('/api/auth/token');
+            if (r.ok) { const d = await r.json(); _authConfigured = d.configured === 'true' || d.configured === true; }
+            else { _authConfigured = false; } // 404 = hosted hive, no token needed
+          } catch { _authConfigured = false; }
+        }
+        if (_authConfigured && !_authToken) {
+          // Self-hosted hive with a token configured but none stored locally:
+          // ask the operator to paste it once. It persists in localStorage.
+          const entered = window.prompt('This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:');
+          if (entered && entered.trim()) {
+            _authToken = entered.trim();
+            try { localStorage.setItem('hive-token', _authToken); } catch {}
+          }
+        }
+        return _authToken;
+      }
       const _origFetch = window.fetch;
       window.fetch = async function(url, opts) {
         opts = opts || {};
         const method = (opts.method || 'GET').toUpperCase();
         if (['PUT','POST','PATCH','DELETE'].includes(method)) {
-          if (!_authToken) {
-            try {
-              const r = await _origFetch('/api/auth/token');
-              const d = await r.json();
-              _authToken = d.token;
-            } catch {}
-          }
-          if (_authToken && _authToken !== '(not set)') {
+          await _ensureAuthToken();
+          if (_authToken) {
             opts.headers = opts.headers || {};
             if (opts.headers instanceof Headers) {
               if (!opts.headers.has('Authorization')) opts.headers.set('Authorization', 'Bearer ' + _authToken);

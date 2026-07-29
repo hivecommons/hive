@@ -4,8 +4,11 @@ services:
     container_name: hive-gateway
     restart: unless-stopped
     ports:
+      # SECURITY: only the authenticating proxy port is published. :7681 (the raw
+      # writable ttyd terminal) is intentionally NOT published — the terminal is
+      # reached through :3001/terminal, which authenticates first. Publishing 7681
+      # exposed an unauthenticated shell into the credential-holding container.
       - "3001:3001"
-      - "7681:7681"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/nginx.conf:ro
       - gateway-upstream:/etc/nginx/upstream

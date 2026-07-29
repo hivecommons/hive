@@ -260,7 +260,9 @@ function shellQuote(s) {
 function redactTokens(text) {
   return text.replace(/gho_[A-Za-z0-9]{36}/g, 'gho_***REDACTED***')
     .replace(/ghp_[A-Za-z0-9]{36}/g, 'ghp_***REDACTED***')
-    .replace(/ghs_[A-Za-z0-9]{36}/g, 'ghs_***REDACTED***');
+    .replace(/ghs_[A-Za-z0-9]{36}/g, 'ghs_***REDACTED***')
+    .replace(/ghu_[A-Za-z0-9]{36}/g, 'ghu_***REDACTED***')
+    .replace(/ghr_[A-Za-z0-9]{36}/g, 'ghr_***REDACTED***');
 }
 
 function captureTmuxLines(n) {
