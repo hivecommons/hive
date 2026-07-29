@@ -5417,6 +5417,20 @@ const dashboardHTML = `<!DOCTYPE html>
     .hive-section-head td { cursor: pointer; user-select: none; }
     .hive-section-head td:hover { color: var(--text) !important; }
     .hive-section-caret { display: inline-block; width: 12px; margin-right: 4px; }
+    /* Grouping + saved-view controls, sitting above the status chips. */
+    #hive-view-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+    .view-ctls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .view-ctl { display: inline-flex; align-items: center; gap: 6px; }
+    .view-ctl-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    .view-select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 0.72rem; font-family: inherit; cursor: pointer; max-width: 220px; }
+    .view-btn { background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 0.7rem; font-weight: 600; font-family: inherit; cursor: pointer; transition: all .15s; }
+    .view-btn:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+    .view-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* Group header rows nest one step in from the Assigned/Unassigned headers,
+       so the outer section split stays legible as the outer structure. */
+    .hive-group-head td { cursor: pointer; }
+    .hive-group-head:hover td { color: var(--text) !important; }
+    .hive-group-caret { display: inline-block; width: 12px; font-size: 0.7rem; }
     .table-wrap { overflow: visible; margin: 0 auto; position: relative; }
     .hive-menu-cell:hover .hive-menu-dropdown { display: block !important; }
     .hive-menu-dropdown a:hover, .hive-menu-dropdown div[onclick]:hover { background: rgba(244,199,95,0.08); border-radius: 4px; }
@@ -5598,6 +5612,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
     <div id="hive-drift-summary" style="display:none"></div>
     <div id="fleet-alerts-panel" style="display:none"></div>
+    <div id="hive-view-bar" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
     <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="bulk-action-bar" style="display:none"></div>
@@ -5660,6 +5675,21 @@ const dashboardHTML = `<!DOCTYPE html>
 
   <script>
     function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+    /* jsArg renders a string as a quoted JS string literal safe to embed in an
+       inline handler attribute. esc() alone is not enough here: it leaves the
+       apostrophe intact, and an org or branch name containing one would close
+       the handler's quote early. Backslash first (so later escapes are not
+       re-escaped), then the quote, then newlines, and finally HTML-escape the
+       whole literal because it lands inside an attribute value. */
+    function jsArg(s) {
+      var lit = "'" + String(s === null || s === undefined ? '' : s)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n') + "'";
+      return esc(lit);
+    }
 
     // sameShaJS: two git SHAs are the same commit even if one is a short
     // prefix of the other. The hub stores 7-char short SHAs while a spoke may
@@ -6305,6 +6335,365 @@ const dashboardHTML = `<!DOCTYPE html>
         if (signals[i] && signals[i].kind === _dashDriftFilter) return true;
       }
       return false;
+    }
+
+    /* ────────────────────────────────────────────────────────────────────────
+       Grouping and saved views for My Hives.
+
+       Grouping applies WITHIN the existing Assigned/Unassigned split — that
+       split is the outer structure and survives untouched. A group-by turns
+       each side into several labelled, collapsible subsections.
+       ──────────────────────────────────────────────────────────────────────── */
+
+    /* Group-by dimension keys. Named constants so the <select>, the persisted
+       value, the grouper and the collapse-state keys can never drift on a
+       typo'd string literal. */
+    var HIVE_GROUP_NONE = 'none';
+    var HIVE_GROUP_CLUSTER = 'cluster';
+    var HIVE_GROUP_ORG = 'org';
+    var HIVE_GROUP_OWNER = 'owner';
+    var HIVE_GROUP_ACMM = 'acmm';
+    var HIVE_GROUP_BRANCH = 'branch';
+
+    /* Label shown for a hive whose grouping field is empty/unreported. Kept as
+       one constant so every dimension buckets blanks identically. */
+    var HIVE_GROUP_UNKNOWN_LABEL = 'Unspecified';
+
+    /* localStorage keys. Prefix matches the existing convention in this file
+       ('hive-dismissed-banners', 'hive-cluster-health-collapsed'). */
+    var LS_HIVE_GROUP_BY = 'hive-group-by';
+    var LS_HIVE_GROUP_COLLAPSED = 'hive-group-collapsed';
+    var LS_HIVE_SAVED_VIEWS = 'hive-saved-views';
+    var LS_HIVE_DEFAULT_VIEW = 'hive-default-view';
+
+    /* Cap on stored saved views. localStorage is a small shared budget and an
+       unbounded list would let one runaway page fill it for every other
+       feature on this origin. */
+    var HIVE_SAVED_VIEWS_MAX = 50;
+
+    /* Cap on a saved-view name, so the picker stays readable and a pasted wall
+       of text cannot blow the storage budget on its own. */
+    var HIVE_VIEW_NAME_MAX_LEN = 60;
+
+    /* Group-by dimension definitions, in <select> order.
+       - key:   stable identifier, persisted
+       - label: shown in the control
+       - of(h): the group label for a hive; '' means "unspecified"
+       - sort:  optional comparator over group labels; default is locale sort */
+    var HIVE_GROUP_DIMENSIONS = [
+      {key: HIVE_GROUP_NONE, label: 'No grouping', of: function() { return ''; }},
+      {key: HIVE_GROUP_CLUSTER, label: 'Cluster', of: function(h) { return (h && (h.clusterName || h.clusterId)) || ''; }},
+      {key: HIVE_GROUP_ORG, label: 'Org', of: function(h) { return (h && h.org) || ''; }},
+      {key: HIVE_GROUP_OWNER, label: 'Owner', of: function(h) { return (h && h.owner) || ''; }},
+      {key: HIVE_GROUP_ACMM, label: 'ACMM level', of: function(h) {
+        /* acmmLevel is numeric; render as "Level N" so the header reads as a
+           label rather than a bare digit. 0/absent falls through to
+           HIVE_GROUP_UNKNOWN_LABEL like every other dimension. */
+        var lvl = h && h.acmmLevel;
+        return lvl ? 'Level ' + lvl : '';
+      }, sort: function(a, b) {
+        /* Numeric order, so Level 10 sorts after Level 2 rather than before it.
+           Non-"Level N" labels (i.e. Unspecified) sort last. */
+        var na = _acmmGroupOrder(a), nb = _acmmGroupOrder(b);
+        return na - nb;
+      }},
+      {key: HIVE_GROUP_BRANCH, label: 'Branch', of: function(h) { return (h && h.gitBranch) || ''; }}
+    ];
+
+    /* Sort weight for an ACMM group label. "Level N" → N; anything else (the
+       Unspecified bucket) sorts after every real level. */
+    var ACMM_GROUP_UNKNOWN_ORDER = Number.MAX_SAFE_INTEGER;
+    function _acmmGroupOrder(label) {
+      var m = /^Level (\d+)$/.exec(label || '');
+      return m ? parseInt(m[1], 10) : ACMM_GROUP_UNKNOWN_ORDER;
+    }
+
+    /* Active group-by key, and per-group collapse state as {groupId: true}
+       where true means COLLAPSED (absent = expanded, so a fresh browser shows
+       everything open). */
+    var _dashGroupBy = HIVE_GROUP_NONE;
+    var _dashGroupCollapsed = {};
+
+    /* Saved views: [{name, groupBy, filters, sortKey, sortAsc}]. Client-side
+       only — a view is a personal lens over data the page already has, so it
+       needs no server round-trip and no server state to go stale. */
+    var _dashSavedViews = [];
+    var _dashDefaultView = '';
+
+    /* lsGetJSON reads and parses a JSON value from localStorage. localStorage
+       can hold anything a previous version (or another tab, or a user poking
+       at devtools) left behind, and can be disabled or full outright — so every
+       failure falls back to the caller's default rather than throwing and
+       blanking the page. */
+    function lsGetJSON(key, fallback) {
+      try {
+        var raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        var v = JSON.parse(raw);
+        return (v === null || v === undefined) ? fallback : v;
+      } catch (e) { return fallback; }
+    }
+
+    /* lsSetJSON persists a JSON value, swallowing quota/disabled errors: losing
+       a preference is not worth breaking the render. */
+    function lsSetJSON(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage full or disabled */ }
+    }
+
+    /* isGroupByKey validates a persisted/incoming group-by against the known
+       dimensions, so a stale or hand-edited value degrades to "no grouping"
+       instead of silently grouping by nothing. */
+    function isGroupByKey(key) {
+      for (var i = 0; i < (HIVE_GROUP_DIMENSIONS || []).length; i++) {
+        if (HIVE_GROUP_DIMENSIONS[i].key === key) return true;
+      }
+      return false;
+    }
+
+    /* groupDimension returns the dimension definition for a key, or the
+       "none" entry when unknown. */
+    function groupDimension(key) {
+      for (var i = 0; i < (HIVE_GROUP_DIMENSIONS || []).length; i++) {
+        if (HIVE_GROUP_DIMENSIONS[i].key === key) return HIVE_GROUP_DIMENSIONS[i];
+      }
+      return HIVE_GROUP_DIMENSIONS[0];
+    }
+
+    /* sanitizeSavedView coerces one stored entry into a well-formed view, or
+       returns null if it is unusable. Everything in localStorage is untrusted
+       input. */
+    function sanitizeSavedView(v) {
+      if (!v || typeof v !== 'object') return null;
+      var name = typeof v.name === 'string' ? v.name.trim() : '';
+      if (!name) return null;
+      var filters = {};
+      if (v.filters && typeof v.filters === 'object') {
+        for (var k in v.filters) {
+          if (Object.prototype.hasOwnProperty.call(v.filters, k) && v.filters[k]) filters[k] = true;
+        }
+      }
+      return {
+        name: name.slice(0, HIVE_VIEW_NAME_MAX_LEN),
+        groupBy: isGroupByKey(v.groupBy) ? v.groupBy : HIVE_GROUP_NONE,
+        filters: filters,
+        sortKey: typeof v.sortKey === 'string' ? v.sortKey : '',
+        sortAsc: v.sortAsc !== false
+      };
+    }
+
+    /* loadDashViewPrefs restores group-by, collapse state, saved views and the
+       default view from localStorage. Called once before the first render. */
+    function loadDashViewPrefs() {
+      var gb = null;
+      try { gb = localStorage.getItem(LS_HIVE_GROUP_BY); } catch (e) { gb = null; }
+      _dashGroupBy = isGroupByKey(gb) ? gb : HIVE_GROUP_NONE;
+
+      var collapsed = lsGetJSON(LS_HIVE_GROUP_COLLAPSED, {});
+      _dashGroupCollapsed = {};
+      if (collapsed && typeof collapsed === 'object') {
+        for (var ck in collapsed) {
+          if (Object.prototype.hasOwnProperty.call(collapsed, ck) && collapsed[ck]) _dashGroupCollapsed[ck] = true;
+        }
+      }
+
+      var views = lsGetJSON(LS_HIVE_SAVED_VIEWS, []);
+      _dashSavedViews = [];
+      if (Object.prototype.toString.call(views) === '[object Array]') {
+        for (var vi = 0; vi < views.length && _dashSavedViews.length < HIVE_SAVED_VIEWS_MAX; vi++) {
+          var sv = sanitizeSavedView(views[vi]);
+          if (sv) _dashSavedViews.push(sv);
+        }
+      }
+
+      var def = null;
+      try { def = localStorage.getItem(LS_HIVE_DEFAULT_VIEW); } catch (e) { def = null; }
+      _dashDefaultView = (typeof def === 'string' && findSavedView(def)) ? def : '';
+      if (_dashDefaultView) applySavedView(_dashDefaultView, true);
+    }
+
+    /* findSavedView looks a view up by name (names are the identity — the
+       picker shows them and rename edits them in place). */
+    function findSavedView(name) {
+      for (var i = 0; i < (_dashSavedViews || []).length; i++) {
+        if (_dashSavedViews[i].name === name) return _dashSavedViews[i];
+      }
+      return null;
+    }
+
+    function persistSavedViews() { lsSetJSON(LS_HIVE_SAVED_VIEWS, _dashSavedViews); }
+    function persistGroupCollapsed() { lsSetJSON(LS_HIVE_GROUP_COLLAPSED, _dashGroupCollapsed); }
+
+    /* groupIdFor builds the stable identity used both as the collapse-state
+       localStorage key and as the DOM id for a group's rows. Scoped by
+       dimension and by section (assigned/unassigned) so the same org name in
+       two sections collapses independently, and so switching dimensions does
+       not inherit an unrelated group's collapse state. */
+    function groupIdFor(section, label) {
+      return _dashGroupBy + '|' + section + '|' + label;
+    }
+
+    /* setDashGroupBy switches the grouping dimension and re-renders. */
+    function setDashGroupBy(key) {
+      _dashGroupBy = isGroupByKey(key) ? key : HIVE_GROUP_NONE;
+      try { localStorage.setItem(LS_HIVE_GROUP_BY, _dashGroupBy); } catch (e) { /* storage full or disabled */ }
+      renderHives(_allDashHives, true);
+    }
+
+    /* toggleDashGroup flips one group's collapse state. */
+    function toggleDashGroup(groupId) {
+      if (_dashGroupCollapsed[groupId]) delete _dashGroupCollapsed[groupId];
+      else _dashGroupCollapsed[groupId] = true;
+      persistGroupCollapsed();
+      renderHives(_allDashHives, true);
+    }
+
+    /* groupHives buckets hives by the active dimension, preserving the incoming
+       order within each bucket (the caller has already applied sortDashHives).
+       Returns [{label, id, hives}] with empty buckets impossible by
+       construction — a group only exists because a hive landed in it, so no
+       empty headers can render. */
+    function groupHives(hives, section) {
+      var dim = groupDimension(_dashGroupBy);
+      var order = [], byLabel = {};
+      for (var i = 0; i < (hives || []).length; i++) {
+        var h = hives[i];
+        var label = dim.of(h) || HIVE_GROUP_UNKNOWN_LABEL;
+        if (!Object.prototype.hasOwnProperty.call(byLabel, label)) { byLabel[label] = []; order.push(label); }
+        byLabel[label].push(h);
+      }
+      order.sort(dim.sort || function(a, b) { return String(a).localeCompare(String(b)); });
+      var out = [];
+      for (var oi = 0; oi < order.length; oi++) {
+        out.push({label: order[oi], id: groupIdFor(section, order[oi]), hives: byLabel[order[oi]]});
+      }
+      return out;
+    }
+
+    /* ── Saved views ── */
+
+    /* currentViewState snapshots the parts of the UI a saved view captures.
+       Search terms and facets are not on v2 yet; when the search/facets branch
+       lands, extend this one function and sanitizeSavedView to match. */
+    function currentViewState() {
+      var filters = {};
+      for (var k in (_dashStatusFilters || {})) {
+        if (Object.prototype.hasOwnProperty.call(_dashStatusFilters, k) && _dashStatusFilters[k]) filters[k] = true;
+      }
+      return {groupBy: _dashGroupBy, filters: filters, sortKey: _dashSortKey, sortAsc: _dashSortAsc};
+    }
+
+    /* saveCurrentView names and stores the current group-by + filters + sort.
+       Saving over an existing name overwrites it, which is what "save" means
+       when the picker already shows that name. */
+    function saveCurrentView() {
+      var raw = window.prompt('Name this view:', '');
+      if (raw === null) return;
+      var name = String(raw).trim().slice(0, HIVE_VIEW_NAME_MAX_LEN);
+      if (!name) { hiveToast('View name cannot be empty', 'error'); return; }
+      var state = currentViewState();
+      state.name = name;
+      var existing = findSavedView(name);
+      if (existing) {
+        if (!window.confirm('A view named "' + name + '" already exists. Overwrite it?')) return;
+        existing.groupBy = state.groupBy;
+        existing.filters = state.filters;
+        existing.sortKey = state.sortKey;
+        existing.sortAsc = state.sortAsc;
+      } else {
+        if (_dashSavedViews.length >= HIVE_SAVED_VIEWS_MAX) {
+          hiveToast('Saved-view limit reached (' + HIVE_SAVED_VIEWS_MAX + '). Delete one first.', 'error');
+          return;
+        }
+        _dashSavedViews.push(state);
+      }
+      persistSavedViews();
+      _dashActiveView = name;
+      renderHives(_allDashHives, true);
+      hiveToast('View "' + name + '" saved', 'success');
+    }
+
+    /* Name of the view most recently applied or saved, for the picker's
+       selected option. Not persisted: it is a UI cursor, not a preference. */
+    var _dashActiveView = '';
+
+    /* applySavedView restores a stored view. quiet=true suppresses the
+       re-render, for the load path where the caller renders once afterwards. */
+    function applySavedView(name, quiet) {
+      var v = findSavedView(name);
+      if (!v) return;
+      _dashGroupBy = isGroupByKey(v.groupBy) ? v.groupBy : HIVE_GROUP_NONE;
+      _dashStatusFilters = {};
+      for (var k in (v.filters || {})) {
+        if (Object.prototype.hasOwnProperty.call(v.filters, k) && v.filters[k]) _dashStatusFilters[k] = true;
+      }
+      _dashSortKey = v.sortKey || '';
+      _dashSortAsc = v.sortAsc !== false;
+      _dashActiveView = name;
+      try { localStorage.setItem(LS_HIVE_GROUP_BY, _dashGroupBy); } catch (e) { /* storage full or disabled */ }
+      if (!quiet) renderHives(sortedDashHives(), true);
+    }
+
+    /* onSavedViewPick handles the picker's change event: '' means "no view". */
+    function onSavedViewPick(name) {
+      if (!name) { _dashActiveView = ''; renderHives(_allDashHives, true); return; }
+      applySavedView(name);
+    }
+
+    /* renameSavedView renames a view in place, keeping the default-view pointer
+       in sync so a renamed default stays the default. */
+    function renameSavedView() {
+      if (!_dashActiveView) { hiveToast('Select a view to rename', 'error'); return; }
+      var v = findSavedView(_dashActiveView);
+      if (!v) return;
+      var raw = window.prompt('Rename view:', v.name);
+      if (raw === null) return;
+      var name = String(raw).trim().slice(0, HIVE_VIEW_NAME_MAX_LEN);
+      if (!name) { hiveToast('View name cannot be empty', 'error'); return; }
+      if (name !== v.name && findSavedView(name)) { hiveToast('A view named "' + name + '" already exists', 'error'); return; }
+      var wasDefault = _dashDefaultView === v.name;
+      v.name = name;
+      _dashActiveView = name;
+      persistSavedViews();
+      if (wasDefault) {
+        _dashDefaultView = name;
+        try { localStorage.setItem(LS_HIVE_DEFAULT_VIEW, name); } catch (e) { /* storage full or disabled */ }
+      }
+      renderHives(_allDashHives, true);
+    }
+
+    /* deleteSavedView removes the selected view, clearing the default pointer
+       if it pointed at the deleted view. */
+    function deleteSavedView() {
+      if (!_dashActiveView) { hiveToast('Select a view to delete', 'error'); return; }
+      if (!window.confirm('Delete view "' + _dashActiveView + '"?')) return;
+      var kept = [];
+      for (var i = 0; i < (_dashSavedViews || []).length; i++) {
+        if (_dashSavedViews[i].name !== _dashActiveView) kept.push(_dashSavedViews[i]);
+      }
+      _dashSavedViews = kept;
+      if (_dashDefaultView === _dashActiveView) {
+        _dashDefaultView = '';
+        try { localStorage.removeItem(LS_HIVE_DEFAULT_VIEW); } catch (e) { /* storage disabled */ }
+      }
+      _dashActiveView = '';
+      persistSavedViews();
+      renderHives(_allDashHives, true);
+    }
+
+    /* toggleDefaultView marks/unmarks the selected view as the one applied on
+       load. */
+    function toggleDefaultView() {
+      if (!_dashActiveView) { hiveToast('Select a view first', 'error'); return; }
+      if (_dashDefaultView === _dashActiveView) {
+        _dashDefaultView = '';
+        try { localStorage.removeItem(LS_HIVE_DEFAULT_VIEW); } catch (e) { /* storage disabled */ }
+        hiveToast('Default view cleared', 'success');
+      } else {
+        _dashDefaultView = _dashActiveView;
+        try { localStorage.setItem(LS_HIVE_DEFAULT_VIEW, _dashDefaultView); } catch (e) { /* storage full or disabled */ }
+        hiveToast('"' + _dashDefaultView + '" is now the default view', 'success');
+      }
+      renderHives(_allDashHives, true);
     }
 
     /* hiveMatchesFilters answers whether a hive survives the active chips. */
@@ -7035,24 +7424,64 @@ const dashboardHTML = `<!DOCTYPE html>
         '<span class="filter-summary">' + summary + '</span>';
     }
 
-    function sortDashHives(key) {
-      if (_dashSortKey === key) { _dashSortAsc = !_dashSortAsc; } else { _dashSortKey = key; _dashSortAsc = true; }
-      var sorted = _allDashHives.slice().sort(function(a, b) {
-        var va, vb;
+    /* renderViewBar draws the group-by <select> and the saved-view controls.
+       Every user-controlled string here — saved-view names the operator typed —
+       is escaped on render; group-by labels are our own constants but go
+       through esc() too so the rule needs no exceptions. */
+    function renderViewBar() {
+      var bar = document.getElementById('hive-view-bar');
+      if (!bar) return;
+      var opts = (HIVE_GROUP_DIMENSIONS || []).map(function(d) {
+        return '<option value="' + esc(d.key) + '"' + (d.key === _dashGroupBy ? ' selected' : '') + '>' + esc(d.label) + '</option>';
+      }).join('');
+      var groupCtl = '<label class="view-ctl"><span class="view-ctl-label">Group by</span>' +
+        '<select id="hive-group-by" class="view-select" onchange="setDashGroupBy(this.value)">' + opts + '</select></label>';
+
+      var viewOpts = '<option value="">No saved view</option>' + (_dashSavedViews || []).map(function(v) {
+        var isDefault = v.name === _dashDefaultView;
+        return '<option value="' + esc(v.name) + '"' + (v.name === _dashActiveView ? ' selected' : '') + '>' +
+          esc(v.name) + (isDefault ? ' ★' : '') + '</option>';
+      }).join('');
+      var hasSel = !!_dashActiveView && !!findSavedView(_dashActiveView);
+      var dis = hasSel ? '' : ' disabled';
+      var defaultLabel = (hasSel && _dashDefaultView === _dashActiveView) ? 'Unset default' : 'Set default';
+      var viewCtl = '<label class="view-ctl"><span class="view-ctl-label">View</span>' +
+        '<select id="hive-saved-view" class="view-select" onchange="onSavedViewPick(this.value)">' + viewOpts + '</select></label>' +
+        '<button type="button" class="view-btn" onclick="saveCurrentView()" title="Save the current grouping, filters and sort as a named view">Save view</button>' +
+        '<button type="button" class="view-btn" onclick="renameSavedView()"' + dis + '>Rename</button>' +
+        '<button type="button" class="view-btn" onclick="deleteSavedView()"' + dis + '>Delete</button>' +
+        '<button type="button" class="view-btn" onclick="toggleDefaultView()"' + dis +
+        ' title="Apply this view automatically the next time My Hives loads">' + defaultLabel + '</button>';
+
+      bar.innerHTML = '<div class="view-ctls">' + groupCtl + '</div><div class="view-ctls">' + viewCtl + '</div>';
+    }
+
+    /* sortedDashHives applies the CURRENT sort key/direction to the unfiltered
+       cache. Split out of sortDashHives so restoring a saved view (which sets
+       the key/direction directly rather than by clicking a header) reproduces
+       the same ordering without re-implementing the comparator. */
+    function sortedDashHives() {
+      var key = _dashSortKey;
+      if (!key) return _allDashHives;
+      return (_allDashHives || []).slice().sort(function(a, b) {
         if (key === 'journey') {
           /* journey is an object, so sort by how urgent it is rather than by
              stringifying it. Higher = needs attention sooner, so the default
              ascending sort puts on-track hives first and the most-escalated
              last; click again to bring the problems to the top. */
-          va = journeySortValue(a.journey);
-          vb = journeySortValue(b.journey);
-          return _dashSortAsc ? va - vb : vb - va;
+          var ja = journeySortValue(a && a.journey);
+          var jb = journeySortValue(b && b.journey);
+          return _dashSortAsc ? ja - jb : jb - ja;
         }
-        va = a[key] || ''; vb = b[key] || '';
+        var va = (a && a[key]) || '', vb = (b && b[key]) || '';
         if (typeof va === 'number' && typeof vb === 'number') return _dashSortAsc ? va - vb : vb - va;
         return _dashSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
       });
-      renderHives(sorted, true);
+    }
+
+    function sortDashHives(key) {
+      if (_dashSortKey === key) { _dashSortAsc = !_dashSortAsc; } else { _dashSortKey = key; _dashSortAsc = true; }
+      renderHives(sortedDashHives(), true);
     }
 
     /* ---- Usage attribution panel ----------------------------------------
@@ -7301,7 +7730,12 @@ const dashboardHTML = `<!DOCTYPE html>
           addBtn.disabled = !canCreate;
           addBtn.title = canCreate ? '' : 'No hosted quota — contact hub admin';
         }
-        renderHives(data.hives || []);
+        /* Render through sortedDashHives() rather than the raw payload so an
+           active sort — whether the operator clicked a column or restored a
+           saved view that carries one — survives each poll instead of snapping
+           back to server order every REFRESH cycle. With no sort key set this
+           returns _allDashHives unchanged, i.e. the previous behaviour. */
+        renderHives(sortedDashHives());
         renderPendingBanner(data.hives || []);
         renderUserAccessBanner();
         renderProvisionRequestBanner(data.my_provision_request || null);
@@ -7662,13 +8096,16 @@ const dashboardHTML = `<!DOCTYPE html>
       /* The signature must include EVERY piece of render-affecting view state,
          otherwise changing it while the hive data is unchanged is silently a
          no-op — toggling a chip, drilling into an alert type, expanding the
-         acknowledged list, typing in the search box, picking a facet, or
-         collapsing a section would all appear to do nothing. */
+         acknowledged list, typing in the search box, picking a facet,
+         collapsing a section, switching group-by, collapsing a group or
+         applying a saved view would all appear to do nothing. */
       var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) +
         '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter +
         '|' + _alertTypeFilter + '|' + _alertShowAcked + '|' + JSON.stringify(_fleetAlerts) +
         '|' + _dashSearchQuery + '|' + JSON.stringify(_dashFacets) +
-        '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed);
+        '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed) +
+        '|' + _dashGroupBy + '|' + JSON.stringify(_dashGroupCollapsed) +
+        '|' + _dashActiveView + '|' + _dashDefaultView + '|' + JSON.stringify(_dashSavedViews);
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status filters describe ASSIGNED hives only. An unassigned placeholder
@@ -7692,6 +8129,12 @@ const dashboardHTML = `<!DOCTYPE html>
         _bulkSelected = {};
         renderBulkBar();
       }
+      /* The view bar shows whenever there are hives at all — including when the
+         status filters currently match none of them, so the operator can still
+         switch grouping or restore a saved view from the empty state. */
+      var viewBar = document.getElementById('hive-view-bar');
+      if (viewBar) viewBar.style.display = allHives.length ? '' : 'none';
+      renderViewBar();
       /* Counts are over the assigned set only, matching what the chips filter. */
       renderStatusFilterBar(assignedAll, hives.length - unassignedAll.length);
       /* Facets are offered over the assigned set for the same reason the chips
@@ -7931,42 +8374,112 @@ const dashboardHTML = `<!DOCTYPE html>
           (sectionKey && selectable !== false ? bulkSectionCheckbox(sectionKey) : '') +
           esc(label) + ' (' + count + ')</td></tr>';
       };
+      /* Group-header row: nested one indent step inside a section header, with
+         a caret showing collapse state and a count. Clicking toggles. Labels are
+         user-controlled (org, owner, cluster and branch names all come from
+         spoke heartbeats) so they are escaped here — and again in the onclick
+         argument, where the id is additionally quote-escaped.
+
+         This deliberately mirrors sectionHeader above — same caret glyphs, same
+         role/tabindex/aria-expanded, same keyboard activation — because a group
+         header and a section header are the same affordance at two nesting
+         levels. Only the persistence key differs: sections store one flag each
+         under hive-section-*-collapsed, groups store a set under
+         hive-group-collapsed (their ids are dynamic and unbounded). */
+      var GROUP_HEADER_INDENT_PX = 26;
+      var groupHeader = function(label, count, collapsed, groupId) {
+        var toggle = 'toggleDashGroup(' + jsArg(groupId) + ')';
+        return '<tr class="hive-group-head" role="button" tabindex="0" aria-expanded="' + (collapsed ? 'false' : 'true') + '" ' +
+          'onclick="' + toggle + '" ' +
+          'onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();' + toggle + '}" ' +
+          'title="Click to ' + (collapsed ? 'expand' : 'collapse') + '">' +
+          '<td colspan="' + TOTAL_COLUMNS_HEADER + '" ' +
+          'style="padding:8px 12px 6px ' + GROUP_HEADER_INDENT_PX + 'px;color:var(--muted);font-weight:600;' +
+          'font-size:0.72rem;letter-spacing:0.3px;text-align:left">' +
+          '<span class="hive-group-caret" aria-hidden="true">' + (collapsed ? '▸' : '▾') + '</span>' +
+          esc(label) + ' <span style="opacity:0.7">(' + count + ')</span></td></tr>';
+      };
+
+      /* renderSection emits one Assigned/Unassigned section: its header, then
+         either a flat run of rows or the grouped subsections. It takes the
+         running index by reference through the counter object so the caller's
+         GLOBAL index keeps advancing across sections AND groups — menu ids
+         (hive-menu-<i>) must stay unique across the whole table or the ⋮
+         dropdowns open the wrong row's menu.
+
+         Critically, the index advances for rows inside COLLAPSED groups too:
+         the index is a per-hive identity, not a per-visible-row position, so
+         expanding a group must not renumber anything below it. */
+      var renderSection = function(label, sectionKey, list, counter, selectable) {
+        if (!(list || []).length) return '';
+        var out = sectionHeader(label, list.length, sectionKey, selectable);
+        /* The section is the OUTER collapse: when it is closed nothing inside
+           it renders — not its rows and not its group headers. The counter
+           still advances over every hive so menu ids stay stable. */
+        var sectionOpen = !_dashSectionCollapsed[sectionKey];
+        if (_dashGroupBy === HIVE_GROUP_NONE) {
+          for (var fi = 0; fi < list.length; fi++) {
+            var flatRow = buildRow(list[fi], counter.i++, sectionKey);
+            if (sectionOpen) out += flatRow;
+          }
+          return out;
+        }
+        /* groupHives only ever emits non-empty buckets, so no empty group
+           header can render. */
+        var groups = groupHives(list, sectionKey);
+        for (var gi = 0; gi < groups.length; gi++) {
+          var g = groups[gi];
+          var isCollapsed = !!_dashGroupCollapsed[g.id];
+          if (sectionOpen) out += groupHeader(g.label, g.hives.length, isCollapsed, g.id);
+          for (var ri = 0; ri < g.hives.length; ri++) {
+            var rowHTML = buildRow(g.hives[ri], counter.i++, sectionKey);
+            if (sectionOpen && !isCollapsed) out += rowHTML;
+          }
+        }
+        return out;
+      };
+
       var rows;
       if (_isAdmin) {
         /* Admin-only organizational aid: split into assigned (real, claimed)
            hives and unassigned placeholders — see isPlaceholderHive. Preserve
-           incoming order so each section stays sorted. */
+           incoming order so each section stays sorted.
+
+           This split is the OUTER structure — grouping subdivides each side,
+           it never replaces the split. */
         var assigned = [], unassigned = [];
         for (var _hi = 0; _hi < hives.length; _hi++) {
           var _h = hives[_hi];
           if (isPlaceholderHive(_h)) unassigned.push(_h); else assigned.push(_h);
         }
-        /* Global running index across BOTH groups so menu ids (hive-menu-<i>)
+        /* Global running index across BOTH sections so menu ids (hive-menu-<i>)
            never collide between sections and the ⋮ dropdowns keep working.
-           It advances over EVERY row, including rows in a collapsed section, so
-           collapsing one section never renumbers the other's menus. */
-        var _idx = 0;
-        rows = '';
-        if (assigned.length > 0) {
-          rows += sectionHeader('Assigned hives', assigned.length, HIVE_SECTION_ASSIGNED);
-          var _assignedOpen = !_dashSectionCollapsed[HIVE_SECTION_ASSIGNED];
-          for (var _ai = 0; _ai < assigned.length; _ai++) {
-            var _arow = buildRow(assigned[_ai], _idx++, HIVE_SECTION_ASSIGNED);
-            if (_assignedOpen) rows += _arow;
-          }
-        }
-        if (unassigned.length > 0) {
+           It advances over EVERY row, including rows inside a collapsed section
+           or a collapsed group, so collapsing anything never renumbers the
+           menus below it. renderSection carries the counter by reference. */
+        var _counter = {i: 0};
+        rows = renderSection('Assigned hives', HIVE_SECTION_ASSIGNED, assigned, _counter) +
           /* Unassigned placeholders are never bulk-eligible (nothing is running
              yet), so the section collapses but gets no select-all box. */
-          rows += sectionHeader('Unassigned hives', unassigned.length, HIVE_SECTION_UNASSIGNED, false);
-          var _unassignedOpen = !_dashSectionCollapsed[HIVE_SECTION_UNASSIGNED];
-          for (var _ui = 0; _ui < unassigned.length; _ui++) {
-            var _urow = buildRow(unassigned[_ui], _idx++, HIVE_SECTION_UNASSIGNED);
-            if (_unassignedOpen) rows += _urow;
+          renderSection('Unassigned hives', HIVE_SECTION_UNASSIGNED, unassigned, _counter, false);
+      } else if (_dashGroupBy !== HIVE_GROUP_NONE) {
+        /* Non-admin with grouping on: one flat set of groups, no section
+           headers (a non-admin sees no placeholders to split off). The same
+           global counter rule applies. */
+        var _flatCounter = {i: 0};
+        var _flatGroups = groupHives(hives, 'all');
+        rows = '';
+        for (var _fgi = 0; _fgi < _flatGroups.length; _fgi++) {
+          var _fg = _flatGroups[_fgi];
+          var _fgCollapsed = !!_dashGroupCollapsed[_fg.id];
+          rows += groupHeader(_fg.label, _fg.hives.length, _fgCollapsed, _fg.id);
+          for (var _fri = 0; _fri < _fg.hives.length; _fri++) {
+            var _fgRow = buildRow(_fg.hives[_fri], _flatCounter.i++, 'all');
+            if (!_fgCollapsed) rows += _fgRow;
           }
         }
       } else {
-        /* Non-admin: single flat list, exactly as before. */
+        /* Non-admin, no grouping: single flat list, exactly as before. */
         rows = hives.map(function(h, i) { return buildRow(h, i, 'all'); }).join('');
       }
       document.getElementById('hives-container').innerHTML =
@@ -8848,6 +9361,11 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     async function init() {
+      /* Restore grouping, collapse state and saved views (including applying
+         the default view) BEFORE the first loadHives(), so the initial render
+         already reflects the operator's view rather than flashing the ungrouped
+         list and then rearranging. */
+      loadDashViewPrefs();
       await loadUser();
       await autoRequestAccessFromUrl();
       await loadHives();
