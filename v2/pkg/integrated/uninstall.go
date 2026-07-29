@@ -337,6 +337,9 @@ func finalizeUninstall(ctx context.Context, options ManagementOptions, store *St
 	if err != nil {
 		return err
 	}
+	if err := synchronizeUninstallVerificationHead(ctx, config, currentHead); err != nil {
+		return err
+	}
 	if err := verifyUninstalledSetupOrPendingProposalAtCommit(ctx, options.GitHub, config, currentHead); err != nil {
 		return err
 	}
@@ -1060,6 +1063,47 @@ func currentDefaultBranchHead(ctx context.Context, client *hivegithub.Client, co
 		return "", fmt.Errorf("current default branch returned no immutable commit")
 	}
 	return sha, nil
+}
+
+// synchronizeUninstallVerificationHead makes the exact current default-branch
+// commit available to the Hive-owned checkout without moving or cleaning it.
+// GitHub normally creates a distinct merge commit for the uninstall PR, so the
+// locally prepared cleanup head alone is insufficient for baseline-inventory
+// verification.
+func synchronizeUninstallVerificationHead(ctx context.Context, config Config, expectedHead string) error {
+	expectedHead = strings.ToLower(strings.TrimSpace(expectedHead))
+	if !immutableCommit.MatchString(expectedHead) {
+		return fmt.Errorf("uninstall verification requires an immutable default-branch head")
+	}
+	branch := strings.TrimSpace(config.DefaultBranch)
+	if !validLegacyBranchName(branch) {
+		return fmt.Errorf("uninstall verification requires a safe installed default branch")
+	}
+	exists, err := validateManagedCheckoutBeforeGit(config.CheckoutDir, config.Repository)
+	if err != nil {
+		return fmt.Errorf("validate managed checkout before uninstall verification: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("uninstall verification managed checkout is unavailable")
+	}
+	remoteURL := RepositoryCloneURL(config.Repository)
+	remoteRef := "refs/remotes/origin/" + branch
+	refspec := "+refs/heads/" + branch + ":" + remoteRef
+	if _, err := gitTransport(ctx, config.CheckoutDir, remoteURL, "fetch", "--no-tags", "--no-recurse-submodules", remoteURL, refspec); err != nil {
+		return fmt.Errorf("fetch uninstall verification head: %w", err)
+	}
+	fetchedHead, err := git(ctx, config.CheckoutDir, "rev-parse", "--verify", remoteRef+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("resolve fetched uninstall verification head: %w", err)
+	}
+	fetchedHead = strings.ToLower(strings.TrimSpace(fetchedHead))
+	if fetchedHead != expectedHead {
+		return fmt.Errorf("fetched default-branch head %s does not match verified uninstall head %s", fetchedHead, expectedHead)
+	}
+	if _, err := git(ctx, config.CheckoutDir, "cat-file", "-e", expectedHead+"^{commit}"); err != nil {
+		return fmt.Errorf("verify fetched uninstall commit %s: %w", expectedHead, err)
+	}
+	return nil
 }
 
 // verifyUninstalledSetupOrPendingProposalAtCommit preserves the normal

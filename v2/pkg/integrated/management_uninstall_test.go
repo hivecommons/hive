@@ -265,7 +265,7 @@ func TestUninstallRemovesHiveCreatedBaselinesAndRestoresEmptyInventory(t *testin
 		t.Fatalf("cleanup commit %s retained Hive-created baseline %s", prepared.CommitSHA, baselinePath)
 	}
 
-	fixture.merge(t, prepared.CommitSHA)
+	fixture.mergeAsCommitNotInCheckout(t, prepared.CommitSHA)
 	result, err := RunManagement(context.Background(), ManagementOptions{
 		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
 	})
@@ -1160,6 +1160,24 @@ func (fixture *uninstallFixture) merge(t *testing.T, cleanupSHA string) {
 	runIntegratedGit(t, fixture.remote, "update-ref", "refs/heads/main", cleanupSHA)
 	fixture.mu.Lock()
 	fixture.merged, fixture.mergeSHA, fixture.managedPathPresent = true, cleanupSHA, false
+	fixture.mu.Unlock()
+}
+
+func (fixture *uninstallFixture) mergeAsCommitNotInCheckout(t *testing.T, cleanupSHA string) {
+	t.Helper()
+	tree := strings.TrimSpace(integratedGitOutput(t, fixture.remote, "rev-parse", cleanupSHA+"^{tree}"))
+	mergeSHA := strings.TrimSpace(integratedGitOutput(
+		t, fixture.remote,
+		"-c", "user.name=Test",
+		"-c", "user.email=test@example.com",
+		"commit-tree", tree,
+		"-p", fixture.baseSHA,
+		"-p", cleanupSHA,
+		"-m", "merge uninstall cleanup",
+	))
+	runIntegratedGit(t, fixture.remote, "update-ref", "refs/heads/main", mergeSHA)
+	fixture.mu.Lock()
+	fixture.merged, fixture.mergeSHA, fixture.managedPathPresent = true, mergeSHA, false
 	fixture.mu.Unlock()
 }
 
