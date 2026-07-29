@@ -6208,6 +6208,109 @@ const dashboardHTML = `<!DOCTYPE html>
       var cls = role === 'owner' ? 'role-owner' : role === 'read-write' ? 'role-read-write' : 'role-read';
       return '<span class="role-badge ' + cls + '">' + esc(role) + '</span>';
     }
+
+    /* ---- Inline hive access avatars -----------------------------------
+       The status-dot hover panel (healthBadge) is the DETAIL view of who can
+       reach a hive: avatar + username + role, one per line. These inline
+       avatars are the scannable SUMMARY of the same h.access list, rendered in
+       the name cell so "who else is on this hive" is answerable without
+       hovering 30 rows one at a time. Both read the same server-built list
+       (accessForHive), so they can never disagree about membership.
+
+       Role colours live here and are reused by the hover panel's rows so a
+       face in the row and its line in the panel read as the same role. */
+    var ACCESS_ROLE_COLORS = {'owner': '#d29922', 'read-write': '#3fb950'};
+    var ACCESS_ROLE_COLOR_DEFAULT = '#6b7280';
+    function accessRoleColor(role) {
+      return ACCESS_ROLE_COLORS[role] || ACCESS_ROLE_COLOR_DEFAULT;
+    }
+
+    /* Faces shown inline before collapsing the rest into a "+N" chip. The hive
+       table is 17 columns and already dense; four 16px faces plus the chip fit
+       beside the role badge without widening the name column, and a hive with
+       a dozen members must not push the row wide. The full list stays one
+       hover away on the status dot. */
+    var INLINE_ACCESS_AVATAR_MAX = 4;
+    /* Rendered size of an inline face, in CSS pixels — small enough to sit on
+       the name cell's second line beside the role badge. */
+    var INLINE_ACCESS_AVATAR_PX = 16;
+    /* Pixel size requested from GitHub. 2x the rendered size so the faces stay
+       sharp on HiDPI displays. */
+    var INLINE_ACCESS_AVATAR_FETCH_PX = INLINE_ACCESS_AVATAR_PX * 2;
+
+    /* Everyone with access to h EXCEPT the signed-in viewer. Their own
+       membership is implied by the row being visible to them, so showing their
+       own face on every row would be noise. GitHub logins are case-insensitive,
+       hence the lowercased compare. Entries with no username are dropped: they
+       would render as a permanently broken image.
+
+       Returns [] for placeholder (unassigned) rows — a pool slot nobody has
+       been granted has no meaningful membership to summarise — and for rows
+       where the server withheld the access list (h.access is only populated for
+       rows the caller owns, or for the hub admin). */
+    function otherHiveMembers(h) {
+      if (!h || isPlaceholderHive(h)) return [];
+      var out = [];
+      var list = (h.access || []);
+      for (var i = 0; i < list.length; i++) {
+        var a = list[i] || {};
+        var uname = String(a.username || '');
+        if (!uname) continue;
+        if (_currentUser && uname.toLowerCase() === _currentUser) continue;
+        out.push(a);
+      }
+      return out;
+    }
+
+    /* One inline face. Carries a native title ONLY — deliberately no custom
+       hover panel on this element. The status dot owns the one custom panel in
+       this row (see healthBadge and TestSingleHoverPanelInvariant); an element
+       with both draws the browser tooltip on top of the panel, which is the
+       overlap bug that was fixed once already.
+
+       The username lands in two hostile contexts: a URL path segment
+       (encodeURIComponent) and a quoted attribute value (escAttr — esc() alone
+       leaves quotes intact and would let a crafted login close the attribute).
+       onerror hides the image rather than leaving a broken-image glyph, the
+       same pattern the hover panel and the provision tables use. */
+    function inlineAccessAvatar(a) {
+      var uname = String(a.username || '');
+      var role = String(a.role || '');
+      var px = INLINE_ACCESS_AVATAR_PX;
+      return '<img src="https://github.com/' + encodeURIComponent(uname) + '.png?size=' + INLINE_ACCESS_AVATAR_FETCH_PX + '" ' +
+        'alt="" title="' + escAttr(uname + (role ? ' — ' + role : '')) + '" ' +
+        'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' +
+        'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto" ' +
+        'onerror="this.style.visibility=\'hidden\'">';
+    }
+
+    /* Inline summary of the OTHER users on this hive, or '' when there are
+       none. Returning the empty string (rather than an empty container) matters:
+       an empty wrapper would still occupy its gap and margin and make rows with
+       no co-members sit a few pixels wider than their neighbours. */
+    function hiveAccessAvatars(h) {
+      var members = otherHiveMembers(h);
+      if (!members.length) return '';
+      var shown = members.slice(0, INLINE_ACCESS_AVATAR_MAX);
+      var faces = '';
+      for (var i = 0; i < shown.length; i++) faces += inlineAccessAvatar(shown[i]);
+      var overflow = members.length - shown.length;
+      if (overflow > 0) {
+        /* The +N chip names the people it hides, so the hidden members are
+           still identifiable without opening the hover panel. */
+        var hiddenNames = [];
+        for (var j = shown.length; j < members.length; j++) {
+          hiddenNames.push(String(members[j].username || ''));
+        }
+        faces += '<span title="' + escAttr(hiddenNames.join(', ')) + '" ' +
+          'style="font-size:0.62rem;color:var(--muted);font-weight:600;white-space:nowrap;cursor:help">+' + overflow + '</span>';
+      }
+      var label = members.length === 1
+        ? '1 other user with access'
+        : members.length + ' other users with access';
+      return '<span class="hive-access-faces" aria-label="' + escAttr(label) + '" ' +
+        'style="display:inline-flex;align-items:center;gap:2px;margin-left:6px;vertical-align:middle">' + faces + '</span>';
+    }
     function fmtTokens(n) {
       n = Number(n) || 0;
       if (n <= 0) return '<span style="color:var(--muted)">—</span>';
@@ -6565,7 +6668,9 @@ const dashboardHTML = `<!DOCTYPE html>
       }).join('');
 
       var accessRows = access.map(function(a) {
-        var rc = a.role === 'owner' ? '#d29922' : (a.role === 'read-write' ? '#3fb950' : '#6b7280');
+        /* Shared with the inline row faces (accessRoleColor) so a face in the
+           name cell and its line in this panel read as the same role. */
+        var rc = accessRoleColor(a.role);
         return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">' +
           '<img src="https://github.com/' + esc(a.username) + '.png?size=40" alt="" ' +
           'style="width:18px;height:18px;border-radius:50%;flex:0 0 auto" ' +
@@ -6720,6 +6825,12 @@ const dashboardHTML = `<!DOCTYPE html>
         var data = await resp.json();
         if (data.authenticated) {
           _isAdmin = !!data.hub_admin;
+          /* The signed-in login is the ONE piece of viewer identity the hive
+             rows need: the inline access avatars omit the viewer, whose own
+             membership is implied by the row being visible at all. Stored
+             lowercased because GitHub usernames are case-insensitive and the
+             roster and the auth payload can disagree on casing. */
+          _currentUser = String(data.login || '').toLowerCase();
           var roleText = data.hub_admin ? 'Hub Admin' : 'User';
           document.getElementById('nav-user').innerHTML =
             '<img src="' + esc(data.avatar_url) + '" class="nav-avatar" title="' + esc(data.login) + ' — ' + roleText + '">' +
@@ -6730,6 +6841,11 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _userQuota = 0, _userUsed = 0, _isAdmin = false;
+    /* Lowercased login of the signed-in viewer, set by loadUser(). Empty until
+       that resolves, and empty is safe: hiveAccessAvatars() then simply omits
+       nobody, which is a cosmetic over-render for one paint rather than a
+       leak — every name it can show was already in h.access. */
+    var _currentUser = '';
     var _latestSHA = '';
     var _latestSHAs = {};
     var _latestSHAMessages = {};
@@ -8842,7 +8958,7 @@ const dashboardHTML = `<!DOCTYPE html>
         return '<tr>' +
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + fcPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + fcPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); var displayName = h.name || h.id; var parts = displayName.split('/'); var orgName = parts.length > 1 ? parts[0] : ''; var repoName = parts.length > 1 ? parts.slice(1).join('/') : displayName; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName || repoName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); var line2 = orgName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + (isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName)) + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
           '<td>' + (function() { var pub = !!h.isPublic; var tid = 'vis-' + esc(h.id); if (isHosted && h.role === 'owner') { return '<label style="position:relative;display:inline-block;width:36px;height:20px;cursor:pointer"><input type="checkbox" id="' + tid + '" ' + (pub ? 'checked' : '') + ' onchange="toggleVisibility(\'' + esc(h.id) + '\',this.checked)" style="opacity:0;width:0;height:0"><span style="position:absolute;inset:0;background:' + (pub ? 'var(--green)' : 'var(--border)') + ';border-radius:10px;transition:background 0.2s"></span><span style="position:absolute;top:2px;left:' + (pub ? '18px' : '2px') + ';width:16px;height:16px;background:#fff;border-radius:50%;transition:left 0.2s"></span></label>'; } if (isLocal) { var dh = h.dashboardUrl && !h.dashboardUrl.includes('localhost') ? h.dashboardUrl : ''; var badge = pub ? '<span style="color:var(--green)">Public</span>' : '<span style="color:var(--muted)">Private</span>'; return dh ? '<a href="' + esc(dh) + '#config/governor/Hub" target="_blank" title="Change in Governor Config → Hub tab" style="text-decoration:none;cursor:pointer">' + badge + ' <span style="font-size:0.6rem;color:var(--muted)">↗</span></a>' : badge; } return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>'; })() + '</td>' +
