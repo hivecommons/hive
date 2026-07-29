@@ -14,7 +14,7 @@ import (
 func TestHandleApproveAccessFlow(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	saveSaaSUser(&SaaSUser{GitHubUsername: "owner", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
@@ -52,7 +52,7 @@ func TestHandleApproveAccessFlow(t *testing.T) {
 func TestHandleDenyAccessFlow(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	saveSaaSUser(&SaaSUser{GitHubUsername: "owner", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
@@ -69,7 +69,7 @@ func TestHandleDenyAccessFlow(t *testing.T) {
 func TestHandleAccessStatus(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
 	mkUser(t, "viewer")

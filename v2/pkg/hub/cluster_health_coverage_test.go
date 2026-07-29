@@ -77,6 +77,7 @@ func TestBuildClusterHealthWithScriptedKubectl(t *testing.T) {
 	clusterHealthCacheMu.Unlock()
 
 	s := &HubServer{
+		hubSecret:       testHubSecret,
 		logger:          slog.Default(),
 		clusters:        map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true, Name: "OKE"}},
 		heartbeatHealth: make(map[string]*HeartbeatHealthEntry),
@@ -105,8 +106,9 @@ func TestHandleUpgradeHiveSuccess(t *testing.T) {
 	mkUser(t, "alice")
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke"})
 	s := &HubServer{
-		logger:   slog.Default(),
-		clusters: map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}},
+		hubSecret: testHubSecret,
+		logger:    slog.Default(),
+		clusters:  map[string]ClusterConfig{"hive-oke": {ID: "hive-oke", InCluster: true}},
 	}
 	s.registry.Hives = []RegistryEntry{{ID: "h1", GitBranch: "v2"}}
 

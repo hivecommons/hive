@@ -1348,8 +1348,7 @@ func (s *HubServer) removeRegistryEntry(id, by string) {
 }
 
 func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("hive_hub_user")
-	if err != nil || cookie.Value != hubAdminUsername {
+	if s.getAuthUser(r) != hubAdminUsername {
 		http.Error(w, "admin access required", http.StatusForbidden)
 		return
 	}
@@ -1366,23 +1365,21 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 	s.mu.Unlock()
 	if removed {
 		s.requestSave()
-		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", cookie.Value)
+		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", hubAdminUsername)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"removed": removed, "id": id})
 }
 
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
+	// The hub secret is never returned from this browser-reachable endpoint; the
+	// raw shared secret has no legitimate consumer over HTTP.
 	resp := map[string]any{
 		"git_hash":      s.hubGitHash,
 		"git_branch":    s.hubGitBranch,
 		"latest_sha":    getLatestSHA(),
 		"latest_shas":   getLatestSHAs(),
 		"upgrade_state": s.hubUpgradeState(),
-	}
-	cookie, _ := r.Cookie("hive_hub_user")
-	if cookie != nil && cookie.Value == hubAdminUsername {
-		resp["hub_secret"] = s.hubSecret
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")

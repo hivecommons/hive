@@ -901,6 +901,12 @@ func TestHandleRegistryDeleteNoAdmin(t *testing.T) {
 }
 
 func TestHandleRegistryDeleteAsAdmin(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	// Admin authorization is resolved through getAuthUser, which requires a real
+	// user record and a signed session cookie.
+	ensureSaaSUser(hubAdminUsername)
+
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.mu.Lock()
 	srv.registry.Hives = []RegistryEntry{
@@ -912,7 +918,7 @@ func TestHandleRegistryDeleteAsAdmin(t *testing.T) {
 	mux.HandleFunc("DELETE /api/hub/registry/{id}", srv.handleRegistryDelete)
 
 	req := httptest.NewRequest("DELETE", "/api/hub/registry/delete-me", nil)
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: hubAdminUsername})
+	req.AddCookie(testAuthCookie(hubAdminUsername))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -928,13 +934,17 @@ func TestHandleRegistryDeleteAsAdmin(t *testing.T) {
 }
 
 func TestHandleRegistryDeleteNotFound(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	ensureSaaSUser(hubAdminUsername)
+
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /api/hub/registry/{id}", srv.handleRegistryDelete)
 
 	req := httptest.NewRequest("DELETE", "/api/hub/registry/nonexistent", nil)
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: hubAdminUsername})
+	req.AddCookie(testAuthCookie(hubAdminUsername))
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -951,7 +961,7 @@ func TestHandleHubVersionAsAdmin(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "admin-hash", "v2")
 
 	req := httptest.NewRequest("GET", "/api/hub/version", nil)
-	req.AddCookie(&http.Cookie{Name: "hive_hub_user", Value: hubAdminUsername})
+	req.AddCookie(testAuthCookie(hubAdminUsername))
 	w := httptest.NewRecorder()
 	srv.mux.ServeHTTP(w, req)
 
@@ -962,8 +972,9 @@ func TestHandleHubVersionAsAdmin(t *testing.T) {
 	if !strings.Contains(body, "admin-hash") {
 		t.Error("should contain git hash")
 	}
-	if !strings.Contains(body, "hub_secret") {
-		t.Error("admin should see hub_secret")
+	// The hub secret must never be exposed over this endpoint, even to an admin.
+	if strings.Contains(body, "hub_secret") {
+		t.Error("version response must not include hub_secret")
 	}
 }
 

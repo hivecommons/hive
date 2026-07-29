@@ -251,10 +251,18 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 
 	s.logger.Info("audit: hub OAuth login", "user", user.Login)
 
-	// Set cookie with user info (simple JSON cookie for now)
+	// Set the session cookie to a signed, tamper-evident value so it cannot be
+	// forged. If the hub has no secret to sign with, fail the login rather than
+	// emit an unsigned (trusted-by-default) cookie.
+	cookieValue := mintHubUserCookieValue(s.hubSecret, user.Login)
+	if cookieValue == "" {
+		s.logger.Warn("OAuth: cannot mint signed session cookie", "user", user.Login)
+		http.Error(w, "session unavailable", http.StatusInternalServerError)
+		return
+	}
 	cookie := &http.Cookie{
 		Name:     "hive_hub_user",
-		Value:    user.Login,
+		Value:    cookieValue,
 		Path:     "/",
 		Domain:   ".hive.kubestellar.io",
 		MaxAge:   86400 * cookieMaxAgeDays,
@@ -288,16 +296,19 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"authenticated":false}`))
 		return
 	}
-	if loadSaaSUser(cookie.Value) == nil {
+	// Trust the carried username only when its signature verifies; a legacy
+	// unsigned or forged cookie reports unauthenticated, prompting a re-login.
+	username, ok := verifyHubUserCookieValue(s.hubSecret, cookie.Value)
+	if !ok || loadSaaSUser(username) == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"authenticated":false}`))
 		return
 	}
-	isAdmin := cookie.Value == hubAdminUsername
+	isAdmin := username == hubAdminUsername
 	data, err := json.Marshal(map[string]any{
 		"authenticated": true,
-		"login":         cookie.Value,
-		"avatar_url":    fmt.Sprintf("https://github.com/%s.png", cookie.Value),
+		"login":         username,
+		"avatar_url":    fmt.Sprintf("https://github.com/%s.png", username),
 		"hub_admin":     isAdmin,
 	})
 	if err != nil {
