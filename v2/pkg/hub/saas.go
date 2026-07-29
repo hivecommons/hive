@@ -1290,10 +1290,14 @@ func parseInt(s string) int {
 
 type MyHiveEntry struct {
 	RegistryEntry
-	Role                string                 `json:"role"`
-	ProvError           string                 `json:"provError,omitempty"`
-	ProvStatus          string                 `json:"provStatus,omitempty"`
-	AutoUpgrade         bool                   `json:"autoUpgrade"`
+	Role        string `json:"role"`
+	ProvError   string `json:"provError,omitempty"`
+	ProvStatus  string `json:"provStatus,omitempty"`
+	AutoUpgrade bool   `json:"autoUpgrade"`
+	// AutoUpgradeMode is always sent NORMALIZED (never empty when autoUpgrade is
+	// on) so the dashboard can render the effective mode without re-deriving the
+	// legacy empty-means-instant rule in JavaScript.
+	AutoUpgradeMode     string                 `json:"autoUpgradeMode,omitempty"`
 	PendingRequestCount int                    `json:"pendingRequestCount,omitempty"`
 	PendingRequests     []PendingAccessRequest `json:"pending_requests,omitempty"`
 
@@ -1347,10 +1351,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	var result []MyHiveEntry
 
 	autoUpgradeMap := make(map[string]bool)
+	// Normalized here (empty → instant) so every consumer sees the effective
+	// mode rather than the raw legacy blank.
+	autoUpgradeModeMap := make(map[string]string)
 	saasByID := make(map[string]*SaaSHive)
 	for _, sh := range listSaaSHives() {
 		shCopy := sh
 		autoUpgradeMap[sh.ID] = sh.AutoUpgrade
+		autoUpgradeModeMap[sh.ID] = normalizeAutoUpgradeMode(sh.AutoUpgradeMode)
 		saasByID[sh.ID] = &shCopy
 	}
 
@@ -1419,20 +1427,20 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			if isAdmin && role != "owner" {
 				role = "owner"
 			}
-			entry := MyHiveEntry{RegistryEntry: h, Role: role, AutoUpgrade: autoUpgradeMap[h.ID]}
+			entry := MyHiveEntry{RegistryEntry: h, Role: role, AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
 			continue
 		}
 		if strings.EqualFold(h.Owner, username) {
-			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID]}
+			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
 			user.Hives[h.ID] = "owner"
 			continue
 		}
 		if isAdmin {
-			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID]}
+			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
 		}
@@ -2087,6 +2095,23 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 
 var hubAutoUpgradePath = "/data/saas/hub-auto-upgrade"
 
+// The hub's own auto-upgrade is deliberately NOT given the daily schedule that
+// per-hive auto-upgrade has. The two look symmetric but carry opposite risk:
+//
+//   - A spoke hive is a workload. Restarting it interrupts running agents, so
+//     deferring to an after-hours window is a clear win — that is exactly the
+//     "don't disturb a working hive" motivation for the daily mode.
+//   - The hub is the control plane. It is what DELIVERS every spoke upgrade,
+//     serves the dashboard, and receives every heartbeat. Holding a hub fix for
+//     up to 24 hours means holding back fixes to the upgrade machinery itself,
+//     including any fix to this scheduler. A hub restart is also cheap: it is a
+//     single stateless pod whose state lives on the PVC, and spokes tolerate a
+//     missed heartbeat cycle by design.
+//
+// Deferring hub upgrades would therefore add real risk (a known-bad hub stays
+// up all day) to avoid a disruption the hub does not really suffer. It stays a
+// plain on/off toggle. Revisit only if hub restarts are ever shown to disrupt
+// in-flight spoke work.
 func isHubAutoUpgrade() bool {
 	data, err := os.ReadFile(hubAutoUpgradePath)
 	if err != nil {
@@ -2528,8 +2553,15 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 		fmt.Fprint(w, `{"error":"only the owner can change auto-upgrade"}`)
 		return
 	}
+	// The mode rides on the EXISTING endpoint rather than a second one: it is
+	// the same preference, the same owner-or-admin authorization checked above,
+	// and the same persistence. A separate endpoint would let the two settings
+	// drift apart across two requests. Older clients that send only
+	// auto_upgrade omit the field, which reads as "" = instant, preserving
+	// their behaviour exactly.
 	var body struct {
-		AutoUpgrade bool `json:"auto_upgrade"`
+		AutoUpgrade bool   `json:"auto_upgrade"`
+		Mode        string `json:"auto_upgrade_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		w.Header().Set("Content-Type", "application/json")
@@ -2537,19 +2569,37 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 		fmt.Fprint(w, `{"error":"invalid request body"}`)
 		return
 	}
+	// Reject unknown modes instead of defaulting — a typo must not silently
+	// change how often a hive restarts.
+	if !isValidAutoUpgradeMode(body.Mode) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"error":"invalid auto_upgrade_mode (expected \"instant\" or \"daily\")"}`)
+		return
+	}
 	h.AutoUpgrade = body.AutoUpgrade
+	h.AutoUpgradeMode = body.Mode
+	// Switching modes clears the day's fire record. Otherwise a hive flipped to
+	// daily after an instant upgrade earlier today would inherit a stale date
+	// and skip tonight's window.
+	h.AutoUpgradeLastFired = ""
 	if err := saveSaaSHive(h); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprint(w, `{"error":"failed to save"}`)
 		return
 	}
-	s.logger.Info("audit: auto-upgrade toggled", "hive_id", id, "auto_upgrade", body.AutoUpgrade, "by", username)
+	s.logger.Info("audit: auto-upgrade toggled", "hive_id", id, "auto_upgrade", body.AutoUpgrade, "mode", normalizeAutoUpgradeMode(body.Mode), "by", username)
 
 	// If enabling auto-upgrade and hive is behind, trigger immediately via kubectl
 	// for hosted hives. For heartbeat-connected hives, the upgrade instruction
 	// is delivered via the heartbeat response.
-	if body.AutoUpgrade {
+	// Daily mode deliberately does NOT kick an upgrade here: the whole point of
+	// choosing it is that turning auto-upgrade on should not immediately
+	// restart a working hive. It will roll at the next 17:00 ET window. The
+	// operator who wants it now still has the explicit Upgrade button, which
+	// goes through handleUpgradeHive and is never gated by mode.
+	if body.AutoUpgrade && normalizeAutoUpgradeMode(body.Mode) == AutoUpgradeModeInstant {
 		s.mu.RLock()
 		var currentSHA, branch string
 		for _, reg := range s.registry.Hives {
@@ -2588,7 +2638,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t}`, body.AutoUpgrade)
+	fmt.Fprintf(w, `{"ok":true,"auto_upgrade":%t,"auto_upgrade_mode":%q}`, body.AutoUpgrade, normalizeAutoUpgradeMode(body.Mode))
 }
 
 // branchSHAInfo holds a short SHA and the first line of its commit message.
@@ -3232,6 +3282,17 @@ func (s *HubServer) triggerAutoUpgrades() {
 		if !h.AutoUpgrade {
 			continue
 		}
+		// Scheduling gate. Instant-mode hives (and every legacy record, whose
+		// mode is empty) pass straight through, so this changes nothing for the
+		// existing fleet. Daily-mode hives are held until the first cycle at or
+		// after autoUpgradeDailyHour ET and released only once per ET day.
+		// Evaluated BEFORE any of the work below so a held hive costs nothing.
+		decision := shouldAutoUpgradeNow(h.AutoUpgradeMode, h.AutoUpgradeLastFired, time.Now())
+		if !decision.Allowed {
+			s.logger.Debug("auto-upgrade held by schedule",
+				"hive_id", h.ID, "mode", h.AutoUpgradeMode, "reason", decision.Reason)
+			continue
+		}
 		// Skip hives that are actively provisioning or in error state.
 		// Empty status means the hive predates the provisioning system — treat as eligible.
 		if h.Status == "provisioning" || h.Status == "error" {
@@ -3343,7 +3404,25 @@ func (s *HubServer) triggerAutoUpgrades() {
 			s.logger.Warn("auto-upgrade skipped — no cluster config", "hive_id", h.ID, "cluster_id", h.ClusterID)
 			continue
 		}
-		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID)
+		// Record the day's fire BEFORE kicking the rollout. Persisting first
+		// means a hub crash between here and the restart cannot cause a second
+		// upgrade for the same ET day; at worst the hive waits for tomorrow's
+		// window, which is the conservative direction for a "don't disturb it"
+		// mode. Only daily-mode hives carry a fire date (decision.FireDate is
+		// empty for instant), and a save failure is logged but not fatal — the
+		// upgrade itself still proceeds.
+		if decision.FireDate != "" {
+			stored := loadSaaSHive(h.ID)
+			if stored == nil {
+				stored = &h
+			}
+			stored.AutoUpgradeLastFired = decision.FireDate
+			if err := saveSaaSHive(stored); err != nil {
+				s.logger.Warn("failed to persist auto-upgrade fire date — a hub restart today could re-fire",
+					"hive_id", h.ID, "date", decision.FireDate, "error", err)
+			}
+		}
+		s.logger.Info("audit: auto-upgrade triggered", "hive_id", h.ID, "branch", branch, "from", currentSHA, "to", latestSHA, "cluster", hiveCluster.ID, "mode", normalizeAutoUpgradeMode(h.AutoUpgradeMode))
 		s.recordTimeline(h.ID, TimelineUpgradeStarted,
 			fmt.Sprintf("auto-upgrade triggered on %s: %s → %s", branch, orDash(currentSHA), latestSHA), "auto-upgrade")
 		s.mu.Lock()
@@ -8000,7 +8079,8 @@ const dashboardHTML = `<!DOCTYPE html>
         '<span style="flex:1"></span>' +
         '<button type="button" onclick="runBulkAction(\'restart\')" style="' + btn + '">Restart</button>' +
         '<button type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
-        '<button type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto-upgrade on</button>' +
+        '<button type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto: instant</button>' +
+        '<button type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, after hours — keeps a stable hive from being restarted mid-work">Auto: daily 5pm ET</button>' +
         '<button type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
         branchPicker +
         '<button type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
@@ -8019,7 +8099,8 @@ const dashboardHTML = `<!DOCTYPE html>
     var BULK_ACTION_LABELS = {
       'restart': 'Restart',
       'upgrade': 'Upgrade to latest',
-      'enable-auto-upgrade': 'Enable auto-upgrade on',
+      'enable-auto-upgrade': 'Enable instant auto-upgrade on',
+      'daily-auto-upgrade': 'Enable daily 5pm ET auto-upgrade on',
       'disable-auto-upgrade': 'Disable auto-upgrade on',
       'switch-branch': 'Switch branch for'
     };
@@ -8285,15 +8366,46 @@ const dashboardHTML = `<!DOCTYPE html>
             var progressTitle = isSwitching ? (switchStale ? 'The hive has not reported branch ' + esc(targetBranch) + ' yet — it may be offline or its build predates in-cluster switch support. It will apply on its next successful check-in.' : 'Rolling out ' + esc(h.upgradeTarget || '') + ' — the pill updates when the hive reports the new branch') : 'Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?');
             upgradeIcon = ' <span title="' + progressTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
-            upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint) + '" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">queued</span>';
+            /* A daily-mode hive is NOT upgrading "shortly" — saying so would be
+               a lie the operator would notice hours later. Name the window and
+               keep the click-to-upgrade-now escape hatch, which is the manual
+               path and is never gated by the schedule. */
+            var queuedDaily = h.autoUpgradeMode === AUTO_UPGRADE_DAILY;
+            var queuedLabel = queuedDaily ? 'queued · 5pm ET' : 'queued';
+            var queuedTitle = queuedDaily
+              ? 'Auto-upgrade will apply ' + esc(branchLatest) + ' at the next 5pm ET window — click to upgrade now' + esc(buildingHint)
+              : 'Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint);
+            upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="' + queuedTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">' + queuedLabel + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
             upgradeIcon = ' <button id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Current: ' + esc(sha) + ' → Latest: ' + esc(branchLatest) + esc(buildingHint) + '" style="padding:3px 10px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
           } else if (latestUnknown && isHosted && h.role === 'owner') {
             upgradeIcon = ' <button disabled title="Waiting for latest version…" style="padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
           }
+          /* Auto-upgrade control: a single select replaces the old checkbox.
+             The dense table has no room for a checkbox PLUS a mode dropdown,
+             and two controls for one setting invites the illegal-looking
+             "off but daily" state. One select shows the effective mode at a
+             glance — no dialog, no hover needed — which is the whole point:
+             an operator scanning the fleet must be able to see which hives
+             restart on sight of a new commit and which wait for the evening.
+             The id travels in a data-* attribute and the handler is bound by
+             delegation (see bindAutoUpgradeSelects) because esc() does NOT
+             escape quotes and is unsafe to interpolate into an attribute. */
           var autoUpgradeCheck = '';
           if (isHosted && h.role === 'owner') {
-            autoUpgradeCheck = ' <label style="margin-left:8px;font-size:0.65rem;color:var(--muted);cursor:pointer;white-space:nowrap" title="Automatically upgrade when a new version is available"><input type="checkbox" ' + (h.autoUpgrade ? 'checked' : '') + ' onchange="toggleAutoUpgrade(\'' + esc(h.id) + '\',this.checked)" style="vertical-align:middle;margin-right:2px;cursor:pointer">auto</label>';
+            var mode = h.autoUpgrade ? (h.autoUpgradeMode === AUTO_UPGRADE_DAILY ? AUTO_UPGRADE_DAILY : AUTO_UPGRADE_INSTANT) : AUTO_UPGRADE_OFF;
+            var opts = '';
+            for (var oi = 0; oi < AUTO_UPGRADE_OPTIONS.length; oi++) {
+              var opt = AUTO_UPGRADE_OPTIONS[oi];
+              opts += '<option value="' + esc(opt.value) + '"' + (mode === opt.value ? ' selected' : '') + '>' + esc(opt.label) + '</option>';
+            }
+            var d = document.createElement('select');
+            d.className = 'auto-upgrade-select';
+            d.setAttribute('data-hive-id', h.id);
+            d.title = AUTO_UPGRADE_TITLE;
+            d.setAttribute('style', 'margin-left:8px;font-size:0.65rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 3px;cursor:pointer;vertical-align:middle');
+            d.innerHTML = opts;
+            autoUpgradeCheck = ' ' + d.outerHTML;
           }
           var shaMsg = _commitMessages[sha] || _latestSHAMessages[branchName] || '';
           versionCell = branch + '<span style="font-family:monospace;color:var(--muted)" title="' + esc(shaMsg) + '">' + esc(sha) + '</span>' + status + upgradeIcon + autoUpgradeCheck;
@@ -8492,6 +8604,9 @@ const dashboardHTML = `<!DOCTYPE html>
         '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '<th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      /* Delegated, so binding once is enough no matter how often the table is
+         re-rendered. The guard keeps repeated renders from stacking listeners. */
+      if (!_autoUpgradeSelectsBound) { bindAutoUpgradeSelects(); _autoUpgradeSelectsBound = true; }
       /* Re-derive the bar and the select-all tri-state from _bulkSelected now
          that the fresh checkboxes exist in the DOM. */
       renderBulkBar();
@@ -8514,6 +8629,59 @@ const dashboardHTML = `<!DOCTYPE html>
         hiveToast(id + ' is now ' + (isPublic ? 'public' : 'private'), 'success');
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadHives(); }
+    }
+
+    /* Auto-upgrade select values. AUTO_UPGRADE_OFF is a UI-only sentinel: on
+       the wire "off" is auto_upgrade:false, and the two real modes match the
+       server's allowlist ("instant" / "daily"). */
+    var _autoUpgradeSelectsBound = false;
+    var AUTO_UPGRADE_OFF = 'off';
+    var AUTO_UPGRADE_INSTANT = 'instant';
+    var AUTO_UPGRADE_DAILY = 'daily';
+    /* Copy is framed around DISRUPTION, not cron mechanics: the operator is
+       choosing when it is acceptable to interrupt a hive that is working. */
+    var AUTO_UPGRADE_TITLE = 'When to apply new versions. Instant restarts the hive as soon as a new version lands; Daily restarts it at most once a day, after hours, so a stable hive is not disturbed mid-work.';
+    var AUTO_UPGRADE_OPTIONS = [
+      {value: AUTO_UPGRADE_OFF, label: 'Auto: off'},
+      {value: AUTO_UPGRADE_INSTANT, label: 'Auto: instant'},
+      {value: AUTO_UPGRADE_DAILY, label: 'Auto: daily 5pm ET'}
+    ];
+
+    /* One delegated listener on the container, bound once at startup, so every
+       re-render of the table keeps working without rebinding per row. */
+    function bindAutoUpgradeSelects() {
+      var container = document.getElementById('hives-container');
+      if (!container) return;
+      container.addEventListener('change', function(e) {
+        var el = e.target;
+        if (!el || !el.classList || !el.classList.contains('auto-upgrade-select')) return;
+        var id = el.getAttribute('data-hive-id');
+        if (!id) return;
+        setAutoUpgradeMode(id, el.value);
+      });
+    }
+
+    /* Maps the select's value onto the existing endpoint's two fields. "off"
+       sends auto_upgrade:false; the mode is still sent so the server records a
+       concrete preference rather than leaving a blank to be re-interpreted. */
+    async function setAutoUpgradeMode(id, value) {
+      var enabled = value !== AUTO_UPGRADE_OFF;
+      var mode = (value === AUTO_UPGRADE_DAILY) ? AUTO_UPGRADE_DAILY : AUTO_UPGRADE_INSTANT;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id) + '/auto-upgrade', {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({auto_upgrade: enabled, auto_upgrade_mode: mode})
+        });
+        if (!resp.ok) { hiveToast('Failed to update auto-upgrade', 'error'); loadHives(); return; }
+        var label = !enabled ? 'off'
+          : (mode === AUTO_UPGRADE_DAILY ? 'daily at 5pm ET' : 'instant');
+        hiveToast(id + ' auto-upgrade: ' + label, 'success');
+        loadHives();
+      } catch(e) {
+        hiveToast('Error: ' + e.message, 'error');
+        loadHives();
+      }
     }
 
     async function toggleAutoUpgrade(id, enabled) {

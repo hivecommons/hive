@@ -282,6 +282,23 @@ type SaaSHive struct {
 	OCIExportID     string                 `json:"oci_export_id,omitempty"`
 	ClusterID       string                 `json:"cluster_id,omitempty"`
 
+	// AutoUpgradeMode gates WHEN an enabled auto-upgrade may fire:
+	// AutoUpgradeModeInstant (or empty) upgrades as soon as the hive is seen
+	// behind latest; AutoUpgradeModeDaily upgrades at most once per ET calendar
+	// day, at or after autoUpgradeDailyHour. omitempty keeps existing meta.json
+	// records byte-identical until the operator actually picks a mode, and an
+	// absent field reads as instant — so the ~42 records already on the PVC keep
+	// today's behaviour exactly.
+	AutoUpgradeMode string `json:"auto_upgrade_mode,omitempty"`
+	// AutoUpgradeLastFired is the ET calendar day (autoUpgradeDateFormat) on
+	// which the daily schedule last triggered an upgrade for this hive. It lives
+	// here, in the hive's own meta.json on the PVC, for two reasons: it is
+	// per-hive state that belongs with the rest of the hive's upgrade
+	// preferences, and persisting it means a hub restart at 17:03 cannot re-fire
+	// an upgrade that already went out at 17:01. Empty for instant-mode hives,
+	// which are never gated and never record a date.
+	AutoUpgradeLastFired string `json:"auto_upgrade_last_fired,omitempty"`
+
 	// GitHubBaseURL / GitHubAPIURL pin this hive's GitHub host. The GitHub
 	// host is a property of the HIVE (where its org/repos live), not the
 	// cluster: a cluster-level GHE default silently breaks hives for

@@ -57,7 +57,11 @@ const (
 	bulkActionUpgrade            = "upgrade"
 	bulkActionEnableAutoUpgrade  = "enable-auto-upgrade"
 	bulkActionDisableAutoUpgrade = "disable-auto-upgrade"
-	bulkActionSwitchBranch       = "switch-branch"
+	// bulkActionDailyAutoUpgrade enables auto-upgrade in daily mode. The plain
+	// enable action keeps meaning INSTANT so existing muscle memory and any
+	// existing API callers are unchanged.
+	bulkActionDailyAutoUpgrade = "daily-auto-upgrade"
+	bulkActionSwitchBranch     = "switch-branch"
 )
 
 // BulkHiveRequest is the body of POST /api/saas/hives/bulk.
@@ -149,7 +153,7 @@ func (s *HubServer) handleBulkHiveAction(w http.ResponseWriter, r *http.Request)
 
 	switch body.Action {
 	case bulkActionRestart, bulkActionUpgrade, bulkActionEnableAutoUpgrade,
-		bulkActionDisableAutoUpgrade, bulkActionSwitchBranch:
+		bulkActionDisableAutoUpgrade, bulkActionDailyAutoUpgrade, bulkActionSwitchBranch:
 	default:
 		writeBulkError(w, http.StatusBadRequest, "unknown bulk action")
 		return
@@ -264,9 +268,11 @@ func (s *HubServer) applyBulkAction(action, branch, id, username string) BulkHiv
 	case bulkActionRestart, bulkActionUpgrade:
 		return s.bulkRestartOrUpgrade(h, id, username, action)
 	case bulkActionEnableAutoUpgrade:
-		return s.bulkSetAutoUpgrade(h, id, username, true)
+		return s.bulkSetAutoUpgrade(h, id, username, true, AutoUpgradeModeInstant)
+	case bulkActionDailyAutoUpgrade:
+		return s.bulkSetAutoUpgrade(h, id, username, true, AutoUpgradeModeDaily)
 	case bulkActionDisableAutoUpgrade:
-		return s.bulkSetAutoUpgrade(h, id, username, false)
+		return s.bulkSetAutoUpgrade(h, id, username, false, AutoUpgradeModeInstant)
 	case bulkActionSwitchBranch:
 		return s.bulkSwitchBranch(h, id, username, branch)
 	}
@@ -350,13 +356,17 @@ func (s *HubServer) bulkRestartOrUpgrade(h *SaaSHive, id, username, action strin
 // store and the registry are the source of truth for the dashboard, and the
 // preference reaches the spoke on its next heartbeat. No kubectl is involved,
 // so this works identically for firewalled clusters.
-func (s *HubServer) bulkSetAutoUpgrade(h *SaaSHive, id, username string, enabled bool) BulkHiveResult {
+func (s *HubServer) bulkSetAutoUpgrade(h *SaaSHive, id, username string, enabled bool, mode string) BulkHiveResult {
 	h.AutoUpgrade = enabled
+	h.AutoUpgradeMode = mode
+	// Mode changes clear the day's fire record for the same reason the
+	// single-hive handler does — see handleToggleAutoUpgrade.
+	h.AutoUpgradeLastFired = ""
 	if err := saveSaaSHive(h); err != nil {
 		return BulkHiveResult{HiveID: id, Ok: false, Error: "failed to save"}
 	}
 	s.logger.Info("audit: bulk auto-upgrade toggled",
-		"hive_id", id, "auto_upgrade", enabled, "by", username)
+		"hive_id", id, "auto_upgrade", enabled, "mode", normalizeAutoUpgradeMode(mode), "by", username)
 	return BulkHiveResult{HiveID: id, Ok: true, Via: bulkViaStore}
 }
 
