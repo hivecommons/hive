@@ -88,7 +88,6 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 		for _, pa := range pack.Agents {
 			if existing, exists := candidate.Agents[pa.Name]; exists {
 				changed := false
-
 				// Pack-behavior fields define what an agent DOES at a given ACMM
 				// level (which kick template it runs, its issue/PR mode, which model,
 				// its role/description). These MUST be reconciled to the current pack
@@ -99,27 +98,34 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 				// scanner/ci-maintainer/quality on their lower-level advisory
 				// templates and models even though acmm_level had moved up.
 				//
-				// Model/Backend are the exception: an operator sets them from the
-				// Governor grid, so they carry an ownership marker and are reconciled
-				// only while still pack-owned (see below).
+				// Model/Backend are the exception: reconcile them as a complete
+				// runtime pair only while the pack still owns them. Explicit operator
+				// ownership and the legacy CLI pin remain authoritative.
+				//
+				// Pack reconciliation selects a complete runtime pair for an
+				// unpinned agent. Keeping a backend from the previous level while
+				// replacing only its model can produce an impossible launch (for
+				// example, Codex with a Copilot-only Claude model). Preserve an
+				// explicitly pinned CLI, but otherwise reconcile backend and
+				// model together.
+				reconcileBackend := !existing.CLIPinned && !existing.BackendIsOperatorOwned()
+				if reconcileBackend && pa.Backend != "" && existing.Backend != pa.Backend {
+					existing.Backend = pa.Backend
+					existing.BackendOwner = config.FieldOwnerPack
+					changed = true
+				}
+				modelMatchesBackend := pa.Backend == "" || existing.Backend == "" || existing.Backend == pa.Backend
+				if !existing.CLIPinned && modelMatchesBackend && pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
+					existing.Model = pa.Model
+					existing.ModelOwner = config.FieldOwnerPack
+					changed = true
+				}
 				if pa.KickTemplate != "" && existing.KickTemplate != pa.KickTemplate {
 					existing.KickTemplate = pa.KickTemplate
 					changed = true
 				}
 				if pa.Mode != "" && existing.Mode != pa.Mode {
 					existing.Mode = pa.Mode
-					changed = true
-				}
-				// Model is reconciled to the pack ONLY while the pack still owns
-				// it. Once an operator picks a model in the Governor grid the
-				// field becomes operator-owned and the pack must leave it alone:
-				// ApplyPack runs on every restart ("merging pack updates"), so an
-				// unconditional replace-on-diff here silently reverted the
-				// operator's choice on the next pod restart — repeatedly, which is
-				// exactly the reported "they always come back".
-				if pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
-					existing.Model = pa.Model
-					existing.ModelOwner = config.FieldOwnerPack
 					changed = true
 				}
 				if pa.Description != "" && existing.Description != pa.Description {
@@ -136,15 +142,6 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 				}
 				if pa.DisplayName != "" && existing.DisplayName != pa.DisplayName {
 					existing.DisplayName = pa.DisplayName
-					changed = true
-				}
-
-				// Backend is fill-if-empty: it never varies by level (always the same
-				// per agent across all packs), and users legitimately pin it, so the
-				// pack must not stomp a user's choice.
-				if existing.Backend == "" && pa.Backend != "" && !existing.BackendIsOperatorOwned() {
-					existing.Backend = pa.Backend
-					existing.BackendOwner = config.FieldOwnerPack
 					changed = true
 				}
 
