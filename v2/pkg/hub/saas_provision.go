@@ -139,7 +139,13 @@ type ClusterConfig struct {
 	InferenceEndpoint           string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
 	GitHubBaseURL               string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
 	GitHubAPIURL                string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
-	OAuthClientID               string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+	// GitHubAppSlug is the GitHub App's URL slug on THIS cluster's GitHub
+	// host. A GitHub Enterprise instance hosts its own App registration,
+	// which is rarely named "kubestellar-hive" — without this the spoke's
+	// install link points at an app that does not exist on that GHE host.
+	// Empty falls back to config.DefaultGitHubAppSlug.
+	GitHubAppSlug string `json:"github_app_slug,omitempty" yaml:"github_app_slug,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 	ClusterHealthTimeoutSeconds int    `json:"cluster_health_timeout_seconds,omitempty" yaml:"cluster_health_timeout_seconds,omitempty"`
 }
 
@@ -625,6 +631,10 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"HasGHE":            effectiveGitHubBaseURL(h, cluster) != "",
 		"GitHubBaseURL":     effectiveGitHubBaseURL(h, cluster),
 		"GitHubAPIURL":      effectiveGitHubAPIURL(h, cluster),
+		// Only emit app_slug when the cluster names one. Leaving it out lets
+		// config.ResolvedAppSlug() supply the public default, so public-GitHub
+		// hives are unaffected.
+		"GitHubAppSlug": cluster.GitHubAppSlug,
 		"OAuthClientID": func() string {
 			// Follow the hive's EFFECTIVE GitHub host, not the cluster
 			// default — a public-GitHub hive on a GHE-defaulted cluster
@@ -1089,6 +1099,9 @@ data:
 {{- if .HasGHE}}
       base_url: {{.GitHubBaseURL}}
       api_url: {{.GitHubAPIURL}}
+{{- end}}
+{{- if .GitHubAppSlug}}
+      app_slug: {{.GitHubAppSlug}}
 {{- end}}
 {{- if .OAuthClientID}}
       oauth_client_id: {{.OAuthClientID}}

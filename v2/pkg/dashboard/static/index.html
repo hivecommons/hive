@@ -4768,7 +4768,24 @@
           banner.classList.add('perm-issue');
           if (title) title.textContent = 'GitHub App — Insufficient Permissions';
           if (desc) desc.textContent = 'The app is installed but cannot write to this repository.';
-          if (link) { link.textContent = 'View App Settings'; link.href = data.githubAppInstallURL || 'https://github.com/apps/kubestellar-hive'; }
+          // Never fall back to a public github.com URL: on GitHub Enterprise
+          // that sends the user to the wrong GitHub entirely and their org
+          // admin never sees the request. Prefer the server-computed install
+          // URL; otherwise send them to this hive's own GitHub host root and
+          // say so, rather than guessing an app path/slug the client does not
+          // know.
+          if (link) {
+            link.textContent = 'View App Settings';
+            if (data.githubAppInstallURL) {
+              link.href = data.githubAppInstallURL;
+            } else if (data.githubBaseURL) {
+              link.href = data.githubBaseURL;
+              link.textContent = 'Open ' + String(data.githubBaseURL).replace(/^https?:\/\//, '');
+            } else {
+              link.removeAttribute('href');
+              link.textContent = 'Install URL unavailable';
+            }
+          }
           var details = existingDetails;
           if (!details) {
             details = document.createElement('div');

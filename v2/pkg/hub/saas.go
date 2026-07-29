@@ -21,6 +21,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 var saasUsersDir = "/data/saas/users"
@@ -528,16 +530,52 @@ type ClusterListEntry struct {
 	Name   string `json:"name"`
 	HasGPU bool   `json:"has_gpu"`
 	Arch   string `json:"arch"`
+	// GitHubHost is the bare hostname of the GitHub instance hives on this
+	// cluster default to ("github.com" for public GitHub). Shown in the
+	// create-hive modal so an admin can see which GitHub a hive will target.
+	GitHubHost string `json:"github_host,omitempty"`
+	// AppInstallURL is the GitHub App install link for THIS cluster's GitHub
+	// host and app slug. A GitHub Enterprise cluster must never be handed a
+	// public github.com link: the install request would land on the wrong
+	// GitHub and the GHE org admin would never see it.
+	AppInstallURL string `json:"app_install_url,omitempty"`
+}
+
+// clusterGitHubConfig projects a cluster's GitHub settings onto the
+// config.GitHubConfig that owns URL construction, so the hub and the spoke
+// build install links from exactly one implementation.
+func clusterGitHubConfig(c *ClusterConfig) config.GitHubConfig {
+	if c == nil {
+		return config.GitHubConfig{}
+	}
+	base := c.GitHubBaseURL
+	// The cluster stores "" for public GitHub; config.GitHubConfig uses the
+	// same convention, so pass it through untouched.
+	return config.GitHubConfig{BaseURL: base, AppSlug: c.GitHubAppSlug}
+}
+
+// githubHostLabel renders a GitHub base URL as a bare hostname for display.
+// Empty (public GitHub) becomes "github.com" rather than an empty chip.
+func githubHostLabel(baseURL string) string {
+	h := strings.TrimSpace(baseURL)
+	if h == "" {
+		return "github.com"
+	}
+	h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
+	return strings.TrimRight(h, "/")
 }
 
 func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	var entries []ClusterListEntry
 	for _, c := range s.clusters {
+		gh := clusterGitHubConfig(&c)
 		entries = append(entries, ClusterListEntry{
-			ID:     c.ID,
-			Name:   c.Name,
-			HasGPU: c.HasGPU,
-			Arch:   c.Arch,
+			ID:            c.ID,
+			Name:          c.Name,
+			HasGPU:        c.HasGPU,
+			Arch:          c.Arch,
+			GitHubHost:    githubHostLabel(c.GitHubBaseURL),
+			AppInstallURL: gh.AppInstallURL(),
 		})
 	}
 	// Sort for deterministic API output.
@@ -9531,11 +9569,83 @@ const dashboardHTML = `<!DOCTYPE html>
           var caps = [];
           if (c.has_gpu) caps.push('GPU');
           if (c.arch) caps.push(c.arch);
+          /* Surface the GitHub host: on a GitHub Enterprise cluster the App
+             lives on that GHE instance, and picking the wrong cluster is the
+             difference between an install request the org admin can see and
+             one that silently lands on public github.com. */
+          if (c.github_host && c.github_host !== PUBLIC_GITHUB_HOST) caps.push(c.github_host);
           var label = c.name || c.id;
           if (caps.length) label += ' (' + caps.join(', ') + ')';
           return '<option value="' + esc(c.id) + '">' + esc(label) + '</option>';
         }).join('');
+        sel.removeEventListener('change', syncCreateModalInstallLinks);
+        sel.addEventListener('change', syncCreateModalInstallLinks);
+        syncCreateModalInstallLinks();
       } catch(e) { /* cluster dropdown stays at default */ }
+    }
+
+    /* PUBLIC_GITHUB_HOST is the bare hostname the hub reports for a cluster
+       with no GitHub Enterprise override. Anything else is a GHE instance. */
+    var PUBLIC_GITHUB_HOST = 'github.com';
+
+    /* selectedClusterEntry returns the ClusterListEntry for the cluster chosen
+       in the create-hive modal, or null when the list has not loaded. */
+    function selectedClusterEntry() {
+      var sel = document.getElementById('f-cluster');
+      if (!sel || !sel.value) return null;
+      var list = _clusterList || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === sel.value) return list[i];
+      }
+      return null;
+    }
+
+    /* syncCreateModalInstallLinks points every "install the app" link in the
+       create-hive modal at the SELECTED cluster's GitHub host. The hub serves
+       one page to admins provisioning onto both public GitHub and GitHub
+       Enterprise clusters, so a static github.com anchor is wrong for half of
+       them: a GHE user following it lands on public github.com and their org
+       admin never sees the pending install request.
+
+       The URL comes from the server (config.GitHubConfig.AppInstallURL), which
+       also honours a per-cluster app slug — a GHE instance hosts its own App
+       registration and it is rarely named "kubestellar-hive". */
+    function syncCreateModalInstallLinks() {
+      var c = selectedClusterEntry();
+      var url = (c && c.app_install_url) || '';
+      var host = (c && c.github_host) || PUBLIC_GITHUB_HOST;
+      var isGHE = host !== PUBLIC_GITHUB_HOST;
+      var ids = ['auth-info-app-link', 'auth-info-later-link', 'auth-later-install-link'];
+      for (var i = 0; i < ids.length; i++) {
+        var el = document.getElementById(ids[i]);
+        if (!el) continue;
+        if (url) {
+          el.href = url;
+          el.removeAttribute('aria-disabled');
+        } else {
+          /* No URL yet (clusters still loading). Do not fall back to a
+             github.com guess — a dead link is safer than one that sends a
+             GHE admin to the wrong GitHub. */
+          el.removeAttribute('href');
+          el.setAttribute('aria-disabled', 'true');
+        }
+      }
+      var appLink = document.getElementById('auth-info-later-link');
+      if (appLink) appLink.textContent = '→ Install app on ' + host + ' now';
+      var btn = document.getElementById('auth-later-install-link');
+      if (btn) btn.textContent = 'Install app on your ' + (isGHE ? host + ' ' : '') + 'org';
+      var note = document.getElementById('auth-later-ghe-note');
+      if (note) {
+        if (isGHE) {
+          note.textContent = 'This cluster targets ' + host + '. The GitHub App must be registered and'
+            + ' installed on that GitHub Enterprise instance — a public github.com install will not'
+            + ' reach it, and the ' + host + ' org admin will see no pending request.';
+          note.style.display = '';
+        } else {
+          note.textContent = '';
+          note.style.display = 'none';
+        }
+      }
     }
 
     // OpenRouter scan-to-fund return: toast the result and clear the query flag
@@ -10311,11 +10421,11 @@ const dashboardHTML = `<!DOCTYPE html>
           The hive uses this token for all GitHub API calls — creating issues, posting advisory comments, reading repos, pushing code, and merging PRs. All actions appear as the token owner. Permissions cannot be scoped per agent trust tier.
         </div>
         <div id="auth-info-app" style="display:none;font-size:0.7rem;color:var(--muted);margin-top:8px;line-height:1.5;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid var(--border)">
-          The hive generates short-lived installation tokens scoped to each agent's trust tier — newcomers get issues-only access, contributors get code + PR access, and trusted agents can merge. Actions appear as the app, not a personal account. Requires a <a href="https://github.com/apps/kubestellar-hive" target="_blank" style="color:var(--accent)">GitHub App</a> installed on the target org/repo.
+          The hive generates short-lived installation tokens scoped to each agent's trust tier — newcomers get issues-only access, contributors get code + PR access, and trusted agents can merge. Actions appear as the app, not a personal account. Requires a <a id="auth-info-app-link" href="" target="_blank" rel="noopener" style="color:var(--accent)">GitHub App</a> installed on the target org/repo.
         </div>
         <div id="auth-info-later" style="display:none;font-size:0.7rem;color:var(--muted);margin-top:8px;line-height:1.5;padding:8px 10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid var(--border)">
           The hive will be provisioned with the <strong>kubestellar-hive</strong> GitHub App pre-configured (App ID: 3568013). Agents will be unable to access GitHub until the app is installed on the target org and the installation ID is supplied via the hive config.<br><br>
-          <a href="https://github.com/apps/kubestellar-hive/installations/new" target="_blank" style="color:var(--accent);font-weight:600">→ Install kubestellar-hive app now</a>
+          <a id="auth-info-later-link" href="" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">→ Install app now</a>
         </div>
       </div>
       <div id="auth-pat">
@@ -10347,7 +10457,8 @@ const dashboardHTML = `<!DOCTYPE html>
         <div style="margin-bottom:12px;padding:12px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:8px">
           <div style="font-size:0.85rem;font-weight:600;color:var(--text);margin-bottom:8px">Hive App: kubestellar-hive</div>
           <div style="font-size:0.75rem;color:var(--muted);line-height:1.5">App ID: <code>3568013</code> (pre-configured)<br>The hive will start without GitHub access. Install the app on the target org, then supply the Installation ID and Private Key via the hive config.</div>
-          <a href="https://github.com/apps/kubestellar-hive/installations/new" target="_blank" style="display:inline-block;margin-top:8px;padding:6px 14px;background:var(--accent);color:#fff;border-radius:6px;font-size:0.8rem;font-weight:600;text-decoration:none">Install kubestellar-hive on your org</a>
+          <div id="auth-later-ghe-note" style="display:none;font-size:0.75rem;color:var(--muted);line-height:1.5;margin-top:8px"></div>
+          <a id="auth-later-install-link" href="" target="_blank" rel="noopener" style="display:inline-block;margin-top:8px;padding:6px 14px;background:var(--accent);color:#fff;border-radius:6px;font-size:0.8rem;font-weight:600;text-decoration:none">Install app on your org</a>
         </div>
       </div>
       </div>

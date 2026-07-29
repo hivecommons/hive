@@ -329,13 +329,35 @@
       <div class="wizard-panel" id="panel-2">
         <h2>Install the Hive GitHub App</h2>
         <p>The Hive GitHub App lets our agents read issues, open PRs, and respond to CI on your repos. Install it on the org or repos you want to manage.</p>
+        <!-- This button is correct ONLY for public github.com. This page signs
+             you in with the public github.com OAuth app and no hive exists yet,
+             so we genuinely do not know which GitHub instance your repos live
+             on — we must not fake a per-user link here. GitHub Enterprise users
+             get the explicit note below instead of a link that would send their
+             install request to the wrong GitHub entirely. -->
         <div style="margin:20px 0">
-          <a href="https://github.com/apps/kubestellar-hive" target="_blank" class="btn-github" id="install-app-btn">
+          <a href="https://github.com/apps/kubestellar-hive" target="_blank" rel="noopener" class="btn-github" id="install-app-btn">
             <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
             Install Hive GitHub App
           </a>
         </div>
         <p style="font-size:0.82rem;color:var(--muted)">Already installed? Click continue.</p>
+        <div style="margin-top:18px;padding:12px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:.7rem">
+          <p style="margin:0 0 6px;font-size:0.86rem;font-weight:700">Using GitHub Enterprise?</p>
+          <p style="margin:0;font-size:0.82rem;color:var(--muted);line-height:1.55">
+            The button above installs on <strong>public github.com</strong>. If your repos live on a
+            GitHub Enterprise instance (<code>github.example.com</code>, and similar), that link will
+            not work &mdash; the install request lands on public GitHub and your Enterprise org admin
+            will never see it.
+            <br><br>
+            Instead: continue to step&nbsp;3 and add your repository by <strong>URL</strong>. We record
+            which Enterprise instance it lives on, and provision your hive against a GitHub App
+            registered on <em>that</em> instance. Your org admin approves the installation from your own
+            Enterprise host &mdash; your hive's dashboard will show the correct install link once it is
+            provisioned. If no App is registered on your Enterprise instance yet, we will set that up
+            with your admin as part of provisioning.
+          </p>
+        </div>
         <div style="display:flex;gap:12px;margin-top:16px">
           <button class="btn-secondary" onclick="goToStep(1)">← Back</button>
           <button class="btn-primary" onclick="goToStep(3)">Continue →</button>
@@ -349,7 +371,8 @@
         <div id="repo-loading" style="color:var(--muted);padding:24px;text-align:center">Loading your repositories...</div>
         <div id="repo-list" class="repo-list" style="display:none"></div>
         <div id="repo-none" style="display:none;padding:24px;text-align:center;color:var(--muted)">
-          <p>No repositories found. Install the <a href="https://github.com/apps/kubestellar-hive" target="_blank" style="color:var(--blue)">Hive GitHub App</a> on the account or org that owns them &mdash; or add a repo URL below.</p>
+          <p>No repositories found. Install the <a href="https://github.com/apps/kubestellar-hive" target="_blank" rel="noopener" style="color:var(--blue)">Hive GitHub App</a> on the account or org that owns them &mdash; or add a repo URL below.</p>
+          <p style="font-size:0.82rem">That link is public github.com. <strong>GitHub Enterprise repos will never appear in this list</strong> and cannot be installed from there &mdash; add the repo by URL below and we will provision against your Enterprise instance.</p>
         </div>
         <!-- Manual entry. Repo discovery uses the github.com OAuth token, so a
              GitHub Enterprise repo (github.ibm.com, github.cisco.com, …) can

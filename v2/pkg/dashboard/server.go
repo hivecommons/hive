@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
+	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/hub"
 	"github.com/kubestellar/hive/v2/pkg/openrouter"
@@ -1061,7 +1062,10 @@ func (s *Server) SetGitHubAppRequired(required bool) {
 	if required && s.deps != nil && s.deps.Config != nil {
 		s.githubAppInstallURL = s.deps.Config.GitHub.AppInstallURL()
 	} else if required {
-		s.githubAppInstallURL = "https://github.com/apps/kubestellar-hive/installations/new"
+		// No config loaded (tests, early boot): fall back to the zero-value
+		// GitHubConfig, which resolves to the public github.com install URL.
+		// Derive it rather than hardcoding so the two paths can never drift.
+		s.githubAppInstallURL = config.GitHubConfig{}.AppInstallURL()
 	} else {
 		s.githubAppInstallURL = ""
 		s.githubAppPermIssue = ""
