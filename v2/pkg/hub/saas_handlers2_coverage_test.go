@@ -14,6 +14,7 @@ import (
 
 func newHandlerHub2() *HubServer {
 	return &HubServer{
+		hubSecret:               testHubSecret,
 		logger:                  slog.Default(),
 		saveCh:                  make(chan struct{}, 1),
 		hubBanners:              make(map[string]*HubBannerEntry),

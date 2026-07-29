@@ -513,6 +513,10 @@ type GovernorConfig struct {
 	LiteLLM       LiteLLMConfig         `yaml:"litellm"`
 	VLLM          InferenceAuthConfig   `yaml:"vllm"`
 	LLMD          InferenceAuthConfig   `yaml:"llm-d"`
+	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
+	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
+	// a headless pod.
+	Bob BobConfig `yaml:"bob"`
 	Trajectory    TrajectoryConfig      `yaml:"trajectory"`
 	// Gateways is the list of named model gateways (OpenAI-compatible endpoints
 	// like OpenRouter, a LiteLLM proxy, vLLM, or llm-d). An agent routes through
@@ -813,6 +817,95 @@ const (
 	// (mirrors HIVE_VLLM_ENDPOINT / HIVE_LLMD_ENDPOINT).
 	LiteLLMEndpointEnv = "HIVE_LITELLM_ENDPOINT"
 )
+
+// Bob (IBM bobshell) API-key resolution. bobshell cannot authenticate in a pod
+// any other way: its default flow (W3ID SSO) opens a browser and polls a
+// localhost callback port, which in a headless container cannot succeed and
+// instead burns a 3-minute timeout per launch. IBM's documented remedy for
+// non-interactive sessions is API-key auth. As with LiteLLM, hive.yaml stores
+// only the env var NAME and/or key FILE PATH — never the key value, because
+// Config.Save() round-trips the config back to disk.
+const (
+	// BobAPIKeyEnvVar is the env var name bobshell itself reads the key from.
+	// Verified against the installed bundle (bobshell 1.0.6 bundle/bob.js):
+	// `process.env.BOBSHELL_API_KEY`. This is the name injected INTO the
+	// agent's environment, distinct from the hive-side variable below that
+	// an operator sets on the hive pod.
+	BobAPIKeyEnvVar = "BOBSHELL_API_KEY"
+
+	// DefaultBobAPIKeyEnv is the hive-side env var consulted for the bob API
+	// key when governor.bob.api_key_env is not set in hive.yaml.
+	DefaultBobAPIKeyEnv = "HIVE_BOB_API_KEY"
+
+	// DefaultBobAPIKeyFile is the key file consulted when api_key_file is not
+	// set. Matches the read-only /secrets volume used for k8s Secret mounts.
+	DefaultBobAPIKeyFile = "/secrets/bob_api_key"
+
+	// WritableBobAPIKeyFile is the PVC-backed location a hosted operator can
+	// write the key to without cluster access, mirroring
+	// WritableLiteLLMAPIKeyFile. Referenced by path only; never by value.
+	WritableBobAPIKeyFile = WritableSecretsDir + "/bob_api_key"
+
+	// BobAuthMethodAPIKey is the value bobshell's `--auth-method` flag expects
+	// to select API-key auth. Verified in bundle/bob.js, where the auth-type
+	// enum is defined as `USE_BOBSHELL="api-key"`.
+	BobAuthMethodAPIKey = "api-key"
+)
+
+// BobConfig configures the IBM bobshell ("bob") CLI backend. Only the
+// key's LOCATION is stored — never the key itself.
+type BobConfig struct {
+	APIKeyEnv  string `yaml:"api_key_env" json:"api_key_env,omitempty"`   // env var NAME holding the key; default HIVE_BOB_API_KEY
+	APIKeyFile string `yaml:"api_key_file" json:"api_key_file,omitempty"` // path to a file holding the key; default /secrets/bob_api_key
+}
+
+// ResolveAPIKey returns the bob API key, or "" when none is configured.
+// Key FILES are consulted in priority order — the configured api_key_file,
+// then the k8s Secret mount (DefaultBobAPIKeyFile), then the PVC file
+// (WritableBobAPIKeyFile) — followed by the env var named by api_key_env and
+// finally DefaultBobAPIKeyEnv. This mirrors LiteLLMConfig.ResolveAPIKey so a
+// key stays working if hive.yaml is re-seeded and the api_key_file pointer is
+// lost, or if the PVC copy is wiped but an admin Secret exists.
+func (c *BobConfig) ResolveAPIKey() string {
+	key, _ := c.resolveAPIKeyWithSource()
+	return key
+}
+
+// ResolveAPIKeySource reports WHERE the key was found without exposing the
+// value: "file:<path>", "env:<NAME>", or "" when unconfigured. Safe to log
+// and safe to return from APIs.
+func (c *BobConfig) ResolveAPIKeySource() string {
+	_, source := c.resolveAPIKeyWithSource()
+	return source
+}
+
+func (c *BobConfig) resolveAPIKeyWithSource() (string, string) {
+	if c == nil {
+		return "", ""
+	}
+	files := []string{c.APIKeyFile, DefaultBobAPIKeyFile, WritableBobAPIKeyFile}
+	seen := map[string]bool{"": true}
+	for _, f := range files {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		if data, err := os.ReadFile(f); err == nil {
+			if key := strings.TrimSpace(string(data)); key != "" {
+				return key, "file:" + f
+			}
+		}
+	}
+	if c.APIKeyEnv != "" {
+		if key := os.Getenv(c.APIKeyEnv); key != "" {
+			return key, "env:" + c.APIKeyEnv
+		}
+	}
+	if key := os.Getenv(DefaultBobAPIKeyEnv); key != "" {
+		return key, "env:" + DefaultBobAPIKeyEnv
+	}
+	return "", ""
+}
 
 // LiteLLMConfig configures the litellm inference backend: an OpenAI-compatible
 // LiteLLM proxy (remote or local) that agents reach through the hive's

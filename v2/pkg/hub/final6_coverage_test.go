@@ -14,7 +14,7 @@ import (
 func TestHandleHiveStatusBranches(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	// Missing hive -> 404.
 	rec := httptest.NewRecorder()
@@ -47,7 +47,7 @@ func TestHandleHiveStatusBranches(t *testing.T) {
 func TestHandleAccessAddBadBody_Cov6(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	saveSaaSUser(&SaaSUser{GitHubUsername: "owner", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
 
@@ -71,7 +71,7 @@ func TestHandleAccessAddBadBody_Cov6(t *testing.T) {
 func TestHandleRequestAccessAlreadyHas(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
 	// User already has access to h1.
@@ -88,7 +88,7 @@ func TestHandleRequestAccessAlreadyHas(t *testing.T) {
 func TestHandleAccessRemoveUserNotFound(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
-	s := &HubServer{logger: slog.Default()}
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
 	saveSaaSUser(&SaaSUser{GitHubUsername: "owner", Hives: map[string]string{"h1": "owner"}})
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "owner"})
 
