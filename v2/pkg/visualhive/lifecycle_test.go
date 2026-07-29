@@ -764,11 +764,11 @@ func TestResolutionAllowsLegacyTestAdequacyOnlyWhenUnitLayerWasEvaluated(t *test
 		Source: Source{Ref: "refs/heads/main"},
 		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true, EvaluatedContracts: []string{"testing-layer:2"}},
 	}
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); !allowed {
 		t.Fatalf("verified Unit layer should resolve a legacy test-adequacy finding: %s", reason)
 	}
 	manifest.Scan.EvaluatedContracts = []string{"testing-layer:3"}
-	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); allowed {
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); allowed {
 		t.Fatal("a different testing layer must not resolve the Unit adequacy finding")
 	}
 	manifest.Scan.EvaluatedContracts = []string{"testing-layer:2"}
@@ -778,11 +778,11 @@ func TestResolutionAllowsLegacyTestAdequacyOnlyWhenUnitLayerWasEvaluated(t *test
 	finding.MergeSHA = "repair-merge"
 	finding.ValidationRunID = "run-verified"
 	verified := ApplyLifecycleOptions{VerificationRunID: "run-verified", VerificationCommitSHA: "target-head", VerifiedMergeAncestorFingerprint: "finding", VerifiedMergeAncestorSHA: "repair-merge"}
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", verified); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", verified, false); !allowed {
 		t.Fatalf("verified non-conflicting descendant should be accepted: %s", reason)
 	}
 	verified.VerificationCommitSHA = "different-head"
-	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", verified); allowed {
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", verified, false); allowed {
 		t.Fatal("descendant authorization bound to a different verification SHA must be rejected")
 	}
 }
@@ -793,16 +793,110 @@ func TestResolutionAllowsRepositoryAuditFindingsOnlyForExactEvaluatedScope(t *te
 		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true, EvaluatedContracts: []string{"workflow-safety"}},
 	}
 	finding := &FindingLifecycle{IssueKind: "workflow_safety"}
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); !allowed {
 		t.Fatalf("verified workflow audit should resolve a repository workflow finding: %s", reason)
 	}
 	manifest.Scan.EvaluatedContracts = []string{"provider-governance"}
-	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); allowed {
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); allowed {
 		t.Fatal("provider evidence must not resolve a workflow finding")
 	}
 	finding.IssueKind = "provider_governance"
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); !allowed {
 		t.Fatalf("verified provider evidence should resolve a provider finding: %s", reason)
+	}
+}
+
+func TestResolutionAllowsStorybookDiscoveryOnlyWithVerifiedRepositoryMap(t *testing.T) {
+	manifest := Manifest{
+		Source: Source{Ref: "refs/heads/main"},
+		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true},
+	}
+	finding := &FindingLifecycle{
+		RepositoryFingerprint: "discovery",
+		IssueKind:             "missing_visual_coverage",
+		OwningAgentHint:       "visual-hive/map",
+		Title:                 "[Visual Hive] Repo map finding: storybook-discovery:.storybook/QualificationMissing.stories.tsx",
+		Status:                StatusIssueOpen,
+	}
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); allowed {
+		t.Fatal("an unverified repository map must not resolve a Storybook discovery finding")
+	}
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, true); !allowed {
+		t.Fatalf("complete verified repository map should resolve omitted Storybook discovery finding: %s", reason)
+	}
+
+	wrongOwner := *finding
+	wrongOwner.OwningAgentHint = "hive/quality"
+	if allowed, _ := resolutionAllowed(&wrongOwner, manifest, true, "main", ApplyLifecycleOptions{}, true); allowed {
+		t.Fatal("repository map evidence must not resolve a non-map finding")
+	}
+	wrongTitle := *finding
+	wrongTitle.Title = "[Visual Hive] Add visual coverage: generic advisory"
+	if allowed, _ := resolutionAllowed(&wrongTitle, manifest, true, "main", ApplyLifecycleOptions{}, true); allowed {
+		t.Fatal("repository map evidence must not resolve a generic coverage finding")
+	}
+	activeRepair := *finding
+	activeRepair.PRNumber = 17
+	if allowed, _ := resolutionAllowed(&activeRepair, manifest, true, "main", ApplyLifecycleOptions{}, true); allowed {
+		t.Fatal("repository map evidence must not bypass post-repair verification")
+	}
+}
+
+func TestVerifiedRepositoryMapRequiresExactIndexedBytes(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`{"schemaVersion":"visual-hive.repo-map.v1","findings":[]}`)
+	path := filepath.Join(root, filepath.FromSlash(repositoryMapArtifactPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := &ValidatedBundle{
+		Validation:         Validation{Authoritative: true},
+		sourceVerified:     true,
+		verifiedSourceRoot: root,
+		artifactIndex: &ArtifactIndexReport{Artifacts: []ArtifactIndexEntry{{
+			Path: repositoryMapArtifactPath, Kind: "json", ContentType: "application/json; charset=utf-8",
+			Bytes: int64(len(data)), SHA256: digest(data),
+		}}},
+	}
+	if !bundle.hasVerifiedRepositoryMap() {
+		t.Fatal("exact indexed repository map was not accepted")
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.hasVerifiedRepositoryMap() {
+		t.Fatal("changed repository map bytes retained resolution authority")
+	}
+	bundle.sourceVerified = false
+	if bundle.hasVerifiedRepositoryMap() {
+		t.Fatal("unverified source artifact granted repository-map resolution authority")
+	}
+}
+
+func TestControllerProjectsOmittedStorybookDiscoveryOnlyWithVerifiedRepositoryMap(t *testing.T) {
+	manifest := Manifest{
+		Source: Source{Repository: "owner/repo", Ref: "refs/heads/main"},
+		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true},
+	}
+	finding := &FindingLifecycle{
+		Repository:            "owner/repo",
+		RepositoryFingerprint: "discovery",
+		IssueKind:             "missing_visual_coverage",
+		OwningAgentHint:       "visual-hive/map",
+		Title:                 "[Visual Hive] Repo map finding: storybook-discovery:.storybook/QualificationMissing.stories.tsx",
+		Status:                StatusIssueOpen,
+	}
+	findings := map[string]*FindingLifecycle{"discovery": finding}
+	options := ApplyLifecycleOptions{TargetRef: "main"}
+	if inputs := controllerAbsenceImportInputs(manifest, findings, nil, options, true, false); len(inputs) != 0 {
+		t.Fatalf("controller projected unverified repository-map absence: %+v", inputs)
+	}
+	inputs := controllerAbsenceImportInputs(manifest, findings, nil, options, true, true)
+	if _, ok := inputs["discovery"]; !ok || len(inputs) != 1 {
+		t.Fatalf("controller did not project verified repository-map absence: %+v", inputs)
 	}
 }
 

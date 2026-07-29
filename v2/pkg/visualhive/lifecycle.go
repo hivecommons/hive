@@ -22,6 +22,9 @@ import (
 const (
 	LifecycleSchemaV1 = "hive.visual-hive-lifecycle.v1"
 	LifecycleSchema   = "hive.visual-hive-lifecycle.v2"
+
+	repositoryMapArtifactPath       = ".visual-hive/repo-map.json"
+	storybookDiscoveryFindingPrefix = "repo map finding: storybook-discovery:"
 )
 
 type LifecycleStatus string
@@ -408,6 +411,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 
 	manifest := bundle.Manifest
 	validatedAuthoritative := bundle.Validation.Authoritative
+	verifiedRepositoryMap := bundle.hasVerifiedRepositoryMap()
 	importInputs, err := buildObservationImportInputs(manifest, bundle.artifactIndex)
 	if err != nil {
 		return ApplyLifecycleResult{}, fmt.Errorf("build verified Visual Hive import plan: %w", err)
@@ -422,7 +426,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 	} else {
 		identities := controllerImportIdentityMap(manifest, s.state.Findings)
 		rekeyControllerImportInputs(manifest.Source.Repository, importInputs, identities)
-		for key, input := range controllerAbsenceImportInputs(manifest, s.state.Findings, identities, options, validatedAuthoritative) {
+		for key, input := range controllerAbsenceImportInputs(manifest, s.state.Findings, identities, options, validatedAuthoritative, verifiedRepositoryMap) {
 			importInputs[key] = input
 		}
 	}
@@ -568,7 +572,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				result.IgnoredAbsent++
 				continue
 			}
-			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots); !allowed {
+			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 				result.IgnoredAbsent++
 				if err := audit(LifecycleAuditEntry{Action: "resolve_finding", Allowed: false, Repository: manifest.Source.Repository, RepositoryFingerprint: observation.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: reason}); err != nil {
 					return result, err
@@ -772,11 +776,13 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 		result.FindingIDs = append(result.FindingIDs, observation.RepositoryFingerprint)
 	}
 
-	// A full authoritative bundle is an exhaustive inventory for the contracts
-	// it says it evaluated. Resolve an existing finding omitted from that
-	// inventory only when every affected contract was actually executed. This
-	// lets a trusted target-branch run close findings without copying Hive's
-	// private lifecycle database into the target workflow.
+	// A full authoritative bundle is an exhaustive inventory for its verified
+	// evaluation scopes. Resolve an existing finding omitted from that inventory
+	// only when every affected contract was actually executed, or when the
+	// finding is a repository-map discovery result and the complete immutable
+	// repository map was independently verified. This lets a trusted
+	// target-branch run close findings without copying Hive's private lifecycle
+	// database into the target workflow.
 	if validatedAuthoritative && manifest.Scan.Scope == "full" && refsEquivalent(manifest.Source.Ref, targetRef) {
 		keys := make([]string, 0, len(s.state.Findings))
 		for key := range s.state.Findings {
@@ -788,7 +794,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 			if finding == nil || !strings.EqualFold(finding.Repository, manifest.Source.Repository) || observedFingerprints[key] || finding.Status == StatusIssueClosed {
 				continue
 			}
-			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots); !allowed {
+			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 				if err := audit(LifecycleAuditEntry{Action: "infer_absent_finding", Allowed: false, Repository: finding.Repository, RepositoryFingerprint: key, BundleID: manifest.BundleID, Detail: reason}); err != nil {
 					return result, err
 				}
@@ -815,7 +821,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				result.OutboxCreated++
 			}
 			result.FindingIDs = append(result.FindingIDs, key)
-			if err := audit(LifecycleAuditEntry{Action: "infer_absent_finding", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: key, BundleID: manifest.BundleID, Detail: "omitted from exhaustive evaluated-contract inventory"}); err != nil {
+			if err := audit(LifecycleAuditEntry{Action: "infer_absent_finding", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: key, BundleID: manifest.BundleID, Detail: "omitted from exhaustive verified inventory"}); err != nil {
 				return result, err
 			}
 		}
@@ -854,6 +860,7 @@ func (s *LifecycleStore) ResolveImportPlanWorks(plan VerifiedImportPlan, options
 	defer s.mu.Unlock()
 	works := plan.Works()
 	manifest := plan.seal.bundle.Manifest
+	verifiedRepositoryMap := plan.seal.bundle.hasVerifiedRepositoryMap()
 	identities := controllerImportIdentityMap(manifest, s.state.Findings)
 	observed := make(map[string]bool, len(works))
 	for index := range works {
@@ -905,7 +912,7 @@ func (s *LifecycleStore) ResolveImportPlanWorks(plan VerifiedImportPlan, options
 				if finding.Status == StatusIssueClosed {
 					continue
 				}
-				if allowed, _ := s.rootResolutionAllowedLocked(finding, manifest, true, options.TargetRef, options, presentRoots); !allowed {
+				if allowed, _ := s.rootResolutionAllowedLocked(finding, manifest, true, options.TargetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 					continue
 				}
 			}
@@ -959,7 +966,7 @@ func controllerImportIdentityMap(manifest Manifest, findings map[string]*Finding
 	return identities
 }
 
-func controllerAbsenceImportInputs(manifest Manifest, findings map[string]*FindingLifecycle, identities map[string]string, options ApplyLifecycleOptions, authoritative bool) map[string]beads.BatchInput {
+func controllerAbsenceImportInputs(manifest Manifest, findings map[string]*FindingLifecycle, identities map[string]string, options ApplyLifecycleOptions, authoritative, verifiedRepositoryMap bool) map[string]beads.BatchInput {
 	inputs := map[string]beads.BatchInput{}
 	observed := make(map[string]bool, len(manifest.Observations))
 	presentRoots := map[string]bool{}
@@ -1003,7 +1010,7 @@ func controllerAbsenceImportInputs(manifest Manifest, findings map[string]*Findi
 			if finding.Status == StatusIssueClosed {
 				continue
 			}
-			if allowed, _ := store.rootResolutionAllowedLocked(finding, manifest, authoritative, options.TargetRef, options, presentRoots); !allowed {
+			if allowed, _ := store.rootResolutionAllowedLocked(finding, manifest, authoritative, options.TargetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 				continue
 			}
 		}
@@ -2634,9 +2641,36 @@ func refsEquivalent(left, right string) bool {
 	return normalize(left) != "" && normalize(left) == normalize(right)
 }
 
-func (s *LifecycleStore) rootResolutionAllowedLocked(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions, presentRoots map[string]bool) (bool, string) {
+func (bundle *ValidatedBundle) hasVerifiedRepositoryMap() bool {
+	if bundle == nil || !bundle.Validation.Authoritative || !bundle.sourceVerified || bundle.artifactIndex == nil {
+		return false
+	}
+	for _, artifact := range bundle.artifactIndex.Artifacts {
+		if artifact.Path != repositoryMapArtifactPath {
+			continue
+		}
+		contentType := strings.ToLower(strings.TrimSpace(artifact.ContentType))
+		if artifact.Kind != "json" || (contentType != "application/json" && !strings.HasPrefix(contentType, "application/json;")) || artifact.Bytes <= 0 || !hexDigest.MatchString(artifact.SHA256) {
+			return false
+		}
+		_, size, sha, err := bundle.VerifiedSourceFileIdentity(repositoryMapArtifactPath)
+		return err == nil && size == artifact.Bytes && sha == artifact.SHA256
+	}
+	return false
+}
+
+func isStorybookDiscoveryFinding(finding *FindingLifecycle) bool {
+	if finding == nil || finding.IssueKind != "missing_visual_coverage" || finding.OwningAgentHint != "visual-hive/map" {
+		return false
+	}
+	title := strings.ToLower(strings.TrimSpace(finding.Title))
+	title = strings.TrimSpace(strings.TrimPrefix(title, "[visual hive]"))
+	return strings.HasPrefix(title, storybookDiscoveryFindingPrefix)
+}
+
+func (s *LifecycleStore) rootResolutionAllowedLocked(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions, presentRoots map[string]bool, verifiedRepositoryMap bool) (bool, string) {
 	resolutionSubject := s.publicationResolutionSubjectLocked(finding)
-	allowed, reason := resolutionAllowed(resolutionSubject, manifest, validatedAuthoritative, targetRef, options)
+	allowed, reason := resolutionAllowed(resolutionSubject, manifest, validatedAuthoritative, targetRef, options, verifiedRepositoryMap)
 	if !allowed || finding == nil || finding.RootCauseKey == "" {
 		return allowed, reason
 	}
@@ -2647,7 +2681,7 @@ func (s *LifecycleStore) rootResolutionAllowedLocked(finding *FindingLifecycle, 
 		if related == nil || related == finding || related.RootCauseKey != finding.RootCauseKey || !strings.EqualFold(related.Repository, finding.Repository) || related.Status == StatusResolved || related.Status == StatusIssueClosed {
 			continue
 		}
-		if relatedAllowed, relatedReason := resolutionAllowed(s.publicationResolutionSubjectLocked(related), manifest, validatedAuthoritative, targetRef, options); !relatedAllowed {
+		if relatedAllowed, relatedReason := resolutionAllowed(s.publicationResolutionSubjectLocked(related), manifest, validatedAuthoritative, targetRef, options, verifiedRepositoryMap); !relatedAllowed {
 			return false, fmt.Sprintf("root %q is not authoritatively absent: %s", finding.RootCauseKey, relatedReason)
 		}
 	}
@@ -2671,7 +2705,7 @@ func (s *LifecycleStore) publicationResolutionSubjectLocked(finding *FindingLife
 	return owner
 }
 
-func resolutionAllowed(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions) (bool, string) {
+func resolutionAllowed(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions, verifiedRepositoryMap bool) (bool, string) {
 	if !validatedAuthoritative || !manifest.Scan.AuthoritativeForResolution || manifest.Scan.Scope != "full" || !refsEquivalent(manifest.Source.Ref, targetRef) {
 		return false, "absence was not from an authoritative target-ref scan"
 	}
@@ -2697,16 +2731,19 @@ func resolutionAllowed(finding *FindingLifecycle, manifest Manifest, validatedAu
 	if len(affectedContracts) == 0 && finding.IssueKind == "provider_governance" {
 		affectedContracts = []string{"provider-governance"}
 	}
-	if len(affectedContracts) == 0 {
+	repositoryMapEvaluated := len(affectedContracts) == 0 && verifiedRepositoryMap && isStorybookDiscoveryFinding(finding)
+	if len(affectedContracts) == 0 && !repositoryMapEvaluated {
 		return false, "finding has no affected contract that can be proven evaluated"
 	}
-	evaluated := make(map[string]bool, len(manifest.Scan.EvaluatedContracts))
-	for _, contract := range manifest.Scan.EvaluatedContracts {
-		evaluated[contract] = true
-	}
-	for _, contract := range affectedContracts {
-		if !evaluated[contract] {
-			return false, fmt.Sprintf("affected contract %s was not evaluated", contract)
+	if !repositoryMapEvaluated {
+		evaluated := make(map[string]bool, len(manifest.Scan.EvaluatedContracts))
+		for _, contract := range manifest.Scan.EvaluatedContracts {
+			evaluated[contract] = true
+		}
+		for _, contract := range affectedContracts {
+			if !evaluated[contract] {
+				return false, fmt.Sprintf("affected contract %s was not evaluated", contract)
+			}
 		}
 	}
 	hasActiveRepair := finding.Branch != "" || finding.RepairCommitSHA != "" || finding.PRNumber > 0 || finding.MergeSHA != ""
