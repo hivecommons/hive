@@ -22,12 +22,17 @@ import (
 	visualcontroller "github.com/kubestellar/hive/v2/pkg/visualhive/controller"
 )
 
-const ledgerSchema = "hive.normal-visual-work.v4"
+const (
+	ledgerSchema         = "hive.normal-visual-work.v5"
+	legacyLedgerSchemaV4 = "hive.normal-visual-work.v4"
+	repairRetirementPlan = "hive.normal-visual-repair-retirement.v1"
+)
 
 var (
 	ErrFinalVerdictPending = errors.New("exact-head pull-request verdict is pending")
 	ErrNoDispatch          = errors.New("verified packet produced no currently launchable specialist dispatch")
 	ErrOpenPullRequest     = errors.New("existing Worker pull request remains open")
+	ErrRepairRetirement    = errors.New("exact Worker repair retirement is pending")
 )
 
 type ArtifactSource interface {
@@ -50,6 +55,39 @@ type RepairOutcome struct {
 
 type Repairer interface {
 	Run(context.Context, visualcontroller.DispatchEnvelope) (RepairOutcome, error)
+}
+
+// RepairRetirementPlan is the complete immutable authority for retiring one
+// exact red, unmerged Hive repair proposal after the default branch changed
+// independently. Retirement is not finding resolution: it only makes a later
+// authoritative production scan possible while preserving the issue, finding,
+// evidence, and bounded repair-attempt history.
+type RepairRetirementPlan struct {
+	SchemaVersion              string          `json:"schema_version"`
+	Repository                 string          `json:"repository"`
+	RepositoryFingerprint      string          `json:"repository_fingerprint"`
+	SourceExternalRef          string          `json:"source_external_ref"`
+	WorkflowKey                string          `json:"workflow_key"`
+	WorkOrderID                string          `json:"work_order_id"`
+	RequestSHA256              string          `json:"request_sha256"`
+	BaseBranch                 string          `json:"base_branch"`
+	BaseSHA                    string          `json:"base_sha"`
+	CurrentDefaultHeadSHA      string          `json:"current_default_head_sha"`
+	PullRequestNumber          int             `json:"pull_request_number"`
+	PullRequestURL             string          `json:"pull_request_url"`
+	Branch                     string          `json:"branch"`
+	HeadSHA                    string          `json:"head_sha"`
+	VerdictReceipt             json.RawMessage `json:"verdict_receipt"`
+	VerdictReceiptSHA256       string          `json:"verdict_receipt_sha256"`
+	RepairRetirementReasonCode string          `json:"reason_code"`
+}
+
+// RepairRetirement owns the repository and lifecycle side effects for an
+// exact retirement plan. Plan is read-only. Apply must be idempotent because
+// the service durably seals the plan before the first remote mutation.
+type RepairRetirement interface {
+	Plan(context.Context, RepairRetirementPlan) (RepairRetirementPlan, error)
+	Apply(context.Context, RepairRetirementPlan) error
 }
 
 type PullRequestVerdictRequest struct {
@@ -108,6 +146,7 @@ type Options struct {
 	Source           ArtifactSource
 	Intake           Intake
 	Repairer         Repairer
+	RepairRetirement RepairRetirement
 	Verdict          PullRequestVerdictVerifier
 	PullRequestState PullRequestStateObserver
 	Logger           *slog.Logger
@@ -368,7 +407,7 @@ func stopTimer(timer *time.Timer) {
 
 func (service *Service) report(err error) {
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, ErrNoDispatch) && !errors.Is(err, ErrFinalVerdictPending) &&
-		!errors.Is(err, ErrOpenPullRequest) && !errors.Is(err, integrated.ErrRunInProgress) &&
+		!errors.Is(err, ErrOpenPullRequest) && !errors.Is(err, ErrRepairRetirement) && !errors.Is(err, integrated.ErrRunInProgress) &&
 		!errors.Is(err, integrated.ErrNormalVisualSetupBaselinePending) && !errors.Is(err, integrated.ErrSetupBaselineLifecycleHold) {
 		service.options.Logger.Warn("normal Visual Hive cycle held", "error", err)
 	}
@@ -420,6 +459,9 @@ func (service *Service) RunCycle(ctx context.Context) error {
 			return err
 		}
 		exists = false
+	}
+	if exists && ledger.RepairRetirement != nil {
+		return ErrRepairRetirement
 	}
 	if exists && ledger.ConsumeStarted && ledger.SourceExternalRef == "" {
 		if err := service.options.Source.Consume(ledger.Workflow, true); err != nil {
@@ -552,6 +594,145 @@ func (service *Service) RunCycle(ctx context.Context) error {
 		return ErrOpenPullRequest
 	}
 	return service.finish(ctx, ledger)
+}
+
+// PlanRepairRetirement returns the exact, read-only plan for the one active
+// red Worker proposal. It never persists an intent or mutates GitHub.
+func (service *Service) PlanRepairRetirement(ctx context.Context) (RepairRetirementPlan, error) {
+	if service == nil {
+		return RepairRetirementPlan{}, errors.New("normal Visual Hive service is nil")
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	ledger, exists, err := service.loadLedger()
+	if err != nil {
+		return RepairRetirementPlan{}, err
+	}
+	if !exists {
+		return RepairRetirementPlan{}, errors.New("normal Visual Hive service has no active repair proposal")
+	}
+	if ledger.RepairRetirement != nil {
+		return *ledger.RepairRetirement, nil
+	}
+	if service.options.RepairRetirement == nil {
+		return RepairRetirementPlan{}, errors.New("normal Visual Hive repair retirement is unavailable")
+	}
+	binding, err := repairRetirementBinding(ledger)
+	if err != nil {
+		return RepairRetirementPlan{}, err
+	}
+	plan, err := service.options.RepairRetirement.Plan(ctx, binding)
+	if err != nil {
+		return RepairRetirementPlan{}, err
+	}
+	if err := validateRepairRetirementPlan(plan, ledger); err != nil {
+		return RepairRetirementPlan{}, err
+	}
+	return plan, nil
+}
+
+// RetireRepair durably seals one exact plan before any repository mutation,
+// then applies its idempotent retirement, consumes only the old evidence
+// workflow, and clears the service ledger. The next cycle must fetch fresh
+// production evidence before lifecycle resolution can occur.
+func (service *Service) RetireRepair(ctx context.Context, expected *RepairRetirementPlan) error {
+	if service == nil {
+		return errors.New("normal Visual Hive service is nil")
+	}
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	ledger, exists, err := service.loadLedger()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("normal Visual Hive service has no active repair proposal")
+	}
+	if service.options.RepairRetirement == nil {
+		return errors.New("normal Visual Hive repair retirement is unavailable")
+	}
+	if ledger.RepairRetirement == nil {
+		binding, bindingErr := repairRetirementBinding(ledger)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		plan, planErr := service.options.RepairRetirement.Plan(ctx, binding)
+		if planErr != nil {
+			return planErr
+		}
+		if err := validateRepairRetirementPlan(plan, ledger); err != nil {
+			return err
+		}
+		if expected != nil && !sameRepairRetirementPlan(plan, *expected) {
+			return errors.New("normal Visual Hive repair retirement plan changed before apply")
+		}
+		ledger.RepairRetirement = &plan
+		if err := service.saveLedger(ledger); err != nil {
+			return err
+		}
+	} else if expected != nil && !sameRepairRetirementPlan(*ledger.RepairRetirement, *expected) {
+		return errors.New("normal Visual Hive repair retirement intent differs from the authorized plan")
+	}
+	plan := *ledger.RepairRetirement
+	if err := service.options.RepairRetirement.Apply(ctx, plan); err != nil {
+		return err
+	}
+	if !ledger.ConsumeStarted {
+		ledger.ConsumeStarted = true
+		if err := service.saveLedger(ledger); err != nil {
+			return err
+		}
+	}
+	if err := service.options.Source.Consume(ledger.Workflow, true); err != nil {
+		return err
+	}
+	if !ledger.Consumed {
+		ledger.Consumed = true
+		if err := service.saveLedger(ledger); err != nil {
+			return err
+		}
+	}
+	return service.clearLedger()
+}
+
+func repairRetirementBinding(ledger workLedger) (RepairRetirementPlan, error) {
+	if ledger.VerdictStatus != "failure" || !validSHA256Value(ledger.VerdictReceiptSHA256) ||
+		ledger.PullRequestNumber <= 0 || ledger.PullRequestURL == "" || ledger.Branch == "" ||
+		!validGitObject(ledger.CommitSHA) || ledger.CompletionRecorded || ledger.ConsumeStarted || ledger.Consumed {
+		return RepairRetirementPlan{}, errors.New("only an exact red, unconsumed Worker repair proposal can be retired")
+	}
+	return RepairRetirementPlan{
+		SchemaVersion: repairRetirementPlan, Repository: ledger.Repository,
+		RepositoryFingerprint: ledger.RepositoryFingerprint, SourceExternalRef: ledger.SourceExternalRef,
+		WorkflowKey: ledger.WorkflowKey, WorkOrderID: ledger.WorkOrderID, RequestSHA256: ledger.RequestSHA256,
+		BaseBranch: ledger.BaseBranch, BaseSHA: ledger.BaseSHA, PullRequestNumber: ledger.PullRequestNumber,
+		PullRequestURL: ledger.PullRequestURL, Branch: ledger.Branch, HeadSHA: ledger.CommitSHA,
+		VerdictReceipt:             append(json.RawMessage(nil), ledger.VerdictReceipt...),
+		VerdictReceiptSHA256:       ledger.VerdictReceiptSHA256,
+		RepairRetirementReasonCode: "default_branch_changed_requires_fresh_authoritative_verification",
+	}, nil
+}
+
+func validateRepairRetirementPlan(plan RepairRetirementPlan, ledger workLedger) error {
+	binding, err := repairRetirementBinding(ledger)
+	if err != nil {
+		return err
+	}
+	if plan.SchemaVersion != repairRetirementPlan || plan.CurrentDefaultHeadSHA == "" ||
+		!validGitObject(plan.CurrentDefaultHeadSHA) || strings.EqualFold(plan.CurrentDefaultHeadSHA, plan.BaseSHA) {
+		return errors.New("repair retirement plan lacks a changed exact default-branch head")
+	}
+	binding.CurrentDefaultHeadSHA = plan.CurrentDefaultHeadSHA
+	if !sameRepairRetirementPlan(plan, binding) {
+		return errors.New("repair retirement plan does not match the active Worker proposal")
+	}
+	return nil
+}
+
+func sameRepairRetirementPlan(left, right RepairRetirementPlan) bool {
+	leftData, leftErr := json.Marshal(left)
+	rightData, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftData) == string(rightData)
 }
 
 func pullRequestVerdictRequest(ledger workLedger) PullRequestVerdictRequest {
@@ -781,6 +962,7 @@ type workLedger struct {
 	CompletionRecorded         bool                           `json:"completion_recorded,omitempty"`
 	ConsumeStarted             bool                           `json:"consume_started,omitempty"`
 	Consumed                   bool                           `json:"consumed,omitempty"`
+	RepairRetirement           *RepairRetirementPlan          `json:"repair_retirement,omitempty"`
 }
 
 func (service *Service) ledgerPath() string {
@@ -840,7 +1022,7 @@ func (service *Service) saveLedger(ledger workLedger) error {
 }
 
 func validateWorkLedger(ledger workLedger) error {
-	if ledger.SchemaVersion != ledgerSchema || !validSHA256Value(ledger.WorkflowKey) || strings.TrimSpace(ledger.Repository) == "" ||
+	if (ledger.SchemaVersion != ledgerSchema && ledger.SchemaVersion != legacyLedgerSchemaV4) || !validSHA256Value(ledger.WorkflowKey) || strings.TrimSpace(ledger.Repository) == "" ||
 		strings.TrimSpace(ledger.BaseBranch) == "" || !validSHA256Value(ledger.PacketDigest) || !validSHA256Value(ledger.Workflow.CorrelationID) ||
 		ledger.Workflow.RunID <= 0 || ledger.Workflow.BundleArtifact <= 0 || ledger.Workflow.EvidenceArtifact <= 0 || !validGitObject(ledger.Workflow.HeadSHA) {
 		return errors.New("workflow and packet binding is incomplete")
@@ -901,16 +1083,31 @@ func validateWorkLedger(ledger workLedger) error {
 	if ledger.CompletionRecorded && !verdictPresent {
 		return errors.New("controller completion has no exact-head verdict")
 	}
-	if verdictPresent && ledger.VerdictStatus != "success" && (ledger.CompletionRecorded || ledger.ConsumeStarted || ledger.Consumed) {
+	if verdictPresent && ledger.VerdictStatus != "success" && (ledger.CompletionRecorded || (ledger.ConsumeStarted || ledger.Consumed) && ledger.RepairRetirement == nil) {
 		return errors.New("red exact-head verdict cannot complete or consume the Worker lifecycle")
 	}
-	if ledger.ConsumeStarted && ledger.SourceExternalRef != "" && !ledger.CompletionRecorded {
+	if ledger.ConsumeStarted && ledger.SourceExternalRef != "" && !ledger.CompletionRecorded && ledger.RepairRetirement == nil {
 		return errors.New("admitted workflow consumption started before controller completion")
 	}
 	if ledger.Consumed && !ledger.ConsumeStarted {
 		return errors.New("workflow is consumed without a durable consume checkpoint")
 	}
+	if ledger.RepairRetirement != nil {
+		if ledger.SchemaVersion == legacyLedgerSchemaV4 {
+			return errors.New("legacy normal-service ledger cannot contain repair retirement state")
+		}
+		if err := validateRepairRetirementPlan(*ledger.RepairRetirement, ledgerWithoutRetirement(ledger)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func ledgerWithoutRetirement(ledger workLedger) workLedger {
+	ledger.RepairRetirement = nil
+	ledger.ConsumeStarted = false
+	ledger.Consumed = false
+	return ledger
 }
 
 func validSHA256Value(value string) bool {

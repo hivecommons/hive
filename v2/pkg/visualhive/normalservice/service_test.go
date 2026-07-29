@@ -75,6 +75,87 @@ func TestNormalServiceVerifiedRedExactHeadRemainsOneOpenUnconsumedPR(t *testing.
 	}
 }
 
+func TestNormalServiceRetiresExactRedRepairAndConsumesOnlyOldEvidence(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.setRedVerdict()
+	service := fixture.service(t, fixture.verifier)
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrOpenPullRequest) {
+		t.Fatalf("red exact-head cycle error = %v", err)
+	}
+	plan, err := service.PlanRepairRetirement(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.PullRequestNumber != 9 || plan.Branch != "hive/repair-one" ||
+		plan.CurrentDefaultHeadSHA != fixture.retirement.currentHead || fixture.retirement.plans != 1 ||
+		!bytes.Equal(plan.VerdictReceipt, fixture.verifier.receipt.Receipt) ||
+		plan.VerdictReceiptSHA256 != fixture.verifier.receipt.ReceiptSHA256 ||
+		fixture.retirement.applies != 0 || fixture.source.consumes != 0 {
+		t.Fatalf("read-only retirement plan was inexact or mutated state: plan=%+v retirement=%+v source=%+v", plan, fixture.retirement, fixture.source)
+	}
+	if err := service.RetireRepair(context.Background(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.retirement.applies != 1 || fixture.retirement.sideEffects != 1 ||
+		fixture.source.consumes != 1 || fixture.source.consumeSideEffects != 1 {
+		t.Fatalf("retirement did not apply and consume exactly once: retirement=%+v source=%+v", fixture.retirement, fixture.source)
+	}
+	if _, exists, err := service.loadLedger(); err != nil || exists {
+		t.Fatalf("retired repair ledger remains: exists=%t err=%v", exists, err)
+	}
+}
+
+func TestNormalServiceRepairRetirementCrashReplayUsesSealedPlanWithoutRepeatingSideEffect(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.setRedVerdict()
+	fixture.retirement.failAfterSideEffect = true
+	stateDir := t.TempDir()
+	service := fixture.serviceAt(t, stateDir, fixture.verifier)
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrOpenPullRequest) {
+		t.Fatal(err)
+	}
+	plan, err := service.PlanRepairRetirement(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RetireRepair(context.Background(), &plan); err == nil || !strings.Contains(err.Error(), "retirement response lost") {
+		t.Fatalf("ambiguous retirement error = %v", err)
+	}
+	ledger, exists, err := service.loadLedger()
+	if err != nil || !exists || ledger.RepairRetirement == nil || !sameRepairRetirementPlan(*ledger.RepairRetirement, plan) {
+		t.Fatalf("retirement intent was not durably sealed: ledger=%+v exists=%t err=%v", ledger, exists, err)
+	}
+	fixture.retirement.currentHead = strings.Repeat("7", 40)
+	service = fixture.serviceAt(t, stateDir, fixture.verifier)
+	if err := service.RetireRepair(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.retirement.plans != 2 || fixture.retirement.applies != 2 || fixture.retirement.sideEffects != 1 ||
+		fixture.source.consumeSideEffects != 1 {
+		t.Fatalf("retirement replay replanned or duplicated effects: retirement=%+v source=%+v", fixture.retirement, fixture.source)
+	}
+}
+
+func TestNormalServiceRepairRetirementRejectsChangedPlanBeforeMutation(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.setRedVerdict()
+	service := fixture.service(t, fixture.verifier)
+	if err := service.RunCycle(context.Background()); !errors.Is(err, ErrOpenPullRequest) {
+		t.Fatal(err)
+	}
+	plan, err := service.PlanRepairRetirement(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.PullRequestNumber++
+	if err := service.RetireRepair(context.Background(), &plan); err == nil || !strings.Contains(err.Error(), "plan changed") {
+		t.Fatalf("changed retirement plan error = %v", err)
+	}
+	if fixture.retirement.applies != 0 || fixture.retirement.sideEffects != 0 || fixture.source.consumes != 0 {
+		t.Fatalf("changed plan reached mutation: retirement=%+v source=%+v", fixture.retirement, fixture.source)
+	}
+}
+
 func TestNormalServiceAmbiguousConsumeRecoversWithoutNewWorkflowOrPR(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.source.failConsumeAfterSideEffect = true
@@ -989,11 +1070,12 @@ func TestNormalServiceRejectsCorruptLedgerStateMachineBeforeSideEffects(t *testi
 }
 
 type serviceFixture struct {
-	work     integrated.NormalVisualWork
-	source   *fakeArtifactSource
-	intake   *fakeIntake
-	repairer *fakeRepairer
-	verifier *fakeVerdictVerifier
+	work       integrated.NormalVisualWork
+	source     *fakeArtifactSource
+	intake     *fakeIntake
+	repairer   *fakeRepairer
+	verifier   *fakeVerdictVerifier
+	retirement *fakeRepairRetirement
 }
 
 func newServiceFixture(t *testing.T) *serviceFixture {
@@ -1017,11 +1099,21 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	receipt := json.RawMessage(`{"schema_version":"visual-hive.pr-verdict.v1","status":"success"}`)
 	digest := sha256.Sum256(receipt)
 	return &serviceFixture{
-		work:     work,
-		source:   &fakeArtifactSource{work: work},
-		intake:   &fakeIntake{dispatch: []visualcontroller.DispatchEnvelope{envelope}},
-		repairer: &fakeRepairer{outcome: outcome},
-		verifier: &fakeVerdictVerifier{pullRequestOpen: true, receipt: PullRequestVerdictReceipt{HeadSHA: outcome.Result.CommitSHA, Status: "success", Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:])}},
+		work:       work,
+		source:     &fakeArtifactSource{work: work},
+		intake:     &fakeIntake{dispatch: []visualcontroller.DispatchEnvelope{envelope}},
+		repairer:   &fakeRepairer{outcome: outcome},
+		verifier:   &fakeVerdictVerifier{pullRequestOpen: true, receipt: PullRequestVerdictReceipt{HeadSHA: outcome.Result.CommitSHA, Status: "success", Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:])}},
+		retirement: &fakeRepairRetirement{currentHead: strings.Repeat("8", 40)},
+	}
+}
+
+func (fixture *serviceFixture) setRedVerdict() {
+	receipt := json.RawMessage(`{"schema_version":"hive.normal-visual-pr-failure.v1","conclusion":"failure"}`)
+	digest := sha256.Sum256(receipt)
+	fixture.verifier.receipt = PullRequestVerdictReceipt{
+		HeadSHA: fixture.repairer.outcome.Result.CommitSHA, Status: "failure",
+		Receipt: receipt, ReceiptSHA256: hex.EncodeToString(digest[:]),
 	}
 }
 
@@ -1034,12 +1126,39 @@ func (fixture *serviceFixture) serviceAt(t *testing.T, stateDir string, verifier
 	service, err := New(Options{
 		StateDir: stateDir, AcquireLease: func() (func(), error) { return func() {}, nil },
 		ShouldQuiesce: func() (bool, error) { return false, nil },
-		Source:        fixture.source, Intake: fixture.intake, Repairer: fixture.repairer, Verdict: verifier, PullRequestState: fixture.verifier,
+		Source:        fixture.source, Intake: fixture.intake, Repairer: fixture.repairer, RepairRetirement: fixture.retirement,
+		Verdict: verifier, PullRequestState: fixture.verifier,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return service
+}
+
+type fakeRepairRetirement struct {
+	currentHead         string
+	plans               int
+	applies             int
+	sideEffects         int
+	failAfterSideEffect bool
+}
+
+func (retirement *fakeRepairRetirement) Plan(_ context.Context, plan RepairRetirementPlan) (RepairRetirementPlan, error) {
+	retirement.plans++
+	plan.CurrentDefaultHeadSHA = retirement.currentHead
+	return plan, nil
+}
+
+func (retirement *fakeRepairRetirement) Apply(_ context.Context, _ RepairRetirementPlan) error {
+	retirement.applies++
+	if retirement.sideEffects == 0 {
+		retirement.sideEffects++
+		if retirement.failAfterSideEffect {
+			retirement.failAfterSideEffect = false
+			return errors.New("retirement response lost after exact side effect")
+		}
+	}
+	return nil
 }
 
 type fakeArtifactSource struct {

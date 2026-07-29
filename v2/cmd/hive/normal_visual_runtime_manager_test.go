@@ -15,6 +15,7 @@ import (
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
 	visualcontroller "github.com/kubestellar/hive/v2/pkg/visualhive/controller"
+	"github.com/kubestellar/hive/v2/pkg/visualhive/normalservice"
 )
 
 type fakeNormalVisualRuntime struct {
@@ -38,6 +39,14 @@ func (runtime *fakeNormalVisualRuntime) Start(context.Context) error {
 
 func (runtime *fakeNormalVisualRuntime) Trigger(context.Context) error {
 	runtime.triggers.Add(1)
+	return nil
+}
+
+func (runtime *fakeNormalVisualRuntime) PlanRepairRetirement(context.Context) (normalservice.RepairRetirementPlan, error) {
+	return normalservice.RepairRetirementPlan{}, nil
+}
+
+func (runtime *fakeNormalVisualRuntime) RetireRepair(context.Context, *normalservice.RepairRetirementPlan) error {
 	return nil
 }
 

@@ -383,6 +383,24 @@ type SpecialistPullRequestCompletion struct {
 	VerdictStatus        string `json:"verdict_status"`
 }
 
+// SpecialistPullRequestRetirement is the exact durable identity of one red,
+// unmerged Worker proposal that Hive retired after the default branch changed
+// independently. It closes only the specialist work-order projection; it does
+// not resolve the finding or close its issue.
+type SpecialistPullRequestRetirement struct {
+	WorkOrderID           string `json:"work_order_id"`
+	RequestSHA256         string `json:"request_sha256"`
+	Branch                string `json:"branch"`
+	CommitSHA             string `json:"commit_sha"`
+	BaseBranch            string `json:"base_branch"`
+	BaseSHA               string `json:"base_sha"`
+	CurrentDefaultHeadSHA string `json:"current_default_head_sha"`
+	PullRequestNumber     int    `json:"pull_request_number"`
+	PullRequestURL        string `json:"pull_request_url"`
+	VerdictReceiptSHA256  string `json:"verdict_receipt_sha256"`
+	RetirementReasonCode  string `json:"retirement_reason_code"`
+}
+
 // CompleteSpecialistPullRequest records only that the exact Worker-owned PR
 // received an exact-head deterministic receipt. It grants no merge, baseline,
 // resolution, or lifecycle-transition authority.
@@ -455,6 +473,162 @@ func (controller *Controller) CompleteSpecialistPullRequest(sourceExternalRef st
 		return err
 	}
 	return controller.recordSpecialistCompletionAudit(store, bead, sourceExternalRef, completion)
+}
+
+// RetireSpecialistPullRequest closes the exact specialist work-order bead
+// after the lifecycle has durably returned the red proposal to its still-open
+// issue. Replays are idempotent and re-attempt only an unacknowledged audit.
+func (controller *Controller) RetireSpecialistPullRequest(sourceExternalRef string, retirement SpecialistPullRequestRetirement) error {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	retirement = normalizeSpecialistPullRequestRetirement(retirement)
+	store, bead, err := controller.findVisualBeadLocked(sourceExternalRef)
+	if err != nil {
+		return err
+	}
+	if visualBeadAdmissionState(bead) == "admitted_pr_retired_for_verification" {
+		if bead.Status != beads.StatusClosed {
+			return errors.New("durable specialist PR retirement is not terminal")
+		}
+		encoded, _ := bead.Metadata["visual_hive_pr_retirement_json"].(string)
+		var existing SpecialistPullRequestRetirement
+		if encoded == "" || json.Unmarshal([]byte(encoded), &existing) != nil {
+			return errors.New("durable specialist PR retirement is corrupt")
+		}
+		existing = normalizeSpecialistPullRequestRetirement(existing)
+		canonical, marshalErr := json.Marshal(existing)
+		if marshalErr != nil || encoded != string(canonical) {
+			return errors.New("durable specialist PR retirement is not canonical")
+		}
+		if existing != retirement {
+			return errors.New("specialist PR was already retired with different exact bytes")
+		}
+		return controller.recordSpecialistRetirementAudit(store, bead, sourceExternalRef, existing)
+	}
+	if err := controller.refreshRuntimeConfigLocked(context.Background()); err != nil {
+		return err
+	}
+	envelope, ok := visualDispatchEnvelope(bead)
+	if !ok {
+		return errors.New("specialist PR retirement has no durable dispatch intent")
+	}
+	if _, recorded := visualBeadAdmissionDecision(bead); !recorded {
+		return errors.New("specialist PR retirement has no durable Governor decision")
+	}
+	finding, exists := controller.lifecycle.Finding(envelope.Work.RepositoryFingerprint)
+	if !exists || finding.Status != visualhive.StatusIssueOpen || finding.LastRetiredRepair == nil {
+		return errors.New("specialist PR retirement is not durably reflected in the lifecycle")
+	}
+	retired := finding.LastRetiredRepair
+	if retirement.WorkOrderID != envelope.SpecialistWorkOrderID || retirement.RequestSHA256 != envelope.SpecialistRequestSHA256 ||
+		retirement.WorkOrderID != "swo-"+retirement.RequestSHA256 || retirement.PullRequestNumber <= 0 ||
+		strings.TrimSpace(retirement.Branch) == "" || !validGitObject(retirement.CommitSHA) ||
+		strings.TrimSpace(retirement.BaseBranch) == "" || !validGitObject(retirement.BaseSHA) || !validGitObject(retirement.CurrentDefaultHeadSHA) ||
+		retirement.BaseSHA == retirement.CurrentDefaultHeadSHA || !validSHA256(retirement.VerdictReceiptSHA256) ||
+		retirement.RetirementReasonCode != "default_branch_changed_requires_fresh_authoritative_verification" ||
+		retired.PullRequestNumber != retirement.PullRequestNumber || retired.PullRequestURL != retirement.PullRequestURL ||
+		retired.Branch != retirement.Branch || !strings.EqualFold(retired.HeadSHA, retirement.CommitSHA) ||
+		retired.BaseBranch != retirement.BaseBranch ||
+		!strings.EqualFold(retired.BaseSHA, retirement.BaseSHA) ||
+		!strings.EqualFold(retired.CurrentDefaultHeadSHA, retirement.CurrentDefaultHeadSHA) ||
+		!strings.EqualFold(retired.VerdictReceiptSHA256, retirement.VerdictReceiptSHA256) {
+		return errors.New("specialist PR retirement does not match the exact lifecycle, work order, proposal, and red receipt")
+	}
+	encoded, err := json.Marshal(retirement)
+	if err != nil {
+		return err
+	}
+	auditEvent, err := specialistRetirementAuditEvent(bead, sourceExternalRef, retirement, encoded)
+	if err != nil {
+		return err
+	}
+	if err := store.CloseWithUpdate(bead.ID, func(value *beads.Bead) {
+		if value.Metadata == nil {
+			value.Metadata = map[string]interface{}{}
+		}
+		value.Metadata["visual_hive_admission_state"] = "admitted_pr_retired_for_verification"
+		value.Metadata["visual_hive_stage_detail"] = "exact red repair proposal retired; awaiting fresh authoritative verification"
+		value.Metadata["visual_hive_pr_retirement_json"] = string(encoded)
+		value.Metadata["visual_hive_retirement_audit_id"] = auditEvent.EventID
+		value.Metadata["visual_hive_retirement_audit_recorded"] = false
+	}); err != nil {
+		return err
+	}
+	return controller.recordSpecialistRetirementAudit(store, bead, sourceExternalRef, retirement)
+}
+
+func normalizeSpecialistPullRequestRetirement(retirement SpecialistPullRequestRetirement) SpecialistPullRequestRetirement {
+	retirement.WorkOrderID = strings.TrimSpace(retirement.WorkOrderID)
+	retirement.RequestSHA256 = strings.ToLower(strings.TrimSpace(retirement.RequestSHA256))
+	retirement.Branch = strings.TrimSpace(retirement.Branch)
+	retirement.CommitSHA = strings.ToLower(strings.TrimSpace(retirement.CommitSHA))
+	retirement.BaseBranch = strings.TrimSpace(retirement.BaseBranch)
+	retirement.BaseSHA = strings.ToLower(strings.TrimSpace(retirement.BaseSHA))
+	retirement.CurrentDefaultHeadSHA = strings.ToLower(strings.TrimSpace(retirement.CurrentDefaultHeadSHA))
+	retirement.PullRequestURL = strings.TrimSpace(retirement.PullRequestURL)
+	retirement.VerdictReceiptSHA256 = strings.ToLower(strings.TrimSpace(retirement.VerdictReceiptSHA256))
+	retirement.RetirementReasonCode = strings.TrimSpace(retirement.RetirementReasonCode)
+	return retirement
+}
+
+func (controller *Controller) recordSpecialistRetirementAudit(store *beads.Store, bead *beads.Bead, sourceExternalRef string, retirement SpecialistPullRequestRetirement) error {
+	encoded, err := json.Marshal(retirement)
+	if err != nil {
+		return err
+	}
+	event, err := specialistRetirementAuditEvent(bead, sourceExternalRef, retirement, encoded)
+	if err != nil {
+		return err
+	}
+	storedID, _ := bead.Metadata["visual_hive_retirement_audit_id"].(string)
+	if storedID != "" && storedID != event.EventID {
+		return errors.New("durable specialist PR retirement audit identity is corrupt")
+	}
+	if value, exists := bead.Metadata["visual_hive_retirement_audit_recorded"]; exists {
+		recorded, valid := value.(bool)
+		if !valid {
+			return errors.New("durable specialist PR retirement audit state is corrupt")
+		}
+		if recorded {
+			if storedID != event.EventID {
+				return errors.New("durable specialist PR retirement audit identity is unavailable")
+			}
+			return nil
+		}
+	}
+	if err := controller.recordAudit(context.Background(), event); err != nil {
+		return fmt.Errorf("record exact specialist PR retirement audit: %w", err)
+	}
+	if err := store.Update(bead.ID, func(value *beads.Bead) {
+		if value.Metadata == nil {
+			value.Metadata = map[string]interface{}{}
+		}
+		value.Metadata["visual_hive_retirement_audit_id"] = event.EventID
+		value.Metadata["visual_hive_retirement_audit_recorded"] = true
+	}); err != nil {
+		return fmt.Errorf("persist exact specialist PR retirement audit acknowledgement: %w", err)
+	}
+	return nil
+}
+
+func specialistRetirementAuditEvent(bead *beads.Bead, sourceExternalRef string, retirement SpecialistPullRequestRetirement, encoded []byte) (AuditEvent, error) {
+	envelope, ok := visualDispatchEnvelope(bead)
+	if !ok || strings.TrimSpace(envelope.Work.RepositoryFingerprint) == "" {
+		return AuditEvent{}, errors.New("durable specialist PR retirement audit binding is unavailable")
+	}
+	canonical := append([]byte(strings.TrimSpace(envelope.Work.RepositoryFingerprint)+"\n"+strings.TrimSpace(sourceExternalRef)+"\n"), encoded...)
+	digest := sha256.Sum256(canonical)
+	return AuditEvent{
+		EventID:               "visual-work-retirement:" + hex.EncodeToString(digest[:]),
+		Stage:                 "admitted_pr_retired_for_verification",
+		SourceExternalRef:     strings.TrimSpace(sourceExternalRef),
+		RepositoryFingerprint: envelope.Work.RepositoryFingerprint,
+		Detail: fmt.Sprintf(
+			"work_order=%s pr=%d branch=%s red_head=%s changed_default_head=%s receipt=%s reason=%s no_resolution_authority=true",
+			retirement.WorkOrderID, retirement.PullRequestNumber, retirement.Branch, retirement.CommitSHA,
+			retirement.CurrentDefaultHeadSHA, retirement.VerdictReceiptSHA256, retirement.RetirementReasonCode,
+		),
+	}, nil
 }
 
 func (controller *Controller) recordSpecialistCompletionAudit(store *beads.Store, bead *beads.Bead, sourceExternalRef string, completion SpecialistPullRequestCompletion) error {

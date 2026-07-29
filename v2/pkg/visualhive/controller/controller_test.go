@@ -422,6 +422,135 @@ func TestVisualWorkControllerAdmitsBeforeIssueAndLeavesSchedulerDispatchPending(
 	}
 }
 
+func TestVisualWorkControllerRetiresExactRedSpecialistOrderIdempotently(t *testing.T) {
+	quality, err := beads.NewStore(filepath.Join(t.TempDir(), "quality"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := visualhive.NewLifecycleStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := strings.Repeat("a", 64)
+	bundle := &visualhive.ValidatedBundle{
+		Validation: visualhive.Validation{Trusted: true, Status: "passed"},
+		Manifest: visualhive.Manifest{
+			SchemaVersion: "visual-hive.bundle.v2", BundleID: "retirement-controller-test", OverallDigest: strings.Repeat("b", 64),
+			GeneratedAt: time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC), ExpiresAt: time.Date(2030, 7, 9, 12, 0, 0, 0, time.UTC),
+			Producer: visualhive.Producer{Name: "visual-hive", GitCommit: strings.Repeat("c", 40)},
+			Source: visualhive.Source{
+				Repository: "owner/repo", RepositoryID: "123", Ref: "refs/heads/main", CommitSHA: strings.Repeat("d", 40), WorkflowRunID: "42",
+			},
+			ReplayProtection: visualhive.ReplayProtection{Key: strings.Repeat("e", 64)},
+			Observations: []visualhive.Observation{{
+				Fingerprint: "retirement/source", RepositoryFingerprint: fingerprint, PublicationRole: "canonical", RootCauseKey: "retirement/source",
+				State: "present", IssueKind: "visual_regression", Severity: "high", OwningAgentHint: "hive/quality",
+				Title: "retire exact red repair", Body: "evidence bound", Labels: []string{"visual-hive"},
+				AffectedContracts: []string{"contract/app"}, ValidationCommand: "go test ./...", FirstSeenAt: "2026-07-09T12:00:00Z",
+			}},
+		},
+	}
+	if _, err := lifecycle.ApplyBundle(bundle, quality, visualhive.ApplyLifecycleOptions{MaxActiveIssues: 2, PreferRepairable: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkIssueOpened(fingerprint, 51, "https://github.test/owner/repo/issues/51"); err != nil {
+		t.Fatal(err)
+	}
+	if pending := lifecycle.PendingOutbox(); len(pending) == 1 {
+		if err := lifecycle.MarkOutboxAttempt(pending[0].ID, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	branch := "hive/repair-retirement-proof"
+	head := strings.Repeat("1", 40)
+	base := strings.Repeat("2", 40)
+	current := strings.Repeat("3", 40)
+	if err := lifecycle.MarkRepairStarted(fingerprint, branch); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkPROpen(fingerprint, head, 52, "https://github.test/owner/repo/pull/52"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkChecks(fingerprint, head, false); err != nil {
+		t.Fatal(err)
+	}
+	finding, _ := lifecycle.Finding(fingerprint)
+	retired := visualhive.RetiredRepair{
+		PullRequestNumber: 52, PullRequestURL: "https://github.test/owner/repo/pull/52",
+		Branch: branch, HeadSHA: head, BaseBranch: "main", BaseSHA: base, CurrentDefaultHeadSHA: current,
+	}
+	retired.VerdictReceipt, retired.VerdictReceiptSHA256 = controllerFailedRetirementReceipt(t, finding, retired)
+	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err != nil {
+		t.Fatal(err)
+	}
+
+	sourceRef := "visual-hive://owner/repo/" + fingerprint
+	bead := quality.FindByExternalRef(sourceRef)
+	if bead == nil {
+		t.Fatal("controller work-order bead is unavailable")
+	}
+	requestSHA := strings.Repeat("4", 64)
+	envelope := DispatchEnvelope{
+		SchemaVersion: "hive.visual-dispatch-intent.v1", BeadID: bead.ID, SourceExternalRef: sourceRef,
+		Work:                  visualhive.AdmittedVisualWork{RepositoryFingerprint: fingerprint},
+		SpecialistWorkOrderID: "swo-" + requestSHA, SpecialistRequestSHA256: requestSHA,
+	}
+	encodedEnvelope, _ := json.Marshal(envelope)
+	decision := governor.WorkAdmissionDecision{Allowed: true, Code: "allowed", Reason: "test"}
+	encodedDecision, _ := json.Marshal(decision)
+	if err := quality.Update(bead.ID, func(value *beads.Bead) {
+		value.Status = beads.StatusBlocked
+		value.ClosedAt = nil
+		value.Metadata["visual_hive_controller_owned"] = true
+		value.Metadata["visual_hive_admission_state"] = "admitted_dispatch_pending"
+		value.Metadata["visual_hive_admission_decision_json"] = string(encodedDecision)
+		value.Metadata["visual_hive_dispatch_envelope_json"] = string(encodedEnvelope)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gov := governor.New(config.GovernorConfig{}, map[string]config.AgentConfig{"quality": {Enabled: true, Role: "quality"}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	controller, err := New(gov, lifecycle, map[string]*beads.Store{"quality": quality}, nil, nil, integrated.Config{
+		Repository: "owner/repo", RepositoryID: "123", DefaultBranch: "main", StateDir: t.TempDir(),
+		ACMMLevel: 5, Automation: integrated.AutomationRepairPR, VisualHiveRef: strings.Repeat("c", 40),
+	}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := &controllerAuditSink{failStage: "admitted_pr_retired_for_verification"}
+	controller.SetAuditSink(audit)
+	retirement := SpecialistPullRequestRetirement{
+		WorkOrderID: "swo-" + requestSHA, RequestSHA256: requestSHA,
+		Branch: branch, CommitSHA: head, BaseBranch: "main", BaseSHA: base, CurrentDefaultHeadSHA: current,
+		PullRequestNumber: 52, PullRequestURL: "https://github.test/owner/repo/pull/52",
+		VerdictReceiptSHA256: retired.VerdictReceiptSHA256,
+		RetirementReasonCode: "default_branch_changed_requires_fresh_authoritative_verification",
+	}
+	if err := controller.RetireSpecialistPullRequest(sourceRef, retirement); err == nil {
+		t.Fatal("retirement audit failure was not returned for retry")
+	}
+	persisted := quality.FindByExternalRef(sourceRef)
+	if persisted.Status != beads.StatusClosed || visualBeadAdmissionState(persisted) != "admitted_pr_retired_for_verification" ||
+		persisted.Metadata["visual_hive_retirement_audit_recorded"] != false {
+		t.Fatalf("retired specialist order was not durably sealed: %+v", persisted)
+	}
+	audit.failStage = ""
+	if err := controller.RetireSpecialistPullRequest(sourceRef, retirement); err != nil {
+		t.Fatalf("retirement audit retry failed: %v", err)
+	}
+	if err := controller.RetireSpecialistPullRequest(sourceRef, retirement); err != nil {
+		t.Fatalf("retirement replay was not idempotent: %v", err)
+	}
+	persisted = quality.FindByExternalRef(sourceRef)
+	if persisted.Metadata["visual_hive_retirement_audit_recorded"] != true || audit.count("admitted_pr_retired_for_verification") != 1 {
+		t.Fatalf("retirement duplicated or lost its audit: bead=%+v audit=%+v", persisted, audit.events)
+	}
+	tampered := retirement
+	tampered.CurrentDefaultHeadSHA = strings.Repeat("5", 40)
+	if err := controller.RetireSpecialistPullRequest(sourceRef, tampered); err == nil {
+		t.Fatal("retired specialist order accepted different replay bytes")
+	}
+}
+
 func TestVisualWorkControllerIssueOnlyPersistsStageWithoutDispatch(t *testing.T) {
 	store, err := beads.NewStore(filepath.Join(t.TempDir(), "quality"))
 	if err != nil {
@@ -1358,6 +1487,50 @@ func testVisualBatchInput(sourceID, externalRef, role string, dependencies []str
 		Actor: role, ExternalRef: externalRef, DependsOn: dependencies,
 		Metadata: map[string]interface{}{"visual_hive_controller_owned": true, "visual_hive_admission_state": "pending"},
 	}
+}
+
+func controllerFailedRetirementReceipt(t *testing.T, finding visualhive.FindingLifecycle, retired visualhive.RetiredRepair) (json.RawMessage, string) {
+	t.Helper()
+	identity := struct {
+		SchemaVersion       string `json:"schema_version"`
+		Repository          string `json:"repository"`
+		RepositoryID        string `json:"repository_id"`
+		PullRequestNumber   int    `json:"pull_request_number"`
+		PullRequestURL      string `json:"pull_request_url"`
+		BaseBranch          string `json:"base_branch"`
+		BaseSHA             string `json:"base_sha"`
+		HeadBranch          string `json:"head_branch"`
+		HeadSHA             string `json:"head_sha"`
+		WorkflowRunID       int64  `json:"workflow_run_id"`
+		WorkflowRunAttempt  int    `json:"workflow_run_attempt"`
+		WorkflowName        string `json:"workflow_name"`
+		WorkflowPath        string `json:"workflow_path"`
+		WorkflowEvent       string `json:"workflow_event"`
+		Conclusion          string `json:"conclusion"`
+		RunURL              string `json:"run_url"`
+		ArtifactID          int64  `json:"artifact_id"`
+		ArtifactName        string `json:"artifact_name"`
+		ArtifactIndexSHA256 string `json:"artifact_index_sha256"`
+		Authority           string `json:"authority"`
+	}{
+		SchemaVersion: "hive.normal-visual-pr-failure.v1",
+		Repository:    finding.Repository, RepositoryID: finding.RepositoryID,
+		PullRequestNumber: retired.PullRequestNumber, PullRequestURL: retired.PullRequestURL,
+		BaseBranch: retired.BaseBranch, BaseSHA: retired.BaseSHA,
+		HeadBranch: retired.Branch, HeadSHA: retired.HeadSHA,
+		WorkflowRunID: 77, WorkflowRunAttempt: 1,
+		WorkflowName: "Visual Hive PR", WorkflowPath: ".github/workflows/visual-hive-pr.yml",
+		WorkflowEvent: "pull_request", Conclusion: "failure",
+		RunURL:     "https://github.test/owner/repo/actions/runs/77",
+		ArtifactID: 88, ArtifactName: "visual-hive-pr", ArtifactIndexSHA256: strings.Repeat("a", 64),
+		Authority: "check-evidence-only; no completion, consume, merge, or resolution authority",
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(encoded)
+	return encoded, hex.EncodeToString(digest[:])
 }
 
 func controllerPullRequestCheckReceipt(t *testing.T, envelope DispatchEnvelope, headSHA, headBranch string, pullRequest int) (visualhive.PullRequestCheckReceiptSnapshot, visualhivepr.SealedReceipt) {

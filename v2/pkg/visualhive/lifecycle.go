@@ -98,6 +98,47 @@ type FindingLifecycle struct {
 	RepairAttempts                 int                              `json:"repair_attempts"`
 	Recurrences                    int                              `json:"recurrences"`
 	PendingIssueAction             OutboxAction                     `json:"pending_issue_action,omitempty"`
+	LastRetiredRepair              *RetiredRepair                   `json:"last_retired_repair,omitempty"`
+}
+
+// RetiredRepair preserves the exact identity of a Hive-owned unmerged repair
+// proposal that an owner explicitly retired so a changed default branch could
+// receive fresh authoritative verification. It is history, not resolution or
+// proof that the finding is absent.
+type RetiredRepair struct {
+	PullRequestNumber     int             `json:"pull_request_number"`
+	PullRequestURL        string          `json:"pull_request_url"`
+	Branch                string          `json:"branch"`
+	HeadSHA               string          `json:"head_sha"`
+	BaseBranch            string          `json:"base_branch"`
+	BaseSHA               string          `json:"base_sha"`
+	CurrentDefaultHeadSHA string          `json:"current_default_head_sha"`
+	VerdictReceipt        json.RawMessage `json:"verdict_receipt"`
+	VerdictReceiptSHA256  string          `json:"verdict_receipt_sha256"`
+	RetiredAt             time.Time       `json:"retired_at"`
+}
+
+type failedPullRequestReceiptIdentity struct {
+	SchemaVersion       string `json:"schema_version"`
+	Repository          string `json:"repository"`
+	RepositoryID        string `json:"repository_id"`
+	PullRequestNumber   int    `json:"pull_request_number"`
+	PullRequestURL      string `json:"pull_request_url"`
+	BaseBranch          string `json:"base_branch"`
+	BaseSHA             string `json:"base_sha"`
+	HeadBranch          string `json:"head_branch"`
+	HeadSHA             string `json:"head_sha"`
+	WorkflowRunID       int64  `json:"workflow_run_id"`
+	WorkflowRunAttempt  int    `json:"workflow_run_attempt"`
+	WorkflowName        string `json:"workflow_name"`
+	WorkflowPath        string `json:"workflow_path"`
+	WorkflowEvent       string `json:"workflow_event"`
+	Conclusion          string `json:"conclusion"`
+	RunURL              string `json:"run_url"`
+	ArtifactID          int64  `json:"artifact_id"`
+	ArtifactName        string `json:"artifact_name"`
+	ArtifactIndexSHA256 string `json:"artifact_index_sha256"`
+	Authority           string `json:"authority"`
 }
 
 type CheckEvidence struct {
@@ -1835,6 +1876,133 @@ func (s *LifecycleStore) MarkChecksWithEvidence(repositoryFingerprint, testedSHA
 	})
 }
 
+// RetireRepairForVerification returns one exact red, unmerged Hive proposal to
+// its still-open issue after the default branch changed independently. It
+// deliberately clears active repair identity so a subsequent authoritative
+// scan can prove presence or absence; it never resolves or closes the finding.
+func (s *LifecycleStore) RetireRepairForVerification(repositoryFingerprint string, retired RetiredRepair) error {
+	return s.updateFinding(repositoryFingerprint, "repair_retired_for_verification", func(finding *FindingLifecycle) error {
+		retired = normalizeRetiredRepair(retired)
+		if err := validateRepairRetirementFinding(finding, retired); err != nil {
+			return err
+		}
+		if finding.Status == StatusIssueOpen && sameRetiredRepair(finding.LastRetiredRepair, retired) {
+			return nil
+		}
+		if retired.RetiredAt.IsZero() {
+			retired.RetiredAt = time.Now().UTC()
+		} else {
+			retired.RetiredAt = retired.RetiredAt.UTC()
+		}
+		finding.LastRetiredRepair = &retired
+		finding.Status = StatusIssueOpen
+		finding.Branch, finding.RepairCommitSHA, finding.PRNumber, finding.PRURL = "", "", 0, ""
+		finding.MergeSHA, finding.ValidationRunID, finding.ValidationRunURL = "", "", ""
+		finding.LastCheckSummary, finding.LastCheckRuns, finding.LastPullRequestCheckReceipt = "", nil, nil
+		return nil
+	})
+}
+
+// ValidateRepairRetirement performs the same read-only exact-binding check as
+// RetireRepairForVerification. It lets a caller fail closed before the first
+// remote close/delete side effect.
+func (s *LifecycleStore) ValidateRepairRetirement(repositoryFingerprint string, retired RetiredRepair) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	finding := s.state.Findings[repositoryFingerprint]
+	if finding == nil {
+		return fmt.Errorf("finding %s not found", repositoryFingerprint)
+	}
+	return validateRepairRetirementFinding(finding, normalizeRetiredRepair(retired))
+}
+
+func normalizeRetiredRepair(retired RetiredRepair) RetiredRepair {
+	retired.PullRequestURL = strings.TrimSpace(retired.PullRequestURL)
+	retired.Branch = strings.TrimSpace(retired.Branch)
+	retired.HeadSHA = strings.ToLower(strings.TrimSpace(retired.HeadSHA))
+	retired.BaseBranch = strings.TrimSpace(retired.BaseBranch)
+	retired.BaseSHA = strings.ToLower(strings.TrimSpace(retired.BaseSHA))
+	retired.CurrentDefaultHeadSHA = strings.ToLower(strings.TrimSpace(retired.CurrentDefaultHeadSHA))
+	retired.VerdictReceipt = append(json.RawMessage(nil), retired.VerdictReceipt...)
+	retired.VerdictReceiptSHA256 = strings.ToLower(strings.TrimSpace(retired.VerdictReceiptSHA256))
+	return retired
+}
+
+func validateRepairRetirementFinding(finding *FindingLifecycle, retired RetiredRepair) error {
+	if finding == nil || retired.PullRequestNumber <= 0 || retired.PullRequestURL == "" || !strings.HasPrefix(retired.Branch, "hive/repair-") ||
+		!validLifecycleGitObject(retired.HeadSHA) || retired.BaseBranch == "" || !validLifecycleGitObject(retired.BaseSHA) ||
+		!validLifecycleGitObject(retired.CurrentDefaultHeadSHA) || retired.CurrentDefaultHeadSHA == retired.BaseSHA ||
+		!validLifecycleSHA256(retired.VerdictReceiptSHA256) || !json.Valid(retired.VerdictReceipt) {
+		return fmt.Errorf("retired repair identity, canonical failed receipt, and changed default head are required")
+	}
+	digest := sha256.Sum256(retired.VerdictReceipt)
+	if fmt.Sprintf("%x", digest[:]) != retired.VerdictReceiptSHA256 {
+		return fmt.Errorf("retired repair failed-verdict receipt digest does not match its exact bytes")
+	}
+	var receipt failedPullRequestReceiptIdentity
+	if err := json.Unmarshal(retired.VerdictReceipt, &receipt); err != nil {
+		return fmt.Errorf("parse retired repair failed-verdict receipt: %w", err)
+	}
+	canonical, err := json.Marshal(receipt)
+	if err != nil || string(canonical) != string(retired.VerdictReceipt) {
+		return fmt.Errorf("retired repair failed-verdict receipt is not canonical")
+	}
+	if receipt.SchemaVersion != "hive.normal-visual-pr-failure.v1" ||
+		!strings.EqualFold(receipt.Repository, finding.Repository) || receipt.RepositoryID != finding.RepositoryID ||
+		receipt.PullRequestNumber != retired.PullRequestNumber || receipt.PullRequestURL != retired.PullRequestURL ||
+		receipt.BaseBranch != retired.BaseBranch || !strings.EqualFold(receipt.BaseSHA, retired.BaseSHA) ||
+		receipt.HeadBranch != retired.Branch || !strings.EqualFold(receipt.HeadSHA, retired.HeadSHA) ||
+		receipt.WorkflowRunID <= 0 || receipt.WorkflowRunAttempt <= 0 ||
+		receipt.WorkflowName != "Visual Hive PR" || receipt.WorkflowPath != ".github/workflows/visual-hive-pr.yml" ||
+		receipt.WorkflowEvent != "pull_request" || receipt.Conclusion != "failure" || receipt.RunURL == "" ||
+		receipt.ArtifactID <= 0 || receipt.ArtifactName != "visual-hive-pr" ||
+		!validLifecycleSHA256(strings.ToLower(receipt.ArtifactIndexSHA256)) ||
+		receipt.Authority != "check-evidence-only; no completion, consume, merge, or resolution authority" {
+		return fmt.Errorf("retired repair receipt does not bind the exact failed PR workflow, proposal, artifact, and check-only authority")
+	}
+	if finding.Status == StatusIssueOpen && sameRetiredRepair(finding.LastRetiredRepair, retired) {
+		return nil
+	}
+	if finding.Status != StatusNeedsRevision || finding.MergeSHA != "" || finding.IssueNumber <= 0 ||
+		finding.PRNumber != retired.PullRequestNumber || finding.PRURL != retired.PullRequestURL ||
+		finding.Branch != retired.Branch || !strings.EqualFold(finding.RepairCommitSHA, retired.HeadSHA) {
+		return fmt.Errorf("only the exact open needs-revision repair can be retired")
+	}
+	return nil
+}
+
+func sameRetiredRepair(existing *RetiredRepair, requested RetiredRepair) bool {
+	if existing == nil {
+		return false
+	}
+	left, right := *existing, requested
+	if right.RetiredAt.IsZero() {
+		right.RetiredAt = left.RetiredAt
+	}
+	leftData, leftErr := json.Marshal(left)
+	rightData, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftData) == string(rightData)
+}
+
+func validLifecycleGitObject(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			lower := character | 0x20
+			if lower < 'a' || lower > 'f' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validLifecycleSHA256(value string) bool {
+	return len(value) == sha256.Size*2 && validLifecycleGitObject(value)
+}
+
 func (s *LifecycleStore) MarkMerged(repositoryFingerprint, mergeSHA string) error {
 	return s.updateFinding(repositoryFingerprint, "pr_merged", func(finding *FindingLifecycle) error {
 		if finding.Status != StatusReady {
@@ -2090,6 +2258,11 @@ func (s *LifecycleStore) load() error {
 		if finding != nil && (finding.IssueWriterID > 0) != (strings.TrimSpace(finding.IssueWriterLogin) != "") {
 			return fmt.Errorf("lifecycle finding %s has a partial immutable issue writer identity", finding.RepositoryFingerprint)
 		}
+		if finding != nil && finding.LastRetiredRepair != nil {
+			if err := validateRetiredRepairHistory(*finding.LastRetiredRepair); err != nil {
+				return fmt.Errorf("lifecycle finding %s has invalid retired repair history: %w", finding.RepositoryFingerprint, err)
+			}
+		}
 		if finding != nil && finding.Status == StatusIssueClosed && (finding.HumanReviewRequired || finding.ManualReviewKind != "" || finding.ManualReviewReason != "") {
 			finding.HumanReviewRequired, finding.ManualReviewKind, finding.ManualReviewReason = false, "", ""
 			migrated = true
@@ -2099,6 +2272,26 @@ func (s *LifecycleStore) load() error {
 		if err := s.persistLocked(); err != nil {
 			return fmt.Errorf("migrate lifecycle state: %w", err)
 		}
+	}
+	return nil
+}
+
+func validateRetiredRepairHistory(retired RetiredRepair) error {
+	if retired.PullRequestNumber <= 0 || retired.PullRequestURL == "" || retired.PullRequestURL != strings.TrimSpace(retired.PullRequestURL) ||
+		!strings.HasPrefix(retired.Branch, "hive/repair-") || retired.Branch != strings.TrimSpace(retired.Branch) ||
+		!validLifecycleGitObject(retired.HeadSHA) || retired.HeadSHA != strings.ToLower(strings.TrimSpace(retired.HeadSHA)) ||
+		retired.BaseBranch == "" || retired.BaseBranch != strings.TrimSpace(retired.BaseBranch) ||
+		!validLifecycleGitObject(retired.BaseSHA) || retired.BaseSHA != strings.ToLower(strings.TrimSpace(retired.BaseSHA)) ||
+		!validLifecycleGitObject(retired.CurrentDefaultHeadSHA) || retired.CurrentDefaultHeadSHA != strings.ToLower(strings.TrimSpace(retired.CurrentDefaultHeadSHA)) ||
+		retired.CurrentDefaultHeadSHA == retired.BaseSHA ||
+		!json.Valid(retired.VerdictReceipt) ||
+		!validLifecycleSHA256(retired.VerdictReceiptSHA256) || retired.VerdictReceiptSHA256 != strings.ToLower(strings.TrimSpace(retired.VerdictReceiptSHA256)) ||
+		retired.RetiredAt.IsZero() || retired.RetiredAt.Location() != time.UTC {
+		return errors.New("retired repair history is not a complete canonical exact proposal, receipt, changed head, and UTC time")
+	}
+	digest := sha256.Sum256(retired.VerdictReceipt)
+	if fmt.Sprintf("%x", digest[:]) != retired.VerdictReceiptSHA256 {
+		return errors.New("retired repair history receipt digest does not match its exact bytes")
 	}
 	return nil
 }
