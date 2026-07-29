@@ -53,6 +53,54 @@ type SaaSUser struct {
 	SaaSQuota      int               `json:"saas_quota"`
 	Blocked        bool              `json:"blocked"`
 	EncryptedToken string            `json:"encrypted_token,omitempty"`
+
+	// Contact/CRM fields. Admin-maintained free text used to reach a hub user
+	// outside GitHub (and to remember what was said last time). All three are
+	// omitempty so the thousands of existing user records already on the PVC
+	// stay byte-identical until an admin actually fills one in — a record
+	// without them round-trips through load/save unchanged.
+	//
+	// These are operator-entered free text rendered into the dashboard, so
+	// every render path must escape them and every write path must cap them
+	// (see maxContactNameLen / maxContactSlackIDLen / maxContactNotesLen).
+	FullName string `json:"full_name,omitempty"`
+	SlackID  string `json:"slack_id,omitempty"`
+	Notes    string `json:"notes,omitempty"`
+}
+
+// Length caps for the admin-editable contact fields. These are free text
+// written straight to the PVC, so each is bounded independently rather than
+// relying on the request-body cap alone: name and Slack ID are identifiers and
+// stay short, while notes is the running CRM log for a user and gets the most
+// room. Values over the cap are truncated (not rejected) so a long paste still
+// saves something useful instead of silently failing.
+const (
+	// maxContactNameLen bounds a person's full name. Generous versus real
+	// names so non-Latin scripts and long multi-part names still fit.
+	maxContactNameLen = 128
+	// maxContactSlackIDLen bounds a Slack member ID or handle. Real Slack IDs
+	// are ~11 chars (U01ABCDEF23); the headroom allows an @handle or a
+	// workspace-qualified form.
+	maxContactSlackIDLen = 64
+	// maxContactNotesLen bounds the free-text notes field — the longest of the
+	// three, sized for a few paragraphs of admin scratch notes per user.
+	maxContactNotesLen = 8192
+	// maxUpdateUserBodyBytes caps the PUT body for the admin user-update
+	// endpoint. Comfortably above the sum of the field caps plus JSON
+	// overhead/escaping, and small enough that the endpoint can never be used
+	// to push a large blob at the PVC.
+	maxUpdateUserBodyBytes = 64 * 1024
+)
+
+// truncateRunes clips s to at most max runes. It counts runes rather than
+// bytes so a cap never splits a multi-byte character (which would write
+// invalid UTF-8 into the user record and then into the dashboard HTML).
+func truncateRunes(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max])
 }
 
 var hmacKeyPath = "/data/saas/hmac.key"
@@ -431,6 +479,18 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"users": users})
 }
 
+// handleAdminUpdateUser applies a partial admin edit to one hub user record.
+// Every field is a POINTER in the request body, so a request carries only the
+// keys the admin actually changed: the handler loads the current record, sets
+// just those fields, and saves. That read-modify-write is what keeps a contact
+// edit from clobbering Hives / quota / Blocked (and vice versa) when two admin
+// widgets on the dashboard post concurrently.
+//
+// The contact fields (full_name, slack_id, notes) are admin-entered free text.
+// They are length-capped here — the last point before the value reaches the
+// PVC — and escaped on every dashboard render path.
+//
+// Registered behind requireAdmin; this handler does no auth of its own.
 func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
 	u := loadSaaSUser(username)
@@ -438,9 +498,14 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
 		return
 	}
+	// Free-text fields land on a PVC, so bound the body before decoding it.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpdateUserBodyBytes)
 	var body struct {
-		SaaSQuota *int  `json:"saas_quota"`
-		Blocked   *bool `json:"blocked"`
+		SaaSQuota *int    `json:"saas_quota"`
+		Blocked   *bool   `json:"blocked"`
+		FullName  *string `json:"full_name"`
+		SlackID   *string `json:"slack_id"`
+		Notes     *string `json:"notes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -452,8 +517,22 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	if body.Blocked != nil {
 		u.Blocked = *body.Blocked
 	}
+	// Trim before capping so trailing whitespace does not eat the budget, and
+	// so clearing a field to spaces stores "" (and drops out via omitempty).
+	if body.FullName != nil {
+		u.FullName = truncateRunes(strings.TrimSpace(*body.FullName), maxContactNameLen)
+	}
+	if body.SlackID != nil {
+		u.SlackID = truncateRunes(strings.TrimSpace(*body.SlackID), maxContactSlackIDLen)
+	}
+	if body.Notes != nil {
+		u.Notes = truncateRunes(strings.TrimSpace(*body.Notes), maxContactNotesLen)
+	}
 	saveSaaSUser(u)
-	s.logger.Info("audit: admin updated user", "target", username, "quota", u.SaaSQuota, "blocked", u.Blocked)
+	// Do not log the note bodies — they are free text and may hold anything an
+	// admin jotted down. Log only that contact fields were touched.
+	s.logger.Info("audit: admin updated user", "target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
+		"contactEdited", body.FullName != nil || body.SlackID != nil || body.Notes != nil)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
 }
@@ -5857,6 +5936,21 @@ const dashboardHTML = `<!DOCTYPE html>
     // into an attribute; esc() remains correct for text nodes.
     function escAttr(s) { return esc(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
+    // ghRepoURL builds the URL for an org/repo on the RIGHT GitHub instance.
+    // Hives are not all on public github.com: a provision request carries a
+    // github_host ('' = public github.com, otherwise a GitHub Enterprise host
+    // such as github.ibm.com), so the host is taken from the record and never
+    // hardcoded. Returns '' when there is no org or no repo to link to, so
+    // callers can fall back to plain text rather than emitting a dead link.
+    function ghRepoURL(host, org, repo) {
+      if (!org || !repo) return '';
+      var h = (host || 'github.com').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      // Path segments are encoded; the host is not (it is a hostname, and
+      // encoding would break the dots) but is constrained to a hostname shape.
+      if (!/^[A-Za-z0-9.-]+$/.test(h)) return '';
+      return 'https://' + h + '/' + encodeURIComponent(org) + '/' + encodeURIComponent(repo);
+    }
+
     // sameShaJS: two git SHAs are the same commit even if one is a short
     // prefix of the other. The hub stores 7-char short SHAs while a spoke may
     // report a longer one; a raw === left the "Upgrading" badge spinning
@@ -9221,6 +9315,25 @@ const dashboardHTML = `<!DOCTYPE html>
     // which hive they actually got. Pending requests stay as action cards above;
     // this is the audit trail, not a work queue, so it is deliberately a dense
     // table rather than more cards.
+    // provisionRepoLabel renders a provision request's org/repo as a link to
+    // the repository on the GitHub instance the request actually targets.
+    // github_host is authoritative: '' means public github.com, a value like
+    // github.ibm.com means GitHub Enterprise — hardcoding github.com would send
+    // an admin to a 404 (or worse, an unrelated public repo of the same name).
+    // Requests with no repo recorded fall back to plain escaped text.
+    function provisionRepoLabel(pr) {
+      if (!pr) return '';
+      var org = pr.org || '';
+      var repo = pr.primary_repo || pr.repos || '';
+      var text = esc(org) + '/' + esc(repo);
+      // repos may be a comma-separated list; only a single concrete repo can be
+      // turned into a URL, so leave a multi-repo value as plain text.
+      var url = (repo.indexOf(',') === -1) ? ghRepoURL(pr.github_host, org, repo) : '';
+      if (!url) return text;
+      return '<a href="' + escAttr(url) + '" target="_blank" rel="noopener noreferrer"' +
+        ' style="color:inherit;text-decoration:underline;text-decoration-style:dotted">' + text + '</a>';
+    }
+
     function renderRequestHistory(requests) {
       var host = document.getElementById('admin-request-history');
       if (!host) return;
@@ -9256,17 +9369,18 @@ const dashboardHTML = `<!DOCTYPE html>
           (uname
             ? '<a href="https://github.com/' + encodeURIComponent(uname) + '" target="_blank" rel="noopener noreferrer" style="color:inherit">' + esc(uname) + '</a>'
             : '<span style="color:var(--muted)">—</span>');
-        // Repo link. github_host is empty for public github.com and otherwise a
-        // GitHub Enterprise host (github.ibm.com, …) — build the origin from it
-        // rather than hardcoding github.com, which would produce dead links for
-        // every Enterprise requester.
-        var host_ = pr.github_host || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+        // Repo link, built by the shared provisionRepoLabel(): github_host is
+        // empty for public github.com and otherwise a GitHub Enterprise host
+        // (github.ibm.com, …), so the origin comes from the record rather than
+        // being hardcoded — hardcoding github.com would produce dead links for
+        // every Enterprise requester. The helper also declines to link a
+        // comma-separated multi-repo value, which has no single URL, and falls
+        // back to plain escaped text when there is nothing to link.
         var org = pr.org || '';
         var repo = pr.primary_repo || pr.repos || '';
-        var repoText = org + '/' + repo;
-        var repoCell = (org && repo)
-          ? '<a href="https://' + encodeURIComponent(host_) + '/' + encodeURIComponent(org) + '/' + encodeURIComponent(repo) + '" target="_blank" rel="noopener noreferrer" style="color:inherit">' + esc(repoText) + '</a>'
-          : (repoText.replace('/', '') ? esc(repoText) : '<span style="color:var(--muted)">—</span>');
+        var repoCell = (org || repo)
+          ? provisionRepoLabel(pr)
+          : '<span style="color:var(--muted)">—</span>';
         // For an approval the outcome is the hive they received — linked to the
         // existing SSO handoff endpoint, the same affordance My Hives uses —
         // plus their role on it. For a denial it is the reason, if one was
@@ -9346,7 +9460,8 @@ const dashboardHTML = `<!DOCTYPE html>
           avatar +
           '<div>' +
           '<span style="font-size:0.85rem;font-weight:600">' + esc(pr.username) + '</span>' +
-          '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' + esc(pr.org) + '/' + esc(pr.primary_repo || pr.repos) + '</span>' +
+          // org/repo links to the repo on the instance the request targets.
+          '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' + provisionRepoLabel(pr) + '</span>' +
           // Show which GitHub instance the request targets — same pill the Past
           // Requests table uses, so pending and decided rows read alike.
           ' ' + githubHostPill(pr.github_host) +
@@ -9765,7 +9880,16 @@ const dashboardHTML = `<!DOCTYPE html>
     function applySortUsers() {
       var key = _userSortKey;
       var q = (document.getElementById('user-search') ? document.getElementById('user-search').value : '').toLowerCase();
-      var filtered = _allUsers.filter(function(u) { return !q || u.github_username.toLowerCase().includes(q); });
+      // Search matches the GitHub login and the contact fields, so an admin can
+      // find someone by real name or by something they wrote in the notes —
+      // which is the point of keeping notes here in the first place.
+      var filtered = (_allUsers || []).filter(function(u) {
+        if (!q) return true;
+        if (!u) return false;
+        var hay = [u.github_username, u.full_name, u.slack_id, u.notes]
+          .filter(function(v) { return !!v; }).join(' ').toLowerCase();
+        return hay.includes(q);
+      });
       var sorted = filtered.slice().sort(function(a, b) {
         var va, vb;
         if (key === 'hiveCount') {
@@ -9818,6 +9942,143 @@ const dashboardHTML = `<!DOCTYPE html>
       applySortUsers();
     }
 
+    // --- Admin Users: contact / CRM fields -------------------------------
+    // Full name, Slack ID and notes are admin-maintained free text on the user
+    // record. They are edited in a per-user panel row rather than inline in the
+    // main row: notes is expected to be the longest field and a multi-line box
+    // simply does not fit in a table cell next to quota and the action buttons.
+    // The main row shows a one-line summary plus an Edit toggle, so the common
+    // case (glance at who someone is) costs nothing and the edit case is one
+    // click away.
+
+    // Number of columns in the admin users table. Panel/expand rows span the
+    // full width, so this must track the <th> count in renderUsers.
+    var USERS_TABLE_COLSPAN = 8;
+    // Rows of the notes textarea. Big enough for a short paragraph without
+    // pushing the next user off screen.
+    var CONTACT_NOTES_ROWS = 3;
+    // Characters of a note shown in the collapsed summary before ellipsis.
+    var CONTACT_NOTES_PREVIEW_CHARS = 40;
+    // Client-side maxlength on each field. Mirrors the server caps in saas.go
+    // (maxContactNameLen / maxContactSlackIDLen / maxContactNotesLen) — the
+    // server still truncates; this is only so the admin sees the limit.
+    var CONTACT_MAX_NAME = 128;
+    var CONTACT_MAX_SLACK = 64;
+    var CONTACT_MAX_NOTES = 8192;
+
+    // Which users currently have their contact panel open, keyed by username.
+    // Re-rendering on the admin poll must not slam a panel shut mid-edit.
+    var _contactExpandedUsers = {};
+
+    // contactPanelId maps a username to a DOM id. Usernames are GitHub logins
+    // (alphanumerics and hyphens) but this is defensive: anything outside that
+    // set is replaced so a stored username can never inject markup through an
+    // id attribute or break querySelector.
+    function contactPanelId(username) {
+      return 'contact-panel-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    // renderContactCell is the collapsed summary shown in the main user row.
+    function renderContactCell(u) {
+      var bits = [];
+      if (u.full_name) bits.push('<span style="font-size:0.78rem">' + esc(u.full_name) + '</span>');
+      if (u.slack_id) bits.push('<span style="font-size:0.7rem;color:var(--muted)">slack: ' + esc(u.slack_id) + '</span>');
+      if (u.notes) {
+        var preview = u.notes.length > CONTACT_NOTES_PREVIEW_CHARS
+          ? u.notes.substring(0, CONTACT_NOTES_PREVIEW_CHARS) + '…' : u.notes;
+        // title= carries the full note on hover, so it needs attribute escaping.
+        bits.push('<span title="' + escAttr(u.notes) + '" style="font-size:0.7rem;color:var(--muted);font-style:italic">' + esc(preview) + '</span>');
+      }
+      var summary = bits.length
+        ? '<div style="display:flex;flex-direction:column;gap:1px;max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
+        : '<span style="color:var(--muted);font-size:0.72rem">—</span>';
+      var btn = '<button type="button" data-contact-toggle="' + escAttr(u.github_username) + '"' +
+        ' style="margin-top:2px;padding:1px 7px;background:none;border:1px solid var(--border);border-radius:4px;' +
+        'color:var(--muted);cursor:pointer;font-size:0.65rem">Edit</button>';
+      return summary + btn;
+    }
+
+    // renderContactPanelRow is the expandable editor row that follows each user
+    // row. It is always emitted (hidden unless expanded) so toggling is a
+    // display flip rather than a re-render, which keeps focus and caret intact.
+    function renderContactPanelRow(u) {
+      var open = !!(_contactExpandedUsers && _contactExpandedUsers[u.github_username]);
+      var fld = 'padding:5px 7px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:0.78rem;box-sizing:border-box;width:100%';
+      var lbl = 'display:block;font-size:0.66rem;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em';
+      var user = escAttr(u.github_username);
+      return '<tr id="' + contactPanelId(u.github_username) + '" style="display:' + (open ? '' : 'none') + '">' +
+        '<td colspan="' + USERS_TABLE_COLSPAN + '" style="background:var(--surface)">' +
+        '<div style="padding:10px 14px 12px 40px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">' +
+          '<div style="flex:1 1 200px;min-width:170px">' +
+            '<label style="' + lbl + '">Full name</label>' +
+            '<input type="text" data-contact-user="' + user + '" data-contact-field="full_name"' +
+              ' maxlength="' + CONTACT_MAX_NAME + '" value="' + escAttr(u.full_name || '') + '" style="' + fld + '">' +
+          '</div>' +
+          '<div style="flex:1 1 160px;min-width:140px">' +
+            '<label style="' + lbl + '">Slack ID</label>' +
+            '<input type="text" data-contact-user="' + user + '" data-contact-field="slack_id"' +
+              ' maxlength="' + CONTACT_MAX_SLACK + '" value="' + escAttr(u.slack_id || '') + '" style="' + fld + '">' +
+          '</div>' +
+          '<div style="flex:2 1 320px;min-width:220px">' +
+            '<label style="' + lbl + '">Notes</label>' +
+            '<textarea data-contact-user="' + user + '" data-contact-field="notes" rows="' + CONTACT_NOTES_ROWS + '"' +
+              ' maxlength="' + CONTACT_MAX_NOTES + '" style="' + fld + ';resize:vertical;font-family:inherit">' + esc(u.notes || '') + '</textarea>' +
+          '</div>' +
+          '<div style="align-self:flex-end;font-size:0.65rem;color:var(--muted);padding-bottom:6px">Saves on blur</div>' +
+        '</div></td></tr>';
+    }
+
+    // bindContactPanels attaches listeners after renderUsers writes the table.
+    // Listeners rather than inline on* attributes: esc() leaves apostrophes
+    // alone, so a value like O'Brien inside onchange="save('...')" would break
+    // the handler (and be an injection vector). Nothing user-controlled is ever
+    // interpolated into executable markup here.
+    function bindContactPanels() {
+      var container = document.getElementById('users-container');
+      if (!container) return;
+      var toggles = container.querySelectorAll('[data-contact-toggle]');
+      Array.prototype.forEach.call(toggles || [], function(btn) {
+        btn.addEventListener('click', function() {
+          toggleContactPanel(btn.getAttribute('data-contact-toggle'));
+        });
+      });
+      var fields = container.querySelectorAll('[data-contact-field]');
+      Array.prototype.forEach.call(fields || [], function(el) {
+        // Save on blur so an admin can tab between fields and type freely
+        // without a request per keystroke.
+        el.addEventListener('blur', function() {
+          saveContactField(el.getAttribute('data-contact-user'), el.getAttribute('data-contact-field'), el.value);
+        });
+      });
+    }
+
+    function toggleContactPanel(username) {
+      if (!username) return;
+      _contactExpandedUsers[username] = !_contactExpandedUsers[username];
+      var row = document.getElementById(contactPanelId(username));
+      if (row) row.style.display = _contactExpandedUsers[username] ? '' : 'none';
+    }
+
+    // Last value saved per user+field, so a blur that changed nothing (tabbing
+    // through, or a re-render restoring focus) does not fire a pointless PUT.
+    var _contactLastSaved = {};
+
+    function saveContactField(username, field, value) {
+      if (!username || !field) return;
+      var key = username + '::' + field;
+      var current = _allUsers ? (_allUsers.find(function(x) { return x.github_username === username; }) || {}) : {};
+      var previous = (_contactLastSaved[key] !== undefined) ? _contactLastSaved[key] : (current[field] || '');
+      var next = (value || '').trim();
+      if (next === previous) return;
+      _contactLastSaved[key] = next;
+      // Keep the in-memory copy in step so the next poll's signature check does
+      // not treat our own edit as an external change and re-render mid-typing.
+      if (current) current[field] = next;
+      var payload = {};
+      payload[field] = next;
+      updateUser(username, payload);
+    }
+
     function renderUsers(users, force) {
       var sig = JSON.stringify(users);
       if (!force && sig === _lastUsersJSON) return;
@@ -9836,7 +10097,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
         var hiveRows = '';
         if (hiveCount > 0) {
-          hiveRows = '<tr id="' + expandId + '" style="display:' + (isExpanded ? '' : 'none') + '"><td colspan="7"><div style="padding:8px 12px 8px 40px;font-size:0.75rem">';
+          hiveRows = '<tr id="' + expandId + '" style="display:' + (isExpanded ? '' : 'none') + '"><td colspan="' + USERS_TABLE_COLSPAN + '"><div style="padding:8px 12px 8px 40px;font-size:0.75rem">';
           hiveRows += '<table style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--muted);font-size:0.7rem"><th style="text-align:left;padding:4px 8px">Hive</th><th>Role</th><th>Type</th><th>Link</th></tr></thead><tbody>';
           hiveIds.forEach(function(hid) {
             var role = hivesObj[hid];
@@ -9873,16 +10134,22 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
+          '<td>' + renderContactCell(u) + '</td>' +
           '<td>' + blocked + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
           '<td>' + (isAdmin ? '' : '<button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" style="padding:3px 10px;background:#b02a2a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Delete</button>') + '</td>' +
-          '</tr>' + hiveRows;
+          '</tr>' + renderContactPanelRow(u) + hiveRows;
       }).join('');
       document.getElementById('users-container').innerHTML =
         '<table class="hive-table"><thead><tr>' +
-        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
+        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
+      // The contact panels are built as raw HTML above; wire their listeners
+      // once the rows are actually in the DOM. Inline on* handlers are avoided
+      // for these fields because esc() does not escape apostrophes, so a name
+      // or note containing one would break out of an inline handler string.
+      bindContactPanels();
     }
 
     async function updateUser(username, updates) {
