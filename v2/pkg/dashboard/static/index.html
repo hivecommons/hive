@@ -2540,6 +2540,11 @@
         <div id="oc-gh-user-menu" style="display:none;position:absolute;right:0;top:34px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 0;min-width:160px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
           <div style="padding:8px 16px;border-bottom:1px solid var(--line);color:var(--text);font-weight:600;font-size:0.85rem" id="oc-gh-menu-user"></div>
           <div id="oc-gh-menu-role" style="display:none;padding:2px 16px 6px;border-bottom:1px solid var(--line);font-size:0.72rem;color:var(--muted)"></div>
+          <!-- This nav avatar is NOT a profile link: its click already opens
+               this menu, a different destination, so it keeps that job. The
+               profile gets a menu entry instead, populated by showGHAuthState()
+               once the signed-in login is known. -->
+          <a href="#" id="oc-gh-menu-profile" target="_blank" rel="noopener noreferrer" style="display:none;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">GitHub profile ↗</a>
           <a href="/api/config/download" id="oc-gh-menu-download" style="display:none;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">Download hive.yaml</a>
           <a href="/api/docs" target="_blank" style="display:block;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">API Docs ↗</a>
           <button onclick="ghLogout()" style="display:block;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem">Sign out</button>
@@ -4768,7 +4773,24 @@
           banner.classList.add('perm-issue');
           if (title) title.textContent = 'GitHub App — Insufficient Permissions';
           if (desc) desc.textContent = 'The app is installed but cannot write to this repository.';
-          if (link) { link.textContent = 'View App Settings'; link.href = data.githubAppInstallURL || 'https://github.com/apps/kubestellar-hive'; }
+          // Never fall back to a public github.com URL: on GitHub Enterprise
+          // that sends the user to the wrong GitHub entirely and their org
+          // admin never sees the request. Prefer the server-computed install
+          // URL; otherwise send them to this hive's own GitHub host root and
+          // say so, rather than guessing an app path/slug the client does not
+          // know.
+          if (link) {
+            link.textContent = 'View App Settings';
+            if (data.githubAppInstallURL) {
+              link.href = data.githubAppInstallURL;
+            } else if (data.githubBaseURL) {
+              link.href = data.githubBaseURL;
+              link.textContent = 'Open ' + String(data.githubBaseURL).replace(/^https?:\/\//, '');
+            } else {
+              link.removeAttribute('href');
+              link.textContent = 'Install URL unavailable';
+            }
+          }
           var details = existingDetails;
           if (!details) {
             details = document.createElement('div');
@@ -9063,13 +9085,24 @@ function burnAreaChart() {
     const AUDIT_POLL_MS = 30000;
     var _auditEntries = [];
 
+    /* Rendered size of the audit log's actor face, in CSS pixels — the log is
+       the densest table on the dashboard, so its faces are the smallest. */
+    const AUDIT_AVATAR_PX = 16;
+
     function renderAuditRow(e) {
       var t = e.ts ? new Date(e.ts) : null;
       var timeStr = t ? t.toLocaleString() : '—';
-      var user = esc(e.user||'ghost');
+      /* An entry with no actor is attributed to 'ghost', which is a real
+         github.com account and not this person — so the placeholder face is
+         rendered UNLINKED by passing no username, rather than sending the
+         reader to a stranger's profile. */
+      var actor = String(e.user || '');
+      var face = actor
+        ? linkedAvatar(actor, AUDIT_AVATAR_PX, actor, '', 'margin-right:4px')
+        : avatarImg(ghProfileURL('ghost') + '.png', AUDIT_AVATAR_PX, 'margin-right:4px');
       return '<tr style="border-bottom:1px solid var(--terminal-line)">' +
         '<td style="padding:4px 8px;white-space:nowrap;color:var(--terminal-muted)">' + timeStr + '</td>' +
-        '<td style="padding:4px 8px"><img src="https://github.com/' + user + '.png?s=32" style="width:16px;height:16px;border-radius:50%;vertical-align:middle;margin-right:4px">' + esc(e.user||'—') + '</td>' +
+        '<td style="padding:4px 8px">' + face + esc(e.user||'—') + '</td>' +
         '<td style="padding:4px 8px;font-weight:600">' + esc(e.action||'—') + '</td>' +
         '<td style="padding:4px 8px">' + esc(e.agent||'—') + '</td>' +
         '<td style="padding:4px 8px;color:var(--terminal-muted)">' + esc(e.detail||'') + '</td>' +
@@ -9172,6 +9205,64 @@ function burnAreaChart() {
     function trustTierBadge(tier) {
       return `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:0.7rem;color:var(--muted);border:1px solid var(--line)">${esc(tier || 'unknown')}</span>`;
     }
+
+    /* ---- Clickable user avatars ---------------------------------------
+       Every face on this dashboard links to that person's GitHub profile, so
+       the avatar itself is the affordance rather than a separate glyph or a
+       second anchor on the username beside it.
+
+       ALWAYS github.com. Contributors, leaderboard entries and allowlisted
+       users are identified by the github.com account that authenticated, even
+       on a hive whose ORG lives on a GitHub Enterprise host — repo links are
+       built from a host field, profile links are not.
+
+       encodeURIComponent for the URL path segment; esc() for the quoted
+       attribute values (this file's esc() does escape " ' and backtick, unlike
+       the hub's, so it is safe in attributes here). */
+    function ghProfileURL(username) {
+      return `https://github.com/${encodeURIComponent(String(username || ''))}`;
+    }
+
+    /* Wrap avatar markup in a profile anchor.
+
+       display:inline-block with line-height:0 stops the anchor contributing a
+       text baseline's worth of height to the table row or flex line that holds
+       it; the avatars are 20-28px inline images that keep their own sizing.
+
+       Returns the markup unwrapped when there is no username — an anchor to a
+       profile that cannot exist is worse than no anchor at all. */
+    function avatarProfileLink(username, label, avatarHTML) {
+      const uname = String(username || '');
+      if (!uname) return avatarHTML;
+      const name = esc(label || uname);
+      return `<a href="${esc(ghProfileURL(uname))}" target="_blank" rel="noopener noreferrer" ` +
+        `title="${name}" aria-label="${name}" ` +
+        `style="display:inline-block;line-height:0;text-decoration:none">${avatarHTML}</a>`;
+    }
+
+    /* Round avatar <img>, at the given rendered size in CSS pixels. src may be
+       an explicit avatar_url from the API (GitHub's CDN URL, not derivable from
+       the login) or, when that is absent, github.com/<login>.png. onerror hides
+       a 404 rather than leaving a broken-image glyph — which would read as a
+       dead control now that the image is inside a link. */
+    function avatarImg(src, px, extraStyle) {
+      return `<img src="${esc(src)}" alt="" width="${px}" height="${px}" ` +
+        `style="width:${px}px;height:${px}px;border-radius:50%;vertical-align:middle;` +
+        `${extraStyle || ''}" onerror="this.style.display='none'">`;
+    }
+
+    /* The common case: a linked, round avatar for a github.com login. avatarURL
+       is optional and wins when present. */
+    function linkedAvatar(username, px, label, avatarURL, extraStyle) {
+      const src = avatarURL || `${ghProfileURL(username)}.png`;
+      return avatarProfileLink(username, label, avatarImg(src, px, extraStyle));
+    }
+
+    /* Rendered avatar sizes, in CSS pixels. The contributor cards and the
+       leaderboard rows share a size because they are the same kind of roster;
+       the Access tab's allowlist is a denser config list. */
+    const CONTRIBUTOR_AVATAR_PX = 28;
+    const ACCESS_LIST_AVATAR_PX = 20;
 
     // Active contributor filter set — empty means "all"
     let _contributorFilters = new Set();
@@ -9293,8 +9384,11 @@ function burnAreaChart() {
         const cards = nonRevoked.map(c => {
           const dotColor = c.active ? 'var(--green)' : 'var(--muted)';
           const dotTitle = c.active ? 'Online' : 'Offline';
-          const ghLink = `https://github.com/${esc(c.github_username)}`;
-          const avatar = c.avatar_url || `https://github.com/${esc(c.github_username)}.png`;
+          // The face is the profile link. The @username beside it used to be a
+          // second anchor to that same profile; it stays as plain text so there
+          // is one control per destination.
+          const avatarHtml = linkedAvatar(c.github_username, CONTRIBUTOR_AVATAR_PX,
+            `@${c.github_username}`, c.avatar_url, 'flex-shrink:0');
           const cliLine = c.cli_backend ? `${esc(c.cli_backend)}${c.model ? ' · ' + esc(c.model) : ''}` : '';
           const roleLine = c.preferred_role ? `role: ${esc(c.preferred_role)}` : '';
           const tierOptions = Object.keys(TRUST_TIER_COLORS).filter(t => t !== 'revoked').map(t =>
@@ -9303,8 +9397,8 @@ function burnAreaChart() {
           return `<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0" title="${dotTitle}"></span>
-              <img src="${avatar}" alt="" style="width:28px;height:28px;border-radius:50%;flex-shrink:0" onerror="this.style.display='none'">
-              <a href="${ghLink}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-weight:600">@${esc(c.github_username)}</a>
+              ${avatarHtml}
+              <span style="font-weight:600">@${esc(c.github_username)}</span>
               <span style="flex-shrink:0">${trustTierBadge(c.trust_tier)}</span>
             </div>
             ${cliLine ? `<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">${cliLine}${roleLine ? ' · ' + roleLine : ''}</div>` : (roleLine ? `<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">${roleLine}</div>` : '')}
@@ -9391,16 +9485,20 @@ function burnAreaChart() {
         setIfChanged(panel, '<div style="color:var(--muted);padding:24px;text-align:center;background:var(--card-bg);border:1px solid var(--border);border-radius:8px">No leaderboard data yet.</div>');
         return;
       }
-      const AVATAR_SIZE_PX = 28;
       const rows = entries.map(e => {
-        const avatarHtml = e.avatar_url
-          ? `<img src="${esc(e.avatar_url)}" width="${AVATAR_SIZE_PX}" height="${AVATAR_SIZE_PX}" style="border-radius:50%;vertical-align:middle" alt="">`
-          : `<span style="display:inline-block;width:${AVATAR_SIZE_PX}px;height:${AVATAR_SIZE_PX}px;border-radius:50%;background:var(--border)"></span>`;
-        const ghLink = `https://github.com/${esc(e.github_username)}`;
+        /* The face links to the profile; the @username beside it is plain text
+           now that the avatar carries the same destination. An entry with no
+           avatar_url still falls back to github.com/<login>.png, so the grey
+           circle is only for entries with no username at all — and that one is
+           deliberately NOT wrapped in an anchor, since there is no profile to
+           point at. */
+        const avatarHtml = e.github_username
+          ? linkedAvatar(e.github_username, CONTRIBUTOR_AVATAR_PX, `@${e.github_username}`, e.avatar_url)
+          : `<span style="display:inline-block;width:${CONTRIBUTOR_AVATAR_PX}px;height:${CONTRIBUTOR_AVATAR_PX}px;border-radius:50%;background:var(--border)"></span>`;
         return `<tr style="border-bottom:1px solid var(--border)">
           <td style="padding:8px 12px;font-weight:600;color:var(--muted)">${e.rank}</td>
           <td style="padding:8px 12px">${avatarHtml}</td>
-          <td style="padding:8px 12px"><a href="${ghLink}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none">@${esc(e.github_username)}</a></td>
+          <td style="padding:8px 12px">@${esc(e.github_username)}</td>
           <td style="padding:8px 12px">${trustTierBadge(e.trust_tier)}</td>
           <td style="padding:8px 12px;text-align:right">${e.tasks_completed || 0}</td>
           <td style="padding:8px 12px;text-align:right;color:${(e.tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--muted)'}">${e.tasks_failed || 0}</td>
@@ -11983,7 +12081,11 @@ function burnAreaChart() {
     let _configState = { type: null, agent: null, tab: null, data: {}, dirty: {} };
     const _configTabMemory = {};
 
-    const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', 'Last Prompt', 'Export'];
+    // The prompt-history tab. Renamed from 'Last Prompt' when it grew from a
+    // single most-recent prompt into a browsable history; kept to one short
+    // word because it sits in a crowded tab strip.
+    const AGENT_PROMPTS_TAB = 'Prior Prompts';
+    const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', AGENT_PROMPTS_TAB, 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
     const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
@@ -12433,6 +12535,9 @@ function burnAreaChart() {
       const body = document.getElementById('config-body');
       if (_configState.type === 'agent') {
         body.innerHTML = renderAgentTab(tabId);
+        // The Prompts tab renders a shell synchronously, then loads this
+        // agent's kick history over the selected time window.
+        if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
         body.innerHTML = renderGovernorTab(tabId);
         if (tabId === 'Hub') fetchQueueCount();
@@ -12554,7 +12659,7 @@ function burnAreaChart() {
         case 'Connections': return renderAgentConnections(d.connections || []);
         case 'Stats': return renderAgentStatsTab(d.stats || []);
         case 'Prompt Template': return renderAgentPromptTemplate();
-        case 'Last Prompt': return renderAgentLastPrompt(d.prompt || '');
+        case AGENT_PROMPTS_TAB: return renderAgentPromptHistoryShell();
         case 'Export': return renderAgentExport();
         default: return '';
       }
@@ -12734,10 +12839,17 @@ function burnAreaChart() {
     }
 
     async function loadAuthorizedUsers() {
-      const listEl = document.getElementById('access-users-list');
-      const statusEl = document.getElementById('access-users-status');
+      // Resolve the targets AFTER the first await, never before. The caller does
+      // `body.innerHTML = renderGovernorTab(tab)`, so renderGovAccess() — and this
+      // function with it — runs while the PREVIOUS tab is still mounted. Looking
+      // the elements up synchronously captured null every time, so both the success
+      // and the catch branch wrote into nothing and the panel sat on "Loading…"
+      // forever regardless of what the API returned.
+      let listEl = null, statusEl = null;
       try {
         const r = await fetch('/api/config/authorized-users');
+        listEl = document.getElementById('access-users-list');
+        statusEl = document.getElementById('access-users-status');
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (statusEl) {
@@ -12753,13 +12865,18 @@ function burnAreaChart() {
         listEl.innerHTML = users.map(function(u) {
           var roleCls = u.role === 'owner' ? 'role-owner' : u.role === 'read-write' ? 'role-read-write' : 'role-read';
           return '<div class="config-list-item" style="align-items:center;gap:8px">' +
-            '<img src="https://github.com/' + esc(u.username) + '.png" style="width:20px;height:20px;border-radius:50%;vertical-align:middle" onerror="this.style.display=\'none\'">' +
+            linkedAvatar(u.username, ACCESS_LIST_AVATAR_PX,
+              String(u.username || '') + (u.role ? ' — ' + u.role : ''), '', '') +
             '<span style="flex:1;font-size:0.85rem">' + esc(u.username) + '</span>' +
             '<span class="role-badge ' + roleCls + '" style="font-size:0.7rem">' + esc(u.role) + '</span>' +
             '</div>';
         }).join('');
       } catch (e) {
-        if (listEl) listEl.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">Could not load authorized users.</div>';
+        // fetch() itself can reject before the lookups above ran, so re-resolve
+        // here rather than trusting listEl to be set — otherwise a network failure
+        // is indistinguishable from a hang.
+        const el = listEl || document.getElementById('access-users-list');
+        if (el) el.innerHTML = '<div style="color:var(--muted);font-size:0.75rem">Could not load authorized users.</div>';
       }
     }
 
@@ -12852,10 +12969,13 @@ function burnAreaChart() {
     }
 
     async function loadVariables() {
-      const listEl = document.getElementById('variables-list');
-      const statusEl = document.getElementById('variables-status');
+      // Same ordering hazard as loadAuthorizedUsers(): renderGovVariables() calls
+      // this before its markup is assigned into the DOM, so resolve after the await.
+      let listEl = null, statusEl = null;
       try {
         const r = await fetch('/api/config/variables');
+        listEl = document.getElementById('variables-list');
+        statusEl = document.getElementById('variables-status');
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (statusEl) {
@@ -13490,12 +13610,15 @@ function burnAreaChart() {
         return {name: name, full: r, enabled: enabled};
       });
       const tiers = ['newcomer', 'contributor', 'trusted', 'advisor'];
-      const allowLabels = (hub.contribute_allow_labels || []);
       const denyLabels = (hub.contribute_deny_labels || []);
       const denyTitles = (hub.contribute_deny_titles || []);
       const denyAuthors = (hub.contribute_deny_authors || []);
       const allowModels = (hub.contribute_allow_models || []);
       const rejectUnknownModels = hub.contribute_reject_unknown_models || false;
+      // Filter modes: 'allow' = only matching pass; 'deny' (default) = matching skipped.
+      const titlesMode = (hub.contribute_titles_mode === 'allow') ? 'allow' : 'deny';
+      const authorsMode = (hub.contribute_authors_mode === 'allow') ? 'allow' : 'deny';
+      const labelsMode = (hub.contribute_labels_mode === 'allow') ? 'allow' : 'deny';
       return `
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="enabled"></div>
@@ -13533,17 +13656,19 @@ function burnAreaChart() {
           <span class="config-toggle-label" style="${hub.contribute_suspended ? 'color:var(--red);font-weight:600' : ''}">Suspend Contributions <span class="config-info">i<span class="config-tooltip">Temporarily stop assigning tasks to contributors. Connected contributors stay online but idle.</span></span></span>
         </div>
 
-        <div class="config-field">
-          <label>Deny Titles <span class="config-info">i<span class="config-tooltip">Issues matching these title patterns are excluded. Supports wildcards (*) and regex (/pattern/).</span></span></label>
-          <div id="hub-deny-titles" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${denyTitles.map(function(t) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(248,81,73,0.15);color:var(--red);border:1px solid rgba(248,81,73,0.3)">' + esc(t) + ' <span onclick="removeHubFilter(\'contribute_deny_titles\',\'' + esc(t).replace(/'/g,"\\'") + '\')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-deny-title-input" placeholder="e.g. *dashboard*, epic:*, /renovate/i" style="flex:1" onkeydown="if(event.key==='Enter'){addHubFilter('contribute_deny_titles','hub-deny-title-input');event.preventDefault()}"><button onclick="addHubFilter('contribute_deny_titles','hub-deny-title-input')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
+        ${renderFilterWithMode({
+          label: 'Titles', noun: 'title', unit: 'issue',
+          modeKey: 'contribute_titles_mode', listKey: 'contribute_deny_titles',
+          mode: titlesMode, list: denyTitles, inputId: 'hub-deny-title-input',
+          placeholder: 'e.g. *dashboard*, epic:*, /renovate/i'
+        })}
 
-        <div class="config-field">
-          <label>Deny Authors <span class="config-info">i<span class="config-tooltip">Issues from these authors are excluded. Supports wildcards (*) and regex (/pattern/).</span></span></label>
-          <div id="hub-deny-authors" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${denyAuthors.map(function(a) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(248,81,73,0.15);color:var(--red);border:1px solid rgba(248,81,73,0.3)">' + esc(a) + ' <span onclick="removeHubFilter(\'contribute_deny_authors\',\'' + esc(a).replace(/'/g,"\\'") + '\')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-deny-author-input" placeholder="e.g. renovate[bot], dependabot*" style="flex:1" onkeydown="if(event.key==='Enter'){addHubFilter('contribute_deny_authors','hub-deny-author-input');event.preventDefault()}"><button onclick="addHubFilter('contribute_deny_authors','hub-deny-author-input')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
+        ${renderFilterWithMode({
+          label: 'Authors', noun: 'author', unit: 'issue',
+          modeKey: 'contribute_authors_mode', listKey: 'contribute_deny_authors',
+          mode: authorsMode, list: denyAuthors, inputId: 'hub-deny-author-input',
+          placeholder: 'e.g. renovate[bot], dependabot*'
+        })}
 
         <hr style="border-color:var(--border);margin:16px 0">
         <h4 style="font-size:0.8rem;color:var(--muted);margin:0 0 8px">Model Filter ${allowModels.length === 0 ? '<span style="font-weight:400;color:var(--green);margin-left:8px">All models accepted</span>' : '<span style="font-weight:400;color:var(--blue);margin-left:8px">' + allowModels.length + ' pattern' + (allowModels.length > 1 ? 's' : '') + '</span>'}</h4>
@@ -13569,17 +13694,12 @@ function burnAreaChart() {
 
         <hr style="border-color:var(--border);margin:16px 0">
 
-        <div class="config-field">
-          <label>Allow Labels <span class="config-info">i<span class="config-tooltip">Only issues with these labels will be queued for contributors. Leave empty to allow all.</span></span></label>
-          <div id="hub-allow-labels" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${allowLabels.map(function(l) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(34,197,94,0.15);color:var(--green);border:1px solid rgba(34,197,94,0.3)">' + esc(l) + ' <span onclick="removeHubLabel(\'allow\',' + "'" + esc(l) + "'" + ')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-allow-label-input" placeholder="e.g. good-first-issue, help-wanted" style="flex:1" onkeydown="if(event.key==='Enter'){addHubLabel('allow');event.preventDefault()}"><button onclick="addHubLabel('allow')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
-
-        <div class="config-field">
-          <label>Deny Labels <span class="config-info">i<span class="config-tooltip">Issues with these labels will never be queued for contributors.</span></span></label>
-          <div id="hub-deny-labels" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${denyLabels.map(function(l) { return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:rgba(248,81,73,0.15);color:var(--red);border:1px solid rgba(248,81,73,0.3)">' + esc(l) + ' <span onclick="removeHubLabel(\'deny\',' + "'" + esc(l) + "'" + ')" style="cursor:pointer;opacity:0.7">✕</span></span>'; }).join('')}</div>
-          <div style="display:flex;gap:4px"><input type="text" id="hub-deny-label-input" placeholder="e.g. hold, wontfix, duplicate" style="flex:1" onkeydown="if(event.key==='Enter'){addHubLabel('deny');event.preventDefault()}"><button onclick="addHubLabel('deny')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>
-        </div>
+        ${renderFilterWithMode({
+          label: 'Labels', noun: 'label', unit: 'issue', perLabel: true,
+          modeKey: 'contribute_labels_mode', listKey: 'contribute_deny_labels',
+          mode: labelsMode, list: denyLabels, inputId: 'hub-deny-label-input',
+          placeholder: 'e.g. good-first-issue, help-wanted'
+        })}
 
         <div class="config-field">
           <label>Repos for Contribute <span class="config-info">i<span class="config-tooltip">Toggle which repos serve work to contributors. New repos default to on.</span></span></label>
@@ -13637,26 +13757,57 @@ function burnAreaChart() {
       }
     }
 
-    function addHubLabel(type) {
-      var input = document.getElementById('hub-' + type + '-label-input');
-      var val = (input.value || '').trim();
-      if (!val) return;
-      var key = type === 'allow' ? 'contribute_allow_labels' : 'contribute_deny_labels';
-      if (!_configState.data.hub) _configState.data.hub = {};
-      if (!_configState.data.hub[key]) _configState.data.hub[key] = [];
-      if (_configState.data.hub[key].indexOf(val) === -1) {
-        _configState.data.hub[key].push(val);
-        markDirty('hub', key, _configState.data.hub[key]);
+    // renderFilterWithMode renders one contribute filter as a mode toggle
+    // (Allow only / Deny) plus a single list of patterns — the well-known
+    // allowlist/denylist pattern. cfg: {label, noun, unit, modeKey, listKey,
+    // mode, list, inputId, placeholder, perLabel}. In allow mode the chips are
+    // green and the helper says only-these pass; in deny mode they're red and
+    // the helper says these-are-skipped. perLabel tweaks the copy for labels
+    // (a set) vs a scalar title/author.
+    function renderFilterWithMode(cfg) {
+      var isAllow = cfg.mode === 'allow';
+      var chipBg = isAllow ? 'rgba(34,197,94,0.15)' : 'rgba(248,81,73,0.15)';
+      var chipColor = isAllow ? 'var(--green)' : 'var(--red)';
+      var chipBorder = isAllow ? 'rgba(34,197,94,0.3)' : 'rgba(248,81,73,0.3)';
+      var help;
+      if (isAllow) {
+        help = cfg.perLabel
+          ? 'Only ' + cfg.unit + 's carrying one of these labels are worked; everything else is skipped.'
+          : 'Only ' + cfg.unit + 's whose ' + cfg.noun + ' matches are worked; everything else is skipped.';
+        if ((cfg.list || []).length === 0) help += ' (List is empty — filter is off until you add a pattern.)';
+      } else {
+        help = cfg.perLabel
+          ? cfg.unit.charAt(0).toUpperCase() + cfg.unit.slice(1) + 's carrying any of these labels are skipped; everything else is worked.'
+          : cfg.unit.charAt(0).toUpperCase() + cfg.unit.slice(1) + 's whose ' + cfg.noun + ' matches are skipped; everything else is worked.';
       }
-      input.value = '';
-      renderConfigTab('Hub');
+      function seg(m, text) {
+        var on = cfg.mode === m;
+        return '<button onclick="setHubFilterMode(\'' + cfg.modeKey + '\',\'' + m + '\')" ' +
+          'style="padding:3px 12px;border:1px solid var(--border);cursor:pointer;font-size:0.72rem;' +
+          (m === 'allow' ? 'border-radius:6px 0 0 6px;' : 'border-radius:0 6px 6px 0;border-left:none;') +
+          (on ? 'background:' + (m === 'allow' ? 'var(--green)' : 'var(--red)') + ';color:#fff;font-weight:600;' : 'background:var(--bg);color:var(--muted);') +
+          '">' + text + '</button>';
+      }
+      var chips = (cfg.list || []).map(function(v) {
+        return '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:9999px;font-size:0.72rem;background:' + chipBg + ';color:' + chipColor + ';border:1px solid ' + chipBorder + '">' +
+          esc(v) + ' <span onclick="removeHubFilter(\'' + cfg.listKey + '\',\'' + esc(v).replace(/'/g, "\\'") + '\')" style="cursor:pointer;opacity:0.7">✕</span></span>';
+      }).join('');
+      return '<div class="config-field">' +
+        '<label>' + cfg.label + ' <span class="config-info">i<span class="config-tooltip">Choose a mode, then add patterns. Supports wildcards (*) and regex (/pattern/).</span></span></label>' +
+        '<div style="display:inline-flex;margin-bottom:6px">' + seg('allow', 'Allow only these') + seg('deny', 'Deny these') + '</div>' +
+        '<div style="font-size:0.68rem;color:var(--muted);margin-bottom:6px">' + help + '</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">' + chips + '</div>' +
+        '<div style="display:flex;gap:4px"><input type="text" id="' + cfg.inputId + '" placeholder="' + cfg.placeholder + '" style="flex:1" ' +
+          'onkeydown="if(event.key===\'Enter\'){addHubFilter(\'' + cfg.listKey + '\',\'' + cfg.inputId + '\');event.preventDefault()}">' +
+          '<button onclick="addHubFilter(\'' + cfg.listKey + '\',\'' + cfg.inputId + '\')" style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;font-size:0.75rem">Add</button></div>' +
+        '</div>';
     }
 
-    function removeHubLabel(type, label) {
-      var key = type === 'allow' ? 'contribute_allow_labels' : 'contribute_deny_labels';
-      if (!_configState.data.hub || !_configState.data.hub[key]) return;
-      _configState.data.hub[key] = _configState.data.hub[key].filter(function(l) { return l !== label; });
-      markDirty('hub', key, _configState.data.hub[key]);
+    // setHubFilterMode switches a filter between allow and deny mode.
+    function setHubFilterMode(modeKey, mode) {
+      if (!_configState.data.hub) _configState.data.hub = {};
+      _configState.data.hub[modeKey] = mode;
+      markDirty('hub', modeKey, mode);
       renderConfigTab('Hub');
     }
 
@@ -14614,17 +14765,154 @@ function burnAreaChart() {
       return html;
     }
 
-    function renderAgentLastPrompt(prompt) {
-      if (!prompt) {
-        return `<div style="display:flex;flex-direction:column;height:100%">
-          <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px">The fully expanded prompt sent to this agent on its most recent kick.</p>
-          <div class="config-pre config-pre-fill" style="color:var(--muted);font-style:italic">(awaiting first kick)</div>
-          </div>`;
-      }
+    // ── Agent Prompt History ──
+    //
+    // Shows the prompts (kicks) this agent actually received over a selectable
+    // window, newest first, so an owner can answer "what was my agent asked to
+    // do, and when?" without reading server logs. Data comes from
+    // GET /api/prompt-history, which is role-gated exactly like /api/audit.
+
+    // Selectable windows, in hours. "Last day" and "last week" are the two the
+    // feature request named; 1h is a convenience for watching a live hive.
+    const PROMPT_HISTORY_WINDOWS = [
+      { hours: 1, label: 'Last hour' },
+      { hours: 24, label: 'Last day' },
+      { hours: 168, label: 'Last week' },
+    ];
+    const PROMPT_HISTORY_DEFAULT_WINDOW_HOURS = 24;
+
+    // Per-agent memory of the chosen window, so switching tabs or reopening the
+    // dialog keeps the selection.
+    const _promptHistoryWindow = {};
+    // Newest-first entries currently rendered, indexed by the list's data-idx.
+    let _promptHistoryEntries = [];
+
+    function renderAgentPromptHistoryShell() {
+      const agent = _configState.agent || '';
+      const selected = _promptHistoryWindow[agent] || PROMPT_HISTORY_DEFAULT_WINDOW_HOURS;
+      const opts = PROMPT_HISTORY_WINDOWS.map(function(w) {
+        return '<option value="' + w.hours + '"' + (w.hours === selected ? ' selected' : '') + '>' + esc(w.label) + '</option>';
+      }).join('');
       return `<div style="display:flex;flex-direction:column;height:100%">
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">The fully expanded prompt sent to this agent on its most recent kick — all variables resolved, pipeline data injected.</p>
-        <div class="config-pre config-pre-fill" style="font-family:inherit;font-size:0.78rem;line-height:1.6">${formatMarkdownPrompt(prompt)}</div>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">Prompts sent to this agent — fully expanded, all variables resolved and pipeline data injected. Newest first.</p>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-shrink:0">
+          <label for="prompt-history-window" style="font-size:0.75rem;color:var(--muted)">Window</label>
+          <select id="prompt-history-window" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.75rem">${opts}</select>
+          <span id="prompt-history-count" style="font-size:0.7rem;color:var(--muted)"></span>
+        </div>
+        <div id="prompt-history-list" class="config-pre-fill" style="flex:1;min-height:200px;overflow-y:auto">
+          <div style="color:var(--muted);font-style:italic;padding:8px">Loading prompts…</div>
+        </div>
         </div>`;
+    }
+
+    function initAgentPromptHistory() {
+      const sel = document.getElementById('prompt-history-window');
+      if (sel) {
+        sel.addEventListener('change', function() {
+          const agent = _configState.agent || '';
+          _promptHistoryWindow[agent] = parseInt(sel.value, 10) || PROMPT_HISTORY_DEFAULT_WINDOW_HOURS;
+          loadAgentPromptHistory();
+        });
+      }
+      loadAgentPromptHistory();
+    }
+
+    async function loadAgentPromptHistory() {
+      const agent = _configState.agent || '';
+      const list = document.getElementById('prompt-history-list');
+      if (!list) return;
+      const hours = _promptHistoryWindow[agent] || PROMPT_HISTORY_DEFAULT_WINDOW_HOURS;
+      try {
+        const resp = await fetch('/api/prompt-history?agent=' + encodeURIComponent(agent) + '&windowHours=' + hours);
+        if (resp.status === 403) {
+          list.innerHTML = '<div style="color:var(--muted);padding:8px">You do not have access to prompt history.</div>';
+          return;
+        }
+        if (!resp.ok) {
+          list.innerHTML = '<div style="color:var(--muted);padding:8px">Could not load prompt history.</div>';
+          return;
+        }
+        const data = await resp.json();
+        // Guard: a failed or partial response can leave entries undefined.
+        _promptHistoryEntries = (data && data.entries) || [];
+        renderAgentPromptHistoryList();
+      } catch (e) {
+        list.innerHTML = '<div style="color:var(--muted);padding:8px">Could not load prompt history.</div>';
+      }
+    }
+
+    function promptHistoryRelativeTime(iso) {
+      const t = Date.parse(iso);
+      if (isNaN(t)) return '—';
+      const secs = Math.floor((Date.now() - t) / 1000);
+      const MIN = 60, HOUR = 3600, DAY = 86400;
+      if (secs < MIN) return 'just now';
+      if (secs < HOUR) return Math.floor(secs / MIN) + 'm ago';
+      if (secs < DAY) return Math.floor(secs / HOUR) + 'h ago';
+      return Math.floor(secs / DAY) + 'd ago';
+    }
+
+    // Trigger badge colors. Keys match the triggers the agent manager records.
+    const PROMPT_TRIGGER_COLORS = {
+      'startup': 'var(--blue)',
+      'governor-eval': 'var(--green)',
+      'dashboard-api': 'var(--purple)',
+      'send-kick': 'var(--purple)',
+      'manual': 'var(--amber)',
+    };
+
+    function renderAgentPromptHistoryList() {
+      const list = document.getElementById('prompt-history-list');
+      const countEl = document.getElementById('prompt-history-count');
+      if (!list) return;
+      const entries = _promptHistoryEntries || [];
+      if (countEl) countEl.textContent = entries.length ? entries.length + (entries.length === 1 ? ' prompt' : ' prompts') : '';
+      if (!entries.length) {
+        // Genuine empty state — this agent has not been kicked in the window.
+        list.innerHTML = '<div style="color:var(--muted);font-style:italic;padding:8px">(awaiting first kick)</div>';
+        return;
+      }
+      list.innerHTML = entries.map(function(e, i) {
+        const trigger = (e && e.trigger) || 'unknown';
+        const color = PROMPT_TRIGGER_COLORS[trigger] || 'var(--muted)';
+        const ts = (e && e.ts) || '';
+        const absolute = ts ? new Date(ts).toLocaleString() : '';
+        // Every field below is untrusted: prompt bodies embed repo content,
+        // issue titles and knowledge-base text. esc() here escapes & < > " '
+        // and backticks; the body uses escPreserveNewlines so line structure
+        // survives inside the <pre>. No inline handlers anywhere — the toggle
+        // is wired by data-idx + addEventListener below.
+        const truncNote = (e && e.truncated)
+          ? '<span style="font-size:0.65rem;color:var(--amber);margin-left:6px">truncated</span>'
+          : '';
+        return '<div style="border:1px solid var(--border);border-radius:6px;margin-bottom:6px;overflow:hidden">' +
+          '<button type="button" class="prompt-history-toggle" data-idx="' + i + '" ' +
+            'style="width:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg);border:none;cursor:pointer;text-align:left;color:var(--text);font-size:0.75rem">' +
+            '<span class="prompt-history-chevron" style="color:var(--muted);flex-shrink:0">▶</span>' +
+            '<span title="' + esc(absolute) + '" style="color:var(--muted);white-space:nowrap">' + esc(promptHistoryRelativeTime(ts)) + '</span>' +
+            '<span style="padding:1px 6px;border-radius:4px;font-size:0.65rem;border:1px solid ' + color + ';color:' + color + ';white-space:nowrap">' + esc(trigger) + '</span>' +
+            truncNote +
+          '</button>' +
+          '<pre class="prompt-history-body" data-idx="' + i + '" style="display:none;margin:0;padding:10px 12px;background:var(--bg);border-top:1px solid var(--border);font-family:var(--font-mono);font-size:0.72rem;line-height:1.5;white-space:pre-wrap;overflow-x:auto;color:var(--text)">' +
+            escPreserveNewlines((e && e.prompt) || '') +
+          '</pre>' +
+          '</div>';
+      }).join('');
+
+      // Collapse/expand per entry. Prompts run to tens of kilobytes, so the
+      // list stays scannable and only the opened one is shown in full.
+      list.querySelectorAll('.prompt-history-toggle').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          const idx = btn.getAttribute('data-idx');
+          const body = list.querySelector('.prompt-history-body[data-idx="' + idx + '"]');
+          if (!body) return;
+          const open = body.style.display !== 'none';
+          body.style.display = open ? 'none' : 'block';
+          const chev = btn.querySelector('.prompt-history-chevron');
+          if (chev) chev.textContent = open ? '▶' : '▼';
+        });
+      });
     }
 
     // ── Governor Tab Renderers ──
@@ -15937,6 +16225,19 @@ function burnAreaChart() {
             img.alt = username;
           }
           document.getElementById('oc-gh-menu-user').textContent = username;
+          /* Point the menu's profile entry at the signed-in account, and show it
+             only once there is a login to point at. href is assigned as a
+             property (not interpolated into markup), so encodeURIComponent on
+             the path segment is the whole escaping story here. */
+          const profEl = document.getElementById('oc-gh-menu-profile');
+          if (profEl) {
+            if (username) {
+              profEl.href = ghProfileURL(username);
+              profEl.style.display = 'block';
+            } else {
+              profEl.style.display = 'none';
+            }
+          }
           const roleEl = document.getElementById('oc-gh-menu-role');
           if (roleEl && role) {
             roleEl.style.display = '';

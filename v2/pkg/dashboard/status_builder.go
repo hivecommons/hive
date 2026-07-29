@@ -804,7 +804,15 @@ func buildRepos(cfg *config.Config, actionable *github.ActionableResult) []Front
 	}
 
 	for _, repoName := range cfg.Project.Repos {
-		full := cfg.Project.Org + "/" + repoName
+		// A repo entry may be a bare name ("cuga-agent") or an explicit
+		// cross-org reference ("laredo/cuga-agent") — both are supported config.
+		// Prefixing the org unconditionally turned the latter into
+		// "laredo/laredo/cuga-agent" in the REPOSITORIES card and in every
+		// GitHub link built from it.
+		full := repoName
+		if !strings.Contains(repoName, "/") {
+			full = cfg.Project.Org + "/" + repoName
+		}
 
 		issueCount := 0
 		prCount := 0

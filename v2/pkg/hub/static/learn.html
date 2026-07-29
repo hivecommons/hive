@@ -267,6 +267,7 @@
       <a href="/">Hives</a>
       <a href="/#how-it-works">How it works</a>
       <a href="/learn">Learn</a>
+      <a href="/learn#architecture">Architecture</a>
       <a href="/reading">Reading</a>
       <a href="/get-started">Get Started</a>
       <a href="/dashboard" id="nav-dashboard" style="display:none">My Hives</a>
@@ -321,6 +322,83 @@
           <div class="loop-step"><span>surge</span><h3>All hands</h3><p>Critical backlog. Maximum cadence until drained.</p></div>
         </div>
       </div>
+    </section>
+
+    <!-- ── Architecture ── -->
+    <style>
+      .arch-intro { margin-bottom: 1.8rem; }
+      .arch-diagram { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 14px; padding: 1.4rem clamp(.8rem, 2.5vw, 1.6rem); margin: 1.2rem 0; overflow-x: auto; }
+      .arch-diagram > .arch-cap { color: var(--muted); font-size: .82rem; letter-spacing: .04em; text-transform: uppercase; margin: 0 0 .9rem; }
+      .arch-diagram .mermaid { display: flex; justify-content: center; min-width: 0; }
+      .arch-diagram .mermaid svg { max-width: 100%; height: auto; }
+      .arch-more { display: inline-flex; align-items: center; gap: .5rem; margin-top: 1.4rem; color: var(--blue); text-decoration: none; font-weight: 600; }
+      .arch-more:hover { text-decoration: underline; }
+      .arch-ports { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: .8rem; margin-top: 1.4rem; }
+      .arch-ports div { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .85rem 1rem; }
+      .arch-ports strong { color: var(--amber); font-variant-numeric: tabular-nums; }
+      .arch-ports p { margin: .25rem 0 0; color: var(--muted); font-size: .9rem; }
+    </style>
+    <section class="section-pad" id="architecture">
+      <div class="section-heading">
+        <p class="section-label">Reference architecture</p>
+        <h2>How the pieces fit</h2>
+        <p class="arch-intro">Hive ships as a single container: a Go binary is the brain, a Node proxy is the public front door, and <code>ttyd</code> exposes the agents&rsquo; terminals. Deterministic work (filtering, classification, merge-gating, permission enforcement) runs before any model sees a task &mdash; agents only make the judgment calls.</p>
+      </div>
+
+      <div class="arch-diagram">
+        <p class="arch-cap">System context</p>
+        <pre class="mermaid">
+flowchart LR
+    maintainer["Maintainer"] -->|dashboard| hive
+    contributor["Contributor"] -->|donates compute| hive
+    subgraph hive["Hive (one container)"]
+      core["Orchestrator + agents"]
+    end
+    hive <-->|"REST / git via MITM proxy"| github["GitHub"]
+    hive <-->|inference| models["Model backends"]
+    hive -->|"heartbeat / 2 min"| hub["Hive Hub"]
+    hive -->|alerts| notify["ntfy / Slack / Discord"]
+        </pre>
+      </div>
+
+      <div class="arch-diagram">
+        <p class="arch-cap">The governor loop &mdash; queue depth to a kick</p>
+        <pre class="mermaid">
+flowchart TB
+    enum["Enumerate actionable<br/>issues / PRs"] --> pipe["Deterministic pipeline<br/>classify · merge-gate · enforce"]
+    pipe --> mode{"Mode by issue count"}
+    mode -->|"&gt; surge"| SURGE
+    mode -->|"&gt; busy"| BUSY
+    mode -->|"&gt; quiet"| QUIET
+    mode -->|else| IDLE
+    SURGE & BUSY & QUIET & IDLE --> cad["Per-agent cadence"]
+    cad --> due["Agents due for a kick"]
+    due --> kick["Type work order into tmux"]
+        </pre>
+      </div>
+
+      <div class="arch-diagram">
+        <p class="arch-cap">Layered guardrails &mdash; defense in depth</p>
+        <pre class="mermaid">
+flowchart LR
+    agent["AI agent"] --> l1["1 · CLI tool deny<br/>(gated by mode)"]
+    l1 --> l2["2 · Scoped token<br/>(least privilege)"]
+    l2 --> l3["3 · MITM proxy<br/>(method,path) → min mode<br/>+ repo allowlist"]
+    l3 --> gh["api.github.com"]
+    traj["Trajectory review"] -.->|"drift → pause"| agent
+        </pre>
+      </div>
+
+      <div class="arch-ports">
+        <div><strong>3001</strong><p>Dashboard (public front door)</p></div>
+        <div><strong>3002</strong><p>Internal Go API</p></div>
+        <div><strong>7681</strong><p>ttyd web terminal</p></div>
+        <div><strong>18443</strong><p>MITM GitHub proxy (loopback)</p></div>
+      </div>
+
+      <a class="arch-more" href="https://github.com/kubestellar/hive/blob/v2/v2/docs/architecture.md" target="_blank" rel="noopener">
+        Read the full reference architecture &rarr;
+      </a>
     </section>
 
     <!-- ── Agents ── -->
@@ -471,6 +549,31 @@
         rlRender(arts, d && d.updatedAt);
       }).catch(function () { rlRender(RL_SEED, null); });
     })();
+  </script>
+
+  <!-- Mermaid — renders the reference-architecture diagrams, themed to the dark palette -->
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: 'strict',
+      theme: 'base',
+      fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+      themeVariables: {
+        background: '#0d1218',
+        primaryColor: '#17212d',
+        primaryTextColor: '#f6f8fb',
+        primaryBorderColor: '#263545',
+        lineColor: '#a8b3c2',
+        secondaryColor: '#121922',
+        tertiaryColor: '#121922',
+        clusterBkg: '#0d1218',
+        clusterBorder: '#263545',
+        nodeTextColor: '#f6f8fb',
+        titleColor: '#f6f8fb',
+        edgeLabelBackground: '#0d1218'
+      }
+    });
   </script>
 </body>
 </html>

@@ -854,14 +854,18 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			title, _ := issue["title"].(string)
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
+			labels := stringSliceFromAny(issue["labels"])
 
-			var denyTitles, denyAuthors []string
+			// Apply the title / author / label contribute filters. Each is a
+			// single list plus a mode (allow = only matching pass; deny = matching
+			// skipped). Labels were previously not enforced at all.
 			if h.server.deps != nil && h.server.deps.Config != nil {
-				denyTitles = h.server.deps.Config.Hub.ContributeDenyTitles
-				denyAuthors = h.server.deps.Config.Hub.ContributeDenyAuthors
-			}
-			if config.MatchesAny(title, denyTitles) || config.MatchesAny(author, denyAuthors) {
-				continue
+				hub := h.server.deps.Config.Hub
+				if !config.FilterPasses(title, hub.ContributeDenyTitles, hub.ContributeTitlesMode) ||
+					!config.FilterPasses(author, hub.ContributeDenyAuthors, hub.ContributeAuthorsMode) ||
+					!config.LabelsFilterPasses(labels, hub.ContributeDenyLabels, hub.ContributeLabelsMode) {
+					continue
+				}
 			}
 
 			ghToken := ""
@@ -922,6 +926,23 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	}
 
 	return nil
+}
+
+// stringSliceFromAny coerces a JSON-decoded value (from an issue map marshaled
+// via encoding/json) into a []string. Labels arrive as []any of strings; any
+// non-string elements are skipped. Returns nil for a missing/other-typed value.
+func stringSliceFromAny(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		if s, ok := it.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func sendJSON(conn *websocket.Conn, msg WSMessage) error {
