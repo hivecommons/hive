@@ -5809,6 +5809,12 @@ const dashboardHTML = `<!DOCTYPE html>
     .hive-table td { padding: 12px; border-bottom: 1px solid #ffffff0a; vertical-align: middle; text-align: center; }
     .hive-table td:first-child { text-align: left; }
     .hive-table tr:hover td { background: rgba(244,199,95,0.04); }
+    /* Admin contact/CRM editor row. The .hive-table td rule above centres every
+       cell, which is right for the dense status columns but wrong for a form:
+       it centred the labels and the text inside the inputs. Fixed here on the
+       panel cell, which owns the form, rather than with !important per field. */
+    .contact-panel-cell { text-align: left; }
+    .contact-panel-cell input, .contact-panel-cell textarea { text-align: left; }
     .online-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
     .online-dot.on { background: var(--green); box-shadow: 0 0 6px rgba(116,223,154,0.5); }
     .online-dot.off { background: #6b7280; }
@@ -10510,8 +10516,9 @@ const dashboardHTML = `<!DOCTYPE html>
     // full width, so this must track the <th> count in renderUsers.
     var USERS_TABLE_COLSPAN = 8;
     // Rows of the notes textarea. Big enough for a short paragraph without
-    // pushing the next user off screen.
-    var CONTACT_NOTES_ROWS = 3;
+    // pushing the next user off screen. It is the only free-form prose field,
+    // so it gets the height as well as the width; still user-resizable.
+    var CONTACT_NOTES_ROWS = 4;
     // Characters of a note shown in the collapsed summary before ellipsis.
     var CONTACT_NOTES_PREVIEW_CHARS = 40;
     // Client-side maxlength on each field. Mirrors the server caps in saas.go
@@ -10521,9 +10528,97 @@ const dashboardHTML = `<!DOCTYPE html>
     var CONTACT_MAX_SLACK = 64;
     var CONTACT_MAX_NOTES = 8192;
 
+    // Field widths in the contact editor panel. The panel is its own full-width
+    // row spanning every column (USERS_TABLE_COLSPAN), so widening these does
+    // NOT add horizontal pressure to the already-dense main table — the fields
+    // only compete with each other for the row's width.
+    //
+    // Expressed as flex "grow basis" pairs in percent so the row reflows with
+    // the viewport instead of locking to pixel widths. The three bases sum to
+    // less than 100% so the gap between fields has room; the grow factors then
+    // divide the remainder, giving Notes the lion's share because it is
+    // free-form prose while the other two are short identifiers.
+    var CONTACT_W_NAME_BASIS = '22%';
+    var CONTACT_W_NAME_MIN = '190px';
+    var CONTACT_W_SLACK_BASIS = '18%';
+    var CONTACT_W_SLACK_MIN = '150px';
+    // Notes grows ~3x faster than the single-line fields and starts widest.
+    var CONTACT_W_NOTES_BASIS = '48%';
+    var CONTACT_W_NOTES_MIN = '320px';
+    var CONTACT_NOTES_GROW = 3;
+
     // Which users currently have their contact panel open, keyed by username.
     // Re-rendering on the admin poll must not slam a panel shut mid-edit.
     var _contactExpandedUsers = {};
+
+    // --- Protecting in-progress contact edits from the admin poll ---------
+    // renderUsers() rebuilds the whole users table via innerHTML, which
+    // destroys and recreates every contact input. The contact fields save on
+    // blur, so a value that has been typed but not yet blurred lives ONLY in
+    // the DOM node the re-render is about to throw away — losing it is real
+    // data loss, not a cosmetic reflow.
+    //
+    // Approach: defer the render while an edit is in progress, rather than
+    // trying to restore focus/caret/selection afterwards. Caret restoration
+    // across an innerHTML swap is fiddly and fails in exactly the cases that
+    // matter (IME composition, native undo history, a textarea scrolled
+    // mid-note), and it cannot restore the browser's undo stack at all. The
+    // users table is admin-only, low-churn data; postponing a refresh for a
+    // few seconds while someone types costs nothing.
+    //
+    // "In progress" deliberately means anywhere in the table, not just the
+    // focused node: an admin who typed a name, tabbed to Slack ID and is
+    // still typing has an unsaved name too, and yanking the row out from
+    // under them loses it just the same.
+
+    // How long after the last contact keystroke/blur the table is still
+    // considered "being edited". Long enough to cover thinking-pauses while
+    // composing a note, short enough that the table is not stale for long
+    // after the admin walks away mid-edit.
+    var CONTACT_EDIT_QUIET_MS = 5000;
+    // How often a deferred render re-checks whether editing has finished.
+    // Also the ceiling on how late a deferred render can be beyond the quiet
+    // window above.
+    var CONTACT_DEFER_RECHECK_MS = 1000;
+
+    // Timestamp of the most recent contact-field interaction, and the handle
+    // of the pending re-check timer (null when no render is deferred).
+    var _contactLastEditAt = 0;
+    var _contactDeferTimer = null;
+    // Set while a deferred render is waiting. The poll keeps updating _allUsers
+    // regardless; this only gates the DOM write, so the deferred render always
+    // paints the newest data rather than a stale snapshot.
+    var _contactRenderPending = false;
+
+    // Per-field dirty values: what the admin has typed but not yet saved,
+    // keyed by "username::field". Survives a render so that if one does slip
+    // through, the typed text is re-applied rather than lost. Multiple users'
+    // fields can be dirty at once (type a note, click into another user's
+    // Slack ID without blurring back), so this is a map, not a single slot.
+    var _contactDirty = {};
+
+    function contactDirtyKey(username, field) { return username + '::' + field; }
+
+    // markContactEditing records activity so the poll backs off.
+    function markContactEditing() { _contactLastEditAt = Date.now(); }
+
+    // contactEditInProgress is true when the table must not be rebuilt:
+    // either a contact control currently has focus, or something is typed and
+    // unsaved, or a keystroke landed within the quiet window.
+    function contactEditInProgress() {
+      var container = document.getElementById('users-container');
+      if (container) {
+        var active = document.activeElement;
+        if (active && active.getAttribute && active.getAttribute('data-contact-field') &&
+            container.contains(active)) {
+          return true;
+        }
+      }
+      for (var k in _contactDirty) {
+        if (Object.prototype.hasOwnProperty.call(_contactDirty, k)) return true;
+      }
+      return (Date.now() - _contactLastEditAt) < CONTACT_EDIT_QUIET_MS;
+    }
 
     // contactPanelId maps a username to a DOM id. Usernames are GitHub logins
     // (alphanumerics and hyphens) but this is defensive: anything outside that
@@ -10562,19 +10657,19 @@ const dashboardHTML = `<!DOCTYPE html>
       var lbl = 'display:block;font-size:0.66rem;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em';
       var user = escAttr(u.github_username);
       return '<tr id="' + contactPanelId(u.github_username) + '" style="display:' + (open ? '' : 'none') + '">' +
-        '<td colspan="' + USERS_TABLE_COLSPAN + '" style="background:var(--surface)">' +
+        '<td class="contact-panel-cell" colspan="' + USERS_TABLE_COLSPAN + '" style="background:var(--surface)">' +
         '<div style="padding:10px 14px 12px 40px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">' +
-          '<div style="flex:1 1 200px;min-width:170px">' +
+          '<div style="flex:1 1 ' + CONTACT_W_NAME_BASIS + ';min-width:' + CONTACT_W_NAME_MIN + '">' +
             '<label style="' + lbl + '">Full name</label>' +
             '<input type="text" data-contact-user="' + user + '" data-contact-field="full_name"' +
               ' maxlength="' + CONTACT_MAX_NAME + '" value="' + escAttr(u.full_name || '') + '" style="' + fld + '">' +
           '</div>' +
-          '<div style="flex:1 1 160px;min-width:140px">' +
+          '<div style="flex:1 1 ' + CONTACT_W_SLACK_BASIS + ';min-width:' + CONTACT_W_SLACK_MIN + '">' +
             '<label style="' + lbl + '">Slack ID</label>' +
             '<input type="text" data-contact-user="' + user + '" data-contact-field="slack_id"' +
               ' maxlength="' + CONTACT_MAX_SLACK + '" value="' + escAttr(u.slack_id || '') + '" style="' + fld + '">' +
           '</div>' +
-          '<div style="flex:2 1 320px;min-width:220px">' +
+          '<div style="flex:' + CONTACT_NOTES_GROW + ' 1 ' + CONTACT_W_NOTES_BASIS + ';min-width:' + CONTACT_W_NOTES_MIN + '">' +
             '<label style="' + lbl + '">Notes</label>' +
             '<textarea data-contact-user="' + user + '" data-contact-field="notes" rows="' + CONTACT_NOTES_ROWS + '"' +
               ' maxlength="' + CONTACT_MAX_NOTES + '" style="' + fld + ';resize:vertical;font-family:inherit">' + esc(u.notes || '') + '</textarea>' +
@@ -10599,10 +10694,35 @@ const dashboardHTML = `<!DOCTYPE html>
       });
       var fields = container.querySelectorAll('[data-contact-field]');
       Array.prototype.forEach.call(fields || [], function(el) {
+        var user = el.getAttribute('data-contact-user');
+        var field = el.getAttribute('data-contact-field');
+        var key = contactDirtyKey(user, field);
+        // Re-apply anything typed but not yet saved. Belt-and-braces: the
+        // render gate should mean we never rebuild mid-edit, but if a render
+        // does land (e.g. one already in flight when typing began), the typed
+        // text is restored instead of silently reverting to the server value.
+        if (Object.prototype.hasOwnProperty.call(_contactDirty, key)) {
+          el.value = _contactDirty[key];
+        }
+        // Any keystroke marks the table as being edited and records the
+        // in-progress value, so the poll backs off and nothing typed is only
+        // ever held in a DOM node that is about to be replaced.
+        el.addEventListener('input', function() {
+          markContactEditing();
+          _contactDirty[key] = el.value;
+        });
+        // focus/blur also count as activity: tabbing between fields must not
+        // leave a gap the poll can render into.
+        el.addEventListener('focus', markContactEditing);
         // Save on blur so an admin can tab between fields and type freely
         // without a request per keystroke.
         el.addEventListener('blur', function() {
-          saveContactField(el.getAttribute('data-contact-user'), el.getAttribute('data-contact-field'), el.value);
+          markContactEditing();
+          // Clear dirty only after handing the value to the save path, so
+          // there is no window where the value is neither dirty nor saved.
+          var pending = el.value;
+          saveContactField(user, field, pending);
+          delete _contactDirty[key];
         });
       });
     }
@@ -10634,9 +10754,32 @@ const dashboardHTML = `<!DOCTYPE html>
       updateUser(username, payload);
     }
 
+    // scheduleDeferredUsersRender keeps re-checking until editing has stopped
+    // and then renders. This is what guarantees a deferred refresh actually
+    // happens: the timer re-arms itself on every check that still sees an edit
+    // in progress, so the only way out of the loop is an actual render. It is
+    // never cleared without rendering, and only one timer is ever in flight.
+    function scheduleDeferredUsersRender() {
+      _contactRenderPending = true;
+      if (_contactDeferTimer) return;
+      _contactDeferTimer = setTimeout(function() {
+        _contactDeferTimer = null;
+        if (contactEditInProgress()) { scheduleDeferredUsersRender(); return; }
+        _contactRenderPending = false;
+        // Re-derive from the latest _allUsers rather than replaying the
+        // snapshot that was deferred, so the render that finally lands shows
+        // current data and not whatever the poll saw minutes ago.
+        try { applySortUsers(); } catch (e) { console.error('deferred renderUsers error:', e); }
+      }, CONTACT_DEFER_RECHECK_MS);
+    }
+
     function renderUsers(users, force) {
       var sig = JSON.stringify(users);
       if (!force && sig === _lastUsersJSON) return;
+      // Never rebuild the table out from under an in-progress contact edit —
+      // the inputs save on blur, so unblurred text exists only in the DOM.
+      // The data is already in _allUsers; only the DOM write is postponed.
+      if (contactEditInProgress()) { scheduleDeferredUsersRender(); return; }
       _lastUsersJSON = sig;
       if (!users.length) { document.getElementById('users-container').innerHTML = '<div class="loading">No users found</div>'; return; }
       var rows = users.map(function(u) {
