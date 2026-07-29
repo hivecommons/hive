@@ -12000,7 +12000,11 @@ function burnAreaChart() {
     let _configState = { type: null, agent: null, tab: null, data: {}, dirty: {} };
     const _configTabMemory = {};
 
-    const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', 'Last Prompt', 'Export'];
+    // The prompt-history tab. Renamed from 'Last Prompt' when it grew from a
+    // single most-recent prompt into a browsable history; kept to one short
+    // word because it sits in a crowded tab strip.
+    const AGENT_PROMPTS_TAB = 'Prompts';
+    const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', AGENT_PROMPTS_TAB, 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
     const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
@@ -12450,6 +12454,9 @@ function burnAreaChart() {
       const body = document.getElementById('config-body');
       if (_configState.type === 'agent') {
         body.innerHTML = renderAgentTab(tabId);
+        // The Prompts tab renders a shell synchronously, then loads this
+        // agent's kick history over the selected time window.
+        if (tabId === AGENT_PROMPTS_TAB) initAgentPromptHistory();
       } else {
         body.innerHTML = renderGovernorTab(tabId);
         if (tabId === 'Hub') fetchQueueCount();
@@ -12571,7 +12578,7 @@ function burnAreaChart() {
         case 'Connections': return renderAgentConnections(d.connections || []);
         case 'Stats': return renderAgentStatsTab(d.stats || []);
         case 'Prompt Template': return renderAgentPromptTemplate();
-        case 'Last Prompt': return renderAgentLastPrompt(d.prompt || '');
+        case AGENT_PROMPTS_TAB: return renderAgentPromptHistoryShell();
         case 'Export': return renderAgentExport();
         default: return '';
       }
@@ -14676,17 +14683,154 @@ function burnAreaChart() {
       return html;
     }
 
-    function renderAgentLastPrompt(prompt) {
-      if (!prompt) {
-        return `<div style="display:flex;flex-direction:column;height:100%">
-          <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px">The fully expanded prompt sent to this agent on its most recent kick.</p>
-          <div class="config-pre config-pre-fill" style="color:var(--muted);font-style:italic">(awaiting first kick)</div>
-          </div>`;
-      }
+    // ── Agent Prompt History ──
+    //
+    // Shows the prompts (kicks) this agent actually received over a selectable
+    // window, newest first, so an owner can answer "what was my agent asked to
+    // do, and when?" without reading server logs. Data comes from
+    // GET /api/prompt-history, which is role-gated exactly like /api/audit.
+
+    // Selectable windows, in hours. "Last day" and "last week" are the two the
+    // feature request named; 1h is a convenience for watching a live hive.
+    const PROMPT_HISTORY_WINDOWS = [
+      { hours: 1, label: 'Last hour' },
+      { hours: 24, label: 'Last day' },
+      { hours: 168, label: 'Last week' },
+    ];
+    const PROMPT_HISTORY_DEFAULT_WINDOW_HOURS = 24;
+
+    // Per-agent memory of the chosen window, so switching tabs or reopening the
+    // dialog keeps the selection.
+    const _promptHistoryWindow = {};
+    // Newest-first entries currently rendered, indexed by the list's data-idx.
+    let _promptHistoryEntries = [];
+
+    function renderAgentPromptHistoryShell() {
+      const agent = _configState.agent || '';
+      const selected = _promptHistoryWindow[agent] || PROMPT_HISTORY_DEFAULT_WINDOW_HOURS;
+      const opts = PROMPT_HISTORY_WINDOWS.map(function(w) {
+        return '<option value="' + w.hours + '"' + (w.hours === selected ? ' selected' : '') + '>' + esc(w.label) + '</option>';
+      }).join('');
       return `<div style="display:flex;flex-direction:column;height:100%">
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">The fully expanded prompt sent to this agent on its most recent kick — all variables resolved, pipeline data injected.</p>
-        <div class="config-pre config-pre-fill" style="font-family:inherit;font-size:0.78rem;line-height:1.6">${formatMarkdownPrompt(prompt)}</div>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:8px;flex-shrink:0">Prompts sent to this agent — fully expanded, all variables resolved and pipeline data injected. Newest first.</p>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-shrink:0">
+          <label for="prompt-history-window" style="font-size:0.75rem;color:var(--muted)">Window</label>
+          <select id="prompt-history-window" style="padding:4px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.75rem">${opts}</select>
+          <span id="prompt-history-count" style="font-size:0.7rem;color:var(--muted)"></span>
+        </div>
+        <div id="prompt-history-list" class="config-pre-fill" style="flex:1;min-height:200px;overflow-y:auto">
+          <div style="color:var(--muted);font-style:italic;padding:8px">Loading prompts…</div>
+        </div>
         </div>`;
+    }
+
+    function initAgentPromptHistory() {
+      const sel = document.getElementById('prompt-history-window');
+      if (sel) {
+        sel.addEventListener('change', function() {
+          const agent = _configState.agent || '';
+          _promptHistoryWindow[agent] = parseInt(sel.value, 10) || PROMPT_HISTORY_DEFAULT_WINDOW_HOURS;
+          loadAgentPromptHistory();
+        });
+      }
+      loadAgentPromptHistory();
+    }
+
+    async function loadAgentPromptHistory() {
+      const agent = _configState.agent || '';
+      const list = document.getElementById('prompt-history-list');
+      if (!list) return;
+      const hours = _promptHistoryWindow[agent] || PROMPT_HISTORY_DEFAULT_WINDOW_HOURS;
+      try {
+        const resp = await fetch('/api/prompt-history?agent=' + encodeURIComponent(agent) + '&windowHours=' + hours);
+        if (resp.status === 403) {
+          list.innerHTML = '<div style="color:var(--muted);padding:8px">You do not have access to prompt history.</div>';
+          return;
+        }
+        if (!resp.ok) {
+          list.innerHTML = '<div style="color:var(--muted);padding:8px">Could not load prompt history.</div>';
+          return;
+        }
+        const data = await resp.json();
+        // Guard: a failed or partial response can leave entries undefined.
+        _promptHistoryEntries = (data && data.entries) || [];
+        renderAgentPromptHistoryList();
+      } catch (e) {
+        list.innerHTML = '<div style="color:var(--muted);padding:8px">Could not load prompt history.</div>';
+      }
+    }
+
+    function promptHistoryRelativeTime(iso) {
+      const t = Date.parse(iso);
+      if (isNaN(t)) return '—';
+      const secs = Math.floor((Date.now() - t) / 1000);
+      const MIN = 60, HOUR = 3600, DAY = 86400;
+      if (secs < MIN) return 'just now';
+      if (secs < HOUR) return Math.floor(secs / MIN) + 'm ago';
+      if (secs < DAY) return Math.floor(secs / HOUR) + 'h ago';
+      return Math.floor(secs / DAY) + 'd ago';
+    }
+
+    // Trigger badge colors. Keys match the triggers the agent manager records.
+    const PROMPT_TRIGGER_COLORS = {
+      'startup': 'var(--blue)',
+      'governor-eval': 'var(--green)',
+      'dashboard-api': 'var(--purple)',
+      'send-kick': 'var(--purple)',
+      'manual': 'var(--amber)',
+    };
+
+    function renderAgentPromptHistoryList() {
+      const list = document.getElementById('prompt-history-list');
+      const countEl = document.getElementById('prompt-history-count');
+      if (!list) return;
+      const entries = _promptHistoryEntries || [];
+      if (countEl) countEl.textContent = entries.length ? entries.length + (entries.length === 1 ? ' prompt' : ' prompts') : '';
+      if (!entries.length) {
+        // Genuine empty state — this agent has not been kicked in the window.
+        list.innerHTML = '<div style="color:var(--muted);font-style:italic;padding:8px">(awaiting first kick)</div>';
+        return;
+      }
+      list.innerHTML = entries.map(function(e, i) {
+        const trigger = (e && e.trigger) || 'unknown';
+        const color = PROMPT_TRIGGER_COLORS[trigger] || 'var(--muted)';
+        const ts = (e && e.ts) || '';
+        const absolute = ts ? new Date(ts).toLocaleString() : '';
+        // Every field below is untrusted: prompt bodies embed repo content,
+        // issue titles and knowledge-base text. esc() here escapes & < > " '
+        // and backticks; the body uses escPreserveNewlines so line structure
+        // survives inside the <pre>. No inline handlers anywhere — the toggle
+        // is wired by data-idx + addEventListener below.
+        const truncNote = (e && e.truncated)
+          ? '<span style="font-size:0.65rem;color:var(--amber);margin-left:6px">truncated</span>'
+          : '';
+        return '<div style="border:1px solid var(--border);border-radius:6px;margin-bottom:6px;overflow:hidden">' +
+          '<button type="button" class="prompt-history-toggle" data-idx="' + i + '" ' +
+            'style="width:100%;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--bg);border:none;cursor:pointer;text-align:left;color:var(--text);font-size:0.75rem">' +
+            '<span class="prompt-history-chevron" style="color:var(--muted);flex-shrink:0">▶</span>' +
+            '<span title="' + esc(absolute) + '" style="color:var(--muted);white-space:nowrap">' + esc(promptHistoryRelativeTime(ts)) + '</span>' +
+            '<span style="padding:1px 6px;border-radius:4px;font-size:0.65rem;border:1px solid ' + color + ';color:' + color + ';white-space:nowrap">' + esc(trigger) + '</span>' +
+            truncNote +
+          '</button>' +
+          '<pre class="prompt-history-body" data-idx="' + i + '" style="display:none;margin:0;padding:10px 12px;background:var(--bg);border-top:1px solid var(--border);font-family:var(--font-mono);font-size:0.72rem;line-height:1.5;white-space:pre-wrap;overflow-x:auto;color:var(--text)">' +
+            escPreserveNewlines((e && e.prompt) || '') +
+          '</pre>' +
+          '</div>';
+      }).join('');
+
+      // Collapse/expand per entry. Prompts run to tens of kilobytes, so the
+      // list stays scannable and only the opened one is shown in full.
+      list.querySelectorAll('.prompt-history-toggle').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          const idx = btn.getAttribute('data-idx');
+          const body = list.querySelector('.prompt-history-body[data-idx="' + idx + '"]');
+          if (!body) return;
+          const open = body.style.display !== 'none';
+          body.style.display = open ? 'none' : 'block';
+          const chev = btn.querySelector('.prompt-history-chevron');
+          if (chev) chev.textContent = open ? '▶' : '▼';
+        });
+      });
     }
 
     // ── Governor Tab Renderers ──

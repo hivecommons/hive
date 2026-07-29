@@ -106,6 +106,10 @@ type Server struct {
 
 	audit *AuditLog
 
+	// promptHistory stores the fully-expanded kick prompts delivered to each
+	// agent, so an owner can review what their agents were actually told.
+	promptHistory *PromptHistory
+
 	versionMu           sync.RWMutex
 	cachedLatestHash    string
 	cachedLatestMessage string
@@ -470,6 +474,7 @@ func NewServer(port int, logger *slog.Logger) *Server {
 		agentPipelines: make(map[string]map[string]bool),
 		agentHooks:     make(map[string]map[string][]any),
 		audit:          newAuditLog(),
+		promptHistory:  newPromptHistory(),
 		userSessions:   make(map[string]*userSession),
 		cliModels:      newCLIModelCache(),
 		startedAt:      time.Now(),
@@ -488,6 +493,7 @@ func NewServerWithAuth(port int, authToken string, logger *slog.Logger) *Server 
 		agentPipelines: make(map[string]map[string]bool),
 		agentHooks:     make(map[string]map[string][]any),
 		audit:          newAuditLog(),
+		promptHistory:  newPromptHistory(),
 		userSessions:   make(map[string]*userSession),
 		cliModels:      newCLIModelCache(),
 		startedAt:      time.Now(),

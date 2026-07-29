@@ -1376,6 +1376,12 @@ func main() {
 		_ = changed
 	})
 
+	// Persist the fully-expanded prompt text of every kick so owners can review
+	// what their agents were actually told, over a day/week window, in the
+	// per-agent "Prompts" tab. Redaction and truncation happen inside the
+	// store, before anything is written to the PVC.
+	agentMgr.SetRecordPromptCallback(dashSrv.RecordPrompt)
+
 	// Register custom GHE hostnames with the proxy allowlist so mode
 	// enforcement applies to GitHub Enterprise API and web requests.
 	for _, rawURL := range []string{cfg.GitHub.ResolvedAPIURL(), cfg.GitHub.ResolvedBaseURL()} {
