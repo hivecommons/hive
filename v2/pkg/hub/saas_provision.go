@@ -1285,13 +1285,18 @@ spec:
           # /api/livez (not /api/health) so a heartbeat goroutine that dies
           # silently while the HTTP server stays up still gets caught and the
           # pod restarted. /api/health only proves the dashboard's HTTP
-          # server is responsive; it does not check heartbeat freshness, so
-          # a hive with a dead heartbeat goroutine but a live server would
-          # otherwise stay 1/1 Running forever while the hub shows it
-          # offline (gray dot) with nothing to recover it. See
-          # pkg/dashboard/server.go handleLivez for the staleness threshold
-          # and startup-grace handling; hives without a hub configured are
-          # exempt (guarded by hub.HeartbeatEnabled()).
+          # server is responsive; it does not check that the heartbeat loop is
+          # still running, so a hive with a wedged loop but a live server
+          # would otherwise stay 1/1 Running forever while the hub shows it
+          # offline (gray dot) with nothing to recover it.
+          #
+          # /api/livez keys off heartbeat *attempts*, not successes, so an
+          # unreachable or rejecting hub never kills the pod — a restart
+          # cannot fix a network partition, and gating on it crash-looped
+          # healthy spokes on firewalled clusters. Heartbeat freshness is
+          # reported via /api/health/deep instead. See
+          # pkg/dashboard/server.go handleLivez; hives without a hub
+          # configured are exempt (guarded by hub.HeartbeatEnabled()).
           httpGet:
             path: /api/livez
             port: {{.DashboardPort}}

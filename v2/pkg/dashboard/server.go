@@ -1217,39 +1217,58 @@ const (
 	// isn't exported. If that interval ever changes, update both.
 	heartbeatSendInterval = 2 * time.Minute
 
-	// livezHeartbeatStaleMax is how old the last successful heartbeat may be
+	// livezHeartbeatStallMax is how old the last heartbeat *attempt* may be
 	// before /api/livez reports unhealthy. Set to 3x the send interval (6
-	// minutes): generous enough to absorb one or two transient hub-side
-	// failures (network blip, hub restart, rate limit) without flapping the
-	// pod, but tight enough that a genuinely dead heartbeat goroutine gets
-	// caught and the pod restarted well within a single human-observable
-	// "gray dot" investigation window.
-	livezHeartbeatStaleMax = 3 * heartbeatSendInterval
+	// minutes): long enough to absorb a couple of missed ticks under CPU
+	// starvation or a slow hub round trip without flapping the pod, but tight
+	// enough that a genuinely wedged loop is caught within a single
+	// human-observable "gray dot" investigation window.
+	//
+	// Deliberately measured against attempts, not successes: a hub that is
+	// down or unreachable leaves successes arbitrarily stale while the loop
+	// keeps beating happily, and restarting the pod cannot fix a network
+	// partition. See handleLivez.
+	livezHeartbeatStallMax = 3 * heartbeatSendInterval
 
 	// livezStartupGrace bounds how long a freshly started process is treated
-	// as healthy before it has sent its first successful heartbeat. Covers
+	// as healthy before the heartbeat loop has made its first attempt. Covers
 	// waitForReady's own up-to-3-minute wait for the dashboard to come up
-	// plus one heartbeat send attempt and hub round trip. Without this, a
-	// pod would fail liveness during normal startup, before the heartbeat
-	// loop ever got a chance to succeed.
+	// plus one heartbeat send attempt. Without this, a pod would fail
+	// liveness during normal startup, before the heartbeat loop ever got a
+	// chance to run.
 	livezStartupGrace = 4 * time.Minute
 )
 
 // handleLivez is the liveness-only counterpart to /api/health. It includes
 // everything /api/health checks (the HTTP server itself is responsive) PLUS,
 // for hub-connected hives, a check that the heartbeat goroutine is actually
-// still beating. The heartbeat goroutine can silently die (panic recovered
-// upstream, deadlock, stuck HTTP call) while this HTTP server keeps serving
-// fine — that's the bug this endpoint exists to catch: before this endpoint
-// existed, /api/health stayed green in that case and kubelet had no reason
-// to ever restart the pod, so the hub kept showing the hive as offline
-// (gray dot) indefinitely even though the pod was 1/1 Running.
+// still running its loop. The heartbeat goroutine can silently die (panic
+// recovered upstream, deadlock, stuck HTTP call) while this HTTP server keeps
+// serving fine — that's the bug this endpoint exists to catch: /api/health
+// stays green in that case and kubelet has no reason to ever restart the pod,
+// so the hub keeps showing the hive as offline (gray dot) indefinitely even
+// though the pod is 1/1 Running.
+//
+// Crucially, "still running its loop" is measured by heartbeat *attempts*,
+// not *successes*. Those are very different conditions:
+//
+//   - Attempts stalled  => the goroutine is wedged. A restart revives it, so
+//     failing liveness is the correct and only remedy.
+//   - Successes stalled but attempts advancing => the hub is unreachable or
+//     rejecting. The process is perfectly healthy; restarting it cannot fix
+//     a network partition, and killing the pod every failureThreshold window
+//     just produces a crash-loop that outlives the outage. Routine on
+//     firewalled clusters that reach the hub only intermittently.
+//
+// Gating liveness on success staleness (as this endpoint originally did) made
+// every hub outage or firewall hiccup look like a dead process and got
+// healthy pods killed in a loop. Heartbeat *freshness* is a connectivity
+// signal, so it is reported via /api/health/deep and the hub's own
+// staleness marking (which already greys the dot) rather than via liveness.
 //
 // Only the livenessProbe should point here. Readiness stays on /api/health:
 // a transient hub outage would otherwise pull a perfectly-serving pod out of
-// the Service's endpoints for no benefit (restarting won't fix a hub that's
-// down). Liveness failing here IS the intended remedy for a dead heartbeat
-// goroutine, since a restart revives it.
+// the Service's endpoints for no benefit.
 func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
 	s.statusMu.RLock()
 	ready := s.ready
@@ -1264,25 +1283,30 @@ func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hives with no hub configured never run a heartbeat loop at all, so
-	// there is nothing to go stale — never gate their liveness on this.
+	// there is nothing to stall — never gate their liveness on this.
 	if hub.HeartbeatEnabled() {
-		lastSuccess, hasSucceededOnce := hub.LastHeartbeatSuccess()
+		lastAttempt, hasAttemptedOnce := hub.LastHeartbeatAttempt()
 		switch {
-		case !hasSucceededOnce:
+		case !hasAttemptedOnce:
+			// The loop has not reached its first send yet. Healthy during the
+			// startup grace (waitForReady legitimately holds it off for
+			// minutes); past that, the goroutine never got going.
 			if age := time.Since(s.startedAt); age > livezStartupGrace {
 				w.WriteHeader(http.StatusServiceUnavailable)
 				json.NewEncoder(w).Encode(map[string]string{
 					"status": "unhealthy",
-					"detail": "no successful heartbeat since startup",
+					"detail": "heartbeat loop never started sending",
 				})
 				return
 			}
-		case time.Since(lastSuccess) > livezHeartbeatStaleMax:
+		case time.Since(lastAttempt) > livezHeartbeatStallMax:
+			// Attempts have stopped advancing entirely — the loop is wedged,
+			// not merely unable to reach the hub. A restart is the remedy.
 			w.WriteHeader(http.StatusServiceUnavailable)
 			json.NewEncoder(w).Encode(map[string]string{
-				"status":            "unhealthy",
-				"detail":            "heartbeat stale",
-				"last_heartbeat_at": lastSuccess.UTC().Format(time.RFC3339),
+				"status":                    "unhealthy",
+				"detail":                    "heartbeat loop stalled",
+				"last_heartbeat_attempt_at": lastAttempt.UTC().Format(time.RFC3339),
 			})
 			return
 		}
@@ -1466,7 +1490,37 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 10. Queue trend (is work being processed?)
+	// 10. Hub heartbeat (connectivity signal).
+	//
+	// Deliberately reported here rather than via /api/livez: a stale
+	// heartbeat means the hub is unreachable or rejecting, which a pod
+	// restart cannot fix. It surfaces as "warn" so operators (and the hub
+	// dashboard's gray dot) still see the connectivity problem without the
+	// kubelet killing an otherwise-healthy pod. See handleLivez.
+	if hub.HeartbeatEnabled() {
+		hbCheck := map[string]any{"status": "pass"}
+		if lastSuccess, ok := hub.LastHeartbeatSuccess(); ok {
+			hbCheck["last_success"] = lastSuccess.UTC().Format(time.RFC3339)
+			hbCheck["last_success_age"] = time.Since(lastSuccess).Round(time.Second).String()
+			if time.Since(lastSuccess) > livezHeartbeatStallMax {
+				hbCheck["status"] = "warn"
+				hbCheck["detail"] = "hub has not accepted a heartbeat recently — check hub reachability"
+			}
+		} else {
+			hbCheck["status"] = "warn"
+			hbCheck["detail"] = "no heartbeat accepted by the hub since startup"
+		}
+		if lastAttempt, ok := hub.LastHeartbeatAttempt(); ok {
+			hbCheck["last_attempt"] = lastAttempt.UTC().Format(time.RFC3339)
+			hbCheck["last_attempt_age"] = time.Since(lastAttempt).Round(time.Second).String()
+		}
+		if hbCheck["status"] == "warn" && overall == "ok" {
+			overall = "degraded"
+		}
+		checks["hub_heartbeat"] = hbCheck
+	}
+
+	// 11. Queue trend (is work being processed?)
 	s.statusMu.RLock()
 	if s.status != nil {
 		totalActionable := 0

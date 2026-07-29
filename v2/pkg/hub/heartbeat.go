@@ -38,8 +38,58 @@ var lastHeartbeatSuccessUnix atomic.Int64
 // liveness forever. Set once at startup; read from the HTTP handler.
 var heartbeatLoopStarted atomic.Bool
 
+// lastHeartbeatAttemptUnix holds the unix-seconds timestamp of the most
+// recent heartbeat the loop *tried* to send, regardless of whether the hub
+// accepted it, rejected it (4xx/5xx), or was unreachable entirely.
+//
+// This is the signal that separates the two failure modes a stale
+// lastHeartbeatSuccessUnix otherwise conflates:
+//
+//   - Attempts advancing but successes not: the goroutine is alive and doing
+//     its job; the *hub* is unreachable or rejecting. Restarting the pod
+//     cannot fix a network partition or a hub outage, so liveness must not
+//     fail — this is routine on firewalled clusters that can only reach the
+//     hub intermittently.
+//   - Attempts themselves not advancing: the loop is genuinely wedged (dead
+//     goroutine, deadlock, permanently stuck HTTP call). A restart is the
+//     only remedy, so this is what liveness should catch.
+//
+// Same atomic rationale as lastHeartbeatSuccessUnix: written by the heartbeat
+// goroutine, read by the dashboard's HTTP handler goroutine.
+var lastHeartbeatAttemptUnix atomic.Int64
+
+// storeUnixOrZero stores t as unix seconds, or 0 for the zero time so it
+// reads back as "never happened" through the Last* accessors.
+func storeUnixOrZero(dst *atomic.Int64, t time.Time) {
+	if t.IsZero() {
+		dst.Store(0)
+		return
+	}
+	dst.Store(t.Unix())
+}
+
 func recordHeartbeatSuccess() {
 	lastHeartbeatSuccessUnix.Store(time.Now().Unix())
+}
+
+// recordHeartbeatAttempt marks that the heartbeat loop reached the top of a
+// send. Called unconditionally before each attempt so a hub that is down,
+// unreachable, or rejecting every beat still counts as "the loop is alive".
+func recordHeartbeatAttempt() {
+	lastHeartbeatAttemptUnix.Store(time.Now().Unix())
+}
+
+// LastHeartbeatAttempt returns the time the heartbeat loop last tried to
+// send, and whether it has ever tried. Unlike LastHeartbeatSuccess this
+// advances even while the hub is unreachable, so liveness checks can tell a
+// wedged goroutine (no attempts) from a partitioned network (attempts, no
+// successes).
+func LastHeartbeatAttempt() (t time.Time, ok bool) {
+	sec := lastHeartbeatAttemptUnix.Load()
+	if sec == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(sec, 0), true
 }
 
 // LastHeartbeatSuccess returns the time of the last heartbeat the hub
@@ -335,6 +385,12 @@ func waitForReady(ctx context.Context, logger *slog.Logger) {
 var validNamePattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 func sendHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, logger *slog.Logger) *HeartbeatResponse {
+	// Record the attempt before anything that can bail out early (including a
+	// nil payload from collect): reaching this point proves the loop goroutine
+	// is still running its schedule, which is exactly what liveness needs to
+	// know. Success is tracked separately, further down, on hub acceptance.
+	recordHeartbeatAttempt()
+
 	payload := collect()
 	if payload == nil {
 		return nil
