@@ -118,7 +118,10 @@ func TestFilterComposition(t *testing.T) {
 	}{
 		// The render signature must include the check filter or toggling it on
 		// unchanged data is treated as a no-op and nothing re-renders.
-		{"render signature includes check filter", "+ '|' + _dashFailingCheckFilter;"},
+		// Matched without a trailing ';' so that later filters appending their
+		// own state to the signature do not trip this guard — the invariant is
+		// that the check filter is PART of the signature, not that it is last.
+		{"render signature includes check filter", "+ '|' + _dashFailingCheckFilter"},
 		// Clearing must clear both filter kinds, else "Clear filters" leaves the
 		// list mysteriously short.
 		{"clear resets check filter", "_dashFailingCheckFilter = '';"},
@@ -126,7 +129,10 @@ func TestFilterComposition(t *testing.T) {
 		{"placeholder split retained", "(isPlaceholderHive(allHives[_si]) ? unassignedAll : assignedAll)"},
 		{"filters applied to assigned only", "applyDashFilters(assignedAll).concat(unassignedAll)"},
 		// Any-active must account for the check filter so the Clear button shows.
-		{"clear button accounts for check filter", "|| !!_dashFailingCheckFilter;"},
+		// Trailing ';' omitted so additional filters can be OR'd into anyActive
+		// without tripping this guard; the invariant is that the check filter
+		// participates, not that it terminates the expression.
+		{"clear button accounts for check filter", "|| !!_dashFailingCheckFilter"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

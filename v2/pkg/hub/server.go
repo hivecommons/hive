@@ -57,40 +57,49 @@ type Registry struct {
 }
 
 type RegistryEntry struct {
-	ID                        string             `json:"id"`
-	Name                      string             `json:"name"`
-	Org                       string             `json:"org"`
-	Repos                     []string           `json:"repos"`
+	ID    string   `json:"id"`
+	Name  string   `json:"name"`
+	Org   string   `json:"org"`
+	Repos []string `json:"repos"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as, as
 	// reported by the spoke. The hub needs it to echo project config back
 	// without blanking it, and it is the author the fleet-stats counts are
 	// scoped to.
-	AIAuthor                  string             `json:"aiAuthor,omitempty"`
+	AIAuthor string `json:"aiAuthor,omitempty"`
 	// StartedAt is the spoke process start time, reported over the heartbeat.
 	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
-	StartedAt                 string             `json:"startedAt,omitempty"`
-	PrimaryRepo               string             `json:"primaryRepo"`
-	DashboardURL              string             `json:"dashboardUrl"`
-	SnapshotURL               string             `json:"snapshotUrl,omitempty"`
-	ACMMLevel                 int                `json:"acmmLevel"`
-	AgentCount                int                `json:"agentCount"`
-	GovernorMode              string             `json:"governorMode"`
-	TotalTokens24h            int64              `json:"totalTokens24h"`
-	ActionableIssues          int                `json:"actionableIssues"`
-	ActionablePRs             int                `json:"actionablePRs"`
-	ContributorCount          int                `json:"contributorCount"`
-	ActiveContributors        int                `json:"activeContributors"`
-	Owner                     string             `json:"owner,omitempty"`
-	ClusterID                 string             `json:"clusterId,omitempty"`
-	ClusterName               string             `json:"clusterName,omitempty"`
-	HiveType                  string             `json:"hiveType,omitempty"`
-	IsPublic                  bool               `json:"isPublic"`
-	RegisteredAt              string             `json:"registeredAt"`
-	LastHeartbeat             string             `json:"lastHeartbeat"`
-	Health                    map[string]any     `json:"health"`
-	Version                   string             `json:"version"`
-	GitHash                   string             `json:"gitHash,omitempty"`
-	GitBranch                 string             `json:"gitBranch,omitempty"`
+	StartedAt          string         `json:"startedAt,omitempty"`
+	PrimaryRepo        string         `json:"primaryRepo"`
+	DashboardURL       string         `json:"dashboardUrl"`
+	SnapshotURL        string         `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int            `json:"acmmLevel"`
+	AgentCount         int            `json:"agentCount"`
+	GovernorMode       string         `json:"governorMode"`
+	TotalTokens24h     int64          `json:"totalTokens24h"`
+	ActionableIssues   int            `json:"actionableIssues"`
+	ActionablePRs      int            `json:"actionablePRs"`
+	ContributorCount   int            `json:"contributorCount"`
+	ActiveContributors int            `json:"activeContributors"`
+	Owner              string         `json:"owner,omitempty"`
+	ClusterID          string         `json:"clusterId,omitempty"`
+	ClusterName        string         `json:"clusterName,omitempty"`
+	HiveType           string         `json:"hiveType,omitempty"`
+	IsPublic           bool           `json:"isPublic"`
+	RegisteredAt       string         `json:"registeredAt"`
+	LastHeartbeat      string         `json:"lastHeartbeat"`
+	Health             map[string]any `json:"health"`
+	Version            string         `json:"version"`
+	GitHash            string         `json:"gitHash,omitempty"`
+	GitBranch          string         `json:"gitBranch,omitempty"`
+	// ImageRef is the container image this spoke's own Deployment runs, as
+	// read in-cluster by the spoke and reported over the heartbeat. The hub
+	// cannot see it any other way for firewalled/heartbeat-only spokes, and
+	// without it there is no way to tell a hive pinned to an immutable
+	// ghcr.io/kubestellar/hive:<sha> tag — which can never receive a rolling
+	// upgrade — from one riding <branch>-latest. Empty on spokes that are not
+	// in-cluster or predate this field; drift detection skips the signal
+	// rather than guessing.
+	ImageRef                  string             `json:"imageRef,omitempty"`
 	Agents                    []AgentSummary     `json:"agents,omitempty"`
 	Leaderboard               []LeaderboardEntry `json:"leaderboard,omitempty"`
 	Online                    bool               `json:"online"`
@@ -628,6 +637,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Version:       sanitizeHeartbeatField(payload.Version),
 		GitHash:       shortSHA(sanitizeHeartbeatField(payload.GitHash)),
 		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
+		ImageRef:      sanitizeHeartbeatField(payload.ImageRef),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)

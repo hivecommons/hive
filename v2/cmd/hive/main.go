@@ -1728,13 +1728,19 @@ func main() {
 					}
 					return fmt.Sprintf("http://localhost:%d", cfg.Dashboard.Port)
 				}(),
-				SnapshotURL:             cfg.Hub.SnapshotURL,
-				HiveType:                cfg.Hub.HiveType,
-				ClusterID:               cfg.Hub.ClusterID,
-				IsPublic:                cfg.Hub.IsPublic,
-				Version:                 "3.0.0",
-				GitHash:                 gitShort,
-				GitBranch:               gitBranch,
+				SnapshotURL: cfg.Hub.SnapshotURL,
+				HiveType:    cfg.Hub.HiveType,
+				ClusterID:   cfg.Hub.ClusterID,
+				IsPublic:    cfg.Hub.IsPublic,
+				Version:     "3.0.0",
+				GitHash:     gitShort,
+				GitBranch:   gitBranch,
+				// The image ref the Deployment tracks, read in-cluster and
+				// cached. The hub cannot see it for firewalled spokes, and it
+				// is the only way to distinguish a hive pinned to an immutable
+				// SHA tag (which can never receive a rolling upgrade) from one
+				// riding <branch>-latest. Empty off-cluster — never guessed.
+				ImageRef:                hub.SelfDeploymentImage(),
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
 				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),

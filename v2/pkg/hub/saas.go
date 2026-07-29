@@ -1310,6 +1310,12 @@ type MyHiveEntry struct {
 	MigrationStatus string `json:"migrationStatus,omitempty"`
 	MigrationFrom   string `json:"migrationFrom,omitempty"`
 	MigrationTo     string `json:"migrationTo,omitempty"`
+
+	// Drift holds config-drift signals computed server-side against the fleet
+	// norm (see drift.go). It rides this payload rather than a per-row API call
+	// so the My Hives table can render the badge and the fleet-exceptions
+	// summary from data it already has.
+	Drift DriftReport `json:"drift"`
 }
 
 func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
@@ -1537,6 +1543,12 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			result[i].PendingRequests = pending
 		}
 	}
+
+	// Config drift, computed once over the caller's full visible set — the
+	// fleet norm is derived from that set, so this must run AFTER every row has
+	// been collected and enriched (a row still missing its provStatus would be
+	// misread as a claimed hive and flagged for having no App).
+	annotateDrift(result, getDisplaySHAs(), time.Now())
 
 	resp := map[string]any{
 		"hives":                   result,
@@ -5321,6 +5333,7 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Status filter chips above the My Hives table. --chip-color is set inline
        per chip so one rule serves every state colour. */
     #hive-filter-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    #hive-drift-summary { margin-bottom: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: rgba(248,81,73,0.04); }
     .filter-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
     .filter-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; background: var(--surface); color: var(--muted); border: 1px solid var(--border); border-radius: 9999px; font-size: 0.72rem; font-weight: 600; cursor: pointer; font-family: inherit; transition: all .15s; }
     .filter-chip:hover { border-color: var(--chip-color, var(--muted)); color: var(--text); }
@@ -5489,6 +5502,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div id="past-requests-body" style="display:none;overflow-x:auto"><div id="admin-request-history"></div></div>
     </div>
 
+    <div id="hive-drift-summary" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
     <div id="hives-container"><div class="loading">Loading your hives...</div></div>
 
@@ -5907,6 +5921,92 @@ const dashboardHTML = `<!DOCTYPE html>
         '<span style="display:block;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">' + esc(heading) + '</span>' +
         accessRows + '</span></span>';
     }
+    /* ---- Config drift -------------------------------------------------
+       The server computes drift signals per hive (pkg/hub/drift.go) and ships
+       them on the My Hives payload as h.drift = {signals, count, worstSeverity}.
+       Everything below only RENDERS that; no drift rule lives in the browser,
+       so the badge, the summary and any future consumer can never disagree
+       about what counts as drift. */
+
+    /* Palette reused from healthBadge() so a critical drift signal reads as the
+       same red as a critical health dot. */
+    var DRIFT_SEVERITY_COLORS = {info: '#58a6ff', warn: '#d29922', critical: '#f85149'};
+    var DRIFT_SEVERITY_LABELS = {info: 'Info', warn: 'Warning', critical: 'Critical'};
+    /* Display order, worst first, for the fleet-exceptions breakdown. */
+    var DRIFT_SEVERITY_ORDER = ['critical', 'warn', 'info'];
+
+    /* Human labels for the server's stable drift kind identifiers. A kind with
+       no entry here falls back to its raw identifier rather than rendering
+       blank, so a new server-side signal is still legible before the UI
+       catches up. */
+    var DRIFT_KIND_LABELS = {
+      'version-behind':  'Version differs from fleet',
+      'branch-mismatch': 'Branch differs from fleet',
+      'pinned-image':    'Pinned to an immutable image',
+      'heartbeat-stale': 'Heartbeat stale',
+      'app-missing':     'GitHub App not installed',
+      'app-perm-issue':  'GitHub App permissions',
+      'health-degraded': 'Health degraded',
+      'upgrade-stuck':   'Upgrade stuck',
+      'acmm-unset':      'ACMM level unset',
+      'no-agents':       'No agents running'
+    };
+
+    function driftKindLabel(kind) { return DRIFT_KIND_LABELS[kind] || kind || 'Unknown'; }
+
+    /* driftOf normalizes the server's report so every caller can treat signals
+       as an array and count as a number, even for a row the server predates
+       (h.drift undefined) or a payload that arrived malformed. */
+    function driftOf(h) {
+      var d = (h && h.drift) || {};
+      var signals = Array.isArray(d.signals) ? d.signals : [];
+      return {
+        signals: signals,
+        count: typeof d.count === 'number' ? d.count : signals.length,
+        worstSeverity: d.worstSeverity || ''
+      };
+    }
+
+    /* driftBadge renders the Drift column: the signal count coloured by the
+       worst severity, with a hover panel listing every reason.
+
+       It follows healthBadge()'s ONE-panel rule exactly: a custom hover panel
+       and NO title attribute on the same element. Setting both makes the
+       browser draw its native tooltip on top of the panel — two overlapping
+       boxes saying different things. */
+    function driftBadge(h) {
+      var d = driftOf(h);
+      if (!d.count) {
+        return '<span title="No configuration drift detected" style="color:var(--muted);font-size:0.72rem;cursor:help">—</span>';
+      }
+      var c = DRIFT_SEVERITY_COLORS[d.worstSeverity] || DRIFT_SEVERITY_COLORS.info;
+
+      var rows = (d.signals || []).map(function(s) {
+        s = s || {};
+        var sc = DRIFT_SEVERITY_COLORS[s.severity] || DRIFT_SEVERITY_COLORS.info;
+        var sevLabel = DRIFT_SEVERITY_LABELS[s.severity] || s.severity || 'Info';
+        return '<div style="padding:4px 0;border-top:1px solid var(--border)">' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">' +
+          '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + sc + ';flex:0 0 auto"></span>' +
+          '<span style="color:' + sc + ';font-weight:600">' + esc(driftKindLabel(s.kind)) + '</span>' +
+          '<span style="margin-left:auto;color:var(--muted);font-size:0.6rem;text-transform:uppercase;letter-spacing:0.04em">' + esc(sevLabel) + '</span>' +
+          '</div>' +
+          '<div style="color:var(--muted);line-height:1.4">' + esc(s.reason || '') + '</div>' +
+          '</div>';
+      }).join('');
+
+      var heading = d.count === 1 ? '1 drift signal' : d.count + ' drift signals';
+
+      return '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help">' +
+        '<span style="display:inline-block;min-width:18px;padding:1px 6px;border-radius:9999px;font-size:0.65rem;font-weight:700;' +
+        'color:' + c + ';background:rgba(255,255,255,0.04);border:1px solid ' + c + '">' + d.count + '</span>' +
+        '<span class="hive-access-pop" style="display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:60;' +
+        'min-width:260px;max-width:380px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);' +
+        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;white-space:normal">' +
+        '<span style="display:block;color:' + c + ';font-weight:600;margin-bottom:2px">' + esc(heading) + '</span>' +
+        rows + '</span></span>';
+    }
+
     function dashboardLink(h) {
       var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
       // Open hosted spokes via the hub's SSO handoff endpoint so the user's hub
@@ -6030,12 +6130,32 @@ const dashboardHTML = `<!DOCTYPE html>
       renderHives(_allDashHives, true);
     }
 
+    /* The drift-kind currently selected in the fleet-exceptions summary, or ''
+       for none. Single-select (unlike the multi-select status chips): the
+       summary's purpose is "show me the hives with THIS problem", and an
+       OR across several problem types is what the status chips already do.
+       It composes with the status chips by AND — the chips answer "which
+       states", this answers "which specific misconfiguration". */
+    var _dashDriftFilter = '';
+
+    /* hiveMatchesDriftFilter answers whether a hive carries the selected drift
+       kind. Guarded so a row with no drift report never throws. */
+    function hiveMatchesDriftFilter(h) {
+      if (!_dashDriftFilter) return true;
+      var signals = driftOf(h).signals;
+      for (var i = 0; i < signals.length; i++) {
+        if (signals[i] && signals[i].kind === _dashDriftFilter) return true;
+      }
+      return false;
+    }
+
     /* hiveMatchesFilters answers whether a hive survives the active chips. */
     function hiveMatchesFilters(h) {
       if (_dashFailingCheckFilter) {
         var hit = failingChecks(h).some(function(ck) { return ck.name === _dashFailingCheckFilter; });
         if (!hit) return false;
       }
+      if (!hiveMatchesDriftFilter(h)) return false;
       var active = Object.keys(_dashStatusFilters || {}).filter(function(k) { return _dashStatusFilters[k]; });
       if (!active.length) return true;
       var f = hiveStatusFlags(h);
@@ -6065,8 +6185,104 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function clearStatusFilters() {
       _dashStatusFilters = {};
+      /* "Clear filters" is offered from the empty state, so it must clear
+         EVERY filter — leaving one on would keep the list empty and make the
+         button look broken. */
       _dashFailingCheckFilter = '';
+      _dashDriftFilter = '';
       renderHives(_allDashHives, true);
+    }
+
+    /* toggleDriftFilter selects (or deselects) one drift kind in the fleet
+       exceptions summary. */
+    function toggleDriftFilter(kind) {
+      _dashDriftFilter = (_dashDriftFilter === kind) ? '' : kind;
+      renderHives(_allDashHives, true);
+    }
+
+    /* renderDriftSummary draws the "N hives need attention" strip above the
+       table, broken down by drift kind and clickable to filter.
+
+       Counts are computed over the ASSIGNED set the caller passes, matching
+       the status chips: an unassigned placeholder is never flagged for the
+       claimed-hive concerns (no App, ACMM 0, no agents) server-side, and
+       scoping the summary the same way keeps the headline count equal to the
+       number of rows a human can actually act on. */
+    function renderDriftSummary(assignedHives) {
+      var el = document.getElementById('hive-drift-summary');
+      if (!el) return;
+      var hives = assignedHives || [];
+
+      var hivesWithDrift = 0;
+      var worstOverall = '';
+      var kindCounts = {};   // kind -> number of HIVES carrying it
+      var kindWorst = {};    // kind -> worst severity seen for that kind
+      for (var i = 0; i < hives.length; i++) {
+        var d = driftOf(hives[i]);
+        if (!d.count) continue;
+        hivesWithDrift++;
+        if (DRIFT_SEVERITY_ORDER.indexOf(d.worstSeverity) >= 0 &&
+            (worstOverall === '' || DRIFT_SEVERITY_ORDER.indexOf(d.worstSeverity) < DRIFT_SEVERITY_ORDER.indexOf(worstOverall))) {
+          worstOverall = d.worstSeverity;
+        }
+        /* A hive can legitimately report the same kind once only, but count
+           distinct kinds per hive defensively so a duplicated signal cannot
+           inflate the breakdown past the headline. */
+        var seenKinds = {};
+        for (var j = 0; j < d.signals.length; j++) {
+          var s = d.signals[j] || {};
+          if (!s.kind || seenKinds[s.kind]) continue;
+          seenKinds[s.kind] = true;
+          kindCounts[s.kind] = (kindCounts[s.kind] || 0) + 1;
+          var prev = kindWorst[s.kind];
+          if (!prev || DRIFT_SEVERITY_ORDER.indexOf(s.severity) < DRIFT_SEVERITY_ORDER.indexOf(prev)) {
+            kindWorst[s.kind] = s.severity;
+          }
+        }
+      }
+
+      if (!hivesWithDrift) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+        return;
+      }
+      el.style.display = '';
+
+      /* Sort the breakdown worst-severity-first, then by how many hives are
+         affected, then by label — so the most urgent, most widespread problem
+         is always the first thing read. */
+      var kinds = Object.keys(kindCounts).sort(function(a, b) {
+        var sa = DRIFT_SEVERITY_ORDER.indexOf(kindWorst[a]);
+        var sb = DRIFT_SEVERITY_ORDER.indexOf(kindWorst[b]);
+        if (sa !== sb) return sa - sb;
+        if (kindCounts[b] !== kindCounts[a]) return kindCounts[b] - kindCounts[a];
+        return driftKindLabel(a).localeCompare(driftKindLabel(b));
+      });
+
+      var chips = kinds.map(function(k) {
+        var color = DRIFT_SEVERITY_COLORS[kindWorst[k]] || DRIFT_SEVERITY_COLORS.info;
+        var on = _dashDriftFilter === k;
+        var cls = on ? 'filter-chip on' : 'filter-chip';
+        return '<button type="button" class="' + cls + '" aria-pressed="' + (on ? 'true' : 'false') +
+          '" onclick="toggleDriftFilter(\'' + esc(k) + '\')" style="--chip-color:' + color + '">' +
+          '<span class="filter-chip-dot" style="background:' + color + '"></span>' +
+          esc(driftKindLabel(k)) + '<span class="filter-chip-count">' + kindCounts[k] + '</span></button>';
+      }).join('');
+
+      var headColor = DRIFT_SEVERITY_COLORS[worstOverall] || DRIFT_SEVERITY_COLORS.info;
+      var headline = hivesWithDrift === 1
+        ? '1 hive needs attention'
+        : hivesWithDrift + ' hives need attention';
+      var clearBtn = _dashDriftFilter
+        ? '<button type="button" class="filter-chip filter-chip-clear" onclick="toggleDriftFilter(\'' + esc(_dashDriftFilter) + '\')">Show all</button>'
+        : '';
+
+      el.innerHTML =
+        '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+        '<span style="color:' + headColor + ';font-weight:600;font-size:0.8rem">⚠ ' + esc(headline) + '</span>' +
+        '<span style="color:var(--muted);font-size:0.7rem">configuration drift detected from the fleet norm</span>' +
+        '</div>' +
+        '<div class="filter-chips" style="margin-top:8px">' + chips + clearBtn + '</div>';
     }
 
     /* renderStatusFilterBar draws the chip row plus the match count. Counts are
@@ -6123,7 +6339,11 @@ const dashboardHTML = `<!DOCTYPE html>
               esc(nm) + '<span class="filter-chip-count">' + n + '</span></button>';
           }).join('') + '</div>';
       }
-      var anyActive = Object.keys(_dashStatusFilters || {}).length > 0 || !!_dashFailingCheckFilter;
+      /* Every filter that narrows the list must be counted here: it drives both
+         the "Showing X of Y" summary and the Clear button, and clearStatusFilters()
+         resets all of them. Omitting one hides the Clear button while the list is
+         still filtered, which reads as hives having disappeared. */
+      var anyActive = Object.keys(_dashStatusFilters || {}).length > 0 || !!_dashFailingCheckFilter || !!_dashDriftFilter;
       /* allHives here is the ASSIGNED set — the caller scopes it, because the
          chips never filter unassigned placeholders. Say "assigned" so the count
          is not read as the whole fleet. */
@@ -6373,7 +6593,7 @@ const dashboardHTML = `<!DOCTYPE html>
       allHives = allHives || [];
       /* The signature must include the active filters, otherwise toggling a
          chip while the hive data is unchanged would be treated as a no-op. */
-      var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) + '|' + _dashFailingCheckFilter;
+      var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) + '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter;
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status filters describe ASSIGNED hives only. An unassigned placeholder
@@ -6391,7 +6611,12 @@ const dashboardHTML = `<!DOCTYPE html>
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
       /* Counts are over the assigned set only, matching what the chips filter. */
       renderStatusFilterBar(assignedAll, hives.length - unassignedAll.length);
+      /* Drift exceptions are scoped to assigned hives for the same reason: a
+         placeholder is never flagged for claimed-hive concerns server-side. */
+      renderDriftSummary(assignedAll);
       if (!allHives.length) {
+        var driftEl0 = document.getElementById('hive-drift-summary');
+        if (driftEl0) driftEl0.style.display = 'none';
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:8px">No hives yet</p>' +
@@ -6539,7 +6764,7 @@ const dashboardHTML = `<!DOCTYPE html>
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
         // 14 = the 13 original columns plus Uptime.
-        var TOTAL_COLUMNS = 14;
+        var TOTAL_COLUMNS = 15;
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
           var prItems = (h.pending_requests || []).map(function(pr) {
@@ -6573,11 +6798,16 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + sparkline(h.issueHistory, '#f59e0b', 50, 14) + (h.actionableIssues || 0) + '</td>' +
           '<td>' + sparkline(h.prHistory, '#3b82f6', 50, 14) + (h.actionablePRs || 0) + '</td>' +
           '<td>' + (h.activeContributors || 0) + '</td>' +
+          '<td style="white-space:nowrap;text-align:right">' + driftBadge(h) + '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
          match the table's muted uppercase heading treatment (see .hive-table th). */
-      var TOTAL_COLUMNS_HEADER = 14;
+      /* Count of <th> cells in the hive table header below. The section-header
+         row spans all of them; a stale value would leave the separator short
+         and the table visibly ragged. Bumped from 14 when the Drift column
+         was added. */
+      var TOTAL_COLUMNS_HEADER = 15;
       var sectionHeader = function(label, count) {
         return '<tr class="hive-section-head"><td colspan="' + TOTAL_COLUMNS_HEADER + '" ' +
           'style="padding:14px 12px 6px;color:var(--muted);font-weight:600;font-size:0.75rem;' +
@@ -6615,6 +6845,7 @@ const dashboardHTML = `<!DOCTYPE html>
       document.getElementById('hives-container').innerHTML =
         '<div class="table-wrap"><table class="hive-table"><thead><tr>' +
         '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Public</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       setTimeout(function() {
         var tw = document.querySelector('.table-wrap');

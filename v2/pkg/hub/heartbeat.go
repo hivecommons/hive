@@ -197,36 +197,45 @@ type HeartbeatGPUSummary struct {
 }
 
 type HeartbeatPayload struct {
-	HiveID                  string                        `json:"hive_id"`
-	Org                     string                        `json:"org"`
-	Repos                   []string                      `json:"repos"`
-	PrimaryRepo             string                        `json:"primary_repo"`
+	HiveID      string   `json:"hive_id"`
+	Org         string   `json:"org"`
+	Repos       []string `json:"repos"`
+	PrimaryRepo string   `json:"primary_repo"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as. Reported
 	// so the hub can echo it back in HeartbeatProjectConfig rather than
 	// blanking it, and so the registry knows each hive's author without any
 	// spoke-side token lookup (which does not work on App-authenticated hives).
-	AIAuthor                string                        `json:"ai_author,omitempty"`
-	ACMMLevel               int                           `json:"acmm_level"`
-	Agents                  []AgentSummary                `json:"agents"`
-	Governor                GovernorSummary               `json:"governor"`
-	Tokens24h               int64                         `json:"tokens_24h"`
-	Contributors            ContributorSummary            `json:"contributors"`
-	Leaderboard             []LeaderboardEntry            `json:"leaderboard"`
+	AIAuthor     string             `json:"ai_author,omitempty"`
+	ACMMLevel    int                `json:"acmm_level"`
+	Agents       []AgentSummary     `json:"agents"`
+	Governor     GovernorSummary    `json:"governor"`
+	Tokens24h    int64              `json:"tokens_24h"`
+	Contributors ContributorSummary `json:"contributors"`
+	Leaderboard  []LeaderboardEntry `json:"leaderboard"`
 	// StartedAt is the spoke process start time (RFC3339). The hub renders it
 	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
 	// but restarted 35 times — is visible in My Hives instead of looking
 	// healthy. A short uptime that keeps resetting is the tell.
-	StartedAt               string                        `json:"started_at,omitempty"`
-	Health                  map[string]any                `json:"health"`
-	DashboardURL            string                        `json:"dashboard_url"`
-	SnapshotURL             string                        `json:"snapshot_url"`
-	Owner                   string                        `json:"owner,omitempty"`
-	HiveType                string                        `json:"hive_type,omitempty"`
-	ClusterID               string                        `json:"cluster_id,omitempty"`
-	IsPublic                bool                          `json:"is_public"`
-	Version                 string                        `json:"version"`
-	GitHash                 string                        `json:"git_hash"`
-	GitBranch               string                        `json:"git_branch,omitempty"`
+	StartedAt    string         `json:"started_at,omitempty"`
+	Health       map[string]any `json:"health"`
+	DashboardURL string         `json:"dashboard_url"`
+	SnapshotURL  string         `json:"snapshot_url"`
+	Owner        string         `json:"owner,omitempty"`
+	HiveType     string         `json:"hive_type,omitempty"`
+	ClusterID    string         `json:"cluster_id,omitempty"`
+	IsPublic     bool           `json:"is_public"`
+	Version      string         `json:"version"`
+	GitHash      string         `json:"git_hash"`
+	GitBranch    string         `json:"git_branch,omitempty"`
+	// ImageRef is the container image this spoke's own Deployment runs, read
+	// in-cluster from the Deployment spec. GitHash says which commit the
+	// BINARY was built from; ImageRef says which TAG the deployment tracks —
+	// and only the tag reveals a hive pinned to an immutable
+	// ghcr.io/kubestellar/hive:<sha> that can never receive a rolling upgrade.
+	// The hub cannot read this itself for firewalled spokes it reaches only by
+	// heartbeat, which is why it rides the payload. Empty when the spoke is
+	// not running in-cluster or the read failed — never a guess.
+	ImageRef                string                        `json:"image_ref,omitempty"`
 	Timestamp               string                        `json:"timestamp"`
 	GitHubAppRequired       bool                          `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue      string                        `json:"github_app_perm_issue,omitempty"`

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -284,4 +285,51 @@ func k8sAPIPatch(path string, body []byte) error {
 		return fmt.Errorf("k8s API PATCH %s: HTTP %d: %s", path, resp.StatusCode, string(respBody))
 	}
 	return nil
+}
+
+// selfImageCacheTTL bounds how long SelfDeploymentImage reuses a cached read.
+// The image only changes on an upgrade (which rolls the pod and restarts this
+// process, clearing the cache anyway), so a long TTL is safe — and necessary:
+// the heartbeat runs on a short interval and an uncached read would hit the
+// in-cluster API server on every beat, from every spoke in the fleet.
+const selfImageCacheTTL = 10 * time.Minute
+
+var (
+	selfImageMu        sync.RWMutex
+	selfImageCached    string
+	selfImageFetched   time.Time
+	selfImageAttempted bool
+)
+
+// SelfDeploymentImage returns this pod's own Deployment image, cached.
+//
+// It is exported for the SPOKE's heartbeat collector: the hub cannot read a
+// firewalled spoke's Deployment over kubectl, so the spoke must report its own
+// image ref for the hub's pinned-image drift detection to work at all.
+//
+// Returns "" (never an error) when the read fails or this process is not
+// running in-cluster — an absent image ref means "unknown", and drift
+// detection skips the pinned-image signal rather than inventing one. A failed
+// read is cached the same as a successful one so a non-cluster process does
+// not retry an API call it can never satisfy on every heartbeat.
+func SelfDeploymentImage() string {
+	selfImageMu.RLock()
+	if selfImageAttempted && time.Since(selfImageFetched) < selfImageCacheTTL {
+		img := selfImageCached
+		selfImageMu.RUnlock()
+		return img
+	}
+	selfImageMu.RUnlock()
+
+	img, err := selfDeploymentImage()
+	if err != nil {
+		img = ""
+	}
+
+	selfImageMu.Lock()
+	selfImageCached = img
+	selfImageFetched = time.Now()
+	selfImageAttempted = true
+	selfImageMu.Unlock()
+	return img
 }
