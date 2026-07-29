@@ -6910,7 +6910,9 @@ const dashboardHTML = `<!DOCTYPE html>
             ' <span style="color:var(--muted);font-size:0.72rem">across ' + (Number(d.hiveCount) || 0) + ' hive' + ((Number(d.hiveCount) || 0) === 1 ? '' : 's') + '</span></span>' +
           '</div>' +
           '<div style="display:flex;gap:20px;flex-wrap:wrap">' +
-            renderUsageSection('By org', d.byOrg, 'org') +
+            /* byOrg buckets on org/repo (usageOrgRepoKey in usage.go), so the
+               label says so; the JSON field keeps its original name. */
+            renderUsageSection('By org / repo', d.byOrg, 'org') +
             renderUsageSection('By owner', d.byOwner, 'owner') +
             renderUsageSection('By cluster', d.byCluster, 'cluster') +
           '</div>' +

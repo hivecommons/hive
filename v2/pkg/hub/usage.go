@@ -58,6 +58,11 @@ const (
 	// deliberate: silently dropping them would make the rollup shares fail to
 	// sum to the fleet total, which is worse than an honest "unattributed".
 	usageUnattributed = "(unattributed)"
+
+	// usageOrgRepoSep joins the org and repo halves of an org/repo bucket key.
+	// GitHub's own "owner/name" convention, so the key reads exactly like the
+	// repository slug an operator would paste into a browser.
+	usageOrgRepoSep = "/"
 )
 
 // usageCurrencyNote is shown wherever a reader might expect a dollar figure.
@@ -106,11 +111,17 @@ type UsageSnapshot struct {
 
 // UsageRollup is the full attribution report.
 type UsageRollup struct {
-	TotalTokens int64         `json:"totalTokens"`
-	HiveCount   int           `json:"hiveCount"`
-	ByOrg       []UsageBucket `json:"byOrg"`
-	ByOwner     []UsageBucket `json:"byOwner"`
-	ByCluster   []UsageBucket `json:"byCluster"`
+	TotalTokens int64 `json:"totalTokens"`
+	HiveCount   int   `json:"hiveCount"`
+	// ByOrg buckets on "org/repo" (see usageOrgRepoKey), NOT on org alone —
+	// two hives in the same org need to be distinguishable. The Go field and
+	// the "byOrg" JSON key are deliberately left unrenamed: the wire contract
+	// is consumed by the dashboard and potentially by external readers, and
+	// churning the name buys nothing that the key values do not already say.
+	// The UI label changed instead.
+	ByOrg     []UsageBucket `json:"byOrg"`
+	ByOwner   []UsageBucket `json:"byOwner"`
+	ByCluster []UsageBucket `json:"byCluster"`
 	// ZeroConsumption lists claimed hives reporting no tokens. Unassigned
 	// placeholders are excluded by the caller — a pool slot with nothing
 	// assigned to it is SUPPOSED to consume nothing, so flagging it would be
@@ -177,6 +188,40 @@ func buildUsageBuckets(hives []RegistryEntry, keyOf func(RegistryEntry) string, 
 	return out
 }
 
+// usageOrgRepoKey builds the org/repo grouping key for a hive.
+//
+// WHY org/repo AND NOT org ALONE: two hives in the same org are indistinguishable
+// in an org-only rollup, so a heavy repo hides behind a quiet sibling. Keying on
+// the slug separates them while still sorting neighbours together.
+//
+// WHY PrimaryRepo AND NOT the whole Repos slice: a hive may watch several repos,
+// but it has exactly one primary. Joining the slice would produce a different key
+// for every combination and mint one-hive buckets that never aggregate; the
+// primary is the single stable identity the hive already declares.
+//
+// Edge cases, all deliberate:
+//   - org + primary repo → "org/repo".
+//   - org, no primary repo → "org" (never "org/", which reads as a truncated
+//     slug and looks like a rendering bug).
+//   - no org, primary repo  → "repo". Attributing it to a fabricated org would be
+//     worse than a bare repo name, and dropping the hive would break the sum.
+//   - neither → "" so usageGroupKey folds it into usageUnattributed, preserving
+//     the existing placeholder handling (see isUnassignedPlaceholder) and keeping
+//     the shares summing to the fleet total.
+func usageOrgRepoKey(h RegistryEntry) string {
+	org := strings.TrimSpace(h.Org)
+	repo := strings.TrimSpace(h.PrimaryRepo)
+	switch {
+	case org != "" && repo != "":
+		return org + usageOrgRepoSep + repo
+	case org != "":
+		return org
+	default:
+		// repo alone, or "" which usageGroupKey turns into usageUnattributed.
+		return repo
+	}
+}
+
 // isUnassignedPlaceholder mirrors the dashboard's isPlaceholderHive() helper
 // (saas.go) server-side: provStatus "available" is authoritative, with an
 // "available-" org prefix as the fallback for placeholders that have not yet
@@ -227,7 +272,7 @@ func buildUsageRollup(hives []RegistryEntry, placeholderOf func(RegistryEntry) b
 	}
 	out.HiveCount = len(claimed)
 
-	out.ByOrg = buildUsageBuckets(claimed, func(h RegistryEntry) string { return h.Org }, out.TotalTokens)
+	out.ByOrg = buildUsageBuckets(claimed, usageOrgRepoKey, out.TotalTokens)
 	out.ByOwner = buildUsageBuckets(claimed, func(h RegistryEntry) string { return h.Owner }, out.TotalTokens)
 	out.ByCluster = buildUsageBuckets(claimed, func(h RegistryEntry) string {
 		// Prefer the human-readable cluster name, fall back to the ID.

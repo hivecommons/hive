@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
 
 // TestBuildUsageBuckets covers the rollup math: grouping, share percentages,
-// descending sort, deterministic tie-breaking, and the empty fleet.
+// descending sort, deterministic tie-breaking, and the empty fleet. Keyed with
+// usageOrgRepoKey, the same func the org rollup uses in production.
 func TestBuildUsageBuckets(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -27,10 +29,10 @@ func TestBuildUsageBuckets(t *testing.T) {
 			wantKeys: []string{},
 		},
 		{
-			name:      "single hive",
-			hives:     []RegistryEntry{{Org: "acme", TotalTokens24h: 100}},
+			name:      "single hive keys on org/repo",
+			hives:     []RegistryEntry{{Org: "acme", PrimaryRepo: "widgets", TotalTokens24h: 100}},
 			total:     100,
-			wantKeys:  []string{"acme"},
+			wantKeys:  []string{"acme/widgets"},
 			wantToks:  []int64{100},
 			wantHives: []int{1},
 			wantShare: []float64{100},
@@ -38,63 +40,114 @@ func TestBuildUsageBuckets(t *testing.T) {
 		{
 			name: "sorted by consumption descending",
 			hives: []RegistryEntry{
-				{Org: "small", TotalTokens24h: 10},
-				{Org: "big", TotalTokens24h: 70},
-				{Org: "mid", TotalTokens24h: 20},
+				{Org: "acme", PrimaryRepo: "small", TotalTokens24h: 10},
+				{Org: "acme", PrimaryRepo: "big", TotalTokens24h: 70},
+				{Org: "acme", PrimaryRepo: "mid", TotalTokens24h: 20},
 			},
 			total:     100,
-			wantKeys:  []string{"big", "mid", "small"},
+			wantKeys:  []string{"acme/big", "acme/mid", "acme/small"},
 			wantToks:  []int64{70, 20, 10},
 			wantHives: []int{1, 1, 1},
 			wantShare: []float64{70, 20, 10},
 		},
 		{
-			name: "groups multiple hives into one bucket",
+			// THE CASE THAT MOTIVATED THE FIX: same org, different repos. Under
+			// the old org-only key these collapsed into one "acme" bucket worth
+			// 50 tokens across 2 hives; they must now be separate rows.
+			name: "same org different repos are separate buckets",
 			hives: []RegistryEntry{
-				{Org: "acme", TotalTokens24h: 30},
-				{Org: "acme", TotalTokens24h: 20},
-				{Org: "other", TotalTokens24h: 50},
+				{Org: "acme", PrimaryRepo: "widgets", TotalTokens24h: 30},
+				{Org: "acme", PrimaryRepo: "gadgets", TotalTokens24h: 20},
+				{Org: "other", PrimaryRepo: "thing", TotalTokens24h: 50},
+			},
+			total:     100,
+			wantKeys:  []string{"other/thing", "acme/widgets", "acme/gadgets"},
+			wantToks:  []int64{50, 30, 20},
+			wantHives: []int{1, 1, 1},
+			wantShare: []float64{50, 30, 20},
+		},
+		{
+			name: "same org same repo still aggregates into one bucket",
+			hives: []RegistryEntry{
+				{Org: "acme", PrimaryRepo: "widgets", TotalTokens24h: 30},
+				{Org: "acme", PrimaryRepo: "widgets", TotalTokens24h: 20},
+				{Org: "other", PrimaryRepo: "thing", TotalTokens24h: 50},
 			},
 			total: 100,
-			// 50/50 tie → tie-break on Key ascending: "acme" < "other".
-			wantKeys:  []string{"acme", "other"},
+			// 50/50 tie → tie-break on Key ascending: "acme/..." < "other/...".
+			wantKeys:  []string{"acme/widgets", "other/thing"},
 			wantToks:  []int64{50, 50},
 			wantHives: []int{2, 1},
 			wantShare: []float64{50, 50},
 		},
 		{
+			// Multi-repo hive: PrimaryRepo alone decides the key. Joining the
+			// whole Repos slice would mint a bucket per repo combination.
+			name: "multi-repo hive keys on the primary repo only",
+			hives: []RegistryEntry{
+				{Org: "acme", PrimaryRepo: "widgets", Repos: []string{"widgets", "gadgets", "sprockets"}, TotalTokens24h: 100},
+			},
+			total:     100,
+			wantKeys:  []string{"acme/widgets"},
+			wantToks:  []int64{100},
+			wantHives: []int{1},
+		},
+		{
+			name: "org with no primary repo renders as bare org, never a trailing slash",
+			hives: []RegistryEntry{
+				{Org: "acme", TotalTokens24h: 60},
+				{Org: "acme", PrimaryRepo: "   ", TotalTokens24h: 40},
+			},
+			total: 100,
+			// Both fold to the same bare-org bucket; whitespace is not a repo.
+			wantKeys:  []string{"acme"},
+			wantToks:  []int64{100},
+			wantHives: []int{2},
+			wantShare: []float64{100},
+		},
+		{
+			name: "repo with no org keys on the bare repo",
+			hives: []RegistryEntry{
+				{PrimaryRepo: "orphan", TotalTokens24h: 100},
+			},
+			total:     100,
+			wantKeys:  []string{"orphan"},
+			wantToks:  []int64{100},
+			wantHives: []int{1},
+		},
+		{
 			name: "ties break on key ascending for stable ordering",
 			hives: []RegistryEntry{
-				{Org: "zebra", TotalTokens24h: 5},
-				{Org: "alpha", TotalTokens24h: 5},
-				{Org: "mango", TotalTokens24h: 5},
+				{Org: "zebra", PrimaryRepo: "r", TotalTokens24h: 5},
+				{Org: "alpha", PrimaryRepo: "r", TotalTokens24h: 5},
+				{Org: "mango", PrimaryRepo: "r", TotalTokens24h: 5},
 			},
 			total:     15,
-			wantKeys:  []string{"alpha", "mango", "zebra"},
+			wantKeys:  []string{"alpha/r", "mango/r", "zebra/r"},
 			wantToks:  []int64{5, 5, 5},
 			wantHives: []int{1, 1, 1},
 		},
 		{
-			name: "blank org folds into the unattributed bucket, not dropped",
+			name: "neither org nor repo folds into the unattributed bucket, not dropped",
 			hives: []RegistryEntry{
-				{Org: "", TotalTokens24h: 40},
-				{Org: "   ", TotalTokens24h: 10},
-				{Org: "acme", TotalTokens24h: 50},
+				{Org: "", PrimaryRepo: "", TotalTokens24h: 40},
+				{Org: "   ", PrimaryRepo: "  ", TotalTokens24h: 10},
+				{Org: "acme", PrimaryRepo: "widgets", TotalTokens24h: 50},
 			},
 			total: 100,
 			// 50/50 tie → Key ascending; "(" sorts before letters.
-			wantKeys:  []string{usageUnattributed, "acme"},
+			wantKeys:  []string{usageUnattributed, "acme/widgets"},
 			wantToks:  []int64{50, 50},
 			wantHives: []int{2, 1},
 		},
 		{
 			name: "zero fleet total yields zero shares, never NaN",
 			hives: []RegistryEntry{
-				{Org: "idle-a", TotalTokens24h: 0},
-				{Org: "idle-b", TotalTokens24h: 0},
+				{Org: "idle", PrimaryRepo: "a", TotalTokens24h: 0},
+				{Org: "idle", PrimaryRepo: "b", TotalTokens24h: 0},
 			},
 			total:     0,
-			wantKeys:  []string{"idle-a", "idle-b"},
+			wantKeys:  []string{"idle/a", "idle/b"},
 			wantToks:  []int64{0, 0},
 			wantHives: []int{1, 1},
 			wantShare: []float64{0, 0},
@@ -102,11 +155,11 @@ func TestBuildUsageBuckets(t *testing.T) {
 		{
 			name: "negative tokens clamped to zero",
 			hives: []RegistryEntry{
-				{Org: "corrupt", TotalTokens24h: -500},
-				{Org: "good", TotalTokens24h: 100},
+				{Org: "acme", PrimaryRepo: "corrupt", TotalTokens24h: -500},
+				{Org: "acme", PrimaryRepo: "good", TotalTokens24h: 100},
 			},
 			total:     100,
-			wantKeys:  []string{"good", "corrupt"},
+			wantKeys:  []string{"acme/good", "acme/corrupt"},
 			wantToks:  []int64{100, 0},
 			wantHives: []int{1, 1},
 		},
@@ -114,7 +167,7 @@ func TestBuildUsageBuckets(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildUsageBuckets(tc.hives, func(h RegistryEntry) string { return h.Org }, tc.total)
+			got := buildUsageBuckets(tc.hives, usageOrgRepoKey, tc.total)
 			if len(got) != len(tc.wantKeys) {
 				t.Fatalf("bucket count = %d, want %d (%+v)", len(got), len(tc.wantKeys), got)
 			}
@@ -209,8 +262,8 @@ func TestBuildUsageRollup(t *testing.T) {
 			t.Errorf("placeholders were flagged as zero-consumption: %+v", got.ZeroConsumption)
 		}
 		for _, b := range got.ByOrg {
-			if b.Key == "available-pool" {
-				t.Error("placeholder org leaked into the org rollup")
+			if strings.HasPrefix(b.Key, "available-pool") {
+				t.Error("placeholder org leaked into the org/repo rollup")
 			}
 		}
 	})
@@ -257,9 +310,9 @@ func TestBuildUsageRollup(t *testing.T) {
 
 	t.Run("shares sum to 100 across a rollup", func(t *testing.T) {
 		hives := []RegistryEntry{
-			{Org: "a", TotalTokens24h: 33},
-			{Org: "b", TotalTokens24h: 33},
-			{Org: "c", TotalTokens24h: 34},
+			{Org: "a", PrimaryRepo: "r", TotalTokens24h: 33},
+			{Org: "b", PrimaryRepo: "r", TotalTokens24h: 33},
+			{Org: "c", PrimaryRepo: "r", TotalTokens24h: 34},
 		}
 		got := buildUsageRollup(hives, placeholderOf, nil, "fleet")
 		var sum float64
@@ -270,6 +323,80 @@ func TestBuildUsageRollup(t *testing.T) {
 			t.Errorf("shares sum to %v, want ~100", sum)
 		}
 	})
+
+	// The motivating regression, exercised end-to-end through the rollup rather
+	// than the bucket builder: splitting one org into per-repo rows must not
+	// lose or double-count tokens.
+	t.Run("two hives in one org split by repo and still sum to the fleet total", func(t *testing.T) {
+		hives := []RegistryEntry{
+			{ID: "1", Org: "kubestellar", PrimaryRepo: "console", TotalTokens24h: 70},
+			{ID: "2", Org: "kubestellar", PrimaryRepo: "docs", TotalTokens24h: 30},
+			// No primary repo: must appear as the bare org, not "kubestellar/".
+			{ID: "3", Org: "kubestellar", TotalTokens24h: 0},
+		}
+		got := buildUsageRollup(hives, placeholderOf, nil, "fleet")
+		if got.TotalTokens != 100 {
+			t.Fatalf("TotalTokens = %d, want 100", got.TotalTokens)
+		}
+		wantKeys := []string{"kubestellar/console", "kubestellar/docs", "kubestellar"}
+		if len(got.ByOrg) != len(wantKeys) {
+			t.Fatalf("ByOrg = %+v, want %d buckets %v", got.ByOrg, len(wantKeys), wantKeys)
+		}
+		var sumTokens int64
+		var sumHives int
+		for i, b := range got.ByOrg {
+			if b.Key != wantKeys[i] {
+				t.Errorf("ByOrg[%d].Key = %q, want %q", i, b.Key, wantKeys[i])
+			}
+			if strings.HasSuffix(b.Key, usageOrgRepoSep) {
+				t.Errorf("ByOrg[%d].Key = %q has a trailing separator", i, b.Key)
+			}
+			sumTokens += b.Tokens
+			sumHives += b.Hives
+		}
+		if sumTokens != got.TotalTokens {
+			t.Errorf("bucket tokens sum to %d, want the fleet total %d", sumTokens, got.TotalTokens)
+		}
+		if sumHives != got.HiveCount {
+			t.Errorf("bucket hives sum to %d, want HiveCount %d", sumHives, got.HiveCount)
+		}
+	})
+}
+
+// TestUsageOrgRepoKey pins the four org/repo edge cases directly.
+func TestUsageOrgRepoKey(t *testing.T) {
+	tests := []struct {
+		name string
+		in   RegistryEntry
+		want string
+	}{
+		{"org and primary repo", RegistryEntry{Org: "acme", PrimaryRepo: "widgets"}, "acme/widgets"},
+		{"org only renders bare, no trailing slash", RegistryEntry{Org: "acme"}, "acme"},
+		{"whitespace repo is not a repo", RegistryEntry{Org: "acme", PrimaryRepo: "  "}, "acme"},
+		{"repo only renders bare, no leading slash", RegistryEntry{PrimaryRepo: "orphan"}, "orphan"},
+		{"neither yields empty for usageGroupKey to fold", RegistryEntry{}, ""},
+		{"whitespace both yields empty", RegistryEntry{Org: " ", PrimaryRepo: " "}, ""},
+		{"values are trimmed", RegistryEntry{Org: " acme ", PrimaryRepo: " widgets "}, "acme/widgets"},
+		{
+			"Repos slice is ignored in favor of PrimaryRepo",
+			RegistryEntry{Org: "acme", PrimaryRepo: "widgets", Repos: []string{"a", "b", "c"}},
+			"acme/widgets",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := usageOrgRepoKey(tc.in); got != tc.want {
+				t.Errorf("usageOrgRepoKey(%+v) = %q, want %q", tc.in, got, tc.want)
+			}
+			// Whatever the key, the rendered bucket label must never be blank
+			// and must never be a bare or dangling separator.
+			label := usageGroupKey(usageOrgRepoKey(tc.in))
+			if label == "" || label == usageOrgRepoSep ||
+				strings.HasPrefix(label, usageOrgRepoSep) || strings.HasSuffix(label, usageOrgRepoSep) {
+				t.Errorf("bucket label %q is blank or a dangling separator", label)
+			}
+		})
+	}
 }
 
 // TestIsUnassignedPlaceholder mirrors the dashboard's isPlaceholderHive().
