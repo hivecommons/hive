@@ -247,7 +247,7 @@ type HeartbeatPayload struct {
 	// The hub cannot read this itself for firewalled spokes it reaches only by
 	// heartbeat, which is why it rides the payload. Empty when the spoke is
 	// not running in-cluster or the read failed — never a guess.
-	ImageRef     string         `json:"image_ref,omitempty"`
+	ImageRef                string                        `json:"image_ref,omitempty"`
 	Timestamp               string                        `json:"timestamp"`
 	GitHubAppRequired       bool                          `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue      string                        `json:"github_app_perm_issue,omitempty"`

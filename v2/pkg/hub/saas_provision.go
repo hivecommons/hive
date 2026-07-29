@@ -113,32 +113,32 @@ var clustersConfigPath = "/data/saas/clusters.json"
 // hive spokes onto. Each cluster has its own kubeconfig, storage backend,
 // ingress style, and optional platform-specific settings (OCI, OpenShift).
 type ClusterConfig struct {
-	ID                          string `json:"id" yaml:"id"`
-	Name                        string `json:"name" yaml:"name"`
-	KubeconfigPath              string `json:"kubeconfig_path,omitempty" yaml:"kubeconfig_path,omitempty"`
-	Context                     string `json:"context" yaml:"context"`
-	InCluster                   bool   `json:"in_cluster" yaml:"in_cluster"`
-	StorageClass                string `json:"storage_class" yaml:"storage_class"`
-	StorageType                 string `json:"storage_type" yaml:"storage_type"`
-	NFSMountIP                  string `json:"nfs_mount_ip,omitempty" yaml:"nfs_mount_ip,omitempty"`
-	IngressType                 string `json:"ingress_type" yaml:"ingress_type"`
-	IngressClass                string `json:"ingress_class,omitempty" yaml:"ingress_class,omitempty"`
-	CertIssuer                  string `json:"cert_issuer,omitempty" yaml:"cert_issuer,omitempty"`
-	Domain                      string `json:"domain" yaml:"domain"`
-	DomainPrefix                string `json:"domain_prefix,omitempty" yaml:"domain_prefix,omitempty"`
-	OCICompartment              string `json:"oci_compartment,omitempty" yaml:"oci_compartment,omitempty"`
-	OCIAvailDomain              string `json:"oci_avail_domain,omitempty" yaml:"oci_avail_domain,omitempty"`
-	OCIMountTarget              string `json:"oci_mount_target,omitempty" yaml:"oci_mount_target,omitempty"`
-	OCIExportSet                string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
-	RequiresSCC                 bool   `json:"requires_scc" yaml:"requires_scc"`
-	SCCName                     string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
-	HasGPU                      bool   `json:"has_gpu" yaml:"has_gpu"`
-	Arch                        string `json:"arch" yaml:"arch"`
-	ImageTag                    string `json:"image_tag" yaml:"image_tag"`
-	ImagePullPolicy             string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`
-	InferenceEndpoint           string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
-	GitHubBaseURL               string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
-	GitHubAPIURL                string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
+	ID                string `json:"id" yaml:"id"`
+	Name              string `json:"name" yaml:"name"`
+	KubeconfigPath    string `json:"kubeconfig_path,omitempty" yaml:"kubeconfig_path,omitempty"`
+	Context           string `json:"context" yaml:"context"`
+	InCluster         bool   `json:"in_cluster" yaml:"in_cluster"`
+	StorageClass      string `json:"storage_class" yaml:"storage_class"`
+	StorageType       string `json:"storage_type" yaml:"storage_type"`
+	NFSMountIP        string `json:"nfs_mount_ip,omitempty" yaml:"nfs_mount_ip,omitempty"`
+	IngressType       string `json:"ingress_type" yaml:"ingress_type"`
+	IngressClass      string `json:"ingress_class,omitempty" yaml:"ingress_class,omitempty"`
+	CertIssuer        string `json:"cert_issuer,omitempty" yaml:"cert_issuer,omitempty"`
+	Domain            string `json:"domain" yaml:"domain"`
+	DomainPrefix      string `json:"domain_prefix,omitempty" yaml:"domain_prefix,omitempty"`
+	OCICompartment    string `json:"oci_compartment,omitempty" yaml:"oci_compartment,omitempty"`
+	OCIAvailDomain    string `json:"oci_avail_domain,omitempty" yaml:"oci_avail_domain,omitempty"`
+	OCIMountTarget    string `json:"oci_mount_target,omitempty" yaml:"oci_mount_target,omitempty"`
+	OCIExportSet      string `json:"oci_export_set,omitempty" yaml:"oci_export_set,omitempty"`
+	RequiresSCC       bool   `json:"requires_scc" yaml:"requires_scc"`
+	SCCName           string `json:"scc_name,omitempty" yaml:"scc_name,omitempty"`
+	HasGPU            bool   `json:"has_gpu" yaml:"has_gpu"`
+	Arch              string `json:"arch" yaml:"arch"`
+	ImageTag          string `json:"image_tag" yaml:"image_tag"`
+	ImagePullPolicy   string `json:"image_pull_policy,omitempty" yaml:"image_pull_policy,omitempty"`
+	InferenceEndpoint string `json:"inference_endpoint,omitempty" yaml:"inference_endpoint,omitempty"`
+	GitHubBaseURL     string `json:"github_base_url,omitempty" yaml:"github_base_url,omitempty"`
+	GitHubAPIURL      string `json:"github_api_url,omitempty" yaml:"github_api_url,omitempty"`
 	// GitHubAppSlug is the GitHub App's URL slug on THIS cluster's GitHub
 	// host. A GitHub Enterprise instance hosts its own App registration,
 	// which is rarely named "kubestellar-hive" — without this the spoke's
@@ -155,8 +155,8 @@ type ClusterConfig struct {
 	//
 	// Zero means "this cluster has no hub-managed App identity" — the hub then
 	// changes nothing about its spokes' credentials.
-	GitHubAppID   int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
-	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+	GitHubAppID                 int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	OAuthClientID               string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
 	ClusterHealthTimeoutSeconds int    `json:"cluster_health_timeout_seconds,omitempty" yaml:"cluster_health_timeout_seconds,omitempty"`
 }
 
@@ -262,10 +262,10 @@ type PendingAccessRequest struct {
 }
 
 type SaaSHive struct {
-	ID          string   `json:"id"`
-	Owner       string   `json:"owner"`
-	ProjectName string   `json:"project_name"`
-	Org         string   `json:"org"`
+	ID          string `json:"id"`
+	Owner       string `json:"owner"`
+	ProjectName string `json:"project_name"`
+	Org         string `json:"org"`
 	// GitHubHost is the GitHub instance this project lives on — empty means
 	// public github.com, otherwise a GitHub Enterprise host (github.ibm.com,
 	// github.cisco.com, …). Recorded at assign time from the requested org so
@@ -1557,7 +1557,7 @@ metadata:
     nginx.ingress.kubernetes.io/custom-http-errors: "502,503"
     nginx.ingress.kubernetes.io/default-backend: hive-error-pages
     nginx.ingress.kubernetes.io/auth-signin: "https://hive.kubestellar.io/login?redirect=$scheme://$http_host$request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role"
+    nginx.ingress.kubernetes.io/auth-response-headers: "X-Hive-User,X-Hive-Role,X-Hive-Proxy-Auth"
 spec:
   ingressClassName: {{.IngressClass}}
   rules:

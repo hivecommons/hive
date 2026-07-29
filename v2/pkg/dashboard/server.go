@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,20 @@ const agentSkipAfterFullBroadcastS = 5 * time.Second
 const maxSSEClients = 100
 const sessionCookieName = "hive_session"
 const sessionCookieMaxAge = 30 * 24 * 60 * 60 // 30 days
+
+// proxyAuthHeader is the proof-of-proxy header the hub's auth-check injects
+// (value = this hive's dashboard token) so a hub-proxied spoke can verify a
+// request actually transited the hub nginx rather than being forged on the pod
+// network. See authenticate() (F2). Must match the hub's constant.
+const proxyAuthHeader = "X-Hive-Proxy-Auth"
+
+// proxyProofRequired controls F2 enforcement strictness. Default false =
+// fail-open rollout: a request with no proof header is still trusted on its
+// identity headers (so hosted hives aren't locked out while the hub half rolls
+// out fleet-wide). Set HIVE_PROXY_PROOF_REQUIRED=true (once every hub is
+// confirmed injecting the header) to fail closed: a missing/incorrect proof
+// header is rejected. A WRONG proof header is ALWAYS rejected regardless.
+var proxyProofRequired = os.Getenv("HIVE_PROXY_PROOF_REQUIRED") == "true"
 
 type Server struct {
 	port       int
@@ -859,13 +874,38 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// valid when a real token is configured.
 		trusted := s.authToken != "" && secureCompare(r.Header.Get("X-Hive-Internal"), s.authToken)
 
-		// Hub-proxied path: nginx injects both headers from the hub's
+		// Hub-proxied path: nginx injects the identity headers from the hub's
 		// per-user/per-hive auth-check. Only trust them when this spoke is NOT a
-		// direct-route spoke (see strip above). Requiring both headers prevents
-		// trivial bypass via a single forged header.
+		// direct-route spoke (see strip above).
+		//
+		// SECURITY (F2): identity headers alone are forgeable by anything on the
+		// pod network that reaches :3002 directly, bypassing the hub nginx. The
+		// hub now also emits X-Hive-Proxy-Auth = this hive's dashboard token (the
+		// same secret we hold as authToken) on the auth-check success path, which
+		// only the trusted proxy can produce. Require it as PROOF the request
+		// transited the hub.
+		//
+		// ROLLOUT SAFETY — fail open until the hub half is everywhere: if the hub
+		// has NOT sent X-Hive-Proxy-Auth (older hub image mid-rollout), fall back
+		// to the pre-F2 behavior (trust the identity headers) so no hosted hive is
+		// locked out. Once the hub half is confirmed deployed fleet-wide, a
+		// follow-up flips proxyProofRequired to make a missing/incorrect proof
+		// header fail closed.
 		if !trusted && !directRouteAuthz &&
 			r.Header.Get("X-Hive-User") != "" && r.Header.Get("X-Hive-Role") != "" {
-			trusted = true
+			proof := r.Header.Get(proxyAuthHeader)
+			switch {
+			case proof != "" && s.authToken != "" && secureCompare(proof, s.authToken):
+				// Proof present and valid — definitely came through the hub.
+				trusted = true
+			case proof == "" && !proxyProofRequired:
+				// No proof header yet (hub not upgraded) and we're not enforcing
+				// strictly — trust the identity headers as before (rollout window).
+				trusted = true
+			default:
+				// Proof header present but WRONG, or strict mode with no proof:
+				// this did not come through the trusted hub proxy — reject.
+			}
 		}
 
 		// Per-user session path (device flow): resolve the session id in the
