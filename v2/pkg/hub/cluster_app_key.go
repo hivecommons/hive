@@ -239,6 +239,15 @@ const (
 	appKeyReasonSpokeHasNoKey   = "spoke reports no app key"
 	appKeyReasonMismatch        = "spoke key fingerprint differs from cluster key"
 	appKeyReasonMatch           = "spoke already holds the cluster key"
+	// appKeyReasonPerHiveUnusable is the one case that overrides the per-hive
+	// precedence: the hive claims the cluster's app_id but holds a key that is
+	// not the cluster's. That pair cannot sign a valid JWT for that App, so the
+	// per-hive key is not a choice being protected — it is a fault.
+	appKeyReasonPerHiveUnusable = "per-hive key cannot sign for the app_id this hive claims"
+	// appKeyReasonDifferentApp is the per-hive case that IS protected: the hive
+	// is pinned to an App other than the cluster's, so its key is presumed
+	// correct for that App and the cluster key would break it.
+	appKeyReasonDifferentApp = "hive is deliberately pinned to a different app_id"
 )
 
 // decideAppKeySync decides whether the hub should push its cluster App key to a
@@ -250,6 +259,32 @@ const (
 // overwrote it would silently undo that decision on the next beat, with no way
 // for the operator to make it stick. The cluster key is a FLOOR for hives nobody
 // has spoken for, not a ceiling over hives somebody has.
+//
+// THE ONE EXCEPTION — A WRONG PER-HIVE KEY IS NOT A CHOICE
+//
+// That precedence protects a DECISION. It must not protect a FAULT, and the two
+// are distinguishable without heuristics. A GitHub App JWT is signed by the
+// private key and presented alongside an app_id; GitHub verifies the signature
+// against the public key registered for THAT app_id. So for a hive reporting
+// app_id == cluster.AppID with a key fingerprint != cluster.Fingerprint, the
+// credential pair is provably unusable — not "probably stale", not "differently
+// configured", but arithmetically incapable of producing a token. That is
+// exactly the state three live GHE hives are in: they carry the PUBLIC
+// github.com App's key while claiming the GHE app_id, and every request dies
+// with "401 A JSON web token could not be decoded". Withholding the cluster key
+// from them protects nothing and leaves them permanently dead.
+//
+// The discriminator is therefore the app_id, and ONLY the app_id:
+//
+//	per-hive key + spoke app_id == cluster app_id + fingerprint differs
+//	    -> PUSH. The key cannot work for the App the hive claims.
+//	per-hive key + spoke app_id != cluster app_id (and non-zero)
+//	    -> DO NOT PUSH. A different App on purpose; its key is right for it.
+//	per-hive key + spoke app_id == 0 (unknown / too old to report)
+//	    -> DO NOT PUSH. Silence is not evidence of a fault; stay conservative.
+//
+// This is a proof, not an inference: it never asks whether a key LOOKS stale,
+// only whether the hive's own claimed App ID makes its own key impossible.
 //
 // IDEMPOTENCE: the hub pushes only when the fingerprints differ. Once the spoke
 // reports the cluster fingerprint the decision flips to no-push and the key stops
@@ -264,35 +299,62 @@ const (
 // that in fact has a good key is harmless — it rewrites the same App identity —
 // whereas withholding leaves a dead hive dead. Once the spoke is new enough to
 // report, the push stops on the following beat.
-func decideAppKeySync(spokeFingerprint string, hasPerHiveKey bool, cluster *clusterAppIdentity) appKeySyncDecision {
+func decideAppKeySync(spokeFingerprint string, hasPerHiveKey bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
 	if cluster == nil {
 		return appKeySyncDecision{Reason: appKeyReasonNoClusterKey, FromFingerprint: spokeFingerprint}
 	}
+	fp := strings.TrimSpace(spokeFingerprint)
 	if hasPerHiveKey {
+		// Idempotence first: if the per-hive key already IS the cluster key
+		// there is nothing to decide and nothing to send. Checking this ahead of
+		// the app_id logic also means a hive whose provisioned key happens to be
+		// correct never enters the exception path at all.
+		if fp != "" && fp == cluster.Fingerprint {
+			return appKeySyncDecision{
+				Reason:          appKeyReasonMatch,
+				FromFingerprint: fp,
+				ToFingerprint:   cluster.Fingerprint,
+			}
+		}
+		// The exception: the hive claims this cluster's App but cannot sign for
+		// it. Requires a POSITIVE app_id match — zero (unknown) and any other
+		// App both fall through to the protected override below.
+		if spokeAppID != 0 && spokeAppID == cluster.AppID && fp != "" && fp != cluster.Fingerprint {
+			return appKeySyncDecision{
+				Push:            true,
+				Reason:          appKeyReasonPerHiveUnusable,
+				FromFingerprint: fp,
+				ToFingerprint:   cluster.Fingerprint,
+			}
+		}
+		reason := appKeyReasonPerHiveOverride
+		if spokeAppID != 0 && spokeAppID != cluster.AppID {
+			reason = appKeyReasonDifferentApp
+		}
 		return appKeySyncDecision{
-			Reason:          appKeyReasonPerHiveOverride,
-			FromFingerprint: spokeFingerprint,
+			Reason:          reason,
+			FromFingerprint: fp,
 			ToFingerprint:   cluster.Fingerprint,
 		}
 	}
-	if strings.TrimSpace(spokeFingerprint) == "" {
+	if fp == "" {
 		return appKeySyncDecision{
 			Push:          true,
 			Reason:        appKeyReasonSpokeHasNoKey,
 			ToFingerprint: cluster.Fingerprint,
 		}
 	}
-	if spokeFingerprint != cluster.Fingerprint {
+	if fp != cluster.Fingerprint {
 		return appKeySyncDecision{
 			Push:            true,
 			Reason:          appKeyReasonMismatch,
-			FromFingerprint: spokeFingerprint,
+			FromFingerprint: fp,
 			ToFingerprint:   cluster.Fingerprint,
 		}
 	}
 	return appKeySyncDecision{
 		Reason:          appKeyReasonMatch,
-		FromFingerprint: spokeFingerprint,
+		FromFingerprint: fp,
 		ToFingerprint:   cluster.Fingerprint,
 	}
 }
@@ -306,9 +368,9 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey bool, cluster *clus
 // installation_id. Zero is passed through as zero — the spoke's callback only
 // rebuilds its client once app_id, installation_id and key file are all present,
 // so a key delivered ahead of an installation ID lands on disk and waits.
-func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey bool, installationID int64, logger *slog.Logger) *HeartbeatGitHubAppConfig {
+func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey bool, spokeAppID int64, installationID int64, logger *slog.Logger) *HeartbeatGitHubAppConfig {
 	identity := s.appIdentityForCluster(clusterID)
-	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, identity)
+	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, spokeAppID, identity)
 	if !decision.Push || identity == nil {
 		return nil
 	}
@@ -318,6 +380,8 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 			"hive_id", hiveID,
 			"cluster_id", clusterID,
 			"app_id", identity.AppID,
+			"spoke_app_id", spokeAppID,
+			"per_hive_key", hasPerHiveKey,
 			"reason", decision.Reason,
 			"from_fingerprint", decision.FromFingerprint,
 			"to_fingerprint", decision.ToFingerprint,
@@ -528,6 +592,7 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		clusterID,
 		payload.GitHubAppKeyFingerprint,
 		payload.GitHubAppKeyPerHive,
+		payload.GitHubAppID,
 		installationIDUnchanged,
 		s.logger,
 	)

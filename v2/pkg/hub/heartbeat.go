@@ -294,6 +294,22 @@ type HeartbeatPayload struct {
 	// its cluster. The hub honours it as an override: a deliberate per-hive
 	// credential is never overwritten by the cluster default.
 	GitHubAppKeyPerHive bool `json:"github_app_key_per_hive,omitempty"`
+	// GitHubAppID is the App ID this spoke believes it is authenticating AS —
+	// cfg.GitHub.AppID, non-secret. It exists to make one specific distinction
+	// decidable on the hub: a per-hive key that is WRONG versus a per-hive key
+	// that is deliberately for a DIFFERENT App.
+	//
+	// A JWT is signed by the key and presented as app_id. If a spoke claims the
+	// cluster's app_id but holds a key whose fingerprint is not the cluster
+	// key's, that pair provably cannot authenticate — GitHub rejects it before
+	// any permission check ("A JSON web token could not be decoded"). If the
+	// spoke claims a DIFFERENT app_id, its key is presumed correct for that
+	// other App and the hub must not touch it.
+	//
+	// Zero means the spoke is too old to report, or has no App configured. Both
+	// read as "unknown": the hub falls back to the conservative per-hive
+	// override and declines to overwrite. Never infer a mismatch from silence.
+	GitHubAppID int64 `json:"github_app_id,omitempty"`
 }
 
 type StatusCollector func() *HeartbeatPayload
