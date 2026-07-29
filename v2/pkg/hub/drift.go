@@ -265,6 +265,42 @@ func imageTagOf(ref string) string {
 	return ref[colon+1:]
 }
 
+// imageRefIsPinned reports whether an image reference is DEFINITIVELY pinned to
+// something a rolling upgrade can never advance.
+//
+// This is deliberately not the same question as imageTagIsMutable. That
+// predicate asks "can a restart pick up new code?", and its safe answer for
+// anything it cannot parse is false — the caller then takes the harmless
+// image-patch path. The drift rule asks something stronger: "do I have positive
+// evidence this hive is pinned, enough to page a human with a CRITICAL badge?"
+// An unparseable ref is not that evidence.
+//
+// The distinction is not academic. A ref that lost its tag separator in transit
+// (the sanitizer used to strip ':') is a MALFORMED value, not a legitimate SHA
+// pin — yet the old rule, built directly on !imageTagIsMutable, read eleven
+// healthy "-latest" hives as critically pinned. So parse failure degrades to
+// silence here, exactly as an empty ref already did. A future mangling of this
+// field can then only ever cost the hub a signal, never invent a false one.
+//
+// Returns false (no signal) for: an empty ref, and a ref with no tag separator
+// at all — both are "unknown", not "pinned".
+func imageRefIsPinned(ref string) bool {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return false // unknown image: old spoke, or not running in-cluster
+	}
+	// A digest pin ("...@sha256:...") is unambiguous positive evidence.
+	if strings.Contains(ref, "@") {
+		return true
+	}
+	// Otherwise a tag must be parseable before any claim can be made. Only a
+	// colon AFTER the last '/' is a tag; an earlier one is a registry port.
+	if imageTagOf(ref) == "" {
+		return false // malformed or untagged — unknown, so stay silent
+	}
+	return !imageTagIsMutable(ref)
+}
+
 // healthFailingChecks returns the names of checks that are not passing, with
 // their status, in the order the spoke reported them. Every access is guarded:
 // Health is a free-form map[string]any decoded from spoke JSON, so any level of
@@ -367,13 +403,15 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 	// Image pinned to an immutable tag. The spoke reports its own Deployment's
 	// image over the heartbeat; a tag that is not "<branch>-latest" can never
 	// receive a rolling upgrade, which is how one spoke sat on hive:63d8902
-	// restart-looping while the fleet moved on. Reuses imageTagIsMutable — the
-	// SAME predicate UpgradeSelfToSHA uses to decide a restart is a no-op, so
-	// the badge can never disagree with the upgrade path about what is pinned.
+	// restart-looping while the fleet moved on.
 	//
-	// Guarded on a non-empty ref: "unknown image" (old spoke, or not running
-	// in-cluster) must never render as "pinned".
-	if h.ImageRef != "" && !imageTagIsMutable(h.ImageRef) {
+	// imageRefIsPinned — not a bare !imageTagIsMutable — because raising a
+	// CRITICAL badge demands positive evidence of a pin. An empty or
+	// unparseable ref is "unknown", and unknown must be silent: that is the
+	// difference between reporting a real pin and telling an operator eleven
+	// healthy rolling hives can never be upgraded. A genuine pin (SHA tag,
+	// release tag, or digest) still fires, and still fires critical.
+	if imageRefIsPinned(h.ImageRef) {
 		label := imageTagOf(h.ImageRef)
 		if label == "" {
 			label = h.ImageRef

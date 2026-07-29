@@ -672,7 +672,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Version:       sanitizeHeartbeatField(payload.Version),
 		GitHash:       shortSHA(sanitizeHeartbeatField(payload.GitHash)),
 		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
-		ImageRef:      sanitizeHeartbeatField(payload.ImageRef),
+		ImageRef:      sanitizeImageRef(payload.ImageRef),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
@@ -1608,6 +1608,39 @@ func sanitizeHeartbeatField(s string) string {
 	var b strings.Builder
 	for _, c := range s {
 		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '/' {
+			b.WriteRune(c)
+		}
+	}
+	return b.String()
+}
+
+// sanitizeImageRef sanitizes a container image reference reported by a spoke.
+//
+// This is DELIBERATELY separate from sanitizeHeartbeatField rather than a
+// widening of it. That allowlist is applied to roughly a dozen fields — hive
+// IDs, versions, branches, governor mode, owner, agent names and states,
+// leaderboard usernames — none of which may legally contain a colon, so
+// admitting one globally would loosen all of them at once to fix a single
+// field.
+//
+// An image ref is the one heartbeat field where a colon is structural: it
+// separates repo from tag ("hive:v2-latest"), introduces a digest algorithm
+// ("@sha256:..."), and delimits a registry port ("registry:5000/..."). The
+// shared sanitizer stripped it, turning "ghcr.io/kubestellar/hive:v2-latest"
+// into "ghcr.io/kubestellar/hivev2-latest" — a ref with no tag separator,
+// which the pinned-image drift rule then reported as a CRITICAL pin on eleven
+// perfectly healthy rolling hives.
+//
+// The allowlist is exactly the character set legal in an OCI reference:
+// alphanumerics plus the "-_./" of a repository path, ":" for tag/port/digest
+// algorithm, and "@" for a digest. Everything else — quotes, angle brackets,
+// whitespace, control characters — is still dropped, so a hostile spoke cannot
+// inject markup into a hub-rendered string.
+func sanitizeImageRef(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '/' || c == ':' || c == '@' {
 			b.WriteRune(c)
 		}
 	}
