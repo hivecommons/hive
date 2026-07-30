@@ -694,7 +694,10 @@ func main() {
 	// as, and requests simply accumulate rather than opening under a wrong
 	// identity. ghClient uses the App installation token (see ghAuth wiring).
 	if ghClient != nil && cfg.GitHub.HasUsableApp() {
-		ghClient.StartPRRequestWatcher(ctx, nil)
+		// authz enforces the SAME per-agent ACMM write-gate + forge-resistance as
+		// the direct `gh pr create` path — the request-file route grants no extra
+		// privilege. A denied request is quarantined, never opened.
+		ghClient.StartPRRequestWatcher(ctx, agentMgr.AuthorizePROpen, nil)
 	}
 
 	go agent.StartPermissionsWatcher(logger)

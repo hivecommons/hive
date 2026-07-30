@@ -59,17 +59,41 @@ type PRResponse struct {
 	At             string `json:"at"`
 }
 
+// PRRequestAuthorizer decides whether a PR-open request may proceed. It receives
+// the agent NAME claimed in the request and the UID that OWNS the request file
+// (from the file's stat), and returns nil to authorize or an error explaining
+// the denial. This is where the two policy checks live, implemented by the
+// caller (which has the manager + uid-map):
+//
+//  1. Forge-resistance: the fileUID must map to the claimed agent (an agent can
+//     only speak for ITSELF — one agent, or any non-agent process, cannot drop a
+//     request "as" another agent). The per-agent PR-request subdir is UID-owned,
+//     so this is the same UID trust anchor the git credential helper uses.
+//  2. ACMM write-gate: the agent must be push-capable at the hive's current ACMM
+//     level (the same CanPush()/mode check that governs `gh pr create` today) —
+//     an advisory-only agent must NOT be able to open a PR via this path.
+//
+// A nil authorizer DENIES everything (fail closed) — the watcher never opens a
+// PR without an authorizer, so a wiring mistake cannot silently bypass policy.
+type PRRequestAuthorizer func(agent string, fileUID int) error
+
 // StartPRRequestWatcher runs a loop that opens PRs for request files dropped in
 // PRRequestDir. It returns immediately; the loop runs until ctx is cancelled.
 // A nil client (no GitHub creds) makes this a no-op: requests accumulate rather
 // than being silently dropped, so the feature degrades to "nothing opens" not
 // "opened as the wrong identity".
 //
+// authz enforces the per-agent ACMM write-gate + forge-resistance (see
+// PRRequestAuthorizer). A nil authz fails closed (denies every request) — the
+// watcher must never open a PR that hasn't been authorized against the same
+// policy as the direct `gh pr create` path.
+//
 // nowFn is injectable for tests; pass nil for time.Now.
-func (c *Client) StartPRRequestWatcher(ctx context.Context, nowFn func() time.Time) {
+func (c *Client) StartPRRequestWatcher(ctx context.Context, authz PRRequestAuthorizer, nowFn func() time.Time) {
 	if c == nil {
 		return
 	}
+	c.prAuthz = authz
 	if nowFn == nil {
 		nowFn = time.Now
 	}
@@ -135,6 +159,21 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// AUTHORIZE before opening — the watcher must enforce the SAME policy as the
+	// direct `gh pr create` path: the request's agent must own the file (an agent
+	// can only speak for itself) AND be push-capable at the hive's ACMM level.
+	// The owning UID comes from the file's stat, which the requester cannot forge
+	// without actually running as that UID. A nil authorizer fails closed.
+	fileUID := statUID(data, path)
+	if c.prAuthz == nil {
+		c.denyPRRequest(path, req, "no authorizer configured (fail closed)", nowFn)
+		return
+	}
+	if err := c.prAuthz(req.Agent, fileUID); err != nil {
+		c.denyPRRequest(path, req, err.Error(), nowFn)
+		return
+	}
+
 	res, err := c.CreatePR(ctx, req.Repo, req.Head, req.Base, req.Title, req.Body)
 	resp := PRResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	if err != nil {
@@ -159,6 +198,30 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		slog.String("repo", req.Repo), slog.String("head", req.Head),
 		slog.Int("number", res.Number), slog.Bool("reused", res.AlreadyExisted),
 		slog.String("agent", req.Agent))
+}
+
+// denyPRRequest records an authorization failure and quarantines the request
+// (renamed .denied) so it is not retried forever. A denied request is a policy
+// event, not a transient error — retrying can never make an advisory agent
+// push-capable or change who owns the file.
+func (c *Client) denyPRRequest(path string, req PRRequest, reason string, nowFn func() time.Time) {
+	c.writePRResult(path, PRResponse{OK: false, Error: "authorization denied: " + reason, At: nowFn().UTC().Format(time.RFC3339)})
+	_ = os.Rename(path, path+".denied")
+	c.logger.Warn("pr-request watcher: DENIED (policy)",
+		slog.String("agent", req.Agent), slog.String("repo", req.Repo),
+		slog.String("head", req.Head), slog.String("reason", reason))
+}
+
+// statUID returns the UID that owns the request file. On the (Linux) container
+// this is a real UID that a forging process cannot fake without running as it.
+// data is unused but kept in the signature so a future non-stat proof (e.g. an
+// embedded signed token) can slot in without touching call sites.
+func statUID(_ []byte, path string) int {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return -1
+	}
+	return fileOwnerUID(fi)
 }
 
 func (c *Client) writePRResult(reqPath string, resp PRResponse) {

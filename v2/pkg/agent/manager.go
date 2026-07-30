@@ -4081,6 +4081,49 @@ func (m *Manager) agentCanWrite(agent *AgentProcess) bool {
 	return m.agentMode(agent).CanPush()
 }
 
+// AuthorizePROpen enforces the policy for the hive-opens-PR watcher: an agent
+// may open a PR (by dropping a request file) only if BOTH hold:
+//
+//  1. Forge-resistance — the request file's owning UID (fileUID) maps to the
+//     agent it claims to be (via the uid-map). One agent cannot open a PR "as"
+//     another, and a non-agent process (unknown UID) is refused. When per-agent
+//     UIDs are not in play (fileUID <= 0, e.g. shared-dev-UID mode with no map),
+//     ownership is unverifiable, so we fall back to the ACMM check alone rather
+//     than hard-failing — the same posture the credential helper takes.
+//  2. ACMM write-gate — the agent must be push-capable at the hive's current
+//     ACMM level, i.e. exactly the CanPush() check that governs `gh pr create`.
+//
+// Returns nil to authorize, or an error describing the denial. This mirrors the
+// direct PR path's policy so the request-file route grants no extra privilege.
+func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
+	if strings.TrimSpace(agentName) == "" {
+		return fmt.Errorf("no agent named in the request")
+	}
+	// Forge check: when we have a UID map and a real owning UID, the file owner
+	// must BE this agent.
+	if m.uidMap != nil && fileUID > 0 {
+		owner := m.uidMap.LookupByUID(fileUID)
+		if owner == "" {
+			return fmt.Errorf("request file owned by unknown uid %d (not a registered agent)", fileUID)
+		}
+		if owner != agentName {
+			return fmt.Errorf("request claims agent %q but file is owned by agent %q (uid %d)", agentName, owner, fileUID)
+		}
+	}
+	// ACMM write-gate: resolve the agent and check CanPush.
+	m.mu.RLock()
+	agent := m.agents[agentName]
+	m.mu.RUnlock()
+	if agent == nil {
+		return fmt.Errorf("unknown agent %q", agentName)
+	}
+	if !m.agentMode(agent).CanPush() {
+		return fmt.Errorf("agent %q is not push-capable at this ACMM level (mode %s) — advisory agents may not open PRs",
+			agentName, m.agentMode(agent).String())
+	}
+	return nil
+}
+
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.
 // COPILOT_GITHUB_TOKEN is kept for all agents (needed for AI auth); write access is
 // gated by --enable-all-github-mcp-tools flag. GH_TOKEN and GITHUB_TOKEN are stripped
