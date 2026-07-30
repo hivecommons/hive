@@ -9893,7 +9893,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
@@ -10096,10 +10096,12 @@ const dashboardHTML = `<!DOCTYPE html>
        height. Only owner rows pay.
 
        STACKED_ROW_GAP_PX separates the stacked lines without adding a full line
-       box. 1px, not more, precisely because the last line is a control whose own
-       border already supplies visual separation. */
+       box. 1px proved too tight in practice: the branch pill, SHA, upgrade link
+       and auto-upgrade select read as one crowded block, and the Location cell's
+       cluster badge sat flush against its visibility toggle. 4px is enough to
+       group them as distinct rows while still costing far less than a line box. */
     var STACKED_LINE_HEIGHT = 1.15;
-    var STACKED_ROW_GAP_PX = 1;
+    var STACKED_ROW_GAP_PX = 4;
     /* Shared style for a stacked cell: a vertical flex column, centred to match
        the table's default text-align:center for non-first cells. */
     var STACKED_CELL_STYLE = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:' + STACKED_ROW_GAP_PX + 'px;line-height:' + STACKED_LINE_HEIGHT;
