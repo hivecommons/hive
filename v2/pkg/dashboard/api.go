@@ -4856,10 +4856,15 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	copilotCLI := s.queryCLIModels("copilot")
 	geminiCLI := s.queryCLIModels("gemini")
 	gooseCLI := s.queryCLIModels("goose")
+	// bob has no discovery source and no usable --model flag: it selects its
+	// own model. Served explicitly so the client never falls through to the
+	// copilot catalog and offers models bob cannot honor (see bobStaticModels).
+	bobCLI := s.queryCLIModels(bobBackendID)
 
 	jsonResponse(w, []map[string]interface{}{
 		{"id": "claude", "name": "Claude Code", "models": claudeCLI.models, "fallback": claudeCLI.fallback},
 		{"id": "copilot", "name": "GitHub Copilot", "models": copilotCLI.models, "fallback": copilotCLI.fallback},
+		{"id": bobBackendID, "name": "bob (IBM bobshell)", "models": bobCLI.models, "fallback": bobCLI.fallback},
 		{"id": "gemini", "name": "Gemini", "models": geminiCLI.models, "fallback": geminiCLI.fallback},
 		{"id": "goose", "name": "Goose", "models": gooseCLI.models, "fallback": gooseCLI.fallback},
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},

@@ -50,9 +50,14 @@ func asString(v any) string {
 	return ""
 }
 
+// testClient returns a client whose PR authorizer ALLOWS everything, so the
+// watcher's open/dedupe/quarantine paths can be exercised. Authorization itself
+// is tested separately in TestPRRequestWatcher_Authz*.
 func testClient(t *testing.T, srvURL string) *Client {
 	t.Helper()
-	return NewClientForTest(srvURL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c := NewClientForTest(srvURL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.prAuthz = func(agent string, uid int) error { return nil }
+	return c
 }
 
 // End-to-end: a request file is opened into a PR, consumed, and a result written.
@@ -137,5 +142,54 @@ func TestPRRequestWatcher_QuarantinesBadJSON(t *testing.T) {
 	}
 	if _, err := os.Stat(bad + ".bad"); err != nil {
 		t.Errorf("bad request should be quarantined as .bad: %v", err)
+	}
+}
+
+// A denying authorizer (e.g. advisory agent / UID mismatch) must NOT open a PR
+// and must quarantine the request as .denied (not retry it forever).
+func TestPRRequestWatcher_AuthzDenyQuarantines(t *testing.T) {
+	created := 0
+	srv := newPRMockServer(t, "", &created)
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	c.prAuthz = func(agent string, uid int) error { return context.DeadlineExceeded } // stand-in denial
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	reqPath, _ := WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "brainstorm/x", Title: "advisory tries to PR", Agent: "brainstorm"})
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if created != 0 {
+		t.Errorf("denied request must NOT create a PR; got %d", created)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Errorf("denied request should be renamed away")
+	}
+	if _, err := os.Stat(reqPath + ".denied"); err != nil {
+		t.Errorf("denied request should be quarantined as .denied: %v", err)
+	}
+}
+
+// A nil authorizer fails closed: no PR opened.
+func TestPRRequestWatcher_NilAuthzFailsClosed(t *testing.T) {
+	created := 0
+	srv := newPRMockServer(t, "", &created)
+	defer srv.Close()
+	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// prAuthz deliberately left nil.
+
+	dir := t.TempDir()
+	old := prRequestDirForTest
+	prRequestDirForTest = dir
+	defer func() { prRequestDirForTest = old }()
+
+	_, _ = WritePRRequest(dir, PRRequest{Repo: "o/r", Head: "scanner/y", Title: "no authorizer", Agent: "scanner"})
+	c.ProcessPRRequestsOnce(context.Background())
+
+	if created != 0 {
+		t.Errorf("nil authorizer must fail closed (no PR); got %d", created)
 	}
 }

@@ -23,10 +23,23 @@ const (
 	DocsTokenCachePath = "/var/run/hive-metrics/gh-app-token-docs.cache"
 	tokenCachePerms    = 0o640
 
-	// Per-agent scoped token caches — only the owning agent UID can read.
-	agentTokenCacheDir   = "/var/run/hive-metrics/agent-tokens"
+	// Per-agent scoped token caches. entrypoint.sh pre-creates each file as
+	// dev:hive-<agent> mode 0640 so the hive process (dev) can rewrite it in
+	// place and ONLY the owning agent's private group can read it — no chown
+	// at runtime, which an unprivileged process cannot perform.
+	defaultAgentTokenCacheDir = "/var/run/hive-metrics/agent-tokens"
+	// Applied only when the file was NOT pre-created (degraded path): keep it
+	// owner-only rather than leaking a token to the shared "node" group.
 	agentTokenCachePerms = 0o600
+	// Directory must be traversable by every agent UID so each can open its
+	// own 0640 file; the files themselves carry the per-agent restriction.
+	agentTokenCacheDirPerms = 0o755
 )
+
+// agentTokenCacheDir is the directory holding per-agent token caches. It is a
+// variable rather than a constant solely so tests can redirect it to a temp
+// dir; production code never reassigns it.
+var agentTokenCacheDir = defaultAgentTokenCacheDir
 
 type AppAuth struct {
 	appID          int64
@@ -197,40 +210,72 @@ func AgentTokenCachePath(agentName string) string {
 	return agentTokenCacheDir + "/gh-token-" + agentName + ".cache"
 }
 
-// WriteAgentToken mints a scoped token for the given tier and writes it
-// to a per-agent cache file owned by agentUID with 0600 perms. The hive
-// binary (UID 1001) creates the file then chowns it to the agent UID so
-// only that agent can read it.
+// WriteAgentToken mints a tier-scoped token for the given agent and writes it
+// into that agent's pre-created cache file.
+//
+// Delivery model (no chown at runtime):
+//
+// The hive binary drops privileges to dev (UID 1001) and therefore CANNOT
+// chown — handing a file to a different UID requires CAP_CHOWN, which is not
+// granted in the hardened/OpenShift environments hive targets (the same
+// container already fails NET_ADMIN for iptables). The previous
+// implementation wrote a temp file and chowned it to the agent UID; that
+// chown ALWAYS failed with EPERM, the temp file was deleted, and no agent on
+// any hive ever received a token.
+//
+// Instead, entrypoint.sh pre-creates the cache file as root, before the
+// privilege drop, as dev:hive-<agent> mode 0640 (see the per-agent user loop
+// there). That gives us:
+//
+//   - owner dev  -> this process can rewrite the contents in place
+//   - group hive-<agent>, whose only member is that agent -> only the owning
+//     agent can read it (NOT group "node", which every agent shares)
+//
+// The write must therefore be IN PLACE. A write-temp-then-rename would
+// replace the pre-created inode with a fresh dev:node one and silently
+// destroy both the ownership and the isolation guarantee.
 func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
 	token, err := a.ScopedToken(ctx, tier)
 	if err != nil {
 		return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
 	}
 
-	if err := os.MkdirAll(agentTokenCacheDir, 0o755); err != nil {
+	if err := os.MkdirAll(agentTokenCacheDir, agentTokenCacheDirPerms); err != nil {
 		return fmt.Errorf("creating agent token dir: %w", err)
 	}
 
 	cachePath := AgentTokenCachePath(agentName)
-	tmpPath := cachePath + ".tmp"
-	if err := os.WriteFile(tmpPath, []byte(token), agentTokenCachePerms); err != nil {
-		return fmt.Errorf("writing agent token cache: %w", err)
+	preCreated := true
+	if _, statErr := os.Stat(cachePath); statErr != nil {
+		preCreated = false
 	}
 
-	if agentUID > 0 {
-		if err := os.Chown(tmpPath, agentUID, -1); err != nil {
-			a.logger.Warn("chown agent token cache failed — agent will use shared cache",
-				"agent", agentName, "uid", agentUID, "error", err)
-			os.Remove(tmpPath)
-			return fmt.Errorf("chown agent token: %w", err)
-		}
+	// O_TRUNC (not O_APPEND) so a shorter token fully replaces a longer one.
+	// The perm argument only applies if the file does not already exist; when
+	// entrypoint pre-created it, the existing 0640 dev:hive-<agent> mode wins.
+	f, err := os.OpenFile(cachePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, agentTokenCachePerms)
+	if err != nil {
+		return fmt.Errorf("opening agent token cache %s: %w", cachePath, err)
+	}
+	if _, err := f.WriteString(token); err != nil {
+		f.Close()
+		return fmt.Errorf("writing agent token cache %s: %w", cachePath, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("closing agent token cache %s: %w", cachePath, err)
 	}
 
-	if err := os.Rename(tmpPath, cachePath); err != nil {
-		return fmt.Errorf("rename agent token cache: %w", err)
+	if !preCreated && agentUID > 0 {
+		// The file did not exist, so we just created it as dev:node 0600 —
+		// the agent UID cannot read it. This is a real, silent-auth-failure
+		// condition, not a benign fallback: state it plainly and actionably.
+		// Do NOT attempt a chown here; it cannot succeed without CAP_CHOWN
+		// and the failure path is what caused this bug in the first place.
+		a.logger.Warn("agent token cache was not pre-created by entrypoint — the agent CANNOT read it and will fall back to the shared full-privilege token (least-privilege scoping lost); ensure entrypoint.sh created this file as dev:hive-<agent> 0640",
+			"agent", agentName, "uid", agentUID, "path", cachePath)
 	}
 
-	a.logger.Info("per-agent token cached", "agent", agentName, "tier", tier, "uid", agentUID)
+	a.logger.Info("per-agent token cached", "agent", agentName, "tier", tier, "uid", agentUID, "pre_created", preCreated)
 	return nil
 }
 

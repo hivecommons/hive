@@ -623,6 +623,13 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
 - Writes are authored by the App bot identity, not a personal account. Do not
   set git user.name/user.email to a human, and do not pass 'gh pr create' or
   'git commit' an explicit --author: let the App identity stand.
+- To OPEN A PULL REQUEST, use ` + "`hive-open-pr`" + ` — the hive opens it with the
+  App token so it is authored by the App bot ("<slug>[bot]"), never the login user:
+    hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" --body "<body with Fixes #N>"
+  Do NOT open PRs with the GitHub MCP (create_pull_request / create_pull_request_with_copilot)
+  or raw 'gh pr create' — those author the PR as the Copilot login user. 'gh pr create'
+  is auto-redirected to hive-open-pr, but prefer calling hive-open-pr directly.
+  (Push your branch first; hive-open-pr requests the PR, the hive opens it within ~10s.)
 - git push / git fetch: run them normally. A credential helper supplies the
   App-scoped push token automatically. Do NOT export GH_TOKEN for git and do
   NOT use HIVE_GITHUB_TOKEN (it is read-only; overriding breaks pushes).
