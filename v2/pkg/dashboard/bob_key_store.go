@@ -40,13 +40,25 @@ const (
 	// whole-volume-mount the Secret (matching entrypoint.sh, which already
 	// chowns/chmods that exact path).
 	bobSecretDataKey = "bob_api_key"
-	// bobKeyFileMode: the key file is read by the hive process itself (the
-	// resolver runs in-process at agent launch), so owner-only is the
-	// tightest mode that works.
-	bobKeyFileMode = 0o600
-	// bobKeyDirMode keeps the PVC secrets dir owner-only, matching the mode
-	// entrypoint.sh applies to /data/secrets.
-	bobKeyDirMode = 0o700
+	// bobKeyFileMode must be group-readable (0640, group node), NOT 0600.
+	// An earlier 0600 assumed "the key file is read by the hive process
+	// itself" — that is wrong for bob. Unlike every other key hive stores,
+	// the bobshell CLI reads BOBSHELL_API_KEY while running AS THE AGENT UID
+	// (2001+, in group node), not as dev. With 0600 dev:node the agent got
+	// EACCES, the key resolved to "", and bob silently fell back to the W3ID
+	// browser SSO flow that cannot complete in a pod — every bob agent on the
+	// hive parked at the auth prompt. Group-read only; never world-readable.
+	bobKeyFileMode = 0o640
+	// bobKeyDirMode gives the PVC secrets dir group EXECUTE (0710) so agent
+	// UIDs can traverse it to open the key file by name. Execute without read
+	// means they cannot LIST the directory, so unrelated secrets stay
+	// unenumerable; per-file modes remain the real access control. Matches the
+	// mode entrypoint.sh applies to /data/secrets.
+	bobKeyDirMode = 0o710
+	// bobKeyDirGroupExec is the `g+x` bit alone — the minimum a pre-existing
+	// 0700 secrets dir needs so agent UIDs can traverse it to open the key by
+	// name. Added to (never substituted for) the dir's current mode.
+	bobKeyDirGroupExec = 0o010
 	// bobKeyMaxLen bounds an accepted key so a stray paste (or a file upload
 	// aimed at the field) cannot write an unbounded blob onto the PVC.
 	// bobshell keys are far shorter than this; the limit only rejects abuse.
@@ -114,6 +126,28 @@ func writeBobKeyFile(key string) error {
 	dir := filepath.Dir(writableBobKeyFile)
 	if err := os.MkdirAll(dir, bobKeyDirMode); err != nil {
 		return actionableWriteError(dir, err)
+	}
+	// MkdirAll is a no-op (and applies no mode) when the dir already exists,
+	// which it will on every hive provisioned before this fix — leaving it at
+	// the old owner-only 0700 that agent UIDs cannot traverse. Widen it in
+	// place so saving a key repairs the dir without waiting for the next pod
+	// restart to re-run entrypoint.sh.
+	//
+	// Only ADD the group-traverse bit to the dir's existing mode; never assign
+	// bobKeyDirMode wholesale. A blanket assignment would also GRANT bits the
+	// operator deliberately removed — in particular it would make an
+	// intentionally read-only secrets dir writable again, silently undoing a
+	// lockdown. Widening one bit is the least surprising repair.
+	//
+	// Best-effort and deliberately NOT fatal: on a hive where the dir is owned
+	// by another UID this fails, but the key write below may still succeed, and
+	// failing the save over a dir we could not re-mode would regress hives that
+	// work today. The launch-time probe (verifyBobKeyReadable) reports any
+	// resulting inaccessibility with a far more actionable message.
+	if info, err := os.Stat(dir); err == nil {
+		if mode := info.Mode().Perm(); mode&bobKeyDirGroupExec == 0 {
+			_ = os.Chmod(dir, mode|bobKeyDirGroupExec)
+		}
 	}
 	tmp, err := os.CreateTemp(dir, ".bob_api_key.*")
 	if err != nil {

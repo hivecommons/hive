@@ -209,10 +209,12 @@ func TestBobEnvPairInjection(t *testing.T) {
 	}
 }
 
-// TestBobAuthTypeEnvPair is the regression guard for the "bob prompts for an
-// API key forever" bug: BOBSHELL_DEFAULT_AUTH_TYPE is the ONLY thing that
-// selects API-key auth (there is no --auth-method flag in bobshell 1.0.6), so
-// a bob agent must always carry it and no other backend should.
+// TestBobAuthTypeEnvPair guards one of the three layers that keep bob off the
+// SSO prompt. BOBSHELL_DEFAULT_AUTH_TYPE is the weakest of them — per
+// bundle/bob.js it is only the FALLBACK default and loses to a persisted
+// security.auth.selectedType — but it still must be present on bob agents and
+// absent everywhere else. The stronger layers are --auth-method (see
+// TestBobLaunchCmd) and the settings file (see TestEnsureBobAuthSettings).
 func TestBobAuthTypeEnvPair(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -303,19 +305,19 @@ func TestBobLaunchCmd(t *testing.T) {
 			name:  "no model",
 			model: "",
 			// --accept-license clears the license gate that would otherwise
-			// hard-error with no human to answer it. It is the ONLY auth/gate
-			// flag we pass: --auth-method does not exist in bobshell 1.0.6, so
-			// passing it was a no-op that left bob on the SSO default.
-			wantContain: []string{"bob", "--accept-license"},
+			// hard-error with no human to answer it.
+			// --auth-method api-key is the strongest auth control: it is a real
+			// (but --help-hidden) flag in bobshell 1.0.6 and is the only input
+			// that outranks the persisted, fleet-shared settings file.
+			wantContain: []string{"bob", "--accept-license", "--auth-method api-key"},
 			// No -p/--prompt: interactive mode must be preserved.
-			// No --auth-method: phantom flag, regression guard.
-			wantAbsent: []string{"--model", " -p ", "--prompt", "--auth-method"},
+			wantAbsent: []string{"--model", " -p ", "--prompt"},
 		},
 		{
 			name:        "with model",
 			model:       "granite-3",
-			wantContain: []string{"--accept-license", "--model granite-3"},
-			wantAbsent:  []string{" -p ", "--prompt", "--auth-method"},
+			wantContain: []string{"--accept-license", "--auth-method api-key", "--model granite-3"},
+			wantAbsent:  []string{" -p ", "--prompt"},
 		},
 	}
 

@@ -149,6 +149,14 @@ type Manager struct {
 	// spoke. An atomic read is lock-free and safe from any lock context.
 	bobAPIKeyResolver atomic.Pointer[func() string]
 
+	// bobKeySourceResolver reports WHERE the key was found ("file:<path>" or
+	// "env:<NAME>"), never the value. The launch path needs the PATH so it can
+	// verify the file is readable by the AGENT UID — the hive process can read
+	// it as dev even when the agent cannot, so key presence alone is a false
+	// positive (see verifyBobKeyReadable). Same atomic.Pointer discipline and
+	// same deadlock reasoning as bobAPIKeyResolver above.
+	bobKeySourceResolver atomic.Pointer[func() string]
+
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 
@@ -316,6 +324,31 @@ func (m *Manager) bobAPIKey() string {
 		return ""
 	}
 	return (*fnp)()
+}
+
+// SetBobKeySourceResolver injects the resolver reporting WHERE the bob key was
+// found. The returned string is safe to log ("file:<path>" / "env:<NAME>") and
+// never contains the key value.
+func (m *Manager) SetBobKeySourceResolver(fn func() string) {
+	m.bobKeySourceResolver.Store(&fn)
+}
+
+// bobKeyFilePath returns the FILE the bob key resolved from, or "" when it came
+// from an env var (nothing to permission-check) or is unconfigured.
+// Safe to call while holding m.mu.
+func (m *Manager) bobKeyFilePath() string {
+	fnp := m.bobKeySourceResolver.Load()
+	if fnp == nil || *fnp == nil {
+		return ""
+	}
+	source := (*fnp)()
+	// Only "file:" sources have a path whose permissions can be checked; an
+	// env-var key is inherited through tmux set-environment and needs none.
+	const filePrefix = "file:"
+	if !strings.HasPrefix(source, filePrefix) {
+		return ""
+	}
+	return strings.TrimPrefix(source, filePrefix)
 }
 
 // routableBackend reports whether a backend should be routed through the
@@ -865,6 +898,19 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			)
 			return nil
 		}
+		// Re-assert hive's ownership of the SHARED /data/home/.bob/settings.json
+		// auth block BEFORE bob starts. A persisted selectedType beats
+		// BOBSHELL_DEFAULT_AUTH_TYPE, so without this one agent that ever picked
+		// SSO leaves every bob agent on the hive stuck at the auth prompt.
+		// Pure filesystem work on locals only — takes no locks, so it is safe on
+		// this m.mu-holding path.
+		m.ensureBobAuthSettings(agent.Name, bobSharedHome)
+		// The key resolved above was read by the HIVE process as dev. bob will
+		// read it as the AGENT UID, which is a different question — and the one
+		// that actually failed in production. Probe it and log actionably.
+		// Advisory only: the Secret-mounted copy may still be readable, so this
+		// never blocks a launch that might succeed.
+		m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
 	}
 
 	launchCmd := binary
@@ -3593,16 +3639,35 @@ const bobBackend = "bob"
 // The launch stays INTERACTIVE — no -p/--prompt — so the agent drives bob in a
 // tmux pane exactly like every other CLI backend and a human can attach to it.
 //
-// Auth type is NOT a flag. An earlier version of this function passed
-// `--auth-method api-key`, but bobshell 1.0.6 has no such flag — it exposes no
-// auth-related flags whatsoever — so bob ignored it, stayed on its W3ID SSO
-// default, and every bob agent parked at `awaiting_api_key_input` forever.
-// The real control is the BOBSHELL_DEFAULT_AUTH_TYPE env var, injected via
-// agentEnvPairs (see config.BobAuthTypeEnvVar). Verified live against a
-// running spoke: with that var exported, `bob --accept-license` boots straight
-// to its prompt and authenticates with the existing key.
+// Two flags are passed:
 //
-// One flag remains, verified present in bobshell 1.0.6's help output:
+//   - --auth-method api-key: this flag DOES exist in bobshell 1.0.6. It was
+//     previously removed after `bob --help | grep auth-method` returned
+//     nothing, but that test is misleading: the bundle registers the option and
+//     then explicitly HIDES it from help output —
+//     `t.option("auth-method",{choices:[fr.W3ID_SSO,fr.USE_BOBSHELL]})` followed
+//     by `["debug",...,"auth-method"].forEach(c=>t.hide(c))`. Verified by
+//     running the real 1.0.6 bundle: `--help` is 67 lines with 0 matches for
+//     auth-method, yet the parser distinguishes it from a typo —
+//       $ bob --definitely-not-a-flag x -p hi
+//       Unknown arguments: definitely-not-a-flag, definitelyNotAFlag
+//       $ bob --auth-method bogus-value -p hi
+//       Invalid values: Argument: auth-method, Given: "bogus-value",
+//                       Choices: "sso", "api-key"
+//     while `--auth-method api-key` is accepted silently. An unknown flag under
+//     yargs .strict() would have errored, so the option is live.
+//
+//     It matters because it is the ONLY input that outranks the persisted,
+//     fleet-shared settings file: bob stores it as globalThis.authMethodByCliArg
+//     and resolves
+//     `authMethodByCliArg || merged.security.auth.selectedType || <default>`,
+//     and it also suppresses the setValue() write-back that would otherwise
+//     persist a competing value. BOBSHELL_DEFAULT_AUTH_TYPE
+//     (config.BobAuthTypeEnvVar) is only the FALLBACK default and loses to a
+//     persisted selectedType. Neither is the primary bug — an unreadable key
+//     file was (see verifyBobKeyReadable) — but both are real, and this flag is
+//     the cheapest guarantee that a stale settings file cannot re-break bob.
+//     Note IBM's public docs also document `--auth-method api-key`.
 //
 //   - --accept-license: bob hard-errors ("A license agreement is required.
 //     Please accept the license terms before proceeding.") before doing any
@@ -3619,7 +3684,8 @@ const bobBackend = "bob"
 // tmux set-environment (see agentEnvPairs) so it never lands in the command
 // line, `ps` output, or pane scrollback.
 func bobLaunchCmd(binary, model string) string {
-	cmd := fmt.Sprintf("%s --accept-license", binary)
+	cmd := fmt.Sprintf("%s --accept-license %s %s",
+		binary, config.BobAuthMethodFlag, config.BobAuthTypeAPIKey)
 	if model != "" {
 		cmd = fmt.Sprintf("%s --model %s", cmd, model)
 	}

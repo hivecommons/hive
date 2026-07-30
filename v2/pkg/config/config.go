@@ -847,14 +847,16 @@ const (
 	WritableBobAPIKeyFile = WritableSecretsDir + "/bob_api_key"
 
 	// BobAuthTypeEnvVar is the env var bobshell reads to pick its auth type.
-	// There is NO `--auth-method` CLI flag: bobshell 1.0.6 exposes no auth
-	// flags at all (`bob --help` mentions none), and the only control point in
-	// bundle/bob.js is
-	//   let h = process.env.BOBSHELL_DEFAULT_AUTH_TYPE;
-	//   if (h && !Object.values(fr).includes(h)) { /* hard error */ }
-	// where `fr` is the auth-type enum. An unset/invalid value leaves bob on
-	// its W3ID SSO default, which in a pod parks at `awaiting_api_key_input`
-	// forever.
+	// It is only a FALLBACK DEFAULT, not an override. From bundle/bob.js
+	// (bobshell 1.0.6), the auth-dialog preselect is:
+	//   let l=null,d=process.env.BOBSHELL_DEFAULT_AUTH_TYPE;
+	//   d&&Object.values(fr).includes(d)&&(l=d);
+	//   let c=a.findIndex(p=>e.merged.security?.auth?.selectedType
+	//         ? p.value===e.merged.security.auth.selectedType
+	//         : l ? p.value===l : ...)
+	// i.e. a persisted security.auth.selectedType WINS over this env var.
+	// An invalid value is a hard error ("Invalid value for
+	// BOBSHELL_DEFAULT_AUTH_TYPE"), so it must be one of the `fr` enum values.
 	BobAuthTypeEnvVar = "BOBSHELL_DEFAULT_AUTH_TYPE"
 
 	// BobAuthTypeAPIKey selects API-key auth. It is bob's own enum constant
@@ -862,6 +864,56 @@ const (
 	// `W3ID_SSO="sso"`), so it is dictated by the vendor, not by us. Not a
 	// secret — it is the literal string "api-key" and carries no credential.
 	BobAuthTypeAPIKey = "api-key"
+
+	// BobAuthMethodFlag is bobshell's `--auth-method` CLI flag. It EXISTS in
+	// bobshell 1.0.6 — an earlier fix removed it after concluding from
+	// `bob --help` that it did not. That conclusion was wrong: bundle/bob.js
+	// registers it and then HIDES it from help output:
+	//   t.option("auth-method",{type:"string",...,choices:[fr.W3ID_SSO,fr.USE_BOBSHELL]});
+	//   let a=[...,"auth-method"]; a.forEach(c=>t.hide(c));
+	// so it is functional but invisible to `--help | grep auth-method`.
+	//
+	// It is the STRONGEST control available, because it is the only input that
+	// beats the persisted settings file. bob stores it as
+	// globalThis.authMethodByCliArg, and the settings-normalization step reads:
+	//   let n=globalThis.authMethodByCliArg||t.merged.security.auth.selectedType||r;
+	// — the CLI arg is consulted FIRST, ahead of the persisted selectedType.
+	// It also suppresses the write-back that would otherwise persist a
+	// different value (`&&!globalThis.authMethodByCliArg`), so passing it
+	// makes hive's choice authoritative without bob rewriting the shared file.
+	BobAuthMethodFlag = "--auth-method"
+
+	// BobSettingsRelPath is the persisted settings file, relative to $HOME.
+	// From bundle/bob.js: `as=".bob"` and
+	// `getGlobalSettingsPath(){return fu.join(t.getGlobalGeminiDir(),"settings.json")}`
+	// where getGlobalGeminiDir() is `path.join(os.homedir(), as)`.
+	// On a hive this resolves to /data/home/.bob/settings.json — a SHARED file,
+	// so one agent picking SSO at the prompt re-breaks every other bob agent.
+	BobSettingsRelPath = ".bob/settings.json"
+
+	// BobSettingsAuthKey / BobSettingsSelectedTypeKey / BobSettingsEnforcedTypeKey
+	// are the nested JSON keys hive owns inside that file. Shape per bundle:
+	//   e.merged.security?.auth?.selectedType   // which method is chosen
+	//   e.merged.security?.auth?.enforcedType   // FILTERS the option list:
+	//     e.merged.security?.auth?.enforcedType && (a=a.filter(p=>p.value===...))
+	//   and validation: eEr() errors when enforcedType !== the active type.
+	// Setting enforcedType to api-key leaves SSO unselectable, so a stray
+	// interactive pick cannot re-break the fleet.
+	BobSettingsSecurityKey     = "security"
+	BobSettingsAuthKey         = "auth"
+	BobSettingsSelectedTypeKey = "selectedType"
+	BobSettingsEnforcedTypeKey = "enforcedType"
+
+	// BobSettingsFileMode keeps the shared settings file group-writable: it
+	// lives in /data/home/.bob (drwxrwx--- dev:node) and bob runs as agent UIDs
+	// in group `node`, which must still be able to write sibling state. Making
+	// it read-only is deliberately NOT done — bob calls setValue() on this file
+	// during normal startup normalization, and an EACCES there is an unhandled
+	// write path, so re-assertion on every launch is the safer self-heal.
+	BobSettingsFileMode = 0o664
+
+	// BobSettingsDirMode matches the observed /data/home/.bob (drwxrwx---).
+	BobSettingsDirMode = 0o770
 )
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the
@@ -908,12 +960,21 @@ func (c *BobConfig) resolveAPIKeyWithSource() (string, string) {
 			}
 		}
 	}
+	// TrimSpace the env-var sources too, matching the file branch above. bob
+	// does NO trimming of its own — bundle/bob.js reads
+	// `process.env.BOBSHELL_API_KEY` verbatim into the Authorization header —
+	// and hive delivers the value through `tmux set-environment`, which passes
+	// it as a raw exec argument with no shell word-splitting to strip a stray
+	// newline. So any trailing whitespace here reaches IBM's API inside the
+	// header and 401s, which bob surfaces as a fallback to the SSO flow rather
+	// than as an auth error. Cheap to normalize; impossible to debug from the
+	// symptom.
 	if c.APIKeyEnv != "" {
-		if key := os.Getenv(c.APIKeyEnv); key != "" {
+		if key := strings.TrimSpace(os.Getenv(c.APIKeyEnv)); key != "" {
 			return key, "env:" + c.APIKeyEnv
 		}
 	}
-	if key := os.Getenv(DefaultBobAPIKeyEnv); key != "" {
+	if key := strings.TrimSpace(os.Getenv(DefaultBobAPIKeyEnv)); key != "" {
 		return key, "env:" + DefaultBobAPIKeyEnv
 	}
 	return "", ""

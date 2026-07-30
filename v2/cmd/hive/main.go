@@ -668,6 +668,12 @@ func main() {
 	agentMgr.SetBobAPIKeyResolver(func() string {
 		return cfg.Governor.Bob.ResolveAPIKey()
 	})
+	// The launch path also needs to know WHICH FILE the key came from, so it can
+	// check that file is readable by the agent UID rather than only by the hive
+	// process. Returns a loggable source string, never the key value.
+	agentMgr.SetBobKeySourceResolver(func() string {
+		return cfg.Governor.Bob.ResolveAPIKeySource()
+	})
 	// Log only WHERE the key came from (or that none is set) so a misconfigured
 	// hive is diagnosable without the value ever reaching the logs.
 	if src := cfg.Governor.Bob.ResolveAPIKeySource(); src != "" {
