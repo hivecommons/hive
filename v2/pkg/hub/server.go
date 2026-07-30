@@ -73,7 +73,18 @@ type RegistryEntry struct {
 	AIAuthorEffective string `json:"aiAuthorEffective,omitempty"`
 	// StartedAt is the spoke process start time, reported over the heartbeat.
 	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
-	StartedAt          string         `json:"startedAt,omitempty"`
+	StartedAt string `json:"startedAt,omitempty"`
+	// AdvisoryLastPostedAt is when the spoke last SUCCESSFULLY posted its
+	// advisory digest (RFC3339), reported over the heartbeat. Empty means the
+	// hive has never posted one — not-advisory-mode or an old spoke — which the
+	// staleness gate reads as UNKNOWN, never as an alarm. My Hives renders a
+	// "stale advisory" pill (advisoryStaleSummary) when this ages past
+	// advisoryStaleThreshold on a hive whose App can write.
+	AdvisoryLastPostedAt string `json:"advisoryLastPostedAt,omitempty"`
+	// AdvisoryError is the log-safe error from the spoke's most recent failed
+	// advisory-post attempt ("" on success). When set on an app-can-write hive
+	// it trips the stale pill directly, carrying the specific cause.
+	AdvisoryError      string         `json:"advisoryError,omitempty"`
 	PrimaryRepo        string         `json:"primaryRepo"`
 	DashboardURL       string         `json:"dashboardUrl"`
 	SnapshotURL        string         `json:"snapshotUrl,omitempty"`
@@ -780,9 +791,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
 		StartedAt:         sanitizeField(payload.StartedAt),
-		DashboardURL:      payload.DashboardURL,
-		SnapshotURL:       payload.SnapshotURL,
-		ACMMLevel:         clampInt(payload.ACMMLevel, 0, 6),
+		// Advisory-staleness signal. Both are sanitized like every other
+		// spoke-reported string; an empty AdvisoryLastPostedAt is preserved as
+		// empty so the render/gate reads it as UNKNOWN rather than stale.
+		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryError:        sanitizeField(payload.AdvisoryError),
+		DashboardURL:         payload.DashboardURL,
+		SnapshotURL:          payload.SnapshotURL,
+		ACMMLevel:            clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {

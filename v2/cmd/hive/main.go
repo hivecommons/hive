@@ -2127,17 +2127,34 @@ func main() {
 			// "genuinely zero agents configured" from "old spoke, unknown".
 			agentsWithModel := agentMgr.CountAgentsWithModel()
 			return &hub.HeartbeatPayload{
-				AgentsWithModel: &agentsWithModel,
-				HiveID:          cfg.HiveID,
-				Org:             cfg.Project.Org,
+				AgentsWithModel:   &agentsWithModel,
+				HiveID:            cfg.HiveID,
+				Org:               cfg.Project.Org,
 				AIAuthor:          cfg.Project.AIAuthor,
 				AIAuthorEffective: cfg.EffectiveAIAuthor(),
 				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
-				Repos:           cfg.Project.Repos,
-				PrimaryRepo:     cfg.Project.PrimaryRepo,
-				ACMMLevel:       acmmLvl,
-				Agents:          agents,
-				Governor:        hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				// Advisory-staleness signal (mirrors StartedAt/uptime). Report the
+				// last successful digest-post time only if the spoke has actually
+				// posted one — a zero time is left as an empty string so the hub
+				// reads it as UNKNOWN (not-advisory-mode / old spoke), never a
+				// false stale alarm. The last post error rides alongside so a
+				// working-App-but-failing-post hive can be flagged with its cause.
+				AdvisoryLastPostedAt: func() string {
+					postedAt, _, _ := dashSrv.AdvisoryState()
+					if postedAt.IsZero() {
+						return ""
+					}
+					return postedAt.UTC().Format(time.RFC3339)
+				}(),
+				AdvisoryError: func() string {
+					_, _, errMsg := dashSrv.AdvisoryState()
+					return errMsg
+				}(),
+				Repos:       cfg.Project.Repos,
+				PrimaryRepo: cfg.Project.PrimaryRepo,
+				ACMMLevel:   acmmLvl,
+				Agents:      agents,
+				Governor:    hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -2217,7 +2234,7 @@ func main() {
 				// is the only way to distinguish a hive pinned to an immutable
 				// SHA tag (which can never receive a rolling upgrade) from one
 				// riding <branch>-latest. Empty off-cluster — never guessed.
-				ImageRef:                hub.SelfDeploymentImage(),
+				ImageRef: hub.SelfDeploymentImage(),
 				// The GitHub instance this spoke actually runs against. Only
 				// the spoke knows this for certain: a hive's GitHub can differ
 				// from its cluster's default, so the hub cannot infer it.
@@ -3190,10 +3207,23 @@ func runEvalCycle(
 						// the digest still gets posted. A user-fallback success
 						// does NOT clear the App banner — the App error below is
 						// what decides the banner state.
+						postedViaFallback := false
 						if uc := userGHClient.Load(); uc != nil {
 							if uerr := uc.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); uerr == nil {
 								logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "user-fallback")
+								postedViaFallback = true
 							}
+						}
+						// Record the outcome for the heartbeat's advisory-staleness
+						// signal. A user-fallback success still counts as a fresh
+						// digest post (the issue DID get updated); otherwise record the
+						// App error so the hub can flag the digest as stale with its
+						// specific cause. err.Error() is the same string logged just
+						// below — log-safe, never key material.
+						if postedViaFallback {
+							dashSrv.RecordAdvisoryPost(digest.TotalCount)
+						} else {
+							dashSrv.RecordAdvisoryError(err.Error())
 						}
 						logger.Warn("failed to post advisory digest via app", "repo", primaryRepo, "issue", issueNum, "error", err)
 						if strings.Contains(err.Error(), "403") && strings.Contains(err.Error(), "Resource not accessible by integration") {
@@ -3230,6 +3260,9 @@ func runEvalCycle(
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
+						// Record the fresh, successful digest post so the hub's
+						// advisory-staleness gate stays satisfied for this hive.
+						dashSrv.RecordAdvisoryPost(digest.TotalCount)
 						// A successful write proves the app is installed AND has
 						// write access — clear BOTH the perm issue and the
 						// app-required banner flag. Previously only the perm

@@ -235,17 +235,37 @@ type HeartbeatPayload struct {
 	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
 	// but restarted 35 times — is visible in My Hives instead of looking
 	// healthy. A short uptime that keeps resetting is the tell.
-	StartedAt    string         `json:"started_at,omitempty"`
-	Health       map[string]any `json:"health"`
-	DashboardURL string         `json:"dashboard_url"`
-	SnapshotURL  string         `json:"snapshot_url"`
-	Owner        string         `json:"owner,omitempty"`
-	HiveType     string         `json:"hive_type,omitempty"`
-	ClusterID    string         `json:"cluster_id,omitempty"`
-	IsPublic     bool           `json:"is_public"`
-	Version      string         `json:"version"`
-	GitHash      string         `json:"git_hash"`
-	GitBranch    string         `json:"git_branch,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
+	// AdvisoryLastPostedAt is when this spoke last SUCCESSFULLY posted/updated
+	// its advisory-digest issue (RFC3339). It is the mirror of StartedAt for the
+	// advisory path: the hub renders a "stale advisory" pill so a hive that
+	// SHOULD be posting advisory digests but has quietly stopped (working App,
+	// advisory agents, but the digest went stale) becomes visible in My Hives
+	// instead of needing a per-hive log sweep.
+	//
+	// Empty means the spoke has NEVER posted a digest — either it is not in the
+	// advisory-posting business at all (pure PR/merge mode, no advisory agents,
+	// so it never reaches the post path) or it is too old to report this field.
+	// BOTH must be read by the hub as UNKNOWN and NEVER as a stale alarm — the
+	// same rule the codebase already applies to StartedAt/GitHubAPIURL. Only a
+	// hive that HAS posted at least once, and then stopped, can trip staleness.
+	AdvisoryLastPostedAt string `json:"advisory_last_posted_at,omitempty"`
+	// AdvisoryError is the log-safe error string from the spoke's most recent
+	// FAILED advisory-post attempt (403 issues:write, rate limit, auth failure),
+	// or empty when the last attempt succeeded. It is the same string the spoke
+	// already logs, so it never carries key material. Set = the hub flags the
+	// digest as stale (gated on advisory-mode + app-can-write) with this cause.
+	AdvisoryError string         `json:"advisory_error,omitempty"`
+	Health        map[string]any `json:"health"`
+	DashboardURL  string         `json:"dashboard_url"`
+	SnapshotURL   string         `json:"snapshot_url"`
+	Owner         string         `json:"owner,omitempty"`
+	HiveType      string         `json:"hive_type,omitempty"`
+	ClusterID     string         `json:"cluster_id,omitempty"`
+	IsPublic      bool           `json:"is_public"`
+	Version       string         `json:"version"`
+	GitHash       string         `json:"git_hash"`
+	GitBranch     string         `json:"git_branch,omitempty"`
 	// ImageRef is the container image this spoke's own Deployment runs, read
 	// in-cluster from the Deployment spec. GitHash says which commit the
 	// BINARY was built from; ImageRef says which TAG the deployment tracks —
