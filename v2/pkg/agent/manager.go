@@ -1380,7 +1380,16 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			// "ready" (the Copilot chrome shows ❯ and / commands) but actually
 			// dead. These errors are transient — a restart will succeed once
 			// the network recovers.
-			if agent.Config.Backend == "copilot" && paneShowsFatalNetworkError(filtered) {
+			// effectiveBackend, not Config.Backend: an agent configured for
+			// copilot but overridden to another CLI at runtime still reported
+			// "copilot" here, so this copilot-only detector ran against a
+			// different TUI's output. Observed in production on a bob agent
+			// whose config said copilot — bob printed one of the generic
+			// patterns below ("fetch failed"), the agent was restarted as if
+			// its TLS had died, and the governor kick delivered seconds
+			// earlier died with the session. It looped every ~60s, so no kick
+			// ever survived long enough to run.
+			if effectiveBackend(agent) == "copilot" && paneShowsFatalNetworkError(filtered) {
 				sinceLastRestart := time.Since(agent.lastTokenRestart).Seconds()
 				if sinceLastRestart >= float64(tlsErrorRestartCooldownSec) {
 					m.logger.Warn("fatal network/TLS error detected, restarting agent",
