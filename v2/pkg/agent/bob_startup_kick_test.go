@@ -190,7 +190,7 @@ func TestBobInputHandlerSettleDelay(t *testing.T) {
 // Asserted through the launch-command builder: bob's command must contain no
 // reference to the bootstrap temp file and no embedded prompt argument.
 func TestBobStartupKickNotWrittenToDeadTempFile(t *testing.T) {
-	cmd := bobLaunchCmd("bob", "some-model")
+	cmd := bobLaunchCmd("bob")
 	for _, forbidden := range []string{".hive-bootstrap", "--text", "$(cat", "-p ", "--prompt"} {
 		if strings.Contains(cmd, forbidden) {
 			t.Errorf("bobLaunchCmd() = %q must not contain %q: bob's prompt is delivered "+

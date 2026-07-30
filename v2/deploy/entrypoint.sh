@@ -563,6 +563,55 @@ print('\n'.join(sorted(names)))
       # files atomically replaced by either principal; links are never followed.
       find -P "/data/beads/${agent_name}" -xdev -type d -exec chown "hive-${agent_name}:${ROLE_GROUP}" {} + -exec chmod 2770 {} + 2>/dev/null || true
       find -P "/data/beads/${agent_name}" -xdev -type f -exec chown "hive-${agent_name}:${ROLE_GROUP}" {} + -exec chmod 0660 {} + 2>/dev/null || true
+      if [ -d "/data/beads/${agent_name}" ]; then
+        BEAD_DIR_OWNER=$(stat -c '%u' "/data/beads/${agent_name}" 2>/dev/null || echo "0")
+        if [ "$BEAD_DIR_OWNER" != "$AGENT_UID" ]; then
+          chown -R "hive-${agent_name}:node" "/data/beads/${agent_name}" 2>/dev/null || true
+        fi
+      fi
+      # ── Per-agent GitHub App token cache file ────────────────────────
+      # The hive binary runs as dev (UID 1001) after privilege drop and CANNOT
+      # chown — an unprivileged process cannot give a file away to another UID
+      # without CAP_CHOWN, and capabilities are deliberately restricted here
+      # (the same container already fails NET_ADMIN for iptables above). So the
+      # runtime write path must never call chown. We pre-create the cache file
+      # HERE, as root, with the final ownership and mode:
+      #
+      #   owner = dev  (UID 1001)      -> hive can rewrite it in place, no chown
+      #   group = hive-<agent>         -> ONLY this agent can read it
+      #   mode  = 0640                 -> owner rw, group r, world none
+      #
+      # The group MUST be a per-agent private group. The agent users are all in
+      # the shared "node" group (gid 1000), so group-node would let EVERY agent
+      # read EVERY other agent's scoped token — exactly the cross-agent leak the
+      # per-agent token exists to prevent. groupadd + usermod -aG gives each
+      # agent a private group it is the only member of, while leaving "node" as
+      # its primary group so nothing else about the agent's access changes.
+      #
+      # dev deliberately does NOT join these groups: it writes as the file
+      # OWNER, so it needs no group membership. That keeps dev out of every
+      # agent's private group and avoids N usermod calls.
+      #
+      # gids are auto-allocated by `groupadd --system` rather than derived from
+      # the agent UID. A derived gid (e.g. uid+1000) can collide with an
+      # existing group; letting groupadd pick from the system range cannot.
+      #
+      # Verified in ghcr.io/kubestellar/hive:v2-latest: dev writes in place OK,
+      # the owning agent reads its own token OK, and a second agent gets
+      # EACCES on the first agent's token.
+      AGENT_TOKEN_GROUP="hive-${agent_name}"
+      if ! getent group "$AGENT_TOKEN_GROUP" >/dev/null 2>&1; then
+        groupadd --system "$AGENT_TOKEN_GROUP" 2>/dev/null || true
+      fi
+      usermod -aG "$AGENT_TOKEN_GROUP" "hive-${agent_name}" 2>/dev/null || true
+      AGENT_TOKEN_FILE="/var/run/hive-metrics/agent-tokens/gh-token-${agent_name}.cache"
+      # Create empty (never seeded with a value) — hive fills it at launch.
+      # touch is idempotent across restarts; chown/chmod re-assert the contract
+      # unconditionally in case a previous image left the file mis-owned.
+      touch "$AGENT_TOKEN_FILE" 2>/dev/null || true
+      chown "dev:${AGENT_TOKEN_GROUP}" "$AGENT_TOKEN_FILE" 2>/dev/null || true
+      chmod 640 "$AGENT_TOKEN_FILE" 2>/dev/null || true
+      echo "[entrypoint] Agent token cache: ${AGENT_TOKEN_FILE} (dev:${AGENT_TOKEN_GROUP} 0640)"
       echo "[entrypoint] Agent user: hive-${agent_name} (UID ${AGENT_UID})"
       UID_OFFSET=$((UID_OFFSET + 1))
     done

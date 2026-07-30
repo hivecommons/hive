@@ -93,6 +93,25 @@ const (
 	// offered (copilotAlwaysIncludeModels) and exempt from model auto-heal.
 	copilotAutoModel = "auto"
 
+	// --- bob (IBM bobshell) ---
+
+	// bobBackendID is the backend id for the IBM bobshell ("bob") CLI. Mirrors
+	// the agent package's unexported bobBackend constant; keep the two in sync.
+	bobBackendID = "bob"
+
+	// bobAutoModel is the ONLY model option offered for bob, and it is a UI
+	// placeholder rather than a flag value: bob selects its own model and has
+	// no working --model flag. Passing one is actively harmful — a concrete id
+	// (e.g. claude-sonnet-4.6) makes every prompt die with "Cannot read
+	// properties of undefined (reading 'maxTokens')", verified live on a spoke,
+	// while the same bob with no --model runs inference fine.
+	//
+	// Unlike copilotAutoModel, this value must NEVER reach a command line:
+	// `bob --model auto` is UNTESTED and presumed unsafe. The launch path
+	// (agent.bobLaunchCmd) omits --model entirely, so "auto" only ever exists
+	// as the stored/displayed selection.
+	bobAutoModel = "auto"
+
 	// --- Gemini ---
 
 	// geminiModelsURL lists models available to a Gemini API key.
@@ -160,6 +179,12 @@ var copilotAlwaysIncludeModels = []string{
 	// launch value, so it must always be offered and must survive auto-heal.
 	copilotAutoModel,
 }
+
+// bobStaticModels is bob's complete model list: exactly one entry, the auto
+// sentinel. bob has no model catalog to discover and no usable --model flag
+// (see bobAutoModel), so offering anything else would invite a selection that
+// either does nothing or breaks inference.
+var bobStaticModels = []string{bobAutoModel}
 
 // codexStaticModels is the maintained list for the OpenAI Codex CLI. Codex only
 // accepts OpenAI models — Claude ids are rejected with a ChatGPT account
@@ -316,6 +341,12 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		// No probe wired yet; the maintained static list is authoritative and
 		// OpenAI-only (Claude ids are rejected by Codex with a ChatGPT account).
 		r = cliModelResult{models: dedupeModels(codexStaticModels), fallback: false}
+	case bobBackendID:
+		// bob picks its own model and exposes no catalog, so there is nothing
+		// to discover. The single auto sentinel is authoritative (not a
+		// fallback) — marking it fallback=true would label it "(common alias,
+		// unverified)" in the dropdown and make it eligible for auto-heal.
+		r = cliModelResult{models: dedupeModels(bobStaticModels), fallback: false}
 	default:
 		r = cliModelResult{models: nil, fallback: true}
 	}
@@ -352,6 +383,8 @@ func cliStaticFallback(backend string) []string {
 		return claudeStaticModels
 	case "codex":
 		return codexStaticModels
+	case bobBackendID:
+		return bobStaticModels
 	case "goose":
 		return []string{"default"}
 	default:
