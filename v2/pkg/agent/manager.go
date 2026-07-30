@@ -654,7 +654,32 @@ var cliPaneMarkers = []string{
 	"Copilot",
 	"Gemini",
 	"goose",
+	// bob's markers. NONE of the entries above match a running bob: verified
+	// against the installed bundle (bobshell 1.0.6 bundle/bob.js), which
+	// contains zero "❯" characters and no "esc cancel" / "/ commands" /
+	// "? help" / "goose" strings. ("Claude"/"Gemini" occur only as model-name
+	// data, never as UI chrome.) Without these two entries
+	// waitForCLIReadyForAgent can never see a booted bob, so its startup kick
+	// would be dropped after cliReadyTimeout even though bob is healthy.
+	bobInputPlaceholder,
+	bobProductMarker,
 }
+
+const (
+	// bobInputPlaceholder is the placeholder bob renders inside its input box
+	// when it is idle and accepting input. This is bob's equivalent of the "❯"
+	// prompt for the other TUIs and is the PRIMARY readiness signal: the
+	// bundle renders it on the same component whose presence is gated by
+	// `isInputActive`, so seeing it means the input is live, not merely
+	// painted. Copied verbatim from bobshell 1.0.6 — see TestBobPaneMarkers.
+	bobInputPlaceholder = "Type your message or @path/to/file"
+	// bobProductMarker is bob's product name, which appears in its banner and
+	// dialogs. It is a weaker, secondary signal than bobInputPlaceholder — it
+	// also shows on trust/auth/license dialogs, which are NOT ready states —
+	// so it is used only for coarse CLI-presence detection (is anything other
+	// than bash in this pane?), never as the input-ready gate.
+	bobProductMarker = "Bob-Shell"
+)
 
 // paneHasCLIMarker reports whether the given pane content contains any known
 // CLI UI marker.
@@ -736,6 +761,37 @@ func paneShowsConsentScreen(pane string) bool {
 	return false
 }
 
+
+// backendDefersStartupKick reports whether a backend's bootstrap prompt is
+// delivered AFTER the CLI is ready (deliverStartupKick) instead of being
+// embedded in the launch command.
+//
+// Embedding raced the CLI boot: the prompt-bearing launch line was typed into
+// the pane in the same second as the (re)start (observed live: `audit: agent
+// kicked trigger=startup` 60ms after `audit: agent restarting`), before the
+// CLI — or even bash — was ready to consume it, so the kick text landed in
+// bash and an unbalanced quote left the shell in PS2 continuation.
+//
+// goose is deliberately NOT in this set: `goose run` needs the embedded --text
+// prompt to stay interactive at all, and it exits on the ^C that
+// readiness-gated delivery sends (see deliverKickLocked). Unknown backends are
+// likewise excluded — they never embed and have no verified readiness signal.
+//
+// bob belongs in this set, not the goose set. It is a long-lived interactive
+// TUI (launched WITHOUT -p, see bobLaunchCmd) that sits at its prompt with no
+// prompt argument at all, so it has no goose-style reason to embed — and
+// embedding would expose it to exactly the PS2 race above. Before this it was
+// in NEITHER group: it fell through to the write-a-file branch in launchInTmux,
+// so its bootstrap prompt was serialized to /tmp/.hive-bootstrap-<name>.txt and
+// then never read, leaving bob idle at its prompt after every launch.
+func backendDefersStartupKick(backend string) bool {
+	switch backend {
+	case "claude", "copilot", "gemini", bobBackend:
+		return true
+	default:
+		return false
+	}
+}
 
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	backend := agent.Config.Backend
@@ -888,23 +944,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		bootstrapPrompt = "You are an AI agent. Await further instructions."
 	}
 
-	// Interactive backends get the bootstrap prompt delivered AFTER the CLI
-	// is ready (deliverStartupKick, spawned below) instead of embedding it in
-	// the launch command. Embedding raced the CLI boot: the prompt-bearing
-	// launch line was typed into the pane in the same second as the (re)start
-	// (observed live: `audit: agent kicked trigger=startup` 60ms after
-	// `audit: agent restarting`), before the CLI — or even bash — was ready
-	// to consume it, so the kick text landed in bash and an unbalanced quote
-	// left the shell in PS2 continuation. Goose keeps the embedded --text
-	// prompt: goose run needs it to stay interactive and exits on the ^C that
-	// readiness-gated delivery sends.
+	// See backendDefersStartupKick for why each backend is or is not deferred.
 	deferredStartupKick := ""
-	if bootstrapPrompt != "" {
-		switch backend {
-		case "claude", "copilot", "gemini":
-			deferredStartupKick = bootstrapPrompt
-			bootstrapPrompt = ""
-		}
+	if bootstrapPrompt != "" && backendDefersStartupKick(backend) {
+		deferredStartupKick = bootstrapPrompt
+		bootstrapPrompt = ""
 	}
 
 	if bootstrapPrompt != "" {
@@ -924,8 +968,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.recordPrompt(agent.Name, "startup", bootstrapPrompt)
 
 		// Only goose (and unknown backends, which never embed) reach this
-		// block — claude/copilot/gemini bootstrap prompts were deferred to
-		// deliverStartupKick above.
+		// block — claude/copilot/gemini/bob bootstrap prompts were deferred to
+		// deliverStartupKick above, so no /tmp/.hive-bootstrap-<name>.txt is
+		// written for them. bob used to land here and get a file nothing ever
+		// read; that dead write is gone with the deferral above.
 		promptFile := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
 		if err := os.WriteFile(promptFile, []byte(bootstrapPrompt), 0o644); err != nil {
 			m.logger.Warn("failed to write bootstrap prompt", "name", agent.Name, "error", err)
@@ -1683,6 +1729,27 @@ func findOverlap(prev, curr []string) int {
 }
 
 
+// paneShowsInputPrompt reports whether the pane content shows a CLI input
+// prompt that is ready to accept a kick.
+//
+// The first four markers are the pre-existing set, preserved verbatim so
+// claude/copilot/gemini/goose readiness is bit-for-bit unchanged. The bob
+// placeholder is additive: bob's TUI renders none of the other four (verified
+// against bobshell 1.0.6 — the bundle contains no "❯" at all), so without it a
+// healthy bob never registers as ready and its startup kick is dropped.
+//
+// Callers pass captured pane text; empty input is not a prompt.
+func paneShowsInputPrompt(output string) bool {
+	if output == "" {
+		return false
+	}
+	return strings.Contains(output, "❯") ||
+		strings.Contains(output, "goose is ready") ||
+		strings.Contains(output, "> Enter to send") ||
+		strings.Contains(output, "\n>\n") ||
+		strings.Contains(output, bobInputPlaceholder)
+}
+
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
 // or the timeout expires. Returns true if the CLI became ready.
 func (m *Manager) waitForCLIReady(session string) bool {
@@ -1758,6 +1825,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"has_goose_ready", strings.Contains(output, "goose is ready"),
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
+				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
 			return false
 		case <-ticker.C:
@@ -1769,7 +1837,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				continue
 			}
 			output := m.captureTmuxPaneForAgent(agent)
-			if strings.Contains(output, "❯") || strings.Contains(output, "goose is ready") || strings.Contains(output, "> Enter to send") || strings.Contains(output, "\n>\n") {
+			if paneShowsInputPrompt(output) {
 				return true
 			}
 		}
@@ -1790,7 +1858,7 @@ func (m *Manager) waitForInputPrompt(session string) bool {
 			return false
 		case <-ticker.C:
 			output := m.captureTmuxPane(session)
-			if strings.Contains(output, "❯") || strings.Contains(output, "goose is ready") || strings.Contains(output, "> Enter to send") || strings.Contains(output, "\n>\n") {
+			if paneShowsInputPrompt(output) {
 				return true
 			}
 		}
@@ -2213,6 +2281,24 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 		m.logger.Warn("startup kick dropped: CLI never reached input prompt",
 			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
 		return
+	}
+
+	// bob needs an extra settle window that the other TUIs do not. Its UI is a
+	// React/Ink app (its crashes surface as React reconciler stack traces), and
+	// Ink paints the input box on an early render pass — so the placeholder
+	// that waitForInputPromptForAgent matches can be visible before the
+	// reconciler has finished mounting the input component and attached its
+	// stdin handler. Text typed in that window is painted into the pane but
+	// never reaches component state, so the kick is silently swallowed and bob
+	// stays idle — the exact failure this change exists to fix. claude/copilot/
+	// gemini do not need this: their input handlers are live as soon as the
+	// prompt renders, which is why the delay is bob-only rather than a new
+	// universal pause in the shared path.
+	//
+	// Read outside m.mu: effectiveBackend is a pure field read and this path
+	// must not hold the lock while sleeping.
+	if effectiveBackend(agent) == bobBackend {
+		time.Sleep(bobInputHandlerSettleDelay)
 	}
 
 	m.mu.Lock()
@@ -2673,6 +2759,20 @@ const (
 	// clears stale PS2 quote-continuation state before the launch command
 	// is typed into the pane.
 	preLaunchShellClearDelay = 500 * time.Millisecond
+	// bobInputHandlerSettleDelay is an extra pause applied ONLY to the bob
+	// backend after its input prompt becomes visible, before its startup kick
+	// is typed. bob's TUI is React/Ink: Ink paints the input box on an early
+	// render pass, so the placeholder can be on screen before the reconciler
+	// finishes mounting the input component and attaching its stdin handler.
+	// Typing in that gap paints characters that never reach component state —
+	// the kick is swallowed and bob sits idle. It is deliberately NOT reused
+	// from textToEnterDelay/staleCheckDelay (1s each): those cover tmux
+	// keystroke pacing, a different concern, and a value that merely happens
+	// to work is what this constant exists to avoid. 3s is a conservative
+	// multiple of the observed 1s pacing unit, chosen because over-waiting
+	// costs one agent a few seconds once per launch while under-waiting
+	// silently loses the bootstrap prompt entirely.
+	bobInputHandlerSettleDelay = 3 * time.Second
 	// cliBootGraceSeconds is how long after StartedAt a bare pane (no CLI
 	// marker) is tolerated before CheckAndRestartCrashedAgents treats it as a
 	// crash. It matches cliReadyTimeout (60s) so a still-booting CLI is never
