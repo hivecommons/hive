@@ -9821,7 +9821,6 @@ const dashboardHTML = `<!DOCTYPE html>
         var locationCell = '<div style="' + STACKED_CELL_STYLE + '">' +
           '<div style="' + STACKED_LINE_STYLE + '">' + locationBadge + '</div>' +
           '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
-          '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance this hive targets">' + githubHostPill(h.githubHost) + '</div>' +
           '</div>';
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
@@ -9852,7 +9851,15 @@ const dashboardHTML = `<!DOCTYPE html>
              but the COLUMN is no longer forced to the width of every part laid
              end to end. That nowrap was the main reason this column was wide. */
           '<td style="font-size:0.7rem">' + versionCell + '</td>' +
-          '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
+          /* Repo count over the GitHub-instance pill: the host qualifies WHICH
+             GitHub these repos live on, so the two belong together. Stacked
+             rather than inline to keep the numeric column narrow. */
+          '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' +
+            '<div style="' + STACKED_CELL_STYLE + '">' +
+              '<div style="' + STACKED_LINE_STYLE + '">' + repoCount + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance these repos live on">' + githubHostPill(h.githubHost) + '</div>' +
+            '</div>' +
+          '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
           /* AI Author: who this hive authors PRs as. aiAuthorEffective is the
              App bot ("<slug>[bot]") in App-authored mode, else the configured
@@ -10619,7 +10626,11 @@ const dashboardHTML = `<!DOCTYPE html>
     // reach it. Shared by the pending action cards and the Past Requests table
     // so the same concept does not drift into two different styles.
     function githubHostPill(githubHost) {
-      var border = githubHost ? 'var(--accent);color:var(--accent)' : 'var(--border);color:var(--muted)';
+      /* Public github.com reads green, GitHub Enterprise reads blue, so the
+         two instances are distinguishable at a glance without reading the
+         text. An absent host is treated as public, matching the label below. */
+      var isGHE = !!githubHost && githubHost !== PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+      var border = isGHE ? 'var(--blue);color:var(--blue)' : 'var(--green);color:var(--green)';
       return '<span style="font-size:0.68rem;padding:1px 7px;border-radius:999px;border:1px solid ' + border + '">' +
         esc(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST) + '</span>';
     }
