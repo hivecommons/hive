@@ -463,10 +463,16 @@ type HubServer struct {
 	// the admin-triggered path. hubUpgradeTarget is the SHA being rolled to.
 	lastHubUpgradeTrigger time.Time
 	hubUpgradeTarget      string
-	hubUpgradeMu          sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget
-	httpServer            *http.Server
-	httpMu                sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
-	clusters              map[string]ClusterConfig
+	// hubUpgradeFault holds a human-readable reason the last self-upgrade did
+	// not land: a refused (malformed) image tag, or a rollout that never became
+	// Ready. Empty means healthy. It exists so a stuck upgrade is visible in the
+	// dashboard instead of only in `kubectl describe` — the `target1` incident
+	// left the hub serving stale code for ~20 minutes with nothing surfaced.
+	hubUpgradeFault string
+	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault
+	httpServer      *http.Server
+	httpMu          sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
+	clusters        map[string]ClusterConfig
 
 	// vanityHostServable overrides how the retroactive vanity-URL repair makes a
 	// vanity host servable (see makeVanityHostServable). nil in production, where

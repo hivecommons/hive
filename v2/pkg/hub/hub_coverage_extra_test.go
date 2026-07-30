@@ -1195,7 +1195,7 @@ func TestHandleHeartbeatUpgradingFlag(t *testing.T) {
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 	srv.hubSecret = ""
 
-	payload := `{"hive_id":"upgrading-flag-test","upgrading":true,"upgrade_target_sha":"target1"}`
+	payload := `{"hive_id":"upgrading-flag-test","upgrading":true,"upgrade_target_sha":"7a41e01"}`
 	req := httptest.NewRequest("POST", "/api/heartbeat", strings.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

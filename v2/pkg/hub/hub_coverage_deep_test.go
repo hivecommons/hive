@@ -777,7 +777,7 @@ func TestHandleHeartbeatAutoUpgradeSpokeRequest(t *testing.T) {
 
 	// Set latest SHA
 	latestSHAMu.Lock()
-	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "target1", Message: "latest"}
+	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "7a41e01", Message: "latest"}
 	latestSHAMu.Unlock()
 	defer func() {
 		latestSHAMu.Lock()
@@ -797,8 +797,8 @@ func TestHandleHeartbeatAutoUpgradeSpokeRequest(t *testing.T) {
 
 	var resp HeartbeatResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp.UpgradeTo != "target1" {
-		t.Errorf("upgrade_to = %q, want target1", resp.UpgradeTo)
+	if resp.UpgradeTo != "7a41e01" {
+		t.Errorf("upgrade_to = %q, want 7a41e01", resp.UpgradeTo)
 	}
 }
 

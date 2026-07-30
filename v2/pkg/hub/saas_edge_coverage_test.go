@@ -144,7 +144,7 @@ func TestHandleHubSelfUpgrade_Edge(t *testing.T) {
 	defer cleanup()
 
 	// A latest v2 SHA must be resolved for the handler to have a target.
-	setV2Latest(t, "target1")
+	setV2Latest(t, "7a41e01")
 	// Stub the GHCR hub-image check so tests don't hit the network; assume the
 	// hub image exists for the success path.
 	oldImgCheck := hubImageExists

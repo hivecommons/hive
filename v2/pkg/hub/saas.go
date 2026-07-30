@@ -2486,6 +2486,21 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 	if sha == "" {
 		return fmt.Errorf("empty target SHA")
 	}
+	// Shape-check the tag BEFORE it can reach a live Deployment. Writing an
+	// unresolvable tag (the `target1` incident — a test fixture SHA that escaped
+	// to the real cluster) leaves the new ReplicaSet in ImagePullBackOff while
+	// the old one keeps serving: the hub stays "up" but silently runs stale
+	// code. Refusing here leaves the last good image running and makes the
+	// failure loud instead of invisible.
+	if err := validateImageTag(sha); err != nil {
+		s.logger.Error("hub self-upgrade REFUSED: invalid image tag",
+			"tag", sha,
+			"deployment", hubDeploymentName,
+			"namespace", hubNamespace,
+			"error", err)
+		s.setHubUpgradeFault(fmt.Sprintf("refused invalid image tag %q: %v", sha, err))
+		return err
+	}
 	if !hubImageExists(sha, s.logger) {
 		return fmt.Errorf("hub image %s:%s not published yet", ghcrRepoHub, sha)
 	}
@@ -2498,8 +2513,98 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 	s.hubUpgradeMu.Lock()
 	s.lastHubUpgradeTrigger = time.Now()
 	s.hubUpgradeTarget = sha
+	s.hubUpgradeFault = "" // a fresh, validated rollout clears any prior refusal
 	s.hubUpgradeMu.Unlock()
+	// Watch the rollout land. Detect-and-report only: an auto-rollback would
+	// race the upgrade poller (which re-triggers the same target every cycle),
+	// so a rollback could fight the upgrade loop and flap the deployment. See
+	// watchHubRollout.
+	go s.watchHubRollout(sha, image)
 	return nil
+}
+
+// hubRolloutWatchTimeout bounds how long we wait for a self-upgrade we just
+// triggered to become Ready before flagging it as stuck. The hub's own image is
+// a few hundred MB and a cold node has to pull it, so this is generous enough
+// to avoid false alarms while still catching an ImagePullBackOff — which
+// back-off-retries indefinitely and would otherwise never surface.
+const hubRolloutWatchTimeout = 5 * time.Minute
+
+// hubRolloutPollInterval is how often watchHubRollout re-checks rollout status.
+const hubRolloutPollInterval = 15 * time.Second
+
+// watchHubRollout confirms a self-upgrade actually became Ready, and records a
+// loud, user-visible fault if it did not.
+//
+// It deliberately does NOT roll back. The auto-upgrade poller re-evaluates the
+// same target every cycle, so an automatic rollback would immediately be undone
+// and re-applied, flapping the deployment during an already-degraded window.
+// Detect and report is the safe half of the loop: the operator sees the stuck
+// upgrade in the UI and in the logs, and decides.
+func (s *HubServer) watchHubRollout(sha, image string) {
+	deadline := time.Now().Add(hubRolloutWatchTimeout)
+	for time.Now().Before(deadline) {
+		time.Sleep(hubRolloutPollInterval)
+		// `rollout status --timeout=0s` returns non-zero while a rollout is
+		// still progressing and zero once it has fully succeeded.
+		cmd := kubectlForCluster(s.hubCluster(), "rollout", "status",
+			"deployment/"+hubDeploymentName, "-n", hubNamespace, "--timeout=0s")
+		if err := cmd.Run(); err == nil {
+			s.hubUpgradeMu.Lock()
+			s.hubUpgradeFault = ""
+			s.hubUpgradeMu.Unlock()
+			s.logger.Info("hub self-upgrade rollout completed", "sha", sha, "image", image)
+			return
+		}
+	}
+	// Still not Ready. Pull the pod-level reason so the log names the actual
+	// cause (ImagePullBackOff / ErrImagePull / CrashLoopBackOff) rather than
+	// just "timed out".
+	reason := s.hubRolloutFailureReason()
+	s.logger.Error("hub self-upgrade STUCK: new ReplicaSet not Ready — hub is still serving the OLD image",
+		"sha", sha,
+		"image", image,
+		"deployment", hubDeploymentName,
+		"namespace", hubNamespace,
+		"waited", hubRolloutWatchTimeout.String(),
+		"reason", reason)
+	s.setHubUpgradeFault(fmt.Sprintf("upgrade to %s stuck after %s: %s (still serving the previous image)",
+		image, hubRolloutWatchTimeout, reason))
+}
+
+// hubRolloutFailureReason best-effort extracts why the hub's pods are not
+// Ready, so the stuck-rollout log/status names the real cause.
+func (s *HubServer) hubRolloutFailureReason() string {
+	const reasonJSONPath = `{range .items[*].status.containerStatuses[*]}{.state.waiting.reason}{" "}{.state.waiting.message}{"\n"}{end}`
+	cmd := kubectlForCluster(s.hubCluster(), "get", "pods",
+		"-n", hubNamespace, "-l", "app="+hubDeploymentName,
+		"-o", "jsonpath="+reasonJSONPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "unknown (could not read pod status)"
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return "unknown (no waiting container state reported)"
+}
+
+// setHubUpgradeFault records a self-upgrade failure for the dashboard so a
+// stuck or refused upgrade is visible in the UI, not only in `kubectl describe`.
+func (s *HubServer) setHubUpgradeFault(msg string) {
+	s.hubUpgradeMu.Lock()
+	s.hubUpgradeFault = msg
+	s.hubUpgradeMu.Unlock()
+}
+
+// HubUpgradeFault returns the current self-upgrade fault message, or "" when
+// the last upgrade attempt was healthy.
+func (s *HubServer) HubUpgradeFault() string {
+	s.hubUpgradeMu.Lock()
+	defer s.hubUpgradeMu.Unlock()
+	return s.hubUpgradeFault
 }
 
 // hubUpgradeState reports the hub's own upgrade status for the dashboard badge:
@@ -2509,6 +2614,9 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 //   - "queued"    — behind latest, auto-upgrade ON, no rollout in flight yet
 //     (the poller will trigger one shortly)
 //   - "behind"    — behind latest, auto-upgrade OFF (admin must click Upgrade)
+//   - "failed"    — an upgrade was REFUSED (malformed image tag) or its rollout
+//     never became Ready. The hub is behind and cannot self-heal;
+//     an operator must look. HubUpgradeFault() carries the reason.
 //   - "unknown"   — latest SHA not resolved yet
 //
 // This is the field the badge needs: previously the frontend could only tell an
@@ -2528,7 +2636,14 @@ func (s *HubServer) hubUpgradeState() string {
 	s.hubUpgradeMu.Lock()
 	inFlight := s.hubUpgradeTarget != "" &&
 		time.Since(s.lastHubUpgradeTrigger) < hubUpgradeDebounce
+	fault := s.hubUpgradeFault
 	s.hubUpgradeMu.Unlock()
+	// A refused or stuck upgrade outranks "upgrading"/"queued": the hub is
+	// behind AND cannot get there on its own, which needs an operator. Without
+	// this the badge showed a reassuring "queued" while the rollout was wedged.
+	if fault != "" {
+		return hubUpgradeStateFailed
+	}
 	if inFlight {
 		return "upgrading"
 	}
@@ -2676,6 +2791,15 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	ns := "hive-hosted-" + id
 	imageTag := branchToTag(body.Branch) + "-latest"
 	image := "ghcr.io/kubestellar/hive:" + imageTag
+	// Refuse a branch name that sanitizes into something that is not a valid
+	// channel tag, rather than stranding the spoke on ImagePullBackOff behind a
+	// still-serving old ReplicaSet.
+	if err := validateImageTag(imageTag); err != nil {
+		s.logger.Error("branch switch REFUSED: invalid image tag",
+			"hive", id, "branch", body.Branch, "tag", imageTag, "error", err)
+		http.Error(w, `{"error":"branch does not map to a valid image tag"}`, http.StatusBadRequest)
+		return
+	}
 	// "*=" updates every container including init containers (copy-config,
 	// init-permissions) — pinning only "hive" left inits on the old branch tag.
 	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
@@ -3009,6 +3133,11 @@ const (
 	hubDeploymentName = "hive-hub"
 	hubContainerName  = "hub"
 	hubNamespace      = "hive-hub"
+
+	// hubUpgradeStateFailed is the hubUpgradeState() value meaning the hub is
+	// behind latest AND its last upgrade attempt was refused or wedged, so it
+	// cannot reach latest without operator action.
+	hubUpgradeStateFailed = "failed"
 )
 
 // hubImageExists reports whether the hub's own container image is published on
