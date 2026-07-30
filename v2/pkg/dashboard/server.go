@@ -662,6 +662,16 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		if s.authToken == "" && !directRouteAuthz {
+			// Open by design — but still resolve a session if the caller has one,
+			// so an SSO handoff on a token-less spoke yields a request that KNOWS
+			// who the user is. Without this the handoff sets a cookie, the next
+			// request is let through anonymously, the UI sees no identity and
+			// sends the user back to log in — a bounce. This grants no extra
+			// access: everyone is already admitted on this branch.
+			if sess := s.sessionFromRequest(r); sess != nil {
+				r.Header.Set("X-Hive-User", sess.Username)
+				r.Header.Set("X-Hive-Role", sess.Role)
+			}
 			next.ServeHTTP(w, r)
 			return
 		}

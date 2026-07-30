@@ -5547,7 +5547,26 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute"}
+var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", ssoHandoffPath}
+
+// ssoHandoffPath is the spoke's SSO handoff endpoint. It MUST bypass the hub's
+// nginx auth_request gate.
+//
+// Why: the auth-check subrequest authorizes a user against THIS hive's grant
+// list (user.Hives[hiveID]). The whole point of the handoff is to admit a user
+// who is authenticated on the hub but has no hub-side grant row for the hive —
+// the spoke's own authorized_users allowlist is the authority. Gating /sso on
+// the hub check therefore 401s exactly the requests the handoff exists to
+// serve, and nginx turns that 401 into an auth-signin redirect back to the hub
+// login, which (the user already having a valid hub cookie) immediately
+// redirects to /sso again — an infinite bounce the browser eventually aborts.
+//
+// This does NOT weaken authentication: the signed, hive-scoped, short-lived
+// HMAC token in the query IS the credential, and dashboard.handleSSO verifies
+// it against HIVE_HUB_SECRET plus the spoke's own allowlist before minting any
+// session. It is the same reasoning that already makes /sso a public path on
+// the spoke half (see dashboard.isPublicPath).
+const ssoHandoffPath = "/sso"
 
 // proxyAuthHeader is the response header the hub sets on a successful
 // auth-check subrequest to PROVE to the spoke that the request was

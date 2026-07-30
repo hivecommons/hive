@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1490,17 +1491,38 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 // authorized_users allowlist. On success it mints the same kind of session the
 // device flow does and redirects to the dashboard root.
 func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
+	// Loop breaker. An authentication failure must never present as an infinite
+	// redirect: if this navigation has already been through the handoff
+	// maxSSOHops times, something between here and "/" is bouncing us and no
+	// further hop will help. Stop and say so.
+	hop, _ := strconv.Atoi(r.URL.Query().Get(ssoHopParam))
+	if hop >= maxSSOHops {
+		if s.deps != nil && s.deps.Logger != nil {
+			s.deps.Logger.Warn("sso handoff loop detected", "hops", hop)
+		}
+		writeSSOError(w, r, http.StatusLoopDetected, ssoErrLoopDetected,
+			"Signing in to this hive redirected in a circle, so it was stopped before your browser gave up.",
+			"Sign in directly with GitHub below. If that also fails, the hive's access settings likely disagree with the hub's — ask the hive operator to check that your account is on this hive's authorized-users list.")
+		return
+	}
+
 	secret := os.Getenv("HIVE_HUB_SECRET")
 	if secret == "" {
-		// No shared secret → SSO cannot be verified. Send the user to the normal
-		// login rather than silently trusting anything.
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		// No shared secret → SSO cannot be verified. Terminate with an
+		// explanation. Redirecting to "/" here is what produced the historical
+		// infinite bounce: "/" is auth-gated, sends the user back to the hub
+		// login, the hub sees a valid session and hands off to /sso again.
+		writeSSOError(w, r, http.StatusServiceUnavailable, ssoErrNoSecret,
+			"This hive has no hub shared secret configured, so single sign-on from the hub cannot be verified.",
+			"Ask the hive operator to set HIVE_HUB_SECRET on this hive. In the meantime you can sign in directly with GitHub using the button below.")
 		return
 	}
 
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		http.Error(w, "sso: missing token", http.StatusBadRequest)
+		writeSSOError(w, r, http.StatusBadRequest, ssoErrMissingToken,
+			"This single sign-on link is missing its handoff token.",
+			"Open the hive from the hub dashboard rather than pasting the /sso URL directly.")
 		return
 	}
 
@@ -1514,10 +1536,11 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		if s.deps != nil && s.deps.Logger != nil {
 			s.deps.Logger.Warn("sso handoff rejected", "error", err.Error())
 		}
-		// Don't leak which check failed; bounce to the normal login page.
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(loginPage))
+		// Don't leak which check failed, but DO terminate here with an
+		// explanation rather than serving anything that re-enters the handoff.
+		writeSSOError(w, r, http.StatusUnauthorized, ssoErrBadToken,
+			"The single sign-on handoff token was rejected — it is expired, malformed, or was issued for a different hive.",
+			"Go back to the hub dashboard and open this hive again to get a fresh link. Handoff links are short-lived by design.")
 		return
 	}
 
@@ -1536,9 +1559,9 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 			if s.deps.Logger != nil {
 				s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
 			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(loginPage))
+			writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
+				"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
+				"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
 			return
 		}
 	}
@@ -1546,20 +1569,106 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		role = config.RoleRead
 	}
 
-	if s.authToken != "" {
-		sid := s.createUserSession(username, role)
-		if sid == "" {
-			http.Error(w, "sso: failed to create session", http.StatusInternalServerError)
-			return
-		}
-		setSessionCookie(w, r, sid)
+	// Always mint the session. This used to be gated on s.authToken != "", which
+	// meant a spoke with no dashboard token logged "authenticated via SSO",
+	// redirected to "/", and set NO cookie at all — so "/" rejected the request
+	// and the browser bounced forever. The session store is the authority on
+	// identity here and does not depend on a shared token existing.
+	sid := s.createUserSession(username, role)
+	if sid == "" {
+		writeSSOError(w, r, http.StatusInternalServerError, ssoErrSessionFailed,
+			"The hive could not create a login session for you.",
+			"This is a problem on the hive itself. Retry in a moment; if it persists, ask the hive operator to check the dashboard logs.")
+		return
 	}
+	setSessionCookie(w, r, sid)
 	s.audit.Log(username, "login", auditDetail("method", "hub sso handoff", "role", role), "")
 	if s.deps != nil && s.deps.Logger != nil {
 		s.deps.Logger.Info("user authenticated via hub SSO handoff", "username", username, "role", role)
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	// Land on the dashboard root, carrying a hop counter. If something upstream
+	// bounces us back into /sso anyway, the counter lets the NEXT handoff detect
+	// the cycle and stop with an error instead of spinning (see the ssoHopParam
+	// check at the top of this handler).
+	http.Redirect(w, r, "/?"+ssoHopParam+"="+strconv.Itoa(hop+1), http.StatusSeeOther)
 }
+
+// SSO handoff failure identifiers, surfaced on the terminal error page so a
+// user can quote one to an operator and an operator can grep for it.
+const (
+	ssoErrNoSecret      = "SSO_NO_HUB_SECRET"
+	ssoErrMissingToken  = "SSO_MISSING_TOKEN"
+	ssoErrBadToken      = "SSO_TOKEN_REJECTED"
+	ssoErrNotAuthorized = "SSO_NOT_AUTHORIZED"
+	ssoErrSessionFailed = "SSO_SESSION_FAILED"
+	ssoErrLoopDetected  = "SSO_REDIRECT_LOOP"
+)
+
+// ssoHopParam is the query parameter carrying how many times this browser has
+// been through the SSO handoff for this navigation. The hub's handoff link
+// carries no hop, so a normal first visit is hop 0; each success redirect
+// increments it. Anything that bounces the browser back into /sso preserves the
+// query string, so a genuine cycle counts upward and trips maxSSOHops.
+const ssoHopParam = "sso_hop"
+
+// maxSSOHops is how many SSO handoffs are allowed for one navigation before we
+// declare a redirect loop and stop. A healthy handoff takes exactly one hop; a
+// small allowance absorbs a legitimate re-handoff (e.g. a racing session
+// expiry) without letting a true cycle run away. Browsers give up around 20
+// redirects with an opaque error, so we must terminate well before that to be
+// the one that explains what happened.
+const maxSSOHops = 3
+
+// writeSSOError terminates an SSO handoff with a self-contained HTML page that
+// says what failed and what to do about it. It exists because the alternative —
+// redirecting a failed handoff back toward login — is what produces an infinite
+// browser bounce, the single worst failure mode here: it tells the user nothing
+// and is indistinguishable from an outage. Any non-success exit from handleSSO
+// must come through this function.
+//
+// It also clears any stale session cookie, so a half-established session cannot
+// keep re-triggering the same failure on reload.
+func writeSSOError(w http.ResponseWriter, r *http.Request, status int, code, what, action string) {
+	clearSessionCookie(w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// A failed handoff must never be cached; a cached 401/403 would make the
+	// hive look permanently broken even after access is granted.
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, ssoErrorPage, html.EscapeString(code), html.EscapeString(what), html.EscapeString(action))
+}
+
+// ssoErrorPage is the terminal error shell for a failed SSO handoff. Format
+// verbs in order: %[1]s error code, %[2]s what happened, %[3]s what to do. It
+// deliberately offers "/" (which serves the device-flow login page when
+// unauthenticated) as an escape hatch and a link back to the hub, so the user
+// is never stranded.
+const ssoErrorPage = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign-in failed — Hive</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:24px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:40px;max-width:560px}
+.bee{font-size:2.5rem;margin-bottom:12px}
+h1{font-size:1.5rem;margin-bottom:16px}
+p{color:#8b949e;line-height:1.6;margin-bottom:16px}
+.action{color:#e6edf3}
+code{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:2px 8px;font-size:0.8rem;color:#f0883e}
+.btn{display:inline-block;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:0.9rem;margin:16px 8px 0 0}
+.btn-primary{background:#238636;color:#fff}
+.btn-secondary{background:transparent;color:#58a6ff;border:1px solid #30363d}
+</style></head>
+<div class="card">
+<div class="bee">&#128029;</div>
+<h1>Sign-in didn't complete</h1>
+<p>%[2]s</p>
+<p class="action">%[3]s</p>
+<p>Error code: <code>%[1]s</code></p>
+<a class="btn btn-primary" href="/">Sign in with GitHub</a>
+<a class="btn btn-secondary" href="https://hive.kubestellar.io/dashboard">Back to the hub</a>
+</div>
+</html>`
 
 func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) {
 	// Clear only THIS request's session so logging out affects one user, not
