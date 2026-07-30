@@ -674,6 +674,13 @@ func (service *Service) RetireRepair(ctx context.Context, expected *RepairRetire
 		return errors.New("normal Visual Hive repair retirement intent differs from the authorized plan")
 	}
 	plan := *ledger.RepairRetirement
+	// RepairRetirement is nested inside the indented service ledger. The JSON
+	// encoder is allowed to rewrite insignificant whitespace in a RawMessage
+	// while persisting that envelope, so the nested copy cannot be the source of
+	// exact receipt bytes after a crash or failed apply. The primary byte slice
+	// is independently digest-validated by validateWorkLedger on every load.
+	plan.VerdictReceipt = append(json.RawMessage(nil), ledger.VerdictReceipt...)
+	plan.VerdictReceiptSHA256 = ledger.VerdictReceiptSHA256
 	if err := service.options.RepairRetirement.Apply(ctx, plan); err != nil {
 		return err
 	}

@@ -131,7 +131,8 @@ func TestNormalServiceRepairRetirementCrashReplayUsesSealedPlanWithoutRepeatingS
 		t.Fatal(err)
 	}
 	if fixture.retirement.plans != 2 || fixture.retirement.applies != 2 || fixture.retirement.sideEffects != 1 ||
-		fixture.source.consumeSideEffects != 1 {
+		fixture.source.consumeSideEffects != 1 ||
+		fixture.retirement.lastReceiptSHA256 != fixture.verifier.receipt.ReceiptSHA256 {
 		t.Fatalf("retirement replay replanned or duplicated effects: retirement=%+v source=%+v", fixture.retirement, fixture.source)
 	}
 }
@@ -1141,6 +1142,7 @@ type fakeRepairRetirement struct {
 	applies             int
 	sideEffects         int
 	failAfterSideEffect bool
+	lastReceiptSHA256   string
 }
 
 func (retirement *fakeRepairRetirement) Plan(_ context.Context, plan RepairRetirementPlan) (RepairRetirementPlan, error) {
@@ -1149,8 +1151,13 @@ func (retirement *fakeRepairRetirement) Plan(_ context.Context, plan RepairRetir
 	return plan, nil
 }
 
-func (retirement *fakeRepairRetirement) Apply(_ context.Context, _ RepairRetirementPlan) error {
+func (retirement *fakeRepairRetirement) Apply(_ context.Context, plan RepairRetirementPlan) error {
 	retirement.applies++
+	digest := sha256.Sum256(plan.VerdictReceipt)
+	retirement.lastReceiptSHA256 = hex.EncodeToString(digest[:])
+	if retirement.lastReceiptSHA256 != plan.VerdictReceiptSHA256 {
+		return errors.New("retired repair failed-verdict receipt digest does not match its exact bytes")
+	}
 	if retirement.sideEffects == 0 {
 		retirement.sideEffects++
 		if retirement.failAfterSideEffect {
