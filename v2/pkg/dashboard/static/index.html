@@ -694,6 +694,16 @@
     /* .gh-auth-overlay/.gh-auth-modal — modal overlay/panel recipes (end of style block).
        z-index encodes stacking intent — do not change. */
     .gh-auth-overlay { z-index: 9999; }
+    /* Credential dialogs opened FROM Governor config must stack above it.
+       .config-overlay is 10000 and .gh-auth-overlay is 9999, so a bob /
+       Copilot / Claude key dialog launched from the config modal rendered
+       BEHIND it — visible only as a dimmed backdrop, with the key field
+       unreachable. These are always launched on top of another modal, never
+       beneath one, so they sit above .config-overlay (10000) and below
+       .hive-dialog-overlay (20000), which is a full-page takeover. The shared
+       9999 stays untouched: the other .gh-auth-overlay users (sign-in,
+       setup) open from the page itself and their stacking intent is correct. */
+    .cred-dialog-overlay { z-index: 10001; }
     .gh-auth-modal { padding: 32px; max-width: 420px; width: 90%; text-align: center; }
     .gh-auth-modal h3 { margin: 0 0 8px; font-size: var(--fs-lg); font-weight: 700; color: var(--text); }
     .gh-auth-modal p { color: var(--muted); font-size: 0.85rem; margin: 4px 0; }
@@ -1985,7 +1995,7 @@
        encode stacking intent). The acmm JS-built overlay keeps its inline
        styles until the Phase 4 template sweep. */
     body.modal-open { overflow: hidden; }
-    .gh-auth-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
+    .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
       position: fixed; inset: 0;
       background: rgba(0, 0, 0, 0.55);
       -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
@@ -2927,7 +2937,7 @@
     // hive-dialog, nous) and any added later; per-modal open/close handlers
     // no longer need to touch body.style.overflow.
     (function installModalScrollLock() {
-      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, #oc-drawer-backdrop';
+      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .cred-dialog-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, #oc-drawer-backdrop';
       function anyOverlayOpen() {
         var overlays = document.querySelectorAll(OVERLAY_SELECTOR);
         for (var i = 0; i < overlays.length; i++) {
@@ -11186,7 +11196,7 @@ function burnAreaChart() {
         // Compact first-selection prompt on the gh-auth-modal pattern (the
         // Claude login modal): centered amber title, tight labeled inputs,
         // centered buttons, 480px max width (#1787).
-        overlay.className = 'gh-auth-overlay';
+        overlay.className = 'gh-auth-overlay cred-dialog-overlay';
         overlay.innerHTML = `<div class="gh-auth-modal" style="max-width:480px;text-align:left">
           <h3 style="color:var(--amber);text-align:center">Configure LiteLLM</h3>
           <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Governor Config → LiteLLM).</p>
@@ -16625,7 +16635,7 @@ function burnAreaChart() {
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
       overlay.id = 'copilot-auth-overlay';
-      overlay.className = 'gh-auth-overlay';
+      overlay.className = 'gh-auth-overlay cred-dialog-overlay';
       overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:480px;text-align:center">' +
         '<h3 style="color:var(--green)">Login GitHub Copilot</h3>' +
         '<p style="color:var(--muted);font-size:0.85rem;margin:12px 0">Enter this one-time code at github.com/login/device:</p>' +
@@ -16696,7 +16706,7 @@ function burnAreaChart() {
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
       overlay.id = 'bob-key-overlay';
-      overlay.className = 'gh-auth-overlay';
+      overlay.className = 'gh-auth-overlay cred-dialog-overlay';
       overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:520px;text-align:left">' +
         '<h3 style="color:#4589ff;text-align:center">bob API key</h3>' +
         '<p style="color:var(--muted);font-size:0.85rem;margin:12px 0">' +
@@ -16839,7 +16849,7 @@ function burnAreaChart() {
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
       overlay.id = 'claude-auth-overlay';
-      overlay.className = 'gh-auth-overlay';
+      overlay.className = 'gh-auth-overlay cred-dialog-overlay';
       var countdownSec = CLAUDE_AUTH_TAB_DELAY_MS / 1000;
       overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:560px;text-align:left">' +
         '<h3 style="color:#d97706;text-align:center">Login Claude Code</h3>' +
