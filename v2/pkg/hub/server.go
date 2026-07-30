@@ -67,6 +67,10 @@ type RegistryEntry struct {
 	// without blanking it, and it is the author the fleet-stats counts are
 	// scoped to.
 	AIAuthor string `json:"aiAuthor,omitempty"`
+	// AIAuthorEffective is who the spoke's agents actually author PRs/commits
+	// as — ai_author when set, else the GitHub App bot login ("<slug>[bot]").
+	// Display-only in the spokes table; never echoed back into project config.
+	AIAuthorEffective string `json:"aiAuthorEffective,omitempty"`
 	// StartedAt is the spoke process start time, reported over the heartbeat.
 	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
 	StartedAt          string         `json:"startedAt,omitempty"`
@@ -682,12 +686,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return safe
 		}(),
-		PrimaryRepo:  safePrimary,
-		AIAuthor:     sanitizeField(payload.AIAuthor),
-		StartedAt:    sanitizeField(payload.StartedAt),
-		DashboardURL: payload.DashboardURL,
-		SnapshotURL:  payload.SnapshotURL,
-		ACMMLevel:    clampInt(payload.ACMMLevel, 0, 6),
+		PrimaryRepo:       safePrimary,
+		AIAuthor:          sanitizeField(payload.AIAuthor),
+		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
+		StartedAt:         sanitizeField(payload.StartedAt),
+		DashboardURL:      payload.DashboardURL,
+		SnapshotURL:       payload.SnapshotURL,
+		ACMMLevel:         clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {

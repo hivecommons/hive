@@ -1087,6 +1087,13 @@ type GitHubConfig struct {
 	// BaseURL is the GitHub web base URL. Defaults to DefaultGitHubBaseURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com".
 	BaseURL string `yaml:"base_url"`
+	// AppAuthoredPRs opts a hive into App-bot authorship: when true AND ai_author
+	// is empty, agents author PRs/commits as the GitHub App bot ("<slug>[bot]")
+	// via the App installation token, instead of the Copilot-login user. Default
+	// false — a hive with this unset behaves exactly as before (author = whatever
+	// the Copilot login / ai_author already produced), so enabling App-bot mode is
+	// strictly opt-in per hive and never changes an existing hive on upgrade.
+	AppAuthoredPRs bool `yaml:"app_authored_prs"`
 }
 
 const (
@@ -1125,6 +1132,35 @@ func (g GitHubConfig) ResolvedAppSlug() string {
 		return g.AppSlug
 	}
 	return DefaultGitHubAppSlug
+}
+
+// BotLogin returns the GitHub App bot login ("<app-slug>[bot]") when a GitHub
+// App is configured (AppID set), or "" otherwise. This is the account that
+// actually authors PRs and commits when the hive authenticates as an
+// installation rather than a personal token.
+func (g GitHubConfig) BotLogin() string {
+	if g.AppID == 0 {
+		return ""
+	}
+	return g.ResolvedAppSlug() + "[bot]"
+}
+
+// EffectiveAIAuthor returns the GitHub identity agents should author PRs and
+// commits as. An explicitly configured project.ai_author always wins. When
+// ai_author is empty, the result depends on the opt-in github.app_authored_prs
+// flag: if set, agents author as the GitHub App bot ("<slug>[bot]") — deriving
+// the bot login here rather than persisting it into ai_author keeps App-bot mode
+// durable across restarts (clearing ai_author is enough; nothing writes the bot
+// name back into config). If the flag is NOT set, this returns "" exactly as
+// before, so a hive that has not opted in behaves identically on upgrade.
+func (c *Config) EffectiveAIAuthor() string {
+	if c.Project.AIAuthor != "" {
+		return c.Project.AIAuthor
+	}
+	if c.GitHub.AppAuthoredPRs {
+		return c.GitHub.BotLogin()
+	}
+	return ""
 }
 
 // AppInstallURL returns the full URL to install the GitHub App.

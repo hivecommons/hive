@@ -214,7 +214,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"PROJECT_ORG":           lit(s.cfg.Project.Org),
 		"PROJECT_NAME":          lit(s.cfg.Project.Name),
 		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),
-		"PROJECT_AI_AUTHOR":     lit(s.cfg.Project.AIAuthor),
+		"PROJECT_AI_AUTHOR":     lit(s.cfg.EffectiveAIAuthor()),
 		"PROJECT_REPOS_LIST":    lit(reposList),
 		"PROJECT_HOMEBREW_REPO": lit(fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org)),
 		"HIVE_REPO":             lit(fmt.Sprintf("%s/hive", s.cfg.Project.Org)),
@@ -500,7 +500,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	b.WriteString("\nWORKFLOW:\n")
 	b.WriteString("  1. Check beads (`bd list --status open`) for context from previous cycles\n")
-	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge green PRs with `--squash --admin`. Ensure `Fixes #<issue>` in body. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
+	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure `Fixes #<issue>` in body. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
 	b.WriteString("  3. Fix blockers — find the ONE fix that unblocks the most PRs/issues. Clone, fix, push, merge.\n")
 	b.WriteString("  4. Crank quick fixes — launch background agents using the Agent tool (run_in_background: true) to fix remaining issues in parallel. One PR per issue, move fast.\n")
 

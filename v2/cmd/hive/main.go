@@ -497,11 +497,12 @@ func main() {
 	}
 
 	projectCtx := agent.ProjectContext{
-		Org:        cfg.Project.Org,
-		Repos:      cfg.Project.Repos,
-		ACMMLevel:  acmmLevel,
-		PRsAllowed: cfg.Project.PRsAllowed(),
-		PolicyDir:  policyDir,
+		Org:            cfg.Project.Org,
+		Repos:          cfg.Project.Repos,
+		ACMMLevel:      acmmLevel,
+		PRsAllowed:     cfg.Project.PRsAllowed(),
+		PolicyDir:      policyDir,
+		AppAuthoredPRs: cfg.GitHub.AppAuthoredPRs,
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 	// Resolve the bob API key at LAUNCH time, not here: cfg is the live config
@@ -1796,8 +1797,9 @@ func main() {
 				AgentsWithModel: &agentsWithModel,
 				HiveID:          cfg.HiveID,
 				Org:             cfg.Project.Org,
-				AIAuthor:        cfg.Project.AIAuthor,
-				StartedAt:       processStartedAt.UTC().Format(time.RFC3339),
+				AIAuthor:          cfg.Project.AIAuthor,
+				AIAuthorEffective: cfg.EffectiveAIAuthor(),
+				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
 				Repos:           cfg.Project.Repos,
 				PrimaryRepo:     cfg.Project.PrimaryRepo,
 				ACMMLevel:       acmmLvl,

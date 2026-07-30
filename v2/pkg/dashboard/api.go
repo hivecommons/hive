@@ -575,15 +575,19 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		githubBaseURL = "https://github.com"
 	}
 	jsonResponse(w, map[string]interface{}{
-		"org":             cfg.Project.Org,
-		"repos":           cfg.Project.Repos,
-		"ai_author":       cfg.Project.AIAuthor,
-		"agents":          len(cfg.EnabledAgents()),
-		"eval_interval_s": cfg.Governor.EvalIntervalS,
-		"primaryRepo":     primaryRepo,
-		"hub_url":         cfg.Hub.URL,
-		"hive_id":         cfg.HiveID,
-		"github_base_url": githubBaseURL,
+		"org":       cfg.Project.Org,
+		"repos":     cfg.Project.Repos,
+		"ai_author": cfg.Project.AIAuthor,
+		// ai_author_effective is who agents actually author PRs/commits as: the
+		// configured ai_author, or the GitHub App bot login ("<slug>[bot]") when
+		// ai_author is empty and the hive authenticates as an App installation.
+		"ai_author_effective": cfg.EffectiveAIAuthor(),
+		"agents":              len(cfg.EnabledAgents()),
+		"eval_interval_s":     cfg.Governor.EvalIntervalS,
+		"primaryRepo":         primaryRepo,
+		"hub_url":             cfg.Hub.URL,
+		"hive_id":             cfg.HiveID,
+		"github_base_url":     githubBaseURL,
 	})
 }
 
@@ -2191,7 +2195,7 @@ func (s *Server) substituteTemplateVars(template, agentName string) string {
 		"PROJECT_NAME":         lit(cfg.Project.Name),
 		"PROJECT_ORG":          lit(org),
 		"PROJECT_PRIMARY_REPO": lit(fullPrimaryRepo),
-		"PROJECT_AI_AUTHOR":    lit(cfg.Project.AIAuthor),
+		"PROJECT_AI_AUTHOR":    lit(cfg.EffectiveAIAuthor()),
 		"PROJECT_REPOS_LIST":   lit(reposList),
 		"HIVE_REPO":            lit(fmt.Sprintf("%s/hive", org)),
 		"HIVE_ID":              lit(cfg.HiveID),

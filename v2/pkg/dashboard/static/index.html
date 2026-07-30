@@ -5080,6 +5080,7 @@
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the current mode's cadence schedule — the governor adds the mode's interval to the last run time. Faster modes (busy/surge) produce a nearer next run than idle/quiet."><div class="label">next run</div><div class="val">${escapeHtml(gov.nextKick || '—')}</div></div>
+          <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" onclick="openConfigDialog('governor',null,'Thresholds')" title="Click to adjust governor thresholds">
           <div class="temp-gauge-label"><span>Issues: ${issueCount}</span><span>max ${maxQ}</span></div>
@@ -12056,6 +12057,10 @@ function burnAreaChart() {
     fetch("/api/config").then(r => r.json()).then(cfg => {
       const ghBase = cfg.github_base_url || 'https://github.com';
       window._githubBaseUrl = ghBase;
+      // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
+      // hive runs App-authored mode, else the configured ai_author. Surfaced on
+      // the governor card so operators can see the write identity at a glance.
+      window._aiAuthor = cfg.ai_author_effective || cfg.ai_author || '';
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');

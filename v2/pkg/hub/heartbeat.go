@@ -206,6 +206,13 @@ type HeartbeatPayload struct {
 	// blanking it, and so the registry knows each hive's author without any
 	// spoke-side token lookup (which does not work on App-authenticated hives).
 	AIAuthor string `json:"ai_author,omitempty"`
+	// AIAuthorEffective is who agents ACTUALLY author PRs/commits as: the
+	// configured ai_author, or the GitHub App bot login ("<slug>[bot]") when
+	// ai_author is empty and the hive authenticates as an App installation.
+	// Display-only — the hub shows it in the spokes table but NEVER echoes it
+	// back into project config, so an App-bot hive keeps ai_author empty and
+	// stays bot-authored across restarts.
+	AIAuthorEffective string `json:"ai_author_effective,omitempty"`
 	// GitHubAPIURL is the GitHub API base URL this spoke is CURRENTLY running
 	// against (its resolved value, so a public-GitHub spoke reports
 	// https://api.github.com rather than ""). Reported so the hub can tell

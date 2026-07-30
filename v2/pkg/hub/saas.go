@@ -9655,7 +9655,7 @@ const dashboardHTML = `<!DOCTYPE html>
         // stacks under Location instead of owning a column. Counted against
         // the <th> cells in the header and the <td> cells emitted below
         // (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 16;
+        var TOTAL_COLUMNS = 17;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -9737,6 +9737,11 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td style="font-size:0.7rem">' + versionCell + '</td>' +
           '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
+          /* AI Author: who this hive authors PRs as. aiAuthorEffective is the
+             App bot ("<slug>[bot]") in App-authored mode, else the configured
+             ai_author (falls back to aiAuthor for spokes too old to report the
+             effective value). A "[bot]" value is the informative case. */
+          '<td style="white-space:nowrap;font-size:0.75rem" title="GitHub identity for this hive\'s PRs/commits">' + esc(h.aiAuthorEffective || h.aiAuthor || '—') + '</td>' +
           '<td>' + journeyBadge(h.journey) + '</td>' +
           /* Drift sits immediately right of Journey: both answer "how healthy
              is this hive's configuration", so they read as one pair rather
@@ -9758,7 +9763,7 @@ const dashboardHTML = `<!DOCTYPE html>
          and the table visibly ragged. 15 with the Drift column, plus the
          bulk-select column, plus the Journey column, minus Public (visibility
          is stacked under Location). Must stay equal to TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 16;
+      var TOTAL_COLUMNS_HEADER = 17;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -9893,7 +9898,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */

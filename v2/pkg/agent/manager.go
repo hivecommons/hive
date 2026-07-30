@@ -110,6 +110,11 @@ type ProjectContext struct {
 	ACMMLevel  int
 	PRsAllowed bool
 	PolicyDir  string
+	// AppAuthoredPRs mirrors config github.app_authored_prs: when true, push-
+	// capable agents get the App installation token as GITHUB_TOKEN so the GitHub
+	// MCP server authors PRs/commits as the App bot. Default false → no token is
+	// injected and behavior is unchanged (opt-in per hive).
+	AppAuthoredPRs bool
 }
 
 type Manager struct {
@@ -361,6 +366,25 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 		tier := m.agentMode(a).TokenTier()
 		if err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID); err != nil {
 			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
+			continue
+		}
+		// Re-inject the freshly-minted App token into the running session so the
+		// GitHub MCP server keeps authenticating as the App bot. The scoped token
+		// expires hourly; WriteAgentToken above rewrites the cache FILE (which the
+		// git credential helper re-reads per call), but the Copilot CLI reads
+		// GITHUB_TOKEN once from its env at startup — so without this push the MCP
+		// token would go stale an hour after launch and GitHub writes would start
+		// 401ing. tmux set-environment only affects processes started AFTER it,
+		// which is fine: the Copilot CLI is (re)spawned per agent turn, so each new
+		// turn picks up the current token. Gated on the opt-in flag + CanPush() to
+		// match the launch injection — advisory agents stay GITHUB_TOKEN-less, and
+		// hives that have not opted in get nothing injected.
+		if m.project.AppAuthoredPRs && a.tmuxSession != "" && m.agentMode(a).CanPush() {
+			if data, err := os.ReadFile(ghpkg.AgentTokenCachePath(a.Name)); err == nil {
+				if tok := strings.TrimSpace(string(data)); tok != "" {
+					_ = m.tmuxCmd(a, "set-environment", "-t", a.tmuxSession, "GITHUB_TOKEN", tok).Run()
+				}
+			}
 		}
 	}
 }
@@ -3981,6 +4005,30 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	}
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{"COPILOT_GITHUB_TOKEN", m.copilotAuthToken, true})
+	}
+	// Point the GitHub MCP server at the App installation token so PRs, issue
+	// comments, and merges are authored by the App bot ("<slug>[bot]") — NOT by
+	// the Copilot login user. COPILOT_GITHUB_TOKEN above stays as the Copilot
+	// OAuth token because it authenticates the AI model (a separate concern from
+	// GitHub write identity); leaving it untouched keeps the Copilot CLI login
+	// working. The Copilot CLI reads GH_TOKEN / GITHUB_TOKEN for GitHub API auth
+	// (per its README: GH_TOKEN or GITHUB_TOKEN, in that precedence), so setting
+	// GITHUB_TOKEN here makes the built-in GitHub MCP server act as the App bot.
+	//
+	// Gated on the opt-in flag first (default OFF → no behavior change on any
+	// hive that has not explicitly enabled App-bot authorship), then on CanPush():
+	// advisory agents are deliberately kept GITHUB_TOKEN-less (see the -u
+	// GITHUB_TOKEN strip after the env loop) so they cannot write; only push-
+	// capable tiers — the ones that legitimately open/merge PRs — get the App
+	// token. m.appAuth != nil means an App is configured. The value is the
+	// per-agent tier-SCOPED App token, and refreshAgentTokens re-pushes it hourly
+	// so it never goes stale.
+	if m.project.AppAuthoredPRs && m.appAuth != nil && agent.UID > 0 && m.agentMode(agent).CanPush() {
+		if data, err := os.ReadFile(ghpkg.AgentTokenCachePath(agent.Name)); err == nil {
+			if tok := strings.TrimSpace(string(data)); tok != "" {
+				vars = append(vars, agentEnvPair{"GITHUB_TOKEN", tok, true})
+			}
+		}
 	}
 	if m.claudeAuthToken != "" && backend == "claude" {
 		vars = append(vars, agentEnvPair{"CLAUDE_CODE_OAUTH_TOKEN", m.claudeAuthToken, true})
