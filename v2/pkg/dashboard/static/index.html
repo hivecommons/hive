@@ -2602,7 +2602,7 @@
   <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
-    <h2 class="section-header-toggle" onclick="toggleSection('repos-section')"><span class="section-chevron">▼</span> Repositories <button class="config-gear" onclick="event.stopPropagation();openConfigDialog('governor',null,'Repos')" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
+    <h2 class="section-header-toggle" onclick="toggleSection('repos-section')"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <button class="config-gear" onclick="event.stopPropagation();openConfigDialog('governor',null,'Repos')" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
     <div class="section-body">
       <div class="repo-grid" id="repos"></div>
     </div>
@@ -5312,6 +5312,18 @@
 
     function renderRepos(repos) {
       const el = document.getElementById('repos');
+      // Definitive single-host badge in the section header: every repo in this
+      // hive is on ONE GitHub host (github.com or a GHE instance). Green =
+      // github.com, blue = GitHub Enterprise — matches the hub spokes-table pill.
+      const badge = document.getElementById('repos-host-badge');
+      if (badge) {
+        const base = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '');
+        const isPublic = (base === 'github.com' || base === '');
+        badge.textContent = isPublic ? 'github.com' : base;
+        badge.style.background = isPublic ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)';
+        badge.style.color = isPublic ? 'var(--green, #16a34a)' : 'var(--blue, #2563eb)';
+        badge.title = 'Every repo in this hive is on ' + (isPublic ? 'github.com' : base) + ' — this hive is single-host';
+      }
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)');
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)');

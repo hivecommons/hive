@@ -257,6 +257,81 @@ func normalizeRepoRef(s string) string {
 	return parts[len(parts)-1]
 }
 
+// repoRefHost extracts the GitHub host a repo string was pasted with, or "" when
+// none was given (a bare name or "owner/repo" with no host = "belongs to the
+// spoke's host"). It parallels normalizeOrgRef's host detection: a leading
+// dotted segment is the hostname.
+//
+//	https://github.ibm.com/z-aiops-unite/ui -> "github.ibm.com"
+//	github.ibm.com/z-aiops-unite/ui         -> "github.ibm.com"
+//	z-aiops-unite/ui                        -> ""   (no explicit host)
+//	ui                                      -> ""
+//
+// This is what makes the single-host-per-spoke invariant enforceable: the
+// caller compares every repo's host (and the primary's) against the spoke host
+// and rejects any that differ, so a spoke can never mix github.com and a GHE
+// instance. Hosts are compared case-insensitively; "github.com" and "" both
+// mean public GitHub (see sameGitHubHost).
+func repoRefHost(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		return parts[0]
+	}
+	return ""
+}
+
+// sameGitHubHost reports whether two host labels refer to the same GitHub. Both
+// "" and "github.com" mean public GitHub, so they are equal; a GHE host
+// ("github.ibm.com") equals only itself. Case-insensitive.
+func sameGitHubHost(a, b string) bool {
+	norm := func(h string) string {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" || h == "github.com" {
+			return "github.com"
+		}
+		return h
+	}
+	return norm(a) == norm(b)
+}
+
+// validateSingleRepoHost enforces the single-host-per-spoke invariant: every
+// repo (and the primary repo) must live on the SAME GitHub host as the spoke.
+// spokeHost is the host derived from the org/primary (normalizeOrgRef); "" means
+// public github.com. repos is the raw, still-host-qualified list as the user
+// pasted it (parse the host BEFORE normalizeRepoRef strips it). Returns a
+// non-nil error naming the first offending repo, so the request/assign handler
+// can 400 with a clear, onboarding-friendly message.
+func validateSingleRepoHost(spokeHost, primaryRepo string, repos []string) error {
+	label := func(h string) string {
+		if h == "" || strings.EqualFold(h, "github.com") {
+			return "github.com"
+		}
+		return h
+	}
+	for _, ref := range append(append([]string{}, repos...), primaryRepo) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		rh := repoRefHost(ref)
+		if rh == "" {
+			continue // no explicit host — belongs to the spoke host by definition
+		}
+		if !sameGitHubHost(rh, spokeHost) {
+			return fmt.Errorf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host (github.com or a single GitHub Enterprise instance). Fix the mismatched repo or request a separate hive for it",
+				ref, label(rh), label(spokeHost))
+		}
+	}
+	return nil
+}
+
 // isValidRepoRef validates a repo entry, which may be a bare name ("repo")
 // or a cross-org "owner/repo" reference. Both segments must be safe names
 // (no path traversal); at most one slash is allowed. Cross-org repos are a

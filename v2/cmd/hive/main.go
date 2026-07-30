@@ -2063,9 +2063,11 @@ func main() {
 				// The GitHub instance this spoke actually runs against. Only
 				// the spoke knows this for certain: a hive's GitHub can differ
 				// from its cluster's default, so the hub cannot infer it.
-				// Reported as a bare hostname; empty base_url means public
-				// github.com, which githubHostLabel renders as such.
-				GitHubHost:              hub.GitHubHostLabel(cfg.GitHub.BaseURL),
+				// Reported as a bare hostname via HostLabel(), which reads BOTH
+				// base_url and api_url — a GHE placeholder with base_url:"" but
+				// api_url: github.ibm.com must report github.ibm.com, not be
+				// silently rendered as github.com in the spokes table.
+				GitHubHost:              cfg.GitHub.HostLabel(),
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
 				GitHubAppState:          dashSrv.GetGitHubAppState(),

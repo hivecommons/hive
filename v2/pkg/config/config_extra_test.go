@@ -780,3 +780,19 @@ agents:
 		t.Error("scanner agent missing")
 	}
 }
+
+func TestHostLabel_PrefersGHEFromAPIURLWhenBaseEmpty(t *testing.T) {
+	// A GHE placeholder: base_url empty but api_url is GHE — must report GHE, not github.com.
+	g := GitHubConfig{APIURL: "https://github.ibm.com/api/v3", BaseURL: ""}
+	if got := g.HostLabel(); got != "github.ibm.com" {
+		t.Errorf("HostLabel() = %q, want github.ibm.com (from api_url when base_url empty)", got)
+	}
+	// Public: both empty.
+	if got := (GitHubConfig{}).HostLabel(); got != "github.com" {
+		t.Errorf("HostLabel() public = %q, want github.com", got)
+	}
+	// base_url wins when set.
+	if got := (GitHubConfig{BaseURL: "https://github.ibm.com"}).HostLabel(); got != "github.ibm.com" {
+		t.Errorf("HostLabel() from base_url = %q, want github.ibm.com", got)
+	}
+}

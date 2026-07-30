@@ -1176,6 +1176,32 @@ func (g GitHubConfig) IsGHE() bool {
 	return g.BaseURL != "" && g.BaseURL != DefaultGitHubBaseURL
 }
 
+// HostLabel returns the bare GitHub hostname this hive's App/repos live on:
+// "github.com" for public GitHub, or the GHE hostname (e.g. "github.ibm.com").
+//
+// It is the DEFINITIVE host for display and reporting, and deliberately looks at
+// BOTH base_url and api_url. Many hives (notably pooled placeholders) carry an
+// empty base_url but a GHE api_url (api_url: https://github.ibm.com/api/v3,
+// base_url: "") — reporting the host from base_url alone renders those as
+// github.com and under-counts GHE hives in the spokes table. Preferring base_url
+// when set, then falling back to the api_url's host, makes the reported host
+// match the GitHub the hive actually talks to.
+func (g GitHubConfig) HostLabel() string {
+	pick := g.BaseURL
+	if pick == "" {
+		pick = g.APIURL
+	}
+	pick = strings.TrimSpace(pick)
+	pick = strings.TrimPrefix(pick, "https://")
+	pick = strings.TrimPrefix(pick, "http://")
+	pick = strings.TrimSuffix(strings.Trim(pick, "/"), "/api/v3")
+	host := strings.SplitN(pick, "/", 2)[0]
+	if host == "" || strings.EqualFold(host, "api.github.com") {
+		return DefaultGitHubBaseURL[len("https://"):] // "github.com"
+	}
+	return host
+}
+
 // OAuthBaseURL and OAuthAPIURL are the hosts used for DEVICE-FLOW LOGIN and
 // user-identity token validation. They are ALWAYS public github.com, decoupled
 // from the App/repo host (ResolvedBaseURL/ResolvedAPIURL, which may be GHE).

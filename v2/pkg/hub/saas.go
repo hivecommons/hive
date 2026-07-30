@@ -4690,6 +4690,15 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	if ghHost != "" {
 		body.GitHubHost = ghHost
 	}
+	// Single-host-per-spoke: every repo (and the primary) must be on the same
+	// GitHub host as the org. Check BEFORE normalizeRepoRef strips the host off
+	// each pasted repo. Reject a mixed request up front with a clear message —
+	// a spoke that mixed github.com and a GHE instance would silently fail to
+	// authenticate against half its repos, the onboarding footgun this removes.
+	if err := validateSingleRepoHost(body.GitHubHost, body.PrimaryRepo, strings.Split(body.Repos, ",")); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
 	{
 		var cleaned []string
 		for _, repo := range strings.Split(body.Repos, ",") {
@@ -5351,6 +5360,20 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	if body.Repos == "" {
 		http.Error(w, `{"error":"repos are required"}`, http.StatusBadRequest)
 		return
+	}
+	// Single-host-per-spoke (assign path — mirrors the request path). Every repo
+	// and the primary must share the spoke's host, checked on the raw pasted
+	// values before normalizeRepoRef strips the host. The "public" sentinel means
+	// github.com, so pass "" to the validator for it.
+	{
+		spokeHost := body.GitHubHost
+		if strings.EqualFold(spokeHost, githubHostPublic) {
+			spokeHost = ""
+		}
+		if err := validateSingleRepoHost(spokeHost, body.PrimaryRepo, strings.Split(body.Repos, ",")); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			return
+		}
 	}
 	{
 		var cleaned []string

@@ -349,16 +349,20 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 
 func (s *Scheduler) buildReposSection() string {
 	var b strings.Builder
-	b.WriteString("AUTHORIZED REPOS (you may ONLY interact with these):\n")
+	host := s.cfg.GitHub.ResolvedBaseURL() // always a full URL; github.com or the GHE instance
+	b.WriteString(fmt.Sprintf("AUTHORIZED REPOS (all on %s — you may ONLY interact with these):\n", host))
 	org := s.cfg.Project.Org
 	for _, repo := range s.cfg.Project.Repos {
-		if strings.Contains(repo, "/") {
-			b.WriteString(fmt.Sprintf("  %s\n", repo))
-		} else {
-			b.WriteString(fmt.Sprintf("  %s/%s\n", org, repo))
+		full := repo
+		if !strings.Contains(repo, "/") {
+			full = org + "/" + repo
 		}
+		// Print the fully-qualified URL so the host is unambiguous in the prompt —
+		// a github.ibm.com repo must never be mistaken for a github.com one.
+		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
+	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
 	return b.String()
 }
 
@@ -629,11 +633,16 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
 
 func (s *Scheduler) reposSection() string {
 	var b strings.Builder
-	b.WriteString("## Project Repositories\n\nYour role covers these repositories:\n")
+	host := s.cfg.GitHub.ResolvedBaseURL()
+	b.WriteString(fmt.Sprintf("## Project Repositories\n\nYour role covers these repositories, all on **%s** (this hive is single-host):\n", host))
 	for _, repo := range s.cfg.Project.Repos {
-		b.WriteString(fmt.Sprintf("  %s/%s\n", s.cfg.Project.Org, repo))
+		full := repo
+		if !strings.Contains(repo, "/") {
+			full = s.cfg.Project.Org + "/" + repo
+		}
+		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))
 	}
-	b.WriteString("\nAll work should be scoped to these repos.\n\n")
+	b.WriteString(fmt.Sprintf("\nAll work should be scoped to these repos on %s.\n\n", host))
 	return b.String()
 }
 
