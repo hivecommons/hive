@@ -114,6 +114,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
+	// bob API key: PUT sets/replaces, DELETE revokes. Both are non-GET, so the
+	// roleEnforcement middleware already 403s a read-only role — no separate
+	// authorization rule is needed or wanted here.
+	s.mux.HandleFunc("GET /api/config/governor/bob", s.handleGovernorBobStatus)
+	s.mux.HandleFunc("PUT /api/config/governor/bob", s.handleGovernorBobKey)
+	s.mux.HandleFunc("DELETE /api/config/governor/bob", s.handleGovernorBobKeyClear)
 	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
 	s.mux.HandleFunc("GET /api/config/governor/gateways", s.handleGovernorGatewaysList)
 	s.mux.HandleFunc("PUT /api/config/governor/gateways", s.handleGovernorGatewaysUpsert)
@@ -4064,6 +4070,145 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 		resp["probe"] = probe
 	}
 	jsonResponse(w, resp)
+}
+
+// handleGovernorBobStatus reports whether a bob API key is configured, and
+// WHERE it came from — never the value. The source string
+// ("file:/data/secrets/bob_api_key", "env:HIVE_BOB_API_KEY") is the same
+// safe-to-log form ResolveAPIKeySource returns and is what the dashboard
+// shows so an operator can tell an admin-managed Secret key from one they
+// entered here.
+func (s *Server) handleGovernorBobStatus(w http.ResponseWriter, r *http.Request) {
+	bc := s.deps.Config.Governor.Bob
+	source := bc.ResolveAPIKeySource()
+	jsonResponse(w, map[string]interface{}{
+		"ok": true,
+		// configured is presence-only; the key value is never serialized.
+		"configured": source != "",
+		"source":     source,
+	})
+}
+
+// handleGovernorBobKey stores a bob API key VALUE submitted from the spoke
+// dashboard's per-agent AUTH field. The value is written to a 0600 PVC file
+// (and best-effort into the hive-secrets Secret); hive.yaml records only the
+// resulting file PATH. The value never appears in the response, in hive.yaml,
+// or in any log line.
+//
+// Authorization is the standard config-endpoint gating: this is a PUT, so the
+// roleEnforcement middleware rejects a read-only role with 403 before the
+// handler runs.
+func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		APIKey *string `json:"apiKey"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.APIKey == nil {
+		jsonError(w, "apiKey is required", http.StatusBadRequest)
+		return
+	}
+	key := strings.TrimSpace(*body.APIKey)
+	if key == "" {
+		// Distinct from DELETE: an empty PUT is a mistake (an empty field
+		// submitted), not an intentional revoke, so say so rather than
+		// silently wiping a working key.
+		jsonError(w, "apiKey is empty — paste the bob API key, or use Clear to remove the existing one",
+			http.StatusBadRequest)
+		return
+	}
+	if len(key) > bobKeyMaxLen {
+		jsonError(w, fmt.Sprintf("apiKey is too long (limit %d characters)", bobKeyMaxLen),
+			http.StatusBadRequest)
+		return
+	}
+
+	cfg := s.deps.Config
+	// Apply to a copy so a store failure leaves config untouched.
+	bc := cfg.Governor.Bob
+	keyFile, err := s.storeBobAPIKey(key)
+	if err != nil {
+		// redactSecret guards against the key surfacing via a filesystem
+		// error that happened to embed it.
+		jsonError(w, "failed to store API key: "+redactSecret(err.Error(), key),
+			http.StatusInternalServerError)
+		return
+	}
+	bc.APIKeyFile = keyFile
+	// A key VALUE pasted into api_key_env would be a plaintext secret in
+	// hive.yaml and never worked as a name (os.Getenv("...") is empty).
+	// Now that a real key is stored properly, scrub it.
+	if looksLikeAPIKeyValue(bc.APIKeyEnv) {
+		bc.APIKeyEnv = ""
+		s.logger.Info("cleared key-like value from bob api_key_env (replaced by stored API key)")
+	}
+	cfg.Governor.Bob = bc
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after bob api key update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_bob_key", auditDetail("section", "bob", "action", "set"), "")
+	s.refreshAndPersist()
+
+	// No agent restart is required to ADOPT the key: main.go injected a
+	// resolver closure over the live config into the agent manager
+	// (SetBobAPIKeyResolver), and it re-reads the key file on every agent
+	// launch. A bob agent that is already paused for "no API key" still needs
+	// to be started/resumed once — it is not re-launched automatically — so
+	// the UI tells the user to start the agent rather than restart the pod.
+	jsonResponse(w, map[string]interface{}{
+		"ok":         true,
+		"configured": true,
+		// Path only, never the value.
+		"source": "file:" + keyFile,
+		// The pod does not need restarting; the resolver reads the key live.
+		"restartNeeded": false,
+	})
+}
+
+// handleGovernorBobKeyClear revokes a stored bob API key: it removes the PVC
+// key file and drops the api_key_file pointer from hive.yaml, returning the
+// hive to the documented "key required" state rather than a half-configured
+// one.
+//
+// It deliberately does NOT try to delete the key from the hive-secrets Secret
+// or from an admin-mounted /secrets/bob_api_key: those are managed outside the
+// dashboard, and ResolveAPIKey consults them ahead of the PVC file. The
+// response reports the source that remains so the UI can tell the user the key
+// is still supplied by an admin-managed store instead of falsely claiming it
+// was cleared.
+func (s *Server) handleGovernorBobKeyClear(w http.ResponseWriter, r *http.Request) {
+	removed, err := clearBobKeyFile()
+	if err != nil {
+		jsonError(w, "failed to clear API key: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	cfg := s.deps.Config
+	bc := cfg.Governor.Bob
+	// Only drop the pointer if it names the file we just removed; an operator
+	// who pointed api_key_file at their own path keeps that setting.
+	if bc.APIKeyFile == writableBobKeyFile {
+		bc.APIKeyFile = ""
+	}
+	cfg.Governor.Bob = bc
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after bob api key clear", "error", err)
+	}
+	s.logger.Info("bob api key cleared", "api_key_file", writableBobKeyFile, "file_removed", removed)
+	s.auditFromRequest(r, "config_governor_bob_key", auditDetail("section", "bob", "action", "clear"), "")
+	s.refreshAndPersist()
+
+	// Re-resolve: an admin-managed Secret/env key may still supply one.
+	remaining := cfg.Governor.Bob.ResolveAPIKeySource()
+	jsonResponse(w, map[string]interface{}{
+		"ok":         true,
+		"configured": remaining != "",
+		"source":     remaining,
+	})
 }
 
 func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) {
