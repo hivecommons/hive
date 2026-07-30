@@ -312,6 +312,17 @@ function bobIsRunning() {
   }
 }
 
+// Relaunch the backend CLI in the tmux session using the flags from
+// backends.conf, the same way contributor-agent.sh first launched it.
+function relaunchCLI() {
+  const confPaths = ['/usr/local/etc/hive/backends.conf', path.join(process.cwd(), 'config/backends.conf')];
+  const confPath = confPaths.find(p => fs.existsSync(p)) || confPaths[0];
+  const CMD = execSync(`bash -c 'source ${confPath} 2>/dev/null; backend_binary ${BACKEND}'`, { encoding: 'utf8', timeout: 15000 }).trim() || BACKEND;
+  const PERM = execSync(`bash -c 'source ${confPath} 2>/dev/null; backend_perm_flag ${BACKEND}'`, { encoding: 'utf8', timeout: 15000 }).trim();
+  execSync(`tmux send-keys -t ${TMUX_SESSION} '${CMD} ${PERM}' Enter`, { timeout: 15000 });
+  return `${CMD} ${PERM}`;
+}
+
 function checkTmuxIdle() {
   try {
     const output = execSync(
@@ -450,7 +461,13 @@ function startProgressReporting() {
         }
       } catch (_) { procs = BACKEND; }
       const cliAlive = procs.includes(BACKEND) || procs.includes('claude') || procs.includes('copilot') || procs.includes('bob') || procs.includes('codex') || procs.includes('goose') || procs.includes('pi');
-      if (!cliAlive) {
+      // bob is not a persistent REPL: it exits at the end of every turn ("Bob
+      // goes to sleep 💤"). For bob an exited process is the normal completion
+      // signal, not a crash, so it must fall through to the checkTmuxIdle()
+      // path below and be reported as task_complete. Treating it as a death
+      // here reported finished work as task_failed on every single task.
+      const cliExitIsNormal = BACKEND === 'bob';
+      if (!cliAlive && !cliExitIsNormal) {
         console.error(`CLI process (${BACKEND}) died — restarting and reporting task as failed`);
         try {
           const confPaths = ['/usr/local/etc/hive/backends.conf', path.join(process.cwd(), 'config/backends.conf')];
@@ -474,6 +491,21 @@ function startProgressReporting() {
     if (idle) {
       console.log(`Task ${currentTask.task_id} completed — agent idle`);
       send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines });
+      // bob exits after each turn, so the pane is now a bare shell. Bring it
+      // back up before the next task, or the prompt would be typed into bash
+      // ("-bash: <prompt>: command not found") and silently lost.
+      if (BACKEND === 'bob' && !bobIsRunning()) {
+        try {
+          console.log(`Relaunching bob for the next task: ${relaunchCLI()}`);
+          cliReady = false;
+          waitForCLI().then(() => {
+            cliReady = true;
+            if (pendingTask) { const t = pendingTask; pendingTask = null; tmuxSendKeys(t); }
+          }).catch(e => console.error(e.message));
+        } catch (e) {
+          console.error('Failed to relaunch bob:', e.message);
+        }
+      }
       const completedRepo = currentTask.repo;
       currentTask = null;
       taskAssignedAt = 0;
