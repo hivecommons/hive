@@ -1302,7 +1302,7 @@ func (s *Server) handleBudgetIgnoreSet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGHAuth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.deps.Config.GitHub
 	authType := "token"
-	if cfg.AppID != 0 {
+	if cfg.HasApp() {
 		authType = "app"
 	}
 	jsonResponse(w, map[string]interface{}{
@@ -4438,7 +4438,10 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		"key_file":        cfg.GitHub.KeyFile,
 	}
 
-	if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+	// HasUsableApp() rejects the placeholder sentinel: reinitializing App auth
+	// against it would fail on every save and, before this guard, could not
+	// succeed no matter what installation_id the operator supplied.
+	if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
 		if s.deps.ReinitGitHubFunc != nil {
 			if err := s.deps.ReinitGitHubFunc(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile); err != nil {
 				s.logger.Error("github client reinit failed", "error", err)

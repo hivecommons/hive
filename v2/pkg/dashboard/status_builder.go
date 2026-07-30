@@ -1036,7 +1036,10 @@ func buildGHRateLimits(ghClient *github.Client, ctx context.Context, cfg *config
 
 	authType := "token"
 	authLabel := "unknown"
-	if cfg.GitHub.AppID != 0 {
+	// HasApp() so a placeholder app_id is not reported as App-authenticated
+	// identity in the rate-limit card — it has no installation and mints no
+	// tokens.
+	if cfg.GitHub.HasApp() {
 		authType = "app"
 		authLabel = cfg.Project.Org
 	} else if cfg.GitHub.Token != "" {

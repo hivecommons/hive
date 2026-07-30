@@ -1096,6 +1096,23 @@ type GitHubConfig struct {
 	AppAuthoredPRs bool `yaml:"app_authored_prs"`
 }
 
+// PlaceholderAppID is the sentinel `github.app_id` written into a hive's config
+// when the hive is provisioned BEFORE its real GitHub App exists — a pooled
+// "available-*" placeholder, or a hive whose owner has not installed the App
+// yet. Config validation requires either github.token or github.app_id, so the
+// seed cannot leave app_id empty; this value fills the slot without ever naming
+// a real App.
+//
+// It is NOT a valid GitHub App ID and must never be handed to
+// github.NewAppAuth. Every test for "is a GitHub App configured?" must use
+// GitHubConfig.HasApp() rather than a bare `AppID != 0` — the sentinel is
+// non-zero, so a bare zero-test reports a placeholder as a real App. That is
+// exactly the bug that put hosted hives into permanent CrashLoopBackOff: the
+// moment installation_id became non-zero (the owner installed the App), the
+// spoke committed to App auth, failed to read a PEM that was never provisioned,
+// and exited before the HTTP listener bound — invisible from the dashboard.
+const PlaceholderAppID int64 = 999999999
+
 const (
 	// DefaultGitHubAPIURL is the default GitHub API endpoint (public github.com).
 	DefaultGitHubAPIURL = "https://api.github.com"
@@ -1104,6 +1121,30 @@ const (
 	// DefaultGitHubAppSlug is the public Hive GitHub App slug.
 	DefaultGitHubAppSlug = "kubestellar-hive"
 )
+
+// IsPlaceholderApp reports whether app_id is the "no real App yet" sentinel.
+func (g GitHubConfig) IsPlaceholderApp() bool {
+	return g.AppID == PlaceholderAppID
+}
+
+// HasApp reports whether a REAL GitHub App is configured — a non-zero app_id
+// that is not the placeholder sentinel. This is the only correct presence test
+// for App auth; `AppID != 0` treats a placeholder as real.
+//
+// It deliberately says nothing about installation_id or the key file: those are
+// separate readiness conditions (see HasUsableApp) that a hive can acquire
+// later, over the heartbeat or the config API.
+func (g GitHubConfig) HasApp() bool {
+	return g.AppID != 0 && !g.IsPlaceholderApp()
+}
+
+// HasUsableApp reports whether App auth can actually be attempted: a real
+// app_id AND an installation to mint tokens against. The key file is resolved
+// separately (config value, then $GH_APP_KEY_FILE, then the on-disk fallbacks),
+// so it is not part of this test.
+func (g GitHubConfig) HasUsableApp() bool {
+	return g.HasApp() && g.InstallationID != 0
+}
 
 // ResolvedAPIURL returns the configured API URL or the default for github.com.
 func (g GitHubConfig) ResolvedAPIURL() string {
@@ -2084,6 +2125,9 @@ func (c *Config) validate() error {
 	if len(c.Agents) == 0 {
 		return fmt.Errorf("at least one agent must be configured")
 	}
+	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
+	// precisely so a hive awaiting its real App can satisfy this check and boot
+	// into dashboard-only mode. Everywhere else, use HasApp().
 	if c.GitHub.Token == "" && c.GitHub.AppID == 0 {
 		return fmt.Errorf("github.token or github.app_id is required")
 	}

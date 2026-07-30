@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -158,6 +160,39 @@ func resolveAppKeyFile(configured, envOverride string) string {
 	return spokeProvisionedAppKeyPath
 }
 
+// describeAppKeyFailure turns a bare wrapped os error from github.NewAppAuth
+// into a message an operator can act on without reading the source: it names
+// the path actually tried, the full resolution order that produced it, and the
+// underlying cause.
+//
+// The generic "reading app key /secrets/gh-app-key.pem: no such file" that this
+// replaces gave no hint that key_file, $GH_APP_KEY_FILE, the PVC path and the
+// provisioning mount are all consulted in a fixed order — so the usual response
+// was to put the key in the wrong one of the four.
+func describeAppKeyFailure(configured, envOverride, resolved string, err error) string {
+	order := []string{
+		fmt.Sprintf("$GH_APP_KEY_FILE=%s", describeKeySource(envOverride)),
+		fmt.Sprintf("github.key_file=%s", describeKeySource(configured)),
+		fmt.Sprintf("PVC fallback %s", spokeAppKeyPath),
+		fmt.Sprintf("provisioning mount %s", spokeProvisionedAppKeyPath),
+	}
+	return fmt.Sprintf(
+		"GitHub App private key could not be loaded from %q: %v. "+
+			"Resolution order (first non-empty wins): %s. "+
+			"Write a PEM-encoded RSA private key to that path, or point github.key_file at one.",
+		resolved, err, strings.Join(order, " → "),
+	)
+}
+
+// describeKeySource renders an unset key-file source as "(unset)" so the
+// resolution order in describeAppKeyFailure reads unambiguously.
+func describeKeySource(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "(unset)"
+	}
+	return v
+}
+
 // processStartedAt is when this hive process began. Reported over the heartbeat
 // so the hub can show an uptime pill — a hive that is 1/1 Running but restarting
 // every couple of minutes looks healthy in a pod listing and in My Hives, and a
@@ -248,14 +283,52 @@ func main() {
 
 	var ghClient *github.Client
 	var appAuth *github.AppAuth
-	if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 {
-		keyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"))
+	// appAuthFailure, when non-empty, is the operator-facing reason App auth
+	// could not be initialized. It is surfaced through the existing
+	// GitHubAppRequired/PermIssue banner rather than killing the process — see
+	// the degraded-boot rationale below.
+	var appAuthFailure string
+	// appAuthState classifies appAuthFailure so the banner and the hub's
+	// journey nudges can tell an operator-side fault (no key was ever
+	// delivered) from a user-actionable one (the App is not installed).
+	appAuthState := github.AppStateUnknown
+	appKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"))
+	// HasUsableApp() rejects config.PlaceholderAppID. A placeholder paired with
+	// a real installation_id (which is what happens the instant an owner
+	// installs the App on a pre-provisioned hive) used to satisfy a bare
+	// `AppID != 0` test, commit the process to App auth, fail to read a PEM
+	// that was never provisioned, and os.Exit(1) BEFORE the listener bound —
+	// permanent CrashLoopBackOff with nothing visible in the dashboard.
+	if cfg.GitHub.HasUsableApp() {
 		var err error
-		appAuth, err = github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyFile, logger, cfg.GitHub.ResolvedAPIURL())
+		appAuth, err = github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, appKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 		if err != nil {
-			logger.Error("failed to init GitHub App auth", "error", err)
-			os.Exit(1)
+			// A genuinely-configured App whose key is missing or malformed is a
+			// real, actionable fault — but NOT a reason to refuse to boot. The
+			// dashboard is the only place an owner can see and fix it, so the
+			// hive comes up degraded (no ghClient, no agent work) and reports
+			// the fault through the banner the UI already renders.
+			appAuthFailure = describeAppKeyFailure(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), appKeyFile, err)
+			// Both states are operator-actionable: the hive's owner cannot
+			// deliver a key. Absent vs. unparseable is the distinction the hub
+			// needs to tell "never pushed" from "pushed something broken".
+			appAuthState = github.AppStateKeyInvalid
+			if errors.Is(err, fs.ErrNotExist) {
+				appAuthState = github.AppStateKeyMissing
+			}
+			logger.Error("GitHub App auth unavailable — starting in dashboard-only mode",
+				"app_id", cfg.GitHub.AppID,
+				"installation_id", cfg.GitHub.InstallationID,
+				"key_file", appKeyFile,
+				"state", appAuthState.String(),
+				"detail", appAuthFailure,
+				"error", err,
+			)
+			appAuth = nil
 		}
+	}
+	switch {
+	case appAuth != nil:
 		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
 		// Correct a stale/wrong installation_id BEFORE building the client, so
 		// the very first token this process mints is scoped to the right org
@@ -266,7 +339,7 @@ func main() {
 		if cfg.GitHub.DocsInstallationID != 0 {
 			docsAuth, err := github.NewAppAuthWithCache(
 				cfg.GitHub.AppID, cfg.GitHub.DocsInstallationID,
-				keyFile, github.DocsTokenCachePath, logger, cfg.GitHub.ResolvedAPIURL(),
+				appKeyFile, github.DocsTokenCachePath, logger, cfg.GitHub.ResolvedAPIURL(),
 			)
 			if err != nil {
 				logger.Warn("failed to init docs org token", "error", err)
@@ -293,20 +366,40 @@ func main() {
 				}()
 			}
 		}
-	} else {
+	default:
 		ghToken := cfg.GitHub.Token
 		if ghToken == "" {
 			ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
 		}
-		if ghToken == "" && cfg.GitHub.AppID != 0 {
+		switch {
+		case ghToken != "":
+			ghClient = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
+		case appAuthFailure != "":
+			// Real App, unusable key. Already logged above; leave ghClient nil
+			// so nothing tries to act on GitHub with no credentials.
+		case cfg.GitHub.IsPlaceholderApp():
+			// User-actionable: this hive was provisioned ahead of its App, and
+			// installing the App is exactly what resolves it.
+			appAuthFailure = "This hive carries a placeholder github.app_id and is not yet linked to a GitHub App. Install the GitHub App on your org to enable agents."
+			appAuthState = github.AppStateNotInstalled
+			logger.Warn("placeholder github.app_id — hive starting in dashboard-only mode",
+				"placeholder_app_id", config.PlaceholderAppID,
+				"installation_id", cfg.GitHub.InstallationID,
+			)
+		case cfg.GitHub.AppID != 0:
+			appAuthFailure = "The GitHub App is configured but has no installation. Install the app on your org to enable agents."
+			appAuthState = github.AppStateNotInstalled
 			logger.Warn("GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.")
-		} else if ghToken == "" {
-			logger.Error("no GitHub token configured (set github.token or github.app_id in config)")
-			os.Exit(1)
+		default:
+			// Neither a token nor any app_id at all. config.validate() should
+			// already have rejected this, so it means the config was mutated
+			// after load. Still a degraded boot rather than an exit: the
+			// dashboard is where an operator fixes it.
+			appAuthFailure = "No GitHub credentials configured. Set github.token, or github.app_id plus an App installation."
+			logger.Error("no GitHub token configured (set github.token or github.app_id in config) — starting in dashboard-only mode")
 		}
-		ghClient = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
 	}
-	if len(cfg.Governor.Labels.Exempt) > 0 {
+	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 	}
 	// Load user token for advisory posting (comments on issues as the logged-in user)
@@ -437,17 +530,20 @@ func main() {
 	notifier := notify.New(cfg.Notifications, logger)
 	notifier.SetHiveID(cfg.HiveID)
 	acmmLevel := inferACMMLevel(cfg)
-	githubAppRequired := false
+	// A hive that booted without usable GitHub credentials raises the banner
+	// immediately, seeded with the classification made at startup. Otherwise
+	// these stay empty and are filled in later by the live probes below.
+	githubAppRequired := appAuthFailure != ""
 	// githubAppDiag/githubAppState carry the classified reason App auth failed,
 	// so the banner can name the true cause (and the hub can avoid escalating
 	// against a hive whose credentials the operator never delivered).
-	githubAppDiag := ""
-	githubAppState := github.AppStateUnknown
+	githubAppDiag := appAuthFailure
+	githubAppState := appAuthState
 
 	// Find or create the pinned advisory issue. Any level can have advisory
 	// agents whose findings should be posted to this issue.
 	advisoryIssues := map[string]int{}
-	if acmmLevel > 0 {
+	if acmmLevel > 0 && ghClient != nil {
 		primaryRepo := cfg.Project.PrimaryRepo
 		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 			primaryRepo = cfg.Project.Repos[0]
@@ -1263,6 +1359,15 @@ func main() {
 		}
 		if recheckRepo != "" {
 			dashSrv.SetGitHubAppRecheckFn(func() bool {
+				// The Re-check button is the first thing an owner clicks on a
+				// degraded hive. Report the real cause instead of the generic
+				// "not accessible" — there is no client to check WITH, so the
+				// credentials themselves are what must be fixed.
+				if ghClient == nil {
+					logger.Warn("github app recheck: hive is running without GitHub credentials", "detail", appAuthFailure)
+					dashSrv.AuditLog("system", "github_app_check", "result=no GitHub client: "+appAuthFailure, "")
+					return false
+				}
 				num, err := ghClient.EnsureAdvisoryIssue(ctx, recheckRepo)
 				if err != nil {
 					logger.Debug("github app recheck: not accessible", "repo", recheckRepo, "error", err)
@@ -1481,7 +1586,7 @@ func main() {
 			prevGitHub.InstallationID != cfg.GitHub.InstallationID ||
 			prevGitHub.KeyFile != cfg.GitHub.KeyFile ||
 			prevGitHub.APIURL != cfg.GitHub.APIURL {
-			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+			if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
 				newAppAuth, appErr := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 				if appErr != nil {
 					logger.Error("github app auth rebuild after config reload failed", "error", appErr)
@@ -2093,7 +2198,12 @@ func main() {
 				}
 			}
 
-			if ghCfg.AppID != 0 {
+			// Adopt a hub-delivered app_id only when it names a REAL App. Zero
+			// means "not speaking to this field"; the placeholder sentinel is
+			// what a pre-provisioned hive already carries, so re-adopting it
+			// would overwrite a good app_id with a non-App on any heartbeat
+			// that echoed the original seed back.
+			if ghCfg.AppID != 0 && ghCfg.AppID != config.PlaceholderAppID {
 				cfg.GitHub.AppID = ghCfg.AppID
 			}
 			// A zero installation_id means "the hub is not speaking to this
@@ -2115,7 +2225,7 @@ func main() {
 				cfg.GitHub.AppSlug = ghCfg.AppSlug
 			}
 
-			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+			if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
 				newAppAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 				if err != nil {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
@@ -2545,6 +2655,15 @@ func runEvalCycle(
 	restartedAgents []string,
 	logger *slog.Logger,
 ) {
+	// A hive running without GitHub credentials (placeholder app_id, or a real
+	// App whose key could not be read) has nothing to enumerate. Return before
+	// the first API call rather than logging a misleading enumeration failure
+	// once per eval interval — the dashboard banner already states the cause.
+	if ghClient == nil {
+		logger.Debug("skipping eval cycle: hive is running without GitHub credentials")
+		return
+	}
+
 	if dashSrv.IsGitHubAppRequired() {
 		primaryRepo := cfg.Project.PrimaryRepo
 		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
