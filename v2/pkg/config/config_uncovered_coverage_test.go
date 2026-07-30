@@ -251,19 +251,46 @@ func TestGitHubConfig_IsGHE(t *testing.T) {
 	tests := []struct {
 		name    string
 		baseURL string
+		apiURL  string
 		want    bool
 	}{
-		{"empty base url is not GHE", "", false},
-		{"default github.com is not GHE", DefaultGitHubBaseURL, false},
-		{"custom base url is GHE", "https://github.mycorp.com", true},
+		{"empty base+api url is not GHE", "", "", false},
+		{"default github.com is not GHE", DefaultGitHubBaseURL, "", false},
+		{"custom base url is GHE", "https://github.mycorp.com", "", true},
+		// Pooled/placeholder GHE hives carry base_url:"" with a GHE api_url — they
+		// MUST be recognized as GHE (else the install URL points at github.com).
+		{"blank base url + GHE api url is GHE", "", "https://github.ibm.com/api/v3", true},
+		{"blank base url + github.com api url is not GHE", "", DefaultGitHubAPIURL, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			g := GitHubConfig{BaseURL: tt.baseURL}
+			g := GitHubConfig{BaseURL: tt.baseURL, APIURL: tt.apiURL}
 			if got := g.IsGHE(); got != tt.want {
 				t.Errorf("IsGHE() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestGitHubConfig_AppInstallURL_BlankBaseGHEApi is the exact zacburns bug: a GHE
+// hive whose overlay carries app_id/app_slug/api_url on github.ibm.com but an
+// empty base_url. The spoke UI must build the GHE /github-apps/ install URL, not
+// the github.com /apps/ one (which returns an empty page on GHE).
+func TestGitHubConfig_AppInstallURL_BlankBaseGHEApi(t *testing.T) {
+	g := GitHubConfig{
+		APIURL:  "https://github.ibm.com/api/v3",
+		BaseURL: "",
+		AppSlug: "kubestellar-hive-ghe",
+	}
+	want := "https://github.ibm.com/github-apps/kubestellar-hive-ghe/installations/new"
+	if got := g.AppInstallURL(); got != want {
+		t.Errorf("AppInstallURL() = %q, want %q", got, want)
+	}
+	if !g.IsGHE() {
+		t.Error("IsGHE() = false, want true for blank base_url + GHE api_url")
+	}
+	if got := g.ResolvedBaseURL(); got != "https://github.ibm.com" {
+		t.Errorf("ResolvedBaseURL() = %q, want https://github.ibm.com", got)
 	}
 }
 
