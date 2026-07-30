@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -162,6 +163,188 @@ func resolveAppKeyFile(configured, envOverride string) string {
 	return spokeProvisionedAppKeyPath
 }
 
+// describeAppKeyFailure turns a bare wrapped os error from github.NewAppAuth
+// into a message an operator can act on without reading the source: it names
+// the path actually tried, the full resolution order that produced it, and the
+// underlying cause.
+//
+// The generic "reading app key /secrets/gh-app-key.pem: no such file" that this
+// replaces gave no hint that key_file, $GH_APP_KEY_FILE, the PVC path and the
+// provisioning mount are all consulted in a fixed order — so the usual response
+// was to put the key in the wrong one of the four.
+func describeAppKeyFailure(configured, envOverride, resolved string, err error) string {
+	order := []string{
+		fmt.Sprintf("$GH_APP_KEY_FILE=%s", describeKeySource(envOverride)),
+		fmt.Sprintf("github.key_file=%s", describeKeySource(configured)),
+		fmt.Sprintf("PVC fallback %s", spokeAppKeyPath),
+		fmt.Sprintf("provisioning mount %s", spokeProvisionedAppKeyPath),
+	}
+	return fmt.Sprintf(
+		"GitHub App private key could not be loaded from %q: %v. "+
+			"Resolution order (first non-empty wins): %s. "+
+			"Write a PEM-encoded RSA private key to that path, or point github.key_file at one.",
+		resolved, err, strings.Join(order, " → "),
+	)
+}
+
+// describeKeySource renders an unset key-file source as "(unset)" so the
+// resolution order in describeAppKeyFailure reads unambiguously.
+func describeKeySource(v string) string {
+	if strings.TrimSpace(v) == "" {
+		return "(unset)"
+	}
+	return v
+}
+
+// githubAuth is the outcome of resolving this hive's GitHub credentials at
+// startup. Every field is optional: a hive with no usable credentials is a
+// legitimate, bootable state.
+type githubAuth struct {
+	// Client is nil when no credentials could be resolved. Callers must treat a
+	// nil Client as "GitHub is unavailable", never as a fatal condition.
+	Client *github.Client
+	// AppAuth is non-nil only when App auth was successfully initialized.
+	AppAuth *github.AppAuth
+	// Failure, when non-empty, is the operator-facing reason there is no
+	// working GitHub client. It is shown in the dashboard's GitHub App banner.
+	Failure string
+	// State classifies Failure so the banner and the hub's journey nudges can
+	// tell an operator-side fault (a key that was never delivered) from a
+	// user-actionable one (the App is not installed). Escalating against an
+	// owner for a key WE failed to provision is precisely the mistake
+	// github.AppAuthState exists to prevent.
+	State github.AppAuthState
+}
+
+// initGitHubAuth resolves this hive's GitHub credentials.
+//
+// It NEVER exits the process. A hive that cannot authenticate to GitHub must
+// still boot and serve its dashboard, because the dashboard is the only place
+// its owner can see what is wrong and fix it. Exiting here — which is what this
+// code used to do on a key-read failure — happens before the HTTP listener
+// binds, so the pod crashloops with the diagnosis visible only in kubectl logs:
+// the hub shows the hive offline, the heartbeat never starts, and a rollout
+// hangs forever because the new pod never goes Ready.
+//
+// The placeholder app_id is the reason that path was reachable at all. See
+// config.PlaceholderAppID.
+func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger) githubAuth {
+	var out githubAuth
+	appKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"))
+
+	// HasUsableApp() rejects config.PlaceholderAppID. A placeholder paired with
+	// a real installation_id — exactly what happens the instant an owner
+	// installs the App on a pre-provisioned hive — used to satisfy a bare
+	// `AppID != 0` test and commit this process to App auth it could never
+	// perform.
+	if cfg.GitHub.HasUsableApp() {
+		appAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, appKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
+		if err != nil {
+			// A genuinely-configured App whose key is missing or malformed is a
+			// real, actionable fault — but not a reason to refuse to boot.
+			out.Failure = describeAppKeyFailure(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), appKeyFile, err)
+			// Both states are operator-actionable: the hive's owner cannot
+			// deliver a key. Absent vs. unparseable is the distinction the hub
+			// needs to tell "never pushed" from "pushed something broken".
+			out.State = github.AppStateKeyInvalid
+			if errors.Is(err, fs.ErrNotExist) {
+				out.State = github.AppStateKeyMissing
+			}
+			logger.Error("GitHub App auth unavailable — starting in dashboard-only mode",
+				"app_id", cfg.GitHub.AppID,
+				"installation_id", cfg.GitHub.InstallationID,
+				"key_file", appKeyFile,
+				"state", out.State.String(),
+				"detail", out.Failure,
+				"error", err,
+			)
+		} else {
+			out.AppAuth = appAuth
+		}
+	}
+
+	if out.AppAuth != nil {
+		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
+		// Correct a stale/wrong installation_id BEFORE building the client, so
+		// the very first token this process mints is scoped to the right org
+		// rather than 403ing on every write until the self-heal tick runs.
+		healGitHubAppInstallation(ctx, out.AppAuth, cfg, logger)
+		out.Client = github.NewClientFromApp(out.AppAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+		startDocsTokenRefresh(ctx, cfg, appKeyFile, logger)
+		return out
+	}
+
+	ghToken := cfg.GitHub.Token
+	if ghToken == "" {
+		ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
+	}
+	switch {
+	case ghToken != "":
+		out.Client = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
+	case out.Failure != "":
+		// Real App, unusable key. Already logged; leave Client nil so nothing
+		// tries to act on GitHub with credentials that do not work.
+	case cfg.GitHub.IsPlaceholderApp():
+		// User-actionable: this hive was provisioned ahead of its App, and
+		// installing the App is exactly what resolves it.
+		out.Failure = "This hive carries a placeholder github.app_id and is not yet linked to a GitHub App. Install the GitHub App on your org to enable agents."
+		out.State = github.AppStateNotInstalled
+		logger.Warn("placeholder github.app_id — hive starting in dashboard-only mode",
+			"placeholder_app_id", config.PlaceholderAppID,
+			"installation_id", cfg.GitHub.InstallationID,
+		)
+	case cfg.GitHub.AppID != 0:
+		out.Failure = "The GitHub App is configured but has no installation. Install the app on your org to enable agents."
+		out.State = github.AppStateNotInstalled
+		logger.Warn("GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.")
+	default:
+		// Neither a token nor any app_id at all. config.validate() rejects this
+		// at load, so reaching it means the config was mutated afterwards.
+		// Still a degraded boot rather than an exit: the dashboard is where an
+		// operator fixes it.
+		out.Failure = "No GitHub credentials configured. Set github.token, or github.app_id plus an App installation."
+		logger.Error("no GitHub token configured (set github.token or github.app_id in config) — starting in dashboard-only mode")
+	}
+	return out
+}
+
+// startDocsTokenRefresh mints and periodically refreshes a token for the
+// separate docs-org installation, when one is configured. A failure here is
+// always non-fatal: the docs org is an add-on, not this hive's primary auth.
+func startDocsTokenRefresh(ctx context.Context, cfg *config.Config, appKeyFile string, logger *slog.Logger) {
+	if cfg.GitHub.DocsInstallationID == 0 {
+		return
+	}
+	docsAuth, err := github.NewAppAuthWithCache(
+		cfg.GitHub.AppID, cfg.GitHub.DocsInstallationID,
+		appKeyFile, github.DocsTokenCachePath, logger, cfg.GitHub.ResolvedAPIURL(),
+	)
+	if err != nil {
+		logger.Warn("failed to init docs org token", "error", err)
+		return
+	}
+	if _, err := docsAuth.Token(ctx); err != nil {
+		logger.Warn("failed to generate initial docs org token", "error", err)
+	} else {
+		logger.Info("docs org token cached", "installation_id", cfg.GitHub.DocsInstallationID)
+	}
+	go func() {
+		const docsTokenRefreshInterval = 45 * time.Minute
+		ticker := time.NewTicker(docsTokenRefreshInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, err := docsAuth.Token(ctx); err != nil {
+					logger.Warn("docs token refresh failed", "error", err)
+				}
+			}
+		}
+	}()
+}
+
 // processStartedAt is when this hive process began. Reported over the heartbeat
 // so the hub can show an uptime pill — a hive that is 1/1 Running but restarting
 // every couple of minutes looks healthy in a pod listing and in My Hives, and a
@@ -256,70 +439,34 @@ func main() {
 		cancel()
 	}()
 
-	var ghClient *github.Client
-	var appAuth *github.AppAuth
+	ghAuth := initGitHubAuth(ctx, cfg, logger)
+	ghClient, appAuth := ghAuth.Client, ghAuth.AppAuth
+	// appAuthFailure, when non-empty, is the operator-facing reason GitHub auth
+	// is unavailable. It is surfaced through the existing
+	// GitHubAppRequired/PermIssue banner rather than killing the process.
+	appAuthFailure := ghAuth.Failure
+	// appAuthState classifies that failure so the banner and the hub's journey
+	// nudges can tell an operator-side fault (no key was ever delivered) from a
+	// user-actionable one (the App is not installed).
+	appAuthState := ghAuth.State
+	// normalGitTransportToken supplies the git-transport credential to the
+	// Visual Hive runtime manager (dd branch feature). It follows the resolved
+	// auth: the App installation token when App auth is in use, else the static
+	// token/HIVE_GITHUB_TOKEN. Nil when no credential resolved — the Visual Hive
+	// runtime treats that as "GitHub unavailable" rather than fatal.
 	var normalGitTransportToken func(context.Context) (string, error)
-	if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 {
-		keyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"))
-		var err error
-		appAuth, err = github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyFile, logger, cfg.GitHub.ResolvedAPIURL())
-		if err != nil {
-			logger.Error("failed to init GitHub App auth", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("using GitHub App authentication", "app_id", cfg.GitHub.AppID)
-		// Correct a stale/wrong installation_id BEFORE building the client, so
-		// the very first token this process mints is scoped to the right org
-		// rather than 403ing on every write until the self-heal tick runs.
-		healGitHubAppInstallation(ctx, appAuth, cfg, logger)
-		ghClient = github.NewClientFromApp(appAuth, cfg.Project.Org, cfg.Project.Repos, logger)
+	if appAuth != nil {
 		normalGitTransportToken = appAuth.Token
-
-		if cfg.GitHub.DocsInstallationID != 0 {
-			docsAuth, err := github.NewAppAuthWithCache(
-				cfg.GitHub.AppID, cfg.GitHub.DocsInstallationID,
-				keyFile, github.DocsTokenCachePath, logger, cfg.GitHub.ResolvedAPIURL(),
-			)
-			if err != nil {
-				logger.Warn("failed to init docs org token", "error", err)
-			} else {
-				if _, err := docsAuth.Token(ctx); err != nil {
-					logger.Warn("failed to generate initial docs org token", "error", err)
-				} else {
-					logger.Info("docs org token cached", "installation_id", cfg.GitHub.DocsInstallationID)
-				}
-				go func() {
-					const docsTokenRefreshInterval = 45 * time.Minute
-					ticker := time.NewTicker(docsTokenRefreshInterval)
-					defer ticker.Stop()
-					for {
-						select {
-						case <-ctx.Done():
-							return
-						case <-ticker.C:
-							if _, err := docsAuth.Token(ctx); err != nil {
-								logger.Warn("docs token refresh failed", "error", err)
-							}
-						}
-					}
-				}()
-			}
-		}
 	} else {
-		ghToken := cfg.GitHub.Token
-		if ghToken == "" {
-			ghToken = os.Getenv("HIVE_GITHUB_TOKEN")
+		staticGitToken := cfg.GitHub.Token
+		if staticGitToken == "" {
+			staticGitToken = os.Getenv("HIVE_GITHUB_TOKEN")
 		}
-		if ghToken == "" && cfg.GitHub.AppID != 0 {
-			logger.Warn("GitHub App configured without credentials — hive starting in dashboard-only mode. Install the app and provide installation_id + key to enable agents.")
-		} else if ghToken == "" {
-			logger.Error("no GitHub token configured (set github.token or github.app_id in config)")
-			os.Exit(1)
+		if staticGitToken != "" {
+			normalGitTransportToken = func(context.Context) (string, error) { return staticGitToken, nil }
 		}
-		ghClient = github.NewClient(ghToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
-		normalGitTransportToken = func(context.Context) (string, error) { return ghToken, nil }
 	}
-	if len(cfg.Governor.Labels.Exempt) > 0 {
+	if ghClient != nil && len(cfg.Governor.Labels.Exempt) > 0 {
 		ghClient.SetExemptLabels(cfg.Governor.Labels.Exempt)
 	}
 	// Load user token for advisory posting (comments on issues as the logged-in user)
@@ -327,7 +474,9 @@ func main() {
 	if tokenData, err := os.ReadFile("/data/gh-user-token"); err == nil {
 		userToken := strings.TrimSpace(string(tokenData))
 		if userToken != "" {
-			if username, err := github.ValidateToken(userToken, cfg.GitHub.ResolvedAPIURL()); err == nil {
+			// Identity check goes to github.com (the user token is a github.com
+			// OAuth token); the repo client stays on the per-hive host.
+			if username, err := github.ValidateToken(userToken, cfg.GitHub.OAuthAPIURL()); err == nil {
 				uc := github.NewClient(userToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
 				userGHClient.Store(uc)
 				logger.Info("user GitHub token loaded for advisory posting", "username", username)
@@ -450,12 +599,20 @@ func main() {
 	notifier := notify.New(cfg.Notifications, logger)
 	notifier.SetHiveID(cfg.HiveID)
 	acmmLevel := inferACMMLevel(cfg)
-	githubAppRequired := false
+	// A hive that booted without usable GitHub credentials raises the banner
+	// immediately, seeded with the classification made at startup. Otherwise
+	// these stay empty and are filled in later by the live probes below.
+	githubAppRequired := appAuthFailure != ""
+	// githubAppDiag/githubAppState carry the classified reason App auth failed,
+	// so the banner can name the true cause (and the hub can avoid escalating
+	// against a hive whose credentials the operator never delivered).
+	githubAppDiag := appAuthFailure
+	githubAppState := appAuthState
 
 	// Find or create the pinned advisory issue. Any level can have advisory
 	// agents whose findings should be posted to this issue.
 	advisoryIssues := map[string]int{}
-	if acmmLevel > 0 {
+	if acmmLevel > 0 && ghClient != nil {
 		primaryRepo := cfg.Project.PrimaryRepo
 		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
 			primaryRepo = cfg.Project.Repos[0]
@@ -471,7 +628,17 @@ func main() {
 					logger.Warn("GitHub API rate limit hit during advisory issue ensure", "repo", primaryRepo)
 				} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
 					githubAppRequired = true
-					logger.Warn("GitHub App not installed or credentials invalid — setting githubAppRequired flag", "error", err)
+					// Classify WHY before the banner renders. A bare 401/403
+					// here used to become "GitHub App Not Installed", which is
+					// wrong — and actively misleading — when the real cause is
+					// a key the operator has not delivered. Classification is
+					// on the live API response, and a missing key file
+					// short-circuits without any API call.
+					githubAppDiag, githubAppState = diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
+					logger.Warn("GitHub App authentication failed at startup",
+						"state", githubAppState.String(),
+						"operator_actionable", githubAppState.OperatorActionable(),
+						"error", err)
 				}
 			} else {
 				advisoryIssues[primaryRepo] = num
@@ -510,11 +677,12 @@ func main() {
 	}
 
 	projectCtx := agent.ProjectContext{
-		Org:        cfg.Project.Org,
-		Repos:      cfg.Project.Repos,
-		ACMMLevel:  acmmLevel,
-		PRsAllowed: cfg.Project.PRsAllowed(),
-		PolicyDir:  policyDir,
+		Org:            cfg.Project.Org,
+		Repos:          cfg.Project.Repos,
+		ACMMLevel:      acmmLevel,
+		PRsAllowed:     cfg.Project.PRsAllowed(),
+		PolicyDir:      policyDir,
+		AppAuthoredPRs: cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 	configCoordinator := dashboard.NewConfigCoordinator(cfg, gov, agentMgr)
@@ -526,6 +694,12 @@ func main() {
 	// is never logged.
 	agentMgr.SetBobAPIKeyResolver(func() string {
 		return cfg.Governor.Bob.ResolveAPIKey()
+	})
+	// The launch path also needs to know WHICH FILE the key came from, so it can
+	// check that file is readable by the agent UID rather than only by the hive
+	// process. Returns a loggable source string, never the key value.
+	agentMgr.SetBobKeySourceResolver(func() string {
+		return cfg.Governor.Bob.ResolveAPIKeySource()
 	})
 	// Log only WHERE the key came from (or that none is set) so a misconfigured
 	// hive is diagnosable without the value ever reaching the logs.
@@ -1280,6 +1454,15 @@ func main() {
 	})
 
 	dashSrv.SetGitHubAppRequired(githubAppRequired)
+	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
+	// classified state is applied only after it, and only when a failure was
+	// actually detected.
+	if githubAppRequired {
+		dashSrv.SetGitHubAppState(githubAppState.String())
+		if githubAppDiag != "" {
+			dashSrv.SetGitHubAppPermIssue(githubAppDiag)
+		}
+	}
 
 	// Wire up the manual re-check callback for the dashboard button.
 	{
@@ -1289,6 +1472,15 @@ func main() {
 		}
 		if recheckRepo != "" {
 			dashSrv.SetGitHubAppRecheckFn(func() bool {
+				// The Re-check button is the first thing an owner clicks on a
+				// degraded hive. Report the real cause instead of the generic
+				// "not accessible" — there is no client to check WITH, so the
+				// credentials themselves are what must be fixed.
+				if ghClient == nil {
+					logger.Warn("github app recheck: hive is running without GitHub credentials", "detail", appAuthFailure)
+					dashSrv.AuditLog("system", "github_app_check", "result=no GitHub client: "+appAuthFailure, "")
+					return false
+				}
 				num, err := ghClient.EnsureAdvisoryIssue(ctx, recheckRepo)
 				if err != nil {
 					logger.Debug("github app recheck: not accessible", "repo", recheckRepo, "error", err)
@@ -1306,9 +1498,12 @@ func main() {
 				// this is the exact case rediscovery exists for. Cached by TTL,
 				// so a repeated re-check does not re-hit the API.
 				healGitHubAppInstallation(ctx, ghClient.AppAuth(), cfg, logger)
-				if diag := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
+				if diag, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
 					dashSrv.SetGitHubAppPermIssue(diag)
-					logger.Warn("github app recheck: app detected but write not verified", "repo", recheckRepo, "detail", diag)
+					dashSrv.SetGitHubAppState(state.String())
+					logger.Warn("github app recheck: app detected but write not verified",
+						"repo", recheckRepo, "state", state.String(),
+						"operator_actionable", state.OperatorActionable(), "detail", diag)
 					dashSrv.AuditLog("system", "github_app_check", "result=installed but write NOT verified: "+diag, "")
 					return false
 				}
@@ -1507,7 +1702,7 @@ func main() {
 			prevGitHub.InstallationID != cfg.GitHub.InstallationID ||
 			prevGitHub.KeyFile != cfg.GitHub.KeyFile ||
 			prevGitHub.APIURL != cfg.GitHub.APIURL {
-			if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+			if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
 				newAppAuth, appErr := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 				if appErr != nil {
 					logger.Error("github app auth rebuild after config reload failed", "error", appErr)
@@ -1881,8 +2076,9 @@ func main() {
 				AgentsWithModel: &agentsWithModel,
 				HiveID:          cfg.HiveID,
 				Org:             cfg.Project.Org,
-				AIAuthor:        cfg.Project.AIAuthor,
-				StartedAt:       processStartedAt.UTC().Format(time.RFC3339),
+				AIAuthor:          cfg.Project.AIAuthor,
+				AIAuthorEffective: cfg.EffectiveAIAuthor(),
+				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
 				Repos:           cfg.Project.Repos,
 				PrimaryRepo:     cfg.Project.PrimaryRepo,
 				ACMMLevel:       acmmLvl,
@@ -1929,7 +2125,9 @@ func main() {
 					if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
 						tok := strings.TrimSpace(string(td))
 						if tok != "" {
-							if u, err := github.ValidateToken(tok, cfg.GitHub.ResolvedAPIURL()); err == nil {
+							// gh-user-token is a github.com OAuth token — validate its
+							// identity against github.com, not the (possibly GHE) repo host.
+							if u, err := github.ValidateToken(tok, cfg.GitHub.OAuthAPIURL()); err == nil {
 								return u.Login
 							}
 						}
@@ -1966,8 +2164,17 @@ func main() {
 				// SHA tag (which can never receive a rolling upgrade) from one
 				// riding <branch>-latest. Empty off-cluster — never guessed.
 				ImageRef:                hub.SelfDeploymentImage(),
+				// The GitHub instance this spoke actually runs against. Only
+				// the spoke knows this for certain: a hive's GitHub can differ
+				// from its cluster's default, so the hub cannot infer it.
+				// Reported as a bare hostname via HostLabel(), which reads BOTH
+				// base_url and api_url — a GHE placeholder with base_url:"" but
+				// api_url: github.ibm.com must report github.ibm.com, not be
+				// silently rendered as github.com in the spokes table.
+				GitHubHost:              cfg.GitHub.HostLabel(),
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
+				GitHubAppState:          dashSrv.GetGitHubAppState(),
 				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:             cfg.Hub.AutoUpgrade,
 				ClusterHealth: func() *hub.HeartbeatClusterHealthReport {
@@ -2149,7 +2356,12 @@ func main() {
 			}
 
 			if err := configCoordinator.Mutate(func(candidate *config.Config) error {
-				if ghCfg.AppID != 0 {
+				// Adopt a hub-delivered app_id only when it names a REAL App. Zero
+				// means "not speaking to this field"; the placeholder sentinel is
+				// what a pre-provisioned hive already carries, so re-adopting it
+				// would overwrite a good app_id with a non-App on any heartbeat
+				// that echoed the original seed back.
+				if ghCfg.AppID != 0 && ghCfg.AppID != config.PlaceholderAppID {
 					candidate.GitHub.AppID = ghCfg.AppID
 				}
 				// A zero installation_id means "the hub is not speaking to this
@@ -2177,7 +2389,7 @@ func main() {
 			}
 
 			committed := configCoordinator.Snapshot()
-			if committed.GitHub.AppID != 0 && committed.GitHub.InstallationID != 0 && committed.GitHub.KeyFile != "" {
+			if committed.GitHub.HasUsableApp() && committed.GitHub.KeyFile != "" {
 				newAppAuth, err := github.NewAppAuth(committed.GitHub.AppID, committed.GitHub.InstallationID, committed.GitHub.KeyFile, logger, committed.GitHub.ResolvedAPIURL())
 				if err != nil {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
@@ -2670,27 +2882,36 @@ func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg
 		"installation_id", newID, "org", org)
 }
 
-func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
+// diagnoseGitHubApp classifies this hive's GitHub App credential state and
+// returns both the machine-readable state and banner-ready copy.
+//
+// It supersedes a substring match on the formatted error ("403"/"401"), which
+// could not tell a user-side failure from an operator-side one and so showed
+// every hive the same "GitHub App Not Installed" banner. The most damaging
+// case that fixes: a spoke holding the WRONG private key (the hub's key push
+// has not landed, or delivered a public github.com key to a GitHub Enterprise
+// hive) gets `401 A JSON web token could not be decoded`. The user cannot see,
+// supply, or correct that key — telling them to install the App or check
+// github.installation_id sends them to redo work they already did correctly.
+//
+// The candidate key paths are passed so a MISSING key is detected without any
+// API round-trip at all.
+//
+// Returns ("", AppStateOK) when App auth is healthy, and ("", state) for a nil
+// appAuth (a token-authenticated hive has nothing to check).
+func diagnoseGitHubApp(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) (string, github.AppAuthState) {
 	if appAuth == nil {
-		return ""
+		return "", github.AppStateOK
 	}
-	info, err := appAuth.VerifyInstallation(ctx)
-	if err != nil {
-		return fmt.Sprintf("Could not verify the GitHub App installation: %v", err)
-	}
-	if expectedOwner != "" && !strings.EqualFold(info.Account, expectedOwner) {
-		return fmt.Sprintf("This hive is authenticating as GitHub App installation %d, which belongs to '%s' — not '%s'. Check github.installation_id in the hive config.",
-			info.InstallationID, info.Account, expectedOwner)
-	}
-	if info.IssuesPerm != "write" {
-		granted := info.IssuesPerm
-		if granted == "" {
-			granted = "none"
-		}
-		return fmt.Sprintf("The GitHub App is installed for '%s' but granted Issues: %s (Issues: Read & Write required). The org owner must approve the updated permissions at the app installation settings page.",
-			info.Account, granted)
-	}
-	return ""
+	d := appAuth.DiagnoseAppAuth(ctx, expectedOwner, spokeAppKeyPath, spokeProvisionedAppKeyPath)
+	return d.Message(), d.State
+}
+
+// diagnoseGitHubAppWrite is the string-only wrapper retained for callers that
+// only need banner copy.
+func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
+	msg, _ := diagnoseGitHubApp(ctx, appAuth, expectedOwner)
+	return msg
 }
 
 func runEvalCycle(
@@ -2713,6 +2934,15 @@ func runEvalCycle(
 	restartedAgents []string,
 	logger *slog.Logger,
 ) {
+	// A hive running without GitHub credentials (placeholder app_id, or a real
+	// App whose key could not be read) has nothing to enumerate. Return before
+	// the first API call rather than logging a misleading enumeration failure
+	// once per eval interval — the dashboard banner already states the cause.
+	if ghClient == nil {
+		logger.Debug("skipping eval cycle: hive is running without GitHub credentials")
+		return
+	}
+
 	if dashSrv.IsGitHubAppRequired() {
 		primaryRepo := cfg.Project.PrimaryRepo
 		if primaryRepo == "" && len(cfg.Project.Repos) > 0 {
@@ -2985,17 +3215,32 @@ func runEvalCycle(
 							// Resolve the actual cause — pending permission approval
 							// vs. an installation_id pointing at the wrong org — so
 							// the banner tells the user what to actually fix.
-							msg := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org)
+							msg, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
 							if msg == "" {
 								msg = "The GitHub App is installed but lacks Issues: Read & Write permission. The org owner must approve updated permissions at the app installation settings page."
+								state = github.AppStateInsufficientPerms
 							}
-							dashSrv.SetGitHubAppPermIssue(msg)
 							dashSrv.SetGitHubAppRequired(true)
-							logger.Warn("GitHub App installed but insufficient permissions — cannot write issue comments", "repo", primaryRepo, "detail", msg)
+							dashSrv.SetGitHubAppPermIssue(msg)
+							dashSrv.SetGitHubAppState(state.String())
+							logger.Warn("GitHub App write failed — cannot write issue comments",
+								"repo", primaryRepo, "state", state.String(),
+								"operator_actionable", state.OperatorActionable(), "detail", msg)
 						} else if strings.Contains(err.Error(), "rate limit") {
 							logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", primaryRepo)
 						} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
+							// Same reasoning as the startup path: classify
+							// before raising a banner, so an operator-side key
+							// failure is never rendered as "not installed".
+							msg, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
 							dashSrv.SetGitHubAppRequired(true)
+							if msg != "" {
+								dashSrv.SetGitHubAppPermIssue(msg)
+							}
+							dashSrv.SetGitHubAppState(state.String())
+							logger.Warn("GitHub App authentication failed posting advisory digest",
+								"repo", primaryRepo, "state", state.String(),
+								"operator_actionable", state.OperatorActionable())
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")

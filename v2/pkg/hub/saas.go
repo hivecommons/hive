@@ -243,16 +243,12 @@ func (s *HubServer) registerSaaSRoutes() {
 	// race detector rightly flags. Production behavior is unchanged; tests
 	// that need poller logic call the functions directly.
 	if !testing.Testing() {
-		startHubBackgroundWorkers(s)
+		go s.startProvisionWatcher(context.Background())
+		go s.StartLatestSHAPoller(context.Background())
+		// Periodically probe every spoke's unauthenticated /api/status and alert
+		// on any that answer 200 (wide open) — catches auth drift automatically.
+		go s.StartAuthAudit(context.Background())
 	}
-}
-
-var startHubBackgroundWorkers = func(s *HubServer) {
-	go s.startProvisionWatcher(context.Background())
-	go s.StartLatestSHAPoller(context.Background())
-	// Periodically probe every spoke's unauthenticated /api/status and alert
-	// on any that answer 200 (wide open) — catches auth drift automatically.
-	go s.StartAuthAudit(context.Background())
 }
 
 func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -657,6 +653,12 @@ func githubHostLabel(baseURL string) string {
 	h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
 	return strings.TrimRight(h, "/")
 }
+
+// GitHubHostLabel is the exported form of githubHostLabel, for the spoke to
+// normalize its own configured GitHub base URL before reporting it over the
+// heartbeat. Sharing one implementation keeps the value the spoke sends and
+// the value the hub renders from drifting into two different spellings.
+func GitHubHostLabel(baseURL string) string { return githubHostLabel(baseURL) }
 
 func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	var entries []ClusterListEntry
@@ -1541,6 +1543,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// Rule: take the meta level only for placeholders, or as a fallback when the
 	// live registry level is 0 (unknown) but meta has a real one. Otherwise the
 	// live registry level wins.
+
 	enrichFromSaaSMeta := func(entry *MyHiveEntry) {
 		sh := saasByID[entry.ID]
 		if sh == nil {
@@ -1582,6 +1585,43 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel, entry.DashboardURL, "") != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
+		}
+	}
+
+	// resolveGitHubHost fills in the Location-column GitHub host pill when the
+	// spoke did not report one over the heartbeat.
+	//
+	// The spoke-reported value always wins: it is the hive's real runtime
+	// GitHub, and it is the only source that is correct when a hive's GitHub
+	// differs from its cluster's default (the enricom8 hive is the live
+	// example — its host had to be corrected by hand). Heartbeat-only and
+	// firewalled spokes upgrade slowly, so for those this falls back to the
+	// hive's recorded host, then its cluster's default. Anything still empty
+	// is left empty and rendered as "github.com" by the pill, so an old spoke
+	// shows a sane default rather than a wrong host.
+	resolveGitHubHost := func(entry *MyHiveEntry) {
+		if entry.GitHubHost != "" {
+			return // spoke-reported — authoritative
+		}
+		if sh := saasByID[entry.ID]; sh != nil {
+			if sh.GitHubHost != "" {
+				entry.GitHubHost = githubHostLabel(sh.GitHubHost)
+				return
+			}
+			if c := s.clusterForHive(sh); c != nil && c.GitHubBaseURL != "" {
+				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+				return
+			}
+		}
+		// No meta record: fall back to the cluster the registry entry reports.
+		// s.clusters is read unlocked here to match every other reader in this
+		// package (clusterForHive, clusterNameForID); it is effectively
+		// immutable after load, and taking s.mu here would nest inside callers
+		// that already hold it.
+		if entry.ClusterID != "" {
+			if c, ok := s.clusters[entry.ClusterID]; ok && c.GitHubBaseURL != "" {
+				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+			}
 		}
 	}
 
@@ -1703,6 +1743,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(h.ID, "hosted-") || strings.HasPrefix(h.ID, "saas-") {
 			saasCount++
 		}
+		// Backfill the Location-column GitHub host for rows whose spoke is too
+		// old to report one. Done here, over the assembled set, so no entry
+		// construction site can be missed.
+		resolveGitHubHost(&result[i])
 		// Who-has-access is shown only to owners (and admin), matching
 		// handleAccessList's rule. A read/read-write member is deliberately not
 		// told who else shares the hive.
@@ -2001,7 +2045,9 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	user.Hives[hiveID] = "owner"
 	saveSaaSUser(user)
 
-	dispatchHiveProvision(func() {
+	provisionWG.Add(1)
+	go func() {
+		defer provisionWG.Done()
 		cluster := s.clusterForHive(h)
 		if cluster == nil {
 			h.Status = "error"
@@ -2019,7 +2065,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		}
 		h.Status = "provisioning"
 		saveSaaSHive(h)
-	})
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -2027,14 +2073,6 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 		"status":    "provisioning",
 		"subdomain": h.Subdomain,
 	})
-}
-
-var dispatchHiveProvision = func(work func()) {
-	provisionWG.Add(1)
-	go func() {
-		defer provisionWG.Done()
-		work()
-	}()
 }
 
 func (s *HubServer) handleHiveStatus(w http.ResponseWriter, r *http.Request) {
@@ -4652,6 +4690,15 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	if ghHost != "" {
 		body.GitHubHost = ghHost
 	}
+	// Single-host-per-spoke: every repo (and the primary) must be on the same
+	// GitHub host as the org. Check BEFORE normalizeRepoRef strips the host off
+	// each pasted repo. Reject a mixed request up front with a clear message —
+	// a spoke that mixed github.com and a GHE instance would silently fail to
+	// authenticate against half its repos, the onboarding footgun this removes.
+	if err := validateSingleRepoHost(body.GitHubHost, body.PrimaryRepo, strings.Split(body.Repos, ",")); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
 	{
 		var cleaned []string
 		for _, repo := range strings.Split(body.Repos, ",") {
@@ -5314,6 +5361,20 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"repos are required"}`, http.StatusBadRequest)
 		return
 	}
+	// Single-host-per-spoke (assign path — mirrors the request path). Every repo
+	// and the primary must share the spoke's host, checked on the raw pasted
+	// values before normalizeRepoRef strips the host. The "public" sentinel means
+	// github.com, so pass "" to the validator for it.
+	{
+		spokeHost := body.GitHubHost
+		if strings.EqualFold(spokeHost, githubHostPublic) {
+			spokeHost = ""
+		}
+		if err := validateSingleRepoHost(spokeHost, body.PrimaryRepo, strings.Split(body.Repos, ",")); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
 	{
 		var cleaned []string
 		for _, r := range strings.Split(body.Repos, ",") {
@@ -5557,7 +5618,26 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute"}
+var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", ssoHandoffPath}
+
+// ssoHandoffPath is the spoke's SSO handoff endpoint. It MUST bypass the hub's
+// nginx auth_request gate.
+//
+// Why: the auth-check subrequest authorizes a user against THIS hive's grant
+// list (user.Hives[hiveID]). The whole point of the handoff is to admit a user
+// who is authenticated on the hub but has no hub-side grant row for the hive —
+// the spoke's own authorized_users allowlist is the authority. Gating /sso on
+// the hub check therefore 401s exactly the requests the handoff exists to
+// serve, and nginx turns that 401 into an auth-signin redirect back to the hub
+// login, which (the user already having a valid hub cookie) immediately
+// redirects to /sso again — an infinite bounce the browser eventually aborts.
+//
+// This does NOT weaken authentication: the signed, hive-scoped, short-lived
+// HMAC token in the query IS the credential, and dashboard.handleSSO verifies
+// it against HIVE_HUB_SECRET plus the spoke's own allowlist before minting any
+// session. It is the same reasoning that already makes /sso a public path on
+// the spoke half (see dashboard.isPublicPath).
+const ssoHandoffPath = "/sso"
 
 // proxyAuthHeader is the response header the hub sets on a successful
 // auth-check subrequest to PROVE to the spoke that the request was
@@ -6478,6 +6558,23 @@ const dashboardHTML = `<!DOCTYPE html>
       var tips = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
       return '<span class="acmm-badge acmm-' + l + '" title="' + esc(tips[l] || '') + '">' + (ACMM_LABELS[l] || 'L' + l) + '</span>';
     }
+    /* Classified GitHub App auth states, matching github.AppAuthState.String()
+       on the spoke and operatorSideAppStates in journey.go. The two OPERATOR
+       states describe a failure the hive OWNER cannot fix: the App private key
+       is distributed by the hub, so a missing or mismatched key is our problem,
+       not theirs. The UI must never present these as something the user should
+       install or reconfigure. */
+    var GH_APP_STATE_KEY_MISSING = 'key-missing';
+    var GH_APP_STATE_KEY_INVALID = 'key-invalid';
+    var GH_APP_OPERATOR_STATES = {};
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
+    /* An unreported or unrecognised state is deliberately NOT operator-side:
+       a spoke too old to classify keeps the existing behaviour. */
+    function ghAppIsOperatorSide(state) {
+      return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
+    }
+
     /* Labels for each journey stage, matching JourneyStage.String() on the hub. */
     var JOURNEY_STAGE_LABELS = {
       'none': 'On track',
@@ -6926,7 +7023,17 @@ const dashboardHTML = `<!DOCTYPE html>
         if (ck.detail) line += ': ' + ck.detail;
         lines.push(line);
       }
-      if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
+      if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
+        /* Operator-side: the key we distribute has not landed, or is for the
+           wrong App. Still degraded — the hive genuinely cannot work — but the
+           hover must name the real cause so an admin does not chase the user
+           about an installation that is already correct. */
+        lines.push(h.githubAppState === GH_APP_STATE_KEY_INVALID
+          ? '⚠ GitHub App: key does not match the App (operator must push the correct key)'
+          : '⚠ GitHub App: credentials not yet delivered by the hub (operator action)');
+        st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel;
+      }
+      else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (!h.githubAppRequired) { lines.push('✓ GitHub App installed'); }
       if (!checks.length) lines.push('No check data');
@@ -7042,6 +7149,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'heartbeat-stale': 'Heartbeat stale',
       'app-missing':     'GitHub App not installed',
       'app-perm-issue':  'GitHub App permissions',
+      'app-creds-operator': 'GitHub App key (operator)',
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
       'acmm-unset':      'ACMM level unset',
@@ -8055,7 +8163,12 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!h) return '';
       var parts = [
         h.id, h.name, h.org, h.primaryRepo, h.clusterId, h.clusterName,
-        h.role, h.gitBranch, h.gitHash, h.dashboardUrl
+        h.role, h.gitBranch, h.gitHash, h.dashboardUrl,
+        /* The GitHub host is shown as a pill in the Location column, so it has
+           to be searchable too — "github.ibm.com" is how an admin narrows to
+           the GHE fleet. Absent means public GitHub, which is what the pill
+           renders, so search on that same default rather than nothing. */
+        h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST
       ];
       (h.repos || []).forEach(function(r) { parts.push(r); });
       (h.access || []).forEach(function(a) {
@@ -8107,6 +8220,10 @@ const dashboardHTML = `<!DOCTYPE html>
     var FACET_ROLE = 'role';
     var FACET_STATUS = 'status';
     var FACET_BRANCH = 'branch';
+    /* GitHub instance the hive targets. Worth its own facet because the
+       GHE-vs-public split is a real operational boundary — a github.ibm.com
+       hive can only be reached from a cluster that can route to it. */
+    var FACET_GITHUB_HOST = 'github-host';
 
     /* Value shown when a hive has no value for a facet, so those rows stay
        reachable instead of silently dropping out of every facet count. */
@@ -8125,7 +8242,8 @@ const dashboardHTML = `<!DOCTYPE html>
       {key: FACET_ACMM, label: 'ACMM level'},
       {key: FACET_ROLE, label: 'Your role'},
       {key: FACET_STATUS, label: 'Status'},
-      {key: FACET_BRANCH, label: 'Branch'}
+      {key: FACET_BRANCH, label: 'Branch'},
+      {key: FACET_GITHUB_HOST, label: 'GitHub'}
     ];
 
     /* Selected facet values: {facetKey: {value: true}}. */
@@ -8239,6 +8357,10 @@ const dashboardHTML = `<!DOCTYPE html>
       f[FACET_ACMM] = (h.acmmLevel != null && h.acmmLevel !== '') ? ('L' + h.acmmLevel) : FACET_UNKNOWN;
       f[FACET_ROLE] = h.role || FACET_UNKNOWN;
       f[FACET_BRANCH] = h.gitBranch || FACET_UNKNOWN;
+      /* Absent host means public GitHub — bucket it under the same label the
+         pill renders, not FACET_UNKNOWN, so old spokes group with github.com
+         rather than forming a meaningless "—" bucket. */
+      f[FACET_GITHUB_HOST] = h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
       var flags = hiveStatusFlags(h);
       f[FACET_STATUS] = flags.degraded ? 'Degraded' : (h.online ? 'Online' : 'Offline');
       return f;
@@ -9531,8 +9653,8 @@ const dashboardHTML = `<!DOCTYPE html>
             }
           }
           var branch = canSwitchBranch
-            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px;cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
-            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:4px">' + esc(branchName) + '</span>';
+            ? '<span id="branch-pill-' + esc(h.id) + '" style="display:inline-block;position:relative;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);cursor:pointer" onclick="toggleBranchMenu(\'' + esc(h.id) + '\')" title="Click to switch branch">' + esc(branchName) + ' ▾<div id="branch-menu-' + esc(h.id) + '" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#1c2128;border:1px solid #30363d;border-radius:6px;padding:4px 0;z-index:1000;min-width:60px;box-shadow:0 4px 12px rgba(0,0,0,0.4)">' + branchOptions + '</div></span>'
+            : '<span style="display:inline-block;padding:1px 6px;border-radius:9999px;font-size:0.6rem;background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)">' + esc(branchName) + '</span>';
           var latestUnknown = !branchLatest;
           var isCurrent = branchLatest && sameShaJS(sha, branchLatest);
           /* Branch switch in flight: the hive still reports the OLD branch
@@ -9563,7 +9685,10 @@ const dashboardHTML = `<!DOCTYPE html>
             var switchStale = isSwitching && _switchStartedAt[h.id] && (Date.now() - _switchStartedAt[h.id] > SWITCH_STALE_MS);
             var progressLabel = isSwitching ? (switchStale ? 'Switching to ' + esc(targetBranch) + ' — taking longer than expected' : 'Switching to ' + esc(targetBranch)) : 'Upgrading';
             var progressTitle = isSwitching ? (switchStale ? 'The hive has not reported branch ' + esc(targetBranch) + ' yet — it may be offline or its build predates in-cluster switch support. It will apply on its next successful check-in.' : 'Rolling out ' + esc(h.upgradeTarget || '') + ' — the pill updates when the hive reports the new branch') : 'Upgrading to ' + esc(branchLatest || h.upgradeTarget || '?');
-            upgradeIcon = ' <span title="' + progressTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
+            /* In-flight state is not clickable, so it loses the box entirely:
+               a border around a non-target was the padding that made this the
+               tall line. The spinner is the affordance-free progress signal. */
+            upgradeIcon = '<span title="' + progressTitle + '" style="font-size:0.7rem;white-space:nowrap;opacity:0.8;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:currentColor;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
             /* A daily-mode hive is NOT upgrading "shortly" — saying so would be
                a lie the operator would notice hours later. Name the window and
@@ -9574,11 +9699,23 @@ const dashboardHTML = `<!DOCTYPE html>
             var queuedTitle = queuedDaily
               ? 'Auto-upgrade will apply ' + esc(branchLatest) + ' at the next 5pm ET window — click to upgrade now' + esc(buildingHint)
               : 'Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint);
-            upgradeIcon = ' <span id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="' + queuedTitle + '" style="display:inline-block;padding:3px 10px;background:var(--surface);color:var(--muted);border:1px dashed var(--border);border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">' + queuedLabel + '</span>';
+            /* escAttr, not esc, for the title: esc() leaves quotes intact and a
+               branch name or commit subject carrying one would break out of the
+               attribute. jsArg supplies its own quotes for the handler args. */
+            upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
+              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
+              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
+              ' title="' + escAttr(queuedTitle) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--muted);font-size:0.7rem;text-decoration-style:dashed">' + esc(queuedLabel) + '</span>';
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner') {
-            upgradeIcon = ' <button id="upgrade-' + esc(h.id) + '" onclick="upgradeHive(\'' + esc(h.id) + '\',\'' + esc(sha) + '\',\'' + esc(branchName) + '\')" title="Current: ' + esc(sha) + ' → Latest: ' + esc(branchLatest) + esc(buildingHint) + '" style="padding:3px 10px;background:var(--green);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem;margin-left:6px;white-space:nowrap">Upgrade</button>';
+            /* Text-with-an-underline rather than a filled button: on its own
+               line the padding bought no extra affordance and cost 8px of row
+               height. Green still marks it as the go-forward action. */
+            upgradeIcon = '<span id="upgrade-' + escAttr(h.id) + '" role="button" tabindex="0"' +
+              ' onclick="upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')"' +
+              ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();upgradeHive(' + jsArg(h.id) + ',' + jsArg(sha) + ',' + jsArg(branchName) + ')}"' +
+              ' title="' + escAttr('Current: ' + sha + ' → Latest: ' + branchLatest + buildingHint) + '" style="' + UPGRADE_LINK_STYLE + ';color:var(--green);font-weight:600;font-size:0.7rem">Upgrade</span>';
           } else if (latestUnknown && isHosted && h.role === 'owner') {
-            upgradeIcon = ' <button disabled title="Waiting for latest version…" style="padding:3px 10px;background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</button>';
+            upgradeIcon = '<span title="Waiting for latest version…" style="font-size:0.7rem;color:var(--muted);white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</span>';
           }
           /* Auto-upgrade control: a single select replaces the old checkbox.
              The dense table has no room for a checkbox PLUS a mode dropdown,
@@ -9596,35 +9733,46 @@ const dashboardHTML = `<!DOCTYPE html>
             var opts = '';
             for (var oi = 0; oi < AUTO_UPGRADE_OPTIONS.length; oi++) {
               var opt = AUTO_UPGRADE_OPTIONS[oi];
-              opts += '<option value="' + esc(opt.value) + '"' + (mode === opt.value ? ' selected' : '') + '>' + esc(opt.label) + '</option>';
+              /* Each OPTION carries its own full-meaning title too, so opening
+                 the list explains the three icons without a legend elsewhere. */
+              opts += '<option value="' + escAttr(opt.value) + '" title="' + escAttr(opt.ariaLabel) + '"' + (mode === opt.value ? ' selected' : '') + '>' + esc(opt.label) + '</option>';
             }
             var d = document.createElement('select');
             d.className = 'auto-upgrade-select';
             d.setAttribute('data-hive-id', h.id);
-            d.title = AUTO_UPGRADE_TITLE;
-            d.setAttribute('style', 'margin-left:8px;font-size:0.65rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:1px 3px;cursor:pointer;vertical-align:middle');
+            /* The label is now icons only, so the meaning has to live in the
+               accessible name and the tooltip or it is simply lost. aria-label
+               names the CURRENT mode; title explains what the modes are. */
+            d.setAttribute('aria-label', autoUpgradeAriaLabel(mode));
+            d.title = autoUpgradeAriaLabel(mode) + ' — ' + AUTO_UPGRADE_TITLE;
+            d.setAttribute('style', 'font-size:0.65rem;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:4px;' +
+              'height:' + AUTO_SELECT_H_PX + 'px;min-width:' + AUTO_SELECT_MIN_W_PX + 'px;padding:0 ' + AUTO_SELECT_PAD_X_PX + 'px;cursor:pointer;vertical-align:middle;line-height:' + AUTO_SELECT_H_PX + 'px');
             d.innerHTML = opts;
-            autoUpgradeCheck = ' ' + d.outerHTML;
+            autoUpgradeCheck = d.outerHTML;
           }
           var shaMsg = _commitMessages[sha] || _latestSHAMessages[branchName] || '';
-          /* Three stacked lines, grouped by what each thing IS — not split
-             arbitrarily to reach three:
-               1. the branch, which the owner can CHANGE (the pill is a
-                  switcher, so it owns a line and stays a full tap target);
-               2. the SHA and its current/behind glyph, which are two views of
-                  the same immutable fact — "what commit is this hive on";
-               3. what happens NEXT: the upgrade affordance (Upgrade button /
-                  "queued · 5pm ET" / in-flight spinner) beside the
-                  auto-upgrade mode select. These are the two tallest items,
-                  so pairing them costs one line instead of two.
-             Every fragment below is embedded verbatim, so ids, onclick/onchange
-             handlers and title tooltips are all preserved exactly. */
-          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + esc(shaMsg) + '">' + esc(sha) + '</span>' + status;
-          var nextLine = upgradeIcon + autoUpgradeCheck;
+          /* FOUR stacked lines, ONE element per line. The column is as wide as
+             its widest LINE, so as long as no two controls share a line the
+             width collapses to the widest single element — which, now that the
+             select is icon-only, is the 56px select rather than the ~150px
+             "[queued · 5pm ET] [Auto: daily 5pm ET]" pair that used to set it.
+               1. the branch pill, which the owner can CHANGE (it is a switcher,
+                  so it owns a line and stays a full tap target);
+               2. the SHA and its current/behind glyph — two views of the same
+                  immutable fact, "what commit is this hive on". These are one
+                  element for width purposes: the glyph is 10px and rides
+                  alongside the hash rather than setting the line's width.
+               3. what happens NEXT: the upgrade affordance alone;
+               4. the icon-only auto-upgrade mode select alone.
+             Lines 3 and 4 are omitted entirely when empty — a read-only viewer
+             gets two lines, not four with two blanks. Every fragment below is
+             embedded verbatim, so ids, handlers and tooltips are preserved. */
+          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status;
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
             '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
             '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
-            (nextLine ? '<div style="' + STACKED_LINE_STYLE + '">' + nextLine + '</div>' : '') +
+            (upgradeIcon ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + '</div>' : '') +
+            (autoUpgradeCheck ? '<div style="' + STACKED_LINE_STYLE + '">' + autoUpgradeCheck + '</div>' : '') +
             '</div>';
         } else { versionCell = '<span style="color:var(--muted)">—</span>'; }
         var pendingBadge = (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write'))
@@ -9639,7 +9787,7 @@ const dashboardHTML = `<!DOCTYPE html>
         // stacks under Location instead of owning a column. Counted against
         // the <th> cells in the header and the <td> cells emitted below
         // (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 16;
+        var TOTAL_COLUMNS = 17;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -9683,9 +9831,16 @@ const dashboardHTML = `<!DOCTYPE html>
           return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>';
         })();
         var locationBadge = isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName);
-        /* Location on top, visibility beneath — two stacked lines, matching the
-           three-line Version treatment. The owner toggle is a 36x20 switch and
-           keeps its own box on its own line, so it stays an easy tap target. */
+        /* Location on top, visibility beneath, GitHub host last — three stacked
+           lines, matching the three-line Version treatment. The owner toggle is
+           a 36x20 switch and keeps its own box on its own line, so it stays an
+           easy tap target.
+
+           The host line reuses githubHostPill — the same helper the pending
+           action cards and the Past Requests table use — so a GHE hive reads
+           identically wherever it appears. An absent host renders as
+           "github.com" rather than a blank chip, which is what an old
+           heartbeat-only spoke that cannot yet report its host should show. */
         var locationCell = '<div style="' + STACKED_CELL_STYLE + '">' +
           '<div style="' + STACKED_LINE_STYLE + '">' + locationBadge + '</div>' +
           '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
@@ -9719,8 +9874,25 @@ const dashboardHTML = `<!DOCTYPE html>
              but the COLUMN is no longer forced to the width of every part laid
              end to end. That nowrap was the main reason this column was wide. */
           '<td style="font-size:0.7rem">' + versionCell + '</td>' +
-          '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
+          /* Repo count over the GitHub-instance pill: the host qualifies WHICH
+             GitHub these repos live on, so the two belong together. Stacked
+             rather than inline to keep the numeric column narrow. */
+          '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' +
+            '<div style="' + STACKED_CELL_STYLE + '">' +
+              '<div style="' + STACKED_LINE_STYLE + '">' + repoCount + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance these repos live on">' + githubHostPill(h.githubHost) + '</div>' +
+            '</div>' +
+          '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
+          /* AI Author: who this hive authors PRs as. aiAuthorEffective is the
+             App bot ("<slug>[bot]") in App-authored mode, else the configured
+             ai_author (falls back to aiAuthor for spokes too old to report the
+             effective value). A "[bot]" value is the informative case. */
+          /* aiAuthorEffective already folds in ai_author (it returns ai_author
+             when set, else the App bot, else empty). Do NOT fall back to a raw
+             ai_author here: a hive with no usable GitHub App has no author and
+             must render "—", not a stale personal ai_author it can't act as. */
+          '<td style="white-space:nowrap;font-size:0.75rem" title="GitHub identity for this hive\'s PRs/commits (— = no GitHub App installed yet)">' + esc(h.aiAuthorEffective || '—') + '</td>' +
           '<td>' + journeyBadge(h.journey) + '</td>' +
           /* Drift sits immediately right of Journey: both answer "how healthy
              is this hive's configuration", so they read as one pair rather
@@ -9742,7 +9914,7 @@ const dashboardHTML = `<!DOCTYPE html>
          and the table visibly ragged. 15 with the Drift column, plus the
          bulk-select column, plus the Journey column, minus Public (visibility
          is stacked under Location). Must stay equal to TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 16;
+      var TOTAL_COLUMNS_HEADER = 17;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -9877,7 +10049,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
@@ -9916,11 +10088,42 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Copy is framed around DISRUPTION, not cron mechanics: the operator is
        choosing when it is acceptable to interrupt a hive that is working. */
     var AUTO_UPGRADE_TITLE = 'When to apply new versions. Instant restarts the hive as soon as a new version lands; Daily restarts it at most once a day, after hours, so a stable hive is not disturbed mid-work.';
+    /* Icon-only labels. The "Auto:" prefix repeated on every row was the widest
+       single element in the Version column and said nothing a scanning operator
+       did not already know from the column it sits in — so it is carried by the
+       title/aria-label instead of being spelled out on every line.
+
+       The three glyphs are chosen to be DISTINCT SHAPES, not intensities of one
+       shape: 'off' must not read as a greyed-out 'instant'.
+         ⦸  off     — a struck-through circle: the universal "disabled" mark,
+                      and the only glyph here with a diagonal stroke.
+         ⚡ instant  — a bolt: applies the moment a version lands.
+         🕔 5p      — a clock face, plus the literal window "5p", because the
+                      hour is the whole point of the mode and no icon conveys it.
+       All three are plain text glyphs rather than SVG or background images, so
+       they inherit the select's currentColor. The hub renders on one dark
+       surface today, but nothing here hard-codes a fill or stroke colour, so a
+       light surface would not make any of the three vanish. The label text
+       after the glyph is the shortest string that still disambiguates — and it
+       is there precisely so the control never degrades to "a picture only":
+       ⚡ and 🕔 are emoji whose rendering varies by platform, so the word
+       carries the meaning if the glyph renders as a box.
+
+       ariaLabel carries the FULL meaning for screen readers and for the
+       per-option tooltip, so nothing is lost by dropping the inline words. */
     var AUTO_UPGRADE_OPTIONS = [
-      {value: AUTO_UPGRADE_OFF, label: 'Auto: off'},
-      {value: AUTO_UPGRADE_INSTANT, label: 'Auto: instant'},
-      {value: AUTO_UPGRADE_DAILY, label: 'Auto: daily 5pm ET'}
+      {value: AUTO_UPGRADE_OFF, label: '⦸ off', ariaLabel: 'Auto-upgrade: off'},
+      {value: AUTO_UPGRADE_INSTANT, label: '⚡ instant', ariaLabel: 'Auto-upgrade: instantly when a new version lands'},
+      {value: AUTO_UPGRADE_DAILY, label: '🕔 5p', ariaLabel: 'Auto-upgrade: daily at 5pm ET'}
     ];
+    /* Accessible name for the select itself, resolved from the CURRENT mode so
+       the control announces what it is set to rather than only what it does. */
+    function autoUpgradeAriaLabel(mode) {
+      for (var ai = 0; ai < AUTO_UPGRADE_OPTIONS.length; ai++) {
+        if (AUTO_UPGRADE_OPTIONS[ai].value === mode) return AUTO_UPGRADE_OPTIONS[ai].ariaLabel;
+      }
+      return 'Auto-upgrade';
+    }
 
     /* One delegated listener on the container, bound once at startup, so every
        re-render of the table keeps working without rebinding per row. */
@@ -10013,25 +10216,48 @@ const dashboardHTML = `<!DOCTYPE html>
        that already carries 16 of them.
 
        STACKED_LINE_HEIGHT is deliberately tighter than the table's default so
-       the stack stays as short as three lines can be. The honest arithmetic, at
-       0.7rem on a 16px root:
-         plain text line          = 0.7*16*1.15            = 12.9px
-         line 3 (Upgrade button)  = 12.9 + 3px pad*2 + 1px border*2 = 20.9px
-         three lines + 2 gaps     = 12.9 + 12.9 + 20.9 + 2*1 = 48.7px
-       The two-line name cell (1rem + 0.8rem at line-height 1.4) is 40.3px, so
-       an OWNER row — the only variant that gets all three lines, because only
-       an owner sees the Upgrade button and the auto-upgrade select — grows from
-       40.3px to ~48.7px, about 8px. Rows for non-owners keep at most two
-       stacked lines (25.8px) and are unchanged, since the name cell still sets
-       their height. That is the deliberate trade: ~8px on owner rows in
-       exchange for dropping a whole column and a much narrower Version column.
-       Loosening either constant is what would make it materially worse.
+       the stack stays as short as four lines can be.
+
+       ONE ELEMENT PER LINE. The three-line arrangement did not actually narrow
+       the column, because its last line carried TWO controls side by side (the
+       upgrade affordance and the auto-upgrade select). A column is as wide as
+       its widest line, so that pair — not the short lines above it — set the
+       width, and the stacking bought nothing. Splitting them onto their own
+       lines is what makes the widest line a single element.
+
+       THE HONEST NUMBERS — do not "simplify" these away and do not restate
+       them from arithmetic alone. A previous change to this cell shipped a
+       claim of height-neutrality that was false. These were MEASURED in
+       Chromium on the rendered cell (getBoundingClientRect), for an owner row
+       that is behind latest with auto-upgrade set to daily — the widest and
+       tallest variant:
+         column width   266.4px -> 110.4px   (-156.0px, -58.6%)
+         cell height     66.8px ->  79.8px   (+13.0px)
+         stack height    50.8px ->  63.8px   (+13.0px)
+       The four lines measure 15.0 / 12.9 / 12.9 / 20.0 px plus 3 gaps of
+       STACKED_ROW_GAP_PX. So ROWS DO GROW, by 13px on owner rows. That is the
+       price of the width win and it is stated rather than hidden. Two things
+       hold it down: the upgrade affordance is now text-with-an-underline rather
+       than a padded button (8px of padding and border removed), and the select
+       is pinned to AUTO_SELECT_H_PX rather than left to the UA's default
+       control height, which is taller.
+
+       What actually sets the width now is the LONGEST upgrade label,
+       "queued · 5pm ET" at 90.4px — not the select, which measures 77px. The
+       old width was set by that label and the "Auto: daily 5pm ET" select
+       sitting on ONE line together.
+
+       Non-owner rows are UNCHANGED: they still get at most two lines (28.9px),
+       under the two-line name cell's 40.3px, which continues to set their
+       height. Only owner rows pay.
 
        STACKED_ROW_GAP_PX separates the stacked lines without adding a full line
-       box. 1px, not more, precisely because line 3 is a button whose own padding
-       already supplies visual separation. */
+       box. 1px proved too tight in practice: the branch pill, SHA, upgrade link
+       and auto-upgrade select read as one crowded block, and the Location cell's
+       cluster badge sat flush against its visibility toggle. 4px is enough to
+       group them as distinct rows while still costing far less than a line box. */
     var STACKED_LINE_HEIGHT = 1.15;
-    var STACKED_ROW_GAP_PX = 1;
+    var STACKED_ROW_GAP_PX = 4;
     /* Shared style for a stacked cell: a vertical flex column, centred to match
        the table's default text-align:center for non-first cells. */
     var STACKED_CELL_STYLE = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:' + STACKED_ROW_GAP_PX + 'px;line-height:' + STACKED_LINE_HEIGHT;
@@ -10043,6 +10269,27 @@ const dashboardHTML = `<!DOCTYPE html>
        SHA must never wrap mid-hash) but the LINES themselves are what narrow
        the column. */
     var STACKED_LINE_STYLE = 'display:flex;align-items:center;justify-content:center;gap:' + STACKED_ITEM_GAP_PX + 'px;white-space:nowrap';
+
+    /* Icon-only auto-upgrade select geometry. The control lost its "Auto:"
+       prefix, so its box must be sized deliberately rather than left to shrink
+       to a glyph: 20px tall and at least 56px wide keeps it a comfortable
+       pointer and touch target (the row is 63.8px tall, so 20px is roughly a
+       third of it — visibly a control, not a decoration) while still being far
+       narrower than the "Auto: daily 5pm ET" string it replaces. Widening it
+       would give back the column width this change exists to reclaim; making it
+       smaller would make it fiddly to hit. */
+    var AUTO_SELECT_H_PX = 20;
+    var AUTO_SELECT_MIN_W_PX = 56;
+    /* Horizontal padding inside the select. 4px, not the previous 3px, because
+       an icon needs a little breathing room from the border to read as a glyph
+       rather than as part of the frame. */
+    var AUTO_SELECT_PAD_X_PX = 4;
+    /* The upgrade affordance is text-with-an-underline, not a padded button:
+       on its own line a button's 3px padding and 1px border added 8px of row
+       height for no extra affordance, since the whole line is already the
+       click target. The underline plus the pointer cursor is what says
+       "clickable"; colour alone would not, and would fail in one theme. */
+    var UPGRADE_LINK_STYLE = 'cursor:pointer;text-decoration:underline;text-underline-offset:2px;white-space:nowrap';
 
     /* Visibility toggle switch geometry, used by the Location cell's owner
        branch. A 36x20 track with a 16px knob inset 2px is the standard iOS-style
@@ -10406,7 +10653,11 @@ const dashboardHTML = `<!DOCTYPE html>
     // reach it. Shared by the pending action cards and the Past Requests table
     // so the same concept does not drift into two different styles.
     function githubHostPill(githubHost) {
-      var border = githubHost ? 'var(--accent);color:var(--accent)' : 'var(--border);color:var(--muted)';
+      /* Public github.com reads green, GitHub Enterprise reads blue, so the
+         two instances are distinguishable at a glance without reading the
+         text. An absent host is treated as public, matching the label below. */
+      var isGHE = !!githubHost && githubHost !== PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+      var border = isGHE ? 'var(--blue);color:var(--blue)' : 'var(--green);color:var(--green)';
       return '<span style="font-size:0.68rem;padding:1px 7px;border-radius:999px;border:1px solid ' + border + '">' +
         esc(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST) + '</span>';
     }

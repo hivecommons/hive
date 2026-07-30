@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <!-- GA4 --><script async src="https://www.googletagmanager.com/gtag/js?id=G-4707R797K3"></script><script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments)}gtag("js",new Date());gtag("config","G-4707R797K3");</script>
+  <meta charset="UTF-8">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta property="og:title" content="Hive — CNCF End User Reference Architecture">
+  <meta property="og:description" content="A CNCF End User reference architecture for Hive — an autonomous cloud-native maintenance platform. Part of the KubeStellar org.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://hive.kubestellar.io/cncf-reference-architecture">
+  <meta name="description" content="A CNCF End User reference architecture for Hive — an autonomous cloud-native maintenance platform. Part of the KubeStellar org.">
+  <meta name="robots" content="noindex">
+  <title>Hive — CNCF End User Reference Architecture</title>
+</head>
+<body>
+<style>
+  :root {
+    --bg: #fbfcfd;
+    --surface: #ffffff;
+    --surface-2: #f4f6f9;
+    --ink: #17202e;
+    --ink-soft: #46536a;
+    --ink-faint: #6b7a92;
+    --line: #e2e7ee;
+    --line-strong: #cdd5e0;
+    --blue: #2f6fd0;
+    --blue-deep: #234f9c;
+    --honey: #e39b12;
+    --honey-soft: #fdf3dd;
+    --good: #1f8a54;
+    --good-soft: #e7f5ed;
+    --bad: #bb4436;
+    --bad-soft: #fbecea;
+    --blue-soft: #eaf1fb;
+    --radius: 14px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --measure: 68ch;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1218; --surface: #121a24; --surface-2: #17212e;
+      --ink: #eef2f7; --ink-soft: #b3bfd0; --ink-faint: #8592a6;
+      --line: #253345; --line-strong: #32445c;
+      --blue: #6da3f7; --blue-deep: #9cc2fb;
+      --honey: #f2b845; --honey-soft: #2a2110;
+      --good: #5cc98a; --good-soft: #14271c;
+      --bad: #ef8b7d; --bad-soft: #2a1613;
+      --blue-soft: #14202f;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #fbfcfd; --surface: #ffffff; --surface-2: #f4f6f9;
+    --ink: #17202e; --ink-soft: #46536a; --ink-faint: #6b7a92;
+    --line: #e2e7ee; --line-strong: #cdd5e0;
+    --blue: #2f6fd0; --blue-deep: #234f9c; --honey: #e39b12; --honey-soft: #fdf3dd;
+    --good: #1f8a54; --good-soft: #e7f5ed; --bad: #bb4436; --bad-soft: #fbecea; --blue-soft: #eaf1fb;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1218; --surface: #121a24; --surface-2: #17212e;
+    --ink: #eef2f7; --ink-soft: #b3bfd0; --ink-faint: #8592a6;
+    --line: #253345; --line-strong: #32445c;
+    --blue: #6da3f7; --blue-deep: #9cc2fb; --honey: #f2b845; --honey-soft: #2a2110;
+    --good: #5cc98a; --good-soft: #14271c; --bad: #ef8b7d; --bad-soft: #2a1613; --blue-soft: #14202f;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.65;
+    font-size: 17px; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 clamp(1.1rem, 4vw, 3rem); }
+
+  /* ── Masthead ── */
+  header.masthead {
+    border-bottom: 1px solid var(--line);
+    background:
+      radial-gradient(1200px 240px at 12% -40%, color-mix(in srgb, var(--blue) 12%, transparent), transparent),
+      radial-gradient(900px 200px at 90% -60%, color-mix(in srgb, var(--honey) 14%, transparent), transparent);
+  }
+  .masthead .wrap { padding-top: 2.6rem; padding-bottom: 2.2rem; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: .5rem;
+    font-size: .74rem; letter-spacing: .14em; text-transform: uppercase;
+    font-weight: 700; color: var(--blue-deep);
+    background: var(--blue-soft); border: 1px solid color-mix(in srgb, var(--blue) 30%, transparent);
+    padding: .3rem .7rem; border-radius: 999px;
+  }
+  h1 {
+    font-size: clamp(1.9rem, 4.6vw, 3rem); line-height: 1.08;
+    letter-spacing: -0.02em; margin: 1.1rem 0 .4rem; text-wrap: balance; font-weight: 800;
+  }
+  .subtitle { color: var(--ink-soft); font-size: 1.12rem; max-width: 60ch; margin: 0; }
+
+  .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .1rem 1.6rem; margin-top: 1.9rem;
+    border-top: 1px solid var(--line); padding-top: 1.3rem;
+  }
+  .meta-grid dt { font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+  .meta-grid dd { margin: .15rem 0 .9rem; font-size: .92rem; color: var(--ink); }
+  .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .2rem; }
+  .tag { font-size: .74rem; font-family: var(--mono); color: var(--ink-soft); background: var(--surface-2); border: 1px solid var(--line); padding: .12rem .5rem; border-radius: 6px; }
+
+  /* ── Layout with TOC ── */
+  .shell { display: grid; grid-template-columns: 1fr; gap: 0; }
+  @media (min-width: 960px) {
+    .shell { grid-template-columns: 210px minmax(0, 1fr); gap: 3rem; align-items: start; }
+    nav.toc { position: sticky; top: 1.4rem; }
+  }
+  nav.toc { padding: 2rem 0; }
+  nav.toc p { font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin: 0 0 .7rem; }
+  nav.toc a { display: block; color: var(--ink-soft); text-decoration: none; font-size: .86rem; padding: .28rem 0; border-left: 2px solid transparent; padding-left: .7rem; transition: color .15s, border-color .15s; }
+  nav.toc a:hover { color: var(--blue); border-color: var(--blue); }
+
+  main { padding: 2rem 0 4rem; min-width: 0; }
+  section { margin-bottom: 3rem; scroll-margin-top: 1.4rem; }
+  section > p, section > ul, section > ol { max-width: var(--measure); }
+  h2 {
+    font-size: clamp(1.3rem, 2.6vw, 1.7rem); letter-spacing: -0.01em; font-weight: 750;
+    margin: 0 0 1rem; padding-bottom: .5rem; border-bottom: 2px solid var(--line);
+    display: flex; align-items: baseline; gap: .6rem;
+  }
+  h2 .num { font-family: var(--mono); font-size: .8rem; color: var(--blue); font-weight: 700; letter-spacing: 0; }
+  h3 { font-size: 1.06rem; font-weight: 700; margin: 1.7rem 0 .5rem; color: var(--ink); }
+  p { margin: 0 0 1rem; }
+  a { color: var(--blue); text-decoration-color: color-mix(in srgb, var(--blue) 40%, transparent); text-underline-offset: 2px; }
+  strong { color: var(--ink); font-weight: 680; }
+  code { font-family: var(--mono); font-size: .86em; background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: .08em .38em; }
+  ul, ol { padding-left: 1.3rem; }
+  li { margin: .35rem 0; }
+
+  /* ── CNCF project cards ── */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; max-width: none; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .35rem;
+  }
+  .card .ch { display: flex; align-items: center; gap: .55rem; font-weight: 700; font-size: 1rem; }
+  .card .dot { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; font-size: .9rem; background: var(--blue-soft); flex: 0 0 auto; }
+  .card .ver { font-family: var(--mono); font-size: .74rem; color: var(--ink-faint); }
+  .card p { font-size: .89rem; color: var(--ink-soft); margin: .3rem 0 0; }
+
+  /* ── diagrams ── */
+  figure { margin: 1.5rem 0; }
+  .diagram {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 1.4rem 1rem; overflow-x: auto;
+  }
+  .diagram .mermaid { display: flex; justify-content: center; min-width: 0; }
+  .diagram .mermaid svg { max-width: 100%; height: auto; }
+  figcaption { font-size: .8rem; color: var(--ink-faint); text-align: center; margin-top: .6rem; letter-spacing: .02em; }
+
+  /* ── worked / didn't panels ── */
+  .split { display: grid; grid-template-columns: 1fr; gap: 1rem; max-width: none; }
+  @media (min-width: 720px) { .split { grid-template-columns: 1fr 1fr; } }
+  .panel { border-radius: var(--radius); padding: 1.2rem 1.3rem; border: 1px solid var(--line); }
+  .panel.good { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 35%, transparent); }
+  .panel.bad { background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .panel h3 { margin-top: 0; display: flex; align-items: center; gap: .5rem; }
+  .panel.good h3 { color: var(--good); }
+  .panel.bad h3 { color: var(--bad); }
+  .panel ul { padding-left: 1.15rem; margin: 0; }
+  .panel li { font-size: .93rem; }
+  .panel li strong { color: inherit; }
+
+  /* ── ACMM ladder ── */
+  .ladder { display: grid; gap: .5rem; max-width: none; margin-top: .5rem; }
+  .rung { display: grid; grid-template-columns: 3rem 1fr; gap: .9rem; align-items: center; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: .7rem .9rem; border-left: 4px solid var(--rung); }
+  .rung .lvl { font-family: var(--mono); font-weight: 700; color: var(--rung); font-size: .95rem; }
+  .rung .rd { font-size: .9rem; color: var(--ink-soft); }
+  .rung .rd b { color: var(--ink); }
+
+  blockquote { margin: 1.2rem 0; padding: .9rem 1.2rem; border-left: 3px solid var(--honey); background: var(--honey-soft); border-radius: 0 8px 8px 0; color: var(--ink-soft); font-size: .95rem; max-width: var(--measure); }
+
+  footer { border-top: 1px solid var(--line); }
+  footer .wrap { padding: 2rem 0 3rem; color: var(--ink-faint); font-size: .85rem; }
+  footer a { font-weight: 600; }
+
+  .disclaimer { font-size: .82rem; color: var(--ink-faint); font-style: italic; }
+</style>
+
+<header class="masthead">
+  <div class="wrap">
+    <span class="eyebrow">🍯 CNCF End User Reference Architecture · Draft</span>
+    <h1>Hive: an autonomous cloud-native maintenance platform for open source</h1>
+    <p class="subtitle">A fleet of AI coding agents maintains software repositories — under a human-controlled autonomy dial and permissions enforced in depth. Run in production by the KubeStellar Console team and Project Bluefin.</p>
+
+    <dl class="meta-grid">
+      <div><dt>Project</dt><dd>Hive (open source)</dd></div>
+      <div><dt>Team</dt><dd>Hive maintainers</dd></div>
+      <div><dt>End users</dt><dd>KubeStellar Console · Project Bluefin</dd></div>
+      <div><dt>Reference architectures</dt><dd>CI/CD · Platform Engineering · AI/ML</dd></div>
+      <div><dt>Website</dt><dd><a href="https://hive.kubestellar.io/">hive.kubestellar.io</a></dd></div>
+      <div style="grid-column: 1 / -1;"><dt>Tags</dt><dd><span class="tags">
+        <span class="tag">kubestellar</span><span class="tag">hive</span><span class="tag">ai-agents</span><span class="tag">autonomous-maintenance</span><span class="tag">platform-engineering</span><span class="tag">multi-cluster</span><span class="tag">security</span>
+      </span></dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="shell">
+    <nav class="toc" aria-label="Contents">
+      <p>Contents</p>
+      <a href="#projects">CNCF projects</a>
+      <a href="#org">Organization &amp; team</a>
+      <a href="#overview">Architecture overview</a>
+      <a href="#principles">Guiding principles</a>
+      <a href="#why">Why these projects</a>
+      <a href="#worked">What worked / didn't</a>
+      <a href="#glue">The glue</a>
+      <a href="#evolution">Evolution &amp; lessons</a>
+      <a href="#next">What's next</a>
+    </nav>
+
+    <main>
+      <!-- ── CNCF projects ── -->
+      <section id="projects">
+        <h2><span class="num">01</span> Relevant CNCF projects</h2>
+        <p>A hive is deployed and operated as a native cloud-native workload. The projects below are the load-bearing ones.</p>
+        <div class="cards">
+          <div class="card">
+            <div class="ch"><span class="dot">☸️</span> Kubernetes</div>
+            <div class="ver">1.24+</div>
+            <p>Each hive is a single-replica Deployment with a PVC, Service, and Ingress. The hub creates new spoke hives as native Kubernetes objects.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">🔐</span> cert-manager</div>
+            <div class="ver">v1.x</div>
+            <p>Issues and renews the TLS certificates that terminate every dashboard and the hosted hub, via a Let's Encrypt <code>ClusterIssuer</code> — needed for the long-lived SSE streams.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">📦</span> containerd</div>
+            <div class="ver">cluster runtime</div>
+            <p>Runs the single hive OCI image — the Go orchestrator, agent CLIs, and dashboard all travel together as one artifact.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">📊</span> Prometheus / OpenTelemetry</div>
+            <div class="ver">exposition</div>
+            <p>Each hive exposes <code>/metrics</code> — governor mode, queue depth, per-agent token spend, fleet health — for scraping, alongside a live SSE stream to the dashboard.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">⎈</span> Helm / Kustomize</div>
+            <div class="ver">v3.x</div>
+            <p>Hive ships a Kustomize base (namespace, Deployment, Service, PVC, ConfigMap, Secret) so an operator applies one overlay per environment.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Organization ── -->
+      <section id="org">
+        <h2><span class="num">02</span> Organization &amp; team</h2>
+        <p><strong>Hive</strong> is an open-source, self-hostable platform — part of the KubeStellar org (<a href="https://github.com/kubestellar/hive"><code>github.com/kubestellar/hive</code></a>) — that keeps software repositories maintained by running a fleet of AI coding agents — triaging issues, writing fixes, opening PRs, and merging on green CI — under a human-controlled autonomy dial and permissions enforced in depth. It runs as a cloud-native workload: each hive is a Kubernetes deployment, and a hosted hub coordinates a fleet of self-hosted spokes.</p>
+        <p>Hive is run in production by more than one open-source community:</p>
+        <ul>
+          <li>The <strong>KubeStellar Console</strong> team (<a href="https://github.com/kubestellar/console"><code>kubestellar/console</code></a>) runs a hive against the console's repositories — the flagship end user, where Hive is dogfooded daily.</li>
+          <li><strong>Project Bluefin</strong> (<a href="https://github.com/ublue-os"><code>projectbluefin</code></a>) runs its own hive (<code>projectbluefin/knuckle</code> and related repos) at a measured ACMM level.</li>
+        </ul>
+        <p>That is the point of the hub-and-spoke design: independent teams each self-host a spoke against their own repositories, while a shared hub (<a href="https://hive.kubestellar.io">hive.kubestellar.io</a>) provides a registry, a cross-hive leaderboard, and — where reachable — provisioning.</p>
+      </section>
+
+      <!-- ── Overview ── -->
+      <section id="overview">
+        <h2><span class="num">03</span> Architecture overview &amp; goals</h2>
+        <p><strong>The goal:</strong> let a fleet of AI coding agents maintain a repository autonomously — triage issues, write fixes, open PRs, merge on green CI — while keeping a human firmly in control of <em>how much</em> autonomy is granted, and enforcing those limits with technical controls rather than trust.</p>
+
+        <p>A hive runs as a <strong>single container</strong> on Kubernetes with three long-lived processes: a <strong>Go orchestrator</strong> (governor loop, agent manager, dashboard API, an in-process MITM GitHub proxy, hub heartbeat), a <strong>Node.js proxy</strong> (the public front door), and <strong>ttyd</strong> (a web terminal onto the agents' <code>tmux</code> sessions).</p>
+
+        <p>Two ideas define the architecture:</p>
+        <ol>
+          <li><strong>Deterministic before judgment.</strong> A pipeline of Go and shell steps enumerates GitHub work, classifies it, gates which PRs are mergeable, and enforces permissions <em>before</em> any model sees a task. Agents only make the judgment calls.</li>
+          <li><strong>Autonomy is a dial, enforced in depth.</strong> An AI-native Capability Maturity Model (ACMM) with six levels is the single control a human turns; each level maps to a per-agent permission mode enforced at three independent layers.</li>
+        </ol>
+
+        <figure>
+          <div class="diagram">
+            <pre class="mermaid">
+flowchart LR
+    github["GitHub<br/>issues · PRs"] --> gov["Governor<br/>queue depth → mode → kick"]
+    gov --> pipe["Deterministic pipeline<br/>classify · merge-gate · enforce"]
+    pipe --> agents["AI agents (tmux)<br/>Claude · Copilot · Gemini · Goose"]
+    agents --> guard["Guardrails<br/>tool deny · scoped token · MITM proxy"]
+    guard -->|"gated writes"| github
+    agents -.-> beads["Beads ledger<br/>git-backed work items"]
+    gov -.->|"heartbeat / 2 min"| hub["Hive Hub<br/>registry · leaderboard · provisioning"]
+            </pre>
+          </div>
+          <figcaption>The maintenance loop: deterministic pre-processing feeds agents whose every write is gated.</figcaption>
+        </figure>
+
+        <h3>The autonomy dial (ACMM)</h3>
+        <p>Raising the level is always a human decision. Each rung is a concrete, enforced permission change.</p>
+        <div class="ladder">
+          <div class="rung" style="--rung:#8a94a6"><span class="lvl">L1</span><span class="rd"><b>Assisted</b> — project inception &amp; advisory only; every action needs human approval.</span></div>
+          <div class="rung" style="--rung:#5a86c9"><span class="lvl">L2</span><span class="rd"><b>Instructed</b> — observe and report findings as beads; no GitHub writes.</span></div>
+          <div class="rung" style="--rung:#3f9c8f"><span class="lvl">L3</span><span class="rd"><b>Measured</b> — the quality agent opens hold-gated PRs about testing gaps, coverage, and CI health. This measurement foundation is what earns automation above.</span></div>
+          <div class="rung" style="--rung:#5a9e52"><span class="lvl">L4</span><span class="rd"><b>Adaptive</b> — all agents file issues (bugs, docs, workflows, vulns); still no PRs.</span></div>
+          <div class="rung" style="--rung:#c99a2e"><span class="lvl">L5</span><span class="rd"><b>Semi-Automated</b> — all agents open PRs, each auto-labeled <code>hold</code> for human batch-review. The system proposes; it does not merge.</span></div>
+          <div class="rung" style="--rung:#c96f3f"><span class="lvl">L6</span><span class="rd"><b>Fully Autonomous</b> — agents open PRs and <b>auto-merge on green CI</b>; no <code>hold</code> label.</span></div>
+        </div>
+
+        <h3>Enforcement in depth</h3>
+        <p>The ACMM level maps to a per-agent mode (<code>ADVISORY</code> → <code>ISSUES_ONLY</code> → <code>ISSUES_AND_PRS</code> → <code>ISSUES_PRS_MERGE</code>) enforced at three independent layers. A bug in one is caught by the next.</p>
+        <figure>
+          <div class="diagram">
+            <pre class="mermaid">
+flowchart LR
+    agent["AI agent"] --> l1["1 · CLI tool deny<br/>(gated by mode)"]
+    l1 --> l2["2 · Scoped token<br/>(least privilege)"]
+    l2 --> l3["3 · MITM proxy<br/>(method,path) → min mode<br/>+ repo allowlist"]
+    l3 --> gh["api.github.com"]
+    traj["Trajectory review"] -.->|"drift → pause"| agent
+            </pre>
+          </div>
+          <figcaption>Every GitHub write crosses all three layers; a trajectory reviewer watches for goal drift.</figcaption>
+        </figure>
+
+        <blockquote>The hub holds a registry of all spokes, a cross-hive leaderboard, and provisions reachable spokes with <code>kubectl</code>. Firewalled spokes it cannot reach directly are still fully managed over the 2-minute heartbeat — the control plane that lets independent teams (KubeStellar Console, Project Bluefin) each run a spoke against their own repositories under one shared hub.</blockquote>
+        <p style="margin-top:1.1rem">The autonomy framework (ACMM) is described in depth in the paper <a href="https://arxiv.org/abs/2604.09388"><em>An AI-native Capability Maturity Model</em></a>.</p>
+      </section>
+
+      <!-- ── Guiding principles ── -->
+      <section id="principles">
+        <h2><span class="num">04</span> Guiding principles</h2>
+        <p>A handful of principles shape every design decision — and they are why the system can be trusted to run at higher autonomy levels.</p>
+        <div class="cards">
+          <div class="card">
+            <div class="ch"><span class="dot">🎯</span> Earn automation with coverage</div>
+            <p>A repo climbs the ACMM ladder as its safety net grows — the target is <strong>90%+ test coverage</strong> before autonomous merging is on the table. Automation is earned, not flipped on.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">🧵</span> Durable work ledger (beads)</div>
+            <p>Every unit of work is a typed, dependency-aware <strong>bead</strong> on disk — agents coordinate without collisions and no work is lost across restarts or upgrades.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">🧹</span> Reset context (<code>/clear</code>)</div>
+            <p>Each agent kick starts from a clean slate, so stale context from a prior task can't leak into the next — a cheap, decisive defense against drift.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">⚙️</span> Deterministic vs. non-deterministic</div>
+            <p>Anything rules can decide (filtering, classification, merge-gating, enforcement) runs in code <em>before</em> a model sees it. The LLM is for judgment — never fill-in-the-blank "Mad Libs" a program should own.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">🔁</span> Multi-stage CI</div>
+            <p>CI is a pipeline that validates at multiple stages — not a single check that opens the merge door. That's what makes "merge on green" a real signal, not a rubber stamp.</p>
+          </div>
+          <div class="card">
+            <div class="ch"><span class="dot">📝</span> Issues are prompts</div>
+            <p>An issue can carry structured context — diagnostics, browser-console errors, OS/browser info, the running SHA — right in its description, which <em>becomes the prompt</em> the agent works from. Better issues, better fixes.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Why ── -->
+      <section id="why">
+        <h2><span class="num">05</span> Why these projects</h2>
+        <ul>
+          <li><strong>Kubernetes</strong> — a hive must be self-hostable anywhere, survive restarts, and be provisioned programmatically. Modeling each hive as a Deployment + PVC + Service + Ingress lets the hub create, upgrade, and delete a spoke with plain API calls.</li>
+          <li><strong>cert-manager</strong> — removes TLS toil for dashboards that stream over long-lived SSE and must be secured.</li>
+          <li><strong>containerd</strong> — runs the single self-contained hive image so a hive is one artifact.</li>
+          <li><strong>Prometheus / OpenTelemetry</strong> — make the fleet observable: a runaway agent or a stalled eval loop is visible before it does harm.</li>
+          <li><strong>Kustomize / Helm</strong> — keep per-environment deployment declarative.</li>
+        </ul>
+      </section>
+
+      <!-- ── Worked / didn't ── -->
+      <section id="worked">
+        <h2><span class="num">06</span> What worked — and what didn't</h2>
+        <div class="split">
+          <div class="panel good">
+            <h3>✓ Worked well</h3>
+            <ul>
+              <li><strong>The three-layer guardrail model.</strong> Because the MITM proxy enforces permissions at the network boundary, we can grant real write access with confidence — this made higher ACMM levels safe to run.</li>
+              <li><strong>A durable, git-backed work ledger ("beads").</strong> Typed, dependency-aware work items on disk mean agents coordinate without collisions and survive restarts.</li>
+              <li><strong>Queue-depth governance.</strong> Driving cadence from the actionable-issue count keeps a quiet repo nearly free and gives a flooded one the full fleet — no manual schedules.</li>
+              <li><strong>Hub-and-spoke over heartbeat.</strong> Managing unreachable (firewalled) spokes purely through the heartbeat response has been robust.</li>
+            </ul>
+          </div>
+          <div class="panel bad">
+            <h3>✗ Didn't work (at first)</h3>
+            <ul>
+              <li><strong>Cost attribution across model backends.</strong> Reconciling token spend across Anthropic, Copilot, and OpenAI-compatible gateways — especially "auto" model selection — took several iterations to get right.</li>
+              <li><strong>Non-reentrant locks on the startup path.</strong> A mutex re-taken from the launch path could deadlock startup; the race detector missed it. We moved hot startup state to lock-free atomics.</li>
+              <li><strong>Config precedence.</strong> The authoritative config lives on the PVC while a ConfigMap seeds only first boot — clear conventions were needed before this stopped confusing operators.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Glue ── -->
+      <section id="glue">
+        <h2><span class="num">07</span> The "glue" we had to build</h2>
+        <p>Most of the interesting engineering is in the glue that makes agents safe and coordinated:</p>
+        <ul>
+          <li>A <strong>deterministic shell/Go pipeline</strong> that enumerates, classifies, clusters, and merge-gates GitHub work before agents run.</li>
+          <li>A <strong><code>gh</code> wrapper</strong> that injects scoped tokens and blocks writes exceeding an agent's tier — the shell-level twin of the proxy.</li>
+          <li>An <strong>in-process MITM proxy</strong> (with <code>iptables</code> egress redirection and a self-signed CA in the container trust store) that gates <code>api.github.com</code> by agent mode and repo allowlist; agent identity is resolved from the connection's owning UID via <code>/proc/net/tcp</code>.</li>
+          <li>An <strong>inference translator</strong> that reroutes Anthropic-shaped calls to OpenAI-shaped gateways so one agent CLI works across backends.</li>
+          <li>A <strong>trajectory reviewer</strong> — a periodic second-model check that reads an agent's transcript against its assigned intent and pauses on drift (a defense against prompt-injection-style goal hijacking).</li>
+          <li>Agents run inside <strong><code>tmux</code></strong> under per-agent OS users for UID isolation; a "kick" is literally a work order typed into the agent's CLI prompt.</li>
+        </ul>
+      </section>
+
+      <!-- ── Evolution ── -->
+      <section id="evolution">
+        <h2><span class="num">08</span> Evolution &amp; lessons learned</h2>
+        <p>The central lesson was <strong>enforce, don't trust</strong>. Early designs relied on prompting and CLI tool-deny lists; that is necessary but not sufficient, because a capable agent finds paths the prompt didn't anticipate. Moving enforcement to the <em>network boundary</em> and to <em>credential scope</em> changed the trust model: we no longer have to believe the agent will behave — we constrain what it <em>can</em> do.</p>
+        <p>A second lesson: <strong>make autonomy a graded, human-owned dial</strong>. Rather than "agents on / off", the ACMM ladder lets an operator start advisory-only and climb one rung at a time as trust is earned — every rung a concrete, enforced permission change.</p>
+        <p>A third: <strong>durable state beats clever runtime state</strong>. The git-backed beads ledger and PVC-authoritative config both came from painful episodes where in-memory coordination lost work across restarts.</p>
+      </section>
+
+      <!-- ── Next ── -->
+      <section id="next">
+        <h2><span class="num">09</span> What's next</h2>
+        <ul>
+          <li><strong>Planning intelligence</strong> (incubating) — automatic decomposition of a high-level goal into a tree of child work items, with a human "approve the plan" gate before execution and stall-triggered re-planning.</li>
+          <li><strong>Richer fleet observability</strong> — first-class OpenTelemetry traces across the governor → pipeline → agent → PR lifecycle.</li>
+          <li><strong>Broadening the guardrail model</strong> — an optional content/prompt-injection classifier and a proxy-level request-rate limiter.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+</div>
+
+<footer>
+  <div class="wrap">
+    <p class="disclaimer">Draft prepared for submission to the CNCF End User Technical Advisory Board reference-architecture collection (<a href="https://architecture.cncf.io/">architecture.cncf.io</a>). Technical claims are grounded in the Hive <code>v2</code> source. Full technical reference: <a href="https://github.com/kubestellar/hive/blob/v2/v2/docs/architecture.md">github.com/kubestellar/hive → v2/docs/architecture.md</a>.</p>
+  </div>
+</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches
+    || document.documentElement.getAttribute('data-theme') === 'dark';
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'strict',
+    fontFamily: 'Inter, -apple-system, system-ui, sans-serif',
+    theme: 'base',
+    themeVariables: dark ? {
+      background: '#121a24', primaryColor: '#17212e', primaryTextColor: '#eef2f7',
+      primaryBorderColor: '#32445c', lineColor: '#8592a6', secondaryColor: '#14202f',
+      tertiaryColor: '#14202f', clusterBkg: '#121a24', clusterBorder: '#253345',
+      edgeLabelBackground: '#121a24'
+    } : {
+      background: '#ffffff', primaryColor: '#eaf1fb', primaryTextColor: '#17202e',
+      primaryBorderColor: '#2f6fd0', lineColor: '#46536a', secondaryColor: '#f4f6f9',
+      tertiaryColor: '#f4f6f9', clusterBkg: '#f4f6f9', clusterBorder: '#cdd5e0',
+      edgeLabelBackground: '#ffffff'
+    }
+  });
+</script>
+
+</body>
+</html>

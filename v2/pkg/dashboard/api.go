@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -125,6 +126,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
+	// bob API key: PUT sets/replaces, DELETE revokes. Both are non-GET, so the
+	// roleEnforcement middleware already 403s a read-only role — no separate
+	// authorization rule is needed or wanted here.
+	s.mux.HandleFunc("GET /api/config/governor/bob", s.handleGovernorBobStatus)
+	s.mux.HandleFunc("PUT /api/config/governor/bob", s.handleGovernorBobKey)
+	s.mux.HandleFunc("DELETE /api/config/governor/bob", s.handleGovernorBobKeyClear)
 	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
 	s.mux.HandleFunc("GET /api/config/governor/gateways", s.handleGovernorGatewaysList)
 	s.mux.HandleFunc("PUT /api/config/governor/gateways", s.handleGovernorGatewaysUpsert)
@@ -606,15 +613,19 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		githubBaseURL = "https://github.com"
 	}
 	jsonResponse(w, map[string]interface{}{
-		"org":             cfg.Project.Org,
-		"repos":           cfg.Project.Repos,
-		"ai_author":       cfg.Project.AIAuthor,
-		"agents":          len(cfg.EnabledAgents()),
-		"eval_interval_s": cfg.Governor.EvalIntervalS,
-		"primaryRepo":     primaryRepo,
-		"hub_url":         cfg.Hub.URL,
-		"hive_id":         cfg.HiveID,
-		"github_base_url": githubBaseURL,
+		"org":       cfg.Project.Org,
+		"repos":     cfg.Project.Repos,
+		"ai_author": cfg.Project.AIAuthor,
+		// ai_author_effective is who agents actually author PRs/commits as: the
+		// configured ai_author, or the GitHub App bot login ("<slug>[bot]") when
+		// ai_author is empty and the hive authenticates as an App installation.
+		"ai_author_effective": cfg.EffectiveAIAuthor(),
+		"agents":              len(cfg.EnabledAgents()),
+		"eval_interval_s":     cfg.Governor.EvalIntervalS,
+		"primaryRepo":         primaryRepo,
+		"hub_url":             cfg.Hub.URL,
+		"hive_id":             cfg.HiveID,
+		"github_base_url":     githubBaseURL,
 	})
 }
 
@@ -1329,7 +1340,7 @@ func (s *Server) handleBudgetIgnoreSet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGHAuth(w http.ResponseWriter, r *http.Request) {
 	cfg := s.deps.Config.GitHub
 	authType := "token"
-	if cfg.AppID != 0 {
+	if cfg.HasApp() {
 		authType = "app"
 	}
 	jsonResponse(w, map[string]interface{}{
@@ -1370,7 +1381,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	token := strings.TrimSpace(string(tokenData))
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		jsonResponse(w, map[string]interface{}{"logged_in": false, "error": "token expired or revoked"})
 		return
@@ -1379,16 +1390,15 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
-	clientID := s.deps.Config.GitHub.OAuthClientID
-	if clientID == "" {
-		jsonError(w, "oauth_client_id not configured. Add 'oauth_client_id: Ov23ligE2p0gjXg6xAUf' to the github section of hive.yaml and restart the container. This is the public Hive GitHub App client ID used for the Device Flow login — no secret required.", http.StatusBadRequest)
-		return
-	}
+	// Always resolves to a github.com client ID (configured or the public
+	// default) — login is github.com even on GHE hives, so this never fails for
+	// a blank oauth_client_id and never uses a GHE client.
+	clientID := s.deps.Config.GitHub.OAuthClientIDResolved()
 
 	s.deviceFlowMu.Lock()
 	defer s.deviceFlowMu.Unlock()
 
-	state, err := github.StartDeviceFlow(clientID, s.deps.Config.GitHub.ResolvedBaseURL(), s.deps.Config.GitHub.ResolvedAPIURL())
+	state, err := github.StartDeviceFlow(clientID, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1412,8 +1422,8 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientID := s.deps.Config.GitHub.OAuthClientID
-	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.ResolvedBaseURL(), s.deps.Config.GitHub.ResolvedAPIURL())
+	clientID := s.deps.Config.GitHub.OAuthClientIDResolved()
+	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deviceFlowState = nil
 		jsonResponse(w, map[string]interface{}{"status": "error", "error": err.Error()})
@@ -1432,7 +1442,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// user's token must never be written to disk or wired in as the hive's user
 	// client — otherwise a rejected login would still leak its token into the
 	// shared client and become the hive's identity.
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil || user == nil || user.Login == "" {
 		s.deviceFlowState = nil
 		// Audit the failed login so the owner can see attempts that never got
@@ -1521,17 +1531,38 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 // authorized_users allowlist. On success it mints the same kind of session the
 // device flow does and redirects to the dashboard root.
 func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
+	// Loop breaker. An authentication failure must never present as an infinite
+	// redirect: if this navigation has already been through the handoff
+	// maxSSOHops times, something between here and "/" is bouncing us and no
+	// further hop will help. Stop and say so.
+	hop, _ := strconv.Atoi(r.URL.Query().Get(ssoHopParam))
+	if hop >= maxSSOHops {
+		if s.deps != nil && s.deps.Logger != nil {
+			s.deps.Logger.Warn("sso handoff loop detected", "hops", hop)
+		}
+		writeSSOError(w, r, http.StatusLoopDetected, ssoErrLoopDetected,
+			"Signing in to this hive redirected in a circle, so it was stopped before your browser gave up.",
+			"Sign in directly with GitHub below. If that also fails, the hive's access settings likely disagree with the hub's — ask the hive operator to check that your account is on this hive's authorized-users list.")
+		return
+	}
+
 	secret := os.Getenv("HIVE_HUB_SECRET")
 	if secret == "" {
-		// No shared secret → SSO cannot be verified. Send the user to the normal
-		// login rather than silently trusting anything.
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+		// No shared secret → SSO cannot be verified. Terminate with an
+		// explanation. Redirecting to "/" here is what produced the historical
+		// infinite bounce: "/" is auth-gated, sends the user back to the hub
+		// login, the hub sees a valid session and hands off to /sso again.
+		writeSSOError(w, r, http.StatusServiceUnavailable, ssoErrNoSecret,
+			"This hive has no hub shared secret configured, so single sign-on from the hub cannot be verified.",
+			"Ask the hive operator to set HIVE_HUB_SECRET on this hive. In the meantime you can sign in directly with GitHub using the button below.")
 		return
 	}
 
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		http.Error(w, "sso: missing token", http.StatusBadRequest)
+		writeSSOError(w, r, http.StatusBadRequest, ssoErrMissingToken,
+			"This single sign-on link is missing its handoff token.",
+			"Open the hive from the hub dashboard rather than pasting the /sso URL directly.")
 		return
 	}
 
@@ -1545,10 +1576,11 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		if s.deps != nil && s.deps.Logger != nil {
 			s.deps.Logger.Warn("sso handoff rejected", "error", err.Error())
 		}
-		// Don't leak which check failed; bounce to the normal login page.
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(loginPage))
+		// Don't leak which check failed, but DO terminate here with an
+		// explanation rather than serving anything that re-enters the handoff.
+		writeSSOError(w, r, http.StatusUnauthorized, ssoErrBadToken,
+			"The single sign-on handoff token was rejected — it is expired, malformed, or was issued for a different hive.",
+			"Go back to the hub dashboard and open this hive again to get a fresh link. Handoff links are short-lived by design.")
 		return
 	}
 
@@ -1567,9 +1599,9 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 			if s.deps.Logger != nil {
 				s.deps.Logger.Warn("sso handoff: user not authorized for this hive", "username", username)
 			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(loginPage))
+			writeSSOError(w, r, http.StatusForbidden, ssoErrNotAuthorized,
+				"You are signed in to the hub, but this hive's own authorized-users list does not include your account.",
+				"Ask the hive owner to grant you access to this hive, then open it again from the hub dashboard.")
 			return
 		}
 	}
@@ -1577,20 +1609,106 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		role = config.RoleRead
 	}
 
-	if s.authToken != "" {
-		sid := s.createUserSession(username, role)
-		if sid == "" {
-			http.Error(w, "sso: failed to create session", http.StatusInternalServerError)
-			return
-		}
-		setSessionCookie(w, r, sid)
+	// Always mint the session. This used to be gated on s.authToken != "", which
+	// meant a spoke with no dashboard token logged "authenticated via SSO",
+	// redirected to "/", and set NO cookie at all — so "/" rejected the request
+	// and the browser bounced forever. The session store is the authority on
+	// identity here and does not depend on a shared token existing.
+	sid := s.createUserSession(username, role)
+	if sid == "" {
+		writeSSOError(w, r, http.StatusInternalServerError, ssoErrSessionFailed,
+			"The hive could not create a login session for you.",
+			"This is a problem on the hive itself. Retry in a moment; if it persists, ask the hive operator to check the dashboard logs.")
+		return
 	}
+	setSessionCookie(w, r, sid)
 	s.audit.Log(username, "login", auditDetail("method", "hub sso handoff", "role", role), "")
 	if s.deps != nil && s.deps.Logger != nil {
 		s.deps.Logger.Info("user authenticated via hub SSO handoff", "username", username, "role", role)
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	// Land on the dashboard root, carrying a hop counter. If something upstream
+	// bounces us back into /sso anyway, the counter lets the NEXT handoff detect
+	// the cycle and stop with an error instead of spinning (see the ssoHopParam
+	// check at the top of this handler).
+	http.Redirect(w, r, "/?"+ssoHopParam+"="+strconv.Itoa(hop+1), http.StatusSeeOther)
 }
+
+// SSO handoff failure identifiers, surfaced on the terminal error page so a
+// user can quote one to an operator and an operator can grep for it.
+const (
+	ssoErrNoSecret      = "SSO_NO_HUB_SECRET"
+	ssoErrMissingToken  = "SSO_MISSING_TOKEN"
+	ssoErrBadToken      = "SSO_TOKEN_REJECTED"
+	ssoErrNotAuthorized = "SSO_NOT_AUTHORIZED"
+	ssoErrSessionFailed = "SSO_SESSION_FAILED"
+	ssoErrLoopDetected  = "SSO_REDIRECT_LOOP"
+)
+
+// ssoHopParam is the query parameter carrying how many times this browser has
+// been through the SSO handoff for this navigation. The hub's handoff link
+// carries no hop, so a normal first visit is hop 0; each success redirect
+// increments it. Anything that bounces the browser back into /sso preserves the
+// query string, so a genuine cycle counts upward and trips maxSSOHops.
+const ssoHopParam = "sso_hop"
+
+// maxSSOHops is how many SSO handoffs are allowed for one navigation before we
+// declare a redirect loop and stop. A healthy handoff takes exactly one hop; a
+// small allowance absorbs a legitimate re-handoff (e.g. a racing session
+// expiry) without letting a true cycle run away. Browsers give up around 20
+// redirects with an opaque error, so we must terminate well before that to be
+// the one that explains what happened.
+const maxSSOHops = 3
+
+// writeSSOError terminates an SSO handoff with a self-contained HTML page that
+// says what failed and what to do about it. It exists because the alternative —
+// redirecting a failed handoff back toward login — is what produces an infinite
+// browser bounce, the single worst failure mode here: it tells the user nothing
+// and is indistinguishable from an outage. Any non-success exit from handleSSO
+// must come through this function.
+//
+// It also clears any stale session cookie, so a half-established session cannot
+// keep re-triggering the same failure on reload.
+func writeSSOError(w http.ResponseWriter, r *http.Request, status int, code, what, action string) {
+	clearSessionCookie(w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// A failed handoff must never be cached; a cached 401/403 would make the
+	// hive look permanently broken even after access is granted.
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, ssoErrorPage, html.EscapeString(code), html.EscapeString(what), html.EscapeString(action))
+}
+
+// ssoErrorPage is the terminal error shell for a failed SSO handoff. Format
+// verbs in order: %[1]s error code, %[2]s what happened, %[3]s what to do. It
+// deliberately offers "/" (which serves the device-flow login page when
+// unauthenticated) as an escape hatch and a link back to the hub, so the user
+// is never stranded.
+const ssoErrorPage = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign-in failed — Hive</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#e6edf3;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:24px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:40px;max-width:560px}
+.bee{font-size:2.5rem;margin-bottom:12px}
+h1{font-size:1.5rem;margin-bottom:16px}
+p{color:#8b949e;line-height:1.6;margin-bottom:16px}
+.action{color:#e6edf3}
+code{background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:2px 8px;font-size:0.8rem;color:#f0883e}
+.btn{display:inline-block;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:0.9rem;margin:16px 8px 0 0}
+.btn-primary{background:#238636;color:#fff}
+.btn-secondary{background:transparent;color:#58a6ff;border:1px solid #30363d}
+</style></head>
+<div class="card">
+<div class="bee">&#128029;</div>
+<h1>Sign-in didn't complete</h1>
+<p>%[2]s</p>
+<p class="action">%[3]s</p>
+<p>Error code: <code>%[1]s</code></p>
+<a class="btn btn-primary" href="/">Sign in with GitHub</a>
+<a class="btn btn-secondary" href="https://hive.kubestellar.io/dashboard">Back to the hub</a>
+</div>
+</html>`
 
 func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) {
 	// Clear only THIS request's session so logging out affects one user, not
@@ -1646,7 +1764,7 @@ func (s *Server) restoreGHUserSession() {
 		return
 	}
 
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deps.Logger.Warn("saved GitHub user token is invalid, removing", "error", err)
 		os.Remove(userTokenPath)
@@ -2222,7 +2340,7 @@ func (s *Server) substituteTemplateVars(template, agentName string) string {
 		"PROJECT_NAME":         lit(cfg.Project.Name),
 		"PROJECT_ORG":          lit(org),
 		"PROJECT_PRIMARY_REPO": lit(fullPrimaryRepo),
-		"PROJECT_AI_AUTHOR":    lit(cfg.Project.AIAuthor),
+		"PROJECT_AI_AUTHOR":    lit(cfg.EffectiveAIAuthor()),
 		"PROJECT_REPOS_LIST":   lit(reposList),
 		"HIVE_REPO":            lit(fmt.Sprintf("%s/hive", org)),
 		"HIVE_ID":              lit(cfg.HiveID),
@@ -4235,6 +4353,167 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, resp)
 }
 
+// handleGovernorBobStatus reports whether a bob API key is configured, and
+// WHERE it came from — never the value. The source string
+// ("file:/data/secrets/bob_api_key", "env:HIVE_BOB_API_KEY") is the same
+// safe-to-log form ResolveAPIKeySource returns and is what the dashboard
+// shows so an operator can tell an admin-managed Secret key from one they
+// entered here.
+func (s *Server) handleGovernorBobStatus(w http.ResponseWriter, r *http.Request) {
+	bc := s.deps.Config.Governor.Bob
+	source := bc.ResolveAPIKeySource()
+	jsonResponse(w, map[string]interface{}{
+		"ok": true,
+		// configured is presence-only; the key value is never serialized.
+		"configured": source != "",
+		"source":     source,
+	})
+}
+
+// handleGovernorBobKey stores a bob API key VALUE submitted from the spoke
+// dashboard's governor Bob tab. The key is hive-wide, not per-agent: this
+// endpoint backs a single hive-scoped setting shared by every bob agent.
+// The value is written to a 0600 PVC file
+// (and best-effort into the hive-secrets Secret); hive.yaml records only the
+// resulting file PATH. The value never appears in the response, in hive.yaml,
+// or in any log line.
+//
+// Authorization is the standard config-endpoint gating: this is a PUT, so the
+// roleEnforcement middleware rejects a read-only role with 403 before the
+// handler runs.
+func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		APIKey *string `json:"apiKey"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.APIKey == nil {
+		jsonError(w, "apiKey is required", http.StatusBadRequest)
+		return
+	}
+	key := strings.TrimSpace(*body.APIKey)
+	if key == "" {
+		// Distinct from DELETE: an empty PUT is a mistake (an empty field
+		// submitted), not an intentional revoke, so say so rather than
+		// silently wiping a working key.
+		jsonError(w, "apiKey is empty — paste the bob API key, or use Clear to remove the existing one",
+			http.StatusBadRequest)
+		return
+	}
+	if len(key) > bobKeyMaxLen {
+		jsonError(w, fmt.Sprintf("apiKey is too long (limit %d characters)", bobKeyMaxLen),
+			http.StatusBadRequest)
+		return
+	}
+
+	cfg := s.deps.Config
+	// Apply to a copy so a store failure leaves config untouched.
+	bc := cfg.Governor.Bob
+	keyFile, err := s.storeBobAPIKey(key)
+	if err != nil {
+		// redactSecret guards against the key surfacing via a filesystem
+		// error that happened to embed it.
+		jsonError(w, "failed to store API key: "+redactSecret(err.Error(), key),
+			http.StatusInternalServerError)
+		return
+	}
+	bc.APIKeyFile = keyFile
+	// A key VALUE pasted into api_key_env would be a plaintext secret in
+	// hive.yaml and never worked as a name (os.Getenv("...") is empty).
+	// Now that a real key is stored properly, scrub it.
+	if looksLikeAPIKeyValue(bc.APIKeyEnv) {
+		bc.APIKeyEnv = ""
+		s.logger.Info("cleared key-like value from bob api_key_env (replaced by stored API key)")
+	}
+	cfg.Governor.Bob = bc
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after bob api key update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_bob_key", auditDetail("section", "bob", "action", "set"), "")
+	s.refreshAndPersist()
+
+	// No agent restart is required to ADOPT the key: main.go injected a
+	// resolver closure over the live config into the agent manager
+	// (SetBobAPIKeyResolver), and it re-reads the key file on every agent
+	// launch. Agents already parked in "failed: no API key" cannot pick it up
+	// on their own, though: the key is Secret, so it is delivered only by tmux
+	// set-environment, which is inherited by shells created AFTER it runs — and
+	// their pane shell predates the key. RelaunchBobAgentsAwaitingKey therefore
+	// recreates those sessions so a fresh shell inherits the key. Running,
+	// paused, and non-bob agents are untouched, and a second save finds nothing
+	// left to do.
+	// s.deps.Ctx, NOT r.Context(): the launch path derives the agent's
+	// long-lived pane-polling goroutine from this context, so a request-scoped
+	// one would cancel it the moment this response is written. Every other
+	// Start/Restart/Resume caller in the dashboard passes s.deps.Ctx too.
+	var relaunched []string
+	if s.deps != nil && s.deps.AgentMgr != nil {
+		relaunched = s.deps.AgentMgr.RelaunchBobAgentsAwaitingKey(s.deps.Ctx)
+	}
+	if len(relaunched) > 0 {
+		s.logger.Info("relaunched bob agents after api key save",
+			"count", len(relaunched), "agents", strings.Join(relaunched, ","))
+	}
+
+	jsonResponse(w, map[string]interface{}{
+		"ok":         true,
+		"configured": true,
+		// Path only, never the value.
+		"source": "file:" + keyFile,
+		// The pod does not need restarting; the resolver reads the key live.
+		"restartNeeded": false,
+		// How many parked bob agents were started by this save, so the UI can
+		// report what actually happened instead of telling the user to do it.
+		"relaunched": len(relaunched),
+	})
+}
+
+// handleGovernorBobKeyClear revokes a stored bob API key: it removes the PVC
+// key file and drops the api_key_file pointer from hive.yaml, returning the
+// hive to the documented "key required" state rather than a half-configured
+// one.
+//
+// It deliberately does NOT try to delete the key from the hive-secrets Secret
+// or from an admin-mounted /secrets/bob_api_key: those are managed outside the
+// dashboard, and ResolveAPIKey consults them ahead of the PVC file. The
+// response reports the source that remains so the UI can tell the user the key
+// is still supplied by an admin-managed store instead of falsely claiming it
+// was cleared.
+func (s *Server) handleGovernorBobKeyClear(w http.ResponseWriter, r *http.Request) {
+	removed, err := clearBobKeyFile()
+	if err != nil {
+		jsonError(w, "failed to clear API key: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	cfg := s.deps.Config
+	bc := cfg.Governor.Bob
+	// Only drop the pointer if it names the file we just removed; an operator
+	// who pointed api_key_file at their own path keeps that setting.
+	if bc.APIKeyFile == writableBobKeyFile {
+		bc.APIKeyFile = ""
+	}
+	cfg.Governor.Bob = bc
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after bob api key clear", "error", err)
+	}
+	s.logger.Info("bob api key cleared", "api_key_file", writableBobKeyFile, "file_removed", removed)
+	s.auditFromRequest(r, "config_governor_bob_key", auditDetail("section", "bob", "action", "clear"), "")
+	s.refreshAndPersist()
+
+	// Re-resolve: an admin-managed Secret/env key may still supply one.
+	remaining := cfg.Governor.Bob.ResolveAPIKeySource()
+	jsonResponse(w, map[string]interface{}{
+		"ok":         true,
+		"configured": remaining != "",
+		"source":     remaining,
+	})
+}
+
 func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name    string `json:"name"`
@@ -4486,7 +4765,10 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		"key_file":        cfg.GitHub.KeyFile,
 	}
 
-	if cfg.GitHub.AppID != 0 && cfg.GitHub.InstallationID != 0 && cfg.GitHub.KeyFile != "" {
+	// HasUsableApp() rejects the placeholder sentinel: reinitializing App auth
+	// against it would fail on every save and, before this guard, could not
+	// succeed no matter what installation_id the operator supplied.
+	if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
 		if s.deps.ReinitGitHubFunc != nil {
 			if err := s.deps.ReinitGitHubFunc(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile); err != nil {
 				s.logger.Error("github client reinit failed", "error", err)

@@ -626,7 +626,7 @@ func (s *Server) handleContributeReissueToken(w http.ResponseWriter, r *http.Req
 		token = ""
 	}
 
-	username := validateGitHubToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	username := validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -1845,7 +1845,7 @@ func (s *Server) handleAPIv1(w http.ResponseWriter, r *http.Request) {
 		token = r.URL.Query().Get("token")
 	}
 
-	username := validateGitHubToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	username := validateGitHubToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if username == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)

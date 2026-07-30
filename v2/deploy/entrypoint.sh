@@ -216,9 +216,23 @@ if [ "$(id -u)" = "0" ]; then
   # and chown it here (as root, before dropping to dev) UNCONDITIONALLY —
   # not gated on DATA_OWNER — because the recursive /data chown above is
   # skipped when /data is already dev-owned, which would leave a
-  # root-owned /data/secrets uncorrected. Mode 700: owner-only secrets.
+  # root-owned /data/secrets uncorrected.
+  #
+  # Mode 710, not 700: the directory needs group EXECUTE so agent UIDs (2001+,
+  # group node) can TRAVERSE it to open /data/secrets/bob_api_key, which the
+  # bobshell CLI reads as the agent (see the bob_api_key chmod 440 below).
+  # Execute-without-read means agents can open that one path by name but
+  # cannot LIST the directory, so other secrets in here are not enumerable.
+  # Per-file modes remain the actual access control.
   mkdir -p /data/secrets && chown dev:node /data/secrets 2>/dev/null || true
-  chmod 700 /data/secrets 2>/dev/null || true
+  chmod 710 /data/secrets 2>/dev/null || true
+  # The dashboard writes this file as dev with mode 600 (bobKeyFileMode); the
+  # agent UID must be able to read it. Re-apply on every boot so a key saved
+  # before this fix shipped is corrected without re-entering it.
+  if [ -f /data/secrets/bob_api_key ]; then
+    chown dev:node /data/secrets/bob_api_key 2>/dev/null || true
+    chmod 440 /data/secrets/bob_api_key 2>/dev/null || true
+  fi
 
   mkdir -p /var/run/hive-metrics && chown dev:node /var/run/hive-metrics 2>/dev/null || true
   mkdir -p /var/run/hive-metrics/agent-tokens && chown dev:node /var/run/hive-metrics/agent-tokens 2>/dev/null || true
@@ -232,11 +246,24 @@ if [ "$(id -u)" = "0" ]; then
   # Go binary (uid 1001), and every key-file read swallows the error — the key
   # silently resolves to "" and the backend looks unconfigured. Mode 400:
   # owner-read only (stricter than the .pem files, which ttyd/git also read).
-  for key_file in /secrets/bob_api_key /secrets/litellm_api_key; do
+  #
+  # bob_api_key is the ONE exception and must be 440 (group node), not 400.
+  # Every other key here is consumed IN-PROCESS by the Go binary running as
+  # dev, so owner-read is sufficient. bob is different: the bobshell CLI reads
+  # BOBSHELL_API_KEY itself while running AS THE AGENT UID (2001+, group node),
+  # so a 400 dev-owned file is EACCES for it. The key then resolves empty and
+  # bob silently falls back to the W3ID browser SSO flow that cannot complete
+  # in a pod — the fleet-wide "stuck at the auth prompt" bug. Group-read only;
+  # never world-readable.
+  for key_file in /secrets/litellm_api_key; do
     [ -f "$key_file" ] || continue
     chown dev:node "$key_file" 2>/dev/null || true
     chmod 400 "$key_file" 2>/dev/null || true
   done
+  if [ -f /secrets/bob_api_key ]; then
+    chown dev:node /secrets/bob_api_key 2>/dev/null || true
+    chmod 440 /secrets/bob_api_key 2>/dev/null || true
+  fi
 
   # Copy read-only mounted secrets so dev user can read them
   if [ -f /etc/hive/gh-app-key.pem ]; then
