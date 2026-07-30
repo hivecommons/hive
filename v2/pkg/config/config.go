@@ -856,6 +856,75 @@ const (
 	// to select API-key auth. Verified in bundle/bob.js, where the auth-type
 	// enum is defined as `USE_BOBSHELL="api-key"`.
 	BobAuthMethodAPIKey = "api-key"
+
+	// BobAuthTypeEnvVar is the env var bobshell reads to pick its auth type.
+	// It is only a FALLBACK DEFAULT, not an override. From bundle/bob.js
+	// (bobshell 1.0.6), the auth-dialog preselect is:
+	//   let l=null,d=process.env.BOBSHELL_DEFAULT_AUTH_TYPE;
+	//   d&&Object.values(fr).includes(d)&&(l=d);
+	//   let c=a.findIndex(p=>e.merged.security?.auth?.selectedType
+	//         ? p.value===e.merged.security.auth.selectedType
+	//         : l ? p.value===l : ...)
+	// i.e. a persisted security.auth.selectedType WINS over this env var.
+	// An invalid value is a hard error ("Invalid value for
+	// BOBSHELL_DEFAULT_AUTH_TYPE"), so it must be one of the `fr` enum values.
+	BobAuthTypeEnvVar = "BOBSHELL_DEFAULT_AUTH_TYPE"
+
+	// BobAuthTypeAPIKey selects API-key auth. It is bob's own enum constant
+	// `USE_BOBSHELL="api-key"` from bundle/bob.js (the sibling value being
+	// `W3ID_SSO="sso"`), so it is dictated by the vendor, not by us. Not a
+	// secret — it is the literal string "api-key" and carries no credential.
+	BobAuthTypeAPIKey = "api-key"
+
+	// BobAuthMethodFlag is bobshell's `--auth-method` CLI flag. It EXISTS in
+	// bobshell 1.0.6 — an earlier fix removed it after concluding from
+	// `bob --help` that it did not. That conclusion was wrong: bundle/bob.js
+	// registers it and then HIDES it from help output:
+	//   t.option("auth-method",{type:"string",...,choices:[fr.W3ID_SSO,fr.USE_BOBSHELL]});
+	//   let a=[...,"auth-method"]; a.forEach(c=>t.hide(c));
+	// so it is functional but invisible to `--help | grep auth-method`.
+	//
+	// It is the STRONGEST control available, because it is the only input that
+	// beats the persisted settings file. bob stores it as
+	// globalThis.authMethodByCliArg, and the settings-normalization step reads:
+	//   let n=globalThis.authMethodByCliArg||t.merged.security.auth.selectedType||r;
+	// — the CLI arg is consulted FIRST, ahead of the persisted selectedType.
+	// It also suppresses the write-back that would otherwise persist a
+	// different value (`&&!globalThis.authMethodByCliArg`), so passing it
+	// makes hive's choice authoritative without bob rewriting the shared file.
+	BobAuthMethodFlag = "--auth-method"
+
+	// BobSettingsRelPath is the persisted settings file, relative to $HOME.
+	// From bundle/bob.js: `as=".bob"` and
+	// `getGlobalSettingsPath(){return fu.join(t.getGlobalGeminiDir(),"settings.json")}`
+	// where getGlobalGeminiDir() is `path.join(os.homedir(), as)`.
+	// On a hive this resolves to /data/home/.bob/settings.json — a SHARED file,
+	// so one agent picking SSO at the prompt re-breaks every other bob agent.
+	BobSettingsRelPath = ".bob/settings.json"
+
+	// BobSettingsAuthKey / BobSettingsSelectedTypeKey / BobSettingsEnforcedTypeKey
+	// are the nested JSON keys hive owns inside that file. Shape per bundle:
+	//   e.merged.security?.auth?.selectedType   // which method is chosen
+	//   e.merged.security?.auth?.enforcedType   // FILTERS the option list:
+	//     e.merged.security?.auth?.enforcedType && (a=a.filter(p=>p.value===...))
+	//   and validation: eEr() errors when enforcedType !== the active type.
+	// Setting enforcedType to api-key leaves SSO unselectable, so a stray
+	// interactive pick cannot re-break the fleet.
+	BobSettingsSecurityKey     = "security"
+	BobSettingsAuthKey         = "auth"
+	BobSettingsSelectedTypeKey = "selectedType"
+	BobSettingsEnforcedTypeKey = "enforcedType"
+
+	// BobSettingsFileMode keeps the shared settings file group-writable: it
+	// lives in /data/home/.bob (drwxrwx--- dev:node) and bob runs as agent UIDs
+	// in group `node`, which must still be able to write sibling state. Making
+	// it read-only is deliberately NOT done — bob calls setValue() on this file
+	// during normal startup normalization, and an EACCES there is an unhandled
+	// write path, so re-assertion on every launch is the safer self-heal.
+	BobSettingsFileMode = 0o664
+
+	// BobSettingsDirMode matches the observed /data/home/.bob (drwxrwx---).
+	BobSettingsDirMode = 0o770
 )
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the
@@ -902,12 +971,21 @@ func (c *BobConfig) resolveAPIKeyWithSource() (string, string) {
 			}
 		}
 	}
+	// TrimSpace the env-var sources too, matching the file branch above. bob
+	// does NO trimming of its own — bundle/bob.js reads
+	// `process.env.BOBSHELL_API_KEY` verbatim into the Authorization header —
+	// and hive delivers the value through `tmux set-environment`, which passes
+	// it as a raw exec argument with no shell word-splitting to strip a stray
+	// newline. So any trailing whitespace here reaches IBM's API inside the
+	// header and 401s, which bob surfaces as a fallback to the SSO flow rather
+	// than as an auth error. Cheap to normalize; impossible to debug from the
+	// symptom.
 	if c.APIKeyEnv != "" {
-		if key := os.Getenv(c.APIKeyEnv); key != "" {
+		if key := strings.TrimSpace(os.Getenv(c.APIKeyEnv)); key != "" {
 			return key, "env:" + c.APIKeyEnv
 		}
 	}
-	if key := os.Getenv(DefaultBobAPIKeyEnv); key != "" {
+	if key := strings.TrimSpace(os.Getenv(DefaultBobAPIKeyEnv)); key != "" {
 		return key, "env:" + DefaultBobAPIKeyEnv
 	}
 	return "", ""
@@ -1093,7 +1171,35 @@ type GitHubConfig struct {
 	// BaseURL is the GitHub web base URL. Defaults to DefaultGitHubBaseURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com".
 	BaseURL string `yaml:"base_url"`
+	// AppAuthoredPRs controls App-bot authorship: when enabled AND ai_author is
+	// empty, agents author PRs/commits as the GitHub App bot ("<slug>[bot]") via
+	// the App installation token, instead of the Copilot-login user.
+	//
+	// It is a *bool so absent (nil) is distinct from an explicit false. Default is
+	// ON (see AppAuthoredPRsEnabled): App-bot authorship is now the fleet norm, so
+	// a hive that says nothing gets it. Set `app_authored_prs: false` to opt a
+	// specific hive OUT. This only affects write-capable hives — the token is
+	// injected solely for agents whose tier CanPush() and only when a real App is
+	// installed (m.appAuth != nil), so an App-less or advisory hive is unaffected.
+	AppAuthoredPRs *bool `yaml:"app_authored_prs,omitempty"`
 }
+
+// PlaceholderAppID is the sentinel `github.app_id` written into a hive's config
+// when the hive is provisioned BEFORE its real GitHub App exists — a pooled
+// "available-*" placeholder, or a hive whose owner has not installed the App
+// yet. Config validation requires either github.token or github.app_id, so the
+// seed cannot leave app_id empty; this value fills the slot without ever naming
+// a real App.
+//
+// It is NOT a valid GitHub App ID and must never be handed to
+// github.NewAppAuth. Every test for "is a GitHub App configured?" must use
+// GitHubConfig.HasApp() rather than a bare `AppID != 0` — the sentinel is
+// non-zero, so a bare zero-test reports a placeholder as a real App. That is
+// exactly the bug that put hosted hives into permanent CrashLoopBackOff: the
+// moment installation_id became non-zero (the owner installed the App), the
+// spoke committed to App auth, failed to read a PEM that was never provisioned,
+// and exited before the HTTP listener bound — invisible from the dashboard.
+const PlaceholderAppID int64 = 999999999
 
 const (
 	// DefaultGitHubAPIURL is the default GitHub API endpoint (public github.com).
@@ -1102,7 +1208,36 @@ const (
 	DefaultGitHubBaseURL = "https://github.com"
 	// DefaultGitHubAppSlug is the public Hive GitHub App slug.
 	DefaultGitHubAppSlug = "kubestellar-hive"
+	// DefaultOAuthClientID is the PUBLIC github.com Hive App client ID used for
+	// device-flow login. Login is always github.com (see OAuthBaseURL), so this
+	// is the correct client for every hive — including GHE hives, whose users
+	// still sign in with a github.com identity. No secret; safe to hardcode.
+	DefaultOAuthClientID = "Ov23ligE2p0gjXg6xAUf"
 )
+
+// IsPlaceholderApp reports whether app_id is the "no real App yet" sentinel.
+func (g GitHubConfig) IsPlaceholderApp() bool {
+	return g.AppID == PlaceholderAppID
+}
+
+// HasApp reports whether a REAL GitHub App is configured — a non-zero app_id
+// that is not the placeholder sentinel. This is the only correct presence test
+// for App auth; `AppID != 0` treats a placeholder as real.
+//
+// It deliberately says nothing about installation_id or the key file: those are
+// separate readiness conditions (see HasUsableApp) that a hive can acquire
+// later, over the heartbeat or the config API.
+func (g GitHubConfig) HasApp() bool {
+	return g.AppID != 0 && !g.IsPlaceholderApp()
+}
+
+// HasUsableApp reports whether App auth can actually be attempted: a real
+// app_id AND an installation to mint tokens against. The key file is resolved
+// separately (config value, then $GH_APP_KEY_FILE, then the on-disk fallbacks),
+// so it is not part of this test.
+func (g GitHubConfig) HasUsableApp() bool {
+	return g.HasApp() && g.InstallationID != 0
+}
 
 // ResolvedAPIURL returns the configured API URL or the default for github.com.
 func (g GitHubConfig) ResolvedAPIURL() string {
@@ -1125,12 +1260,113 @@ func (g GitHubConfig) IsGHE() bool {
 	return g.BaseURL != "" && g.BaseURL != DefaultGitHubBaseURL
 }
 
+// HostLabel returns the bare GitHub hostname this hive's App/repos live on:
+// "github.com" for public GitHub, or the GHE hostname (e.g. "github.ibm.com").
+//
+// It is the DEFINITIVE host for display and reporting, and deliberately looks at
+// BOTH base_url and api_url. Many hives (notably pooled placeholders) carry an
+// empty base_url but a GHE api_url (api_url: https://github.ibm.com/api/v3,
+// base_url: "") — reporting the host from base_url alone renders those as
+// github.com and under-counts GHE hives in the spokes table. Preferring base_url
+// when set, then falling back to the api_url's host, makes the reported host
+// match the GitHub the hive actually talks to.
+func (g GitHubConfig) HostLabel() string {
+	pick := g.BaseURL
+	if pick == "" {
+		pick = g.APIURL
+	}
+	pick = strings.TrimSpace(pick)
+	pick = strings.TrimPrefix(pick, "https://")
+	pick = strings.TrimPrefix(pick, "http://")
+	pick = strings.TrimSuffix(strings.Trim(pick, "/"), "/api/v3")
+	host := strings.SplitN(pick, "/", 2)[0]
+	if host == "" || strings.EqualFold(host, "api.github.com") {
+		return DefaultGitHubBaseURL[len("https://"):] // "github.com"
+	}
+	return host
+}
+
+// OAuthBaseURL and OAuthAPIURL are the hosts used for DEVICE-FLOW LOGIN and
+// user-identity token validation. They are ALWAYS public github.com, decoupled
+// from the App/repo host (ResolvedBaseURL/ResolvedAPIURL, which may be GHE).
+//
+// Why the split: the Hive login OAuth app (oauth_client_id, default the public
+// "Ov23ligE2p0gjXg6xAUf") is a github.com app, and every user signs in with a
+// github.com identity — even on a hive whose REPOS and GitHub App live on GHE.
+// Pointing the device-flow endpoints at a GHE host (as ResolvedBaseURL does for
+// a GHE hive) makes GitHub return "Not Found" and the dashboard shows "could not
+// verify GitHub identity". Login must therefore use these fixed public hosts;
+// only the App-token / repo-API paths follow the per-hive (possibly GHE) host.
+func (g GitHubConfig) OAuthBaseURL() string { return DefaultGitHubBaseURL }
+func (g GitHubConfig) OAuthAPIURL() string  { return DefaultGitHubAPIURL }
+
+// OAuthClientIDResolved returns the client ID for device-flow login: the
+// configured oauth_client_id, or the public github.com default. Because login
+// is always github.com, the default is correct for every hive — a GHE hive must
+// not fall back to a GHE client ID here, or device flow against github.com fails
+// with an unknown-client error. A hive that has explicitly set oauth_client_id
+// to a github.com app keeps that; the default only fills a blank.
+func (g GitHubConfig) OAuthClientIDResolved() string {
+	if g.OAuthClientID != "" {
+		return g.OAuthClientID
+	}
+	return DefaultOAuthClientID
+}
+
 // ResolvedAppSlug returns the configured app slug or the default public Hive app slug.
 func (g GitHubConfig) ResolvedAppSlug() string {
 	if g.AppSlug != "" {
 		return g.AppSlug
 	}
 	return DefaultGitHubAppSlug
+}
+
+// BotLogin returns the GitHub App bot login ("<app-slug>[bot]") when a GitHub
+// App is configured (AppID set), or "" otherwise. This is the account that
+// actually authors PRs and commits when the hive authenticates as an
+// installation rather than a personal token.
+func (g GitHubConfig) BotLogin() string {
+	// Only a REAL, installed App has a bot that can author anything. A bare
+	// `AppID != 0` also passes for the placeholder sentinel (PlaceholderAppID)
+	// and for a real app_id that was never installed (installation_id: 0) —
+	// neither can mint a token or author a PR, so neither has a bot login. Using
+	// HasUsableApp() keeps EffectiveAIAuthor() empty for those, so the UI shows
+	// "-" (no author) rather than a phantom "<slug>[bot]" for an App-less hive.
+	if !g.HasUsableApp() {
+		return ""
+	}
+	return g.ResolvedAppSlug() + "[bot]"
+}
+
+// EffectiveAIAuthor returns the GitHub identity agents should author PRs and
+// commits as. An explicitly configured project.ai_author always wins. When
+// ai_author is empty, the result depends on the opt-in github.app_authored_prs
+// flag: if set, agents author as the GitHub App bot ("<slug>[bot]") — deriving
+// the bot login here rather than persisting it into ai_author keeps App-bot mode
+// durable across restarts (clearing ai_author is enough; nothing writes the bot
+// name back into config). If the flag is NOT set, this returns "" exactly as
+// before, so a hive that has not opted in behaves identically on upgrade.
+func (c *Config) EffectiveAIAuthor() string {
+	if c.Project.AIAuthor != "" {
+		return c.Project.AIAuthor
+	}
+	if c.GitHub.AppAuthoredPRsEnabled() {
+		return c.GitHub.BotLogin()
+	}
+	return ""
+}
+
+// AppAuthoredPRsEnabled reports whether App-bot authorship is on for this hive.
+// The default is ON (nil == true): App-bot authorship is the fleet norm, so a
+// hive that never set app_authored_prs gets it. Only an explicit
+// `app_authored_prs: false` disables it. Note this is only the INTENT — the
+// token is still injected solely for CanPush() tiers with a real App installed,
+// so an App-less or advisory hive never actually writes regardless of this flag.
+func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
+	if g.AppAuthoredPRs == nil {
+		return true
+	}
+	return *g.AppAuthoredPRs
 }
 
 // AppInstallURL returns the full URL to install the GitHub App.
@@ -2322,6 +2558,9 @@ func (c *Config) validate() error {
 	if len(c.Agents) == 0 {
 		return fmt.Errorf("at least one agent must be configured")
 	}
+	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
+	// precisely so a hive awaiting its real App can satisfy this check and boot
+	// into dashboard-only mode. Everywhere else, use HasApp().
 	if c.GitHub.Token == "" && c.GitHub.AppID == 0 {
 		return fmt.Errorf("github.token or github.app_id is required")
 	}

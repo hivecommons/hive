@@ -67,6 +67,10 @@ type RegistryEntry struct {
 	// without blanking it, and it is the author the fleet-stats counts are
 	// scoped to.
 	AIAuthor string `json:"aiAuthor,omitempty"`
+	// AIAuthorEffective is who the spoke's agents actually author PRs/commits
+	// as — ai_author when set, else the GitHub App bot login ("<slug>[bot]").
+	// Display-only in the spokes table; never echoed back into project config.
+	AIAuthorEffective string `json:"aiAuthorEffective,omitempty"`
 	// StartedAt is the spoke process start time, reported over the heartbeat.
 	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
 	StartedAt          string         `json:"startedAt,omitempty"`
@@ -100,7 +104,18 @@ type RegistryEntry struct {
 	// upgrade — from one riding <branch>-latest. Empty on spokes that are not
 	// in-cluster or predate this field; drift detection skips the signal
 	// rather than guessing.
-	ImageRef                  string             `json:"imageRef,omitempty"`
+	ImageRef string `json:"imageRef,omitempty"`
+	// GitHubHost is the bare hostname of the GitHub instance this hive targets
+	// ("github.com", "github.ibm.com", …), rendered as a pill in the My Hives
+	// Location column. Resolution order, most to least authoritative:
+	//   1. the spoke's own reported runtime github.base_url (heartbeat), which
+	//      is the only source that is right when a hive's GitHub differs from
+	//      its cluster's default;
+	//   2. the hive's recorded SaaSHive.GitHubHost / its cluster default, for
+	//      spokes too old to report it;
+	//   3. "github.com" at render time, so a chip is never blank.
+	// Empty here means "not reported" — resolved on read, never guessed.
+	GitHubHost                string             `json:"githubHost,omitempty"`
 	Agents                    []AgentSummary     `json:"agents,omitempty"`
 	Leaderboard               []LeaderboardEntry `json:"leaderboard,omitempty"`
 	Online                    bool               `json:"online"`
@@ -111,6 +126,7 @@ type RegistryEntry struct {
 	PRHistory                 []SparkPoint       `json:"prHistory,omitempty"`
 	GitHubAppRequired         bool               `json:"githubAppRequired,omitempty"`
 	GitHubAppPermIssue        string             `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState            string             `json:"githubAppState,omitempty"`
 	PendingGitHubAppInstall   bool               `json:"pendingGitHubAppInstall,omitempty"`
 	PendingGitHubAppInstallAt time.Time          `json:"pendingGitHubAppInstallAt,omitempty"`
 	// Fleet contribution counts reported by the spoke (nil = not reported /
@@ -239,6 +255,81 @@ func normalizeRepoRef(s string) string {
 	}
 	parts := strings.Split(s, "/")
 	return parts[len(parts)-1]
+}
+
+// repoRefHost extracts the GitHub host a repo string was pasted with, or "" when
+// none was given (a bare name or "owner/repo" with no host = "belongs to the
+// spoke's host"). It parallels normalizeOrgRef's host detection: a leading
+// dotted segment is the hostname.
+//
+//	https://github.ibm.com/z-aiops-unite/ui -> "github.ibm.com"
+//	github.ibm.com/z-aiops-unite/ui         -> "github.ibm.com"
+//	z-aiops-unite/ui                        -> ""   (no explicit host)
+//	ui                                      -> ""
+//
+// This is what makes the single-host-per-spoke invariant enforceable: the
+// caller compares every repo's host (and the primary's) against the spoke host
+// and rejects any that differ, so a spoke can never mix github.com and a GHE
+// instance. Hosts are compared case-insensitively; "github.com" and "" both
+// mean public GitHub (see sameGitHubHost).
+func repoRefHost(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		return parts[0]
+	}
+	return ""
+}
+
+// sameGitHubHost reports whether two host labels refer to the same GitHub. Both
+// "" and "github.com" mean public GitHub, so they are equal; a GHE host
+// ("github.ibm.com") equals only itself. Case-insensitive.
+func sameGitHubHost(a, b string) bool {
+	norm := func(h string) string {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" || h == "github.com" {
+			return "github.com"
+		}
+		return h
+	}
+	return norm(a) == norm(b)
+}
+
+// validateSingleRepoHost enforces the single-host-per-spoke invariant: every
+// repo (and the primary repo) must live on the SAME GitHub host as the spoke.
+// spokeHost is the host derived from the org/primary (normalizeOrgRef); "" means
+// public github.com. repos is the raw, still-host-qualified list as the user
+// pasted it (parse the host BEFORE normalizeRepoRef strips it). Returns a
+// non-nil error naming the first offending repo, so the request/assign handler
+// can 400 with a clear, onboarding-friendly message.
+func validateSingleRepoHost(spokeHost, primaryRepo string, repos []string) error {
+	label := func(h string) string {
+		if h == "" || strings.EqualFold(h, "github.com") {
+			return "github.com"
+		}
+		return h
+	}
+	for _, ref := range append(append([]string{}, repos...), primaryRepo) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		rh := repoRefHost(ref)
+		if rh == "" {
+			continue // no explicit host — belongs to the spoke host by definition
+		}
+		if !sameGitHubHost(rh, spokeHost) {
+			return fmt.Errorf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host (github.com or a single GitHub Enterprise instance). Fix the mismatched repo or request a separate hive for it",
+				ref, label(rh), label(spokeHost))
+		}
+	}
+	return nil
 }
 
 // isValidRepoRef validates a repo entry, which may be a bare name ("repo")
@@ -540,6 +631,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/docs", s.serveStatic("static/api-docs.html"))
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
+	// Unlinked page (not in nav, noindex) — direct-URL only. The CNCF End User
+	// reference-architecture draft, shareable without artifact permissions.
+	s.mux.HandleFunc("GET /cncf-reference-architecture", s.serveStatic("static/cncf-reference-architecture.html"))
 	s.mux.HandleFunc("GET /{$}", s.serveStatic("static/index.html"))
 	// Open Graph preview image for shared links. Registered here rather than in
 	// registerOAuth because that function returns early when OAuth is
@@ -682,12 +776,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return safe
 		}(),
-		PrimaryRepo:  safePrimary,
-		AIAuthor:     sanitizeField(payload.AIAuthor),
-		StartedAt:    sanitizeField(payload.StartedAt),
-		DashboardURL: payload.DashboardURL,
-		SnapshotURL:  payload.SnapshotURL,
-		ACMMLevel:    clampInt(payload.ACMMLevel, 0, 6),
+		PrimaryRepo:       safePrimary,
+		AIAuthor:          sanitizeField(payload.AIAuthor),
+		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
+		StartedAt:         sanitizeField(payload.StartedAt),
+		DashboardURL:      payload.DashboardURL,
+		SnapshotURL:       payload.SnapshotURL,
+		ACMMLevel:         clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {
@@ -720,6 +815,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHash:       shortSHA(sanitizeHeartbeatField(payload.GitHash)),
 		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
 		ImageRef:      sanitizeImageRef(payload.ImageRef),
+		// Normalize through githubHostLabel so "https://github.ibm.com/" and
+		// "github.ibm.com" persist identically, then sanitize as a hostname.
+		// A spoke that does not report the field leaves this empty rather
+		// than recording a fabricated "github.com" — empty is what lets the
+		// read path fall back to the hive's recorded/cluster host instead.
+		GitHubHost: func() string {
+			if strings.TrimSpace(payload.GitHubHost) == "" {
+				return ""
+			}
+			return sanitizeHeartbeatField(githubHostLabel(payload.GitHubHost))
+		}(),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
@@ -744,6 +850,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Online:                  true,
 		GitHubAppRequired:       payload.GitHubAppRequired,
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
+		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
 		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {

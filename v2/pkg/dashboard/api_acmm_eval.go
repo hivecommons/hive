@@ -370,7 +370,13 @@ func (s *Server) prefetchDirectories(ctx context.Context, owner, repo string) ma
 		"docs/security",
 	}
 
+	// GoGitHub() is nil-receiver safe and returns nil, so the deref below would
+	// panic on a hive running without GitHub credentials. Sibling handlers
+	// guard the same way.
 	ghClient := s.deps.GHClient.GoGitHub()
+	if ghClient == nil {
+		return cache
+	}
 	for _, dir := range dirs {
 		_, dirContents, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, dir, nil)
 		if err != nil {
@@ -422,6 +428,9 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 	}
 
 	ghClient := s.deps.GHClient.GoGitHub()
+	if ghClient == nil {
+		return false
+	}
 	_, _, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, cleanPath, nil)
 	return err == nil
 }

@@ -121,9 +121,10 @@ func TestBobConfigNilReceiver(t *testing.T) {
 	}
 }
 
-// TestBobConstants pins the externally-defined names. BobAPIKeyEnvVar and
-// BobAuthMethodAPIKey are dictated by the bobshell bundle, not by us: changing
-// them silently breaks headless auth, so they are asserted rather than assumed.
+// TestBobConstants pins the externally-defined names. BobAPIKeyEnvVar,
+// BobAuthTypeEnvVar and BobAuthTypeAPIKey are dictated by the bobshell bundle,
+// not by us: changing them silently breaks headless auth, so they are asserted
+// rather than assumed.
 func TestBobConstants(t *testing.T) {
 	tests := []struct {
 		name string
@@ -131,7 +132,14 @@ func TestBobConstants(t *testing.T) {
 		want string
 	}{
 		{"bob's own env var name", BobAPIKeyEnvVar, "BOBSHELL_API_KEY"},
-		{"bob's api-key auth method value", BobAuthMethodAPIKey, "api-key"},
+		{"bob's auth-type env var name", BobAuthTypeEnvVar, "BOBSHELL_DEFAULT_AUTH_TYPE"},
+		{"bob's api-key auth type value", BobAuthTypeAPIKey, "api-key"},
+		{"bob's hidden auth-method flag", BobAuthMethodFlag, "--auth-method"},
+		{"bob's persisted settings path", BobSettingsRelPath, ".bob/settings.json"},
+		{"settings security key", BobSettingsSecurityKey, "security"},
+		{"settings auth key", BobSettingsAuthKey, "auth"},
+		{"settings selectedType key", BobSettingsSelectedTypeKey, "selectedType"},
+		{"settings enforcedType key", BobSettingsEnforcedTypeKey, "enforcedType"},
 		{"hive-side default env var", DefaultBobAPIKeyEnv, "HIVE_BOB_API_KEY"},
 		{"k8s Secret mount default path", DefaultBobAPIKeyFile, "/secrets/bob_api_key"},
 		{"PVC default path", WritableBobAPIKeyFile, "/data/secrets/bob_api_key"},

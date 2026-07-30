@@ -44,6 +44,16 @@ func (s *HubServer) journeyBannerFor(hiveID string, now time.Time) *HubBanner {
 			"hive_id", hiveID)
 		return nil
 	}
+	// Defence in depth for the same rule applied to operator-side failures: a
+	// hive blocked because WE have not delivered its GitHub App key must never
+	// receive a stage-1 nudge, and least of all a de-provision warning. This
+	// duplicates the check in nextNudge deliberately — the cost of a future
+	// edit getting it wrong is threatening a user for our own mistake.
+	if n.Stage == StageGitHubApp && githubAppBlockedByOperator(entry) {
+		s.logger.Error("journey: refusing to nudge a hive whose GitHub App credentials are operator-supplied and not yet valid",
+			"hive_id", hiveID, "app_state", entry.GitHubAppState, "severity", n.Severity.String())
+		return nil
+	}
 
 	s.journey.recordSent(hiveID, n, entry.ACMMLevel, now)
 	if err := s.journey.save(); err != nil {

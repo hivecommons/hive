@@ -152,18 +152,40 @@
        stacked so the block height stays stable while they fade; a spacer sizes
        it to the tallest slide. Auto-rotation is JS-driven and disabled under
        prefers-reduced-motion (handled in JS, not just CSS). ── */
-    .hero-rotator { position: relative; }
+    /* Grid-stack crossfade: every slide (and the spacer) shares the same grid
+       cell, so the rotator auto-sizes to the TALLEST slide at any breakpoint.
+       This is what prevents a long lede from overflowing a fixed-height spacer
+       and colliding with the actions below (the old absolute+spacer approach
+       only reserved one slide's height). */
+    .hero-rotator { display: grid; }
+    .hero-rotator > .hero-slide,
+    .hero-rotator > .hero-slide-spacer { grid-area: 1 / 1; }
     .hero-slide {
-      position: absolute; inset: 0;
       opacity: 0; visibility: hidden;
       transition: opacity .6s ease;
     }
     .hero-slide.is-active { opacity: 1; visibility: visible; }
-    .hero-slide-spacer { visibility: hidden; }
-    /* Slides and the spacer must measure identically or the crossfade jumps —
-       but zeroing the margin let the h1's descenders (line-height .92) collide
-       with the lede below. Keep them equal, just not zero. */
-    .hero-slide h1, .hero-slide-spacer h1 { margin: 0 0 1.15rem; }
+    /* Spacer no longer reserves height (the grid does) — keep it fully hidden. */
+    .hero-slide-spacer { visibility: hidden; pointer-events: none; }
+    /* Pin the hero title's font, weight, and size identically on every slide.
+       Without an explicit weight the browser synthesizes bold from whatever
+       Inter weight is (or isn't) installed, so slides rendered subtly different
+       faces. Fixing font-family + font-weight + font-size here makes all slides
+       visually identical regardless of the viewer's installed fonts. */
+    .hero-slide h1, .hero-slide-spacer h1 {
+      margin: 0 0 1.15rem;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 800;
+      font-size: clamp(3.2rem, 7vw, 6.5rem);
+      line-height: .92;
+      letter-spacing: 0;
+      max-width: 16ch;
+      font-synthesis: none;
+    }
+    .hero-slide .hero-lede, .hero-slide-spacer .hero-lede {
+      font-weight: 400;
+      font-synthesis: none;
+    }
     @media (prefers-reduced-motion: reduce) {
       .hero-slide { transition: none; }
     }
@@ -301,7 +323,7 @@
     }
     /* ── Comparison table ── */
     .compare-wrap { overflow-x: auto; margin-top: 2rem; border: 1px solid var(--line); border-radius: .8rem; background: linear-gradient(#17212deb, #0c1219eb); }
-    .compare-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 720px; }
+    .compare-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; min-width: 860px; }
     .compare-table th { text-align: center; padding: 14px 14px; color: var(--muted); font-weight: 600; border-bottom: 2px solid var(--line); font-size: 0.72rem; text-transform: uppercase; letter-spacing: .05em; }
     .compare-table th.cap { text-align: left; }
     .compare-table th.hive-col { color: var(--amber); }
@@ -577,7 +599,7 @@
           </div>
           <div class="hero-slide is-active">
             <h1>Put your repo on autopilot</h1>
-            <p class="hero-lede">Spend your time on the work you actually love &mdash; and put a fleet of AI agents on the rest: triaging issues, writing the fixes, opening the PRs, and merging them on green.</p>
+            <p class="hero-lede">The autonomous development lifecycle (ADLC), self-hosted and yours: a fleet of AI agents triages issues, writes the fixes, opens the PRs, and merges them on green &mdash; so you spend your time on the work you actually love.</p>
           </div>
           <div class="hero-slide">
             <h1>You earn automation with test coverage</h1>
@@ -663,8 +685,8 @@
     <section class="section-pad" id="compare">
       <div class="section-heading">
         <p class="section-label">How Hive compares</p>
-        <h2>The only open-source one in the room</h2>
-        <p>AI teammates that break down work, run in the background, and open pull requests are everywhere now &mdash; from GitHub&rsquo;s own coding agent to Devin to Microsoft Planner. Nearly all of them are paid, proprietary, and cloud-only. Hive is the free, open-source, self-hosted alternative &mdash; and it enforces what agents can do at the network layer, not on the honor system.</p>
+        <h2>The ADLC platform you own outright</h2>
+        <p>A new category is forming around the <strong style="color:var(--text)">autonomous development lifecycle (ADLC)</strong> &mdash; agents that triage, code, review, fix, and ship across your repos, continuously. Contenders are everywhere now, from GitHub&rsquo;s own coding agent to Devin to Microsoft Planner to open-source peers like Fullsend. Where Hive stands apart: it makes autonomy something a repo <em>earns</em> as its test coverage grows (the six-level ACMM ladder), enforces what agents can do at the network layer rather than on the honor system, and gives you a live dashboard over the whole fleet &mdash; not just activity buried in GitHub.</p>
       </div>
       <div class="compare-wrap">
         <table class="compare-table">
@@ -672,6 +694,7 @@
             <tr>
               <th class="cap">Capability</th>
               <th class="hive-col">Hive</th>
+              <th>Fullsend</th>
               <th>GitHub Copilot<br>coding agent</th>
               <th>Devin</th>
               <th>MS Planner /<br>Jira Rovo</th>
@@ -681,6 +704,7 @@
             <tr>
               <td class="cap">Free &amp; open source</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Apache&#8209;2.0 &middot; CNCF/KubeStellar</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Apache&#8209;2.0</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Paid subscription</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Paid / enterprise</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">M365 / Atlassian license</span></td>
@@ -688,6 +712,7 @@
             <tr>
               <td class="cap">Self-hosted / your infra</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">K8s, LXC, Compose</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Self-host supported</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">GitHub cloud</span></td>
               <td><span class="c-part">Hybrid</span><span class="c-note">Planning stays in cloud</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Vendor cloud</span></td>
@@ -695,6 +720,7 @@
             <tr>
               <td class="cap">Bring your own AI &amp; model</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Any OpenAI-compatible; self-host vLLM/llm-d</span></td>
+              <td><span class="c-part">CLI-based</span><span class="c-note">Model per CLI</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Locked to provider</span></td>
               <td><span class="c-no">&#10007;</span></td>
               <td><span class="c-part">Vendor models</span></td>
@@ -702,6 +728,7 @@
             <tr>
               <td class="cap">Multi-agent, specialized roles</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Scanner, quality, architect, &hellip;</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">6 agents: triage&rarr;code&rarr;review&rarr;retro</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Single agent</span></td>
               <td><span class="c-part">Subagents</span><span class="c-note">Delegation, not peers</span></td>
               <td><span class="c-part">Assignable agents</span></td>
@@ -709,6 +736,7 @@
             <tr>
               <td class="cap">Enforced permissions at network layer</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">MITM proxy + scoped tokens</span></td>
+              <td><span class="c-part">Guarded paths</span><span class="c-note">Sandbox, not network-layer</span></td>
               <td><span class="c-part">Branch rules</span></td>
               <td><span class="c-part">Rule engine</span><span class="c-note">Agent-layer</span></td>
               <td><span class="c-part">Graph ACL inherit</span></td>
@@ -716,6 +744,7 @@
             <tr>
               <td class="cap">Graduated autonomy levels</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">ACMM L1&ndash;L6, advisory&rarr;auto-merge</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">Human-in-loop, no maturity ladder</span></td>
               <td><span class="c-no">&#10007;</span></td>
               <td><span class="c-part">Allow/Ask/Deny</span></td>
               <td><span class="c-no">&#10007;</span></td>
@@ -723,6 +752,7 @@
             <tr>
               <td class="cap">Transparent AI cost &amp; budget controls</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Per-model cost + weekly token budget</span></td>
+              <td><span class="c-no">&#10007;</span></td>
               <td><span class="c-no">&#10007;</span><span class="c-note">Opaque in license</span></td>
               <td><span class="c-no">&#10007;</span></td>
               <td><span class="c-no">&#10007;</span></td>
@@ -730,6 +760,7 @@
             <tr>
               <td class="cap">Trajectory / goal-drift review</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Intent-vs-transcript, injection-aware</span></td>
+              <td><span class="c-part">Injection defense</span><span class="c-note">No drift review</span></td>
               <td><span class="c-no">&#10007;</span></td>
               <td><span class="c-no">&#10007;</span></td>
               <td><span class="c-no">&#10007;</span></td>
@@ -737,13 +768,23 @@
             <tr>
               <td class="cap">Durable work ledger (DAG)</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Git-backed beads w/ dependencies</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub issues/PRs are the state</span></td>
               <td><span class="c-no">&#10007;</span></td>
               <td><span class="c-part">In-run</span></td>
               <td><span class="c-part">Task lists</span></td>
             </tr>
             <tr>
+              <td class="cap">Dashboard &amp; fleet observability</td>
+              <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Live dashboard, governor, per-agent metrics, leaderboard</span></td>
+              <td><span class="c-no">&#10007;</span><span class="c-note">GitHub-native only, no UI</span></td>
+              <td><span class="c-part">In GitHub</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Vendor UI</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Vendor UI</span></td>
+            </tr>
+            <tr>
               <td class="cap">Human-in-the-loop &amp; audit trail</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">PR holds, pause/resume, full audit</span></td>
+              <td><span class="c-yes">&#10003;</span><span class="c-note">Human in the loop, transparent</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Draft-PR review</span></td>
               <td><span class="c-yes">&#10003;</span></td>
               <td><span class="c-yes">&#10003;</span></td>
@@ -751,6 +792,7 @@
             <tr>
               <td class="cap">Auto plan decomposition + plan review</td>
               <td class="hive-col"><span class="c-yes">&#10003;</span><span class="c-note">Live at ACMM L5&ndash;L6 &middot; decompose &rarr; review gate &rarr; stall-replan</span></td>
+              <td><span class="c-part">Prioritize stage</span><span class="c-note">No review-gated DAG</span></td>
               <td><span class="c-part">Spec/plan</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Interactive Planning</span></td>
               <td><span class="c-yes">&#10003;</span><span class="c-note">Work breakdown</span></td>
