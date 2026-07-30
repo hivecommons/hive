@@ -846,10 +846,22 @@ const (
 	// WritableLiteLLMAPIKeyFile. Referenced by path only; never by value.
 	WritableBobAPIKeyFile = WritableSecretsDir + "/bob_api_key"
 
-	// BobAuthMethodAPIKey is the value bobshell's `--auth-method` flag expects
-	// to select API-key auth. Verified in bundle/bob.js, where the auth-type
-	// enum is defined as `USE_BOBSHELL="api-key"`.
-	BobAuthMethodAPIKey = "api-key"
+	// BobAuthTypeEnvVar is the env var bobshell reads to pick its auth type.
+	// There is NO `--auth-method` CLI flag: bobshell 1.0.6 exposes no auth
+	// flags at all (`bob --help` mentions none), and the only control point in
+	// bundle/bob.js is
+	//   let h = process.env.BOBSHELL_DEFAULT_AUTH_TYPE;
+	//   if (h && !Object.values(fr).includes(h)) { /* hard error */ }
+	// where `fr` is the auth-type enum. An unset/invalid value leaves bob on
+	// its W3ID SSO default, which in a pod parks at `awaiting_api_key_input`
+	// forever.
+	BobAuthTypeEnvVar = "BOBSHELL_DEFAULT_AUTH_TYPE"
+
+	// BobAuthTypeAPIKey selects API-key auth. It is bob's own enum constant
+	// `USE_BOBSHELL="api-key"` from bundle/bob.js (the sibling value being
+	// `W3ID_SSO="sso"`), so it is dictated by the vendor, not by us. Not a
+	// secret — it is the literal string "api-key" and carries no credential.
+	BobAuthTypeAPIKey = "api-key"
 )
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the

@@ -3592,21 +3592,17 @@ const bobBackend = "bob"
 //
 // The launch stays INTERACTIVE — no -p/--prompt — so the agent drives bob in a
 // tmux pane exactly like every other CLI backend and a human can attach to it.
-// Two flags make that work in a headless pod. Both were verified against the
-// installed bundle (bobshell 1.0.6 bundle/bob.js), not assumed:
 //
-//   - --auth-method api-key: bob computes its default auth type as "if
-//     BOBSHELL_API_KEY is set AND the session is non-interactive then api-key,
-//     else W3ID_SSO". So in interactive mode the env var ALONE is not enough —
-//     bob still selects SSO, opens a browser, and dies on the 3-minute
-//     callback timeout; it merely prints 'Existing API key detected
-//     (BOBSHELL_API_KEY). Select "Bob-Shell API Key" option to use it.' This
-//     flag sets globalThis.authMethodByCliArg, which takes precedence over both
-//     the computed default and the persisted security.auth.selectedType, so an
-//     interactive session authenticates with the key and never reaches the
-//     browser flow. The value is bob's own enum constant USE_BOBSHELL="api-key".
-//     This is why interactive mode remains available rather than being
-//     hard-switched to -p.
+// Auth type is NOT a flag. An earlier version of this function passed
+// `--auth-method api-key`, but bobshell 1.0.6 has no such flag — it exposes no
+// auth-related flags whatsoever — so bob ignored it, stayed on its W3ID SSO
+// default, and every bob agent parked at `awaiting_api_key_input` forever.
+// The real control is the BOBSHELL_DEFAULT_AUTH_TYPE env var, injected via
+// agentEnvPairs (see config.BobAuthTypeEnvVar). Verified live against a
+// running spoke: with that var exported, `bob --accept-license` boots straight
+// to its prompt and authenticates with the existing key.
+//
+// One flag remains, verified present in bobshell 1.0.6's help output:
 //
 //   - --accept-license: bob hard-errors ("A license agreement is required.
 //     Please accept the license terms before proceeding.") before doing any
@@ -3623,7 +3619,7 @@ const bobBackend = "bob"
 // tmux set-environment (see agentEnvPairs) so it never lands in the command
 // line, `ps` output, or pane scrollback.
 func bobLaunchCmd(binary, model string) string {
-	cmd := fmt.Sprintf("%s --auth-method %s --accept-license", binary, config.BobAuthMethodAPIKey)
+	cmd := fmt.Sprintf("%s --accept-license", binary)
 	if model != "" {
 		cmd = fmt.Sprintf("%s --model %s", cmd, model)
 	}
@@ -4190,6 +4186,16 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		if key := m.bobAPIKey(); key != "" {
 			vars = append(vars, agentEnvPair{config.BobAPIKeyEnvVar, key, true})
 		}
+		// BOBSHELL_DEFAULT_AUTH_TYPE is what actually selects API-key auth;
+		// without it bob defaults to W3ID SSO and parks at the interactive key
+		// prompt forever. Deliberately NOT Secret: the value is the literal
+		// non-credential string "api-key", and secret pairs only reach a
+		// freshly-created pane shell via tmux set-environment, whereas
+		// non-secret pairs are re-applied on EVERY launch through
+		// buildEnvPrefix. That asymmetry is exactly what caused the sibling
+		// bug fixed in #2228, so the auth type must ride the always-reapplied
+		// path or a relaunch into an existing session loses it.
+		vars = append(vars, agentEnvPair{config.BobAuthTypeEnvVar, config.BobAuthTypeAPIKey, false})
 	}
 	// BD_DIR tells the `bd` CLI where to read/write beads. Without this,
 	// bd falls back to cwd (/data/agents/<name>) instead of the configured
