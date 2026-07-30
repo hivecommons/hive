@@ -290,3 +290,48 @@ func TestCLIModelCacheStabilize_PerBackendIsolation(t *testing.T) {
 		t.Fatalf("copilot retention lost, got %v", got)
 	}
 }
+
+// TestQueryCLIModels_BobAutoOnly verifies bob is served EXACTLY one model, the
+// auto sentinel, and that it is authoritative rather than a fallback. bob has
+// no model catalog and no usable --model flag, so any additional option would
+// invite a selection it cannot honor; marking it fallback would label it
+// "(common alias, unverified)" in the dropdown and expose it to auto-heal.
+func TestQueryCLIModels_BobAutoOnly(t *testing.T) {
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.queryCLIModels(bobBackendID)
+	if len(r.models) != 1 {
+		t.Fatalf("bob must be served exactly one model, got %v", r.models)
+	}
+	if r.models[0] != bobAutoModel {
+		t.Fatalf("bob's only model must be %q, got %q", bobAutoModel, r.models[0])
+	}
+	if r.fallback {
+		t.Fatal("bob's single-option list is authoritative, not a fallback")
+	}
+}
+
+// TestCliStaticFallback_BobAutoOnly verifies the static fallback path (used if
+// the discovery switch is ever bypassed) also yields only the auto sentinel,
+// so bob can never be handed the copilot catalog.
+func TestCliStaticFallback_BobAutoOnly(t *testing.T) {
+	got := cliStaticFallback(bobBackendID)
+	if len(got) != 1 || got[0] != bobAutoModel {
+		t.Fatalf("bob static fallback must be exactly [%q], got %v", bobAutoModel, got)
+	}
+}
+
+// TestQueryCLIModels_BobDoesNotAffectOtherBackends guards against a regression
+// where adding bob narrows or empties another CLI backend's catalog.
+func TestQueryCLIModels_BobDoesNotAffectOtherBackends(t *testing.T) {
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	for _, backend := range []string{"claude", "copilot", "gemini", "goose", "codex"} {
+		r := s.queryCLIModels(backend)
+		if len(r.models) == 0 {
+			t.Errorf("%s models must not be empty", backend)
+		}
+		if len(r.models) == 1 && r.models[0] == bobAutoModel {
+			t.Errorf("%s must not inherit bob's single auto option: %v", backend, r.models)
+		}
+	}
+}

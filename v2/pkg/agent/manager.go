@@ -5094,6 +5094,20 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 			cmd += fmt.Sprintf(" --deny-tool='%s'", copilotPattern)
 		}
 		return cmd
+	case bobBackend:
+		// bob must never receive --model. It auto-selects its own model and a
+		// concrete id breaks inference outright: normalizeModelName rewrites a
+		// trailing -<digits> to .<digits> for every non-claude backend, so a
+		// configured claude-sonnet-4-6 reaches bob as claude-sonnet-4.6 — an id
+		// bob's backend does not know — and every prompt dies with "Cannot read
+		// properties of undefined (reading 'maxTokens')". The dashboard offers
+		// bob only the "auto" sentinel, and even that is a display/stored
+		// placeholder: `bob --model auto` is untested and must not be emitted.
+		//
+		// This branch exists because agents with Config.Tools set bypass
+		// bobLaunchCmd entirely and would otherwise land in the default case
+		// below, reintroducing the crash for exactly those agents.
+		return binary
 	default:
 		cmd := binary
 		if model != "" {
