@@ -315,6 +315,7 @@ type ApplyLifecycleOptions struct {
 	MaxActiveIssues                  int
 	PreferRepairable                 bool
 	DisableIssuePublication          bool
+	RetiredRepairVerificationOnly    bool
 }
 
 type ApplyLifecycleResult struct {
@@ -508,20 +509,22 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 		newLegacyMigrations[observation.RepositoryFingerprint] = legacy
 	}
 	beadInputs := make([]beads.BatchInput, 0, len(importInputs))
-	if controllerOwned {
-		for _, input := range importInputs {
-			if beadStore.FindByExternalRef(input.ExternalRef) == nil {
-				beadInputs = append(beadInputs, input)
-			}
-		}
-	} else {
-		for _, observation := range manifest.Observations {
-			if observation.State != "present" || canonicalOwners[observation.RepositoryFingerprint] != nil {
-				continue
-			}
-			if existing := s.state.Findings[observation.RepositoryFingerprint]; existing == nil || existing.BeadID == "" {
-				if input, exists := importInputs[observation.RepositoryFingerprint]; exists {
+	if !options.RetiredRepairVerificationOnly {
+		if controllerOwned {
+			for _, input := range importInputs {
+				if beadStore.FindByExternalRef(input.ExternalRef) == nil {
 					beadInputs = append(beadInputs, input)
+				}
+			}
+		} else {
+			for _, observation := range manifest.Observations {
+				if observation.State != "present" || canonicalOwners[observation.RepositoryFingerprint] != nil {
+					continue
+				}
+				if existing := s.state.Findings[observation.RepositoryFingerprint]; existing == nil || existing.BeadID == "" {
+					if input, exists := importInputs[observation.RepositoryFingerprint]; exists {
+						beadInputs = append(beadInputs, input)
+					}
 				}
 			}
 		}
@@ -608,6 +611,32 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				return result, err
 			}
 			result.FindingIDs = append(result.FindingIDs, observation.RepositoryFingerprint)
+			continue
+		}
+
+		if options.RetiredRepairVerificationOnly {
+			result.Deferred++
+			if finding == nil {
+				if err := audit(LifecycleAuditEntry{
+					Action: "defer_retired_repair_verification_issue", Allowed: true,
+					Repository: manifest.Source.Repository, RepositoryFingerprint: observation.RepositoryFingerprint,
+					BundleID: manifest.BundleID, Detail: "present unrelated observation was not admitted during exact retired-repair verification",
+				}); err != nil {
+					return result, err
+				}
+				continue
+			}
+			updateFindingFromObservation(finding, manifest, observation)
+			finding.PendingIssueAction = ""
+			result.Updated++
+			result.FindingIDs = append(result.FindingIDs, finding.RepositoryFingerprint)
+			if err := audit(LifecycleAuditEntry{
+				Action: "defer_retired_repair_verification_issue", Allowed: true,
+				Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint,
+				BundleID: manifest.BundleID, Detail: "present existing finding was refreshed without issue publication or repair admission during exact retired-repair verification",
+			}); err != nil {
+				return result, err
+			}
 			continue
 		}
 

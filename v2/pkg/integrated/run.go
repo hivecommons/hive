@@ -219,6 +219,7 @@ func RunOnce(ctx context.Context, options RunOptions) (RunResult, error) {
 	if err := reconcileOpenRepairDuplicates(runCtx, store, config, lifecycle, options.GitHub, policy); err != nil {
 		return result, err
 	}
+	retiredRepairVerificationOnly := pendingRetiredRepairVerification(lifecycle.Snapshot())
 	if config.Automation != AutomationAutoMerge {
 		workflow, err = dispatchAndWait(runCtx, options.GitHub, config)
 		if err != nil {
@@ -235,7 +236,7 @@ func RunOnce(ctx context.Context, options RunOptions) (RunResult, error) {
 	var outbox visualhive.OutboxProcessorResult
 	var verifiedArtifact hivegithub.VerifiedVisualHiveArtifact
 	for staleAttempt := 0; ; staleAttempt++ {
-		applyOptions := visualhive.ApplyLifecycleOptions{}
+		applyOptions := visualhive.ApplyLifecycleOptions{RetiredRepairVerificationOnly: retiredRepairVerificationOnly}
 		postMergeFingerprint := ""
 		if externalMerge {
 			finding, ok := mergedRepairFinding(lifecycle.Snapshot())
@@ -246,6 +247,7 @@ func RunOnce(ctx context.Context, options RunOptions) (RunResult, error) {
 			if err != nil {
 				return result, err
 			}
+			applyOptions.RetiredRepairVerificationOnly = retiredRepairVerificationOnly
 			if err := lifecycle.MarkPostMergeVerifying(finding.RepositoryFingerprint, fmt.Sprintf("%d", workflow.RunID), workflow.RunURL); err != nil {
 				return result, err
 			}
@@ -287,7 +289,14 @@ func RunOnce(ctx context.Context, options RunOptions) (RunResult, error) {
 			return result, err
 		}
 	}
-	if config.Automation == AutomationRepairPR || config.Automation == AutomationAutoMerge {
+	if retiredRepairVerificationOnly {
+		if err := store.AuditStrict(AuditEntry{
+			Action: "retired_repair_verification", Allowed: true, Repository: config.Repository,
+			Detail: "authoritative evidence reconciled retired repair state; new repair orchestration was deferred to a later production cycle",
+		}); err != nil {
+			return result, err
+		}
+	} else if config.Automation == AutomationRepairPR || config.Automation == AutomationAutoMerge {
 		orchestration, orchestrationErr := orchestrateRepairs(runCtx, options.StateDir, config, lifecycle, beadStore, options.GitHub, policy, verifiedArtifact, options.Specialists, options.SpecialistWorkDir)
 		result.Repairs, result.Gates = orchestration.Repairs, orchestration.Gates
 		result.PostMergeWorkflow, result.PostMergeLifecycle = orchestration.PostMergeWorkflow, orchestration.PostMergeLifecycle
@@ -303,6 +312,18 @@ func RunOnce(ctx context.Context, options RunOptions) (RunResult, error) {
 	}
 	result.CompletedAt = time.Now().UTC()
 	return result, nil
+}
+
+func pendingRetiredRepairVerification(state visualhive.LifecycleState) bool {
+	for _, finding := range state.Findings {
+		if finding == nil || finding.LastRetiredRepair == nil || finding.Status != visualhive.StatusIssueOpen {
+			continue
+		}
+		if !finding.LastSeenAt.After(finding.LastRetiredRepair.RetiredAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func reconcileApprovedBaselineBranches(ctx context.Context, stateDir string, config Config, lifecycle *visualhive.LifecycleStore, client *hivegithub.Client, policy automation.Policy) error {

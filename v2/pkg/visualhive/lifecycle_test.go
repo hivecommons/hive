@@ -317,6 +317,90 @@ func TestLifecycleRetiredRepairRequiresFreshAuthoritativeAbsence(t *testing.T) {
 	}
 }
 
+func TestRetiredRepairVerificationReconcilesAbsenceWithoutAdmittingUnrelatedWork(t *testing.T) {
+	root := t.TempDir()
+	beadStore := newTestBeadStore(t, filepath.Join(root, "beads"))
+	lifecycle, err := NewLifecycleStore(filepath.Join(root, "lifecycle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiredObservation := publicationTestObservation("retired-source", "canonical", "retired-root", "visual_regression", "Retired repair")
+	unrelatedObservation := publicationTestObservation("unrelated-source", "canonical", "unrelated-root", "visual_regression", "Unrelated existing finding")
+	initial := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "initial"), "bundle-retirement-initial",
+		[]Observation{retiredObservation, unrelatedObservation}, true,
+	))
+	if _, err := lifecycle.ApplyBundle(initial, beadStore, ApplyLifecycleOptions{TargetRef: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	retiredFingerprint := initial.Manifest.Observations[0].RepositoryFingerprint
+	unrelatedFingerprint := initial.Manifest.Observations[1].RepositoryFingerprint
+	if err := lifecycle.MarkIssueOpened(retiredFingerprint, 101, "https://github.test/owner/repo/issues/101"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkIssueOpened(unrelatedFingerprint, 102, "https://github.test/owner/repo/issues/102"); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range lifecycle.PendingOutbox() {
+		if err := lifecycle.MarkOutboxAttempt(entry.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	branch := "hive/repair-retirement-scope"
+	head, base, current := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+	if err := lifecycle.MarkRepairStarted(retiredFingerprint, branch); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkPROpen(retiredFingerprint, head, 202, "https://github.test/owner/repo/pull/202"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkChecks(retiredFingerprint, head, false); err != nil {
+		t.Fatal(err)
+	}
+	retired := RetiredRepair{
+		PullRequestNumber: 202, PullRequestURL: "https://github.test/owner/repo/pull/202",
+		Branch: branch, HeadSHA: head, BaseBranch: "main", BaseSHA: base, CurrentDefaultHeadSHA: current,
+	}
+	findingBeforeRetirement, _ := lifecycle.Finding(retiredFingerprint)
+	retired.VerdictReceipt, retired.VerdictReceiptSHA256 = failedRetirementReceipt(t, findingBeforeRetirement, retired)
+	if err := lifecycle.RetireRepairForVerification(retiredFingerprint, retired); err != nil {
+		t.Fatal(err)
+	}
+
+	retiredObservation.State = "absent"
+	newObservation := publicationTestObservation("new-source", "canonical", "new-root", "visual_regression", "New unrelated finding")
+	verification := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "verification"), "bundle-retirement-verification",
+		[]Observation{retiredObservation, unrelatedObservation, newObservation}, true,
+	))
+	applied, err := lifecycle.ApplyBundle(verification, beadStore, ApplyLifecycleOptions{
+		TargetRef: "main", CurrentTargetCommitSHA: verification.Manifest.Source.CommitSHA,
+		RetiredRepairVerificationOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.Resolved != 1 || applied.Created != 0 || applied.Reopened != 0 || applied.BeadsCreated != 0 || applied.Deferred != 2 {
+		t.Fatalf("retired-repair verification admitted unrelated work: %+v", applied)
+	}
+	retiredFinding, _ := lifecycle.Finding(retiredFingerprint)
+	if retiredFinding.Status != StatusResolved || retiredFinding.PendingIssueAction != OutboxCloseIssue {
+		t.Fatalf("retired finding was not authoritatively reconciled: %+v", retiredFinding)
+	}
+	unrelatedFinding, _ := lifecycle.Finding(unrelatedFingerprint)
+	if unrelatedFinding.Status != StatusIssueOpen || unrelatedFinding.PendingIssueAction != "" {
+		t.Fatalf("unrelated existing finding was published or reopened: %+v", unrelatedFinding)
+	}
+	newFingerprint := verification.Manifest.Observations[2].RepositoryFingerprint
+	if _, exists := lifecycle.Finding(newFingerprint); exists {
+		t.Fatal("new unrelated finding was admitted during bounded retirement verification")
+	}
+	pending := lifecycle.PendingOutbox()
+	if len(pending) != 1 || pending[0].Action != OutboxCloseIssue || pending[0].RepositoryFingerprint != retiredFingerprint {
+		t.Fatalf("retirement verification produced unexpected GitHub lifecycle writes: %+v", pending)
+	}
+}
+
 func TestLifecycleRepairRetirementFailsClosedOnWrongReceiptOrUnchangedHead(t *testing.T) {
 	lifecycle, err := NewLifecycleStore(t.TempDir())
 	if err != nil {
