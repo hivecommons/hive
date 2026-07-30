@@ -67,10 +67,11 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		return map[string]any{"applied": true}, []byte("{\"applied\":true}\n"), nil
 	}
 
+	maxActiveIssues := 3
 	request := dashboard.IntegratedSetupRequest{
 		RequestID:  "setup-cycle-a-001",
 		Repository: "owner/repository", Coverage: "essential", Automation: "repair-pr",
-		Provider: "codex", VisualHiveRef: strings.Repeat("a", 40),
+		Provider: "codex", VisualHiveRef: strings.Repeat("a", 40), MaxActiveIssues: &maxActiveIssues,
 	}
 	planDigest, err := dashboardSetupPlanDigest(request, planBytes)
 	if err != nil {
@@ -89,6 +90,7 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 		"setup", "--json", "--repo", "owner/repository", "--coverage", "essential",
 		"--automation", "repair-pr", "--provider", "codex", "--runtime", "local",
 		"--visual-hive=true", "--visual-hive-ref", strings.Repeat("a", 40),
+		"--max-active-issues", "3",
 	}
 	if !reflect.DeepEqual(calls[0], append(append([]string(nil), wantBase...), "--plan")) ||
 		!reflect.DeepEqual(calls[1], wantBase) {
@@ -136,6 +138,17 @@ func TestDashboardSetupPlanDigestIgnoresOnlyGeneratedAt(t *testing.T) {
 	}
 	if changedDigest == firstDigest {
 		t.Fatal("a semantic setup-plan change did not change the digest")
+	}
+
+	changedLimit := request
+	maxActiveIssues := 3
+	changedLimit.MaxActiveIssues = &maxActiveIssues
+	changedLimitDigest, err := dashboardSetupPlanDigest(changedLimit, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changedLimitDigest == firstDigest {
+		t.Fatal("changing max_active_issues did not change the dashboard setup plan digest")
 	}
 }
 

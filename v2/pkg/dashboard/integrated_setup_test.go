@@ -27,6 +27,7 @@ func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 			request.RequestID != "setup-cycle-a-001" ||
 			request.Coverage != "essential" || request.Automation != "repair-pr" ||
 			request.Provider != "codex" || request.VisualHiveRef != strings.Repeat("a", 40) ||
+			request.MaxActiveIssues == nil || *request.MaxActiveIssues != 3 ||
 			request.ExpectedPlanSHA256 != "" {
 			t.Fatalf("unexpected setup request: token=%q request=%+v", token, request)
 		}
@@ -39,6 +40,7 @@ func TestIntegratedSetupPlanUsesExactHiveRepositoryAndSavedOwner(t *testing.T) {
 		"coverage":"essential",
 		"automation":"repair-pr",
 		"provider":"codex",
+		"max_active_issues":3,
 		"visual_hive_ref":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -132,6 +134,32 @@ func TestIntegratedSetupRejectsReadOnlyViewerAndUnknownFields(t *testing.T) {
 	})
 	if unknown.Code != http.StatusBadRequest || !strings.Contains(unknown.Body.String(), "unknown field") {
 		t.Fatalf("unknown-field status=%d body=%s", unknown.Code, unknown.Body.String())
+	}
+}
+
+func TestIntegratedSetupRejectsInvalidActiveIssueLimit(t *testing.T) {
+	server, deps := apiServer(t)
+	server.authToken = "dashboard-test-token"
+	deps.Config.Project.PrimaryRepo = "owner/repository"
+	deps.IntegratedSetupTokenFunc = func() (string, error) { return "saved-token", nil }
+	deps.IntegratedSetupAuthorizerFunc = func(string) (string, error) { return "alice", nil }
+	deps.IntegratedSetupFunc = func(context.Context, IntegratedSetupRequest, string) (map[string]any, error) {
+		t.Fatal("setup callback must not run for an invalid active issue limit")
+		return nil, nil
+	}
+
+	for _, limit := range []int{0, 101} {
+		recorder := doIntegratedPost(server, "/api/integrated/setup/plan", map[string]any{
+			"request_id":        "setup-cycle-a-006",
+			"coverage":          "essential",
+			"automation":        "repair-pr",
+			"provider":          "codex",
+			"visual_hive_ref":   strings.Repeat("a", 40),
+			"max_active_issues": limit,
+		})
+		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "max_active_issues") {
+			t.Fatalf("limit=%d status=%d body=%s", limit, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 

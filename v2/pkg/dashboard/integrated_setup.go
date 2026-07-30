@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/kubestellar/hive/v2/pkg/github"
@@ -29,6 +30,7 @@ type IntegratedSetupRequest struct {
 	Automation         string `json:"automation"`
 	Provider           string `json:"provider"`
 	VisualHiveRef      string `json:"visual_hive_ref"`
+	MaxActiveIssues    *int   `json:"max_active_issues,omitempty"`
 	ExpectedPlanSHA256 string `json:"expected_plan_sha256,omitempty"`
 }
 
@@ -80,6 +82,7 @@ func (s *Server) handleIntegratedSetup(w http.ResponseWriter, r *http.Request, a
 		"repository", request.Repository,
 		"request_id", request.RequestID,
 		"visual_hive_ref", request.VisualHiveRef,
+		"max_active_issues", strconv.Itoa(integratedSetupMaxActiveIssues(request)),
 		"expected_plan_sha256", request.ExpectedPlanSHA256,
 	))
 	jsonResponse(w, result)
@@ -174,6 +177,9 @@ func validateIntegratedSetupRequest(request IntegratedSetupRequest, apply bool) 
 	if !integratedSetupCommitPattern.MatchString(request.VisualHiveRef) {
 		return errors.New("visual_hive_ref must be an exact lowercase 40-character commit")
 	}
+	if request.MaxActiveIssues != nil && (*request.MaxActiveIssues < 1 || *request.MaxActiveIssues > 100) {
+		return errors.New("max_active_issues must be between 1 and 100 when specified")
+	}
 	if apply {
 		if !integratedSetupDigestPattern.MatchString(request.ExpectedPlanSHA256) {
 			return errors.New("expected_plan_sha256 must bind the exact dashboard setup plan")
@@ -182,6 +188,13 @@ func validateIntegratedSetupRequest(request IntegratedSetupRequest, apply bool) 
 		return errors.New("expected_plan_sha256 is accepted only by setup apply")
 	}
 	return nil
+}
+
+func integratedSetupMaxActiveIssues(request IntegratedSetupRequest) int {
+	if request.MaxActiveIssues == nil {
+		return 5
+	}
+	return *request.MaxActiveIssues
 }
 
 func ensureJSONEOF(decoder *json.Decoder) error {

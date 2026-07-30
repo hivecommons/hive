@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 		"--runtime", "local",
 		"--visual-hive=true",
 		"--visual-hive-ref", request.VisualHiveRef,
+		"--max-active-issues", strconv.Itoa(dashboardSetupMaxActiveIssues(request)),
 	}
 	stateDir, err := dashboardSetupStateDir(request.Repository)
 	if err != nil {
@@ -130,16 +132,24 @@ func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, planByte
 		return "", fmt.Errorf("encode canonical setup plan: %w", err)
 	}
 	binding := strings.Join([]string{
-		"hive.dashboard-integrated-setup-plan.v3",
+		"hive.dashboard-integrated-setup-plan.v4",
 		request.RequestID,
 		request.Repository,
 		request.Coverage,
 		request.Automation,
 		request.Provider,
 		request.VisualHiveRef,
+		strconv.Itoa(dashboardSetupMaxActiveIssues(request)),
 	}, "\n") + "\n"
 	sum := sha256.Sum256(append([]byte(binding), canonicalPlan...))
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func dashboardSetupMaxActiveIssues(request dashboard.IntegratedSetupRequest) int {
+	if request.MaxActiveIssues == nil {
+		return 5
+	}
+	return *request.MaxActiveIssues
 }
 
 func ensureDashboardSetupJSONEOF(decoder *json.Decoder) error {
