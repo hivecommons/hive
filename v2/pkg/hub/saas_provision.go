@@ -540,6 +540,111 @@ func (s *HubServer) repairGitHubHostForHive(hiveID string) bool {
 // Until a human does that, the hive authenticates as nothing on its GHE host.
 const gitHubAppStillRequiredNote = "github_host repaired; a hive still carrying the public app_id also needs the GitHub Enterprise App installed on its org before its installation can be auto-discovered"
 
+// repairVanityURLForHive retroactively mints the friendly vanity host for a hive
+// that was CLAIMED BEFORE the vanity feature existed, reporting whether it
+// changed anything.
+//
+// h.VanityURL is written in exactly ONE place — handleAssignHive, at claim time.
+// Every read path (claimedVanityURL, and through it My Hives, the SSO /open
+// handoff, and migrateHive) treats an empty VanityURL as "no validated host, keep
+// the placeholder". So a hive claimed before that code shipped keeps
+// VanityURL == "" forever and displays/opens its raw placeholder host no matter
+// how many times it heartbeats — nothing else ever fills it in. That is the
+// 14-claimed-hives-still-on-placeholder-IDs report: those records have a real org
+// but a placeholder id, and a placeholder id is NOT evidence the fix is missing,
+// only that the vanity URL was never minted for them.
+//
+// This deliberately does NOT touch the hive's id. The id is a k8s namespace
+// suffix (hive-hosted-<id>), an ingress hostname, a per-agent socket path and the
+// SSO token's "h" claim; renaming it is a different and far larger migration. The
+// goal is only that the DISPLAYED name and the OPENED URL are the vanity ones.
+//
+// It is conservative and idempotent, mirroring repairGitHubHostForHive:
+//   - Unclaimed placeholders are skipped: assign owns those and mints the vanity
+//     URL itself at claim time.
+//   - A hive that already has a VanityURL is never touched, so re-running is a
+//     no-op and a hive keeps one stable vanity host (the id's random suffix is
+//     regenerated per call, so re-minting would churn the host every beat).
+//   - A hive with no resolvable cluster domain, or an incomplete claim (no org or
+//     no primary repo), is skipped — there is nothing to derive a host from.
+//   - The host is adopted ONLY once it is actually servable. Unlike the claim
+//     path, which adopts optimistically because provisioning is creating the
+//     spoke's routes anyway, a retroactive repair has no such guarantee: the
+//     vanity host is a NEW name that resolves to no backend until an
+//     ingress/route exists for it. Adopting it before then would replace an
+//     ugly-but-working placeholder link with a 503, so addVanityHostToIngress
+//     must succeed first. On a heartbeat-only cluster the hub cannot kubectl to
+//     the spoke, so that call fails and the hive correctly keeps its working
+//     placeholder host.
+//
+// Called on each heartbeat, so it must be cheap and silent in the overwhelmingly
+// common no-op case — every guard below returns before any network call or write.
+func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		return false
+	}
+	if h.Status == statusAvailable {
+		return false // unclaimed placeholder — assign mints it at claim time
+	}
+	if h.VanityURL != "" {
+		return false // already has one — never re-mint (idempotency + stable host)
+	}
+	// An incomplete claim has nothing to derive a friendly host from.
+	if h.Org == "" || h.PrimaryRepo == "" {
+		return false
+	}
+	cluster := s.clusterForHive(h)
+	if cluster == nil || cluster.Domain == "" {
+		return false
+	}
+	vanityHost := generateHiveID(h.Org, h.PrimaryRepo) + "." + cluster.Domain
+	// Make it servable BEFORE adopting it; on failure leave VanityURL empty so
+	// every read path keeps falling back to the working placeholder host.
+	if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
+		s.logger.Info("vanity url repair: host is not servable yet, keeping the placeholder host",
+			"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
+		return false
+	}
+	h.VanityURL = "https://" + vanityHost
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("vanity url repair: failed to save hive", "hive", hiveID, "error", err)
+		return false
+	}
+	s.logger.Info("vanity url repair: minted a vanity host for a hive claimed before the vanity feature",
+		"hive", hiveID, "org", h.Org, "primary_repo", h.PrimaryRepo,
+		"cluster", cluster.ID, "vanity_url", h.VanityURL)
+	return true
+}
+
+// makeVanityHostServable creates the ingress/route that makes vanityHost resolve,
+// returning an error when it could not be made servable. It is the one seam the
+// retroactive repair goes through: production uses addVanityHostToIngress, while
+// tests substitute it to exercise the adopt path without a live cluster (kubectl
+// is unavailable under test, so the real call always fails there).
+func (s *HubServer) makeVanityHostServable(hiveID, vanityHost string, cluster *ClusterConfig) error {
+	if s.vanityHostServable != nil {
+		return s.vanityHostServable(hiveID, vanityHost, cluster)
+	}
+	return s.addVanityHostToIngress(hiveID, vanityHost, cluster)
+}
+
+// repairVanityURLsForClaimedHives applies the retroactive vanity-URL repair to
+// every hive, returning the number changed. Safe to run repeatedly: each hive is
+// gated by repairVanityURLForHive, which no-ops once a vanity URL exists.
+func (s *HubServer) repairVanityURLsForClaimedHives() int {
+	repaired := 0
+	for _, h := range listSaaSHives() {
+		if s.repairVanityURLForHive(h.ID) {
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		s.logger.Info("vanity url repair: complete", "hives_repaired", repaired)
+	}
+	return repaired
+}
+
 func generateHiveID(org, repo string) string {
 	short := repo
 	if len(short) > 12 {

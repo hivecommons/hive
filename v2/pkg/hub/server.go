@@ -402,8 +402,14 @@ type HubServer struct {
 	httpServer            *http.Server
 	httpMu                sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
 	clusters              map[string]ClusterConfig
-	heartbeatHealth       map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
-	heartbeatHealthMu     sync.RWMutex
+
+	// vanityHostServable overrides how the retroactive vanity-URL repair makes a
+	// vanity host servable (see makeVanityHostServable). nil in production, where
+	// the real addVanityHostToIngress runs; set by tests, which have no cluster to
+	// kubectl to.
+	vanityHostServable func(hiveID, vanityHost string, cluster *ClusterConfig) error
+	heartbeatHealth    map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
+	heartbeatHealthMu  sync.RWMutex
 
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to
@@ -1100,6 +1106,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// very beat. No-op (and silent) for every hive that already has a host, is
 	// an unclaimed placeholder, or sits on a non-GHE cluster.
 	s.repairGitHubHostForHive(payload.HiveID)
+
+	// Retroactively mint the vanity host for a hive CLAIMED BEFORE the vanity
+	// feature existed, also BEFORE building the project config, so the URL-only
+	// push below delivers it on this very beat. VanityURL is otherwise written
+	// only at assign time, so those hives would display and open their raw
+	// placeholder host forever. No-op (and silent) for unclaimed placeholders,
+	// hives that already have a vanity URL, and hives whose vanity host the hub
+	// cannot make servable (heartbeat-only clusters keep their placeholder).
+	s.repairVanityURLForHive(payload.HiveID)
 
 	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL, payload.GitHubAPIURL); projCfg != nil {
 		resp.ProjectConfig = projCfg
