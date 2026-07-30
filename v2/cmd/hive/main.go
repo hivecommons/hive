@@ -448,7 +448,9 @@ func main() {
 	if tokenData, err := os.ReadFile("/data/gh-user-token"); err == nil {
 		userToken := strings.TrimSpace(string(tokenData))
 		if userToken != "" {
-			if username, err := github.ValidateToken(userToken, cfg.GitHub.ResolvedAPIURL()); err == nil {
+			// Identity check goes to github.com (the user token is a github.com
+			// OAuth token); the repo client stays on the per-hive host.
+			if username, err := github.ValidateToken(userToken, cfg.GitHub.OAuthAPIURL()); err == nil {
 				uc := github.NewClient(userToken, cfg.Project.Org, cfg.Project.Repos, logger, cfg.GitHub.ResolvedAPIURL())
 				userGHClient.Store(uc)
 				logger.Info("user GitHub token loaded for advisory posting", "username", username)
@@ -2019,7 +2021,9 @@ func main() {
 					if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
 						tok := strings.TrimSpace(string(td))
 						if tok != "" {
-							if u, err := github.ValidateToken(tok, cfg.GitHub.ResolvedAPIURL()); err == nil {
+							// gh-user-token is a github.com OAuth token — validate its
+							// identity against github.com, not the (possibly GHE) repo host.
+							if u, err := github.ValidateToken(tok, cfg.GitHub.OAuthAPIURL()); err == nil {
 								return u.Login
 							}
 						}

@@ -1120,6 +1120,11 @@ const (
 	DefaultGitHubBaseURL = "https://github.com"
 	// DefaultGitHubAppSlug is the public Hive GitHub App slug.
 	DefaultGitHubAppSlug = "kubestellar-hive"
+	// DefaultOAuthClientID is the PUBLIC github.com Hive App client ID used for
+	// device-flow login. Login is always github.com (see OAuthBaseURL), so this
+	// is the correct client for every hive — including GHE hives, whose users
+	// still sign in with a github.com identity. No secret; safe to hardcode.
+	DefaultOAuthClientID = "Ov23ligE2p0gjXg6xAUf"
 )
 
 // IsPlaceholderApp reports whether app_id is the "no real App yet" sentinel.
@@ -1165,6 +1170,33 @@ func (g GitHubConfig) ResolvedBaseURL() string {
 // IsGHE returns true if the configured base URL points to a GitHub Enterprise instance.
 func (g GitHubConfig) IsGHE() bool {
 	return g.BaseURL != "" && g.BaseURL != DefaultGitHubBaseURL
+}
+
+// OAuthBaseURL and OAuthAPIURL are the hosts used for DEVICE-FLOW LOGIN and
+// user-identity token validation. They are ALWAYS public github.com, decoupled
+// from the App/repo host (ResolvedBaseURL/ResolvedAPIURL, which may be GHE).
+//
+// Why the split: the Hive login OAuth app (oauth_client_id, default the public
+// "Ov23ligE2p0gjXg6xAUf") is a github.com app, and every user signs in with a
+// github.com identity — even on a hive whose REPOS and GitHub App live on GHE.
+// Pointing the device-flow endpoints at a GHE host (as ResolvedBaseURL does for
+// a GHE hive) makes GitHub return "Not Found" and the dashboard shows "could not
+// verify GitHub identity". Login must therefore use these fixed public hosts;
+// only the App-token / repo-API paths follow the per-hive (possibly GHE) host.
+func (g GitHubConfig) OAuthBaseURL() string { return DefaultGitHubBaseURL }
+func (g GitHubConfig) OAuthAPIURL() string  { return DefaultGitHubAPIURL }
+
+// OAuthClientIDResolved returns the client ID for device-flow login: the
+// configured oauth_client_id, or the public github.com default. Because login
+// is always github.com, the default is correct for every hive — a GHE hive must
+// not fall back to a GHE client ID here, or device flow against github.com fails
+// with an unknown-client error. A hive that has explicitly set oauth_client_id
+// to a github.com app keeps that; the default only fills a blank.
+func (g GitHubConfig) OAuthClientIDResolved() string {
+	if g.OAuthClientID != "" {
+		return g.OAuthClientID
+	}
+	return DefaultOAuthClientID
 }
 
 // ResolvedAppSlug returns the configured app slug or the default public Hive app slug.

@@ -1343,7 +1343,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	token := strings.TrimSpace(string(tokenData))
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		jsonResponse(w, map[string]interface{}{"logged_in": false, "error": "token expired or revoked"})
 		return
@@ -1352,16 +1352,15 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGHUserAuthStart(w http.ResponseWriter, r *http.Request) {
-	clientID := s.deps.Config.GitHub.OAuthClientID
-	if clientID == "" {
-		jsonError(w, "oauth_client_id not configured. Add 'oauth_client_id: Ov23ligE2p0gjXg6xAUf' to the github section of hive.yaml and restart the container. This is the public Hive GitHub App client ID used for the Device Flow login — no secret required.", http.StatusBadRequest)
-		return
-	}
+	// Always resolves to a github.com client ID (configured or the public
+	// default) — login is github.com even on GHE hives, so this never fails for
+	// a blank oauth_client_id and never uses a GHE client.
+	clientID := s.deps.Config.GitHub.OAuthClientIDResolved()
 
 	s.deviceFlowMu.Lock()
 	defer s.deviceFlowMu.Unlock()
 
-	state, err := github.StartDeviceFlow(clientID, s.deps.Config.GitHub.ResolvedBaseURL(), s.deps.Config.GitHub.ResolvedAPIURL())
+	state, err := github.StartDeviceFlow(clientID, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1385,8 +1384,8 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientID := s.deps.Config.GitHub.OAuthClientID
-	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.ResolvedBaseURL(), s.deps.Config.GitHub.ResolvedAPIURL())
+	clientID := s.deps.Config.GitHub.OAuthClientIDResolved()
+	token, status, err := github.PollDeviceFlow(clientID, s.deviceFlowState.DeviceCode, s.deps.Config.GitHub.OAuthBaseURL(), s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deviceFlowState = nil
 		jsonResponse(w, map[string]interface{}{"status": "error", "error": err.Error()})
@@ -1405,7 +1404,7 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// user's token must never be written to disk or wired in as the hive's user
 	// client — otherwise a rejected login would still leak its token into the
 	// shared client and become the hive's identity.
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil || user == nil || user.Login == "" {
 		s.deviceFlowState = nil
 		// Audit the failed login so the owner can see attempts that never got
@@ -1619,7 +1618,7 @@ func (s *Server) restoreGHUserSession() {
 		return
 	}
 
-	user, err := github.ValidateToken(token, s.deps.Config.GitHub.ResolvedAPIURL())
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deps.Logger.Warn("saved GitHub user token is invalid, removing", "error", err)
 		os.Remove(userTokenPath)

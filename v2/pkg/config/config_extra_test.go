@@ -654,6 +654,36 @@ func TestResolvedBaseURL_Custom(t *testing.T) {
 	}
 }
 
+// OAuth login hosts are ALWAYS public github.com, even when the App/repo host is
+// GHE — this is the split that keeps device-flow login working on GHE hives.
+func TestOAuthURLs_AlwaysPublic_EvenOnGHE(t *testing.T) {
+	ghe := GitHubConfig{
+		APIURL:        "https://github.ibm.com/api/v3",
+		BaseURL:       "https://github.ibm.com",
+		OAuthClientID: "", // blank must fall back to the public github.com client
+	}
+	if got := ghe.OAuthAPIURL(); got != DefaultGitHubAPIURL {
+		t.Errorf("OAuthAPIURL() on GHE hive = %q, want github.com %q", got, DefaultGitHubAPIURL)
+	}
+	if got := ghe.OAuthBaseURL(); got != DefaultGitHubBaseURL {
+		t.Errorf("OAuthBaseURL() on GHE hive = %q, want github.com %q", got, DefaultGitHubBaseURL)
+	}
+	if got := ghe.OAuthClientIDResolved(); got != DefaultOAuthClientID {
+		t.Errorf("OAuthClientIDResolved() blank on GHE = %q, want public %q", got, DefaultOAuthClientID)
+	}
+	// Meanwhile the App/repo host must STILL be GHE — the split does not touch it.
+	if got := ghe.ResolvedAPIURL(); got != "https://github.ibm.com/api/v3" {
+		t.Errorf("ResolvedAPIURL() (App host) = %q, want GHE preserved", got)
+	}
+}
+
+func TestOAuthClientIDResolved_ConfiguredWins(t *testing.T) {
+	g := GitHubConfig{OAuthClientID: "Ov23liCUSTOM"}
+	if got := g.OAuthClientIDResolved(); got != "Ov23liCUSTOM" {
+		t.Errorf("OAuthClientIDResolved() = %q, want the configured value", got)
+	}
+}
+
 func TestRemoveAgentFile_PathTraversal(t *testing.T) {
 	dir := t.TempDir()
 	for _, bad := range []string{"../etc/passwd", "sub/agent", "back\\slash"} {
