@@ -431,6 +431,17 @@ const (
 	// is pinned to an App other than the cluster's, so its key is presumed
 	// correct for that App and the cluster key would break it.
 	appKeyReasonDifferentApp = "hive is deliberately pinned to a different app_id"
+	// appKeyReasonPublicHiveOnGHECluster is the class fix for a github.com hive
+	// parked on a GitHub-Enterprise-default cluster (vllm-d). The hive's meta
+	// pins it to public github.com (github_base_url:"public" / "https://github.com")
+	// even though its cluster's default App is the GHE App. Pushing the cluster's
+	// GHE key as the hive's PRIMARY every beat overwrites its github.com app_id and
+	// breaks github.com auth. The hive is github.com: its own public App is
+	// primary, and the cluster GHE key rides only as an ADDITIONAL key
+	// (attachMissingAppKeys) so a future migration onto the GHE App already has the
+	// key on disk. This mirrors resolveProvisionAppID, which likewise honours the
+	// public pin instead of forcing the cluster GHE app_id.
+	appKeyReasonPublicHiveOnGHECluster = "hive is pinned to public github.com on a GHE-default cluster"
 )
 
 // decideAppKeySync decides whether the hub should push its cluster App key to a
@@ -482,9 +493,30 @@ const (
 // that in fact has a good key is harmless — it rewrites the same App identity —
 // whereas withholding leaves a dead hive dead. Once the spoke is new enough to
 // report, the push stops on the following beat.
-func decideAppKeySync(spokeFingerprint string, hasPerHiveKey bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
+//
+// PUBLIC-PINNED HIVE ON A GHE CLUSTER — never force the cluster GHE app.
+// hivePublicPinned is true when the hive's meta pins it to public github.com
+// (github_base_url:"public" / "https://github.com") while its cluster defaults to
+// a GHE App. The cluster identity resolved above is that GHE App; pushing it as
+// this hive's PRIMARY would overwrite its github.com app_id and break github.com
+// auth on the very next beat. So the reconcile refuses to push the cluster key as
+// primary for such a hive — its own public App stays primary and the cluster GHE
+// key rides only as an ADDITIONAL key (attachMissingAppKeys). This is the app-KEY
+// reconcile finally honouring the same public pin that resolveProvisionAppID and
+// effectiveGitHubBaseURL already honour on the provisioning path.
+func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
 	if cluster == nil {
 		return appKeySyncDecision{Reason: appKeyReasonNoClusterKey, FromFingerprint: spokeFingerprint}
+	}
+	if hivePublicPinned {
+		// The hive is public github.com on a GHE-default cluster. Never push the
+		// cluster's GHE App as primary; the additional-keys pass still delivers the
+		// GHE key so a later migration onto that App has it on disk.
+		return appKeySyncDecision{
+			Reason:          appKeyReasonPublicHiveOnGHECluster,
+			FromFingerprint: strings.TrimSpace(spokeFingerprint),
+			ToFingerprint:   cluster.Fingerprint,
+		}
 	}
 	fp := strings.TrimSpace(spokeFingerprint)
 	if hasPerHiveKey {
@@ -551,9 +583,9 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey bool, spokeAppID in
 // installation_id. Zero is passed through as zero — the spoke's callback only
 // rebuilds its client once app_id, installation_id and key file are all present,
 // so a key delivered ahead of an installation ID lands on disk and waits.
-func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey bool, spokeAppID int64, installationID int64, logger *slog.Logger) *HeartbeatGitHubAppConfig {
+func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, installationID int64, logger *slog.Logger) *HeartbeatGitHubAppConfig {
 	identity := s.appIdentityForCluster(clusterID)
-	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, spokeAppID, identity)
+	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, spokeAppID, identity)
 	if !decision.Push || identity == nil {
 		return nil
 	}
@@ -565,6 +597,7 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 			"app_id", identity.AppID,
 			"spoke_app_id", spokeAppID,
 			"per_hive_key", hasPerHiveKey,
+			"public_pinned", hivePublicPinned,
 			"reason", decision.Reason,
 			"from_fingerprint", decision.FromFingerprint,
 			"to_fingerprint", decision.ToFingerprint,
@@ -755,16 +788,36 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		return nil
 	}
 	clusterID := payload.ClusterID
+	// Load the hive's own meta once: it carries the GitHub-host pin
+	// (github_base_url) that decides whether this hive is public github.com, and
+	// it is also the fallback source for the cluster ID when the spoke did not
+	// report one.
+	sh := loadSaaSHive(payload.HiveID)
 	if clusterID == "" {
 		// The spoke did not report a cluster. Fall back to the hub's own record
 		// for this hive rather than guessing the default cluster: guessing would
 		// aim a GitHub Enterprise key at a public-GitHub hive.
-		if sh := loadSaaSHive(payload.HiveID); sh != nil {
+		if sh != nil {
 			clusterID = sh.ClusterID
 		}
 	}
 	if clusterID == "" {
 		return nil
+	}
+	// Is this hive pinned to public github.com while its cluster defaults to a
+	// GHE App? effectiveGitHubBaseURL honours the hive's github_base_url:"public"
+	// / "https://github.com" sentinel and returns "" for public; the cluster
+	// defaulting to GHE is exactly cluster.GitHubBaseURL != "". When both hold, the
+	// cluster's GHE App must NOT be forced onto this hive as its primary key — the
+	// same public pin resolveProvisionAppID already honours on the provisioning
+	// path. The signal is computed here (where the hive meta and cluster config are
+	// both in hand) and threaded into the decision so decideAppKeySync stays a pure,
+	// table-testable function.
+	hivePublicPinned := false
+	if sh != nil {
+		if c, ok := s.clusters[clusterID]; ok {
+			hivePublicPinned = effectiveGitHubBaseURL(sh, &c) == "" && c.GitHubBaseURL != ""
+		}
 	}
 	// The hub does not track installation IDs, and this reconcile is about the
 	// KEY. Sending 0 tells the spoke to leave its (already correct) installation
@@ -775,6 +828,7 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		clusterID,
 		payload.GitHubAppKeyFingerprint,
 		payload.GitHubAppKeyPerHive,
+		hivePublicPinned,
 		payload.GitHubAppID,
 		installationIDUnchanged,
 		s.logger,
