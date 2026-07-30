@@ -2048,32 +2048,65 @@ func main() {
 	dashSrv.AuditLog("system", "hive_restart",
 		fmt.Sprintf("build=%s version=%s; restoring %d paused agent(s)", gitShort, "3.0.0", pausedCount), "")
 
-	const agentLaunchDelaySec = 15
-	agentIndex := 0
-	for name, ac := range cfg.EnabledAgents() {
-		isOnDemand := ac.OnDemand || onDemandFromPack[name]
-		if isOnDemand {
-			logger.Info("skipping on-demand agent at startup", "name", name)
-			continue
-		}
-		if agentIndex > 0 {
-			logger.Info("staggering agent launch", "name", name, "delay_sec", agentLaunchDelaySec)
-			time.Sleep(time.Duration(agentLaunchDelaySec) * time.Second)
-		}
-		logger.Info("audit: starting agent", "name", name, "trigger", "startup")
-		if err := agentMgr.Start(ctx, name); err != nil {
-			logger.Warn("failed to start agent", "name", name, "error", err)
-		} else {
-			// Surface whether a persisted operator pause was honored on this
-			// restart, so the audit log shows pause state survived (or didn't).
-			detail := "trigger=startup"
-			if ac.Paused {
-				detail = "trigger=startup; restored paused (persisted)"
+	// Mark the dashboard READY as soon as the HTTP server can serve requests —
+	// which is NOW: config is loaded, GitHub client/App auth are wired, the
+	// dashboard deps are set, and the listener (go dashSrv.Start() above) is up.
+	// None of /api/*, /sso, /open, /api/livez or /api/health depend on the agent
+	// fleet being up; the frontend already handles agents appearing over time.
+	//
+	// This MUST precede the staggered agent-launch loop below. That loop sleeps
+	// ~15s per agent (× the whole fleet = several minutes) and previously ran
+	// BEFORE MarkReady, so /api/livez returned 503 "starting" for the entire
+	// launch window. The liveness probe (period 30s × failureThreshold 3 ≈ 90s)
+	// then SIGKILLed the container (exit 137) before readiness was ever reached
+	// on cold start, and rolling upgrades left the Service with no Ready endpoint
+	// for minutes → 503s on /open and /sso. Flipping ready here makes the pod
+	// Ready in seconds and moves the fleet spin-up entirely off the critical path.
+	dashSrv.MarkReady()
+
+	// Launch the persistent (non-on-demand) agents in the BACKGROUND so the
+	// staggered start no longer gates pod readiness. The loop honors ctx: on
+	// shutdown the ctx-aware stagger returns immediately instead of leaking a
+	// goroutine parked in a bare time.Sleep.
+	go func() {
+		const agentLaunchDelaySec = 15
+		agentIndex := 0
+		for name, ac := range cfg.EnabledAgents() {
+			isOnDemand := ac.OnDemand || onDemandFromPack[name]
+			if isOnDemand {
+				logger.Info("skipping on-demand agent at startup", "name", name)
+				continue
 			}
-			dashSrv.AuditLog("system", "agent_start", detail, name)
+			if agentIndex > 0 {
+				logger.Info("staggering agent launch", "name", name, "delay_sec", agentLaunchDelaySec)
+				select {
+				case <-time.After(time.Duration(agentLaunchDelaySec) * time.Second):
+				case <-ctx.Done():
+					logger.Info("aborting staggered agent launch: shutting down")
+					return
+				}
+			}
+			// Bail before starting another agent if we are already shutting down,
+			// so a SIGTERM during the launch window doesn't spawn fresh processes.
+			if ctx.Err() != nil {
+				logger.Info("aborting staggered agent launch: shutting down")
+				return
+			}
+			logger.Info("audit: starting agent", "name", name, "trigger", "startup")
+			if err := agentMgr.Start(ctx, name); err != nil {
+				logger.Warn("failed to start agent", "name", name, "error", err)
+			} else {
+				// Surface whether a persisted operator pause was honored on this
+				// restart, so the audit log shows pause state survived (or didn't).
+				detail := "trigger=startup"
+				if ac.Paused {
+					detail = "trigger=startup; restored paused (persisted)"
+				}
+				dashSrv.AuditLog("system", "agent_start", detail, name)
+			}
+			agentIndex++
 		}
-		agentIndex++
-	}
+	}()
 
 	// Start hub heartbeat push if configured (env var or config)
 	hubURL := cfg.Hub.URL
@@ -2727,7 +2760,11 @@ func main() {
 		logger.Info("fast agent status enabled", "interval_seconds", cfg.Dashboard.AgentPollIntervalS)
 	}
 
-	dashSrv.MarkReady()
+	// NOTE: dashSrv.MarkReady() was previously HERE, after the staggered agent
+	// launch and the heartbeat/trajectory/ticker setup. It has been moved to
+	// immediately after the HTTP listener starts (before the agent-launch loop),
+	// so the pod becomes Ready in seconds instead of minutes. See the MarkReady
+	// call and comment above the agent-launch goroutine.
 
 	const cliStartupDelay = 10 * time.Second
 	logger.Info("waiting for CLI startup before first eval", "delay", cliStartupDelay)
