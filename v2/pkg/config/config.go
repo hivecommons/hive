@@ -883,6 +883,40 @@ const (
 	// makes hive's choice authoritative without bob rewriting the shared file.
 	BobAuthMethodFlag = "--auth-method"
 
+	// BobApprovalModeFlag / BobApprovalModeYolo set bob's tool-approval policy.
+	// Verified in bobshell 1.0.6 `bob --help`:
+	//   --approval-mode  Set the approval mode: default (prompt for approval),
+	//                    auto_edit (auto-approve edit tools), yolo
+	//                    (auto-approve all tools)
+	//                    [string] [choices: "default", "auto_edit", "yolo"]
+	//
+	// Without it bob defaults to "default" and the TUI shows
+	// `Auto-approve: Off`, so an unattended agent blocks forever on the first
+	// tool call — no human is attached to answer the prompt. With
+	// `--approval-mode yolo` the TUI shows `Auto-approve: Full` and bob
+	// executes shell/edit tools unattended (verified live on a spoke: bob
+	// wrote /tmp/_tool.txt with no approval prompt).
+	//
+	// The named flag is preferred over the equivalent `-y`/`--yolo` boolean
+	// because it states the mode at the call site.
+	BobApprovalModeFlag = "--approval-mode"
+	BobApprovalModeYolo = "yolo"
+
+	// BobTrustFlag marks the agent's workspace as trusted. bobshell 1.0.6
+	// otherwise renders "This folder is not trusted. Some features may be
+	// disabled." and gates tool availability behind that state. Verified in
+	// `bob --help`:
+	//   --trust  specify trust level for the current workspace
+	//
+	// Passing the flag is preferred over seeding $HOME/.bob/trustedFolders.json
+	// because the flag is per-launch and stateless: it needs no knowledge of
+	// bob's on-disk trust schema, cannot drift when that schema changes, and
+	// applies to whatever workdir the agent is launched in. The shared
+	// /data/home is used by EVERY bob agent on a hive, so a seeded trust file
+	// would also be a fleet-wide mutation of the kind that already caused the
+	// selectedType incident (see BobAuthTypeEnvVar).
+	BobTrustFlag = "--trust"
+
 	// BobSettingsRelPath is the persisted settings file, relative to $HOME.
 	// From bundle/bob.js: `as=".bob"` and
 	// `getGlobalSettingsPath(){return fu.join(t.getGlobalGeminiDir(),"settings.json")}`

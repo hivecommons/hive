@@ -247,8 +247,13 @@ func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 	if cmd != "gemini --model flash" {
 		t.Errorf("default backend cmd: %q", cmd)
 	}
-	cmd = toolRulesToLaunchCmd("bob", "", "bob", tools, false)
-	if cmd != "bob" {
+	// An UNKNOWN backend with no model gets the bare binary. This used to be
+	// asserted with backend "bob", which meant it pinned bob's broken
+	// fall-through: a bare `bob` has no --accept-license (hard-errors), no
+	// auth flag, and no --approval-mode (stalls on the first tool call). bob
+	// now has its own branch, so use a backend that really is unknown.
+	cmd = toolRulesToLaunchCmd("mystery", "", "mystery", tools, false)
+	if cmd != "mystery" {
 		t.Errorf("default backend with empty model: %q", cmd)
 	}
 }

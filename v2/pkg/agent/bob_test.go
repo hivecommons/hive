@@ -292,49 +292,106 @@ func TestBobKeyNotInEnvPrefix(t *testing.T) {
 	}
 }
 
-// TestBobLaunchCmd pins the flags that make headless auth work while keeping
-// the session interactive.
+// TestBobLaunchCmd pins the flags that make headless auth work, keep the
+// session interactive, and let an unattended agent actually run tool calls.
 func TestBobLaunchCmd(t *testing.T) {
-	tests := []struct {
-		name        string
-		model       string
-		wantContain []string
-		wantAbsent  []string
-	}{
-		{
-			name:  "no model",
-			model: "",
-			// --accept-license clears the license gate that would otherwise
-			// hard-error with no human to answer it.
-			// --auth-method api-key is the strongest auth control: it is a real
-			// (but --help-hidden) flag in bobshell 1.0.6 and is the only input
-			// that outranks the persisted, fleet-shared settings file.
-			wantContain: []string{"bob", "--accept-license", "--auth-method api-key"},
-			// No -p/--prompt: interactive mode must be preserved.
-			wantAbsent: []string{"--model", " -p ", "--prompt"},
-		},
-		{
-			name:        "with model",
-			model:       "granite-3",
-			wantContain: []string{"--accept-license", "--auth-method api-key", "--model granite-3"},
-			wantAbsent:  []string{" -p ", "--prompt"},
-		},
+	got := bobLaunchCmd("bob")
+
+	wantContain := []string{
+		"bob",
+		// Clears the license gate that would otherwise hard-error with no
+		// human to answer it.
+		"--accept-license",
+		// The strongest auth control: a real (but --help-hidden) flag in
+		// bobshell 1.0.6, and the only input that outranks the persisted,
+		// fleet-shared settings file.
+		"--auth-method api-key",
+		// Without this bob reports `Auto-approve: Off` and blocks forever on
+		// the first tool call. Verified live: with it, bob executed a shell
+		// tool unattended.
+		"--approval-mode yolo",
+		// Clears "This folder is not trusted. Some features may be disabled."
+		"--trust",
+	}
+	for _, want := range wantContain {
+		if !strings.Contains(got, want) {
+			t.Errorf("bobLaunchCmd() = %q, want it to contain %q", got, want)
+		}
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := bobLaunchCmd("bob", tc.model)
-			for _, want := range tc.wantContain {
-				if !strings.Contains(got, want) {
-					t.Errorf("bobLaunchCmd(...) = %q, want it to contain %q", got, want)
-				}
-			}
-			for _, absent := range tc.wantAbsent {
-				if strings.Contains(got, absent) {
-					t.Errorf("bobLaunchCmd(...) = %q, want it NOT to contain %q", got, absent)
-				}
-			}
-		})
+	wantAbsent := []string{
+		// --model is the BUG: normalizeModelName rewrote claude-sonnet-4-6 to
+		// claude-sonnet-4.6, an id bob's backend does not know, and every
+		// prompt died with "Cannot read properties of undefined (reading
+		// 'maxTokens')". bob auto-selects its model; hive must not pass one.
+		"--model",
+		// Interactive mode must be preserved.
+		" -p ",
+		"--prompt",
+	}
+	for _, absent := range wantAbsent {
+		if strings.Contains(got, absent) {
+			t.Errorf("bobLaunchCmd() = %q, want it NOT to contain %q", got, absent)
+		}
+	}
+}
+
+// TestBobLaunchCmdApprovalIsFlat documents the deliberate design decision that
+// bob's approval mode does NOT vary with the agent's ACMM mode.
+//
+// Every other backend already auto-approves tools at every level (claude gets
+// --dangerously-skip-permissions, copilot gets --allow-all, in all three mode
+// branches of launchInTmux). Hive contains low-mode agents by denying GitHub
+// write tools and unsetting GH_TOKEN/GITHUB_TOKEN, not by making them ask
+// permission for local tool calls. bob matches that posture.
+func TestBobLaunchCmdApprovalIsFlat(t *testing.T) {
+	// bobLaunchCmd takes no mode argument at all, so the command is identical
+	// for every agent. Guard against a future signature change reintroducing
+	// per-mode approval without updating this reasoning.
+	if a, b := bobLaunchCmd("bob"), bobLaunchCmd("bob"); a != b {
+		t.Fatalf("bobLaunchCmd() is not deterministic: %q vs %q", a, b)
+	}
+	for _, forbidden := range []string{"--approval-mode default", "--approval-mode auto_edit"} {
+		if strings.Contains(bobLaunchCmd("bob"), forbidden) {
+			t.Errorf("bobLaunchCmd() must not use %q: bob matches the fleet's "+
+				"flat auto-approve posture", forbidden)
+		}
+	}
+}
+
+// TestNormalizeModelNameSkipsBob covers the dot-rewrite that corrupted bob's
+// model id. bob is now excluded alongside claude and the inference backends.
+func TestNormalizeModelNameSkipsBob(t *testing.T) {
+	const configured = "claude-sonnet-4-6"
+	if got := normalizeModelName(configured, bobBackend); got != configured {
+		t.Errorf("normalizeModelName(%q, %q) = %q, want it unchanged: the "+
+			"dot-rewrite produced claude-sonnet-4.6, an id bob does not know",
+			configured, bobBackend, got)
+	}
+	// Non-bob backends must still be normalized.
+	if got := normalizeModelName(configured, "copilot"); got != "claude-sonnet-4.6" {
+		t.Errorf("normalizeModelName(%q, \"copilot\") = %q, want %q: other "+
+			"backends must be unaffected", configured, got, "claude-sonnet-4.6")
+	}
+}
+
+// TestToolRulesToLaunchCmdBobHasNoModel guards the second path that could feed
+// bob a --model: an agent with Config.Tools set bypasses the launchInTmux
+// switch entirely and would otherwise fall to the default branch.
+func TestToolRulesToLaunchCmdBobHasNoModel(t *testing.T) {
+	tools := &config.ToolsConfig{}
+	got := toolRulesToLaunchCmd("bob", "claude-sonnet-4.6", bobBackend, tools, false)
+	if strings.Contains(got, "--model") {
+		t.Errorf("toolRulesToLaunchCmd(bob) = %q must not contain --model", got)
+	}
+	for _, want := range []string{"--accept-license", "--approval-mode yolo", "--trust"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("toolRulesToLaunchCmd(bob) = %q, want it to contain %q", got, want)
+		}
+	}
+	// Non-bob backends must still receive their model.
+	if c := toolRulesToLaunchCmd("copilot", "gpt-5", "copilot", tools, false); !strings.Contains(c, "--model gpt-5") {
+		t.Errorf("toolRulesToLaunchCmd(copilot) = %q, want it to contain --model gpt-5", c)
 	}
 }
 

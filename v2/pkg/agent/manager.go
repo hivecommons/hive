@@ -1016,7 +1016,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 				launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
 			}
 		case bobBackend:
-			launchCmd = bobLaunchCmd(binary, model)
+			launchCmd = bobLaunchCmd(binary)
 		default:
 			launchCmd = binary
 		}
@@ -3680,16 +3680,51 @@ const bobBackend = "bob"
 //     key for unattended use is the act of acceptance; the text stays
 //     reviewable via `bob --show-license`.
 //
+//   - --approval-mode yolo (config.BobApprovalModeFlag/BobApprovalModeYolo):
+//     without it bob runs in its "default" approval mode, the TUI reports
+//     `Auto-approve: Off`, and the agent blocks forever on its FIRST tool call
+//     waiting for a human who is not attached. Verified live on a spoke: with
+//     the flag the TUI reports `Auto-approve: Full` and bob executed a shell
+//     tool unattended.
+//
+//     This is deliberately FLAT — not gated on m.agentMode(agent) — because it
+//     matches the existing fleet posture rather than inventing a new one for
+//     bob. Every other backend already auto-approves tools at EVERY ACMM level:
+//     claude gets --dangerously-skip-permissions and copilot gets --allow-all
+//     in all three mode branches of launchInTmux. Hive does not restrain agents
+//     by making them ask permission for local tool calls; it restrains them by
+//     (a) denying specific GitHub write tools per mode and (b) unsetting
+//     GH_TOKEN/GITHUB_TOKEN for agents whose mode fails CanPush(). Both of
+//     those controls apply to bob unchanged and are where an advisory bob is
+//     actually contained. Giving bob a per-mode approval policy would make it
+//     the only backend that stalls at low ACMM levels — less capable than its
+//     peers, and stalled rather than safely limited.
+//
+//   - --trust (config.BobTrustFlag): bob otherwise treats the agent workdir as
+//     untrusted ("This folder is not trusted. Some features may be disabled.")
+//     and gates tool availability on it. See BobTrustFlag for why the flag is
+//     preferred over seeding the shared $HOME/.bob/trustedFolders.json.
+//
+// No --model is passed, and that is load-bearing. bob auto-selects its own
+// model, and hive's normalizeModelName rewrites a trailing -<digits> to
+// .<digits> for every backend except claude/inference, so a configured
+// `claude-sonnet-4-6` reached bob as `claude-sonnet-4.6` — an id bob's backend
+// does not know. Its model config came back undefined and every prompt died
+// with "🛑 Cannot read properties of undefined (reading 'maxTokens')". Verified
+// live: the same bob with no --model runs inference successfully.
+//
 // The API key itself is NOT a flag — it is delivered out-of-band via
 // tmux set-environment (see agentEnvPairs) so it never lands in the command
 // line, `ps` output, or pane scrollback.
-func bobLaunchCmd(binary, model string) string {
-	cmd := fmt.Sprintf("%s --accept-license %s %s",
-		binary, config.BobAuthMethodFlag, config.BobAuthTypeAPIKey)
-	if model != "" {
-		cmd = fmt.Sprintf("%s --model %s", cmd, model)
-	}
-	return cmd
+//
+// The model parameter is intentionally absent from the signature so no future
+// caller can reintroduce the crash by passing one.
+func bobLaunchCmd(binary string) string {
+	return fmt.Sprintf("%s --accept-license %s %s %s %s %s",
+		binary,
+		config.BobAuthMethodFlag, config.BobAuthTypeAPIKey,
+		config.BobApprovalModeFlag, config.BobApprovalModeYolo,
+		config.BobTrustFlag)
 }
 
 // codexHomePrefix is the per-agent CODEX_HOME directory prefix. Each agent gets
@@ -3966,8 +4001,17 @@ func (m *Manager) ensureWorldWritable(root string) {
 // "gpt-4o-2024-08.06") produces a model the team is not entitled to and the
 // gateway 403s ("team not allowed to access model") even for entitled models.
 // So never normalize inference model names — pass them through untouched.
+//
+// bob is likewise excluded. bobLaunchCmd passes no --model at all (bob
+// auto-selects), so this is defense-in-depth rather than the fix: the value is
+// still computed and logged on the bob launch path, and the dot-rewrite is
+// what turned a configured `claude-sonnet-4-6` into the unknown
+// `claude-sonnet-4.6` that made bob die with "Cannot read properties of
+// undefined (reading 'maxTokens')". Leaving it unrewritten keeps logs honest
+// about what was configured and stops the corrupted id from being handed to a
+// future bob consumer.
 func normalizeModelName(model, backend string) string {
-	if backend == "claude" || IsInferenceBackend(backend) {
+	if backend == "claude" || backend == bobBackend || IsInferenceBackend(backend) {
 		return model
 	}
 	idx := strings.LastIndex(model, "-")
@@ -4961,6 +5005,15 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 	denies := tools.DenyPatterns()
 
 	switch backend {
+	case bobBackend:
+		// bob has no deny-tool flag, so ToolsConfig cannot be expressed here.
+		// It must still go through bobLaunchCmd rather than falling to the
+		// default branch below, which would append `--model` and crash bob
+		// with "Cannot read properties of undefined (reading 'maxTokens')".
+		// A bob agent with tools configured therefore launches identically to
+		// one without; the deny patterns are silently inapplicable, exactly as
+		// they already were before this branch existed.
+		return bobLaunchCmd(binary)
 	case "claude":
 		bareFlag := ""
 		if isInference {
