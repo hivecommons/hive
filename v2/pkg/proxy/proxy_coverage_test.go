@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/agent"
@@ -32,8 +33,17 @@ func TestAllowedByModePROperations(t *testing.T) {
 	if AllowedByMode(agent.ModeIssuesOnly, "POST", "/repos/org/repo/pulls") {
 		t.Error("ISSUES_ONLY should NOT allow creating PRs")
 	}
-	if !AllowedByMode(agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls") {
-		t.Error("ISSUES_AND_PRS should allow creating PRs")
+	// Direct PR creation (POST /pulls) is a HARD DENY for every mode — agents
+	// must route through hive-open-pr so the App bot authors the PR. Even a
+	// push-capable mode cannot POST /pulls directly.
+	if AllowedByMode(agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls") {
+		t.Error("POST /pulls must be denied for all modes (use hive-open-pr)")
+	}
+	if AllowedByMode(agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls") {
+		t.Error("POST /pulls must be denied even for merge mode (use hive-open-pr)")
+	}
+	if msg, denied := DeniedMessage("POST", "/repos/org/repo/pulls"); !denied || !strings.Contains(msg, "hive-open-pr") {
+		t.Errorf("POST /pulls should carry a hive-open-pr deny message; got denied=%v msg=%q", denied, msg)
 	}
 	if !AllowedByMode(agent.ModeIssuesAndPRs, "PATCH", "/repos/org/repo/pulls/42") {
 		t.Error("ISSUES_AND_PRS should allow patching PRs")
@@ -314,8 +324,11 @@ func TestIsGitHubHostComplete(t *testing.T) {
 }
 
 func TestAllowedByModeEscalation(t *testing.T) {
-	path := "/repos/org/repo/pulls"
-	method := "POST"
+	// PATCH /pulls/<n> is a mode-gated PR operation (unlike POST /pulls, which is
+	// a hard deny for every mode): advisory/issues-only cannot, issues-and-prs and
+	// above can. This exercises the mode-escalation path itself.
+	path := "/repos/org/repo/pulls/42"
+	method := "PATCH"
 
 	modes := []agent.AgentMode{
 		agent.ModeAdvisory,
@@ -331,6 +344,14 @@ func TestAllowedByModeEscalation(t *testing.T) {
 		}
 		if i >= 2 && !allowed {
 			t.Errorf("mode %v should allow %s %s", mode, method, path)
+		}
+	}
+
+	// POST /pulls (direct PR creation) is denied for EVERY mode — no escalation
+	// unlocks it. Agents must use hive-open-pr.
+	for _, mode := range modes {
+		if AllowedByMode(mode, "POST", "/repos/org/repo/pulls") {
+			t.Errorf("mode %v must NOT allow direct POST /pulls (use hive-open-pr)", mode)
 		}
 	}
 }

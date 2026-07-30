@@ -550,9 +550,10 @@ func TestProxyHTTPBlockedPOSTShowsPath(t *testing.T) {
 	if !strings.Contains(response, "403") {
 		t.Errorf("expected 403 in response")
 	}
-	// The blocked path should be mentioned in the body
-	if !strings.Contains(response, "/repos/org/repo/pulls") {
-		t.Errorf("expected path in response body, got: %s", response)
+	// POST /pulls is a hard deny: the body carries the hive-open-pr directive
+	// (the deny message) rather than the raw path, so agents learn the fix.
+	if !strings.Contains(response, "hive-open-pr") {
+		t.Errorf("expected hive-open-pr directive in response body, got: %s", response)
 	}
 }
 
