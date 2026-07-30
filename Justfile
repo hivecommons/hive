@@ -463,7 +463,16 @@ contribute-hive backend="" mode="docker": check-version
           ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
-      "$RUNTIME" run -d --rm \
+      # NOTE: deliberately NOT --rm. With --rm the runtime deletes the
+      # container the instant it exits, taking its logs with it — so a
+      # container that dies during startup leaves nothing to diagnose
+      # (the user just sees "no such container"). We remove it ourselves
+      # in the cleanup trap below, after the logs have been read.
+      cleanup_container() {
+        "$RUNTIME" rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+      }
+      trap cleanup_container EXIT
+      "$RUNTIME" run -d \
         --name "${CONTAINER_NAME}" \
         ${RUNTIME_FLAGS} \
         ${NET_FLAGS} \
@@ -472,7 +481,7 @@ contribute-hive backend="" mode="docker": check-version
         -v "${HOME}/.config/gh:/home/dev/.config/gh${ROSUF}" \
         -e HIVE_HUB="{{hive_hub}}" \
         -e AGENT_BACKEND="${BACKEND}" \
-        -e GH_TOKEN="${GH_TOKEN}" \
+        -e GH_TOKEN="${GH_TOKEN:-}" \
         -e HIVE_USE_CONTRIBUTOR_GH=true \
         -e HIVE_CONTAINER_NAME="${CONTAINER_NAME}" \
         ${ANTHROPIC_API_KEY:+-e ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}"} \
@@ -488,18 +497,77 @@ contribute-hive backend="" mode="docker": check-version
 
       echo "Container: ${CONTAINER_NAME}"
       echo "Waiting for CLI session to start..."
-      sleep 3
+      # Grace period for the container entrypoint to bring up the tmux
+      # session before we try to attach to it.
+      readonly STARTUP_GRACE_SECONDS=3
+      sleep "${STARTUP_GRACE_SECONDS}"
+
+      # The container may have died during the grace period (bad flag, OOM,
+      # unreadable mount, failed entrypoint). Detect that BEFORE attaching or
+      # tailing, and surface the exit code plus the captured logs — otherwise
+      # the user only sees an opaque runtime error.
+      CONTAINER_STATE=$("$RUNTIME" inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "missing")
+      if [[ "$CONTAINER_STATE" != "true" ]]; then
+        CONTAINER_EXIT=$("$RUNTIME" inspect -f '{{ "{{" }}.State.ExitCode{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "unknown")
+        echo ""
+        echo "ERROR: the contributor container exited during startup."
+        echo "  Container: ${CONTAINER_NAME}"
+        echo "  Runtime:   ${RUNTIME}"
+        echo "  Exit code: ${CONTAINER_EXIT}"
+        echo ""
+        echo "── Container logs ──"
+        "$RUNTIME" logs "${CONTAINER_NAME}" 2>&1 || echo "(no logs captured)"
+        echo "────────────────────"
+        echo ""
+        echo "Common causes:"
+        echo "  * GH_TOKEN empty/expired  — re-run: just contribute-setup {{backend}}"
+        echo "  * config mounts unreadable (rootless podman UID mapping)"
+        echo "  * missing HIVE_REGISTRATION_TOKEN"
+        echo ""
+        echo "Re-run with HIVE_KEEP_CONTAINER=true to keep the container for inspection."
+        if [[ "${HIVE_KEEP_CONTAINER:-}" == "true" ]]; then
+          trap - EXIT
+          echo "Container kept: ${RUNTIME} logs ${CONTAINER_NAME}"
+        fi
+        exit 1
+      fi
 
       # Open the CLI session in a new terminal window
       ATTACH_CMD="${RUNTIME} exec -it ${CONTAINER_NAME} tmux attach -t contributor"
       if [[ "$OSTYPE" == "darwin"* ]]; then
-        if pgrep -x "iTerm2" > /dev/null 2>&1; then
-          osascript -e "tell application \"iTerm2\" to tell current window to create tab with default profile command \"${ATTACH_CMD}\""
+        # Detect iTerm via System Events rather than pgrep. On macOS the
+        # iTerm process's comm is the full bundle path
+        # (/Applications/iTerm.app/Contents/MacOS/iTerm2), so `pgrep -x iTerm2`
+        # anchors against that path and NEVER matches — every iTerm user
+        # silently fell through to Terminal.app. System Events reports the
+        # application name ("iTerm2"), which is what we actually want.
+        TAB_OPENED=true
+        RUNNING_APPS=$(osascript -e 'tell application "System Events" to get name of every application process whose background only is false' 2>/dev/null || echo "")
+        if [[ "$RUNNING_APPS" == *"iTerm"* ]]; then
+          # iTerm may be running with no open window, in which case
+          # `tell current window` errors — fall back to creating a window.
+          osascript -e "tell application \"iTerm2\"
+            if (count of windows) = 0 then
+              create window with default profile command \"${ATTACH_CMD}\"
+            else
+              tell current window to create tab with default profile command \"${ATTACH_CMD}\"
+            end if
+          end tell" >/dev/null 2>&1 || {
+            TAB_OPENED=false
+            echo "WARNING: could not open an iTerm tab; attach manually with:"
+            echo "  ${ATTACH_CMD}"
+          }
         else
-          osascript -e "tell application \"Terminal\" to do script \"${ATTACH_CMD}\""
+          osascript -e "tell application \"Terminal\" to do script \"${ATTACH_CMD}\"" >/dev/null 2>&1 || {
+            TAB_OPENED=false
+            echo "WARNING: could not open a Terminal window; attach manually with:"
+            echo "  ${ATTACH_CMD}"
+          }
         fi
-        echo ""
-        echo "✓ CLI session opened in a new terminal tab."
+        if [[ "$TAB_OPENED" == "true" ]]; then
+          echo ""
+          echo "✓ CLI session opened in a new terminal tab."
+        fi
       else
         echo ""
         echo "Attach to the CLI session with:"
@@ -508,7 +576,15 @@ contribute-hive backend="" mode="docker": check-version
 
       echo ""
       echo "Relay logs:"
-      "$RUNTIME" logs -f "${CONTAINER_NAME}"
+      # `logs -f` returns when the container stops. Don't let a non-zero
+      # status from it kill the recipe under `set -e` — we want to report the
+      # container's own exit code, which is the useful signal.
+      "$RUNTIME" logs -f "${CONTAINER_NAME}" 2>&1 || true
+      FINAL_EXIT=$("$RUNTIME" inspect -f '{{ "{{" }}.State.ExitCode{{ "}}" }}' "${CONTAINER_NAME}" 2>/dev/null || echo "unknown")
+      if [[ "$FINAL_EXIT" != "0" && "$FINAL_EXIT" != "unknown" ]]; then
+        echo ""
+        echo "Container ${CONTAINER_NAME} exited with code ${FINAL_EXIT}."
+      fi
     fi
 
 # Check hub status and your contributor profile
