@@ -1087,13 +1087,17 @@ type GitHubConfig struct {
 	// BaseURL is the GitHub web base URL. Defaults to DefaultGitHubBaseURL.
 	// For GitHub Enterprise, set to e.g. "https://github.ibm.com".
 	BaseURL string `yaml:"base_url"`
-	// AppAuthoredPRs opts a hive into App-bot authorship: when true AND ai_author
-	// is empty, agents author PRs/commits as the GitHub App bot ("<slug>[bot]")
-	// via the App installation token, instead of the Copilot-login user. Default
-	// false — a hive with this unset behaves exactly as before (author = whatever
-	// the Copilot login / ai_author already produced), so enabling App-bot mode is
-	// strictly opt-in per hive and never changes an existing hive on upgrade.
-	AppAuthoredPRs bool `yaml:"app_authored_prs"`
+	// AppAuthoredPRs controls App-bot authorship: when enabled AND ai_author is
+	// empty, agents author PRs/commits as the GitHub App bot ("<slug>[bot]") via
+	// the App installation token, instead of the Copilot-login user.
+	//
+	// It is a *bool so absent (nil) is distinct from an explicit false. Default is
+	// ON (see AppAuthoredPRsEnabled): App-bot authorship is now the fleet norm, so
+	// a hive that says nothing gets it. Set `app_authored_prs: false` to opt a
+	// specific hive OUT. This only affects write-capable hives — the token is
+	// injected solely for agents whose tier CanPush() and only when a real App is
+	// installed (m.appAuth != nil), so an App-less or advisory hive is unaffected.
+	AppAuthoredPRs *bool `yaml:"app_authored_prs,omitempty"`
 }
 
 // PlaceholderAppID is the sentinel `github.app_id` written into a hive's config
@@ -1230,10 +1234,23 @@ func (c *Config) EffectiveAIAuthor() string {
 	if c.Project.AIAuthor != "" {
 		return c.Project.AIAuthor
 	}
-	if c.GitHub.AppAuthoredPRs {
+	if c.GitHub.AppAuthoredPRsEnabled() {
 		return c.GitHub.BotLogin()
 	}
 	return ""
+}
+
+// AppAuthoredPRsEnabled reports whether App-bot authorship is on for this hive.
+// The default is ON (nil == true): App-bot authorship is the fleet norm, so a
+// hive that never set app_authored_prs gets it. Only an explicit
+// `app_authored_prs: false` disables it. Note this is only the INTENT — the
+// token is still injected solely for CanPush() tiers with a real App installed,
+// so an App-less or advisory hive never actually writes regardless of this flag.
+func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
+	if g.AppAuthoredPRs == nil {
+		return true
+	}
+	return *g.AppAuthoredPRs
 }
 
 // AppInstallURL returns the full URL to install the GitHub App.

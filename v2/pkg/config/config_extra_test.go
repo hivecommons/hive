@@ -684,6 +684,42 @@ func TestOAuthClientIDResolved_ConfiguredWins(t *testing.T) {
 	}
 }
 
+// App-bot authorship defaults ON (nil == true, the fleet norm); only an explicit
+// false opts out.
+func TestAppAuthoredPRsEnabled_DefaultsOn(t *testing.T) {
+	if !(GitHubConfig{}).AppAuthoredPRsEnabled() {
+		t.Error("AppAuthoredPRsEnabled() with unset flag = false, want true (default on)")
+	}
+	f := false
+	if (GitHubConfig{AppAuthoredPRs: &f}).AppAuthoredPRsEnabled() {
+		t.Error("AppAuthoredPRsEnabled() with explicit false = true, want false")
+	}
+	tr := true
+	if !(GitHubConfig{AppAuthoredPRs: &tr}).AppAuthoredPRsEnabled() {
+		t.Error("AppAuthoredPRsEnabled() with explicit true = false, want true")
+	}
+}
+
+// With App-bot mode on (the default) and ai_author empty, the effective author
+// is the App bot login; an explicit ai_author still wins; an explicit opt-out
+// yields no author.
+func TestEffectiveAIAuthor_AppBotDefault(t *testing.T) {
+	botHive := &Config{GitHub: GitHubConfig{AppID: 42, AppSlug: "acme-hive"}}
+	if got := botHive.EffectiveAIAuthor(); got != "acme-hive[bot]" {
+		t.Errorf("EffectiveAIAuthor() default = %q, want acme-hive[bot]", got)
+	}
+	withAuthor := &Config{GitHub: GitHubConfig{AppID: 42, AppSlug: "acme-hive"}}
+	withAuthor.Project.AIAuthor = "alice"
+	if got := withAuthor.EffectiveAIAuthor(); got != "alice" {
+		t.Errorf("EffectiveAIAuthor() with ai_author = %q, want alice", got)
+	}
+	f := false
+	optOut := &Config{GitHub: GitHubConfig{AppID: 42, AppSlug: "acme-hive", AppAuthoredPRs: &f}}
+	if got := optOut.EffectiveAIAuthor(); got != "" {
+		t.Errorf("EffectiveAIAuthor() opted out = %q, want empty", got)
+	}
+}
+
 func TestRemoveAgentFile_PathTraversal(t *testing.T) {
 	dir := t.TempDir()
 	for _, bad := range []string{"../etc/passwd", "sub/agent", "back\\slash"} {

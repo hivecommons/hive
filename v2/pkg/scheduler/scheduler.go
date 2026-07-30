@@ -604,13 +604,22 @@ func (s *Scheduler) buildCIFailingList() string {
 func (s *Scheduler) ghAuthInstructions(agentName string) string {
 	return fmt.Sprintf(`## Project Authentication
 
-- git push / git fetch: run them normally. A credential helper supplies a
-  push-capable token automatically. Do NOT export GH_TOKEN for git and do
+- The GitHub App is the WRITE GATE. Every write to GitHub — opening or updating
+  an issue or PR, commenting, and merging — goes through this hive's GitHub App
+  (github.com or GitHub Enterprise, per the primary repo). If the App is not
+  installed you have NO write credential: stay advisory (read, KB, beads) and do
+  not attempt to write. Never substitute a personal user token to work around a
+  missing App. Login/identity is a separate concern and is always github.com.
+- Writes are authored by the App bot identity, not a personal account. Do not
+  set git user.name/user.email to a human, and do not pass 'gh pr create' or
+  'git commit' an explicit --author: let the App identity stand.
+- git push / git fetch: run them normally. A credential helper supplies the
+  App-scoped push token automatically. Do NOT export GH_TOKEN for git and do
   NOT use HIVE_GITHUB_TOKEN (it is read-only; overriding breaks pushes).
 - gh CLI: export your per-agent token first:
     export GH_TOKEN=$(cat /var/run/hive-metrics/agent-tokens/gh-token-%s.cache)
-  It is scoped to YOUR tier. Never read another agent's token file or the
-  shared gh-app-token.cache.
+  It is scoped to YOUR tier and is an App installation token. Never read another
+  agent's token file or the shared gh-app-token.cache.
 - A missing GH_TOKEN at session start is expected (the Copilot CLI owns that
   variable) — it is never a blocker. All GitHub traffic flows through the
   hive proxy either way.

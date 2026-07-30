@@ -9,18 +9,50 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 // User-journey nudges.
 //
-// Every hive owner walks the same adoption path:
+// The full adoption path, in order. It has two phases: the HUB provisions and
+// assigns a placeholder, then — once the user TAKES POSSESSION of that assigned
+// placeholder — the remaining steps happen on the SPOKE.
 //
-//	Stage 1  Install the GitHub App          URGENT   — days, not weeks
-//	Stage 2  Assign a method/model, OR run   MEDIUM   — a few weeks
-//	         the contributor relay
-//	Stage 3  Raise the ACMM level            SLOW     — months, never forced
+//	── Hub-side (before the user takes possession) ──
+//	1. Request        — with a PRIMARY REPO on github.com OR github.ibm.com.
+//	                    The primary repo's host determines this hive's App host
+//	                    (step 4) and every other repo in the spoke MUST be on the
+//	                    same host — a spoke is single-host (see the repo-host
+//	                    consistency rule).
+//	2. Assign         — the hub assigns the requester to a placeholder hive.
 //
-// This file computes, server-side, which stage each hive is stalled on and
-// turns that into an escalating banner delivered over the existing per-hive
-// hub-banner channel (see hubBanners in server.go and the heartbeat response
-// assembly in handleHeartbeat). It NEVER de-provisions anything: the strongest
-// action it takes is warning that a human may de-provision the spoke.
+//	── Spoke-side (once the user has taken possession) ──
+//	3. Spoke login    — the owner signs into the dashboard via device flow. Login
+//	                    is ALWAYS github.com OAuth (GitHubConfig.OAuthBaseURL /
+//	                    OAuthAPIURL / OAuthClientIDResolved), decoupled from the
+//	                    App/repo host — a user signs in with a github.com identity
+//	                    even on a GHE hive.
+//	4. GH / GHE App   — install the GitHub App. github.com App for a github.com
+//	                    primary repo, GitHub Enterprise App for a github.ibm.com
+//	                    primary repo. THIS IS THE WRITE GATE (below).
+//	5. Setup agents   — assign methods + models (or run the contributor relay),
+//	                    then raise the ACMM level.
+//
+// The stall-detection stages below track the SPOKE-side steps (3-5): a
+// placeholder can be assigned yet sit un-logged-in, App-less, or agent-less.
+//
+// WRITE GATE — the App (step 4) is a hard prerequisite for ANY write. A hive
+// MUST have a real, installed GH/GHE App before an agent opens an issue or PR,
+// comments, or merges. This is enforced in code, not just policy: agent write
+// credentials (the GITHUB_TOKEN handed to the GitHub MCP server) are minted from
+// the App installation token, and that token only exists when
+// GitHubConfig.HasUsableApp() is true (real app_id + installation_id). No App →
+// m.appAuth is nil → no GITHUB_TOKEN is injected → the agent has no credential to
+// write with. Advisory work (reading, KB, beads) still runs App-less.
+//
+// The nudge STAGES below (1/2/3) are a compressed view of the same path used for
+// escalating banners — stage 1 = "install the App" (journey step 4), stage 2 =
+// "assign a method/model" (step 5), stage 3 = "raise the ACMM level". This file
+// computes, server-side, which stage each hive is stalled on and turns that into
+// an escalating banner delivered over the existing per-hive hub-banner channel
+// (see hubBanners in server.go and the heartbeat response assembly in
+// handleHeartbeat). It NEVER de-provisions anything: the strongest action it
+// takes is warning that a human may de-provision the spoke.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Tunable thresholds ──────────────────────────────────────────────────────

@@ -656,7 +656,7 @@ func main() {
 		ACMMLevel:      acmmLevel,
 		PRsAllowed:     cfg.Project.PRsAllowed(),
 		PolicyDir:      policyDir,
-		AppAuthoredPRs: cfg.GitHub.AppAuthoredPRs,
+		AppAuthoredPRs: cfg.GitHub.AppAuthoredPRsEnabled(),
 	}
 	agentMgr := agent.NewManager(cfg.EnabledAgents(), logger, projectCtx)
 	// Resolve the bob API key at LAUNCH time, not here: cfg is the live config
