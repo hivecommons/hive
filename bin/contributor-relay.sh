@@ -287,6 +287,31 @@ function captureTmuxLines(n) {
   }
 }
 
+// True while a bob CLI process is alive. bob exits at the end of every turn,
+// so "process gone" means the turn finished — see the bob branch of
+// checkTmuxIdle(). Matches the launch command rather than the bare name so a
+// stray "bob" substring elsewhere in the process table cannot mask an exit.
+const BOB_PROCESS_PATTERN = 'bob --accept-license';
+
+function bobIsRunning() {
+  try {
+    let procs;
+    if (fs.existsSync('/proc')) {
+      procs = execSync(
+        `for p in /proc/[0-9]*/cmdline; do tr "\\0" " " < "$p" 2>/dev/null; echo; done`,
+        { encoding: 'utf8', timeout: 15000 }
+      );
+    } else {
+      procs = execSync('ps -eo command 2>/dev/null', { encoding: 'utf8', timeout: 15000 });
+    }
+    return procs.includes(BOB_PROCESS_PATTERN);
+  } catch (_) {
+    // Unknown -> assume still running, so a probe failure cannot fabricate a
+    // completion for a task that is actually still in flight.
+    return true;
+  }
+}
+
 function checkTmuxIdle() {
   try {
     const output = execSync(
@@ -345,16 +370,20 @@ function checkTmuxIdle() {
       // (same convention as the copilot/goose branches above).
       const BOB_IDLE_CHROME = /Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/;
       const BOB_SPINNER = /\(esc to cancel/;
-      // bob exits after finishing a turn ("Bob goes to sleep 💤"), dropping the
-      // pane back to a shell prompt. That is a completed turn, not a hung one,
-      // so treat it as idle rather than waiting for chrome that is now gone.
-      const BOB_EXITED = /goes to sleep/;
-      const lastLines = text.split('\n').slice(-TMUX_TAIL_LINES).join('\n');
-      hasIdlePrompt = BOB_IDLE_CHROME.test(text) || BOB_EXITED.test(text);
+      // bob exits after finishing a turn ("Bob goes to sleep 💤"). Process
+      // liveness is the only reliable completion signal: bob does not repaint
+      // over its last frame on the way out, so a finished pane keeps a frozen
+      // spinner line ("◡ <title> (esc to cancel, 5s)") and the "goes to sleep"
+      // notice often scrolls out of the visible pane entirely. Screen-scraping
+      // alone therefore reports a completed turn as still working. Conversely
+      // the trailing shell prompt cannot stand in for "exited" either — it is
+      // also present mid-turn, left over from before bob was launched.
+      // Once bob has exited its chrome scrolls away, so an exited bob counts
+      // as idle on its own: there is no prompt left to look for.
+      const bobRunning = bobIsRunning();
+      hasIdlePrompt = BOB_IDLE_CHROME.test(text) || !bobRunning;
       hasCompletionMarker = true;
-      // Scope the spinner probe to the tail: a stale spinner line scrolled up
-      // in the backlog would otherwise pin isWorking true forever.
-      isWorking = BOB_SPINNER.test(lastLines) && !BOB_EXITED.test(lastLines);
+      isWorking = bobRunning && BOB_SPINNER.test(text);
     } else if (BACKEND === 'codex') {
       hasIdlePrompt = /codex>|>\s*$/.test(text);
       hasCompletionMarker = /completed|done|finished/i.test(text);
