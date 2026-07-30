@@ -1254,7 +1254,13 @@ func (g GitHubConfig) ResolvedAppSlug() string {
 // actually authors PRs and commits when the hive authenticates as an
 // installation rather than a personal token.
 func (g GitHubConfig) BotLogin() string {
-	if g.AppID == 0 {
+	// Only a REAL, installed App has a bot that can author anything. A bare
+	// `AppID != 0` also passes for the placeholder sentinel (PlaceholderAppID)
+	// and for a real app_id that was never installed (installation_id: 0) —
+	// neither can mint a token or author a PR, so neither has a bot login. Using
+	// HasUsableApp() keeps EffectiveAIAuthor() empty for those, so the UI shows
+	// "-" (no author) rather than a phantom "<slug>[bot]" for an App-less hive.
+	if !g.HasUsableApp() {
 		return ""
 	}
 	return g.ResolvedAppSlug() + "[bot]"

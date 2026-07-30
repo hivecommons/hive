@@ -9888,7 +9888,11 @@ const dashboardHTML = `<!DOCTYPE html>
              App bot ("<slug>[bot]") in App-authored mode, else the configured
              ai_author (falls back to aiAuthor for spokes too old to report the
              effective value). A "[bot]" value is the informative case. */
-          '<td style="white-space:nowrap;font-size:0.75rem" title="GitHub identity for this hive\'s PRs/commits">' + esc(h.aiAuthorEffective || h.aiAuthor || '—') + '</td>' +
+          /* aiAuthorEffective already folds in ai_author (it returns ai_author
+             when set, else the App bot, else empty). Do NOT fall back to a raw
+             ai_author here: a hive with no usable GitHub App has no author and
+             must render "—", not a stale personal ai_author it can't act as. */
+          '<td style="white-space:nowrap;font-size:0.75rem" title="GitHub identity for this hive\'s PRs/commits (— = no GitHub App installed yet)">' + esc(h.aiAuthorEffective || '—') + '</td>' +
           '<td>' + journeyBadge(h.journey) + '</td>' +
           /* Drift sits immediately right of Journey: both answer "how healthy
              is this hive's configuration", so they read as one pair rather

@@ -704,19 +704,27 @@ func TestAppAuthoredPRsEnabled_DefaultsOn(t *testing.T) {
 // is the App bot login; an explicit ai_author still wins; an explicit opt-out
 // yields no author.
 func TestEffectiveAIAuthor_AppBotDefault(t *testing.T) {
-	botHive := &Config{GitHub: GitHubConfig{AppID: 42, AppSlug: "acme-hive"}}
+	// A USABLE App (real app_id + installed) defaults to the bot author.
+	botHive := &Config{GitHub: GitHubConfig{AppID: 42, InstallationID: 7, AppSlug: "acme-hive"}}
 	if got := botHive.EffectiveAIAuthor(); got != "acme-hive[bot]" {
 		t.Errorf("EffectiveAIAuthor() default = %q, want acme-hive[bot]", got)
 	}
-	withAuthor := &Config{GitHub: GitHubConfig{AppID: 42, AppSlug: "acme-hive"}}
+	// An explicit ai_author always wins, App or not.
+	withAuthor := &Config{GitHub: GitHubConfig{AppID: 42, InstallationID: 7, AppSlug: "acme-hive"}}
 	withAuthor.Project.AIAuthor = "alice"
 	if got := withAuthor.EffectiveAIAuthor(); got != "alice" {
 		t.Errorf("EffectiveAIAuthor() with ai_author = %q, want alice", got)
 	}
+	// Explicit opt-out → no author.
 	f := false
-	optOut := &Config{GitHub: GitHubConfig{AppID: 42, AppSlug: "acme-hive", AppAuthoredPRs: &f}}
+	optOut := &Config{GitHub: GitHubConfig{AppID: 42, InstallationID: 7, AppSlug: "acme-hive", AppAuthoredPRs: &f}}
 	if got := optOut.EffectiveAIAuthor(); got != "" {
 		t.Errorf("EffectiveAIAuthor() opted out = %q, want empty", got)
+	}
+	// No usable App (app_id set but NOT installed) → no author, UI shows "—".
+	noApp := &Config{GitHub: GitHubConfig{AppID: 42, AppSlug: "acme-hive"}} // installation_id 0
+	if got := noApp.EffectiveAIAuthor(); got != "" {
+		t.Errorf("EffectiveAIAuthor() uninstalled App = %q, want empty (UI shows —)", got)
 	}
 }
 
@@ -794,5 +802,32 @@ func TestHostLabel_PrefersGHEFromAPIURLWhenBaseEmpty(t *testing.T) {
 	// base_url wins when set.
 	if got := (GitHubConfig{BaseURL: "https://github.ibm.com"}).HostLabel(); got != "github.ibm.com" {
 		t.Errorf("HostLabel() from base_url = %q, want github.ibm.com", got)
+	}
+}
+
+// A hive with no USABLE App (placeholder app_id, or a real app_id that was never
+// installed) has no bot and must yield an empty author, so the UI shows "—".
+func TestBotLogin_RequiresUsableApp(t *testing.T) {
+	// Real, installed App → bot login.
+	real := GitHubConfig{AppID: 5686, InstallationID: 42980, AppSlug: "kubestellar-hive-ghe"}
+	if got := real.BotLogin(); got != "kubestellar-hive-ghe[bot]" {
+		t.Errorf("installed App BotLogin() = %q, want kubestellar-hive-ghe[bot]", got)
+	}
+	// Placeholder sentinel app_id → no bot.
+	if got := (GitHubConfig{AppID: PlaceholderAppID, InstallationID: 42980}).BotLogin(); got != "" {
+		t.Errorf("placeholder-app BotLogin() = %q, want empty", got)
+	}
+	// Real app_id but NOT installed (installation_id 0) → no bot.
+	if got := (GitHubConfig{AppID: 3568013, InstallationID: 0}).BotLogin(); got != "" {
+		t.Errorf("uninstalled-app BotLogin() = %q, want empty", got)
+	}
+	// No App at all → no bot.
+	if got := (GitHubConfig{}).BotLogin(); got != "" {
+		t.Errorf("no-app BotLogin() = %q, want empty", got)
+	}
+	// EffectiveAIAuthor is empty for an App-less hive (→ UI shows "—").
+	c := &Config{GitHub: GitHubConfig{AppID: PlaceholderAppID}}
+	if got := c.EffectiveAIAuthor(); got != "" {
+		t.Errorf("App-less EffectiveAIAuthor() = %q, want empty (UI shows —)", got)
 	}
 }

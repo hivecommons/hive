@@ -12128,7 +12128,10 @@ function burnAreaChart() {
       // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
       // hive runs App-authored mode, else the configured ai_author. Surfaced on
       // the governor card so operators can see the write identity at a glance.
-      window._aiAuthor = cfg.ai_author_effective || cfg.ai_author || '';
+      // ai_author_effective already incorporates ai_author (else the App bot,
+      // else empty). Don't fall back to a raw ai_author — an App-less hive has
+      // no author and should render "—", not a stale personal value.
+      window._aiAuthor = cfg.ai_author_effective || '';
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');
