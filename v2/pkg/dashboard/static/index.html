@@ -5665,8 +5665,22 @@
       { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
       { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
     ];
+    // bob (IBM bobshell) selects its own model and has NO usable --model flag:
+    // launching `bob --model <concrete-id>` makes every prompt die with
+    // "Cannot read properties of undefined (reading 'maxTokens')" (verified
+    // live on a spoke), while the same bob with no --model runs inference fine.
+    // So bob gets exactly ONE option — the auto sentinel — and the launch path
+    // (bobLaunchCmd) passes no --model at all. This value is a display/stored
+    // placeholder, never a command-line argument.
+    const BOB_CLI_MODELS = [
+      { value: 'auto', label: 'Auto (bob picks)' },
+    ];
     const KNOWN_MODELS = COPILOT_CLI_MODELS;
-    const CLI_BACKENDS = ['claude', 'copilot', 'gemini', 'goose', 'codex'];
+    // CLI_BACKENDS gates which /api/config/backends entries populate
+    // BACKEND_MODELS. bob is included so its server-served single-option list
+    // is honored; without it bob's entry would be dropped and modelsForBackend
+    // would fall through to the copilot catalog.
+    const CLI_BACKENDS = ['claude', 'copilot', 'bob', 'gemini', 'goose', 'codex'];
     // BACKEND_MODELS holds the live-discovered model list for every backend
     // (inference AND cli), keyed by backend id. INFERENCE_MODELS is kept as
     // an alias to the same object for backward compatibility with existing
@@ -5680,6 +5694,7 @@
     const CLI_FALLBACK_MODELS = {
       claude: CLAUDE_CLI_MODELS,
       copilot: COPILOT_CLI_MODELS,
+      bob: BOB_CLI_MODELS,
       gemini: COPILOT_CLI_MODELS,
       goose: COPILOT_CLI_MODELS,
       codex: CODEX_CLI_MODELS,
@@ -5690,18 +5705,43 @@
       if (INFERENCE_BACKENDS.includes(b) || _configuredGateways.includes(b)) return b + ' ⚡';
       return b;
     }
-    // Auto-select sentinels: special --model VALUES that tell a CLI to pick the
-    // model itself rather than pin a concrete id. They flow verbatim through the
-    // launch path's `--model <value>` but are never in a discovered model
-    // catalog, so they must be exempted from model auto-heal. Copilot: `auto`.
-    const AUTO_MODEL_SENTINELS = { copilot: ['auto'] };
+    // Auto-select sentinels: values meaning "let the CLI pick its own model"
+    // rather than pinning a concrete id. They are never in a discovered model
+    // catalog, so they must be exempted from model auto-heal — otherwise
+    // reconcileModelsAfterDiscovery rewrites them to a concrete discovered id.
+    //
+    // How each reaches the CLI differs, and the difference is load-bearing:
+    //   - copilot: `auto` flows VERBATIM through the launch path as
+    //     `--model auto`. It is a real, supported Copilot CLI flag value.
+    //   - bob: `auto` is NEVER passed on the command line. bob has no working
+    //     --model flag (a concrete id breaks inference with "Cannot read
+    //     properties of undefined (reading 'maxTokens')"), and `bob --model
+    //     auto` is untested/presumed unsafe. bobLaunchCmd omits --model
+    //     entirely; `auto` exists only as the stored/displayed selection.
+    const AUTO_MODEL_SENTINELS = { copilot: ['auto'], bob: ['auto'] };
     function isAutoModelSentinel(backend, model) {
       return (AUTO_MODEL_SENTINELS[backend] || []).includes(model);
     }
+    // Backends whose model list is a single fixed option, so there is nothing
+    // for a user to choose and nothing meaningful to store per agent.
+    const SINGLE_OPTION_BACKENDS = ['bob'];
     function modelsForBackend(backend) {
+      // Single-option backends are authoritative and never overridden by
+      // discovery: even if the server (or a stale cached response) offered a
+      // longer list, bob cannot honor a model choice, so the local one-option
+      // list wins. This also guarantees bob never reaches the copilot fallback.
+      if (SINGLE_OPTION_BACKENDS.includes(backend)) {
+        return CLI_FALLBACK_MODELS[backend] || [];
+      }
       const discovered = BACKEND_MODELS[backend];
       if (discovered && discovered.length) return discovered;
       if (INFERENCE_BACKENDS.includes(backend)) return [];
+      // NOTE (latent trap): any UNKNOWN backend still falls through to the
+      // copilot catalog and is offered models it may not support — the exact
+      // bug this change fixes for bob. Left as-is deliberately: gateway
+      // backends rely on a non-empty first paint, so narrowing it needs its
+      // own change. Every known CLI backend is now explicit in
+      // CLI_FALLBACK_MODELS, so nothing shipped reaches this line by accident.
       return CLI_FALLBACK_MODELS[backend] || COPILOT_CLI_MODELS;
     }
     // _modelIdMatches: an agent's stored model may lack (or carry) the
@@ -5724,7 +5764,17 @@
     // the dropdown never silently drops an agent's active selection.
     function modelOptionsHtml(backend, currentModel) {
       const models = modelsForBackend(backend);
-      const cur = currentModel || '';
+      // SINGLE_OPTION_BACKENDS offer exactly one valid selection, so an agent's
+      // stored model carries no information — and bob agents created before
+      // this change hold a stale concrete id (e.g. "claude-sonnet-4.6") that
+      // bob cannot honor. Substituting the sole option as the "current" value
+      // both preselects it (with the usual " ▾" caret) and starves the
+      // "(current)" branch below, which would otherwise resurrect the stale id
+      // as a pinned, preselected option.
+      const soleOption = SINGLE_OPTION_BACKENDS.includes(backend) && models.length === 1
+        ? models[0].value
+        : '';
+      const cur = soleOption || currentModel || '';
       let matched = false;
       const opts = models.map(m => {
         const sel = !matched && _modelIdMatches(m.value, cur);

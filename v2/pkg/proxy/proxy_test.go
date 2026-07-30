@@ -45,12 +45,14 @@ func TestAllowedByModeExtended(t *testing.T) {
 		{"issues-only can comment", agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/1/comments", true},
 		{"issues-only cannot create PRs", agent.ModeIssuesOnly, "POST", "/repos/org/repo/pulls", false},
 
-		{"issues-and-prs can create PRs", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls", true},
+		// Direct PR creation is a hard deny for EVERY mode — agents must use
+		// hive-open-pr so the App bot authors the PR (never the login user).
+		{"issues-and-prs cannot create PRs directly (use hive-open-pr)", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls", false},
 		{"issues-and-prs can push", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo.git/git-receive-pack", true},
 		{"issues-and-prs cannot merge", agent.ModeIssuesAndPRs, "PUT", "/repos/org/repo/pulls/1/merge", false},
 
 		{"merge mode can merge", agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/1/merge", true},
-		{"merge mode can create PRs", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", true},
+		{"merge mode cannot create PRs directly (use hive-open-pr)", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", false},
 
 		{"git upload-pack always allowed", agent.ModeAdvisory, "POST", "/repos/org/repo.git/git-upload-pack", true},
 

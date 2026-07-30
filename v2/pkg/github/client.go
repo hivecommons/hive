@@ -32,6 +32,10 @@ type Client struct {
 	exemptLabels []string
 	logger       *slog.Logger
 	appAuth      *AppAuth // nil for token-authenticated clients
+	// prAuthz gates PR-open requests from the request-file watcher against the
+	// per-agent ACMM write-policy + forge-resistance. nil fails closed. Set by
+	// StartPRRequestWatcher.
+	prAuthz PRRequestAuthorizer
 }
 
 // GoGitHub returns the underlying go-github client for direct API access.

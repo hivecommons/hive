@@ -40,7 +40,8 @@ func TestAllowedByMode(t *testing.T) {
 		// ── ISSUES_AND_PRS: issues + PRs, no merge ──
 		{"prs allows GET", agent.ModeIssuesAndPRs, "GET", "/repos/org/repo/pulls", true},
 		{"prs allows POST issue", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/issues", true},
-		{"prs allows POST pull", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls", true},
+		// Direct PR creation is a hard deny for every mode — agents use hive-open-pr.
+		{"prs blocks direct POST pull", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls", false},
 		{"prs allows PATCH pull", agent.ModeIssuesAndPRs, "PATCH", "/repos/org/repo/pulls/42", true},
 		{"prs allows PR review", agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls/42/reviews", true},
 		{"prs allows git push", agent.ModeIssuesAndPRs, "POST", "/org/repo.git/git-receive-pack", true},
@@ -52,7 +53,8 @@ func TestAllowedByMode(t *testing.T) {
 		// ── ISSUES_PRS_MERGE: everything allowed ──
 		{"merge allows GET", agent.ModeIssuesPRsMerge, "GET", "/repos/org/repo/issues", true},
 		{"merge allows POST issue", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/issues", true},
-		{"merge allows POST pull", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", true},
+		// Even merge mode cannot POST /pulls directly — hive-open-pr is the only path.
+		{"merge blocks direct POST pull", agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", false},
 		{"merge allows PUT merge", agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/42/merge", true},
 		{"merge allows git push", agent.ModeIssuesPRsMerge, "POST", "/org/repo.git/git-receive-pack", true},
 
