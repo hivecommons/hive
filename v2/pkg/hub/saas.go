@@ -693,8 +693,11 @@ func clusterGitHubConfig(c *ClusterConfig) config.GitHubConfig {
 	}
 	base := c.GitHubBaseURL
 	// The cluster stores "" for public GitHub; config.GitHubConfig uses the
-	// same convention, so pass it through untouched.
-	return config.GitHubConfig{BaseURL: base, AppSlug: c.GitHubAppSlug}
+	// same convention, so pass it through untouched. Carry the api_url too so the
+	// derived config's HostLabel()/IsGHE()/AppInstallURL() resolve the forge
+	// base-or-api: a GHE cluster that records only an api_url (blank base_url —
+	// the common state) is still recognised as GHE, not mislabelled github.com.
+	return config.GitHubConfig{BaseURL: base, APIURL: c.GitHubAPIURL, AppSlug: c.GitHubAppSlug}
 }
 
 // githubHostLabel renders a GitHub base URL as a bare hostname for display.
@@ -723,7 +726,7 @@ func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
 			Name:          c.Name,
 			HasGPU:        c.HasGPU,
 			Arch:          c.Arch,
-			GitHubHost:    githubHostLabel(c.GitHubBaseURL),
+			GitHubHost:    gh.HostLabel(),
 			AppInstallURL: gh.AppInstallURL(),
 		})
 	}
@@ -1845,8 +1848,11 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 				entry.GitHubHost = githubHostLabel(sh.GitHubHost)
 				return
 			}
-			if c := s.clusterForHive(sh); c != nil && c.GitHubBaseURL != "" {
-				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+			if c := s.clusterForHive(sh); c != nil && (c.GitHubBaseURL != "" || c.GitHubAPIURL != "") {
+				// base-or-api so a GHE cluster recorded with only an api_url
+				// (blank base_url — the common state) is recognised as GHE, not
+				// mislabelled github.com.
+				entry.GitHubHost = clusterGitHubConfig(c).HostLabel()
 				return
 			}
 		}
@@ -1856,8 +1862,8 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// immutable after load, and taking s.mu here would nest inside callers
 		// that already hold it.
 		if entry.ClusterID != "" {
-			if c, ok := s.clusters[entry.ClusterID]; ok && c.GitHubBaseURL != "" {
-				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+			if c, ok := s.clusters[entry.ClusterID]; ok && (c.GitHubBaseURL != "" || c.GitHubAPIURL != "") {
+				entry.GitHubHost = clusterGitHubConfig(&c).HostLabel()
 			}
 		}
 	}

@@ -95,3 +95,36 @@ func TestDecideAppKeySync_RepairsPlaceholderSentinel(t *testing.T) {
 		t.Errorf("a real non-matching app_id must stay protected as a deliberate pin: %+v", got)
 	}
 }
+
+// clusterGitHubConfig must derive the forge base-or-api, so a GHE cluster recorded
+// with ONLY an api_url (blank base_url — the common state after heartbeat, which
+// never delivers base_url) is still recognised as GHE: its host pill reads the
+// enterprise host and its App install URL uses the GHE /github-apps/ path (not the
+// public /apps/ path, which 404s on a GHE host).
+func TestClusterGitHubConfig_BaseOrAPI(t *testing.T) {
+	// GHE cluster, api_url only (no base_url), GHE slug set.
+	gheAPIOnly := &ClusterConfig{
+		GitHubAPIURL:  "https://github.ibm.com/api/v3",
+		GitHubAppSlug: "kubestellar-hive-ghe",
+	}
+	gh := clusterGitHubConfig(gheAPIOnly)
+	if host := gh.HostLabel(); host != "github.ibm.com" {
+		t.Errorf("api-only GHE cluster HostLabel = %q, want github.ibm.com (base-or-api)", host)
+	}
+	if !gh.IsGHE() {
+		t.Error("api-only GHE cluster must be recognised as GHE")
+	}
+	if url := gh.AppInstallURL(); url != "https://github.ibm.com/github-apps/kubestellar-hive-ghe/installations/new" {
+		t.Errorf("api-only GHE install URL = %q, want the GHE /github-apps/ path", url)
+	}
+
+	// A genuine public cluster (nothing set) still reads github.com and the public
+	// /apps/ install path.
+	pub := clusterGitHubConfig(&ClusterConfig{})
+	if host := pub.HostLabel(); host != "github.com" {
+		t.Errorf("public cluster HostLabel = %q, want github.com", host)
+	}
+	if pub.IsGHE() {
+		t.Error("public cluster must not be flagged GHE")
+	}
+}
