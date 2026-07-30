@@ -4782,6 +4782,11 @@
        states must not tell the user to install anything or edit config. */
     var GH_APP_STATE_KEY_MISSING = 'key-missing';
     var GH_APP_STATE_KEY_INVALID = 'key-invalid';
+    /* User-actionable, but distinct from a permission problem: the App is not
+       installed at all, so there are no settings to view — only an install to
+       perform. Kept out of GH_APP_OPERATOR_STATES: installing is the user's
+       job, not the operator's. */
+    var GH_APP_STATE_NOT_INSTALLED = 'not-installed';
     var GH_APP_OPERATOR_STATES = {};
     GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
     GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
@@ -4839,7 +4844,18 @@
       if (resetLink) resetLink.style.display = '';
       banner.classList.remove('operator-issue');
 
-      var isPermIssue = data.githubAppRequired && data.githubAppPermIssue;
+      /* githubAppPermIssue carries the diagnostic string for EVERY
+         user-actionable App failure, including "not installed at all", so it
+         cannot decide between "installed but under-permissioned" and "never
+         installed". Using it alone told a hive carrying a placeholder app_id
+         that "the app is installed but cannot write" and offered
+         "View App Settings" — settings for an App that does not exist — while
+         the banner's own body text said it was not yet linked to any App.
+         githubAppState (added with the operator/user classification) is the
+         authoritative signal, so an explicitly not-installed state is never
+         treated as a permission problem. */
+      var isNotInstalled = appState === GH_APP_STATE_NOT_INSTALLED;
+      var isPermIssue = data.githubAppRequired && data.githubAppPermIssue && !isNotInstalled;
       if (data.githubAppRequired && (data.githubAppInstallURL || isPermIssue)) {
         var link = document.getElementById('gh-app-install-link');
         var title = document.querySelector('#gh-app-install-banner .gh-app-title');
