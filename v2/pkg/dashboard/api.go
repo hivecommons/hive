@@ -4161,9 +4161,26 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 	// No agent restart is required to ADOPT the key: main.go injected a
 	// resolver closure over the live config into the agent manager
 	// (SetBobAPIKeyResolver), and it re-reads the key file on every agent
-	// launch. A bob agent that is already paused for "no API key" still needs
-	// to be started/resumed once — it is not re-launched automatically — so
-	// the UI tells the user to start the agent rather than restart the pod.
+	// launch. Agents already parked in "failed: no API key" cannot pick it up
+	// on their own, though: the key is Secret, so it is delivered only by tmux
+	// set-environment, which is inherited by shells created AFTER it runs — and
+	// their pane shell predates the key. RelaunchBobAgentsAwaitingKey therefore
+	// recreates those sessions so a fresh shell inherits the key. Running,
+	// paused, and non-bob agents are untouched, and a second save finds nothing
+	// left to do.
+	// s.deps.Ctx, NOT r.Context(): the launch path derives the agent's
+	// long-lived pane-polling goroutine from this context, so a request-scoped
+	// one would cancel it the moment this response is written. Every other
+	// Start/Restart/Resume caller in the dashboard passes s.deps.Ctx too.
+	var relaunched []string
+	if s.deps != nil && s.deps.AgentMgr != nil {
+		relaunched = s.deps.AgentMgr.RelaunchBobAgentsAwaitingKey(s.deps.Ctx)
+	}
+	if len(relaunched) > 0 {
+		s.logger.Info("relaunched bob agents after api key save",
+			"count", len(relaunched), "agents", strings.Join(relaunched, ","))
+	}
+
 	jsonResponse(w, map[string]interface{}{
 		"ok":         true,
 		"configured": true,
@@ -4171,6 +4188,9 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 		"source": "file:" + keyFile,
 		// The pod does not need restarting; the resolver reads the key live.
 		"restartNeeded": false,
+		// How many parked bob agents were started by this save, so the UI can
+		// report what actually happened instead of telling the user to do it.
+		"relaunched": len(relaunched),
 	})
 }
 

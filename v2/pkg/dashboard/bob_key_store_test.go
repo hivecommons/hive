@@ -435,18 +435,22 @@ func TestBobKeyUIRemovedFromAgentCard(t *testing.T) {
 
 // TestBobKeyUIRestartCopyStaysAccurate pins the user-facing claim about
 // restarts. The resolver re-reads the key file at every agent launch, so no pod
-// restart is needed — but an agent already paused for a missing key is NOT
-// relaunched automatically. Copy that drops either half sends users to the
-// wrong remedy.
+// restart is needed — and since handleGovernorBobKey now calls
+// RelaunchBobAgentsAwaitingKey, an agent parked for a missing key IS relaunched
+// by the save. Copy that drops either half sends users to the wrong remedy.
 func TestBobKeyUIRestartCopyStaysAccurate(t *testing.T) {
 	html := indexHTML(t)
 	cases := []struct {
 		name    string
 		snippet string
 	}{
-		{"panel says no restart needed", "restart is needed — but a bob agent already paused for a missing key is not"},
-		{"panel says start the agent once", "relaunched automatically and must be started once."},
-		{"save toast says no restart, start the agent", "no restart needed; start any bob agent that is paused for a missing key"},
+		{"panel says no restart needed", "restart is needed — and any bob agent already parked for a missing key is"},
+		{"panel says restart is automatic", "restarted automatically as part of the save"},
+		// The fresh-session half is the actual fix: a relaunch into the stale
+		// pane shell would not pick the key up (secrets reach the CLI only via
+		// tmux set-environment, inherited by shells created afterwards).
+		{"panel says the session is fresh", "in a fresh session that picks"},
+		{"save toast reports the relaunched count", "Number(data.relaunched)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -454,6 +458,24 @@ func TestBobKeyUIRestartCopyStaysAccurate(t *testing.T) {
 				t.Errorf("index.html is missing %q — the restart copy is no longer accurate", tc.snippet)
 			}
 		})
+	}
+}
+
+// TestBobKeyUINoLongerTellsUserToStartAgents guards the regression this change
+// closes: the old copy told operators to go start paused bob agents by hand.
+// Now that the save relaunches them, any resurfacing of that instruction (e.g.
+// via a backport from mk/dd/v3, where this fix has not landed yet) is a lie.
+func TestBobKeyUINoLongerTellsUserToStartAgents(t *testing.T) {
+	html := indexHTML(t)
+	stale := []string{
+		"must be started once",
+		"not\n            relaunched automatically",
+		"start any bob agent that is paused for a missing key",
+	}
+	for _, s := range stale {
+		if strings.Contains(html, s) {
+			t.Errorf("index.html still contains stale copy %q — the key save now relaunches parked bob agents", s)
+		}
 	}
 }
 

@@ -12967,8 +12967,9 @@ function burnAreaChart() {
             bob cannot complete browser sign-in inside a pod (its callback resolves to
             the pod, not your machine) and offers no device-code flow, so an API key is
             its only headless credential. Saving a key takes effect immediately — no pod
-            restart is needed — but a bob agent already paused for a missing key is not
-            relaunched automatically and must be started once.
+            restart is needed — and any bob agent already parked for a missing key is
+            restarted automatically as part of the save, in a fresh session that picks
+            up the new key.
           </div>
           <div id="bob-key-inline-status" style="font-size:0.74rem;min-height:18px;margin-top:8px"></div>
         </div>`;
@@ -16691,9 +16692,14 @@ function burnAreaChart() {
           }
           closeDialog();
           // The hive reads the key at each agent launch, so no pod restart is
-          // needed — but an agent already paused for a missing key must be
-          // started once to pick it up. Say which, so the user isn't guessing.
-          showToast('bob API key saved — no restart needed; start any bob agent that is paused for a missing key', 'success');
+          // needed — and the save also relaunches any bob agent that was parked
+          // for a missing key. Report the count the server actually relaunched
+          // rather than telling the user to go start agents by hand.
+          var relaunched = Number(data.relaunched) || 0;
+          showToast(relaunched > 0
+            ? 'bob API key saved — no restart needed; relaunched ' + relaunched +
+              ' bob agent' + (relaunched === 1 ? '' : 's') + ' that was waiting for a key'
+            : 'bob API key saved — no restart needed', 'success');
           refreshBobKeyPanel();
         } catch (e) {
           setStatus('Save failed: ' + e.message, 'var(--red)');
