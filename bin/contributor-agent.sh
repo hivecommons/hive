@@ -127,6 +127,21 @@ case "$STATUS" in
     ;;
 esac
 
+# bob is launched with --auth-method api-key (see backend_perm_flag in
+# config/backends.conf), which makes BOBSHELL_API_KEY mandatory: without it bob
+# comes up sitting at "Enter Bob-Shell API Key" and simply waits. Nobody is
+# attached to an unattended relay, so that is an indefinite silent hang rather
+# than a failure anyone can see. Fail loudly at startup instead.
+# Only the presence of the key is tested — never its value, and it is never
+# echoed.
+if [[ "$AGENT_BACKEND" == "bob" ]] && [[ -z "${BOBSHELL_API_KEY:-}" ]]; then
+  echo "ERROR: backend 'bob' requires BOBSHELL_API_KEY to be set."
+  echo "  Get a key at https://bob.ibm.com (Scope: Inference), then:"
+  echo "    export BOBSHELL_API_KEY=..."
+  echo "  The key stays on your machine and is never sent to the hive."
+  exit 1
+fi
+
 # Ensure metrics directory exists for gh-wrapper token injection
 mkdir -p /var/run/hive-metrics 2>/dev/null || true
 
@@ -240,7 +255,15 @@ PERM_FLAG=$(backend_perm_flag "$AGENT_BACKEND")
 MODEL_FLAG=""
 if [[ -n "${AGENT_MODEL:-}" ]]; then
   case "$AGENT_BACKEND" in
-    amazonq|goose) ;;
+    # amazonq/goose take their model from config/env, not a --model flag.
+    #
+    # bob is excluded because --model is actively FATAL, not merely unused:
+    # bob auto-selects its own model, and passing one leaves its model config
+    # undefined so every prompt dies with
+    # "🛑 Cannot read properties of undefined (reading 'maxTokens')".
+    # Verified against bobshell 1.0.6. PR #2249 removed it hub-side; this is
+    # the same fix on the contributor-relay path.
+    amazonq|goose|bob) ;;
     *) MODEL_FLAG="--model $AGENT_MODEL" ;;
   esac
 fi

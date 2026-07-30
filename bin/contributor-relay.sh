@@ -92,7 +92,18 @@ function getCLIState() {
     } else if (BACKEND === 'goose') {
       if (/goose is ready|> Enter to send|>\s*$|goose>|G\s*>/.test(text)) return 'ready';
     } else if (BACKEND === 'bob') {
-      if (/bob>|>\s*$|Bob-Shell/.test(text)) return 'ready';
+      // Order matters: the blocked states are checked FIRST because bob's
+      // auth prompt contains the literal string "Bob-Shell" ("Enter Bob-Shell
+      // API Key"). The former /Bob-Shell/ 'ready' test therefore reported a
+      // bob stuck at the API-key prompt as READY, and the relay would dispatch
+      // tasks into a pane that could never run them.
+      if (/Enter Bob-Shell API Key|enter your Bob-Shell API key|Paste your API key here/i.test(text)) return 'needs-login';
+      if (/Do you trust this folder|not trusted/i.test(text)) return 'onboarding';
+      // Real prompt chrome of an authenticated, ready bob TUI. Matching the
+      // status line ("Auto-approve:", "Tokens left:") or the boxed input hint
+      // is far tighter than the old />\s*$/, which matched almost any pane
+      // that happened to end in a '>' — including partially drawn frames.
+      if (/Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/.test(text)) return 'ready';
     } else if (BACKEND === 'codex') {
       if (/codex>|>\s*$|Codex CLI/.test(text)) return 'ready';
     } else if (BACKEND === 'pi') {
