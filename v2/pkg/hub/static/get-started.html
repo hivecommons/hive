@@ -418,6 +418,7 @@
         <div id="request-summary" style="margin:20px 0;padding:16px;background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
           <div style="margin-bottom:8px"><strong>Summary</strong></div>
           <div style="color:var(--muted)">Repo: <span id="summary-repos" style="color:var(--text)">none added</span></div>
+          <div style="color:var(--muted)">GitHub: <span id="summary-forge" style="color:var(--text)">github.com</span></div>
           <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)"></span></div>
           <div style="color:var(--muted)">Name: <span id="summary-name" style="color:var(--text)">&mdash;</span></div>
           <div style="color:var(--muted)">Slack ID: <span id="summary-slack" style="color:var(--text)">&mdash;</span></div>
@@ -611,6 +612,17 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       var sl = contactValue('req-slack-id', CONTACT_MAX_SLACK);
       document.getElementById('summary-name').textContent = nm || em;
       document.getElementById('summary-slack').textContent = sl || em;
+      // Surface the forge so the choice is explicit before the user submits — a
+      // GHE host (from a pasted enterprise repo URL) reads "github.ibm.com", a
+      // plain github.com request reads "github.com". Never blank/ambiguous.
+      var forgeEl = document.getElementById('summary-forge');
+      if (forgeEl) {
+        var fl = forgeLabel();
+        forgeEl.textContent = fl;
+        forgeEl.title = fl === 'github.com'
+          ? 'This hive will run against public github.com'
+          : 'This hive will run against your GitHub Enterprise instance (' + fl + ')';
+      }
     }
 
     /* parseRepoRef turns whatever a user pastes into {host, org, name}.
@@ -792,6 +804,28 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       goToStep(WIZARD_STEP_LEVEL);
     }
 
+    // selectedForgeHost returns the GitHub forge the request targets, derived
+    // authoritatively from the selected repos: the enterprise host if any repo
+    // carries one (single-host-per-spoke is validated server-side, so at most one
+    // distinct host is possible), otherwise the explicit literal "github.com".
+    // It is never blank — a blank github_host fails the server's required-forge
+    // check (normalizeForgeHost) AND, if it slipped through, would let the hub's
+    // cluster placement rather than the user decide the forge. An explicit
+    // "github.com" passes the forge gate, resolves to public everywhere
+    // (gheAPIURLForHost/sameGitHubHost treat it as github.com), and is recorded
+    // non-blank so the cluster backfill cannot silently re-GHE it.
+    function selectedForgeHost() {
+      var withHost = _selectedRepos.find(function(r) { return r.github_host; });
+      return (withHost && withHost.github_host) || 'github.com';
+    }
+
+    // forgeLabel renders the chosen forge for the review step so the user SEES
+    // which GitHub instance the hive will run against before submitting — the
+    // choice is explicit, not silent.
+    function forgeLabel() {
+      return selectedForgeHost();
+    }
+
     async function submitRequest() {
       var btn = document.getElementById('submit-request');
       /* Check the required name BEFORE disabling the button: bailing out after
@@ -829,10 +863,9 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             org: reqOrg,
-            // Carry the GHE host when a pasted URL supplied one, so the admin
-            // sees which instance the request targets and the spoke can later
-            // be pointed at the right API.
-            github_host: (_selectedRepos.find(function(r) { return r.github_host; }) || {}).github_host || '',
+            // Explicit forge, never blank: the GHE host if a repo carries one,
+            // else literal "github.com". See selectedForgeHost().
+            github_host: selectedForgeHost(),
             repos: reqRepos,
             primary_repo: reqRepos.split(',')[0],
             acmm_level: _selectedAcmm,

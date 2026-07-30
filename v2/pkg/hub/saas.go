@@ -5525,7 +5525,17 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 			h.GitHubHost = host
 		}
 	} else if pr.GitHubHost != "" {
-		h.GitHubHost = pr.GitHubHost
+		// The request itself named a host. Honour a "public" sentinel here the SAME
+		// way the admin override does: the self-service onboarding form now sends
+		// "public" for an explicit github.com choice (never a blank), so a
+		// github.com request must be pinned public — NOT stored as the literal host
+		// "public", and NOT left blank for the cluster backfill below to re-GHE.
+		if strings.EqualFold(pr.GitHubHost, githubHostPublic) {
+			h.GitHubHost = ""
+			h.GitHubBaseURL = githubHostPublic
+		} else {
+			h.GitHubHost = pr.GitHubHost
+		}
 	}
 	// Same cluster backfill the manual assign path does: when neither the admin
 	// nor the request named a host, inherit the cluster's GHE default rather

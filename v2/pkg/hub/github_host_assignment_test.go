@@ -154,19 +154,36 @@ func TestApprovePrefersRequestGitHubHost(t *testing.T) {
 			adminHost:   "",
 			wantHost:    gheTestHost,
 		},
+		{
+			// The onboarding form sends "public" for an explicit github.com choice.
+			// On a GHE cluster it must STAY public — not be stored as the literal
+			// host "public", and not fall through to the cluster GHE backfill.
+			name:        "public request on a GHE cluster stays public (never backfilled)",
+			requestHost: githubHostPublic,
+			adminHost:   "",
+			wantHost:    "",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &SaaSHive{ID: "hosted-approve", ClusterID: defaultClusterID}
-			// Mirrors handleApproveProvision's resolution order.
+			// Mirrors handleApproveProvision's resolution order — including the
+			// request-side "public" sentinel the onboarding form now sends for an
+			// explicit github.com choice, which must pin public just like an admin
+			// override rather than be stored as the literal host "public".
 			if tc.adminHost == githubHostPublic {
 				h.GitHubHost = ""
 				h.GitHubBaseURL = githubHostPublic
 			} else if tc.adminHost != "" {
 				h.GitHubHost = tc.adminHost
 			} else if tc.requestHost != "" {
-				h.GitHubHost = tc.requestHost
+				if tc.requestHost == githubHostPublic {
+					h.GitHubHost = ""
+					h.GitHubBaseURL = githubHostPublic
+				} else {
+					h.GitHubHost = tc.requestHost
+				}
 			}
 			if host := backfillGitHubHostFromCluster(h, s.clusterForHive(h)); host != "" {
 				h.GitHubHost = host
