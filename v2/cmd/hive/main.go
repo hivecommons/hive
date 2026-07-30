@@ -2607,7 +2607,25 @@ func main() {
 			// possible. The hub keeps sending this every beat until we report the
 			// matching project back, so an idempotent no-op when already matched
 			// is expected and cheap.
-			if pc == nil || pc.Org == "" {
+			if pc == nil {
+				return
+			}
+			// A URL-only push (org empty, dashboard_url set) delivers the vanity
+			// dashboard URL to an already-claimed hive whose meta project is stale/
+			// empty on the hub — we must still adopt+report it, or the hub keeps
+			// showing the raw placeholder host forever. Handle it BEFORE the
+			// org-empty bail below, which exists so an empty project never blanks a
+			// working config: with no org there is nothing to reconcile except the
+			// URL, so adopt it, persist, and return without touching the project.
+			if pc.Org == "" {
+				if pc.DashboardURL != "" && cfg.Hub.DashboardURL != pc.DashboardURL {
+					logger.Info("adopting vanity dashboard URL from hub heartbeat (url-only push)",
+						"was", cfg.Hub.DashboardURL, "now", pc.DashboardURL)
+					cfg.Hub.DashboardURL = pc.DashboardURL
+					if err := cfg.Save(); err != nil {
+						logger.Error("failed to save adopted vanity dashboard URL", "error", err)
+					}
+				}
 				return
 			}
 			curACMM := 0

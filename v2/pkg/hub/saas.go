@@ -1592,6 +1592,15 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if sh.Status == statusAvailable || (entry.ACMMLevel == 0 && sh.ACMMLevel > 0) {
 			entry.ACMMLevel = sh.ACMMLevel
 		}
+		// Show the friendly vanity host for a claimed hive the instant it is
+		// claimed, rather than waiting for the spoke to adopt+report it back over
+		// the heartbeat. Until then entry.DashboardURL (spoke-reported) is still the
+		// raw placeholder host, which is the placeholder-URL-persists bug in My
+		// Hives / the row's Open link. Only overlays a validated meta vanity_url;
+		// an unclaimed placeholder or a hive with no vanity keeps its own URL.
+		if v := claimedVanityURL(sh); v != "" {
+			entry.DashboardURL = v
+		}
 		switch sh.Status {
 		case "provisioning":
 			entry.GovernorMode = "PROVISIONING"
@@ -2193,6 +2202,14 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.mu.RUnlock()
+	// For a claimed hive, hand the SSO handoff off to its vanity host rather than
+	// the raw placeholder host the spoke may still be reporting — the vanity URL
+	// is the validated, user-facing host (and the one the spoke will settle on).
+	// Only a validated meta vanity_url is used; unclaimed placeholders are left on
+	// their working placeholder host.
+	if v := claimedVanityURL(loadSaaSHive(id)); v != "" {
+		base = v
+	}
 	if base == "" && (strings.HasPrefix(id, "hosted-") || strings.HasPrefix(id, "saas-")) {
 		base = "https://" + id + ".hive.kubestellar.io"
 	}
@@ -5208,6 +5225,28 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 		"acmm_was", prevLevel, "acmm_now", h.ACMMLevel)
 }
 
+// claimedVanityURL returns the vanity dashboard URL the hub should SHOW and LINK
+// for a hive (My Hives, the SSO /open handoff, config proxy), or "" to fall back
+// to the spoke-reported placeholder host.
+//
+// The rule is deliberately narrow so it never resurrects the 503 bug:
+//   - Unclaimed placeholder (statusAvailable): "" — it has no project yet, so its
+//     placeholder host is the only correct URL. Leave it.
+//   - Claimed hive with a non-empty meta VanityURL: return it. A vanity URL is
+//     only non-empty because it was VALIDATED as servable at provision/assign
+//     time (addVanityHostToIngress succeeded, or a cluster wildcard/OpenShift
+//     route already serves it, e.g. vllm-d's hosted-...apps.fmaas-vllm-d... host).
+//     Trusting it here means the hub shows/links the friendly host the instant a
+//     hive is claimed, instead of waiting for the spoke to adopt+report it back.
+//   - Claimed hive with an empty VanityURL: "" — never mint an unvalidated host
+//     here; the placeholder still works.
+func claimedVanityURL(h *SaaSHive) string {
+	if h == nil || h.Status == statusAvailable {
+		return ""
+	}
+	return h.VanityURL
+}
+
 // curAPIURL is the GitHub API base URL the spoke reports it is CURRENTLY using
 // (HeartbeatPayload.GitHubAPIURL). Empty means the spoke is too old to report
 // it — treated as UNKNOWN, never as a mismatch.
@@ -5234,7 +5273,24 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	}
 	claimComplete := h.Org != "" && len(h.Repos) > 0 && primary != "" && h.ACMMLevel > 0
 	if !claimComplete {
-		// Incomplete/stale record (a pre-claim hive) — leave the spoke alone.
+		// Incomplete/stale record (a pre-claim hive) — leave the spoke's PROJECT
+		// (org/repos/ACMM) alone; reconciling from a stale record wiped/downgraded
+		// live hives. BUT the vanity URL is independent of project completeness: a
+		// claimed hive can carry a validated meta vanity_url (set at provision,
+		// e.g. vllmd-10's hosted-...apps.fmaas-vllm-d... route) while its meta's
+		// org/repos/ACMM are still stale/empty. Without pushing it, the spoke never
+		// adopts the vanity URL and the hub keeps showing the raw placeholder host
+		// forever (the placeholder-URL-persists bug). Push the URL alone — never
+		// the stale project — until the spoke reports the vanity back.
+		//
+		// Safety: only a NON-EMPTY VanityURL is ever pushed. A vanity URL is only
+		// non-empty because it was validated/served at provision or assign time
+		// (addVanityHostToIngress succeeded, or a cluster wildcard route already
+		// serves it), so this never pushes an unserved host and never reintroduces
+		// the 503.
+		if h.VanityURL != "" && curURL != h.VanityURL {
+			return &HeartbeatProjectConfig{DashboardURL: h.VanityURL}
+		}
 		return nil
 	}
 	// What the hub still PUSHES to the spoke, and until when:
@@ -5536,20 +5592,31 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	if h.VanityURL == "" {
 		if cluster := s.clusterForHive(h); cluster != nil && cluster.Domain != "" {
 			vanityHost := generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
-			// Only adopt the vanity hostname once the spoke's Ingress actually
-			// serves it. Nothing else creates a route for this host: provisioning
-			// templates a single DashboardHost, so a vanity URL minted here
-			// resolves to no backend and every hub link to it — including the SSO
-			// handoff — returns 503, while the raw placeholder host works fine.
-			// Create the route FIRST, then adopt the URL. VanityURL doubles as
-			// the "placeholder is claimed" marker (projectConfigForHiveID keeps
-			// pushing until the spoke reports it back), so it is always set —
-			// but a failed route is logged at Warn rather than swallowed, since
-			// the symptom is a 503 on every hub link to this hive.
+			// Make the vanity host servable, then adopt it. Nothing else creates a
+			// route for this host: provisioning templates a single DashboardHost, so
+			// a vanity URL minted here resolves to no backend and every hub link to
+			// it — including the SSO handoff — returns 503, while the raw placeholder
+			// host works fine. Create the route FIRST, then adopt the URL.
+			//
+			// VanityURL doubles as the "placeholder is claimed" marker
+			// (projectConfigForHiveID keeps pushing until the spoke reports it
+			// back), so it is always set once we have a domain to derive it from —
+			// but a failed create is logged at Warn rather than swallowed, since the
+			// symptom is a 503 on every hub link to this hive until the route is
+			// reconciled (cert-manager on nginx, or the cluster wildcard on the
+			// heartbeat-only OpenShift pool where the hub cannot kubectl to create
+			// it, so the create "fails" yet the *.apps.<domain> wildcard still
+			// serves the host — the vllm-d case).
 			if err := s.addVanityHostToIngress(hiveID, vanityHost, cluster); err != nil {
-				s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
-					"hub links to this hive will 503 until it is added by hand",
-					"hive", hiveID, "host", vanityHost, "error", err)
+				if cluster.IngressType == ingressTypeOpenShiftRoute {
+					s.logger.Info("vanity host: hub could not create a route (heartbeat-only OpenShift cluster) "+
+						"— relying on the cluster wildcard route to serve it",
+						"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
+				} else {
+					s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
+						"hub links to this hive will 503 until it is added by hand",
+						"hive", hiveID, "host", vanityHost, "error", err)
+				}
 			}
 			h.VanityURL = "https://" + vanityHost
 		}

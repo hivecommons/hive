@@ -1058,12 +1058,22 @@ func (s *HubServer) migrateHive(h *SaaSHive, fromCluster, toCluster *ClusterConf
 	}
 
 	// Update the registry entry's ClusterID and ClusterName in-memory.
+	// A migration re-provisions the hive under a fresh placeholder Subdomain on
+	// the target cluster, but a CLAIMED hive must keep showing its vanity host —
+	// resetting DashboardURL to the placeholder subdomain here is exactly what
+	// left claimed, migrated hives back on the placeholder URL in the hub. Prefer
+	// the validated meta vanity_url for a claimed hive; only an unclaimed
+	// placeholder falls back to its new placeholder subdomain.
+	migratedURL := "https://" + h.Subdomain
+	if v := claimedVanityURL(h); v != "" {
+		migratedURL = v
+	}
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == h.ID {
 			s.registry.Hives[i].ClusterID = toCluster.ID
 			s.registry.Hives[i].ClusterName = toCluster.Name
-			s.registry.Hives[i].DashboardURL = "https://" + h.Subdomain
+			s.registry.Hives[i].DashboardURL = migratedURL
 			break
 		}
 	}
