@@ -104,6 +104,7 @@ func TestPaneShowsInputPrompt(t *testing.T) {
 
 		// --- pre-existing markers: must be unchanged ---
 		{"claude/copilot/gemini arrow prompt", "some output\n❯ ", true},
+		{"codex 0.144 arrow prompt", "OpenAI Codex (v0.144.1)\n› Improve documentation in @filename\n  gpt-5.6-sol default", true},
 		{"goose ready banner", "goose is ready", true},
 		{"enter-to-send prompt", "> Enter to send", true},
 		{"bare newline-gt-newline prompt", "text\n>\nmore", true},
@@ -111,6 +112,7 @@ func TestPaneShowsInputPrompt(t *testing.T) {
 		// --- negatives ---
 		{"empty pane", "", false},
 		{"bare bash prompt", "user@host:~$ ", false},
+		{"codex numbered selection is not input-ready", "› 1. No, exit\n  2. Yes, continue", false},
 		{"bob product name alone is NOT input-ready", bobProductMarker, false},
 		{"bob license dialog is NOT input-ready",
 			bobProductMarker + " API Key Notice\nBy using the " + bobProductMarker + " API", false},

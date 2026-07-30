@@ -2044,6 +2044,7 @@ func paneShowsInputPrompt(output string) bool {
 		return false
 	}
 	return strings.Contains(output, "❯") ||
+		paneHasInputPrompt(output) ||
 		strings.Contains(output, "goose is ready") ||
 		strings.Contains(output, "> Enter to send") ||
 		strings.Contains(output, "\n>\n") ||
@@ -2127,6 +2128,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"has_goose_ready", strings.Contains(output, "goose is ready"),
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
+				"has_codex_arrow", strings.Contains(output, "\u203a"),
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
