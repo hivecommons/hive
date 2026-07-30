@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// contributor-relay.sh — WebSocket client that connects a contributor agent to the Hive hub.
+// contributor-relay.sh — ClankeR, the contributor relay: the WebSocket client
+// that connects a contributor agent to the Hive hub.
 //
 // Handles: authentication, task receipt, GitHub token injection, result reporting,
 // heartbeat, and reconnection with exponential backoff.
@@ -92,7 +93,18 @@ function getCLIState() {
     } else if (BACKEND === 'goose') {
       if (/goose is ready|> Enter to send|>\s*$|goose>|G\s*>/.test(text)) return 'ready';
     } else if (BACKEND === 'bob') {
-      if (/bob>|>\s*$|Bob-Shell/.test(text)) return 'ready';
+      // Order matters: the blocked states are checked FIRST because bob's
+      // auth prompt contains the literal string "Bob-Shell" ("Enter Bob-Shell
+      // API Key"). The former /Bob-Shell/ 'ready' test therefore reported a
+      // bob stuck at the API-key prompt as READY, and the relay would dispatch
+      // tasks into a pane that could never run them.
+      if (/Enter Bob-Shell API Key|enter your Bob-Shell API key|Paste your API key here/i.test(text)) return 'needs-login';
+      if (/Do you trust this folder|not trusted/i.test(text)) return 'onboarding';
+      // Real prompt chrome of an authenticated, ready bob TUI. Matching the
+      // status line ("Auto-approve:", "Tokens left:") or the boxed input hint
+      // is far tighter than the old />\s*$/, which matched almost any pane
+      // that happened to end in a '>' — including partially drawn frames.
+      if (/Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/.test(text)) return 'ready';
     } else if (BACKEND === 'codex') {
       if (/codex>|>\s*$|Codex CLI/.test(text)) return 'ready';
     } else if (BACKEND === 'pi') {
@@ -275,6 +287,42 @@ function captureTmuxLines(n) {
   }
 }
 
+// True while a bob CLI process is alive. bob exits at the end of every turn,
+// so "process gone" means the turn finished — see the bob branch of
+// checkTmuxIdle(). Matches the launch command rather than the bare name so a
+// stray "bob" substring elsewhere in the process table cannot mask an exit.
+const BOB_PROCESS_PATTERN = 'bob --accept-license';
+
+function bobIsRunning() {
+  try {
+    let procs;
+    if (fs.existsSync('/proc')) {
+      procs = execSync(
+        `for p in /proc/[0-9]*/cmdline; do tr "\\0" " " < "$p" 2>/dev/null; echo; done`,
+        { encoding: 'utf8', timeout: 15000 }
+      );
+    } else {
+      procs = execSync('ps -eo command 2>/dev/null', { encoding: 'utf8', timeout: 15000 });
+    }
+    return procs.includes(BOB_PROCESS_PATTERN);
+  } catch (_) {
+    // Unknown -> assume still running, so a probe failure cannot fabricate a
+    // completion for a task that is actually still in flight.
+    return true;
+  }
+}
+
+// Relaunch the backend CLI in the tmux session using the flags from
+// backends.conf, the same way contributor-agent.sh first launched it.
+function relaunchCLI() {
+  const confPaths = ['/usr/local/etc/hive/backends.conf', path.join(process.cwd(), 'config/backends.conf')];
+  const confPath = confPaths.find(p => fs.existsSync(p)) || confPaths[0];
+  const CMD = execSync(`bash -c 'source ${confPath} 2>/dev/null; backend_binary ${BACKEND}'`, { encoding: 'utf8', timeout: 15000 }).trim() || BACKEND;
+  const PERM = execSync(`bash -c 'source ${confPath} 2>/dev/null; backend_perm_flag ${BACKEND}'`, { encoding: 'utf8', timeout: 15000 }).trim();
+  execSync(`tmux send-keys -t ${TMUX_SESSION} '${CMD} ${PERM}' Enter`, { timeout: 15000 });
+  return `${CMD} ${PERM}`;
+}
+
 function checkTmuxIdle() {
   try {
     const output = execSync(
@@ -310,9 +358,43 @@ function checkTmuxIdle() {
       hasCompletionMarker = true;
       isWorking = /working|running|executing|calling/i.test(text);
     } else if (BACKEND === 'bob') {
-      hasIdlePrompt = /bob>|>\s*$/.test(text);
-      hasCompletionMarker = /completed|done|finished|✓/i.test(text);
-      isWorking = /running|executing|thinking/i.test(text);
+      // Matched against real bobshell 1.0.6 panes. Every part of the previous
+      // classifier was wrong on real output, and each was independently fatal:
+      //
+      //   hasIdlePrompt /bob>|>\s*$/ NEVER matched. bob's idle prompt is drawn
+      //     inside a box ("│ >   Enter your prompt, / for commands, …  │"), so
+      //     the '>' is never at end-of-line and there is no "bob>" anywhere.
+      //     Since idle is ANDed in, task_complete could never fire for bob:
+      //     a finished task stayed "in progress" until the 30-min timeout, and
+      //     the hub then heard task_failed for work bob had actually done.
+      //
+      //   isWorking /running|executing|thinking/i was permanently TRUE. bob
+      //     prints a static banner "You are running Bob Shell in your home
+      //     directory" and echoes its <thinking> block; both stay in the pane
+      //     forever, so this never cleared even on a fully idle bob.
+      //
+      // Instead: reuse the same prompt chrome getCLIState() already verifies
+      // for 'ready', and detect work via bob's live spinner line, which reads
+      // "◡ <task title> (esc to cancel, 5s)" only while a turn is running.
+      // hasCompletionMarker is true because bob has no completion token —
+      // returning to the idle prompt with no spinner IS the completion signal
+      // (same convention as the copilot/goose branches above).
+      const BOB_IDLE_CHROME = /Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/;
+      const BOB_SPINNER = /\(esc to cancel/;
+      // bob exits after finishing a turn ("Bob goes to sleep 💤"). Process
+      // liveness is the only reliable completion signal: bob does not repaint
+      // over its last frame on the way out, so a finished pane keeps a frozen
+      // spinner line ("◡ <title> (esc to cancel, 5s)") and the "goes to sleep"
+      // notice often scrolls out of the visible pane entirely. Screen-scraping
+      // alone therefore reports a completed turn as still working. Conversely
+      // the trailing shell prompt cannot stand in for "exited" either — it is
+      // also present mid-turn, left over from before bob was launched.
+      // Once bob has exited its chrome scrolls away, so an exited bob counts
+      // as idle on its own: there is no prompt left to look for.
+      const bobRunning = bobIsRunning();
+      hasIdlePrompt = BOB_IDLE_CHROME.test(text) || !bobRunning;
+      hasCompletionMarker = true;
+      isWorking = bobRunning && BOB_SPINNER.test(text);
     } else if (BACKEND === 'codex') {
       hasIdlePrompt = /codex>|>\s*$/.test(text);
       hasCompletionMarker = /completed|done|finished/i.test(text);
@@ -379,7 +461,13 @@ function startProgressReporting() {
         }
       } catch (_) { procs = BACKEND; }
       const cliAlive = procs.includes(BACKEND) || procs.includes('claude') || procs.includes('copilot') || procs.includes('bob') || procs.includes('codex') || procs.includes('goose') || procs.includes('pi');
-      if (!cliAlive) {
+      // bob is not a persistent REPL: it exits at the end of every turn ("Bob
+      // goes to sleep 💤"). For bob an exited process is the normal completion
+      // signal, not a crash, so it must fall through to the checkTmuxIdle()
+      // path below and be reported as task_complete. Treating it as a death
+      // here reported finished work as task_failed on every single task.
+      const cliExitIsNormal = BACKEND === 'bob';
+      if (!cliAlive && !cliExitIsNormal) {
         console.error(`CLI process (${BACKEND}) died — restarting and reporting task as failed`);
         try {
           const confPaths = ['/usr/local/etc/hive/backends.conf', path.join(process.cwd(), 'config/backends.conf')];
@@ -403,6 +491,21 @@ function startProgressReporting() {
     if (idle) {
       console.log(`Task ${currentTask.task_id} completed — agent idle`);
       send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines });
+      // bob exits after each turn, so the pane is now a bare shell. Bring it
+      // back up before the next task, or the prompt would be typed into bash
+      // ("-bash: <prompt>: command not found") and silently lost.
+      if (BACKEND === 'bob' && !bobIsRunning()) {
+        try {
+          console.log(`Relaunching bob for the next task: ${relaunchCLI()}`);
+          cliReady = false;
+          waitForCLI().then(() => {
+            cliReady = true;
+            if (pendingTask) { const t = pendingTask; pendingTask = null; tmuxSendKeys(t); }
+          }).catch(e => console.error(e.message));
+        } catch (e) {
+          console.error('Failed to relaunch bob:', e.message);
+        }
+      }
       const completedRepo = currentTask.repo;
       currentTask = null;
       taskAssignedAt = 0;

@@ -5,7 +5,9 @@
 Hive Federation allows any open source project to run their own Hive instance
 and join a network where contributors can discover and join any participating
 project's swarm. A contributor runs `just contribute-browse` to find projects
-that need help, then `just contribute-hive` pointed at that project's hub.
+that need help, then `just contribute-hive` pointed at that project's hub —
+**ClankeR**, the contributor relay, carries that project's tasks to the agent on
+their machine.
 
 ## How a New Project Signs Up
 
@@ -131,7 +133,7 @@ connections and token minting.
 
 - **Dashboard** at port 3001 with agent status, queue, sparklines
 - **Agent fleet** (scanner, supervisor, + whatever they enable)
-- **Contributor WebSocket** at `/contribute`
+- **Contributor WebSocket** (ClankeR) at `/contribute`
 - **Scoped GitHub tokens** via the shared Hive GitHub App
 - **Governor** that adapts agent cadence to queue depth
 - **Nous Strategy Lab** for automated experimentation (optional)

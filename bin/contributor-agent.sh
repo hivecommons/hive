@@ -2,7 +2,7 @@
 # contributor-agent.sh — Entrypoint for the contributor container.
 #
 # 1. Detects which CLI backend is authenticated
-# 2. Starts the contributor-relay (WebSocket client) in the background
+# 2. Starts contributor-relay.sh — ClankeR, the contributor relay (WebSocket client) — in the background
 # 3. Launches the CLI agent in a tmux session
 # 4. The relay feeds tasks into the tmux session and reports results
 #
@@ -105,7 +105,7 @@ detect_cli() {
   esac
 }
 
-echo "=== Hive Contributor Agent ==="
+echo "=== Hive Contributor Agent (ClankeR) ==="
 echo "Hub:     $HIVE_HUB"
 echo "Backend: $AGENT_BACKEND"
 echo ""
@@ -127,11 +127,35 @@ case "$STATUS" in
     ;;
 esac
 
+# bob is launched with --auth-method api-key (see backend_perm_flag in
+# config/backends.conf), which makes BOBSHELL_API_KEY mandatory: without it bob
+# comes up sitting at "Enter Bob-Shell API Key" and simply waits. Nobody is
+# attached to an unattended relay, so that is an indefinite silent hang rather
+# than a failure anyone can see. Fail loudly at startup instead.
+# Only the presence of the key is tested — never its value, and it is never
+# echoed.
+if [[ "$AGENT_BACKEND" == "bob" ]] && [[ -z "${BOBSHELL_API_KEY:-}" ]]; then
+  echo "ERROR: backend 'bob' requires BOBSHELL_API_KEY to be set."
+  echo "  Get a key at https://bob.ibm.com (Scope: Inference), then:"
+  echo "    export BOBSHELL_API_KEY=..."
+  echo "  The key stays on your machine and is never sent to the hive."
+  exit 1
+fi
+
 # Ensure metrics directory exists for gh-wrapper token injection
 mkdir -p /var/run/hive-metrics 2>/dev/null || true
 
 # Configure git credentials so push works (fork + PR model).
 # GH_TOKEN is the contributor's personal token — enough to fork and push.
+#
+# It is expanded with a ":-" default because this script runs under `set -u`:
+# an unset GH_TOKEN would otherwise abort the entrypoint here with
+# "GH_TOKEN: unbound variable", before the CLI or the relay ever start.
+# An absent token is a normal, supported state — `just contribute-run` passes
+# -e GH_TOKEN="${GH_TOKEN}" and sets it to "" whenever `gh auth token` fails,
+# and the hub also injects a per-task token over the WebSocket at dispatch
+# time (task_assign.github_token -> injectGhToken). Only git push needs this
+# helper, so an empty value must degrade rather than kill the container.
 CRED_HELPER="${HOME}/.git-credential-hive"
 cat > "$CRED_HELPER" <<CRED
 #!/bin/sh
@@ -141,7 +165,7 @@ case "\$1" in
     echo "protocol=https"
     echo "host=github.com"
     echo "username=x-access-token"
-    echo "password=${GH_TOKEN}"
+    echo "password=${GH_TOKEN:-}"
     ;;
 esac
 CRED
@@ -229,7 +253,7 @@ tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50
 
 # Start the relay in the background
-echo "Starting relay connection to hub..."
+echo "Starting ClankeR relay connection to hub..."
 node "${SCRIPT_DIR}/contributor-relay.sh" &
 RELAY_PID=$!
 
@@ -240,7 +264,15 @@ PERM_FLAG=$(backend_perm_flag "$AGENT_BACKEND")
 MODEL_FLAG=""
 if [[ -n "${AGENT_MODEL:-}" ]]; then
   case "$AGENT_BACKEND" in
-    amazonq|goose) ;;
+    # amazonq/goose take their model from config/env, not a --model flag.
+    #
+    # bob is excluded because --model is actively FATAL, not merely unused:
+    # bob auto-selects its own model, and passing one leaves its model config
+    # undefined so every prompt dies with
+    # "🛑 Cannot read properties of undefined (reading 'maxTokens')".
+    # Verified against bobshell 1.0.6. PR #2249 removed it hub-side; this is
+    # the same fix on the contributor-relay path.
+    amazonq|goose|bob) ;;
     *) MODEL_FLAG="--model $AGENT_MODEL" ;;
   esac
 fi
@@ -312,9 +344,9 @@ AUTO_DISMISS_INTERVAL=3
 echo ""
 CONTAINER_NAME="${HIVE_CONTAINER_NAME:-hive-contributor}"
 echo "Contributor agent is running."
-echo "  CLI:   $CMD"
-echo "  Relay: PID $RELAY_PID"
-echo "  Tmux:  docker exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
+echo "  CLI:     $CMD"
+echo "  ClankeR: PID $RELAY_PID"
+echo "  Tmux:    docker exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
 echo ""
 
 # Keep running until interrupted

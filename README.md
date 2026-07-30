@@ -278,7 +278,9 @@ flowchart LR
 
 ## Contribute to a Hive
 
-Community members can contribute compute to any hive:
+Community members can contribute compute to any hive through **ClankeR**, the
+contributor relay — it hands tasks from a hive's backlog to the CLI agent
+running on your own machine:
 
 ```bash
 brew install just gh
