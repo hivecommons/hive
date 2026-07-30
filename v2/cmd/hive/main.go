@@ -687,6 +687,16 @@ func main() {
 		go agentMgr.StartAgentTokenRefresh(ctx)
 	}
 
+	// PR-open-as-the-App-bot: agents push their branch (App-token credential
+	// helper) then drop a request file; the hive opens the PR here with the App
+	// token so it is authored by "<slug>[bot]", not the Copilot login user.
+	// Gated on a real client + usable App — with no App there is no bot to author
+	// as, and requests simply accumulate rather than opening under a wrong
+	// identity. ghClient uses the App installation token (see ghAuth wiring).
+	if ghClient != nil && cfg.GitHub.HasUsableApp() {
+		ghClient.StartPRRequestWatcher(ctx, nil)
+	}
+
 	go agent.StartPermissionsWatcher(logger)
 
 	const statePath = "/data/hive-state.json"
