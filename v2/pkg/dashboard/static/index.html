@@ -9475,9 +9475,9 @@ function burnAreaChart() {
         const contributeUrl = window.location.origin + '/contribute';
         setIfChanged(panel,
           '<div style="color:var(--text);padding:24px;background:var(--card-bg);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:760px">' +
-            '<div style="font-weight:600;font-size:var(--fs-md);margin-bottom:8px">\ud83e\udd1d Grow your hive with Contributor Relay</div>' +
+            '<div style="font-weight:600;font-size:var(--fs-md);margin-bottom:8px">\ud83e\udd1d Grow your hive with ClankeR</div>' +
             '<div style="color:var(--muted);font-size:var(--fs-base);line-height:1.6;margin-bottom:12px">' +
-              'Contributor Relay lets anyone lend their own machine and AI subscription to this hive. ' +
+              'ClankeR \u2014 the contributor relay \u2014 lets anyone lend their own machine and AI subscription to this hive. ' +
               'Contributors register with their GitHub account, run a lightweight worker locally, and the hive ' +
               'relays tasks (issue fixes, reviews, docs) to their agents over a secure WebSocket \u2014 their compute, your backlog. ' +
               'Completed tasks build trust: contributors are promoted automatically from <strong>Newcomer</strong> to <strong>Contributor</strong>, <strong>Trusted</strong>, and <strong>Advisor</strong> tiers.' +
@@ -17202,7 +17202,7 @@ function burnAreaChart() {
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Governor Config → Budget).', onclick: "welcomeShowConfigTab('Budget')" },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Governor Config → Notifications).', onclick: "welcomeShowConfigTab('Notifications')" },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', onclick: "welcomeShowSection('knowledge-section')" },
-      { id: 'contributors', label: 'Contributor Relay', desc: 'let outside contributors drive agents, with a leaderboard.', onclick: "welcomeShowSection('contributors-section')" },
+      { id: 'contributors', label: 'ClankeR (Contributor Relay)', desc: 'let outside contributors drive agents, with a leaderboard.', onclick: "welcomeShowSection('contributors-section')" },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).', onclick: "welcomeShowConfigTab('Hub')" },
       { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', onclick: 'toggleLayout()' }
     ];

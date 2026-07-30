@@ -1,3 +1,5 @@
+# ClankeR — the contributor relay. Runs a contributor's CLI agent locally and
+# connects it to a Hive hub over WebSocket.
 services:
   contributor:
     build:

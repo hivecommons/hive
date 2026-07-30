@@ -73,7 +73,18 @@ type RegistryEntry struct {
 	AIAuthorEffective string `json:"aiAuthorEffective,omitempty"`
 	// StartedAt is the spoke process start time, reported over the heartbeat.
 	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
-	StartedAt          string         `json:"startedAt,omitempty"`
+	StartedAt string `json:"startedAt,omitempty"`
+	// AdvisoryLastPostedAt is when the spoke last SUCCESSFULLY posted its
+	// advisory digest (RFC3339), reported over the heartbeat. Empty means the
+	// hive has never posted one — not-advisory-mode or an old spoke — which the
+	// staleness gate reads as UNKNOWN, never as an alarm. My Hives renders a
+	// "stale advisory" pill (advisoryStaleSummary) when this ages past
+	// advisoryStaleThreshold on a hive whose App can write.
+	AdvisoryLastPostedAt string `json:"advisoryLastPostedAt,omitempty"`
+	// AdvisoryError is the log-safe error from the spoke's most recent failed
+	// advisory-post attempt ("" on success). When set on an app-can-write hive
+	// it trips the stale pill directly, carrying the specific cause.
+	AdvisoryError      string         `json:"advisoryError,omitempty"`
 	PrimaryRepo        string         `json:"primaryRepo"`
 	DashboardURL       string         `json:"dashboardUrl"`
 	SnapshotURL        string         `json:"snapshotUrl,omitempty"`
@@ -142,7 +153,7 @@ type RegistryEntry struct {
 	AgentsWithModel *int `json:"agentsWithModel,omitempty"`
 	// Journey is the computed user-journey status (which adoption stage this
 	// hive is stalled on, how hard it is being nudged, and whether stage 2 is
-	// satisfied via the contributor relay). Computed on read from the journey
+	// satisfied via ClankeR, the contributor relay). Computed on read from the journey
 	// state store — never persisted on the registry entry itself.
 	Journey *JourneyStatus `json:"journey,omitempty"`
 }
@@ -780,9 +791,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
 		StartedAt:         sanitizeField(payload.StartedAt),
-		DashboardURL:      payload.DashboardURL,
-		SnapshotURL:       payload.SnapshotURL,
-		ACMMLevel:         clampInt(payload.ACMMLevel, 0, 6),
+		// Advisory-staleness signal. Both are sanitized like every other
+		// spoke-reported string; an empty AdvisoryLastPostedAt is preserved as
+		// empty so the render/gate reads it as UNKNOWN rather than stale.
+		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
+		AdvisoryError:        sanitizeField(payload.AdvisoryError),
+		DashboardURL:         payload.DashboardURL,
+		SnapshotURL:          payload.SnapshotURL,
+		ACMMLevel:            clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {
@@ -1193,6 +1209,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// by the fleet-wide default.
 		resp.GitHubAppConfig = keyCfg
 	}
+
+	// Deliver the fleet's OTHER App keys so a spoke can authenticate as an App
+	// that is NOT its cluster's default — the github.com hive parked on a
+	// GitHub-Enterprise cluster (vllm-d) that inherits only the GHE key and can
+	// never sign for github.com. This runs on EVERY heartbeat, independent of the
+	// branches above: those decide the spoke's PRIMARY (cluster) key; this makes
+	// sure it also carries every other key it is missing. Delivering only the
+	// missing/stale ones (attachMissingAppKeys diffs against what the spoke
+	// reports it holds) keeps it idempotent — once the spoke has them all, nothing
+	// rides the wire.
+	s.attachMissingAppKeys(&resp, &payload)
 
 	s.hubBannersMu.RLock()
 	if banner, ok := s.hubBanners[payload.HiveID]; ok {

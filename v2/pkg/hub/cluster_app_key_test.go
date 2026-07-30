@@ -67,16 +67,17 @@ func TestDecideAppKeySync(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		spokeFP     string
-		perHive     bool
-		spokeAppID  int64
-		cluster     *clusterAppIdentity
-		wantPush    bool
-		wantReason  string
-		wantFromFP  string
-		wantToFP    string
-		description string
+		name         string
+		spokeFP      string
+		perHive      bool
+		publicPinned bool
+		spokeAppID   int64
+		cluster      *clusterAppIdentity
+		wantPush     bool
+		wantReason   string
+		wantFromFP   string
+		wantToFP     string
+		description  string
 	}{
 		{
 			name:        "fingerprint matches - no push",
@@ -227,11 +228,36 @@ func TestDecideAppKeySync(t *testing.T) {
 			wantToFP:    clusterFP,
 			description: "reporting app_id must not change the pre-existing non-per-hive path",
 		},
+
+		// --- THE CLASS FIX: a public github.com hive parked on a GHE cluster ---
+		{
+			name:         "public-pinned hive on GHE cluster - never push the cluster GHE key as primary",
+			spokeFP:      "",
+			publicPinned: true,
+			spokeAppID:   3568013, // the hive's own public github.com App
+			cluster:      identity,
+			wantPush:     false,
+			wantReason:   appKeyReasonPublicHiveOnGHECluster,
+			wantToFP:     clusterFP,
+			description:  "kalantar/vllmd-10 etc: github.com hive on vllm-d — its github.com App stays primary, the GHE key rides only as additional",
+		},
+		{
+			name:         "public-pinned hive with the wrong/empty key is still not forced onto the GHE app",
+			spokeFP:      wrongFP,
+			publicPinned: true,
+			spokeAppID:   3568013,
+			cluster:      identity,
+			wantPush:     false,
+			wantReason:   appKeyReasonPublicHiveOnGHECluster,
+			wantFromFP:   wrongFP,
+			wantToFP:     clusterFP,
+			description:  "the public pin wins even before any per-hive/mismatch reasoning: the cluster GHE app is never this hive's primary",
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideAppKeySync(tc.spokeFP, tc.perHive, tc.spokeAppID, tc.cluster)
+			got := decideAppKeySync(tc.spokeFP, tc.perHive, tc.publicPinned, tc.spokeAppID, tc.cluster)
 			if got.Push != tc.wantPush {
 				t.Errorf("Push = %v, want %v (%s)", got.Push, tc.wantPush, tc.description)
 			}
@@ -266,7 +292,7 @@ func TestDecideAppKeySyncIsIdempotent(t *testing.T) {
 	identity := &clusterAppIdentity{AppID: 5686, PrivateKey: keyPEM, Fingerprint: fp}
 
 	// Beat 1: spoke has nothing → push.
-	first := decideAppKeySync("", false, 0, identity)
+	first := decideAppKeySync("", false, false, 0, identity)
 	if !first.Push {
 		t.Fatal("first beat should push to a spoke with no key")
 	}
@@ -278,7 +304,7 @@ func TestDecideAppKeySyncIsIdempotent(t *testing.T) {
 	}
 	// Beat 2: spoke now reports the delivered key → no push, forever after.
 	for beat := 2; beat <= 5; beat++ {
-		d := decideAppKeySync(delivered, false, 0, identity)
+		d := decideAppKeySync(delivered, false, false, 0, identity)
 		if d.Push {
 			t.Fatalf("beat %d re-pushed a key the spoke already holds", beat)
 		}
@@ -554,6 +580,91 @@ func TestAppKeySyncForHeartbeatNilServer(t *testing.T) {
 	}
 }
 
+// TestAppKeySyncForHeartbeatPublicPinnedHive is the end-to-end class fix: a
+// github.com hive (github_base_url:"public") parked on the vllm-d GHE cluster
+// must NEVER be handed the cluster's GHE App (5686) as its primary key, while a
+// genuine GHE hive on the same cluster still is. The public hive's GHE key rides
+// only as an additional key via attachMissingAppKeys — asserted separately in
+// both_app_keys_test.go.
+func TestAppKeySyncForHeartbeatPublicPinnedHive(t *testing.T) {
+	withTempAppKeyDir(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+
+	keyPEM := testAppKeyPEM(t)
+	if err := storeClusterAppKey("vllm-d", keyPEM); err != nil {
+		t.Fatal(err)
+	}
+
+	// vllm-d defaults to a GHE App: GitHubBaseURL is a GHE host, app_id 5686.
+	s := &HubServer{
+		logger: appKeyTestLogger(),
+		clusters: map[string]ClusterConfig{
+			"vllm-d": {
+				ID:            "vllm-d",
+				GitHubAppID:   5686,
+				GitHubAppSlug: "ibm-hive",
+				GitHubBaseURL: "https://github.ibm.com",
+			},
+		},
+	}
+
+	// A github.com hive pinned public, parked on the GHE cluster (kalantar's case).
+	if err := saveSaaSHive(&SaaSHive{
+		ID:            "kalantar-vllmd-10",
+		ClusterID:     "vllm-d",
+		GitHubBaseURL: githubHostPublic,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A genuine GHE hive on the same cluster: no public pin, inherits the default.
+	if err := saveSaaSHive(&SaaSHive{
+		ID:        "genuine-ghe-hive",
+		ClusterID: "vllm-d",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("public-pinned hive is NOT forced onto the cluster GHE app", func(t *testing.T) {
+		// Reports no key and app_id 3568013 (its own github.com App) — the exact
+		// state that previously got 5686 pushed as primary every beat.
+		got := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:      "kalantar-vllmd-10",
+			ClusterID:   "vllm-d",
+			GitHubAppID: 3568013,
+		})
+		if got != nil {
+			t.Fatalf("public-pinned hive got a primary key config (app_id %d); the cluster GHE app must never be forced as primary", got.AppID)
+		}
+	})
+
+	t.Run("genuine GHE hive on the same cluster still gets the GHE key", func(t *testing.T) {
+		got := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:    "genuine-ghe-hive",
+			ClusterID: "vllm-d",
+		})
+		if got == nil {
+			t.Fatal("a genuine GHE hive with no key must still receive the cluster GHE key")
+		}
+		if got.AppID != 5686 {
+			t.Errorf("GHE hive primary app_id = %d, want 5686", got.AppID)
+		}
+	})
+
+	t.Run("public pin honoured even when the spoke does not report a cluster", func(t *testing.T) {
+		// Cluster ID falls back to the hive's own meta record; the public pin must
+		// still be read from that same record.
+		got := s.appKeySyncForHeartbeat(&HeartbeatPayload{
+			HiveID:      "kalantar-vllmd-10",
+			GitHubAppID: 3568013,
+		})
+		if got != nil {
+			t.Fatalf("public-pinned hive (cluster from meta) got app_id %d as primary, want none", got.AppID)
+		}
+	})
+}
+
 // --- The key must never leave the hub through an API ---
 
 // TestClusterKeyNeverSerializedIntoAPIPayload is the standing guarantee that a
@@ -611,7 +722,7 @@ func TestClusterKeyNeverSerializedIntoAPIPayload(t *testing.T) {
 			Fingerprint: identity.Fingerprint,
 		},
 		// The decision record that feeds every log line.
-		"appKeySyncDecision": decideAppKeySync("sha256:00000000000000000000000000000000", false, 0, identity),
+		"appKeySyncDecision": decideAppKeySync("sha256:00000000000000000000000000000000", false, false, 0, identity),
 	}
 
 	for name, payload := range payloads {

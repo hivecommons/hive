@@ -66,16 +66,132 @@ var (
 //   - spokeAppKeyPath is on the PVC and is where a hub-delivered (cluster
 //     default) key lands. It is also what cfg.GitHub.KeyFile is repointed at
 //     once the hub delivers one, so it takes effect over the provisioned mount.
+//
 // Vars rather than consts so tests can point them at a temp dir and exercise
 // the real resolution order; production never reassigns them.
 var (
 	spokeProvisionedAppKeyPath = "/secrets/gh-app-key.pem"
 	spokeAppKeyPath            = "/data/gh-app-key.pem"
+	// spokeAppKeyDir is where per-app-id keys the hub delivers land, one file per
+	// App the fleet knows: gh-app-key-<appid>.pem. It is the PVC directory that
+	// already holds spokeAppKeyPath, so both survive restarts. A var so tests can
+	// redirect it; production never reassigns it.
+	spokeAppKeyDir = "/data"
 )
 
 // spokeAppKeyFileMode is rw------- : signing material must never be readable by
 // anything else sharing the PVC or the pod.
 const spokeAppKeyFileMode = 0o600
+
+// perAppIDKeyPath returns the on-disk path of the key file a spoke uses for a
+// specific app_id — /data/gh-app-key-<appid>.pem. This is what lets one spoke
+// hold BOTH the github.com App key AND its cluster's GitHub Enterprise App key
+// at once and sign with whichever matches its configured app_id.
+//
+// Returns "" for a non-positive app_id (0 = unknown/unset, the placeholder
+// sentinel, or a hand-corrupted value): there is no meaningful per-app file for
+// those, and the caller falls back to the existing single-file behaviour.
+func perAppIDKeyPath(appID int64) string {
+	if appID <= 0 {
+		return ""
+	}
+	return filepath.Join(spokeAppKeyDir, fmt.Sprintf("gh-app-key-%d.pem", appID))
+}
+
+// perAppIDKeyFilePrefix / Suffix bracket the per-app-id key filename so a scan
+// can recover the app_id from the name. Named so the format lives in exactly one
+// place alongside perAppIDKeyPath.
+const (
+	perAppIDKeyFilePrefix = "gh-app-key-"
+	perAppIDKeyFileSuffix = ".pem"
+)
+
+// heldPerAppIDKeyFingerprints scans the PVC for per-app-id key files
+// (gh-app-key-<appid>.pem) and returns app_id (decimal string) → fingerprint for
+// every one that holds a usable key. It is what the spoke reports so the hub
+// delivers the fleet's additional keys idempotently: a key already present with
+// the right fingerprint is not re-sent.
+//
+// It never returns key material — only fingerprints. A missing directory,
+// unreadable file, or unparseable key is silently skipped: the worst case is the
+// hub re-delivers a key the spoke already writes idempotently, never a crash.
+func heldPerAppIDKeyFingerprints() map[string]string {
+	entries, err := os.ReadDir(spokeAppKeyDir)
+	if err != nil {
+		return nil
+	}
+	var held map[string]string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasPrefix(name, perAppIDKeyFilePrefix) || !strings.HasSuffix(name, perAppIDKeyFileSuffix) {
+			continue
+		}
+		idStr := strings.TrimSuffix(strings.TrimPrefix(name, perAppIDKeyFilePrefix), perAppIDKeyFileSuffix)
+		id, convErr := strconv.ParseInt(idStr, 10, 64)
+		if convErr != nil || id <= 0 {
+			continue
+		}
+		fp, fpErr := config.AppKeyFingerprintFromFile(filepath.Join(spokeAppKeyDir, name))
+		if fpErr != nil || fp == "" {
+			continue
+		}
+		if held == nil {
+			held = make(map[string]string)
+		}
+		held[idStr] = fp
+	}
+	return held
+}
+
+// writePerAppIDKey persists a hub-delivered per-app-id key to its PVC file
+// atomically (temp file in the same dir, then rename) with a restrictive 0600
+// mode from creation, so a spoke can never sign with a half-written key. Returns
+// the resulting fingerprint (never the key) for auditable logging, or an error.
+func writePerAppIDKey(appID int64, pemData string) (string, error) {
+	path := perAppIDKeyPath(appID)
+	if path == "" {
+		return "", fmt.Errorf("refusing to write key for non-positive app_id %d", appID)
+	}
+	trimmed := strings.TrimSpace(pemData)
+	if !strings.HasPrefix(trimmed, "-----BEGIN") {
+		return "", fmt.Errorf("app key for app_id %d is not PEM", appID)
+	}
+	fp, err := config.AppKeyFingerprint(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("app key for app_id %d is unusable: %w", appID, err)
+	}
+	if err := os.MkdirAll(spokeAppKeyDir, 0o700); err != nil {
+		return "", fmt.Errorf("create app key dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(spokeAppKeyDir, "."+filepath.Base(path)+".tmp*")
+	if err != nil {
+		return "", fmt.Errorf("create temp app key file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once the rename below succeeds
+	if err := tmp.Chmod(spokeAppKeyFileMode); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("chmod temp app key file: %w", err)
+	}
+	if _, err := tmp.WriteString(trimmed + "\n"); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("write temp app key file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return "", fmt.Errorf("sync temp app key file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close temp app key file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return "", fmt.Errorf("rename app key into place: %w", err)
+	}
+	return fp, nil
+}
 
 // reportedAppKeyFingerprint returns the non-secret fingerprint of the App key
 // this spoke is ACTUALLY using, for the heartbeat payload. It fingerprints the
@@ -86,11 +202,12 @@ const spokeAppKeyFileMode = 0o600
 // unparseable contents. All three mean the same thing to the hub ("this spoke
 // cannot authenticate") and are repaired identically. The private key itself is
 // never returned, and never enters the payload.
-func reportedAppKeyFingerprint(keyFile string) string {
+func reportedAppKeyFingerprint(keyFile string, appID int64) string {
 	// Lead with the same path resolveAppKeyFile would sign with, so the hub is
 	// told about the key actually in effect and never about a shadowed one.
 	candidates := []string{
-		resolveAppKeyFile(keyFile, os.Getenv("GH_APP_KEY_FILE")),
+		resolveAppKeyFile(keyFile, os.Getenv("GH_APP_KEY_FILE"), appID),
+		perAppIDKeyPath(appID),
 		keyFile, spokeAppKeyPath, spokeProvisionedAppKeyPath,
 	}
 	for _, p := range candidates {
@@ -112,7 +229,7 @@ func reportedAppKeyFingerprint(keyFile string) string {
 // When BOTH exist the hub-delivered PVC key is the one in effect (the callback
 // repoints cfg.GitHub.KeyFile at it), so this only claims an override while the
 // provisioned key is genuinely the one being used.
-func hasPerHiveAppKey(keyFile string) bool {
+func hasPerHiveAppKey(keyFile string, appID int64) bool {
 	fp, err := config.AppKeyFingerprintFromFile(spokeProvisionedAppKeyPath)
 	if err != nil || fp == "" {
 		return false
@@ -120,8 +237,9 @@ func hasPerHiveAppKey(keyFile string) bool {
 	// The provisioned key exists. It is the effective credential only if the
 	// resolved key file still points at it — resolveAppKeyFile is the single
 	// authority on that, so an unconfigured hive that has already taken delivery
-	// of a /data key correctly stops claiming a per-hive override.
-	return resolveAppKeyFile(keyFile, os.Getenv("GH_APP_KEY_FILE")) == spokeProvisionedAppKeyPath
+	// of a /data key (or a per-app-id key) correctly stops claiming a per-hive
+	// override.
+	return resolveAppKeyFile(keyFile, os.Getenv("GH_APP_KEY_FILE"), appID) == spokeProvisionedAppKeyPath
 }
 
 // resolveAppKeyFile picks which App private key this process will actually sign
@@ -143,17 +261,38 @@ func hasPerHiveAppKey(keyFile string) bool {
 // preferred over the provisioning mount. An EXPLICIT key_file or env override
 // still wins outright: those are deliberate, and this must not silently redirect
 // an operator who named a path.
-func resolveAppKeyFile(configured, envOverride string) string {
+//
+// PER-APP-ID SELECTION (the both-keys fix)
+//
+// appID is the App this process is configured to authenticate AS
+// (cfg.GitHub.AppID). When the hub has delivered a per-app-id key for exactly
+// that App — /data/gh-app-key-<appID>.pem — it is preferred over the generic
+// single-file paths, because it is provably the RIGHT key for the app_id we
+// claim. This is what lets a github.com hive on a GitHub-Enterprise cluster sign
+// with the github.com key even though its cluster default (and its single
+// /data/gh-app-key.pem) is the GHE key. It sits just below an explicit
+// key_file/env override — an operator who named a path still wins — and above
+// the generic fallbacks. appID <= 0 disables it entirely, so nothing changes for
+// a hive that reports no app_id.
+func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 	if v := strings.TrimSpace(envOverride); v != "" {
 		return v
 	}
 	if v := strings.TrimSpace(configured); v != "" {
 		return v
 	}
-	// Nothing configured. Prefer a usable hub-delivered key on the PVC; fall
-	// back to the provisioning mount only when /data has no parseable key. The
-	// fingerprint check (not mere existence) keeps an empty or truncated /data
-	// file from shadowing a good provisioned key.
+	// Nothing explicitly configured. Prefer a per-app-id key matching the App we
+	// claim — the only key that is CORRECT-by-construction for this app_id — over
+	// the generic cluster/provisioned files. The fingerprint check (not mere
+	// existence) keeps an empty or truncated per-app file from shadowing a good
+	// generic key.
+	if p := perAppIDKeyPath(appID); p != "" {
+		if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
+			return p
+		}
+	}
+	// Prefer a usable hub-delivered key on the PVC; fall back to the provisioning
+	// mount only when /data has no parseable key.
 	if fp, err := config.AppKeyFingerprintFromFile(spokeAppKeyPath); err == nil && fp != "" {
 		return spokeAppKeyPath
 	}
@@ -227,7 +366,7 @@ type githubAuth struct {
 // config.PlaceholderAppID.
 func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger) githubAuth {
 	var out githubAuth
-	appKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"))
+	appKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
 
 	// HasUsableApp() rejects config.PlaceholderAppID. A placeholder paired with
 	// a real installation_id — exactly what happens the instant an owner
@@ -1988,17 +2127,34 @@ func main() {
 			// "genuinely zero agents configured" from "old spoke, unknown".
 			agentsWithModel := agentMgr.CountAgentsWithModel()
 			return &hub.HeartbeatPayload{
-				AgentsWithModel: &agentsWithModel,
-				HiveID:          cfg.HiveID,
-				Org:             cfg.Project.Org,
+				AgentsWithModel:   &agentsWithModel,
+				HiveID:            cfg.HiveID,
+				Org:               cfg.Project.Org,
 				AIAuthor:          cfg.Project.AIAuthor,
 				AIAuthorEffective: cfg.EffectiveAIAuthor(),
 				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
-				Repos:           cfg.Project.Repos,
-				PrimaryRepo:     cfg.Project.PrimaryRepo,
-				ACMMLevel:       acmmLvl,
-				Agents:          agents,
-				Governor:        hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
+				// Advisory-staleness signal (mirrors StartedAt/uptime). Report the
+				// last successful digest-post time only if the spoke has actually
+				// posted one — a zero time is left as an empty string so the hub
+				// reads it as UNKNOWN (not-advisory-mode / old spoke), never a
+				// false stale alarm. The last post error rides alongside so a
+				// working-App-but-failing-post hive can be flagged with its cause.
+				AdvisoryLastPostedAt: func() string {
+					postedAt, _, _ := dashSrv.AdvisoryState()
+					if postedAt.IsZero() {
+						return ""
+					}
+					return postedAt.UTC().Format(time.RFC3339)
+				}(),
+				AdvisoryError: func() string {
+					_, _, errMsg := dashSrv.AdvisoryState()
+					return errMsg
+				}(),
+				Repos:       cfg.Project.Repos,
+				PrimaryRepo: cfg.Project.PrimaryRepo,
+				ACMMLevel:   acmmLvl,
+				Agents:      agents,
+				Governor:    hub.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs},
 				// Tokens carries the spoke's authoritative cumulative token
 				// total (same store the dashboard token panel and governor
 				// budget read). It flows to the hub's My Hives token column so
@@ -2078,7 +2234,7 @@ func main() {
 				// is the only way to distinguish a hive pinned to an immutable
 				// SHA tag (which can never receive a rolling upgrade) from one
 				// riding <branch>-latest. Empty off-cluster — never guessed.
-				ImageRef:                hub.SelfDeploymentImage(),
+				ImageRef: hub.SelfDeploymentImage(),
 				// The GitHub instance this spoke actually runs against. Only
 				// the spoke knows this for certain: a hive's GitHub can differ
 				// from its cluster's default, so the hub cannot infer it.
@@ -2105,12 +2261,16 @@ func main() {
 				// this against its per-cluster key and pushes a correction only
 				// on a mismatch, so a spoke already holding the right key costs
 				// nothing and a spoke holding the wrong one self-heals.
-				GitHubAppKeyFingerprint: reportedAppKeyFingerprint(cfg.GitHub.KeyFile),
-				GitHubAppKeyPerHive:     hasPerHiveAppKey(cfg.GitHub.KeyFile),
+				GitHubAppKeyFingerprint: reportedAppKeyFingerprint(cfg.GitHub.KeyFile, cfg.GitHub.AppID),
+				GitHubAppKeyPerHive:     hasPerHiveAppKey(cfg.GitHub.KeyFile, cfg.GitHub.AppID),
 				// Report the App this hive believes it authenticates as. The hub
 				// pairs it with the fingerprint above to tell a per-hive key that
 				// is WRONG for this App from one that is deliberately for another.
 				GitHubAppID: cfg.GitHub.AppID,
+				// Report the fingerprint of every ADDITIONAL per-app-id key already
+				// on the PVC, so the hub delivers the fleet's other App keys once
+				// and then stops re-sending them.
+				GitHubAppKeysHeld: heldPerAppIDKeyFingerprints(),
 			}
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
@@ -2270,6 +2430,46 @@ func main() {
 				}
 			}
 
+			// Persist the fleet's ADDITIONAL App keys — every OTHER App's key,
+			// keyed by app_id — so this spoke can sign for the App it is actually
+			// configured as even when that is NOT its cluster's default. This is
+			// the both-keys fix: a github.com hive on a GHE cluster now receives
+			// and stores the github.com key here, and resolveAppKeyFile selects it
+			// by matching cfg.GitHub.AppID.
+			//
+			// Written to distinct /data/gh-app-key-<appid>.pem files, so they never
+			// collide with the primary /data/gh-app-key.pem above. Writing one that
+			// matches our OWN app_id must take effect immediately: flip keyChanged
+			// so the client is rebuilt below, exactly as a primary-key change does.
+			for _, ak := range ghCfg.AdditionalKeys {
+				if ak.PrivateKey == "" || ak.AppID <= 0 {
+					continue
+				}
+				perAppPath := perAppIDKeyPath(ak.AppID)
+				beforeFP, _ := config.AppKeyFingerprintFromFile(perAppPath)
+				fp, err := writePerAppIDKey(ak.AppID, ak.PrivateKey)
+				if err != nil {
+					logger.Error("failed to write additional github app key from heartbeat",
+						"app_id", ak.AppID, "error", err)
+					continue
+				}
+				changed := fp != "" && fp != beforeFP
+				logger.Info("additional github app private key written via heartbeat",
+					"app_id", ak.AppID,
+					"path", perAppPath,
+					"from_fingerprint", beforeFP,
+					"to_fingerprint", fp,
+					"key_changed", changed,
+				)
+				// If this additional key is for the App we ourselves authenticate
+				// as, it is now the key resolveAppKeyFile will pick — treat it like
+				// a primary-key rotation so the client rebuild below uses it.
+				if changed && ak.AppID == cfg.GitHub.AppID {
+					keyChanged = true
+					appAuth.DropCachedToken()
+				}
+			}
+
 			// Adopt a hub-delivered app_id only when it names a REAL App. Zero
 			// means "not speaking to this field"; the placeholder sentinel is
 			// what a pre-provisioned hive already carries, so re-adopting it
@@ -2297,12 +2497,22 @@ func main() {
 				cfg.GitHub.AppSlug = ghCfg.AppSlug
 			}
 
-			if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
-				newAppAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile, logger, cfg.GitHub.ResolvedAPIURL())
+			// Resolve the key file the same way startup does, so a hive whose
+			// only correct key arrived as an ADDITIONAL per-app-id key (no
+			// primary key_file configured — the exact vllm-d state) still finds
+			// it: resolveAppKeyFile prefers /data/gh-app-key-<appid>.pem for the
+			// app_id we now claim. An explicit key_file still wins outright.
+			rebuildKeyFile := resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID)
+			if cfg.GitHub.HasUsableApp() && rebuildKeyFile != "" {
+				newAppAuth, err := github.NewAppAuth(cfg.GitHub.AppID, cfg.GitHub.InstallationID, rebuildKeyFile, logger, cfg.GitHub.ResolvedAPIURL())
 				if err != nil {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
 					return
 				}
+				// Record the key file actually in effect so subsequent config
+				// reads and heartbeat fingerprint reports reflect the resolved
+				// per-app-id key rather than an empty configured value.
+				cfg.GitHub.KeyFile = rebuildKeyFile
 				// Hub-delivered creds can carry a wrong installation_id just as
 				// easily as a hand-edited config; correct (and persist) it
 				// before building a client that would 403 on every write.
@@ -2997,10 +3207,23 @@ func runEvalCycle(
 						// the digest still gets posted. A user-fallback success
 						// does NOT clear the App banner — the App error below is
 						// what decides the banner state.
+						postedViaFallback := false
 						if uc := userGHClient.Load(); uc != nil {
 							if uerr := uc.PostAdvisoryDigest(ctx, primaryRepo, issueNum, md); uerr == nil {
 								logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "user-fallback")
+								postedViaFallback = true
 							}
+						}
+						// Record the outcome for the heartbeat's advisory-staleness
+						// signal. A user-fallback success still counts as a fresh
+						// digest post (the issue DID get updated); otherwise record the
+						// App error so the hub can flag the digest as stale with its
+						// specific cause. err.Error() is the same string logged just
+						// below — log-safe, never key material.
+						if postedViaFallback {
+							dashSrv.RecordAdvisoryPost(digest.TotalCount)
+						} else {
+							dashSrv.RecordAdvisoryError(err.Error())
 						}
 						logger.Warn("failed to post advisory digest via app", "repo", primaryRepo, "issue", issueNum, "error", err)
 						if strings.Contains(err.Error(), "403") && strings.Contains(err.Error(), "Resource not accessible by integration") {
@@ -3037,6 +3260,9 @@ func runEvalCycle(
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
+						// Record the fresh, successful digest post so the hub's
+						// advisory-staleness gate stays satisfied for this hive.
+						dashSrv.RecordAdvisoryPost(digest.TotalCount)
 						// A successful write proves the app is installed AND has
 						// write access — clear BOTH the perm issue and the
 						// app-required banner flag. Previously only the perm
