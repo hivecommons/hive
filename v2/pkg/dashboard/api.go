@@ -571,10 +571,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if primaryRepo != "" && cfg.Project.Org != "" && !strings.Contains(primaryRepo, "/") {
 		primaryRepo = cfg.Project.Org + "/" + primaryRepo
 	}
-	githubBaseURL := cfg.GitHub.BaseURL
-	if githubBaseURL == "" {
-		githubBaseURL = "https://github.com"
-	}
+	// ResolvedBaseURL (not the raw BaseURL) so pooled/placeholder GHE hives —
+	// which legitimately carry base_url: "" but api_url: https://github.ibm.com/api/v3
+	// — report github.ibm.com, not github.com. Reading BaseURL alone made the
+	// Repos config show bare org/repo with no GHE hint, so operators mistook a
+	// github.ibm.com hive for github.com. ResolvedBaseURL falls back to the api_url
+	// host in exactly that case (mirrors HostLabel).
+	githubBaseURL := cfg.GitHub.ResolvedBaseURL()
 	jsonResponse(w, map[string]interface{}{
 		"org":       cfg.Project.Org,
 		"repos":     cfg.Project.Repos,

@@ -5341,14 +5341,22 @@
       // Definitive single-host badge in the section header: every repo in this
       // hive is on ONE GitHub host (github.com or a GHE instance). Green =
       // github.com, blue = GitHub Enterprise — matches the hub spokes-table pill.
+      // hostLabel is the hive's forge. window._githubBaseUrl now comes from the
+      // backend's ResolvedBaseURL() (base_url, else the api_url host), so a
+      // pooled GHE hive carrying base_url: "" + api_url github.ibm.com resolves
+      // to github.ibm.com here — not github.com. This is the fix for the pill
+      // that read "GITHUB.COM" on a github.ibm.com hive.
+      const hostLabel = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'github.com';
+      const isPublic = hostLabel === 'github.com';
       const badge = document.getElementById('repos-host-badge');
       if (badge) {
-        const base = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '');
-        const isPublic = (base === 'github.com' || base === '');
-        badge.textContent = isPublic ? 'github.com' : base;
-        badge.style.background = isPublic ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)';
-        badge.style.color = isPublic ? 'var(--green, #16a34a)' : 'var(--blue, #2563eb)';
-        badge.title = 'Every repo in this hive is on ' + (isPublic ? 'github.com' : base) + ' — this hive is single-host';
+        // Definitive single-host badge in the section header: every repo in this
+        // hive is on ONE GitHub host. Green = github.com, indigo = GHE — GHE also
+        // gets an "Enterprise" tag so an operator instantly sees it is not public.
+        badge.textContent = isPublic ? 'github.com' : hostLabel + ' · Enterprise';
+        badge.style.background = isPublic ? 'color-mix(in srgb, var(--green) 15%, transparent)' : 'color-mix(in srgb, var(--indigo) 15%, transparent)';
+        badge.style.color = isPublic ? 'var(--green)' : 'var(--indigo)';
+        badge.title = 'Every repo in this hive is on ' + hostLabel + (isPublic ? '' : ' (GitHub Enterprise)') + ' — this hive is single-host';
       }
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)');
@@ -5373,6 +5381,7 @@
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';
         return `
         <div class="repo-card">
+          <div style="font-size:0.62rem;font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:2px" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
           <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a></div>
@@ -15445,9 +15454,30 @@ function burnAreaChart() {
 
     function renderGovRepos(repos) {
       const primary = _configState.data.primaryRepo || '';
+      // ghHost is the hive's forge, derived server-side by ResolvedBaseURL()
+      // (base_url, or the api_url host for pooled GHE hives that carry
+      // base_url: ""). A hive is single-forge — validateSingleRepoHost rejects
+      // off-host repos — so every repo below lives on THIS host. We surface it
+      // both in the header and as a per-row pill so an org/repo can never be
+      // mistaken for github.com when it actually lives on github.ibm.com.
       const ghBase = window._githubBaseUrl || 'https://github.com';
-      const ghHost = ghBase.replace(/^https?:\/\//, '');
+      const ghHost = ghBase.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const isGHE = ghHost !== 'github.com';
+      // GHE hosts get an indigo "Enterprise" pill so an operator instantly sees
+      // this is an Enterprise hive; public github.com gets a muted host pill.
+      // Inline styles mirror the pill recipe (--pill-c tint + border) and the
+      // ACMM badge pattern — self-contained, no external resources (CSP-safe).
+      const pillColor = isGHE ? 'var(--indigo)' : 'var(--muted)';
+      const pillBase = 'display:inline-flex;align-items:center;gap:4px;flex-shrink:0;'
+        + 'font-size:0.62rem;font-weight:700;letter-spacing:0.02em;padding:1px 7px;'
+        + 'border-radius:999px;white-space:nowrap;'
+        + 'background:color-mix(in srgb, ' + pillColor + ' 12%, transparent);'
+        + 'border:1px solid color-mix(in srgb, ' + pillColor + ' 40%, transparent);'
+        + 'color:' + pillColor;
+      const pillLabel = isGHE ? esc(ghHost) + ' · Enterprise' : esc(ghHost);
+      const pillTitle = isGHE
+        ? 'This repo lives on the GitHub Enterprise host ' + esc(ghHost) + ' — NOT public github.com'
+        : 'This repo lives on public github.com';
       const list = repos.map((r, i) => {
         const isDefault = r === primary;
         const starStyle = isDefault
@@ -15456,15 +15486,19 @@ function burnAreaChart() {
         const starTitle = isDefault
           ? 'Default repo (advisory issue lives here)'
           : 'Set as default repo for advisory issue';
-        const displayName = isGHE ? ghHost + '/' + r : r;
-        return `<div class="config-list-item" style="align-items:center"><span onclick="setDefaultRepo('${esc(r)}')" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1">${esc(displayName)}</span><button class="remove-item" onclick="removeListItem('repos','list',${i})">&#x2715;</button></div>`;
+        // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
+        const displayName = ghHost + '/' + r;
+        return `<div class="config-list-item" style="align-items:center;gap:6px"><span onclick="setDefaultRepo('${esc(r)}')" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(displayName)}">${esc(displayName)}</span><span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" onclick="removeListItem('repos','list',${i})">&#x2715;</button></div>`;
       }).join('');
+      const hostNote = isGHE
+        ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
+        : ` on <strong>${esc(ghHost)}</strong>`;
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive. Click the star to set the default repo where the advisory issue is maintained.</p>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive${hostNote}. Click the star to set the default repo where the advisory issue is maintained.</p>
         <div class="config-list">
           ${list || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">No repos configured</div>'}
           <div class="config-list-add">
-            <input type="text" id="cfg-repo-input" placeholder="org/repo" title="GitHub repository in org/repo format (e.g. kubestellar/console). The governor will monitor this repo for issues, PRs, and CI status.">
+            <input type="text" id="cfg-repo-input" placeholder="org/repo (on ${esc(ghHost)})" title="GitHub repository in org/repo format (e.g. kubestellar/console). It must live on this hive's forge, ${esc(ghHost)} — the governor rejects repos on other GitHub hosts. It will be monitored for issues, PRs, and CI status.">
             <button onclick="addListItem('repos','list','cfg-repo-input')" title="Add this repository to the monitored list">+ Add</button>
           </div>
         </div>`;

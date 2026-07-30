@@ -1935,6 +1935,41 @@ func TestHandleConfig_WithPrimaryRepo(t *testing.T) {
 	}
 }
 
+// handleConfig must report the RESOLVED GitHub host so the dashboard's
+// forge indicators (Repositories section pill, per-repo cards, Repos config
+// modal) show the real host. A pooled/placeholder GHE hive legitimately
+// carries base_url: "" with a GHE api_url — reading base_url alone rendered
+// those as github.com, so operators mistook a github.ibm.com hive for
+// github.com (the vllmd-06 case). ResolvedBaseURL falls back to the api_url
+// host in exactly that case.
+func TestHandleConfig_GitHubBaseURL_BlankBaseGHEApi(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.GitHub.BaseURL = ""
+	deps.Config.GitHub.APIURL = "https://github.ibm.com/api/v3"
+	rec := doGet(s, "/api/config")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if got := result["github_base_url"]; got != "https://github.ibm.com" {
+		t.Errorf("github_base_url = %v, want https://github.ibm.com", got)
+	}
+}
+
+func TestHandleConfig_GitHubBaseURL_PublicDefault(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.GitHub.BaseURL = ""
+	deps.Config.GitHub.APIURL = ""
+	rec := doGet(s, "/api/config")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if got := result["github_base_url"]; got != "https://github.com" {
+		t.Errorf("github_base_url = %v, want https://github.com", got)
+	}
+}
+
 // ---- handleKnowledgeToggle enable with layers ----
 
 func TestHandleKnowledgeToggle_EnableWithLayers(t *testing.T) {
