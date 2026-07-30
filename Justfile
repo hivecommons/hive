@@ -1,4 +1,4 @@
-# Justfile — KubeStellar Hive contributor commands
+# Justfile — KubeStellar Hive contributor commands, for ClankeR (the contributor relay)
 #
 # Install just: brew install just (macOS) or cargo install just
 # Usage: just contribute-setup claude && just contribute-hive
@@ -91,7 +91,7 @@ contribute-setup backend="claude": check-version
       echo ""
     fi
     mkdir -p "{{config_dir}}"
-    echo "=== Hive Contributor Setup ==="
+    echo "=== Hive Contributor Setup (ClankeR) ==="
     echo ""
 
     # ── Step 1: GitHub authentication ──
@@ -318,7 +318,7 @@ contribute-hive backend="" mode="docker": check-version
       BACKEND="${AGENT_BACKEND:-claude}"
     fi
     export AGENT_BACKEND="$BACKEND"
-    echo "=== Hive Contributor Agent ==="
+    echo "=== Hive Contributor Agent (ClankeR) ==="
     echo "Backend:  ${BACKEND}"
     echo "Hub:      {{hive_hub}}"
     echo "GitHub:   $(gh api user --jq '.login' 2>/dev/null || echo 'authenticated')"

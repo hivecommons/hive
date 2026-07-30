@@ -602,6 +602,35 @@ func clusterIDForSaaSHive(sh SaaSHive) string {
 	return defaultClusterID
 }
 
+// ensureClusterIDForClaim stamps a non-blank cluster_id onto a hive that is
+// about to be persisted by a claim/assign. This is the data-integrity guard
+// for the observed bug where CLAIMED hives lost cluster_id in their meta.json
+// and then fell back to defaultClusterID (hive-oke) in clusterForHive — which
+// mis-routed App/host resolution for hives that actually run on vllm-d.
+//
+// Precedence, most-trusted first:
+//  1. The hive's OWN non-blank ClusterID (the placeholder already belongs to a
+//     cluster — always the most authoritative source; never override it).
+//  2. poolFallback — the pool the claim was drawn from, when the caller knows
+//     it (e.g. handleApproveProvision picks a pool by auth_method), but only
+//     when it names a cluster the hub actually has.
+//  3. defaultClusterID — last resort, matching clusterForHive's own fallback.
+//
+// The result is always non-blank, so with omitempty on the json tag it still
+// serializes to a concrete "cluster_id" value rather than vanishing.
+func (s *HubServer) ensureClusterIDForClaim(h *SaaSHive, poolFallback string) {
+	if h.ClusterID != "" {
+		return
+	}
+	if poolFallback != "" {
+		if _, ok := s.clusters[poolFallback]; ok {
+			h.ClusterID = poolFallback
+			return
+		}
+	}
+	h.ClusterID = defaultClusterID
+}
+
 // clusterNameForID returns the human-readable name for a cluster ID.
 // Returns empty string when the cluster is not found.
 func (s *HubServer) clusterNameForID(clusterID string) string {
@@ -1487,6 +1516,16 @@ type MyHiveEntry struct {
 	// guards. The full 200-event history stays behind that endpoint and its
 	// modal; this is only the hover preview.
 	RecentEvents []TimelineEvent `json:"recentEvents,omitempty"`
+
+	// AdvisoryStale is true when this hive SHOULD be posting advisory digests
+	// but its digest has quietly gone stale — computed on read by advisoryStale()
+	// so the browser never re-derives the threshold or the gating (advisory-mode
+	// + app-can-write) and cannot drift from the Go rule. AdvisoryStaleReason is
+	// the tooltip cause. Both stay zero/empty for hives that are not in advisory
+	// mode, whose App cannot write, or that report an unknown timestamp — those
+	// must never show the pill.
+	AdvisoryStale       bool   `json:"advisoryStale,omitempty"`
+	AdvisoryStaleReason string `json:"advisoryStaleReason,omitempty"`
 }
 
 // myHivesRecentEventCount is how many timeline events ride the My Hives
@@ -1790,6 +1829,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		st := s.journey.get(result[i].ID)
 		status := JourneyStatusFor(&result[i].RegistryEntry, st, journeyNow)
 		result[i].Journey = &status
+
+		// Advisory-staleness pill, computed on read (same as Journey) so the
+		// gating — advisory-mode participation, app-can-write, past-threshold —
+		// lives ONLY in Go and the browser just renders the flag.
+		if stale, reason := advisoryStale(result[i].RegistryEntry, journeyNow); stale {
+			result[i].AdvisoryStale = true
+			result[i].AdvisoryStaleReason = reason
+		}
 
 		// Sparkline history dominated this payload: at 42 hives the two series
 		// were ~755 KB of an 818 KB response (92%), yet they are drawn into a
@@ -4857,6 +4904,13 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	h.ACMMLevel = acmm
 	h.Status = ""
 	h.Error = ""
+	// Preserve the placeholder's real cluster before ANY cluster-derived
+	// resolution below (host backfill uses s.clusterForHive(h), which silently
+	// returns hive-oke when ClusterID is blank). The placeholder was picked
+	// from `pool`, so a blank cluster_id here can only mean the placeholder was
+	// created without one — stamp the pool it came from rather than leaving a
+	// blank that later resolves to the wrong (default) cluster's App/host.
+	s.ensureClusterIDForClaim(h, pool)
 	// The requester already told us which GitHub their org lives on (parsed
 	// from the org URL they pasted, or picked explicitly), so honour it. Before
 	// this, approve dropped github_host entirely — only the manual assign path
@@ -5424,6 +5478,12 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// (and any stale error) alone makes it show under the new owner in My Hives.
 	h.Owner = body.Owner
 	h.Org = body.Org
+	// Preserve the placeholder's real cluster before the host backfill below,
+	// which resolves via s.clusterForHive(h) and would fall back to hive-oke on
+	// a blank cluster_id. The admin assigns a specific placeholder, so its own
+	// ClusterID is authoritative; only a placeholder created without one lands
+	// on the default here (never a silent blank that mis-routes to hive-oke).
+	s.ensureClusterIDForClaim(h, "")
 	// Record the GHE host (if any) so the heartbeat can point this spoke at the
 	// right GitHub API. Never blank an existing value with an empty one.
 	//
@@ -6586,7 +6646,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var JOURNEY_STAGE_TIPS = {
       'none': 'No outstanding adoption steps.',
       'github-app': 'Stage 1 — the GitHub App is not installed, so no agent can open issues or PRs.',
-      'method-model': 'Stage 2 — no agent has a method/model assigned and the contributor relay is not in use.',
+      'method-model': 'Stage 2 — no agent has a method/model assigned and ClankeR (the contributor relay) is not in use.',
       'acmm-level': 'Stage 3 — running steadily; due a gentle suggestion to consider the next ACMM level. Never a de-provision risk.',
     };
     /* Rank a journey status for sorting. Snoozed hives rank lowest — an admin
@@ -6621,9 +6681,9 @@ const dashboardHTML = `<!DOCTYPE html>
         if (sev === 'deprovision-warning') text = label + ' ⚠';
       }
       var html = '<span class="journey-badge ' + cls + '" title="' + esc(tip) + '">' + esc(text) + '</span>';
-      /* Stage 2 satisfied via the contributor relay gets its own visible badge. */
+      /* Stage 2 satisfied via ClankeR gets its own visible badge. */
       if (j.viaRelay) {
-        html += '<span class="journey-relay" title="' + esc('Stage 2 is satisfied through the contributor relay (human contributors picking up tasks), not by an assigned method/model.') + '">relay</span>';
+        html += '<span class="journey-relay" title="' + esc('Stage 2 is satisfied through ClankeR, the contributor relay (human contributors picking up tasks), not by an assigned method/model.') + '">relay</span>';
       }
       return html;
     }
@@ -6909,7 +6969,25 @@ const dashboardHTML = `<!DOCTYPE html>
         esc(label) + '</span>';
     }
 
-    /* ---- Contributor relay (hover panel) ------------------------------
+    /* advisoryStaleSummary renders a small "stale advisory" pill next to the
+       failing-check pill when the hub has flagged this hive's advisory digest as
+       stale. The flag (h.advisoryStale) and its reason are computed server-side
+       by advisoryStale() — gated on advisory-mode participation AND app-can-write
+       AND past-threshold — so this renderer never re-derives the rule and a
+       not-installed or PR-mode hive is already filtered out before it gets here.
+       Amber, matching the "worth noticing" band of the uptime pill: a stale
+       digest is an operator nudge, not a hard row failure. */
+    function advisoryStaleSummary(h) {
+      if (!h || !h.advisoryStale) return '';
+      var col = '#d29922';
+      var title = h.advisoryStaleReason || 'Advisory digest has gone stale';
+      return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:6px;padding:0 6px;' +
+        'border-radius:9999px;font-size:0.62rem;font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
+        'color:' + col + ';background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.35)">' +
+        'stale advisory</span>';
+    }
+
+    /* ---- ClankeR, the contributor relay (hover panel) ------------------
        The relay is a first-class SUBSTITUTE for assigning a method/model:
        when humans are picking up this hive's tasks through /contribute, the
        "tokens for an agent" requirement is satisfied. The product rule is
@@ -6949,7 +7027,7 @@ const dashboardHTML = `<!DOCTYPE html>
         who = 'task in progress';
       }
       return '<div style="padding:1px 0;color:' + RELAY_COLOR + '">' +
-        esc('◆ Contributor relay · ' + who) + '</div>' +
+        esc('◆ ClankeR · ' + who) + '</div>' +
         '<div style="padding:0 0 1px 12px;color:var(--muted);font-size:0.65rem">' +
         esc('satisfies the method/model requirement') + '</div>';
     }
@@ -7071,7 +7149,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!access.length) {
         var plainLines = lines.slice();
         if ((h.journey || {}).viaRelay) {
-          plainLines.push('◆ Contributor relay in use — satisfies the method/model requirement');
+          plainLines.push('◆ ClankeR (contributor relay) in use — satisfies the method/model requirement');
         }
         return '<span title="' + esc(plainLines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line">' + dotMarkup + '</span>';
       }
@@ -9866,7 +9944,7 @@ const dashboardHTML = `<!DOCTYPE html>
         return '<tr>' +
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; var link = function(text, bold) { if (dh) { return '<a href="' + dh + '" target="_blank" class="' + (bold ? 'hive-name-link' : 'hive-sub-link') + '" title="Open dashboard">' + esc(text) + '</a>'; } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
           /* No white-space:nowrap on the cell itself: the stacked lines each
@@ -10049,7 +10127,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */

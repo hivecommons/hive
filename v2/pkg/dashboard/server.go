@@ -98,6 +98,27 @@ type Server struct {
 
 	advisoryMu     sync.RWMutex
 	advisoryDigest any
+	// advisoryLastPostedAt / advisoryLastFindings / advisoryLastError record the
+	// outcome of the most recent advisory-digest post ATTEMPT, so the heartbeat
+	// builder can report it to the hub and a hive whose digest has quietly gone
+	// stale (working App, advisory agents, but the digest stopped updating)
+	// becomes visible in My Hives instead of needing a per-hive log sweep.
+	//
+	// advisoryLastPostedAt stays zero until the spoke SUCCESSFULLY posts a
+	// digest at least once. That zero is what makes "this hive is not in the
+	// advisory-posting business" (pure PR/merge mode, no advisory agents — it
+	// never reaches the post path) indistinguishable on the wire from "old
+	// spoke": both report an empty timestamp, which the hub must read as UNKNOWN
+	// and never as a stale alarm. Only a hive that HAS posted at least once, and
+	// then stopped, can trip the hub's staleness gate.
+	//
+	// advisoryLastError holds the log-safe error string from the most recent
+	// FAILED post attempt (403 issues:write, rate limit, auth failure), or "" on
+	// success. It is set from the same error the spoke already logs, so it never
+	// carries key material.
+	advisoryLastPostedAt time.Time
+	advisoryLastFindings int
+	advisoryLastError    string
 
 	deviceFlowMu    sync.Mutex
 	deviceFlowState *github.DeviceFlowState
@@ -2146,6 +2167,41 @@ func (s *Server) GetAdvisoryDigest() any {
 	s.advisoryMu.RLock()
 	defer s.advisoryMu.RUnlock()
 	return s.advisoryDigest
+}
+
+// RecordAdvisoryPost marks that the spoke SUCCESSFULLY posted/updated the
+// advisory digest just now, carrying the finding count that went out. It clears
+// any prior error, since a fresh success means the advisory path is healthy
+// again. Called only from the digest-posting path — a hive with no advisory
+// agents never reaches it, so its advisoryLastPostedAt stays zero and the hub
+// reads it as UNKNOWN (never a false stale alarm).
+func (s *Server) RecordAdvisoryPost(findings int) {
+	s.advisoryMu.Lock()
+	defer s.advisoryMu.Unlock()
+	s.advisoryLastPostedAt = time.Now()
+	s.advisoryLastFindings = findings
+	s.advisoryLastError = ""
+}
+
+// RecordAdvisoryError records that a digest post ATTEMPT failed, with a
+// log-safe error string (the same one the spoke logs — never key material). It
+// does NOT advance advisoryLastPostedAt: the last SUCCESSFUL post time must
+// keep ageing so the hub still sees the digest going stale, while the error
+// gives the operator the specific cause (403 issues:write, rate limit, …).
+func (s *Server) RecordAdvisoryError(errMsg string) {
+	s.advisoryMu.Lock()
+	defer s.advisoryMu.Unlock()
+	s.advisoryLastError = errMsg
+}
+
+// AdvisoryState returns the last successful advisory-post time (zero if the
+// spoke has never posted one), the finding count that went out then, and the
+// most recent post error ("" when the last attempt succeeded). The heartbeat
+// builder reports these so the hub can flag a stale advisory digest.
+func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, lastError string) {
+	s.advisoryMu.RLock()
+	defer s.advisoryMu.RUnlock()
+	return s.advisoryLastPostedAt, s.advisoryLastFindings, s.advisoryLastError
 }
 
 // HealthSummary returns a deep-health summary with individual check results for heartbeats.
