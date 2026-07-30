@@ -322,9 +322,39 @@ function checkTmuxIdle() {
       hasCompletionMarker = true;
       isWorking = /working|running|executing|calling/i.test(text);
     } else if (BACKEND === 'bob') {
-      hasIdlePrompt = /bob>|>\s*$/.test(text);
-      hasCompletionMarker = /completed|done|finished|✓/i.test(text);
-      isWorking = /running|executing|thinking/i.test(text);
+      // Matched against real bobshell 1.0.6 panes. Every part of the previous
+      // classifier was wrong on real output, and each was independently fatal:
+      //
+      //   hasIdlePrompt /bob>|>\s*$/ NEVER matched. bob's idle prompt is drawn
+      //     inside a box ("│ >   Enter your prompt, / for commands, …  │"), so
+      //     the '>' is never at end-of-line and there is no "bob>" anywhere.
+      //     Since idle is ANDed in, task_complete could never fire for bob:
+      //     a finished task stayed "in progress" until the 30-min timeout, and
+      //     the hub then heard task_failed for work bob had actually done.
+      //
+      //   isWorking /running|executing|thinking/i was permanently TRUE. bob
+      //     prints a static banner "You are running Bob Shell in your home
+      //     directory" and echoes its <thinking> block; both stay in the pane
+      //     forever, so this never cleared even on a fully idle bob.
+      //
+      // Instead: reuse the same prompt chrome getCLIState() already verifies
+      // for 'ready', and detect work via bob's live spinner line, which reads
+      // "◡ <task title> (esc to cancel, 5s)" only while a turn is running.
+      // hasCompletionMarker is true because bob has no completion token —
+      // returning to the idle prompt with no spinner IS the completion signal
+      // (same convention as the copilot/goose branches above).
+      const BOB_IDLE_CHROME = /Enter your prompt, \/ for commands|Auto-approve:|Tokens left:/;
+      const BOB_SPINNER = /\(esc to cancel/;
+      // bob exits after finishing a turn ("Bob goes to sleep 💤"), dropping the
+      // pane back to a shell prompt. That is a completed turn, not a hung one,
+      // so treat it as idle rather than waiting for chrome that is now gone.
+      const BOB_EXITED = /goes to sleep/;
+      const lastLines = text.split('\n').slice(-TMUX_TAIL_LINES).join('\n');
+      hasIdlePrompt = BOB_IDLE_CHROME.test(text) || BOB_EXITED.test(text);
+      hasCompletionMarker = true;
+      // Scope the spinner probe to the tail: a stale spinner line scrolled up
+      // in the backlog would otherwise pin isWorking true forever.
+      isWorking = BOB_SPINNER.test(lastLines) && !BOB_EXITED.test(lastLines);
     } else if (BACKEND === 'codex') {
       hasIdlePrompt = /codex>|>\s*$/.test(text);
       hasCompletionMarker = /completed|done|finished/i.test(text);

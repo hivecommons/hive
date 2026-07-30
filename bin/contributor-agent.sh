@@ -147,6 +147,15 @@ mkdir -p /var/run/hive-metrics 2>/dev/null || true
 
 # Configure git credentials so push works (fork + PR model).
 # GH_TOKEN is the contributor's personal token — enough to fork and push.
+#
+# It is expanded with a ":-" default because this script runs under `set -u`:
+# an unset GH_TOKEN would otherwise abort the entrypoint here with
+# "GH_TOKEN: unbound variable", before the CLI or the relay ever start.
+# An absent token is a normal, supported state — `just contribute-run` passes
+# -e GH_TOKEN="${GH_TOKEN}" and sets it to "" whenever `gh auth token` fails,
+# and the hub also injects a per-task token over the WebSocket at dispatch
+# time (task_assign.github_token -> injectGhToken). Only git push needs this
+# helper, so an empty value must degrade rather than kill the container.
 CRED_HELPER="${HOME}/.git-credential-hive"
 cat > "$CRED_HELPER" <<CRED
 #!/bin/sh
@@ -156,7 +165,7 @@ case "\$1" in
     echo "protocol=https"
     echo "host=github.com"
     echo "username=x-access-token"
-    echo "password=${GH_TOKEN}"
+    echo "password=${GH_TOKEN:-}"
     ;;
 esac
 CRED
