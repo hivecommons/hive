@@ -602,6 +602,35 @@ func clusterIDForSaaSHive(sh SaaSHive) string {
 	return defaultClusterID
 }
 
+// ensureClusterIDForClaim stamps a non-blank cluster_id onto a hive that is
+// about to be persisted by a claim/assign. This is the data-integrity guard
+// for the observed bug where CLAIMED hives lost cluster_id in their meta.json
+// and then fell back to defaultClusterID (hive-oke) in clusterForHive — which
+// mis-routed App/host resolution for hives that actually run on vllm-d.
+//
+// Precedence, most-trusted first:
+//  1. The hive's OWN non-blank ClusterID (the placeholder already belongs to a
+//     cluster — always the most authoritative source; never override it).
+//  2. poolFallback — the pool the claim was drawn from, when the caller knows
+//     it (e.g. handleApproveProvision picks a pool by auth_method), but only
+//     when it names a cluster the hub actually has.
+//  3. defaultClusterID — last resort, matching clusterForHive's own fallback.
+//
+// The result is always non-blank, so with omitempty on the json tag it still
+// serializes to a concrete "cluster_id" value rather than vanishing.
+func (s *HubServer) ensureClusterIDForClaim(h *SaaSHive, poolFallback string) {
+	if h.ClusterID != "" {
+		return
+	}
+	if poolFallback != "" {
+		if _, ok := s.clusters[poolFallback]; ok {
+			h.ClusterID = poolFallback
+			return
+		}
+	}
+	h.ClusterID = defaultClusterID
+}
+
 // clusterNameForID returns the human-readable name for a cluster ID.
 // Returns empty string when the cluster is not found.
 func (s *HubServer) clusterNameForID(clusterID string) string {
@@ -4857,6 +4886,13 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	h.ACMMLevel = acmm
 	h.Status = ""
 	h.Error = ""
+	// Preserve the placeholder's real cluster before ANY cluster-derived
+	// resolution below (host backfill uses s.clusterForHive(h), which silently
+	// returns hive-oke when ClusterID is blank). The placeholder was picked
+	// from `pool`, so a blank cluster_id here can only mean the placeholder was
+	// created without one — stamp the pool it came from rather than leaving a
+	// blank that later resolves to the wrong (default) cluster's App/host.
+	s.ensureClusterIDForClaim(h, pool)
 	// The requester already told us which GitHub their org lives on (parsed
 	// from the org URL they pasted, or picked explicitly), so honour it. Before
 	// this, approve dropped github_host entirely — only the manual assign path
@@ -5424,6 +5460,12 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// (and any stale error) alone makes it show under the new owner in My Hives.
 	h.Owner = body.Owner
 	h.Org = body.Org
+	// Preserve the placeholder's real cluster before the host backfill below,
+	// which resolves via s.clusterForHive(h) and would fall back to hive-oke on
+	// a blank cluster_id. The admin assigns a specific placeholder, so its own
+	// ClusterID is authoritative; only a placeholder created without one lands
+	// on the default here (never a silent blank that mis-routes to hive-oke).
+	s.ensureClusterIDForClaim(h, "")
 	// Record the GHE host (if any) so the heartbeat can point this spoke at the
 	// right GitHub API. Never blank an existing value with an empty one.
 	//
