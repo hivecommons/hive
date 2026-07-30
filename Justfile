@@ -197,7 +197,9 @@ contribute-setup backend="claude": check-version
         ;;
       bob)
         if command -v bob &>/dev/null; then
-          echo "Bob CLI detected — authentication handled on first run."
+          # Bob's browser SSO flow cannot complete in a container, so the
+          # containerized path needs BOBSHELL_API_KEY exported in your shell.
+          echo "Bob CLI detected — export BOBSHELL_API_KEY for containerized runs."
         else
           echo "ERROR: Bob CLI not found."
           exit 1
@@ -318,6 +320,14 @@ contribute-hive backend="" mode="docker": check-version
       BACKEND="${AGENT_BACKEND:-claude}"
     fi
     export AGENT_BACKEND="$BACKEND"
+    # Bob has no headless credential other than its API key — without it the
+    # agent would launch and sit at Bob's key prompt forever. Fail fast.
+    if [[ "$BACKEND" == "bob" && -z "${BOBSHELL_API_KEY:-}" ]]; then
+      echo "ERROR: BOBSHELL_API_KEY not set — Bob cannot authenticate."
+      echo "  export BOBSHELL_API_KEY=your-bob-api-key"
+      echo "  then re-run: just contribute-hive bob"
+      exit 1
+    fi
     echo "=== Hive Contributor Agent (ClankeR) ==="
     echo "Backend:  ${BACKEND}"
     echo "Hub:      {{hive_hub}}"
@@ -481,6 +491,7 @@ contribute-hive backend="" mode="docker": check-version
         ${GOOSE_PROVIDER:+-e GOOSE_PROVIDER="${GOOSE_PROVIDER}"} \
         ${GOOSE_MODEL:+-e GOOSE_MODEL="${GOOSE_MODEL}"} \
         ${OPENAI_API_KEY:+-e OPENAI_API_KEY="${OPENAI_API_KEY}"} \
+        ${BOBSHELL_API_KEY:+-e BOBSHELL_API_KEY="${BOBSHELL_API_KEY}"} \
         ${HIVE_LITELLM_ENDPOINT:+-e HIVE_LITELLM_ENDPOINT="${HIVE_LITELLM_ENDPOINT}"} \
         ${HIVE_LITELLM_API_KEY:+-e HIVE_LITELLM_API_KEY="${HIVE_LITELLM_API_KEY}"} \
         ${AGENT_MODEL:+-e AGENT_MODEL="${AGENT_MODEL}"} \
