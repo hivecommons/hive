@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -214,6 +215,188 @@ func (s *HubServer) appIdentityForCluster(clusterID string) *clusterAppIdentity 
 		AppSlug:     c.GitHubAppSlug,
 		PrivateKey:  pem,
 		Fingerprint: fp,
+	}
+}
+
+// fleetAppKey is one App identity the fleet knows, indexed by its own app_id.
+// It is assembled the same way appIdentityForCluster assembles a cluster's
+// identity — the non-secret app_id/slug from cluster config, the secret key from
+// the per-cluster key store — but keyed by APP rather than by cluster, so a
+// spoke can be handed the key of an App that is not its own cluster's.
+type fleetAppKey struct {
+	AppID       int64
+	AppSlug     string
+	PrivateKey  string
+	Fingerprint string
+}
+
+// appKeysByAppID returns the fleet's App keys de-duplicated by app_id.
+//
+// WHY app_id AND NOT clusterID
+//
+// The store on disk is keyed by cluster (one <clusterID>.pem per cluster), but
+// two clusters can front the SAME GitHub host and therefore the same App — and,
+// more importantly, a spoke needs to be handed the key for an App that is NOT its
+// cluster's default (a github.com hive parked on a GitHub-Enterprise cluster).
+// Re-indexing the existing per-cluster keys by their app_id gives exactly that
+// lookup without a second on-disk store or any migration: every key already on
+// disk simply becomes discoverable by the App it belongs to.
+//
+// It is read-only over the cluster map and the key files; it invents nothing and
+// stores nothing. A cluster with no configured app_id, or no usable key on disk,
+// contributes nothing. When two clusters resolve to the same app_id the first
+// usable key wins deterministically (clusters are visited in sorted ID order) —
+// they are the same App, so any of its valid keys is correct.
+func (s *HubServer) appKeysByAppID() map[int64]fleetAppKey {
+	out := make(map[int64]fleetAppKey)
+	if s == nil || s.clusters == nil {
+		return out
+	}
+	ids := make([]string, 0, len(s.clusters))
+	for id := range s.clusters {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // deterministic winner when two clusters share an app_id
+	for _, id := range ids {
+		c := s.clusters[id]
+		if c.GitHubAppID == 0 {
+			continue
+		}
+		if _, seen := out[c.GitHubAppID]; seen {
+			continue
+		}
+		pem := loadClusterAppKey(id)
+		if pem == "" {
+			continue
+		}
+		fp, err := config.AppKeyFingerprint(pem)
+		if err != nil {
+			continue
+		}
+		out[c.GitHubAppID] = fleetAppKey{
+			AppID:       c.GitHubAppID,
+			AppSlug:     c.GitHubAppSlug,
+			PrivateKey:  pem,
+			Fingerprint: fp,
+		}
+	}
+	return out
+}
+
+// additionalAppKeysForSpoke returns every fleet App key EXCEPT the one a given
+// spoke would already receive as its primary (cluster) key, so a spoke ends up
+// holding all keys the fleet knows and can select by its own app_id.
+//
+// primaryAppID is the app_id of the key already carried in the heartbeat's
+// AppID/PrivateKey pair (the spoke's cluster key). Passing 0 means "no primary
+// carried" and every fleet key is returned. The result is sorted by app_id so
+// delivery — and any test asserting on it — is deterministic, and never contains
+// the primary again (that would be pure duplication on the wire).
+func (s *HubServer) additionalAppKeysForSpoke(primaryAppID int64) []HeartbeatAppKey {
+	keys := s.appKeysByAppID()
+	if len(keys) == 0 {
+		return nil
+	}
+	appIDs := make([]int64, 0, len(keys))
+	for id := range keys {
+		if id == primaryAppID {
+			continue // already delivered as the primary key
+		}
+		appIDs = append(appIDs, id)
+	}
+	if len(appIDs) == 0 {
+		return nil
+	}
+	sort.Slice(appIDs, func(i, j int) bool { return appIDs[i] < appIDs[j] })
+	out := make([]HeartbeatAppKey, 0, len(appIDs))
+	for _, id := range appIDs {
+		k := keys[id]
+		out = append(out, HeartbeatAppKey{
+			AppID:       k.AppID,
+			PrivateKey:  k.PrivateKey,
+			Fingerprint: k.Fingerprint,
+		})
+	}
+	return out
+}
+
+// attachMissingAppKeys adds the fleet's OTHER App keys to a heartbeat response
+// so a spoke ends up holding every App key the fleet knows, and can pick the one
+// matching its own app_id. It is the fix for a github.com hive on a
+// GitHub-Enterprise cluster (vllm-d): that hive inherits only the GHE cluster
+// key, holds no github.com key, and cannot authenticate github.com repos.
+//
+// IDEMPOTENCE: it delivers only the keys the spoke does NOT already hold with a
+// matching fingerprint (payload.GitHubAppKeysHeld). Once the spoke reports it
+// holds them all, nothing further rides the wire — the same "compare by
+// fingerprint, never re-send a key already in place" contract the per-cluster
+// reconcile uses.
+//
+// EXCLUSIONS: the spoke's PRIMARY key is never sent as an "additional" key.
+// Primary = whatever app_id the spoke is already configured as
+// (payload.GitHubAppID) AND whatever app_id the response's own
+// GitHubAppConfig.AppID carries this beat (the cluster key just decided above).
+// Sending either again would be pure duplication.
+//
+// It attaches to resp.GitHubAppConfig, creating a bare one (no primary key, no
+// app_id change) when the branches above left it nil — the additional keys must
+// reach the spoke even when its cluster key needs no correction. The private key
+// values are secret and travel only on this TLS response; only fingerprints are
+// logged.
+func (s *HubServer) attachMissingAppKeys(resp *HeartbeatResponse, payload *HeartbeatPayload) {
+	if s == nil || resp == nil || payload == nil {
+		return
+	}
+	// The spoke's primary app_id is its own configured one; also exclude the
+	// app_id of any cluster key attached this beat so we never duplicate it.
+	primaryAppID := payload.GitHubAppID
+	var alsoExclude int64
+	if resp.GitHubAppConfig != nil {
+		alsoExclude = resp.GitHubAppConfig.AppID
+	}
+
+	additional := s.additionalAppKeysForSpoke(primaryAppID)
+	if len(additional) == 0 {
+		return
+	}
+
+	missing := make([]HeartbeatAppKey, 0, len(additional))
+	for _, k := range additional {
+		if alsoExclude != 0 && k.AppID == alsoExclude {
+			continue // already delivered as the primary/cluster key this beat
+		}
+		// Idempotence: skip a key the spoke already holds with this fingerprint.
+		if held, ok := payload.GitHubAppKeysHeld[strconv.FormatInt(k.AppID, 10)]; ok {
+			if held != "" && k.Fingerprint != "" && held == k.Fingerprint {
+				continue
+			}
+		}
+		missing = append(missing, k)
+	}
+	if len(missing) == 0 {
+		return
+	}
+
+	if resp.GitHubAppConfig == nil {
+		// No primary key change this beat — attach a bare carrier. AppID 0 and an
+		// empty PrivateKey both mean "leave the spoke's primary alone"; only the
+		// additional keys travel.
+		resp.GitHubAppConfig = &HeartbeatGitHubAppConfig{}
+	}
+	resp.GitHubAppConfig.AdditionalKeys = missing
+
+	if s.logger != nil {
+		fps := make([]string, 0, len(missing))
+		for _, k := range missing {
+			// Fingerprints only — the key material is never logged.
+			fps = append(fps, strconv.FormatInt(k.AppID, 10)+"="+k.Fingerprint)
+		}
+		s.logger.Info("heartbeat: delivering additional github app keys to spoke",
+			"hive_id", payload.HiveID,
+			"cluster_id", payload.ClusterID,
+			"primary_app_id", primaryAppID,
+			"delivered", strings.Join(fps, ","),
+		)
 	}
 }
 

@@ -1194,6 +1194,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		resp.GitHubAppConfig = keyCfg
 	}
 
+	// Deliver the fleet's OTHER App keys so a spoke can authenticate as an App
+	// that is NOT its cluster's default — the github.com hive parked on a
+	// GitHub-Enterprise cluster (vllm-d) that inherits only the GHE key and can
+	// never sign for github.com. This runs on EVERY heartbeat, independent of the
+	// branches above: those decide the spoke's PRIMARY (cluster) key; this makes
+	// sure it also carries every other key it is missing. Delivering only the
+	// missing/stale ones (attachMissingAppKeys diffs against what the spoke
+	// reports it holds) keeps it idempotent — once the spoke has them all, nothing
+	// rides the wire.
+	s.attachMissingAppKeys(&resp, &payload)
+
 	s.hubBannersMu.RLock()
 	if banner, ok := s.hubBanners[payload.HiveID]; ok {
 		resp.HubBanner = &HubBanner{
