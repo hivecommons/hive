@@ -21,6 +21,9 @@ const (
 	// bobKeyOtherReadBit is `o+r`. Also sufficient for the agent to read, but
 	// it means the secret is world-readable, which is worth flagging.
 	bobKeyOtherReadBit fs.FileMode = 0o004
+	// bobStateGroupWriteBit is `g+w` — the bit that lets an agent UID create
+	// or replace files inside a dev:node-owned bob state directory.
+	bobStateGroupWriteBit fs.FileMode = 0o020
 )
 
 // verifyBobKeyReadable checks that the resolved bob key file is readable BY
@@ -88,6 +91,81 @@ const bobSharedHome = "/data/home"
 // bobSettingsPath returns the shared bob settings file for a given HOME.
 func bobSettingsPath(home string) string {
 	return filepath.Join(home, config.BobSettingsRelPath)
+}
+
+// verifyBobStateDirsWritable probes, AS THE AGENT UID, every directory bob
+// writes to during startup, and logs an actionable error for each one that is
+// not writable.
+//
+// This exists because bob reports these failures only inside its own TUI —
+// "There was an error saving your latest settings changes." and "Failed to
+// initialize logger:" — which nobody sees unless they are attached to that
+// pane. Nothing reaches the hive log, so a genuinely unwritable directory is
+// invisible to an operator reading `kubectl logs` and gets misdiagnosed as a
+// read-only filesystem. The same false-positive trap as verifyBobKeyReadable
+// applies: the hive process runs as dev and OWNS these directories, so any
+// check it performs on its own behalf succeeds while the agent UID still gets
+// EACCES. The probe therefore tests the agent's group access explicitly rather
+// than calling os.Access as dev.
+//
+// Advisory only — it never blocks a launch. bob degrades rather than dying
+// when these writes fail (ephemeral installation ID, no chat recording), so a
+// probe failure is a reason to log loudly, not to refuse to start the agent.
+// Logs paths, modes and UIDs only — never any file contents.
+//
+// Returns the directories found unwritable, so callers and tests can assert on
+// the outcome rather than scraping log output. A nil result means every
+// existing state dir is writable by the agent UID.
+func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, uid int) []string {
+	if uid <= 0 {
+		return nil
+	}
+	var unwritable []string
+
+	// The directories bob creates or writes during startup:
+	//   - $HOME/.bob            settings.json, trustedFolders.json,
+	//                           installation_id, tmp/ (chat recordings)
+	//   - <workdir>/.bob        per-agent .bob-errors/ logger target, which is
+	//                           what "Failed to initialize logger:" refers to
+	probeDirs := []string{
+		filepath.Dir(bobSettingsPath(home)),
+		filepath.Join(workDir, config.BobStateDirName),
+	}
+
+	for _, dir := range probeDirs {
+		info, err := os.Stat(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Not an error on its own: bob creates these with
+				// mkdirSync({recursive:true}) on first use. It only matters
+				// whether the PARENT is writable, which the next launch's
+				// probe reports once the dir exists.
+				continue
+			}
+			m.logger.Warn("bob state dir not statable; bob may fail to persist settings or initialize its logger",
+				"agent", agentName, "dir", dir, "uid", uid, "error", err)
+			continue
+		}
+		if !info.IsDir() {
+			m.logger.Warn("bob state path exists but is not a directory",
+				"agent", agentName, "path", dir, "uid", uid)
+			continue
+		}
+
+		// The agent UID reaches these dev-owned dirs through group `node`, so
+		// group write+execute is what actually decides whether bob can create
+		// or replace a file inside. Write alone is not enough — without
+		// execute the path cannot be traversed to open the file by name.
+		mode := info.Mode().Perm()
+		if mode&bobStateGroupWriteBit == 0 || mode&bobKeyGroupExecBit == 0 {
+			m.logger.Error("bob state dir is not writable by the agent UID; bob will report \"error saving your latest settings changes\" and \"Failed to initialize logger\"",
+				"agent", agentName, "dir", dir,
+				"mode", fs.FileMode(mode).String(), "uid", uid,
+				"remedy", "chmod 770 "+dir+" and ensure it is group-owned by node")
+			unwritable = append(unwritable, dir)
+		}
+	}
+	return unwritable
 }
 
 // ensureBobAuthSettings makes hive the owner of the `security.auth` block in

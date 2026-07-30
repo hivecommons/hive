@@ -159,11 +159,12 @@ COPY v2/deploy/data/ /opt/hive/seed-data/
 COPY v2/deploy/ttyd-tmux.sh /usr/local/bin/ttyd-tmux.sh
 COPY v2/deploy/hive-panes.sh /usr/local/bin/hive-panes
 COPY bin/gh-app-token.sh bin/hive-config.sh bin/agent-launch.sh bin/git-credential-hive.sh /usr/local/bin/
+COPY bin/hive-open-pr.sh /usr/local/bin/hive-open-pr
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
 COPY config/backends.conf /usr/local/etc/hive/backends.conf
 RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bin/gh-app-token.sh \
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh \
-    /usr/local/bin/git-credential-hive.sh
+    /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr
 
 # --- Nous framework (strategist experiment engine) ---
 RUN (apt-get update && apt-get install -y --no-install-recommends \

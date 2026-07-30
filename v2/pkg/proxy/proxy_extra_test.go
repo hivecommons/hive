@@ -261,14 +261,17 @@ func TestAllowedByModeComprehensive(t *testing.T) {
 		{agent.ModeIssuesOnly, "POST", "/repos/org/repo/issues/1/comments", true},
 		{agent.ModeIssuesOnly, "POST", "/repos/org/repo/pulls", false},
 
-		// IssuesAndPRs can create PRs but not merge
-		{agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls", true},
+		// IssuesAndPRs can push + patch PRs but NOT create them directly
+		// (POST /pulls is a hard deny — agents use hive-open-pr).
+		{agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/pulls", false},
+		{agent.ModeIssuesAndPRs, "PATCH", "/repos/org/repo/pulls/42", true},
 		{agent.ModeIssuesAndPRs, "POST", "/repos/org/repo/issues", true},
 		{agent.ModeIssuesAndPRs, "PUT", "/repos/org/repo/pulls/1/merge", false},
 
-		// IssuesPRsMerge can do everything
+		// IssuesPRsMerge can merge + create issues, but still cannot POST /pulls
+		// directly (direct PR creation is denied for every mode).
 		{agent.ModeIssuesPRsMerge, "PUT", "/repos/org/repo/pulls/1/merge", true},
-		{agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", true},
+		{agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/pulls", false},
 		{agent.ModeIssuesPRsMerge, "POST", "/repos/org/repo/issues", true},
 	}
 

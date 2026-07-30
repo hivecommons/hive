@@ -98,7 +98,9 @@ var rules = []ProxyRule{
 	{regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/merge$`), "PUT", agent.ModeIssuesPRsMerge},
 
 	// ── PR operations — ISSUES_AND_PRS and above ──
-	{regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls$`), "POST", agent.ModeIssuesAndPRs},
+	// NOTE: direct PR creation (POST /pulls) is NOT here — it is a HARD DENY for
+	// every mode, handled by denyRules below, so agents route through hive-open-pr
+	// (App-bot authorship) instead of `gh pr create` / the GitHub MCP create_pull_request.
 	{regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+$`), "PATCH", agent.ModeIssuesAndPRs},
 	{regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/reviews`), "POST", agent.ModeIssuesAndPRs},
 
@@ -127,13 +129,56 @@ var rules = []ProxyRule{
 // AllowedByMode returns true if the given HTTP method+path is permitted
 // for an agent running in the specified mode. Unknown operations are
 // denied by default.
+// denyRule is a hard block that applies to EVERY agent mode, regardless of the
+// mode-escalation rules. It exists for operations agents must route through a
+// hive-mediated path instead of calling GitHub directly.
+type denyRule struct {
+	PathPattern *regexp.Regexp
+	Method      string
+	Msg         string // agent-facing directive surfaced in the 403 body
+}
+
+// denyRules are checked BEFORE the mode rules. The canonical (and currently only)
+// case is direct PR creation: a POST /repos/*/pulls — whether from `gh pr create`
+// or the GitHub MCP create_pull_request/create_pull_request_with_copilot tool —
+// authors the PR as the Copilot login user, not the App bot. Blocking it here
+// forces agents to use `hive-open-pr`, which the hive fulfills with the App token
+// so the PR is authored by the App bot. This closes the MCP path the gh-wrapper
+// redirect cannot see. The hive's OWN CreatePR call does not traverse this agent
+// proxy, so it is unaffected.
+var denyRules = []denyRule{
+	{
+		PathPattern: regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls$`),
+		Method:      "POST",
+		Msg:         "direct PR creation is disabled for agents — use `hive-open-pr --repo <owner/repo> --head <branch> --title <t> --body <b>` so the hive opens the PR as the App bot (never the login user). Do NOT use `gh pr create` or the GitHub MCP create_pull_request/create_pull_request_with_copilot.",
+	},
+}
+
 func AllowedByMode(mode agent.AgentMode, method, path string) bool {
+	// Hard denies win over any mode rule.
+	if _, denied := DeniedMessage(method, path); denied {
+		return false
+	}
 	for _, r := range rules {
 		if r.Method == method && r.PathPattern.MatchString(path) {
 			return mode >= r.MinMode
 		}
 	}
 	return false
+}
+
+// DeniedMessage returns the agent-facing directive for a request blocked by a
+// hard-deny rule, and true if such a rule matched. It lets the proxy surface WHY
+// a request was refused (e.g. "use hive-open-pr") instead of the generic ACMM
+// message. Returns ("", false) when no deny rule matches — the caller then falls
+// back to the normal mode-based block reason.
+func DeniedMessage(method, path string) (string, bool) {
+	for _, r := range denyRules {
+		if r.Method == method && r.PathPattern.MatchString(path) {
+			return r.Msg, true
+		}
+	}
+	return "", false
 }
 
 var repoPathPrefix = regexp.MustCompile(`^/repos/([^/]+/[^/]+)`)
