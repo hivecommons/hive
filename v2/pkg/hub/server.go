@@ -540,6 +540,9 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/docs", s.serveStatic("static/api-docs.html"))
 	s.mux.HandleFunc("GET /api/reading-list", s.handleReadingList)
 	s.mux.HandleFunc("GET /reading", s.serveStatic("static/reading.html"))
+	// Unlinked page (not in nav, noindex) — direct-URL only. The CNCF End User
+	// reference-architecture draft, shareable without artifact permissions.
+	s.mux.HandleFunc("GET /cncf-reference-architecture", s.serveStatic("static/cncf-reference-architecture.html"))
 	s.mux.HandleFunc("GET /{$}", s.serveStatic("static/index.html"))
 	// Open Graph preview image for shared links. Registered here rather than in
 	// registerOAuth because that function returns early when OAuth is
