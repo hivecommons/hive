@@ -16701,6 +16701,18 @@ function burnAreaChart() {
     //
     // `configured` / `source` are passed in by the caller (the Bob tab already
     // fetched them) so opening the dialog does not re-round-trip.
+    // Where an operator obtains a bob API key. Named constants rather than
+    // inline literals so the three links stay in one place if IBM moves them.
+    //
+    // NOTE ON SCOPE: IBM's own docs disagree. The API-keys page describes
+    // General as usable across services, while the bob Shell setup page says
+    // "Create an API key with Scope set to Inference". The Shell page is the
+    // authoritative one for this CLI, so the dialog says Inference and links
+    // BOTH pages so the operator can check if a key is rejected.
+    var BOB_PORTAL_URL = 'https://bob.ibm.com';
+    var BOB_API_KEY_DOCS_URL = 'https://bob.ibm.com/docs/ide/account/api-keys';
+    var BOB_SHELL_SETUP_DOCS_URL = 'https://bob.ibm.com/docs/shell/getting-started/install-and-setup';
+
     function openBobKeyDialog(configured, source) {
       var overlay = document.getElementById('bob-key-overlay');
       if (overlay) { overlay.remove(); }
@@ -16717,6 +16729,26 @@ function burnAreaChart() {
           ? '<div style="color:var(--green);font-size:0.8rem;margin:8px 0">✓ A key is currently set' +
               (source ? ' (' + esc(source) + ')' : '') + '. Entering a new one replaces it.</div>'
           : '<div style="color:var(--muted);font-size:0.8rem;margin:8px 0">No key is set — agents using bob cannot start.</div>') +
+        /* Where to get a key. Without this the dialog assumes the operator
+           already knows the portal flow, and the scope choice is easy to get
+           wrong: an Inference-scoped key is what bob Shell documents, and a
+           key is shown exactly once, so a mis-scoped key means starting over. */
+        '<div style="background:rgba(69,137,255,0.08);border:1px solid rgba(69,137,255,0.25);' +
+          'border-radius:6px;padding:10px 12px;margin:12px 0;font-size:0.8rem;color:var(--muted)">' +
+          '<div style="color:var(--text);font-weight:600;margin-bottom:6px">How to get a key</div>' +
+          '<ol style="margin:0;padding-left:18px;line-height:1.6">' +
+            '<li>Sign in at <a href="' + BOB_PORTAL_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">bob.ibm.com</a> and open your subscription instance.</li>' +
+            '<li>Go to API key management and create a key with <strong>Scope: Inference</strong>.</li>' +
+            '<li>Copy it immediately — IBM shows the value only once.</li>' +
+          '</ol>' +
+          '<div style="margin-top:8px">' +
+            '<a href="' + BOB_API_KEY_DOCS_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">API key docs</a> · ' +
+            '<a href="' + BOB_SHELL_SETUP_DOCS_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">bob Shell setup</a>' +
+          '</div>' +
+        '</div>' +
         '<input id="bob-key-input" type="password" autocomplete="off" spellcheck="false" ' +
           'placeholder="Paste the bob API key" ' +
           'style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);' +
