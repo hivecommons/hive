@@ -366,3 +366,96 @@ func TestBobKeyFilePathNoResolver(t *testing.T) {
 		t.Errorf("bobKeyFilePath() = %q with no resolver, want empty", got)
 	}
 }
+
+// TestVerifyBobStateDirsWritable pins the probe behind issue #2253: bob
+// reports "error saving your latest settings changes" and "Failed to
+// initialize logger:" only inside its own TUI, so hive must detect the
+// underlying permission problem itself.
+//
+// The modes are the real ones: 0770 is what /data/home/.bob actually carries
+// in production (drwxrwx--- dev:node), and 0700 is the failure mode where the
+// dir is owned by dev but carries no group bits, which is exactly what locks
+// out an agent UID that reaches it through group `node`.
+func TestVerifyBobStateDirsWritable(t *testing.T) {
+	tests := []struct {
+		name           string
+		mode           os.FileMode
+		uid            int
+		wantUnwritable bool
+	}{
+		{"production-correct 0770 is writable", 0o770, 2004, false},
+		{"0700 locks out the agent UID", 0o700, 2004, true},
+		{"0750 is readable but not writable", 0o750, 2004, true},
+		{"0760 lacks group traverse", 0o760, 2004, true},
+		{"root agent bypasses the check", 0o700, 0, false},
+		{"unset uid bypasses the check", 0o700, -1, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			bobDir := filepath.Dir(bobSettingsPath(home))
+			if err := os.MkdirAll(bobDir, 0o770); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.Chmod(bobDir, tc.mode); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
+			// Restore traversal so t.TempDir cleanup can remove the tree.
+			t.Cleanup(func() { _ = os.Chmod(bobDir, 0o770) })
+
+			m := &Manager{logger: discardLogger()}
+			// workDir points at a non-existent path on purpose: a state dir
+			// bob has not created yet must NOT be reported, since bob creates
+			// it recursively on first use.
+			got := m.verifyBobStateDirsWritable("tester", home,
+				filepath.Join(t.TempDir(), "agents", "tester"), tc.uid)
+
+			if gotUnwritable := len(got) > 0; gotUnwritable != tc.wantUnwritable {
+				t.Errorf("verifyBobStateDirsWritable() unwritable=%v (%v), want %v",
+					gotUnwritable, got, tc.wantUnwritable)
+			}
+		})
+	}
+}
+
+// TestVerifyBobStateDirsWritableIgnoresMissingDirs covers the fresh-PVC case:
+// neither state dir exists yet. bob creates them with mkdirSync recursive on
+// first use, so a missing dir is not a fault and must not be reported.
+func TestVerifyBobStateDirsWritableIgnoresMissingDirs(t *testing.T) {
+	m := &Manager{logger: discardLogger()}
+	got := m.verifyBobStateDirsWritable("tester", t.TempDir(),
+		filepath.Join(t.TempDir(), "nope"), 2004)
+	if len(got) != 0 {
+		t.Errorf("verifyBobStateDirsWritable() = %v for missing dirs, want none", got)
+	}
+}
+
+// TestVerifyBobStateDirsWritableFlagsWorkspaceDir pins that the per-agent
+// workspace .bob (the "Failed to initialize logger:" target, seen in
+// production at /data/agents/<name>/.bob/.bob-errors/) is probed too, not just
+// the shared $HOME/.bob.
+func TestVerifyBobStateDirsWritableFlagsWorkspaceDir(t *testing.T) {
+	home := t.TempDir()
+	homeBob := filepath.Dir(bobSettingsPath(home))
+	if err := os.MkdirAll(homeBob, 0o770); err != nil {
+		t.Fatalf("mkdir home .bob: %v", err)
+	}
+	// MkdirAll's mode is masked by umask, so set the production mode
+	// explicitly — this dir must be the WRITABLE one for the assertion below
+	// to prove the workspace dir is probed independently.
+	if err := os.Chmod(homeBob, 0o770); err != nil {
+		t.Fatalf("chmod home .bob: %v", err)
+	}
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, config.BobStateDirName)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatalf("mkdir workspace .bob: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(stateDir, 0o770) })
+
+	m := &Manager{logger: discardLogger()}
+	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
+	if len(got) != 1 || got[0] != stateDir {
+		t.Errorf("verifyBobStateDirsWritable() = %v, want [%s]", got, stateDir)
+	}
+}

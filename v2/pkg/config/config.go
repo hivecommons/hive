@@ -948,6 +948,13 @@ const (
 
 	// BobSettingsDirMode matches the observed /data/home/.bob (drwxrwx---).
 	BobSettingsDirMode = 0o770
+
+	// BobStateDirName is the per-workspace state directory bob creates inside
+	// the directory it is launched in (in addition to the shared $HOME/.bob).
+	// Its .bob-errors/ subdirectory is the logger target behind bob's
+	// "Failed to initialize logger:" message, observed in production at
+	// /data/agents/<name>/.bob/.bob-errors/errors-YYYY-MM-DD.log.
+	BobStateDirName = ".bob"
 )
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the

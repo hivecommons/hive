@@ -681,6 +681,39 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GITHUB_TOKEN").Run()
 	}
 
+	// Every set-environment above updated the SESSION environment, which tmux
+	// only copies into processes it forks AFTERWARDS. `new-session -d` already
+	// forked this session's pane shell, so that bash predates all of it and
+	// will never see a single one of those variables — including the Secret
+	// pairs (BOBSHELL_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) that buildEnvPrefix
+	// deliberately keeps off the command line. Every CLI launched by send-keys
+	// into this pane therefore inherits an environment missing exactly the
+	// credentials that are only delivered this way, which is why bob still
+	// prompted for an API key with the key demonstrably present in the session
+	// env (`show-environment` listed it; no bob /proc/<pid>/environ had it).
+	//
+	// Respawning the pane replaces that stale shell with a fresh one forked by
+	// the server after the environment was populated, so it inherits the full
+	// set. This is the only ordering that works in all three states the launch
+	// path actually hits: cold server, warm server with other sessions, and a
+	// session recreated by killSessionForRelaunch. Passing the vars in the
+	// environment of the `tmux new-session` client process does NOT work once
+	// the server is already running (the server, not the client, forks the
+	// pane), and `set-environment -g` before `new-session` cannot run at all on
+	// a cold server ("error connecting to <socket>") — both verified.
+	//
+	// Secrets stay off the command line: respawn-pane takes no arguments here,
+	// so nothing is typed into the pane or visible in `ps`.
+	respawnArgs := []string{"respawn-pane", "-k", "-t", agent.tmuxSession}
+	if err := m.tmuxCmd(agent, respawnArgs...).Run(); err != nil {
+		// Non-fatal: the pane still exists with the pre-env shell. Log it so a
+		// later "CLI cannot see its credentials" report has a breadcrumb
+		// instead of being silent, then continue — a degraded session is still
+		// better than refusing to launch the agent at all.
+		m.logger.Warn("tmux pane respawn failed; pane shell will not inherit session env (CLI may prompt for credentials)",
+			"name", agent.Name, "session", agent.tmuxSession, "error", err)
+	}
+
 	m.logger.Info("tmux session created", "name", agent.Name, "session", agent.tmuxSession, "uid", agent.UID, "socket", agent.tmuxSocket)
 
 	// Attach pluk publisher if available — streams structured events
@@ -918,6 +951,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// Advisory only: the Secret-mounted copy may still be readable, so this
 		// never blocks a launch that might succeed.
 		m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
+		// bob reports unwritable state dirs only inside its own TUI, so probe
+		// them here as the agent UID and surface any failure in the hive log.
+		// Advisory, like the key probe above — never blocks a launch.
+		_ = m.verifyBobStateDirsWritable(agent.Name, bobSharedHome, m.workDir+"/"+agent.Name, agent.UID)
 	}
 
 	launchCmd := binary
