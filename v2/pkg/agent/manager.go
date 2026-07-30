@@ -770,6 +770,14 @@ var cliPaneMarkers = []string{
 	bobInputPlaceholder,
 	bobInputPlaceholderDefault,
 	bobProductMarker,
+	// codex's markers. Codex 0.144.1's TUI renders NONE of the entries above:
+	// verified live (daviddiaz "Visual Hive", hive-oke) — an idle codex pane
+	// contained no "❯", "goose", "Claude"/"Gemini" chrome, or bob strings, only
+	// the "›" (U+203A) input caret and the "OpenAI Codex" banner. Without these
+	// two entries waitForCLIReadyForAgent can never see a booted codex, so its
+	// kick is dropped after cliReadyTimeout even though codex is healthy.
+	codexInputPromptMarker,
+	codexProductMarker,
 }
 
 const (
@@ -1891,6 +1899,11 @@ func findOverlap(prev, curr []string) int {
 // against bobshell 1.0.6 — the bundle contains no "❯" at all), so without it a
 // healthy bob never registers as ready and its startup kick is dropped.
 //
+// The codex caret (U+203A "›") is likewise additive: Codex 0.144.1's TUI
+// renders none of the markers above (verified live — its idle pane contains no
+// "❯" at all), so without it a healthy codex pane never registers as ready and
+// its kick is dropped with "did not reach input prompt".
+//
 // Callers pass captured pane text; empty input is not a prompt.
 func paneShowsInputPrompt(output string) bool {
 	if output == "" {
@@ -1901,7 +1914,8 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, "> Enter to send") ||
 		strings.Contains(output, "\n>\n") ||
 		strings.Contains(output, bobInputPlaceholder) ||
-		strings.Contains(output, bobInputPlaceholderDefault)
+		strings.Contains(output, bobInputPlaceholderDefault) ||
+		strings.Contains(output, codexInputPromptMarker)
 }
 
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
@@ -1980,6 +1994,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
+				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
 			return false
 		case <-ticker.C:
@@ -3698,6 +3713,34 @@ func inferenceHomePath(agentName string) string {
 
 // codexBackend is the backend name for the OpenAI Codex CLI.
 const codexBackend = "codex"
+
+// codexInputPromptMarker is the caret Codex renders on its input line when it
+// is idle and awaiting input. It is Codex's equivalent of claude/gemini's "❯"
+// and bob's placeholder — the PRIMARY readiness signal for a codex agent.
+//
+// It is a SINGLE-ANGLE-QUOTATION-MARK (U+203A "›"), deliberately distinct from
+// the "❯" (U+276F) used by the other TUIs and by the consent-screen menu, so it
+// never collides with paneShowsConsentScreen's "❯"-selected-line check.
+//
+// Verified live on Codex 0.144.1 (daviddiaz "Visual Hive", hive-oke): an idle
+// scanner pane sitting at its prompt rendered this caret with placeholder
+// ghost-text ("› Improve documentation in @filename", "› Explain this
+// codebase") and contained ZERO "❯", "goose is ready", "> Enter to send", or
+// bob placeholders — so without this marker a healthy codex pane never
+// registers as ready and every kick is dropped with "did not reach input
+// prompt", leaving the advisory issue stale.
+//
+// Matching the caret alone (not any specific placeholder string) is robust to
+// the ghost-text varying between Codex tips/versions, and stays tight: Codex
+// shows this idle input caret ONLY while awaiting input — a running turn
+// renders streaming output and a working indicator instead, not the "›" caret.
+const codexInputPromptMarker = "›"
+
+// codexProductMarker is Codex's product name, rendered in its splash banner
+// ("OpenAI Codex (v0.144.1)"). Like bobProductMarker it is a coarse
+// CLI-presence signal only (it also shows on the splash before the input caret
+// is live), never the input-ready gate — that is codexInputPromptMarker.
+const codexProductMarker = "OpenAI Codex"
 
 // bobBackend is the backend name for the IBM bobshell ("bob") CLI.
 const bobBackend = "bob"
