@@ -654,6 +654,12 @@ func githubHostLabel(baseURL string) string {
 	return strings.TrimRight(h, "/")
 }
 
+// GitHubHostLabel is the exported form of githubHostLabel, for the spoke to
+// normalize its own configured GitHub base URL before reporting it over the
+// heartbeat. Sharing one implementation keeps the value the spoke sends and
+// the value the hub renders from drifting into two different spellings.
+func GitHubHostLabel(baseURL string) string { return githubHostLabel(baseURL) }
+
 func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	var entries []ClusterListEntry
 	for _, c := range s.clusters {
@@ -1537,6 +1543,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// Rule: take the meta level only for placeholders, or as a fallback when the
 	// live registry level is 0 (unknown) but meta has a real one. Otherwise the
 	// live registry level wins.
+
 	enrichFromSaaSMeta := func(entry *MyHiveEntry) {
 		sh := saasByID[entry.ID]
 		if sh == nil {
@@ -1578,6 +1585,43 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel, entry.DashboardURL, "") != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
+		}
+	}
+
+	// resolveGitHubHost fills in the Location-column GitHub host pill when the
+	// spoke did not report one over the heartbeat.
+	//
+	// The spoke-reported value always wins: it is the hive's real runtime
+	// GitHub, and it is the only source that is correct when a hive's GitHub
+	// differs from its cluster's default (the enricom8 hive is the live
+	// example — its host had to be corrected by hand). Heartbeat-only and
+	// firewalled spokes upgrade slowly, so for those this falls back to the
+	// hive's recorded host, then its cluster's default. Anything still empty
+	// is left empty and rendered as "github.com" by the pill, so an old spoke
+	// shows a sane default rather than a wrong host.
+	resolveGitHubHost := func(entry *MyHiveEntry) {
+		if entry.GitHubHost != "" {
+			return // spoke-reported — authoritative
+		}
+		if sh := saasByID[entry.ID]; sh != nil {
+			if sh.GitHubHost != "" {
+				entry.GitHubHost = githubHostLabel(sh.GitHubHost)
+				return
+			}
+			if c := s.clusterForHive(sh); c != nil && c.GitHubBaseURL != "" {
+				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+				return
+			}
+		}
+		// No meta record: fall back to the cluster the registry entry reports.
+		// s.clusters is read unlocked here to match every other reader in this
+		// package (clusterForHive, clusterNameForID); it is effectively
+		// immutable after load, and taking s.mu here would nest inside callers
+		// that already hold it.
+		if entry.ClusterID != "" {
+			if c, ok := s.clusters[entry.ClusterID]; ok && c.GitHubBaseURL != "" {
+				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+			}
 		}
 	}
 
@@ -1699,6 +1743,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(h.ID, "hosted-") || strings.HasPrefix(h.ID, "saas-") {
 			saasCount++
 		}
+		// Backfill the Location-column GitHub host for rows whose spoke is too
+		// old to report one. Done here, over the assembled set, so no entry
+		// construction site can be missed.
+		resolveGitHubHost(&result[i])
 		// Who-has-access is shown only to owners (and admin), matching
 		// handleAccessList's rule. A read/read-write member is deliberately not
 		// told who else shares the hive.
@@ -4642,6 +4690,15 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	if ghHost != "" {
 		body.GitHubHost = ghHost
 	}
+	// Single-host-per-spoke: every repo (and the primary) must be on the same
+	// GitHub host as the org. Check BEFORE normalizeRepoRef strips the host off
+	// each pasted repo. Reject a mixed request up front with a clear message —
+	// a spoke that mixed github.com and a GHE instance would silently fail to
+	// authenticate against half its repos, the onboarding footgun this removes.
+	if err := validateSingleRepoHost(body.GitHubHost, body.PrimaryRepo, strings.Split(body.Repos, ",")); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
 	{
 		var cleaned []string
 		for _, repo := range strings.Split(body.Repos, ",") {
@@ -5304,6 +5361,20 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"repos are required"}`, http.StatusBadRequest)
 		return
 	}
+	// Single-host-per-spoke (assign path — mirrors the request path). Every repo
+	// and the primary must share the spoke's host, checked on the raw pasted
+	// values before normalizeRepoRef strips the host. The "public" sentinel means
+	// github.com, so pass "" to the validator for it.
+	{
+		spokeHost := body.GitHubHost
+		if strings.EqualFold(spokeHost, githubHostPublic) {
+			spokeHost = ""
+		}
+		if err := validateSingleRepoHost(spokeHost, body.PrimaryRepo, strings.Split(body.Repos, ",")); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
 	{
 		var cleaned []string
 		for _, r := range strings.Split(body.Repos, ",") {
@@ -5547,7 +5618,26 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }
 
-var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute"}
+var publicPaths = []string{"/snapshot", "/leaderboard", "/contribute", "/api/leaderboard", "/api/contribute", ssoHandoffPath}
+
+// ssoHandoffPath is the spoke's SSO handoff endpoint. It MUST bypass the hub's
+// nginx auth_request gate.
+//
+// Why: the auth-check subrequest authorizes a user against THIS hive's grant
+// list (user.Hives[hiveID]). The whole point of the handoff is to admit a user
+// who is authenticated on the hub but has no hub-side grant row for the hive —
+// the spoke's own authorized_users allowlist is the authority. Gating /sso on
+// the hub check therefore 401s exactly the requests the handoff exists to
+// serve, and nginx turns that 401 into an auth-signin redirect back to the hub
+// login, which (the user already having a valid hub cookie) immediately
+// redirects to /sso again — an infinite bounce the browser eventually aborts.
+//
+// This does NOT weaken authentication: the signed, hive-scoped, short-lived
+// HMAC token in the query IS the credential, and dashboard.handleSSO verifies
+// it against HIVE_HUB_SECRET plus the spoke's own allowlist before minting any
+// session. It is the same reasoning that already makes /sso a public path on
+// the spoke half (see dashboard.isPublicPath).
+const ssoHandoffPath = "/sso"
 
 // proxyAuthHeader is the response header the hub sets on a successful
 // auth-check subrequest to PROVE to the spoke that the request was
@@ -6468,6 +6558,23 @@ const dashboardHTML = `<!DOCTYPE html>
       var tips = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
       return '<span class="acmm-badge acmm-' + l + '" title="' + esc(tips[l] || '') + '">' + (ACMM_LABELS[l] || 'L' + l) + '</span>';
     }
+    /* Classified GitHub App auth states, matching github.AppAuthState.String()
+       on the spoke and operatorSideAppStates in journey.go. The two OPERATOR
+       states describe a failure the hive OWNER cannot fix: the App private key
+       is distributed by the hub, so a missing or mismatched key is our problem,
+       not theirs. The UI must never present these as something the user should
+       install or reconfigure. */
+    var GH_APP_STATE_KEY_MISSING = 'key-missing';
+    var GH_APP_STATE_KEY_INVALID = 'key-invalid';
+    var GH_APP_OPERATOR_STATES = {};
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
+    /* An unreported or unrecognised state is deliberately NOT operator-side:
+       a spoke too old to classify keeps the existing behaviour. */
+    function ghAppIsOperatorSide(state) {
+      return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
+    }
+
     /* Labels for each journey stage, matching JourneyStage.String() on the hub. */
     var JOURNEY_STAGE_LABELS = {
       'none': 'On track',
@@ -6916,7 +7023,17 @@ const dashboardHTML = `<!DOCTYPE html>
         if (ck.detail) line += ': ' + ck.detail;
         lines.push(line);
       }
-      if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
+      if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
+        /* Operator-side: the key we distribute has not landed, or is for the
+           wrong App. Still degraded — the hive genuinely cannot work — but the
+           hover must name the real cause so an admin does not chase the user
+           about an installation that is already correct. */
+        lines.push(h.githubAppState === GH_APP_STATE_KEY_INVALID
+          ? '⚠ GitHub App: key does not match the App (operator must push the correct key)'
+          : '⚠ GitHub App: credentials not yet delivered by the hub (operator action)');
+        st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel;
+      }
+      else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (!h.githubAppRequired) { lines.push('✓ GitHub App installed'); }
       if (!checks.length) lines.push('No check data');
@@ -7032,6 +7149,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'heartbeat-stale': 'Heartbeat stale',
       'app-missing':     'GitHub App not installed',
       'app-perm-issue':  'GitHub App permissions',
+      'app-creds-operator': 'GitHub App key (operator)',
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
       'acmm-unset':      'ACMM level unset',
@@ -8045,7 +8163,12 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!h) return '';
       var parts = [
         h.id, h.name, h.org, h.primaryRepo, h.clusterId, h.clusterName,
-        h.role, h.gitBranch, h.gitHash, h.dashboardUrl
+        h.role, h.gitBranch, h.gitHash, h.dashboardUrl,
+        /* The GitHub host is shown as a pill in the Location column, so it has
+           to be searchable too — "github.ibm.com" is how an admin narrows to
+           the GHE fleet. Absent means public GitHub, which is what the pill
+           renders, so search on that same default rather than nothing. */
+        h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST
       ];
       (h.repos || []).forEach(function(r) { parts.push(r); });
       (h.access || []).forEach(function(a) {
@@ -8097,6 +8220,10 @@ const dashboardHTML = `<!DOCTYPE html>
     var FACET_ROLE = 'role';
     var FACET_STATUS = 'status';
     var FACET_BRANCH = 'branch';
+    /* GitHub instance the hive targets. Worth its own facet because the
+       GHE-vs-public split is a real operational boundary — a github.ibm.com
+       hive can only be reached from a cluster that can route to it. */
+    var FACET_GITHUB_HOST = 'github-host';
 
     /* Value shown when a hive has no value for a facet, so those rows stay
        reachable instead of silently dropping out of every facet count. */
@@ -8115,7 +8242,8 @@ const dashboardHTML = `<!DOCTYPE html>
       {key: FACET_ACMM, label: 'ACMM level'},
       {key: FACET_ROLE, label: 'Your role'},
       {key: FACET_STATUS, label: 'Status'},
-      {key: FACET_BRANCH, label: 'Branch'}
+      {key: FACET_BRANCH, label: 'Branch'},
+      {key: FACET_GITHUB_HOST, label: 'GitHub'}
     ];
 
     /* Selected facet values: {facetKey: {value: true}}. */
@@ -8229,6 +8357,10 @@ const dashboardHTML = `<!DOCTYPE html>
       f[FACET_ACMM] = (h.acmmLevel != null && h.acmmLevel !== '') ? ('L' + h.acmmLevel) : FACET_UNKNOWN;
       f[FACET_ROLE] = h.role || FACET_UNKNOWN;
       f[FACET_BRANCH] = h.gitBranch || FACET_UNKNOWN;
+      /* Absent host means public GitHub — bucket it under the same label the
+         pill renders, not FACET_UNKNOWN, so old spokes group with github.com
+         rather than forming a meaningless "—" bucket. */
+      f[FACET_GITHUB_HOST] = h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
       var flags = hiveStatusFlags(h);
       f[FACET_STATUS] = flags.degraded ? 'Degraded' : (h.online ? 'Online' : 'Offline');
       return f;
@@ -9655,7 +9787,7 @@ const dashboardHTML = `<!DOCTYPE html>
         // stacks under Location instead of owning a column. Counted against
         // the <th> cells in the header and the <td> cells emitted below
         // (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 16;
+        var TOTAL_COLUMNS = 17;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -9699,9 +9831,16 @@ const dashboardHTML = `<!DOCTYPE html>
           return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>';
         })();
         var locationBadge = isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName);
-        /* Location on top, visibility beneath — two stacked lines, matching the
-           three-line Version treatment. The owner toggle is a 36x20 switch and
-           keeps its own box on its own line, so it stays an easy tap target. */
+        /* Location on top, visibility beneath, GitHub host last — three stacked
+           lines, matching the three-line Version treatment. The owner toggle is
+           a 36x20 switch and keeps its own box on its own line, so it stays an
+           easy tap target.
+
+           The host line reuses githubHostPill — the same helper the pending
+           action cards and the Past Requests table use — so a GHE hive reads
+           identically wherever it appears. An absent host renders as
+           "github.com" rather than a blank chip, which is what an old
+           heartbeat-only spoke that cannot yet report its host should show. */
         var locationCell = '<div style="' + STACKED_CELL_STYLE + '">' +
           '<div style="' + STACKED_LINE_STYLE + '">' + locationBadge + '</div>' +
           '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
@@ -9735,8 +9874,25 @@ const dashboardHTML = `<!DOCTYPE html>
              but the COLUMN is no longer forced to the width of every part laid
              end to end. That nowrap was the main reason this column was wide. */
           '<td style="font-size:0.7rem">' + versionCell + '</td>' +
-          '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' + repoCount + '</td>' +
+          /* Repo count over the GitHub-instance pill: the host qualifies WHICH
+             GitHub these repos live on, so the two belong together. Stacked
+             rather than inline to keep the numeric column narrow. */
+          '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' +
+            '<div style="' + STACKED_CELL_STYLE + '">' +
+              '<div style="' + STACKED_LINE_STYLE + '">' + repoCount + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance these repos live on">' + githubHostPill(h.githubHost) + '</div>' +
+            '</div>' +
+          '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
+          /* AI Author: who this hive authors PRs as. aiAuthorEffective is the
+             App bot ("<slug>[bot]") in App-authored mode, else the configured
+             ai_author (falls back to aiAuthor for spokes too old to report the
+             effective value). A "[bot]" value is the informative case. */
+          /* aiAuthorEffective already folds in ai_author (it returns ai_author
+             when set, else the App bot, else empty). Do NOT fall back to a raw
+             ai_author here: a hive with no usable GitHub App has no author and
+             must render "—", not a stale personal ai_author it can't act as. */
+          '<td style="white-space:nowrap;font-size:0.75rem" title="GitHub identity for this hive\'s PRs/commits (— = no GitHub App installed yet)">' + esc(h.aiAuthorEffective || '—') + '</td>' +
           '<td>' + journeyBadge(h.journey) + '</td>' +
           /* Drift sits immediately right of Journey: both answer "how healthy
              is this hive's configuration", so they read as one pair rather
@@ -9758,7 +9914,7 @@ const dashboardHTML = `<!DOCTYPE html>
          and the table visibly ragged. 15 with the Drift column, plus the
          bulk-select column, plus the Journey column, minus Public (visibility
          is stacked under Location). Must stay equal to TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 16;
+      var TOTAL_COLUMNS_HEADER = 17;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -9893,7 +10049,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
@@ -10096,10 +10252,12 @@ const dashboardHTML = `<!DOCTYPE html>
        height. Only owner rows pay.
 
        STACKED_ROW_GAP_PX separates the stacked lines without adding a full line
-       box. 1px, not more, precisely because the last line is a control whose own
-       border already supplies visual separation. */
+       box. 1px proved too tight in practice: the branch pill, SHA, upgrade link
+       and auto-upgrade select read as one crowded block, and the Location cell's
+       cluster badge sat flush against its visibility toggle. 4px is enough to
+       group them as distinct rows while still costing far less than a line box. */
     var STACKED_LINE_HEIGHT = 1.15;
-    var STACKED_ROW_GAP_PX = 1;
+    var STACKED_ROW_GAP_PX = 4;
     /* Shared style for a stacked cell: a vertical flex column, centred to match
        the table's default text-align:center for non-first cells. */
     var STACKED_CELL_STYLE = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:' + STACKED_ROW_GAP_PX + 'px;line-height:' + STACKED_LINE_HEIGHT;
@@ -10495,7 +10653,11 @@ const dashboardHTML = `<!DOCTYPE html>
     // reach it. Shared by the pending action cards and the Past Requests table
     // so the same concept does not drift into two different styles.
     function githubHostPill(githubHost) {
-      var border = githubHost ? 'var(--accent);color:var(--accent)' : 'var(--border);color:var(--muted)';
+      /* Public github.com reads green, GitHub Enterprise reads blue, so the
+         two instances are distinguishable at a glance without reading the
+         text. An absent host is treated as public, matching the label below. */
+      var isGHE = !!githubHost && githubHost !== PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+      var border = isGHE ? 'var(--blue);color:var(--blue)' : 'var(--green);color:var(--green)';
       return '<span style="font-size:0.68rem;padding:1px 7px;border-radius:999px;border:1px solid ' + border + '">' +
         esc(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST) + '</span>';
     }

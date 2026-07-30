@@ -71,11 +71,15 @@ func TestCovG_BuildSnapshot(t *testing.T) {
 func TestCovG_HandleSSO(t *testing.T) {
 	s := covMiscServer(t)
 
-	// No shared secret → redirect to /.
+	// No shared secret → terminal error page, NOT a redirect. Redirecting to
+	// "/" here is what produced the infinite browser bounce.
 	rec := httptest.NewRecorder()
 	s.handleSSO(rec, httptest.NewRequest(http.MethodGet, "/sso", nil))
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("no-secret: expected 303, got %d", rec.Code)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no-secret: expected 503, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("no-secret must not redirect, got Location %q", loc)
 	}
 
 	// Secret set but no token → 400.

@@ -206,6 +206,13 @@ type HeartbeatPayload struct {
 	// blanking it, and so the registry knows each hive's author without any
 	// spoke-side token lookup (which does not work on App-authenticated hives).
 	AIAuthor string `json:"ai_author,omitempty"`
+	// AIAuthorEffective is who agents ACTUALLY author PRs/commits as: the
+	// configured ai_author, or the GitHub App bot login ("<slug>[bot]") when
+	// ai_author is empty and the hive authenticates as an App installation.
+	// Display-only — the hub shows it in the spokes table but NEVER echoes it
+	// back into project config, so an App-bot hive keeps ai_author empty and
+	// stays bot-authored across restarts.
+	AIAuthorEffective string `json:"ai_author_effective,omitempty"`
 	// GitHubAPIURL is the GitHub API base URL this spoke is CURRENTLY running
 	// against (its resolved value, so a public-GitHub spoke reports
 	// https://api.github.com rather than ""). Reported so the hub can tell
@@ -247,10 +254,24 @@ type HeartbeatPayload struct {
 	// The hub cannot read this itself for firewalled spokes it reaches only by
 	// heartbeat, which is why it rides the payload. Empty when the spoke is
 	// not running in-cluster or the read failed — never a guess.
-	ImageRef                string                        `json:"image_ref,omitempty"`
-	Timestamp               string                        `json:"timestamp"`
-	GitHubAppRequired       bool                          `json:"github_app_required,omitempty"`
-	GitHubAppPermIssue      string                        `json:"github_app_perm_issue,omitempty"`
+	ImageRef string `json:"image_ref,omitempty"`
+	// GitHubHost is the bare hostname of the GitHub instance this spoke is
+	// ACTUALLY configured against (github.com, github.ibm.com, …), derived
+	// from its own runtime github.base_url. This is the authoritative value:
+	// a hive's GitHub can differ from its cluster's default, so the cluster
+	// default is only ever a fallback for spokes too old to report this.
+	// Empty on such spokes — the hub falls back rather than guessing.
+	GitHubHost         string `json:"github_host,omitempty"`
+	Timestamp          string `json:"timestamp"`
+	GitHubAppRequired  bool   `json:"github_app_required,omitempty"`
+	GitHubAppPermIssue string `json:"github_app_perm_issue,omitempty"`
+	// GitHubAppState is the spoke's classification of WHY App auth is failing
+	// (a github.AppAuthState token: "key-missing", "key-invalid",
+	// "not-installed", "wrong-installation", "insufficient-permissions").
+	// The hub uses it to avoid nudging — let alone threatening de-provisioning
+	// — a hive whose credentials the OPERATOR has not delivered. Empty from a
+	// spoke too old to report it, which must be read as "cannot tell".
+	GitHubAppState          string                        `json:"github_app_state,omitempty"`
 	AutoUpgrade             bool                          `json:"auto_upgrade,omitempty"`
 	Upgrading               bool                          `json:"upgrading,omitempty"`
 	UpgradeTargetSHA        string                        `json:"upgrade_target_sha,omitempty"`

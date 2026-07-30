@@ -63,10 +63,15 @@ const (
 	DriftKindHeartbeatStale = "heartbeat-stale"
 	DriftKindAppMissing     = "app-missing"
 	DriftKindAppPermIssue   = "app-perm-issue"
-	DriftKindHealthDegraded = "health-degraded"
-	DriftKindUpgradeStuck   = "upgrade-stuck"
-	DriftKindACMMUnset      = "acmm-unset"
-	DriftKindNoAgents       = "no-agents"
+	// DriftKindAppCredsOperator marks a hive whose GitHub App credentials are
+	// broken in a way only the hub operator can repair. Kept distinct from
+	// app-missing/app-perm-issue so operator work is never filed as an
+	// owner-facing adoption problem.
+	DriftKindAppCredsOperator = "app-creds-operator"
+	DriftKindHealthDegraded   = "health-degraded"
+	DriftKindUpgradeStuck     = "upgrade-stuck"
+	DriftKindACMMUnset        = "acmm-unset"
+	DriftKindNoAgents         = "no-agents"
 )
 
 // DriftSignal is one detected deviation. Reason is a complete, human-readable
@@ -457,7 +462,21 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 	// the hives a human can actually fix.
 	if !placeholder {
 		if h.GitHubAppRequired {
-			if h.GitHubAppPermIssue != "" {
+			// Operator-side first: a hive whose App key we never delivered (or
+			// delivered wrong) is not an owner-facing "installed but under-
+			// permissioned" problem, and must not be described as one. It is
+			// still critical drift — the hive cannot work — but the text has to
+			// point at the operator so nobody chases the owner about an
+			// installation that is already correct.
+			if appStateIsOperatorSide(h.GitHubAppState) {
+				detail := "the App private key has not been delivered to this spoke"
+				if strings.TrimSpace(h.GitHubAppState) == appStateKeyInvalidToken {
+					detail = "the App private key on this spoke does not match the App it authenticates as, so GitHub rejects its JWT"
+				}
+				add(DriftKindAppCredsOperator, DriftCritical,
+					"GitHub App credentials are not valid and only an operator can fix it: "+detail+
+						" — the hive owner cannot supply or correct this key")
+			} else if h.GitHubAppPermIssue != "" {
 				add(DriftKindAppPermIssue, DriftCritical,
 					fmt.Sprintf("GitHub App is installed but its permissions are insufficient: %s", h.GitHubAppPermIssue))
 			} else {
