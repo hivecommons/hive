@@ -1332,6 +1332,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// very beat. No-op (and silent) for every hive that already has a host, is
 	// an unclaimed placeholder, or sits on a non-GHE cluster.
 	s.repairGitHubHostForHive(payload.HiveID)
+	// Beyond filling a BLANK host, repair a persisted host that is set but WRONG
+	// from the forge the spoke actually reports it runs against (public→GHE only,
+	// never demoting a legit public pin). Closes the vllmd-06 class: meta said
+	// github.com while the spoke ran api_url github.ibm.com.
+	s.reconcileGitHubHostFromSpoke(&payload)
 
 	// Close the FORGE handshake before building the project config, so the beat
 	// on which the spoke first reports the requested host is also the beat the

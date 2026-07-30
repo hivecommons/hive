@@ -17,6 +17,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 var saasHivesDir = "/data/saas/hives"
@@ -749,6 +751,98 @@ func (s *HubServer) repairGitHubHostForHive(hiveID string) bool {
 		"github_host_before", "",
 		"github_host_after", host,
 		"github_api_url_after", gheAPIURLForHost(host),
+		"note", gitHubAppStillRequiredNote)
+	return true
+}
+
+// reconcileGitHubHostFromSpoke repairs a persisted github_host that is not merely
+// BLANK but WRONG, using the forge the spoke actually reports it is running
+// against. It reports whether it changed anything.
+//
+// Why, on top of the blank-fill: repairGitHubHostForHive only ever fills a BLANK
+// host from cluster defaults; it
+// refuses to touch an already-set value. But a hive can carry a persisted host
+// that is set AND wrong: assigned from a pasted github.com URL, or seeded with a
+// stale record, while the repo actually lives on GitHub Enterprise (vllmd-06 is
+// the live example — meta said github.com but the spoke ran api_url
+// github.ibm.com). Nothing repaired those; each needed a hand-edit.
+//
+// The spoke's OWN reported forge is authoritative: it is what the running hive is
+// actually configured against. Read it base-or-api across the two reported fields
+// (GitHubHost from base_url, GitHubAPIURL from api_url) so a GHE spoke with a
+// blank base_url — the common state — is still recognised as GHE.
+//
+// CONSERVATIVE, ONE DIRECTION ONLY. It repairs public→GHE: a persisted github.com
+// host that the spoke reports as a GHE host is corrected to that GHE host. It does
+// NOT demote GHE→public, because a hive legitimately pinned to public github.com
+// on a GHE cluster (the appKeyReasonPublicHiveOnGHECluster case) reports
+// github.com by design, and overwriting a GHE record from a transient public read
+// could fight that pin. A blank/unknown spoke report changes nothing (silence is
+// not a mismatch — the same rule the heartbeat fields already follow). Every
+// change is logged with before/after.
+func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool {
+	if s == nil || payload == nil {
+		return false
+	}
+	// The spoke's observed forge, base-or-api. GitHubHost is the bare base_url
+	// host; GitHubAPIURL is the resolved api_url. HostLabel() prefers base, falls
+	// back to api — exactly the authority the rest of this package now uses.
+	observed := config.GitHubConfig{
+		BaseURL: strings.TrimSpace(payload.GitHubHost),
+		APIURL:  strings.TrimSpace(payload.GitHubAPIURL),
+	}.HostLabel()
+	// A spoke that reported neither field resolves to the github.com default; that
+	// is "unknown", not a real mismatch. Only a spoke that positively reports a
+	// GHE host can trip this reconcile.
+	if observed == "" || observed == config.DefaultGitHubBaseURL[len("https://"):] {
+		return false
+	}
+	h := loadSaaSHive(payload.HiveID)
+	if h == nil {
+		return false
+	}
+	if h.Status == statusAvailable {
+		return false // unclaimed placeholder — assign owns its host
+	}
+	// An operator-requested forge SWITCH is in flight — RequestedGitHubHost is set
+	// and adoptSpokeForge is driving the spoke from its old forge to the new one
+	// (see forge.go). During that handshake the spoke transiently reports EITHER
+	// host, so an unsolicited repair here would race the switch and could latch a
+	// stale value. The switch path owns the host until it completes (it clears
+	// RequestedGitHubHost when ForgeDelivered flips), so stand down entirely while
+	// it is pending. This is the ONLY writer coordination this reconcile needs; a
+	// hive with no switch requested is exactly the drift case it exists to fix.
+	if h.RequestedGitHubHost != "" {
+		return false
+	}
+	// An explicit public pin is a DECISION, not a fault: leave it alone even if the
+	// spoke momentarily reports a GHE host (its cluster default leaking through).
+	if h.GitHubBaseURL == githubHostPublic || h.GitHubBaseURL == "https://github.com" {
+		return false
+	}
+	current := githubHostLabel(h.GitHubHost) // normalize for a like-for-like compare
+	if current == observed {
+		return false // already correct — nothing to do
+	}
+	// Only repair public→GHE. If the persisted host is already some other GHE host,
+	// do not overwrite it from a single beat — that is an operator concern, not a
+	// safe automatic flip.
+	if h.GitHubHost != "" && current != config.DefaultGitHubBaseURL[len("https://"):] {
+		return false
+	}
+	before := h.GitHubHost
+	h.GitHubHost = observed
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("github host reconcile: failed to save hive",
+			"hive", payload.HiveID, "error", err)
+		return false
+	}
+	s.logger.Info("github host reconcile: corrected wrong github_host from spoke-reported forge",
+		"hive", payload.HiveID,
+		"org", h.Org,
+		"github_host_before", before,
+		"github_host_after", observed,
+		"github_api_url_reported", strings.TrimSpace(payload.GitHubAPIURL),
 		"note", gitHubAppStillRequiredNote)
 	return true
 }
