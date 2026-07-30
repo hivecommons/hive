@@ -1,3 +1,11 @@
+// ClankeR — the contributor relay. This file is the hive-side half: the
+// WebSocket endpoint that authenticates contributor agents, dispatches tasks
+// (issue fixes, reviews, docs) to whichever machine is connected, and keeps
+// GitHub tokens fresh for the duration of a task. The contributor-side half
+// lives in bin/contributor-relay.sh.
+//
+// Names on the wire (message types, JSON fields, the /contribute route) are
+// deliberately unchanged: ClankeR is the presentation name, not the protocol.
 package dashboard
 
 import (

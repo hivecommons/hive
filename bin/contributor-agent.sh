@@ -2,7 +2,7 @@
 # contributor-agent.sh — Entrypoint for the contributor container.
 #
 # 1. Detects which CLI backend is authenticated
-# 2. Starts the contributor-relay (WebSocket client) in the background
+# 2. Starts contributor-relay.sh — ClankeR, the contributor relay (WebSocket client) — in the background
 # 3. Launches the CLI agent in a tmux session
 # 4. The relay feeds tasks into the tmux session and reports results
 #
@@ -105,7 +105,7 @@ detect_cli() {
   esac
 }
 
-echo "=== Hive Contributor Agent ==="
+echo "=== Hive Contributor Agent (ClankeR) ==="
 echo "Hub:     $HIVE_HUB"
 echo "Backend: $AGENT_BACKEND"
 echo ""
@@ -244,7 +244,7 @@ tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$TMUX_SESSION" -x 200 -y 50
 
 # Start the relay in the background
-echo "Starting relay connection to hub..."
+echo "Starting ClankeR relay connection to hub..."
 node "${SCRIPT_DIR}/contributor-relay.sh" &
 RELAY_PID=$!
 
@@ -335,9 +335,9 @@ AUTO_DISMISS_INTERVAL=3
 echo ""
 CONTAINER_NAME="${HIVE_CONTAINER_NAME:-hive-contributor}"
 echo "Contributor agent is running."
-echo "  CLI:   $CMD"
-echo "  Relay: PID $RELAY_PID"
-echo "  Tmux:  docker exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
+echo "  CLI:     $CMD"
+echo "  ClankeR: PID $RELAY_PID"
+echo "  Tmux:    docker exec -it $CONTAINER_NAME tmux attach -t $TMUX_SESSION"
 echo ""
 
 # Keep running until interrupted

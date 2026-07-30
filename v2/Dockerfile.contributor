@@ -1,3 +1,5 @@
+# Contributor image for ClankeR, the contributor relay: a CLI agent plus the
+# WebSocket client that pulls tasks from a Hive hub.
 FROM debian:bookworm-slim
 
 ARG NODE_MAJOR=24

@@ -236,6 +236,9 @@ func findContributor(id string) *ContributorProfile {
 
 // ── Landing page ───────────────────────────────────────────────────────────
 
+// handleContributeLanding renders the public sign-up page for ClankeR, the
+// contributor relay: it explains the deal, offers per-CLI copy-paste setup
+// commands, and shows a live feed of contributor activity.
 func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	projectName := ""
@@ -345,6 +348,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <div class="main">
 <h1>🐝 Contribute to %s</h1>
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
+<p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog.</p>
 <div class="stat-row">
 <div class="stat"><div class="stat-num" style="color:#58a6ff">%d</div><div class="stat-label">Total</div></div>
 %s
@@ -470,7 +474,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="how">
 <h3>What you bring vs. what the hive provides</h3>
 <p><strong>You bring:</strong> Your GitHub account + CLI API tokens. With LiteLLM you bring your own proxy instead — Claude Code on your machine talks directly to your endpoint, and the hive never sees your endpoint or key. Issues and PRs are created under YOUR name.</p>
-<p><strong>The hive provides:</strong> Work queue, task assignment, and coordination. Your credentials never leave your machine.</p>
+<p><strong>The hive provides:</strong> Work queue, task assignment, and coordination &mdash; ClankeR carries each task to your agent over a secure WebSocket. Your credentials never leave your machine.</p>
 </div>
 <div class="how">
 <h3>Trust tiers</h3>
@@ -1468,7 +1472,7 @@ font-size:.875rem;font-weight:500;text-decoration:none;transition:opacity .2s}
     <div style="margin-top:24px;display:flex;justify-content:center">
       <a href="/contribute" class="contribute-link">
         <span>&#x1F41D;</span>
-        <span><strong>Join the swarm</strong> &mdash; donate your CLI to help autonomous agents maintain repos</span>
+        <span><strong>Join the swarm</strong> &mdash; donate your CLI to help autonomous agents maintain repos, over ClankeR (the contributor relay)</span>
       </a>
     </div>
   </section>
@@ -1511,7 +1515,7 @@ font-size:.875rem;font-weight:500;text-decoration:none;transition:opacity .2s}
   <section class="invite-section">
     <div class="invite-card">
       <h3>Want to contribute?</h3>
-      <p>Connect to the %s hive and let your CLI agent help maintain open-source repos.</p>
+      <p>Connect to the %s hive over ClankeR and let your CLI agent help maintain open-source repos.</p>
       <code>%s</code>
     </div>
   </section>

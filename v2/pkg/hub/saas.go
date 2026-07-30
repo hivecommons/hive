@@ -6586,7 +6586,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var JOURNEY_STAGE_TIPS = {
       'none': 'No outstanding adoption steps.',
       'github-app': 'Stage 1 — the GitHub App is not installed, so no agent can open issues or PRs.',
-      'method-model': 'Stage 2 — no agent has a method/model assigned and the contributor relay is not in use.',
+      'method-model': 'Stage 2 — no agent has a method/model assigned and ClankeR (the contributor relay) is not in use.',
       'acmm-level': 'Stage 3 — running steadily; due a gentle suggestion to consider the next ACMM level. Never a de-provision risk.',
     };
     /* Rank a journey status for sorting. Snoozed hives rank lowest — an admin
@@ -6621,9 +6621,9 @@ const dashboardHTML = `<!DOCTYPE html>
         if (sev === 'deprovision-warning') text = label + ' ⚠';
       }
       var html = '<span class="journey-badge ' + cls + '" title="' + esc(tip) + '">' + esc(text) + '</span>';
-      /* Stage 2 satisfied via the contributor relay gets its own visible badge. */
+      /* Stage 2 satisfied via ClankeR gets its own visible badge. */
       if (j.viaRelay) {
-        html += '<span class="journey-relay" title="' + esc('Stage 2 is satisfied through the contributor relay (human contributors picking up tasks), not by an assigned method/model.') + '">relay</span>';
+        html += '<span class="journey-relay" title="' + esc('Stage 2 is satisfied through ClankeR, the contributor relay (human contributors picking up tasks), not by an assigned method/model.') + '">relay</span>';
       }
       return html;
     }
@@ -6909,7 +6909,7 @@ const dashboardHTML = `<!DOCTYPE html>
         esc(label) + '</span>';
     }
 
-    /* ---- Contributor relay (hover panel) ------------------------------
+    /* ---- ClankeR, the contributor relay (hover panel) ------------------
        The relay is a first-class SUBSTITUTE for assigning a method/model:
        when humans are picking up this hive's tasks through /contribute, the
        "tokens for an agent" requirement is satisfied. The product rule is
@@ -6949,7 +6949,7 @@ const dashboardHTML = `<!DOCTYPE html>
         who = 'task in progress';
       }
       return '<div style="padding:1px 0;color:' + RELAY_COLOR + '">' +
-        esc('◆ Contributor relay · ' + who) + '</div>' +
+        esc('◆ ClankeR · ' + who) + '</div>' +
         '<div style="padding:0 0 1px 12px;color:var(--muted);font-size:0.65rem">' +
         esc('satisfies the method/model requirement') + '</div>';
     }
@@ -7071,7 +7071,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!access.length) {
         var plainLines = lines.slice();
         if ((h.journey || {}).viaRelay) {
-          plainLines.push('◆ Contributor relay in use — satisfies the method/model requirement');
+          plainLines.push('◆ ClankeR (contributor relay) in use — satisfies the method/model requirement');
         }
         return '<span title="' + esc(plainLines.join('\n')) + '" style="display:inline-flex;align-items:center;gap:4px;cursor:help;white-space:pre-line">' + dotMarkup + '</span>';
       }
@@ -10049,7 +10049,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */

@@ -142,7 +142,7 @@ type RegistryEntry struct {
 	AgentsWithModel *int `json:"agentsWithModel,omitempty"`
 	// Journey is the computed user-journey status (which adoption stage this
 	// hive is stalled on, how hard it is being nudged, and whether stage 2 is
-	// satisfied via the contributor relay). Computed on read from the journey
+	// satisfied via ClankeR, the contributor relay). Computed on read from the journey
 	// state store — never persisted on the registry entry itself.
 	Journey *JourneyStatus `json:"journey,omitempty"`
 }

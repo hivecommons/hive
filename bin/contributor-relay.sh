@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// contributor-relay.sh — WebSocket client that connects a contributor agent to the Hive hub.
+// contributor-relay.sh — ClankeR, the contributor relay: the WebSocket client
+// that connects a contributor agent to the Hive hub.
 //
 // Handles: authentication, task receipt, GitHub token injection, result reporting,
 // heartbeat, and reconnection with exponential backoff.
