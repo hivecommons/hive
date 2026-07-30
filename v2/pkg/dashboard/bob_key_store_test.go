@@ -373,3 +373,115 @@ func TestBobKeyEndpoints_ReadOnlyRoleForbidden(t *testing.T) {
 		})
 	}
 }
+
+// --- UI location -----------------------------------------------------------
+//
+// The bob key entry UI moved from the per-agent AUTH field (#2218) to a
+// hive-wide governor tab: governor.bob.api_key_file is a single hive-scoped
+// setting resolving to one file, so a per-agent control implied a scope that
+// does not exist. The markup is JS inside index.html and invisible to the Go
+// compiler, so these tests are the only automated guard that the control stays
+// in exactly one place.
+
+// TestBobKeyUILivesOnGovernorTab asserts the governor Bob tab exists, is wired
+// into the tab strip and the render dispatch, and drives the set/clear flow.
+func TestBobKeyUILivesOnGovernorTab(t *testing.T) {
+	html := indexHTML(t)
+	cases := []struct {
+		name    string
+		snippet string
+	}{
+		{"tab name constant", "const GOVERNOR_BOB_TAB = 'Bob';"},
+		{"tab is in the governor strip", "'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'"},
+		{"tab is wired into render dispatch", "case GOVERNOR_BOB_TAB: return renderGovBob();"},
+		{"tab renderer exists", "function renderGovBob() {"},
+		{"status loader exists", "async function loadBobKeyStatus() {"},
+		{"panel renderer exists", "function renderBobKeyPanel(host, configured, source) {"},
+		{"dialog is opened from the panel", "openBobKeyDialog(configured, source)"},
+		{"clear is reachable from the panel", "clearBtn.addEventListener('click', clearBobKey)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(html, tc.snippet) {
+				t.Errorf("index.html is missing %q — the governor Bob tab is not wired up", tc.snippet)
+			}
+		})
+	}
+}
+
+// TestBobKeyUIRemovedFromAgentCard asserts the per-agent AUTH entry point from
+// #2218 is gone, so there is exactly one place the key can be set. The AUTH
+// field must fall through to the generic backend button for a bob agent.
+func TestBobKeyUIRemovedFromAgentCard(t *testing.T) {
+	html := indexHTML(t)
+	cases := []struct {
+		name    string
+		snippet string
+	}{
+		{"no per-agent dispatch case", "case 'setBobKey':"},
+		{"no per-agent data-action", `data-action="setBobKey"`},
+		{"no per-agent isBob branch", "const isBob = a.cli === 'bob';"},
+		{"no dead bob button styling", ".cli-login-btn.bob"},
+		{"dialog takes no agent argument", "openBobKeyDialog(agentName)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if strings.Contains(html, tc.snippet) {
+				t.Errorf("index.html still contains %q — the per-agent bob entry point was not fully removed", tc.snippet)
+			}
+		})
+	}
+}
+
+// TestBobKeyUIRestartCopyStaysAccurate pins the user-facing claim about
+// restarts. The resolver re-reads the key file at every agent launch, so no pod
+// restart is needed — but an agent already paused for a missing key is NOT
+// relaunched automatically. Copy that drops either half sends users to the
+// wrong remedy.
+func TestBobKeyUIRestartCopyStaysAccurate(t *testing.T) {
+	html := indexHTML(t)
+	cases := []struct {
+		name    string
+		snippet string
+	}{
+		{"panel says no restart needed", "restart is needed — but a bob agent already paused for a missing key is not"},
+		{"panel says start the agent once", "relaunched automatically and must be started once."},
+		{"save toast says no restart, start the agent", "no restart needed; start any bob agent that is paused for a missing key"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(html, tc.snippet) {
+				t.Errorf("index.html is missing %q — the restart copy is no longer accurate", tc.snippet)
+			}
+		})
+	}
+}
+
+// TestBobKeyUINeverRendersTheKeyValue asserts the dashboard never puts a key
+// value into markup. The panel is built from `configured` (bool) and the safe
+// `source` string only; the input that carries the value is a password field
+// that is cleared before the dialog node is removed.
+func TestBobKeyUINeverRendersTheKeyValue(t *testing.T) {
+	html := indexHTML(t)
+	if !strings.Contains(html, `<input id="bob-key-input" type="password"`) {
+		t.Error("the bob key input must be type=password so the value is never shown")
+	}
+	if !strings.Contains(html, "// Drop the secret from the DOM before removing the node.") {
+		t.Error("the dialog must clear the input value before removing the node")
+	}
+	// The panel must render presence + source only, never a value field.
+	if !strings.Contains(html, "renderBobKeyPanel(host, d.configured === true, d.source || '')") {
+		t.Error("the panel must be fed only `configured` and the safe `source` string")
+	}
+}
+
+// TestIndexHTMLHasExactlyOneBodyTag guards the snapshot builder, which locates
+// the document body with a plain indexOf("<body>"). A second occurrence — even
+// inside a comment or a JS string — silently corrupts the build, so any edit to
+// index.html has to keep this at exactly one.
+func TestIndexHTMLHasExactlyOneBodyTag(t *testing.T) {
+	html := indexHTML(t)
+	if got := strings.Count(html, "<body>"); got != 1 {
+		t.Errorf("index.html contains %d occurrences of the opening body tag, want exactly 1", got)
+	}
+}

@@ -1,7 +1,9 @@
 package dashboard
 
 // Storage for the IBM bobshell ("bob") API key VALUE entered from the spoke
-// dashboard's per-agent AUTH field. bobshell cannot complete its browser SSO
+// dashboard's governor Bob tab. The key is hive-wide, not per-agent:
+// governor.bob.api_key_file is a single hive-scoped setting resolving to one
+// file, so every bob agent shares it. bobshell cannot complete its browser SSO
 // flow inside a pod (the callback is http://localhost:35227/bob-callback,
 // which resolves to the pod, not the operator's machine), and the 1.0.6
 // bundle exposes no device-code flow — the API key is the only headless

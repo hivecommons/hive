@@ -4090,7 +4090,9 @@ func (s *Server) handleGovernorBobStatus(w http.ResponseWriter, r *http.Request)
 }
 
 // handleGovernorBobKey stores a bob API key VALUE submitted from the spoke
-// dashboard's per-agent AUTH field. The value is written to a 0600 PVC file
+// dashboard's governor Bob tab. The key is hive-wide, not per-agent: this
+// endpoint backs a single hive-scoped setting shared by every bob agent.
+// The value is written to a 0600 PVC file
 // (and best-effort into the hive-secrets Secret); hive.yaml records only the
 // resulting file PATH. The value never appears in the response, in hive.yaml,
 // or in any log line.

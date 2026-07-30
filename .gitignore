@@ -8,3 +8,7 @@ examples/kubestellar/agents/agent.env
 # Beads ledger — runtime state, not source code
 .beads/
 node_modules/
+
+# Scratch output from extracting index.html's inline <script> bodies for
+# `node --check`. A build artifact of the verification step, never source.
+_inline.js

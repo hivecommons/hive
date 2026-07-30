@@ -667,8 +667,6 @@
     .cli-login-btn.claude:hover { background: #f59e0b; }
     .cli-login-btn.copilot { background: #238636; color: #fff; }
     .cli-login-btn.copilot:hover { background: #2ea043; }
-    .cli-login-btn.bob { background: #0f62fe; color: #fff; }
-    .cli-login-btn.bob:hover { background: #4589ff; }
     .cli-login-btn.disabled { background: var(--panel-strong); color: var(--muted); cursor: not-allowed; opacity: 0.5; }
     .cli-login-btn .cli-icon { width: 14px; height: 14px; vertical-align: middle; display: inline-block; background-size: contain; background-repeat: no-repeat; background-position: center; border-radius: 2px; }
     .cli-login-btn .cli-icon.claude-icon { background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAMAAAAoLQ9TAAAABGdBTUEAALGPC/xhBQAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3CculE8AAABU1BMVEUAAADad1jadlnVgFXYdljjcVXZd1fZd1f/VVXYeFbZd1bYd1fYdljYeFfZdlfdd1XZd1fad1jXd1jad1bWc1rXeVHad1fYd1f/AADZd1jZeFffcFDZd1faeFbbeFjZd1fZd1jYeFnYdlfadlfZdlfaeFjZeFfZd1jZd1fZd1fad1fZeFfZdlbZd1fRdF3/gIDZdlfZd1fZd1fZd1fZeFfZd1fadlfZdlfYeFnZeFjadljZdljYdljZd1fZd1fZd1fad1jZd1bWelfXeFjad1fYeFjaeFbadlbZd1fZdlfZd1fZeVbceFXZd1fZdlfYd1fZeFbZd1fYdlfZd1bZd1fZd1fYd1fZeVm/gEDZeFfYd1fYeFfZdlfZd1fYd1fMZmbbeVXZdlbYd1jVdVXZd1fZd1bSeFrZd1jWelzVcVXaeFbaeFbZeFjVgFXeelnZd1f///+GnZeHAAAAb3RSTlMAdEUGNAn73gNi5phUhMQey1o6qx8T7s0BmpUQ11kx7+xIcFK1ZrOjwf6P4LfVCwJs9Pj8NS9hjEKAbl1OWN/6zJQsIGd3gojqmV5KJK3isnP2irTk66UoBNFpVZunuQU5f4MY7boRaxkSRFNXDBdqCrImAAAAAWJLR0Rw2ABsdAAAAAlwSFlzAAAA8wAAAPMBRvLPbQAAAAd0SU1FB+gEHhUwIfpH8hUAAADZSURBVBjTY2AAAkYmBgZmFgY4YGVj52Dg5EIIMHDn8zDw8jHwCwiCeELCIqJi4hKSUtIy+bIgATl5BUWlfGUVVbV8dYgGEQ1NLW1xcZ18XT2oEfoGhvn5RvnGJqZm5hYMipZW1ja2dvn5+WyG9g6OTgzOLq5u7lrsQAEPTy9vFgmwHh9fP+P8fAFXf7H8AJC7zAODfINDNEPDmPXDI4ACupEsUeLRMbG6UnEQa0zjE0J9EpOSU5I4UyHWpmnbMKilM9iyZSRDBDKzGBi4shkYcnKR/OeSB2UAAL9MJSEszd09AAAAJXRFWHRkYXRlOmNyZWF0ZQAyMDI0LTA0LTMwVDIxOjQ4OjMzKzAwOjAwyl6QtAAAACV0RVh0ZGF0ZTptb2RpZnkAMjAyNC0wNC0zMFQyMTo0ODozMyswMDowMLsDKAgAAAAZdEVYdFNvZnR3YXJlAHd3dy5pbmtzY2FwZS5vcmeb7jwaAAAAV3pUWHRSYXcgcHJvZmlsZSB0eXBlIGlwdGMAAHic4/IMCHFWKCjKT8vMSeVSAAMjCy5jCxMjE0uTFAMTIESANMNkAyOzVCDL2NTIxMzEHMQHy4BIoEouAOoXEXTyQjWVAAAAAElFTkSuQmCC'); }
@@ -3301,12 +3299,10 @@
             if (_needsLogin) {
               if (isClaude) return '<button class="cli-login-btn claude" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Authenticate Claude Code CLI">' + claudeIcon + ' Login</button>';
               if (isCopilot) return '<button class="cli-login-btn copilot" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Authenticate GitHub Copilot CLI">' + copilotIcon + ' Login</button>';
-              if (isBob) return '<button class="cli-login-btn bob" data-action="setBobKey" data-agent="' + esc(a.name) + '" title="bob cannot use browser SSO in a pod — set its API key">Set API key</button>';
               return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">Login</button>';
             }
             if (isClaude) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Re-authenticate Claude Code CLI">' + claudeIcon + ' ✓ logged in</button>';
             if (isCopilot) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Re-authenticate GitHub Copilot CLI">' + copilotIcon + ' ✓ logged in</button>';
-            if (isBob) return '<button class="cli-login-btn logged-in" data-action="setBobKey" data-agent="' + esc(a.name) + '" title="bob API key is set — click to replace or clear it">✓ key set</button>';
             return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
           })()}</div></div>
         </div>
@@ -4721,20 +4717,15 @@
           <div class="agent-field"><span class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">auth</span><span class="value">${(() => {
             const isClaude = a.cli === 'claude';
             const isCopilot = a.cli === 'copilot';
-            // bob (IBM bobshell) cannot complete browser SSO inside a pod, so
-            // its AUTH control sets an API key instead of starting a login.
-            const isBob = a.cli === 'bob';
             const claudeIcon = '<span class="cli-icon claude-icon"></span>';
             const copilotIcon = '<span class="cli-icon copilot-icon"></span>';
             if (needsLogin) {
               if (isClaude) return '<button class="cli-login-btn claude" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Authenticate Claude Code CLI">' + claudeIcon + ' Login</button>';
               if (isCopilot) return '<button class="cli-login-btn copilot" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Authenticate GitHub Copilot CLI">' + copilotIcon + ' Login</button>';
-              if (isBob) return '<button class="cli-login-btn bob" data-action="setBobKey" data-agent="' + esc(a.name) + '" title="bob cannot use browser SSO in a pod — set its API key">Set API key</button>';
               return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">Login</button>';
             }
             if (isClaude) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Re-authenticate Claude Code CLI">' + claudeIcon + ' ✓ logged in</button>';
             if (isCopilot) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Re-authenticate GitHub Copilot CLI">' + copilotIcon + ' ✓ logged in</button>';
-            if (isBob) return '<button class="cli-login-btn logged-in" data-action="setBobKey" data-agent="' + esc(a.name) + '" title="bob API key is set — click to replace or clear it">✓ key set</button>';
             return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
           })()}</span></div>
           ${summaryEl}${indEl}
@@ -10867,7 +10858,6 @@ function burnAreaChart() {
         case 'kickEmpty': { const inp = document.getElementById('kick-prompt-' + agent); if (inp) inp.value = ''; kick(agent); } break;
         case 'togglePin': togglePin(agent, el.dataset.pinType, el.dataset.unpin === 'true'); break;
         case 'resetRestarts': resetRestarts(agent); break;
-        case 'setBobKey': { e.stopPropagation(); openBobKeyDialog(agent); } break;
         case 'deleteAgentFromConfig': deleteAgentFromConfig(agent); break;
         case 'ocRenameSidebarGroup': ocRenameSidebarGroup(el.dataset.group); break;
         case 'ocRemoveSidebarGroup': ocRemoveSidebarGroup(el.dataset.group); break;
@@ -12097,7 +12087,15 @@ function burnAreaChart() {
     const AGENT_PROMPTS_TAB = 'Prior Prompts';
     const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', AGENT_PROMPTS_TAB, 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', 'Variables', 'Access'];
+    // 'Bob' holds the hive-wide credential for the IBM bobshell CLI backend.
+    // It is deliberately NOT part of 'Model Gateways': a gateway is an
+    // OpenAI-compatible inference ENDPOINT (endpoint + default_model, routed
+    // to by name), whereas the bob key authenticates a binary running in this
+    // pod and has neither. It is also not 'Access', which is read-only
+    // hub-synced user/role data. It sits next to Model Gateways because both
+    // are backend configuration.
+    const GOVERNOR_BOB_TAB = 'Bob';
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -12690,6 +12688,7 @@ function burnAreaChart() {
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Model Gateways': return renderGovGateways();
+        case GOVERNOR_BOB_TAB: return renderGovBob();
         case 'Variables': return renderGovVariables();
         case 'Access': return renderGovAccess();
         default: return '';
@@ -12836,6 +12835,82 @@ function burnAreaChart() {
     // Reads GET /api/config/authorized-users. Access is granted on the HUB
     // (Manage Access) and propagated to the spoke via heartbeat, so this view is
     // intentionally read-only — it shows the current allowlist, not an editor.
+    // ---- Bob tab -----------------------------------------------------------
+    // The IBM bobshell ("bob") API key. This is hive-wide, not per-agent:
+    // governor.bob.api_key_file is a single hive-scoped setting resolving to
+    // ONE file, so every bob agent shares the same key. It lives here rather
+    // than on an agent card so the scope the UI implies matches the scope the
+    // storage actually has.
+    function renderGovBob() {
+      loadBobKeyStatus();
+      return `
+        <div style="font-size:0.82rem;color:var(--muted);margin-bottom:14px;line-height:1.5">
+          The API key the <b>bob</b> (IBM bobshell) CLI backend authenticates with. It
+          applies to the whole hive — every agent using the bob backend shares this one
+          key. The key is stored in a private file on this hive and is never shown
+          again, never written to hive.yaml, and never included in config downloads.
+        </div>
+        <div id="gov-bob-host"><div style="color:var(--muted);font-size:0.8rem">Loading…</div></div>`;
+    }
+
+    // loadBobKeyStatus fetches presence-only status and paints the bob panel.
+    // The response carries `configured` (bool) and a safe `source` string
+    // ("file:<path>" / "env:<NAME>") — never the key value.
+    //
+    // The DOM target is resolved AFTER the first await, never before: the
+    // caller does `body.innerHTML = renderGovernorTab(tab)`, so this function
+    // starts while the PREVIOUS tab is still mounted (see loadAuthorizedUsers).
+    async function loadBobKeyStatus() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/governor/bob');
+        host = document.getElementById('gov-bob-host');
+        if (!host) return;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        renderBobKeyPanel(host, d.configured === true, d.source || '');
+      } catch (e) {
+        host = host || document.getElementById('gov-bob-host');
+        if (host) host.innerHTML = '<div style="color:var(--red);font-size:0.8rem">Failed to load bob key status: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    // renderBobKeyPanel paints the bob credential card. `source` is the safe
+    // source string only; the key value never reaches this function.
+    function renderBobKeyPanel(host, configured, source) {
+      if (!host) return;
+      const statusLine = configured
+        ? '<span style="color:var(--green)">✓ Key set</span>' + (source ? ' <span style="color:var(--muted)">(' + esc(source) + ')</span>' : '')
+        : '<span style="color:var(--muted)">No key set — agents using bob cannot start.</span>';
+      host.innerHTML = `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <span style="font-weight:600;font-size:0.9rem">bob</span>
+            <span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid #4589ff;color:#4589ff">IBM bobshell</span>
+            <span style="flex:1"></span>
+            ${configured ? '<button data-action="bobKeyClear" style="padding:4px 12px;border:1px solid var(--red);border-radius:6px;background:var(--bg);color:var(--red);cursor:pointer;font-size:0.74rem">Clear key</button>' : ''}
+            <button data-action="bobKeySet" style="padding:4px 12px;border:none;border-radius:6px;background:#0f62fe;color:#fff;cursor:pointer;font-size:0.74rem;font-weight:600">${configured ? 'Replace key' : 'Set API key'}</button>
+          </div>
+          <div style="font-size:0.78rem;margin-bottom:8px">${statusLine}</div>
+          <div style="font-size:0.74rem;color:var(--muted);line-height:1.5">
+            bob cannot complete browser sign-in inside a pod (its callback resolves to
+            the pod, not your machine) and offers no device-code flow, so an API key is
+            its only headless credential. Saving a key takes effect immediately — no pod
+            restart is needed — but a bob agent already paused for a missing key is not
+            relaunched automatically and must be started once.
+          </div>
+          <div id="bob-key-inline-status" style="font-size:0.74rem;min-height:18px;margin-top:8px"></div>
+        </div>`;
+
+      // data-* + addEventListener rather than inline handlers. Bound here (not
+      // via the agent-card dispatcher) because this panel is repainted on every
+      // set/clear and owns its own buttons.
+      const setBtn = host.querySelector('[data-action="bobKeySet"]');
+      if (setBtn) setBtn.addEventListener('click', () => openBobKeyDialog(configured, source));
+      const clearBtn = host.querySelector('[data-action="bobKeyClear"]');
+      if (clearBtn) clearBtn.addEventListener('click', clearBobKey);
+    }
+
     function renderGovAccess() {
       loadAuthorizedUsers();
       return `
@@ -16469,20 +16544,17 @@ function burnAreaChart() {
     // bob cannot complete its browser SSO flow inside a pod: the callback is
     // http://localhost:35227/bob-callback, which resolves to the pod rather
     // than the operator's machine, and the CLI exposes no device-code flow.
-    // The API key is therefore the only headless credential, and this dialog
-    // is where the hive owner enters it. The key is POSTed once and never
-    // read back — the dashboard only ever learns whether one is configured.
-    async function openBobKeyDialog(agentName) {
-      var configured = false, source = '';
-      try {
-        var st = await fetch('/api/config/governor/bob');
-        if (st.ok) {
-          var sd = await st.json();
-          configured = sd.configured === true;
-          source = sd.source || '';
-        }
-      } catch (e) { /* fall back to the unconfigured view */ }
-
+    // The API key is therefore the only headless credential.
+    //
+    // The key is hive-wide, not per-agent — governor.bob.api_key_file is a
+    // single hive-scoped setting resolving to one file — so this dialog is
+    // reached from the governor's Bob tab, not from an agent card. The key is
+    // PUT once and never read back; the dashboard only ever learns WHETHER one
+    // is configured and the safe source string.
+    //
+    // `configured` / `source` are passed in by the caller (the Bob tab already
+    // fetched them) so opening the dialog does not re-round-trip.
+    function openBobKeyDialog(configured, source) {
       var overlay = document.getElementById('bob-key-overlay');
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
@@ -16492,7 +16564,8 @@ function burnAreaChart() {
         '<h3 style="color:#4589ff;text-align:center">bob API key</h3>' +
         '<p style="color:var(--muted);font-size:0.85rem;margin:12px 0">' +
           'bob cannot sign in with a browser inside this hive, so it authenticates with an API key. ' +
-          'The key is stored in a private file on this hive and is never shown again.</p>' +
+          'The key applies to every agent using the bob backend. It is stored in a private file ' +
+          'on this hive and is never shown again.</p>' +
         (configured
           ? '<div style="color:var(--green);font-size:0.8rem;margin:8px 0">✓ A key is currently set' +
               (source ? ' (' + esc(source) + ')' : '') + '. Entering a new one replaces it.</div>'
@@ -16503,7 +16576,6 @@ function burnAreaChart() {
           'background:var(--panel);color:var(--fg);font-family:monospace;margin:8px 0">' +
         '<div id="bob-key-status" style="color:var(--muted);font-size:0.8rem;min-height:20px;margin:4px 0"></div>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">' +
-          (configured ? '<button id="bob-key-clear" class="gh-cancel" style="margin-top:0">Clear key</button>' : '') +
           '<button id="bob-key-cancel" class="gh-cancel" style="margin-top:0">Cancel</button>' +
           '<button id="bob-key-save" style="background:#0f62fe;color:#fff;border:none;padding:6px 16px;' +
             'border-radius:6px;font-weight:600;cursor:pointer">Save key</button>' +
@@ -16550,39 +16622,50 @@ function burnAreaChart() {
           // The hive reads the key at each agent launch, so no pod restart is
           // needed — but an agent already paused for a missing key must be
           // started once to pick it up. Say which, so the user isn't guessing.
-          showToast('bob API key saved — start ' + agentName + ' to use it (no restart needed)', 'success');
+          showToast('bob API key saved — no restart needed; start any bob agent that is paused for a missing key', 'success');
+          refreshBobKeyPanel();
         } catch (e) {
           setStatus('Save failed: ' + e.message, 'var(--red)');
           saveBtn.disabled = false;
         }
       });
+    }
 
-      var clearBtn = document.getElementById('bob-key-clear');
-      if (clearBtn) clearBtn.addEventListener('click', async function() {
-        if (!confirm('Remove the stored bob API key? Agents using bob will stop being able to start.')) return;
-        clearBtn.disabled = true;
-        setStatus('Clearing…');
-        try {
-          var resp = await fetch('/api/config/governor/bob', { method: 'DELETE' });
-          var data = await resp.json().catch(function() { return {}; });
-          if (!resp.ok) {
-            setStatus(data.error || ('Clear failed (' + resp.status + ')'), 'var(--red)');
-            clearBtn.disabled = false;
-            return;
-          }
-          closeDialog();
-          if (data.configured) {
-            // An admin-managed Secret or env var still supplies a key; don't
-            // claim it was removed when bob would still authenticate.
-            showToast('Stored key removed, but a key is still provided by ' + (data.source || 'another source'), 'info');
-          } else {
-            showToast('bob API key cleared', 'success');
-          }
-        } catch (e) {
-          setStatus('Clear failed: ' + e.message, 'var(--red)');
-          clearBtn.disabled = false;
+    // clearBobKey revokes the stored key from the governor's Bob tab. Clearing
+    // is idempotent server-side; if an admin-managed Secret or env var still
+    // supplies a key the response says so, and we report that rather than
+    // falsely claiming the key was removed.
+    async function clearBobKey() {
+      if (!confirm('Remove the stored bob API key? Agents using bob will stop being able to start.')) return;
+      var statusEl = document.getElementById('bob-key-inline-status');
+      function setStatus(msg, color) {
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+      }
+      setStatus('Clearing…');
+      try {
+        var resp = await fetch('/api/config/governor/bob', { method: 'DELETE' });
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+          setStatus(data.error || ('Clear failed (' + resp.status + ')'), 'var(--red)');
+          return;
         }
-      });
+        setStatus('');
+        if (data.configured) {
+          showToast('Stored key removed, but a key is still provided by ' + (data.source || 'another source'), 'info');
+        } else {
+          showToast('bob API key cleared', 'success');
+        }
+        refreshBobKeyPanel();
+      } catch (e) {
+        setStatus('Clear failed: ' + e.message, 'var(--red)');
+      }
+    }
+
+    // refreshBobKeyPanel repaints the Bob tab after a set/clear, but only if
+    // that tab is still mounted — the user may have switched tabs or closed
+    // the dialog in the meantime.
+    function refreshBobKeyPanel() {
+      if (document.getElementById('gov-bob-host')) loadBobKeyStatus();
     }
 
     async function checkClaudeAuth() {
