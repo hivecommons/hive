@@ -1268,6 +1268,11 @@
     .toast.error { background: color-mix(in srgb, var(--red) 14%, var(--panel)); border-color: color-mix(in srgb, var(--red) 35%, var(--line)); border-left-color: var(--red); }
     .toast.info { background: color-mix(in srgb, var(--blue) 14%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); border-left-color: var(--blue); }
     .toast-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid color-mix(in srgb, var(--text) 30%, transparent); border-top-color: var(--text); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+    /* Error toasts never auto-dismiss (a failed save must stay readable), so
+       they carry an explicit close affordance and a click-anywhere target. */
+    .toast.sticky { cursor: pointer; padding-right: 30px; position: relative; }
+    .toast-close { position: absolute; top: 4px; right: 8px; font-size: 0.9rem; line-height: 1; color: var(--muted); background: none; border: none; padding: 2px 4px; cursor: pointer; }
+    .toast-close:hover { color: var(--text); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
     @keyframes toast-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-10px); } }
@@ -11093,6 +11098,21 @@ function burnAreaChart() {
         overlay.querySelector('.primary').focus();
       });
     }
+    // makeToastSticky turns a toast into one that never auto-dismisses. Used
+    // for errors: a failed save may carry a validation message the user has
+    // not finished reading, so it waits for an explicit click or × instead of
+    // vanishing on a timer. Success/info toasts keep their timeout.
+    function makeToastSticky(el) {
+      if (el._sticky) return;
+      el._sticky = true;
+      el.classList.add('sticky');
+      const close = document.createElement('button');
+      close.className = 'toast-close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', 'Dismiss');
+      el.appendChild(close);
+      el.addEventListener('click', () => dismissToast(el, null, null, true));
+    }
     function showToast(msg, type = 'info', persistent = false) {
       const container = document.getElementById('toast-container');
       const el = document.createElement('div');
@@ -11107,16 +11127,28 @@ function burnAreaChart() {
         setTimeout(() => { if (el.parentNode) dismissToast(el); }, TOAST_PROGRESS_MAX_MS);
         return el;
       }
+      if (type === 'error') {
+        makeToastSticky(el);
+        return el;
+      }
       setTimeout(() => dismissToast(el), TOAST_DURATION_MS);
       return el;
     }
-    function dismissToast(el, newMsg, newType) {
+    // dismissToast removes a toast, or (with newMsg) rewrites an in-flight
+    // toast into its result. `force` bypasses stickiness for the user-initiated
+    // click/× path, so a sticky error can still be dismissed on demand.
+    function dismissToast(el, newMsg, newType, force) {
       if (!el || !el.parentNode) return;
       if (newMsg) {
         el.textContent = newMsg;
         el.className = `toast ${newType || 'success'}`;
+        el._sticky = false;
+        // A resolved in-flight toast that resolved to an error stays put for
+        // the same reason a direct error toast does.
+        if (newType === 'error') { makeToastSticky(el); return; }
         setTimeout(() => { el.style.animation = 'toast-out 0.3s ease-in forwards'; setTimeout(() => el.remove(), 300); }, TOAST_DURATION_MS);
       } else {
+        if (el._sticky && !force) return;
         el.style.animation = 'toast-out 0.3s ease-in forwards';
         setTimeout(() => el.remove(), 300);
       }

@@ -3585,30 +3585,52 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
+	// Pointer fields distinguish "field absent from the JSON" (nil) from
+	// "field explicitly set to 0". The dashboard sends only the inputs the
+	// user actually touched, so editing Total Tokens alone POSTs
+	// {"totalTokens":N} with no periodDays/criticalPct. With plain ints
+	// those absent fields decoded to 0 and were rejected by validation as
+	// out-of-range. Nil now means "leave the stored value alone", while an
+	// explicit 0 is still honored (totalTokens: 0 disables budget tracking).
 	var body struct {
-		TotalTokens int64 `json:"totalTokens"`
-		PeriodDays  int   `json:"periodDays"`
-		CriticalPct int   `json:"criticalPct"`
+		TotalTokens *int64 `json:"totalTokens"`
+		PeriodDays  *int   `json:"periodDays"`
+		CriticalPct *int   `json:"criticalPct"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	if err := validateGovernorBudget(body.TotalTokens, body.PeriodDays, body.CriticalPct); err != nil {
+	// Validate against the effective post-update values: supplied fields use
+	// the incoming value, omitted fields keep what is already stored. This
+	// keeps a partial update from being judged against a phantom zero.
+	current := s.deps.Config.Governor.Budget
+	totalTokens, periodDays, criticalPct := current.TotalTokens, current.PeriodDays, current.CriticalPct
+	if body.TotalTokens != nil {
+		totalTokens = *body.TotalTokens
+	}
+	if body.PeriodDays != nil {
+		periodDays = *body.PeriodDays
+	}
+	if body.CriticalPct != nil {
+		criticalPct = *body.CriticalPct
+	}
+
+	if err := validateGovernorBudget(totalTokens, periodDays, criticalPct); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	if body.TotalTokens > 0 {
-		s.deps.Config.Governor.Budget.TotalTokens = body.TotalTokens
-		s.deps.Governor.SetBudgetLimit(body.TotalTokens)
+	if body.TotalTokens != nil {
+		s.deps.Config.Governor.Budget.TotalTokens = totalTokens
+		s.deps.Governor.SetBudgetLimit(totalTokens)
 	}
-	if body.PeriodDays > 0 {
-		s.deps.Config.Governor.Budget.PeriodDays = body.PeriodDays
+	if body.PeriodDays != nil {
+		s.deps.Config.Governor.Budget.PeriodDays = periodDays
 	}
-	if body.CriticalPct > 0 {
-		s.deps.Config.Governor.Budget.CriticalPct = body.CriticalPct
+	if body.CriticalPct != nil {
+		s.deps.Config.Governor.Budget.CriticalPct = criticalPct
 	}
 
 	if err := s.saveConfig(); err != nil {
