@@ -132,6 +132,26 @@ fi
 ACMM_LEVEL="${HIVE_ACMM_LEVEL:-0}"
 ADVISORY_ISSUE="${HIVE_ADVISORY_ISSUE:-}"
 
+# ── Route `gh pr create` through the hive so the PR is App-bot-authored ──
+# An agent running `gh pr create` would author the PR as whatever identity the gh
+# token / Copilot login resolves to (the login USER, not the App bot). Redirect
+# to hive-open-pr, which drops a request file the hive's watcher opens with the
+# App installation token → authored by "<slug>[bot]". The watcher enforces the
+# SAME ACMM write-gate + forge-resistance, so this changes WHO opens the PR, not
+# WHAT an agent is allowed to do. Contributors are EXEMPT: they fork and PR under
+# their OWN identity by design, so their gh pr create must pass through unchanged.
+if [ "$subcmd" = "pr" ] && [ "$action" = "create" ] && [ "${HIVE_CONTRIBUTOR_MODE:-}" != "true" ]; then
+  if command -v hive-open-pr >/dev/null 2>&1; then
+    # Pass the original gh-pr-create flags straight through — hive-open-pr accepts
+    # the same --repo/--head/--base/--title/--body shape and ignores the rest.
+    exec hive-open-pr "$@"
+  fi
+  # If the wrapper somehow isn't installed, fail loud rather than silently
+  # opening the PR as the wrong identity (hard switch: no gh-pr-create fallback).
+  echo "⛔ hive-open-pr not found — cannot open a PR as the App bot. Do NOT fall back to gh pr create (would author as the login user). Report this to the operator." >&2
+  exit 1
+fi
+
 # Helper: capture advisory finding to JSONL for governor digest
 _capture_advisory_finding() {
   local _adv_title="" _adv_body="" _next_is_title=false _next_is_body=false

@@ -590,7 +590,14 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if m.appAuth != nil && agent.UID > 0 {
 		tier := m.agentMode(agent).TokenTier()
 		if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
-			m.logger.Warn("failed to mint per-agent token, agent will use shared cache",
+			// Be precise about the blast radius. A shared-cache fallback does
+			// exist (gh-wrapper.sh / git-credential-hive.sh fall back to
+			// /var/run/hive-metrics/gh-app-token.cache), but it is the FULL
+			// installation token, not this agent's tier-scoped one — so the
+			// failure silently escalates privilege rather than degrading
+			// gracefully, and it only works at all if that shared cache is
+			// present and group-readable. Say that, don't imply it's fine.
+			m.logger.Warn("per-agent scoped token NOT delivered — agent falls back to the shared FULL-privilege App token (tier scoping lost); if the shared cache is also missing, all GitHub writes for this agent will fail",
 				"agent", agent.Name, "tier", tier, "error", err)
 		}
 	}
@@ -672,6 +679,39 @@ func (m *Manager) ensureTmuxSession(agent *AgentProcess) error {
 	if !m.agentMode(agent).CanPush() {
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GH_TOKEN").Run()
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-u", "GITHUB_TOKEN").Run()
+	}
+
+	// Every set-environment above updated the SESSION environment, which tmux
+	// only copies into processes it forks AFTERWARDS. `new-session -d` already
+	// forked this session's pane shell, so that bash predates all of it and
+	// will never see a single one of those variables — including the Secret
+	// pairs (BOBSHELL_API_KEY, CLAUDE_CODE_OAUTH_TOKEN) that buildEnvPrefix
+	// deliberately keeps off the command line. Every CLI launched by send-keys
+	// into this pane therefore inherits an environment missing exactly the
+	// credentials that are only delivered this way, which is why bob still
+	// prompted for an API key with the key demonstrably present in the session
+	// env (`show-environment` listed it; no bob /proc/<pid>/environ had it).
+	//
+	// Respawning the pane replaces that stale shell with a fresh one forked by
+	// the server after the environment was populated, so it inherits the full
+	// set. This is the only ordering that works in all three states the launch
+	// path actually hits: cold server, warm server with other sessions, and a
+	// session recreated by killSessionForRelaunch. Passing the vars in the
+	// environment of the `tmux new-session` client process does NOT work once
+	// the server is already running (the server, not the client, forks the
+	// pane), and `set-environment -g` before `new-session` cannot run at all on
+	// a cold server ("error connecting to <socket>") — both verified.
+	//
+	// Secrets stay off the command line: respawn-pane takes no arguments here,
+	// so nothing is typed into the pane or visible in `ps`.
+	respawnArgs := []string{"respawn-pane", "-k", "-t", agent.tmuxSession}
+	if err := m.tmuxCmd(agent, respawnArgs...).Run(); err != nil {
+		// Non-fatal: the pane still exists with the pre-env shell. Log it so a
+		// later "CLI cannot see its credentials" report has a breadcrumb
+		// instead of being silent, then continue — a degraded session is still
+		// better than refusing to launch the agent at all.
+		m.logger.Warn("tmux pane respawn failed; pane shell will not inherit session env (CLI may prompt for credentials)",
+			"name", agent.Name, "session", agent.tmuxSession, "error", err)
 	}
 
 	m.logger.Info("tmux session created", "name", agent.Name, "session", agent.tmuxSession, "uid", agent.UID, "socket", agent.tmuxSocket)
@@ -911,6 +951,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		// Advisory only: the Secret-mounted copy may still be readable, so this
 		// never blocks a launch that might succeed.
 		m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
+		// bob reports unwritable state dirs only inside its own TUI, so probe
+		// them here as the agent UID and surface any failure in the hive log.
+		// Advisory, like the key probe above — never blocks a launch.
+		_ = m.verifyBobStateDirsWritable(agent.Name, bobSharedHome, m.workDir+"/"+agent.Name, agent.UID)
 	}
 
 	launchCmd := binary
@@ -1016,7 +1060,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 				launchCmd = fmt.Sprintf("%s --model %s", launchCmd, model)
 			}
 		case bobBackend:
-			launchCmd = bobLaunchCmd(binary, model)
+			launchCmd = bobLaunchCmd(binary)
 		default:
 			launchCmd = binary
 		}
@@ -3680,16 +3724,51 @@ const bobBackend = "bob"
 //     key for unattended use is the act of acceptance; the text stays
 //     reviewable via `bob --show-license`.
 //
+//   - --approval-mode yolo (config.BobApprovalModeFlag/BobApprovalModeYolo):
+//     without it bob runs in its "default" approval mode, the TUI reports
+//     `Auto-approve: Off`, and the agent blocks forever on its FIRST tool call
+//     waiting for a human who is not attached. Verified live on a spoke: with
+//     the flag the TUI reports `Auto-approve: Full` and bob executed a shell
+//     tool unattended.
+//
+//     This is deliberately FLAT — not gated on m.agentMode(agent) — because it
+//     matches the existing fleet posture rather than inventing a new one for
+//     bob. Every other backend already auto-approves tools at EVERY ACMM level:
+//     claude gets --dangerously-skip-permissions and copilot gets --allow-all
+//     in all three mode branches of launchInTmux. Hive does not restrain agents
+//     by making them ask permission for local tool calls; it restrains them by
+//     (a) denying specific GitHub write tools per mode and (b) unsetting
+//     GH_TOKEN/GITHUB_TOKEN for agents whose mode fails CanPush(). Both of
+//     those controls apply to bob unchanged and are where an advisory bob is
+//     actually contained. Giving bob a per-mode approval policy would make it
+//     the only backend that stalls at low ACMM levels — less capable than its
+//     peers, and stalled rather than safely limited.
+//
+//   - --trust (config.BobTrustFlag): bob otherwise treats the agent workdir as
+//     untrusted ("This folder is not trusted. Some features may be disabled.")
+//     and gates tool availability on it. See BobTrustFlag for why the flag is
+//     preferred over seeding the shared $HOME/.bob/trustedFolders.json.
+//
+// No --model is passed, and that is load-bearing. bob auto-selects its own
+// model, and hive's normalizeModelName rewrites a trailing -<digits> to
+// .<digits> for every backend except claude/inference, so a configured
+// `claude-sonnet-4-6` reached bob as `claude-sonnet-4.6` — an id bob's backend
+// does not know. Its model config came back undefined and every prompt died
+// with "🛑 Cannot read properties of undefined (reading 'maxTokens')". Verified
+// live: the same bob with no --model runs inference successfully.
+//
 // The API key itself is NOT a flag — it is delivered out-of-band via
 // tmux set-environment (see agentEnvPairs) so it never lands in the command
 // line, `ps` output, or pane scrollback.
-func bobLaunchCmd(binary, model string) string {
-	cmd := fmt.Sprintf("%s --accept-license %s %s",
-		binary, config.BobAuthMethodFlag, config.BobAuthTypeAPIKey)
-	if model != "" {
-		cmd = fmt.Sprintf("%s --model %s", cmd, model)
-	}
-	return cmd
+//
+// The model parameter is intentionally absent from the signature so no future
+// caller can reintroduce the crash by passing one.
+func bobLaunchCmd(binary string) string {
+	return fmt.Sprintf("%s --accept-license %s %s %s %s %s",
+		binary,
+		config.BobAuthMethodFlag, config.BobAuthTypeAPIKey,
+		config.BobApprovalModeFlag, config.BobApprovalModeYolo,
+		config.BobTrustFlag)
 }
 
 // codexHomePrefix is the per-agent CODEX_HOME directory prefix. Each agent gets
@@ -3966,8 +4045,17 @@ func (m *Manager) ensureWorldWritable(root string) {
 // "gpt-4o-2024-08.06") produces a model the team is not entitled to and the
 // gateway 403s ("team not allowed to access model") even for entitled models.
 // So never normalize inference model names — pass them through untouched.
+//
+// bob is likewise excluded. bobLaunchCmd passes no --model at all (bob
+// auto-selects), so this is defense-in-depth rather than the fix: the value is
+// still computed and logged on the bob launch path, and the dot-rewrite is
+// what turned a configured `claude-sonnet-4-6` into the unknown
+// `claude-sonnet-4.6` that made bob die with "Cannot read properties of
+// undefined (reading 'maxTokens')". Leaving it unrewritten keeps logs honest
+// about what was configured and stops the corrupted id from being handed to a
+// future bob consumer.
 func normalizeModelName(model, backend string) string {
-	if backend == "claude" || IsInferenceBackend(backend) {
+	if backend == "claude" || backend == bobBackend || IsInferenceBackend(backend) {
 		return model
 	}
 	idx := strings.LastIndex(model, "-")
@@ -4079,6 +4167,49 @@ func DefaultAgentMode(agentName string, level int) AgentMode {
 // Deprecated: use agentMode() for granular mode checks.
 func (m *Manager) agentCanWrite(agent *AgentProcess) bool {
 	return m.agentMode(agent).CanPush()
+}
+
+// AuthorizePROpen enforces the policy for the hive-opens-PR watcher: an agent
+// may open a PR (by dropping a request file) only if BOTH hold:
+//
+//  1. Forge-resistance — the request file's owning UID (fileUID) maps to the
+//     agent it claims to be (via the uid-map). One agent cannot open a PR "as"
+//     another, and a non-agent process (unknown UID) is refused. When per-agent
+//     UIDs are not in play (fileUID <= 0, e.g. shared-dev-UID mode with no map),
+//     ownership is unverifiable, so we fall back to the ACMM check alone rather
+//     than hard-failing — the same posture the credential helper takes.
+//  2. ACMM write-gate — the agent must be push-capable at the hive's current
+//     ACMM level, i.e. exactly the CanPush() check that governs `gh pr create`.
+//
+// Returns nil to authorize, or an error describing the denial. This mirrors the
+// direct PR path's policy so the request-file route grants no extra privilege.
+func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
+	if strings.TrimSpace(agentName) == "" {
+		return fmt.Errorf("no agent named in the request")
+	}
+	// Forge check: when we have a UID map and a real owning UID, the file owner
+	// must BE this agent.
+	if m.uidMap != nil && fileUID > 0 {
+		owner := m.uidMap.LookupByUID(fileUID)
+		if owner == "" {
+			return fmt.Errorf("request file owned by unknown uid %d (not a registered agent)", fileUID)
+		}
+		if owner != agentName {
+			return fmt.Errorf("request claims agent %q but file is owned by agent %q (uid %d)", agentName, owner, fileUID)
+		}
+	}
+	// ACMM write-gate: resolve the agent and check CanPush.
+	m.mu.RLock()
+	agent := m.agents[agentName]
+	m.mu.RUnlock()
+	if agent == nil {
+		return fmt.Errorf("unknown agent %q", agentName)
+	}
+	if !m.agentMode(agent).CanPush() {
+		return fmt.Errorf("agent %q is not push-capable at this ACMM level (mode %s) — advisory agents may not open PRs",
+			agentName, m.agentMode(agent).String())
+	}
+	return nil
 }
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.
@@ -4961,6 +5092,15 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 	denies := tools.DenyPatterns()
 
 	switch backend {
+	case bobBackend:
+		// bob has no deny-tool flag, so ToolsConfig cannot be expressed here.
+		// It must still go through bobLaunchCmd rather than falling to the
+		// default branch below, which would append `--model` and crash bob
+		// with "Cannot read properties of undefined (reading 'maxTokens')".
+		// A bob agent with tools configured therefore launches identically to
+		// one without; the deny patterns are silently inapplicable, exactly as
+		// they already were before this branch existed.
+		return bobLaunchCmd(binary)
 	case "claude":
 		bareFlag := ""
 		if isInference {

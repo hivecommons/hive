@@ -585,6 +585,12 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			req.ContentLength = int64(len(body))
 		} else if !AllowedByMode(mode, req.Method, req.URL.Path) {
 			blocked = true
+			// A hard-deny rule (e.g. direct PR creation) carries an agent-facing
+			// directive explaining the sanctioned alternative — surface it so the
+			// agent knows to use hive-open-pr rather than seeing only a mode error.
+			if msg, denied := DeniedMessage(req.Method, req.URL.Path); denied && msg != "" {
+				blockReason = msg
+			}
 		} else if len(p.allowedRepos) > 0 && !RepoFilterAllowed(p.allowedRepos, req.Method, req.URL.Path) {
 			blocked = true
 			blockReason = "repo not in hive config"

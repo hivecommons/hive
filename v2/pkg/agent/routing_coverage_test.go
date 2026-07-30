@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
@@ -247,8 +248,13 @@ func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 	if cmd != "gemini --model flash" {
 		t.Errorf("default backend cmd: %q", cmd)
 	}
-	cmd = toolRulesToLaunchCmd("bob", "", "bob", tools, false)
-	if cmd != "bob" {
+	// An UNKNOWN backend with no model gets the bare binary. This used to be
+	// asserted with backend "bob", which meant it pinned bob's broken
+	// fall-through: a bare `bob` has no --accept-license (hard-errors), no
+	// auth flag, and no --approval-mode (stalls on the first tool call). bob
+	// now has its own branch, so use a backend that really is unknown.
+	cmd = toolRulesToLaunchCmd("mystery", "", "mystery", tools, false)
+	if cmd != "mystery" {
 		t.Errorf("default backend with empty model: %q", cmd)
 	}
 }
@@ -481,6 +487,43 @@ func TestAgentModeTokenTier(t *testing.T) {
 	for mode, want := range cases {
 		if got := mode.TokenTier(); got != want {
 			t.Errorf("mode %d TokenTier=%q want %q", mode, got, want)
+		}
+	}
+}
+
+// TestToolRulesToLaunchCmd_BobNeverGetsModel verifies bob's launch command
+// carries no --model even when a concrete model is configured.
+//
+// Agents with Config.Tools set bypass bobLaunchCmd and build their command
+// here, so without an explicit bob branch they fell into the default case and
+// got `bob --model <id>`. That is the crash: normalizeModelName rewrites a
+// trailing -<digits> to .<digits> for every non-claude backend, so a stored
+// claude-sonnet-4-6 reaches bob as claude-sonnet-4.6 — an id bob's backend
+// does not know — and every prompt dies with "Cannot read properties of
+// undefined (reading 'maxTokens')". bob auto-selects its own model.
+func TestToolRulesToLaunchCmd_BobNeverGetsModel(t *testing.T) {
+	tools := &config.ToolsConfig{}
+	// Includes "auto": the dashboard's only bob option is a display/stored
+	// placeholder, and `bob --model auto` is untested and must not be emitted.
+	for _, model := range []string{"", "auto", "claude-sonnet-4.6", "claude-sonnet-4-6", "granite-3"} {
+		cmd := toolRulesToLaunchCmd("bob", model, bobBackend, tools, false)
+		if strings.Contains(cmd, "--model") {
+			t.Errorf("bob launch cmd with model %q must not contain --model: %q", model, cmd)
+		}
+		if cmd != "bob" {
+			t.Errorf("bob launch cmd with model %q = %q, want %q", model, cmd, "bob")
+		}
+	}
+}
+
+// TestToolRulesToLaunchCmd_OtherBackendsStillGetModel guards the bob branch
+// against swallowing the default case for everything else.
+func TestToolRulesToLaunchCmd_OtherBackendsStillGetModel(t *testing.T) {
+	tools := &config.ToolsConfig{}
+	for _, backend := range []string{"gemini", "goose", "codex"} {
+		cmd := toolRulesToLaunchCmd(backend, "some-model", backend, tools, false)
+		if !strings.Contains(cmd, "--model some-model") {
+			t.Errorf("%s must still receive --model: %q", backend, cmd)
 		}
 	}
 }
