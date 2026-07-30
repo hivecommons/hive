@@ -1910,6 +1910,12 @@ func main() {
 				// SHA tag (which can never receive a rolling upgrade) from one
 				// riding <branch>-latest. Empty off-cluster — never guessed.
 				ImageRef:                hub.SelfDeploymentImage(),
+				// The GitHub instance this spoke actually runs against. Only
+				// the spoke knows this for certain: a hive's GitHub can differ
+				// from its cluster's default, so the hub cannot infer it.
+				// Reported as a bare hostname; empty base_url means public
+				// github.com, which githubHostLabel renders as such.
+				GitHubHost:              hub.GitHubHostLabel(cfg.GitHub.BaseURL),
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
 				GitHubAppState:          dashSrv.GetGitHubAppState(),

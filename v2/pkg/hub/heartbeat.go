@@ -254,7 +254,14 @@ type HeartbeatPayload struct {
 	// The hub cannot read this itself for firewalled spokes it reaches only by
 	// heartbeat, which is why it rides the payload. Empty when the spoke is
 	// not running in-cluster or the read failed — never a guess.
-	ImageRef           string `json:"image_ref,omitempty"`
+	ImageRef string `json:"image_ref,omitempty"`
+	// GitHubHost is the bare hostname of the GitHub instance this spoke is
+	// ACTUALLY configured against (github.com, github.ibm.com, …), derived
+	// from its own runtime github.base_url. This is the authoritative value:
+	// a hive's GitHub can differ from its cluster's default, so the cluster
+	// default is only ever a fallback for spokes too old to report this.
+	// Empty on such spokes — the hub falls back rather than guessing.
+	GitHubHost         string `json:"github_host,omitempty"`
 	Timestamp          string `json:"timestamp"`
 	GitHubAppRequired  bool   `json:"github_app_required,omitempty"`
 	GitHubAppPermIssue string `json:"github_app_perm_issue,omitempty"`

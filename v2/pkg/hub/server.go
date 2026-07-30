@@ -104,7 +104,18 @@ type RegistryEntry struct {
 	// upgrade — from one riding <branch>-latest. Empty on spokes that are not
 	// in-cluster or predate this field; drift detection skips the signal
 	// rather than guessing.
-	ImageRef                  string             `json:"imageRef,omitempty"`
+	ImageRef string `json:"imageRef,omitempty"`
+	// GitHubHost is the bare hostname of the GitHub instance this hive targets
+	// ("github.com", "github.ibm.com", …), rendered as a pill in the My Hives
+	// Location column. Resolution order, most to least authoritative:
+	//   1. the spoke's own reported runtime github.base_url (heartbeat), which
+	//      is the only source that is right when a hive's GitHub differs from
+	//      its cluster's default;
+	//   2. the hive's recorded SaaSHive.GitHubHost / its cluster default, for
+	//      spokes too old to report it;
+	//   3. "github.com" at render time, so a chip is never blank.
+	// Empty here means "not reported" — resolved on read, never guessed.
+	GitHubHost                string             `json:"githubHost,omitempty"`
 	Agents                    []AgentSummary     `json:"agents,omitempty"`
 	Leaderboard               []LeaderboardEntry `json:"leaderboard,omitempty"`
 	Online                    bool               `json:"online"`
@@ -729,6 +740,17 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHash:       shortSHA(sanitizeHeartbeatField(payload.GitHash)),
 		GitBranch:     sanitizeHeartbeatField(payload.GitBranch),
 		ImageRef:      sanitizeImageRef(payload.ImageRef),
+		// Normalize through githubHostLabel so "https://github.ibm.com/" and
+		// "github.ibm.com" persist identically, then sanitize as a hostname.
+		// A spoke that does not report the field leaves this empty rather
+		// than recording a fabricated "github.com" — empty is what lets the
+		// read path fall back to the hive's recorded/cluster host instead.
+		GitHubHost: func() string {
+			if strings.TrimSpace(payload.GitHubHost) == "" {
+				return ""
+			}
+			return sanitizeHeartbeatField(githubHostLabel(payload.GitHubHost))
+		}(),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)

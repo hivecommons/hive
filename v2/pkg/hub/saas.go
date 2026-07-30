@@ -654,6 +654,12 @@ func githubHostLabel(baseURL string) string {
 	return strings.TrimRight(h, "/")
 }
 
+// GitHubHostLabel is the exported form of githubHostLabel, for the spoke to
+// normalize its own configured GitHub base URL before reporting it over the
+// heartbeat. Sharing one implementation keeps the value the spoke sends and
+// the value the hub renders from drifting into two different spellings.
+func GitHubHostLabel(baseURL string) string { return githubHostLabel(baseURL) }
+
 func (s *HubServer) handleListClusters(w http.ResponseWriter, r *http.Request) {
 	var entries []ClusterListEntry
 	for _, c := range s.clusters {
@@ -1537,6 +1543,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// Rule: take the meta level only for placeholders, or as a fallback when the
 	// live registry level is 0 (unknown) but meta has a real one. Otherwise the
 	// live registry level wins.
+
 	enrichFromSaaSMeta := func(entry *MyHiveEntry) {
 		sh := saasByID[entry.ID]
 		if sh == nil {
@@ -1578,6 +1585,43 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			projectConfigForHiveID(entry.ID, entry.Org, entry.Repos, entry.PrimaryRepo, entry.ACMMLevel, entry.DashboardURL, "") != nil {
 			entry.Assigning = true
 			entry.AssigningTo = sh.Org
+		}
+	}
+
+	// resolveGitHubHost fills in the Location-column GitHub host pill when the
+	// spoke did not report one over the heartbeat.
+	//
+	// The spoke-reported value always wins: it is the hive's real runtime
+	// GitHub, and it is the only source that is correct when a hive's GitHub
+	// differs from its cluster's default (the enricom8 hive is the live
+	// example — its host had to be corrected by hand). Heartbeat-only and
+	// firewalled spokes upgrade slowly, so for those this falls back to the
+	// hive's recorded host, then its cluster's default. Anything still empty
+	// is left empty and rendered as "github.com" by the pill, so an old spoke
+	// shows a sane default rather than a wrong host.
+	resolveGitHubHost := func(entry *MyHiveEntry) {
+		if entry.GitHubHost != "" {
+			return // spoke-reported — authoritative
+		}
+		if sh := saasByID[entry.ID]; sh != nil {
+			if sh.GitHubHost != "" {
+				entry.GitHubHost = githubHostLabel(sh.GitHubHost)
+				return
+			}
+			if c := s.clusterForHive(sh); c != nil && c.GitHubBaseURL != "" {
+				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+				return
+			}
+		}
+		// No meta record: fall back to the cluster the registry entry reports.
+		// s.clusters is read unlocked here to match every other reader in this
+		// package (clusterForHive, clusterNameForID); it is effectively
+		// immutable after load, and taking s.mu here would nest inside callers
+		// that already hold it.
+		if entry.ClusterID != "" {
+			if c, ok := s.clusters[entry.ClusterID]; ok && c.GitHubBaseURL != "" {
+				entry.GitHubHost = githubHostLabel(c.GitHubBaseURL)
+			}
 		}
 	}
 
@@ -1699,6 +1743,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(h.ID, "hosted-") || strings.HasPrefix(h.ID, "saas-") {
 			saasCount++
 		}
+		// Backfill the Location-column GitHub host for rows whose spoke is too
+		// old to report one. Done here, over the assembled set, so no entry
+		// construction site can be missed.
+		resolveGitHubHost(&result[i])
 		// Who-has-access is shown only to owners (and admin), matching
 		// handleAccessList's rule. A read/read-write member is deliberately not
 		// told who else shares the hive.
@@ -8073,7 +8121,12 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!h) return '';
       var parts = [
         h.id, h.name, h.org, h.primaryRepo, h.clusterId, h.clusterName,
-        h.role, h.gitBranch, h.gitHash, h.dashboardUrl
+        h.role, h.gitBranch, h.gitHash, h.dashboardUrl,
+        /* The GitHub host is shown as a pill in the Location column, so it has
+           to be searchable too — "github.ibm.com" is how an admin narrows to
+           the GHE fleet. Absent means public GitHub, which is what the pill
+           renders, so search on that same default rather than nothing. */
+        h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST
       ];
       (h.repos || []).forEach(function(r) { parts.push(r); });
       (h.access || []).forEach(function(a) {
@@ -8125,6 +8178,10 @@ const dashboardHTML = `<!DOCTYPE html>
     var FACET_ROLE = 'role';
     var FACET_STATUS = 'status';
     var FACET_BRANCH = 'branch';
+    /* GitHub instance the hive targets. Worth its own facet because the
+       GHE-vs-public split is a real operational boundary — a github.ibm.com
+       hive can only be reached from a cluster that can route to it. */
+    var FACET_GITHUB_HOST = 'github-host';
 
     /* Value shown when a hive has no value for a facet, so those rows stay
        reachable instead of silently dropping out of every facet count. */
@@ -8143,7 +8200,8 @@ const dashboardHTML = `<!DOCTYPE html>
       {key: FACET_ACMM, label: 'ACMM level'},
       {key: FACET_ROLE, label: 'Your role'},
       {key: FACET_STATUS, label: 'Status'},
-      {key: FACET_BRANCH, label: 'Branch'}
+      {key: FACET_BRANCH, label: 'Branch'},
+      {key: FACET_GITHUB_HOST, label: 'GitHub'}
     ];
 
     /* Selected facet values: {facetKey: {value: true}}. */
@@ -8257,6 +8315,10 @@ const dashboardHTML = `<!DOCTYPE html>
       f[FACET_ACMM] = (h.acmmLevel != null && h.acmmLevel !== '') ? ('L' + h.acmmLevel) : FACET_UNKNOWN;
       f[FACET_ROLE] = h.role || FACET_UNKNOWN;
       f[FACET_BRANCH] = h.gitBranch || FACET_UNKNOWN;
+      /* Absent host means public GitHub — bucket it under the same label the
+         pill renders, not FACET_UNKNOWN, so old spokes group with github.com
+         rather than forming a meaningless "—" bucket. */
+      f[FACET_GITHUB_HOST] = h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
       var flags = hiveStatusFlags(h);
       f[FACET_STATUS] = flags.degraded ? 'Degraded' : (h.online ? 'Online' : 'Offline');
       return f;
@@ -9727,12 +9789,20 @@ const dashboardHTML = `<!DOCTYPE html>
           return pub ? '<span style="color:var(--green)">✓</span>' : '<span style="color:var(--muted)">—</span>';
         })();
         var locationBadge = isLocal ? '<span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:0.65rem;font-weight:600;background:rgba(107,114,128,0.15);color:#9ca3af;border:1px solid rgba(107,114,128,0.3)">local</span>' : clusterBadge(h.clusterId, h.clusterName);
-        /* Location on top, visibility beneath — two stacked lines, matching the
-           three-line Version treatment. The owner toggle is a 36x20 switch and
-           keeps its own box on its own line, so it stays an easy tap target. */
+        /* Location on top, visibility beneath, GitHub host last — three stacked
+           lines, matching the three-line Version treatment. The owner toggle is
+           a 36x20 switch and keeps its own box on its own line, so it stays an
+           easy tap target.
+
+           The host line reuses githubHostPill — the same helper the pending
+           action cards and the Past Requests table use — so a GHE hive reads
+           identically wherever it appears. An absent host renders as
+           "github.com" rather than a blank chip, which is what an old
+           heartbeat-only spoke that cannot yet report its host should show. */
         var locationCell = '<div style="' + STACKED_CELL_STYLE + '">' +
           '<div style="' + STACKED_LINE_STYLE + '">' + locationBadge + '</div>' +
           '<div style="' + STACKED_LINE_STYLE + ';font-size:0.7rem">' + visibilityCell + '</div>' +
+          '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance this hive targets">' + githubHostPill(h.githubHost) + '</div>' +
           '</div>';
         var pendingExpandRow = '';
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write') && (h.pending_requests || []).length > 0) {
