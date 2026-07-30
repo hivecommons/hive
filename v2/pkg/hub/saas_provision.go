@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -396,6 +397,30 @@ func effectiveGitHubAPIURL(h *SaaSHive, cluster *ClusterConfig) string {
 	}
 }
 
+// resolveProvisionAppID chooses the GitHub App ID to provision a hive with,
+// following the hive's GitHub HOST. The App may live on github.com or GitHub
+// Enterprise depending on the repos; the App ID must match, because the public
+// github.com App (config.Default... / the 3568013 default carried in req.AppID)
+// cannot mint installation tokens against a github.ibm.com repo.
+//
+// Rule:
+//   - GHE hive (effectiveGitHubBaseURL != "") → the cluster's GitHubAppID (the
+//     GHE App registered on that enterprise), when the cluster names one. This
+//     overrides a public app_id that a placeholder was seeded with — the exact
+//     bug where GHE hives carried app_id 3568013 and could never write.
+//   - Otherwise (public hive, or a GHE cluster with no GHE App configured) →
+//     the request's app_id verbatim, so public hives and explicit overrides are
+//     unchanged.
+//
+// Returns a string (the template field is a string); sanitize() is applied to
+// any request-sourced value exactly as before.
+func resolveProvisionAppID(reqAppID string, h *SaaSHive, cluster *ClusterConfig) string {
+	if cluster != nil && cluster.GitHubAppID != 0 && effectiveGitHubBaseURL(h, cluster) != "" {
+		return strconv.FormatInt(cluster.GitHubAppID, 10)
+	}
+	return sanitize(reqAppID)
+}
+
 // backfillGitHubHostFromCluster returns the GitHub host a hive should inherit
 // from its cluster, or "" when there is nothing to fill in.
 //
@@ -713,8 +738,16 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"Token":           req.GitHubToken,
 		"UseApp":          useApp,
 		"UseAppFull":      useAppFull,
-		"AppID":           sanitize(req.AppID),
-		"InstallationID":  sanitize(req.InstallationID),
+		// AppID / AppSlug follow the hive's GitHub HOST (the App may be on
+		// github.com OR github.ibm.com, per the repos). A GHE hive must get the
+		// cluster's GitHub Enterprise App — not the public github.com App
+		// (3568013), which cannot mint tokens against github.ibm.com. When the
+		// request didn't carry an App id and the hive is GHE, fall back to the
+		// cluster's GitHubAppID/GitHubAppSlug. Public-GitHub hives are unchanged
+		// (req value, else config's public default downstream). OAuth is a SEPARATE
+		// concern and is always github.com — see OAuthClientID below.
+		"AppID":          resolveProvisionAppID(req.AppID, h, cluster),
+		"InstallationID": sanitize(req.InstallationID),
 		"AppPrivateKey": func() string {
 			lines := strings.Split(strings.TrimSpace(req.AppPrivateKey), "\n")
 			for i := range lines {
@@ -778,22 +811,24 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		"HasGHE":            effectiveGitHubBaseURL(h, cluster) != "",
 		"GitHubBaseURL":     effectiveGitHubBaseURL(h, cluster),
 		"GitHubAPIURL":      effectiveGitHubAPIURL(h, cluster),
-		// Only emit app_slug when the cluster names one. Leaving it out lets
-		// config.ResolvedAppSlug() supply the public default, so public-GitHub
-		// hives are unaffected.
-		"GitHubAppSlug": cluster.GitHubAppSlug,
-		"OAuthClientID": func() string {
-			// Follow the hive's EFFECTIVE GitHub host, not the cluster
-			// default — a public-GitHub hive on a GHE-defaulted cluster
-			// must still get the public Device Flow client ID or its
-			// direct-route sign-in is broken.
-			if effectiveGitHubBaseURL(h, cluster) == "" {
-				return publicGitHubOAuthClientID
-			}
-			if cluster.OAuthClientID != "" {
-				return cluster.OAuthClientID
+		// app_slug follows the hive's GitHub host: a GHE hive gets the cluster's
+		// GHE App slug (e.g. "kubestellar-hive-ghe"); a public-GitHub hive emits
+		// none, letting config.ResolvedAppSlug() supply the public default. Only
+		// pair the cluster slug with a GHE hive so a public hive on a GHE-defaulted
+		// cluster is never mislabeled with the GHE app.
+		"GitHubAppSlug": func() string {
+			if effectiveGitHubBaseURL(h, cluster) != "" {
+				return cluster.GitHubAppSlug
 			}
 			return ""
+		}(),
+		"OAuthClientID": func() string {
+			// OAuth / device-flow LOGIN is ALWAYS github.com, decoupled from the
+			// App/repo host — every user signs in with a github.com identity even
+			// on a GHE hive. Always emit the public github.com Device Flow client
+			// ID; never the cluster's (possibly GHE) client. Mirrors the spoke-side
+			// GitHubConfig.OAuthClientIDResolved() / OAuthBaseURL() split.
+			return publicGitHubOAuthClientID
 		}(),
 		"CertIssuer":   cluster.CertIssuer,
 		"IngressClass": cluster.IngressClass,
