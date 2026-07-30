@@ -590,7 +590,14 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if m.appAuth != nil && agent.UID > 0 {
 		tier := m.agentMode(agent).TokenTier()
 		if err := m.appAuth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
-			m.logger.Warn("failed to mint per-agent token, agent will use shared cache",
+			// Be precise about the blast radius. A shared-cache fallback does
+			// exist (gh-wrapper.sh / git-credential-hive.sh fall back to
+			// /var/run/hive-metrics/gh-app-token.cache), but it is the FULL
+			// installation token, not this agent's tier-scoped one — so the
+			// failure silently escalates privilege rather than degrading
+			// gracefully, and it only works at all if that shared cache is
+			// present and group-readable. Say that, don't imply it's fine.
+			m.logger.Warn("per-agent scoped token NOT delivered — agent falls back to the shared FULL-privilege App token (tier scoping lost); if the shared cache is also missing, all GitHub writes for this agent will fail",
 				"agent", agent.Name, "tier", tier, "error", err)
 		}
 	}
