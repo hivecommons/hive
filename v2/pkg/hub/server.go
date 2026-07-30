@@ -215,6 +215,71 @@ func isValidName(s string) bool {
 	return safeNamePattern.MatchString(s) && len(s) <= 100
 }
 
+// publicGitHubHost is the bare hostname of public GitHub. A hive record stores
+// "" for public GitHub, but a REQUEST must name its forge explicitly, and this
+// is the label a requester types (or the picker submits) to mean "public".
+const publicGitHubHost = "github.com"
+
+// minForgeHostLabels is the fewest dot-separated labels a forge hostname can
+// have. A GitHub forge is always at least "host.tld" (github.com,
+// github.ibm.com); a single bare label like "github" is a typo, not a forge,
+// and accepting it would provision a hive against a host that resolves nowhere.
+const minForgeHostLabels = 2
+
+// normalizeForgeHost turns whatever a user typed into a "GitHub forge" field
+// into a bare hostname, and reports whether the result is a usable forge.
+//
+// It accepts every form the request modal advertises — with or without a
+// scheme, with or without a trailing slash — because those are what people
+// actually paste out of a browser address bar:
+//
+//	github.com            -> ("github.com",     true)
+//	https://github.com    -> ("github.com",     true)
+//	github.ibm.com        -> ("github.ibm.com", true)
+//	https://github.ibm.com/ -> ("github.ibm.com", true)
+//	""                    -> ("",               false)
+//	"not a host"          -> ("not a host",     false)
+//
+// Normalization runs BEFORE validation deliberately. isValidName rejects ":"
+// and "/", so validating the raw input would reject "https://github.ibm.com" —
+// a form the request form explicitly tells users to use. Callers must
+// normalize first and validate the result.
+//
+// githubHostLabel does the scheme/slash stripping and is reused here rather
+// than duplicated, so the hostname a request records and the hostname the
+// dashboard renders can never drift into two spellings.
+func normalizeForgeHost(s string) (string, bool) {
+	host := strings.ToLower(githubHostLabel(strings.TrimSpace(s)))
+	// githubHostLabel maps empty -> "github.com". For a REQUEST that default is
+	// wrong: an omitted forge must fail, not silently become public GitHub.
+	if strings.TrimSpace(s) == "" {
+		return "", false
+	}
+	// A pasted org URL ("github.ibm.com/my-org") carries a path; keep only the
+	// host so the forge field tolerates the same paste the org field does.
+	if i := strings.Index(host, "/"); i >= 0 {
+		host = host[:i]
+	}
+	if !isValidName(host) {
+		return host, false
+	}
+	// Every label must be non-empty and contain something other than dots, so
+	// "..", "../..", and ".github.com" are rejected. isValidName permits dots
+	// (legitimately — hostnames need them), which on its own would let a
+	// path-traversal prefix like "../../etc/passwd" survive truncation at the
+	// first slash and be stored as the forge "..".
+	labels := strings.Split(host, ".")
+	if len(labels) < minForgeHostLabels {
+		return host, false
+	}
+	for _, label := range labels {
+		if label == "" {
+			return host, false
+		}
+	}
+	return host, true
+}
+
 // normalizeOrgRef accepts what a user actually pastes into an "org" field and
 // splits it into a GitHub host and a bare org name.
 //

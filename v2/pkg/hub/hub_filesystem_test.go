@@ -977,7 +977,9 @@ func TestHandleRequestProvisionWithFilesystem(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	body := `{"org":"validorg","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3}`
+	// github_host is required — the forge the org lives on must be captured at
+	// request time, so this end-to-end save fixture carries one.
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_reqprov_fs")
@@ -995,6 +997,9 @@ func TestHandleRequestProvisionWithFilesystem(t *testing.T) {
 	}
 	if pr.Org != "validorg" {
 		t.Errorf("org = %q", pr.Org)
+	}
+	if pr.GitHubHost != "github.com" {
+		t.Errorf("github_host = %q, want it persisted as github.com", pr.GitHubHost)
 	}
 }
 

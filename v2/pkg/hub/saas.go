@@ -4784,6 +4784,19 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	if ghHost != "" {
 		body.GitHubHost = ghHost
 	}
+	// The forge is REQUIRED. A bare org name ("z-innersource") does not say
+	// whether the org lives on github.com or on a GitHub Enterprise instance,
+	// and the hub cannot guess: the wrong choice provisions the hive against
+	// the wrong GitHub and points the App-install link at a forge the org
+	// admin never sees. Normalize FIRST — the field accepts
+	// "https://github.ibm.com/" and isValidName rejects ":" and "/", so
+	// validating the raw value would reject a form the form itself advertises.
+	forgeHost, ok := normalizeForgeHost(body.GitHubHost)
+	if !ok {
+		http.Error(w, `{"error":"a GitHub forge is required — enter the host your org lives on (e.g. github.com or github.ibm.com); without it we cannot tell which GitHub to provision against"}`, http.StatusBadRequest)
+		return
+	}
+	body.GitHubHost = forgeHost
 	// Single-host-per-spoke: every repo (and the primary) must be on the same
 	// GitHub host as the org. Check BEFORE normalizeRepoRef strips the host off
 	// each pasted repo. Reject a mixed request up front with a clear message —
@@ -4807,7 +4820,10 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		http.Error(w, fmt.Sprintf(`{"error":"invalid org name %q — use the org name or its URL (e.g. github.ibm.com/my-org)"}`, body.Org), http.StatusBadRequest)
 		return
 	}
-	if body.GitHubHost != "" && !isValidName(body.GitHubHost) {
+	// Defence in depth: normalizeForgeHost above already guaranteed this, but
+	// keep the check so a future edit that reorders the handler cannot let an
+	// unvalidated host reach the stored request.
+	if !isValidName(body.GitHubHost) {
 		http.Error(w, `{"error":"invalid github host"}`, http.StatusBadRequest)
 		return
 	}
@@ -6423,7 +6439,7 @@ const dashboardHTML = `<!DOCTYPE html>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
         <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
-        <button class="btn-primary" id="btn-request-hive" style="display:none;background:var(--blue)" onclick="document.getElementById('request-modal').style.display='flex'">Request a Hive</button>
+        <button class="btn-primary" id="btn-request-hive" style="display:none;background:var(--blue)" onclick="openRequestHiveModal()">Request a Hive</button>
       </div>
     </div>
 
@@ -11178,6 +11194,116 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Deny'; }
     }
 
+    /* REQUEST_FORGE_CUSTOM is the sentinel option value that reveals the
+       free-text forge box. It is not a hostname and is never submitted. */
+    var REQUEST_FORGE_CUSTOM = '__custom__';
+
+    /* normalizeForgeInput mirrors the server's normalizeForgeHost: strip the
+       scheme, drop any pasted path, drop a trailing slash, lowercase. Keeping
+       the two in step means the live preview shows exactly the host the server
+       will store, instead of a spelling that changes on submit. */
+    function normalizeForgeInput(raw) {
+      var h = (raw || '').trim().toLowerCase();
+      h = h.replace(/^https?:\/\//, '');
+      var slash = h.indexOf('/');
+      if (slash >= 0) h = h.slice(0, slash);
+      return h;
+    }
+
+    /* renderRequestForgeOptions fills the Request-a-Hive forge picker from the
+       forges the hub's own clusters actually run on, plus public github.com and
+       an "other" escape hatch.
+
+       Hybrid rather than pure free-text: the listed forges are the ones the hub
+       can actually place a hive on, so the common path is a click that cannot
+       be typo'd, and the list self-documents what is supported. Pure free-text
+       invites "gihub.ibm.com"; a pure select would block a brand-new GHE
+       instance the hub has no cluster for yet, which is a real onboarding case
+       — hence "Other". */
+    function renderRequestForgeOptions() {
+      var sel = document.getElementById('rq-forge');
+      if (!sel) return;
+      var seen = {};
+      var hosts = [];
+      (_clusterList || []).forEach(function(c) {
+        var h = normalizeForgeInput((c && c.github_host) || '');
+        if (!h || seen[h]) return;
+        seen[h] = true;
+        hosts.push(h);
+      });
+      /* Public GitHub is always offered even when no cluster reports it, so the
+         picker is never empty before the cluster list loads. */
+      if (!seen[PUBLIC_GITHUB_HOST]) hosts.unshift(PUBLIC_GITHUB_HOST);
+      hosts.sort();
+      var prev = sel.value;
+      var opts = hosts.map(function(h) {
+        return '<option value="' + esc(h) + '">' + esc(h) + '</option>';
+      });
+      opts.push('<option value="' + esc(REQUEST_FORGE_CUSTOM) + '">Other GitHub Enterprise host&#x2026;</option>');
+      sel.innerHTML = opts.join('');
+      if (prev) sel.value = prev;
+      if (!sel.value) sel.value = PUBLIC_GITHUB_HOST;
+      /* Bind once. renderRequestForgeOptions re-runs whenever the cluster list
+         reloads, and re-adding these listeners each time would fire the
+         preview N times per keystroke. */
+      if (!sel._rqForgeWired) {
+        sel._rqForgeWired = true;
+        sel.addEventListener('change', syncRequestForgePreview);
+        var customEl = document.getElementById('rq-forge-custom');
+        if (customEl) customEl.addEventListener('input', syncRequestForgePreview);
+        var orgEl = document.getElementById('rq-org');
+        if (orgEl) orgEl.addEventListener('input', syncRequestForgePreview);
+      }
+      syncRequestForgePreview();
+    }
+
+    /* requestForgeValue returns the normalized forge host the modal will
+       submit, or '' when "Other" is selected and nothing has been typed. */
+    function requestForgeValue() {
+      var sel = document.getElementById('rq-forge');
+      if (!sel) return '';
+      if (sel.value !== REQUEST_FORGE_CUSTOM) return normalizeForgeInput(sel.value);
+      var custom = document.getElementById('rq-forge-custom');
+      return normalizeForgeInput(custom && custom.value);
+    }
+
+    /* syncRequestForgePreview shows the forge with the org affixed to it —
+       "github.ibm.com/z-innersource" — so the requester sees the exact target
+       they are asking for before they submit, rather than discovering after
+       provisioning that the org was resolved against the wrong GitHub. */
+    function syncRequestForgePreview() {
+      var sel = document.getElementById('rq-forge');
+      var custom = document.getElementById('rq-forge-custom');
+      var out = document.getElementById('rq-target-preview');
+      if (sel && custom) custom.style.display = sel.value === REQUEST_FORGE_CUSTOM ? 'block' : 'none';
+      if (!out) return;
+      var host = requestForgeValue();
+      var orgEl = document.getElementById('rq-org');
+      var org = orgEl ? orgEl.value.trim() : '';
+      /* The org field accepts a pasted URL too; show only its last segment so
+         the preview never renders "github.com/https://github.ibm.com/x". */
+      if (org) {
+        var parts = org.replace(/^https?:\/\//, '').replace(/\/+$/, '').split('/');
+        org = parts[parts.length - 1];
+      }
+      if (!host) {
+        out.textContent = 'Enter the GitHub forge your org lives on.';
+        out.style.color = 'var(--muted)';
+        return;
+      }
+      out.textContent = 'This hive will target ' + host + '/' + (org || '<org>') +
+        (host !== PUBLIC_GITHUB_HOST ? ' — the GitHub App must be installed on that org on ' + host + '.' : '');
+      out.style.color = host !== PUBLIC_GITHUB_HOST ? 'var(--accent, #58a6ff)' : 'var(--muted)';
+    }
+
+    /* openRequestHiveModal shows the modal with a freshly populated forge
+       picker, so a cluster list that loaded after page render is reflected. */
+    function openRequestHiveModal() {
+      renderRequestForgeOptions();
+      syncRequestForgePreview();
+      document.getElementById('request-modal').style.display = 'flex';
+    }
+
     var _requestInProgress = false;
     async function submitProvisionRequest() {
       if (_requestInProgress) return;
@@ -11189,14 +11315,25 @@ const dashboardHTML = `<!DOCTYPE html>
       var repos = document.getElementById('rq-repos').value.trim();
       var primary = document.getElementById('rq-primary').value.trim();
       var level = parseInt(document.getElementById('rq-level').value) || 1;
+      var forge = requestForgeValue();
 
-      if (!org || !repos) { hiveToast('Org and repos are required', 'error'); _requestInProgress = false; btn.disabled = false; btn.textContent = 'Submit Request'; return; }
+      function abort(msg) {
+        hiveToast(msg, 'error');
+        _requestInProgress = false;
+        btn.disabled = false;
+        btn.textContent = 'Submit Request';
+      }
+
+      if (!org || !repos) { abort('Org and repos are required'); return; }
+      /* The forge is required client-side for a fast, in-context error; the
+         server enforces it independently — this check is UX, not security. */
+      if (!forge) { abort('A GitHub forge is required — pick one or enter the host your org lives on'); return; }
 
       try {
         var resp = await fetch('/api/saas/request-provision', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({org: org, repos: repos, primary_repo: primary || repos.split(',')[0].trim(), acmm_level: level})
+          body: JSON.stringify({org: org, github_host: forge, repos: repos, primary_repo: primary || repos.split(',')[0].trim(), acmm_level: level})
         });
         var data = await resp.json();
         if (!resp.ok) { hiveToast(data.error || 'Request failed', 'error'); return; }
@@ -11388,6 +11525,10 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!resp.ok) return;
         var clusters = await resp.json();
         _clusterList = clusters || [];
+        /* Refresh the Request-a-Hive forge picker: the cluster list usually
+           lands after first render, and the picker's whole value is listing the
+           forges the hub can actually place a hive on. */
+        renderRequestForgeOptions();
         var sel = document.getElementById('f-cluster');
         if (!sel || !clusters || !clusters.length) return;
         sel.innerHTML = clusters.map(function(c) {
@@ -12830,8 +12971,15 @@ const dashboardHTML = `<!DOCTYPE html>
       <div style="flex:1;overflow-y:auto;padding:0 32px">
         <p style="font-size:0.8rem;color:var(--muted);margin-bottom:16px">Submit a request for a hosted hive. An admin will review and approve it.</p>
         <div style="margin-bottom:12px">
+          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">GitHub Forge *</label>
+          <select id="rq-forge" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"></select>
+          <input id="rq-forge-custom" type="text" placeholder="github.example.com" style="width:100%;margin-top:6px;display:none;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+          <div style="font-size:0.72rem;color:var(--muted);margin-top:4px">Which GitHub your org lives on. Required &#x2014; a bare org name does not say whether it is on github.com or a GitHub Enterprise instance.</div>
+        </div>
+        <div style="margin-bottom:12px">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">GitHub Organization *</label>
           <input id="rq-org" type="text" placeholder="my-org" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
+          <div id="rq-target-preview" style="font-size:0.75rem;color:var(--muted);margin-top:6px"></div>
         </div>
         <div style="margin-bottom:12px">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Repositories * <span style="font-size:0.7rem">(comma-separated)</span></label>

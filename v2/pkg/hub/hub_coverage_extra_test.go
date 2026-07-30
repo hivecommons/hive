@@ -968,8 +968,9 @@ func TestHandleRequestProvisionDefaultPrimaryRepo(t *testing.T) {
 		ghTokenCacheMu.Unlock()
 	}()
 
-	// primary_repo not provided — should default to first repo
-	body := `{"org":"validorg","repos":"repo1,repo2","acmm_level":2}`
+	// primary_repo not provided — should default to first repo. github_host is
+	// required and must be present for the request to reach that defaulting.
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","acmm_level":2}`
 	req := httptest.NewRequest("POST", "/provision-test", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_prov_default")

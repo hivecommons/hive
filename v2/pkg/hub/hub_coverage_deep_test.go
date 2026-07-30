@@ -602,7 +602,9 @@ func TestHandleRequestProvisionValidBody(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	body := `{"org":"validorg","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token"}`
+	// github_host is required: a request must name the GitHub forge its org
+	// lives on, so a "valid body" fixture has to carry one.
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_prov_valid")
