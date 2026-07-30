@@ -2266,7 +2266,7 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 		// so the hive disappears from the listing immediately.
 		s.removeRegistryEntry(id, username)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"deleted"}`))
+		json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 		return
 	}
 	if h.Owner != username && username != hubAdminUsername {
@@ -2275,19 +2275,49 @@ func (s *HubServer) handleDeleteHive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Full de-provisioning: namespace, PV, OCI export, OCI file system, disk record, user cleanup.
+	//
+	// The registry entry is removed unconditionally, even when the cluster
+	// teardown cannot run or only partially succeeds. A hive whose namespace is
+	// already gone (or whose cluster config has been removed) would otherwise be
+	// permanently un-deletable: the handler used to return 500 before reaching
+	// removeRegistryEntry, stranding a ghost row in "My Hives" that no amount of
+	// re-clicking Delete could clear. Leaving a stranded row is strictly worse
+	// than leaving cloud resources behind, because the row is what the user sees
+	// and it is the only thing they can act on. Partial failures are reported in
+	// the response so the user knows manual cleanup may still be needed.
 	cluster := s.clusterForHive(h)
-	if cluster == nil {
-		s.logger.Error("no cluster config for deprovision", "hive_id", id, "cluster_id", h.ClusterID)
-		http.Error(w, `{"error":"no cluster config — cannot deprovision"}`, http.StatusInternalServerError)
-		return
+	if cluster != nil {
+		deprovisionHive(h, cluster, s.logger)
+	} else {
+		s.logger.Error("no cluster config for deprovision; removing registry entry anyway",
+			"hive_id", id, "cluster_id", h.ClusterID)
 	}
-	deprovisionHive(h, cluster, s.logger)
 	s.removeRegistryEntry(id, username)
 
-	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username)
+	s.logger.Info("audit: hosted hive deleted", "hive_id", id, "by", username,
+		"deprovisioned", cluster != nil)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"deleted"}`))
+	if cluster == nil {
+		// deleteStatusPartial tells the UI the registry row is gone but cloud
+		// resources may survive and need manual cleanup.
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  deleteStatusPartial,
+			"warning": "removed from the hub registry, but no cluster config was available to delete the namespace, PV, or OCI storage — these may need manual cleanup",
+		})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": deleteStatusDeleted})
 }
+
+// Delete outcome statuses returned by handleDeleteHive.
+const (
+	// deleteStatusDeleted means the registry entry was removed and the cluster
+	// teardown ran.
+	deleteStatusDeleted = "deleted"
+	// deleteStatusPartial means the registry entry was removed but the cluster
+	// teardown could not run; cloud resources may need manual cleanup.
+	deleteStatusPartial = "partially_deleted"
+)
 
 // MigrateRequest is the JSON body for POST /api/saas/hives/{id}/migrate.
 type MigrateRequest struct {
@@ -12087,8 +12117,20 @@ const dashboardHTML = `<!DOCTYPE html>
         gtag('event','hive_deleted',{hive_id:id});
         hiveToast('Deleting ' + id + '...', 'info');
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(id), {method: 'DELETE'});
-        if (!resp.ok) { var d = await resp.json(); hiveToast(d.error || 'Delete failed', 'error'); return; }
-        hiveToast('Deleted ' + id, 'success');
+        if (!resp.ok) {
+          var d = await resp.json().catch(function(){ return {}; });
+          hiveToast(d.error || 'Delete failed', 'error');
+          // Refresh regardless: the hub removes the registry entry even when
+          // teardown fails, so the listing may already be correct.
+          loadHives();
+          return;
+        }
+        var ok = await resp.json().catch(function(){ return {}; });
+        if (ok.status === 'partially_deleted') {
+          hiveToast('Removed ' + id + ' from the hub, but cleanup was incomplete: ' + (ok.warning || 'cloud resources may need manual removal'), 'error');
+        } else {
+          hiveToast('Deleted ' + id, 'success');
+        }
         loadHives();
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
       finally { btns.forEach(function(b) { b.disabled = false; b.textContent = 'Delete'; b.style.opacity = '1'; }); }

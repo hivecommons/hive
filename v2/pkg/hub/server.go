@@ -1466,19 +1466,55 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// removeRegistryEntry removes a hive from the in-memory registry by ID.
+// removeRegistryEntry removes a hive from the in-memory registry by ID and
+// flushes the registry to disk before returning.
+//
+// The flush is synchronous rather than going through requestSave because
+// requestSave defers the write by registrySaveDelay. A hub restart inside that
+// window would reload the pre-delete registry from disk and the deleted hive
+// would reappear in "My Hives" — the in-memory removal alone is not durable.
+// Deletion is rare and user-initiated, so paying the write cost inline is fine.
 func (s *HubServer) removeRegistryEntry(id, by string) {
 	s.mu.Lock()
+	removed := false
 	for i, h := range s.registry.Hives {
 		if h.ID == id {
 			s.registry.Hives = append(s.registry.Hives[:i], s.registry.Hives[i+1:]...)
-			s.mu.Unlock()
-			s.requestSave()
-			s.logger.Info("audit: registry entry removed", "id", id, "by", by)
-			return
+			removed = true
+			break
 		}
 	}
 	s.mu.Unlock()
+	if !removed {
+		return
+	}
+	if err := s.saveRegistryNow(); err != nil {
+		// The in-memory removal already happened, so the listing is correct for
+		// this process. Log loudly: only a restart before the next periodic save
+		// would resurrect the entry.
+		s.logger.Error("registry entry removed in memory but persist failed", "id", id, "error", err)
+		s.requestSave()
+	}
+	s.logger.Info("audit: registry entry removed", "id", id, "by", by)
+}
+
+// saveRegistryNow marshals and writes the registry to disk immediately, via a
+// temp file plus atomic rename so a crash mid-write cannot truncate it.
+func (s *HubServer) saveRegistryNow() error {
+	s.mu.RLock()
+	data, err := json.MarshalIndent(s.registry, "", "  ")
+	s.mu.RUnlock()
+	if err != nil {
+		return fmt.Errorf("marshal hub registry: %w", err)
+	}
+	tmpPath := registryPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("write hub registry: %w", err)
+	}
+	if err := os.Rename(tmpPath, registryPath); err != nil {
+		return fmt.Errorf("rename hub registry: %w", err)
+	}
+	return nil
 }
 
 func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
@@ -1498,7 +1534,11 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 	}
 	s.mu.Unlock()
 	if removed {
-		s.requestSave()
+		// Synchronous flush for the same durability reason as removeRegistryEntry.
+		if err := s.saveRegistryNow(); err != nil {
+			s.logger.Error("admin registry removal persist failed", "id", id, "error", err)
+			s.requestSave()
+		}
 		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", hubAdminUsername)
 	}
 	w.Header().Set("Content-Type", "application/json")

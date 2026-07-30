@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -68,18 +69,40 @@ func TestHandleUpgradeHiveRegistryUpdate(t *testing.T) {
 	}
 }
 
+// TestHandleDeleteHiveNoCluster: a missing cluster config must NOT block the
+// delete. This previously returned 500 before removing the registry entry,
+// which stranded a ghost row in "My Hives" that the user could never clear.
+// The delete now succeeds and reports the partial outcome instead.
 func TestHandleDeleteHiveNoCluster(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	mkUser(t, "alice")
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "gone"})
 	s := noClusterHub()
+	s.mu.Lock()
+	s.registry.Hives = []RegistryEntry{{ID: "h1", Owner: "alice"}}
+	s.mu.Unlock()
 
 	rec := httptest.NewRecorder()
 	req := setPathValue(reqWithUser(http.MethodDelete, "/del", "", "alice"), "id", "h1")
 	s.handleDeleteHive(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("no-cluster delete status = %d, want 500", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("no-cluster delete status = %d, want 200 body=%s", rec.Code, rec.Body.String())
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("parse response: %v (body=%s)", err, rec.Body.String())
+	}
+	if body["status"] != deleteStatusPartial {
+		t.Errorf("no-cluster delete status field = %q, want %q", body["status"], deleteStatusPartial)
+	}
+
+	s.mu.RLock()
+	remaining := len(s.registry.Hives)
+	s.mu.RUnlock()
+	if remaining != 0 {
+		t.Errorf("registry entry survived a no-cluster delete (ghost hive), %d remaining", remaining)
 	}
 }
 
