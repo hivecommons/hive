@@ -9,18 +9,50 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 // User-journey nudges.
 //
-// Every hive owner walks the same adoption path:
+// The full adoption path, in order. It has two phases: the HUB provisions and
+// assigns a placeholder, then — once the user TAKES POSSESSION of that assigned
+// placeholder — the remaining steps happen on the SPOKE.
 //
-//	Stage 1  Install the GitHub App          URGENT   — days, not weeks
-//	Stage 2  Assign a method/model, OR run   MEDIUM   — a few weeks
-//	         the contributor relay
-//	Stage 3  Raise the ACMM level            SLOW     — months, never forced
+//	── Hub-side (before the user takes possession) ──
+//	1. Request        — with a PRIMARY REPO on github.com OR github.ibm.com.
+//	                    The primary repo's host determines this hive's App host
+//	                    (step 4) and every other repo in the spoke MUST be on the
+//	                    same host — a spoke is single-host (see the repo-host
+//	                    consistency rule).
+//	2. Assign         — the hub assigns the requester to a placeholder hive.
 //
-// This file computes, server-side, which stage each hive is stalled on and
-// turns that into an escalating banner delivered over the existing per-hive
-// hub-banner channel (see hubBanners in server.go and the heartbeat response
-// assembly in handleHeartbeat). It NEVER de-provisions anything: the strongest
-// action it takes is warning that a human may de-provision the spoke.
+//	── Spoke-side (once the user has taken possession) ──
+//	3. Spoke login    — the owner signs into the dashboard via device flow. Login
+//	                    is ALWAYS github.com OAuth (GitHubConfig.OAuthBaseURL /
+//	                    OAuthAPIURL / OAuthClientIDResolved), decoupled from the
+//	                    App/repo host — a user signs in with a github.com identity
+//	                    even on a GHE hive.
+//	4. GH / GHE App   — install the GitHub App. github.com App for a github.com
+//	                    primary repo, GitHub Enterprise App for a github.ibm.com
+//	                    primary repo. THIS IS THE WRITE GATE (below).
+//	5. Setup agents   — assign methods + models (or run the contributor relay),
+//	                    then raise the ACMM level.
+//
+// The stall-detection stages below track the SPOKE-side steps (3-5): a
+// placeholder can be assigned yet sit un-logged-in, App-less, or agent-less.
+//
+// WRITE GATE — the App (step 4) is a hard prerequisite for ANY write. A hive
+// MUST have a real, installed GH/GHE App before an agent opens an issue or PR,
+// comments, or merges. This is enforced in code, not just policy: agent write
+// credentials (the GITHUB_TOKEN handed to the GitHub MCP server) are minted from
+// the App installation token, and that token only exists when
+// GitHubConfig.HasUsableApp() is true (real app_id + installation_id). No App →
+// m.appAuth is nil → no GITHUB_TOKEN is injected → the agent has no credential to
+// write with. Advisory work (reading, KB, beads) still runs App-less.
+//
+// The nudge STAGES below (1/2/3) are a compressed view of the same path used for
+// escalating banners — stage 1 = "install the App" (journey step 4), stage 2 =
+// "assign a method/model" (step 5), stage 3 = "raise the ACMM level". This file
+// computes, server-side, which stage each hive is stalled on and turns that into
+// an escalating banner delivered over the existing per-hive hub-banner channel
+// (see hubBanners in server.go and the heartbeat response assembly in
+// handleHeartbeat). It NEVER de-provisions anything: the strongest action it
+// takes is warning that a human may de-provision the spoke.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── Tunable thresholds ──────────────────────────────────────────────────────
@@ -302,6 +334,55 @@ func githubAppInstalled(h *RegistryEntry) bool {
 	return true
 }
 
+// githubAppBlockedByOperator reports whether this hive's GitHub App stage is
+// stalled for a reason ONLY the hub operator can fix — the App private key was
+// never delivered to the spoke, or the key it holds belongs to a different App
+// so GitHub rejects every JWT it signs.
+//
+// The owner cannot see, supply, or correct that key. Nudging them to "install
+// the GitHub App" is wrong, and escalating to a de-provision warning would
+// penalise a user for OUR failure. So when this is true the journey system
+// stays silent on stage 1 entirely: the hive is not on the adoption journey,
+// it is waiting on us.
+//
+// It reads the spoke-reported classification. An empty or unrecognised value
+// (a spoke too old to report it) is NOT treated as operator-blocked — that
+// would silence genuine "you have not installed the App" nudges for the whole
+// fleet. Unknown means "fall through to the existing behaviour".
+func githubAppBlockedByOperator(h *RegistryEntry) bool {
+	if h == nil {
+		return false
+	}
+	return appStateIsOperatorSide(h.GitHubAppState)
+}
+
+// appStateIsOperatorSide is the token-level predicate, so callers holding a
+// different entry type (MyHiveEntry in drift.go) share one definition.
+func appStateIsOperatorSide(state string) bool {
+	return operatorSideAppStates[strings.TrimSpace(state)]
+}
+
+// operatorSideAppStates are the github.AppAuthState wire tokens that describe
+// a credential failure only the hub operator can repair. Kept as literal
+// tokens rather than importing pkg/github so the hub does not take a
+// dependency on the spoke's GitHub client; pkg/github's
+// TestAppAuthState_WireRoundTrip locks the token strings on the other side.
+//
+//   - "key-missing" — no App private key reached this spoke at all.
+//   - "key-invalid" — a key is present but GitHub rejects the JWT it signs,
+//     i.e. it belongs to a different App than the hive claims to be.
+var operatorSideAppStates = map[string]bool{
+	appStateKeyMissingToken: true,
+	appStateKeyInvalidToken: true,
+}
+
+const (
+	// appStateKeyMissingToken / appStateKeyInvalidToken mirror
+	// github.AppStateKeyMissing.String() and github.AppStateKeyInvalid.String().
+	appStateKeyMissingToken = "key-missing"
+	appStateKeyInvalidToken = "key-invalid"
+)
+
 // methodModelAssigned reports whether any agent on this hive has a method
 // (backend) or model assigned.
 //
@@ -425,6 +506,14 @@ func nextNudge(h *RegistryEntry, now time.Time) nudge {
 
 	// ── Stage 1: GitHub App ────────────────────────────────────────────────
 	if !githubAppInstalled(h) {
+		// Never nudge — and above all never threaten de-provisioning — when
+		// the block is operator-side. The owner has done everything asked of
+		// them; the missing piece is a private key the hub distributes. Say
+		// nothing here and let the spoke's own banner explain that an admin is
+		// required.
+		if githubAppBlockedByOperator(h) {
+			return nudge{}
+		}
 		n := nudge{Stage: StageGitHubApp, Resend: stage1ResendInterval, StalledFor: age}
 		switch {
 		case age >= stage1WarnAfter:

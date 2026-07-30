@@ -93,6 +93,12 @@ Response:
 
 The generated ID is `hosted-<org>-<primary_repo>-<4char>`.
 
+> **`app_id: 999999999` above is the placeholder sentinel, not an arbitrary
+> number.** It is `config.PlaceholderAppID`, and the spoke recognises it as
+> "this hive has no GitHub App yet". Use exactly this value — any other
+> non-zero number is read as a real App ID and the hive will try (and fail) to
+> authenticate as it. See [Placeholder `app_id`](#placeholder-app_id) below.
+
 **`CreateHiveRequest` fields that matter:**
 
 | Field | Notes |
@@ -102,7 +108,7 @@ The generated ID is `hosted-<org>-<primary_repo>-<4char>`.
 | `acmm_level` | Starting autonomy. **Default new hives to `2`** (Instructed / advisory-only). |
 | `cluster_id` | `hive-oke` (the `defaultClusterID`). |
 | `auth_method` | `app` or a token. |
-| `app_id` / `installation_id` / `app_private_key` | Three auth shapes: **token** (`github_token` starts `ghp_`/`github_pat_`); **app now** (all three set); **app later** — `app_id` set, `installation_id` **and** `app_private_key` **empty**. The last is the placeholder case: the hive provisions, then 401s until the owner installs the App from the dashboard. |
+| `app_id` / `installation_id` / `app_private_key` | Three auth shapes: **token** (`github_token` starts `ghp_`/`github_pat_`); **app now** (all three set); **app later** — `app_id` set, `installation_id` **and** `app_private_key` **empty**. The last is the placeholder case: pass the sentinel `app_id: 999999999` (see [Placeholder `app_id`](#placeholder-app_id)) and the hive provisions into dashboard-only mode until the owner installs the App from the dashboard. |
 | `is_public` | Pointer. **Absent defaults to public.** Send `false` explicitly for a private hive. |
 
 > **Gotcha — `auth_method: app` with no key provisions but reports `error`.**
@@ -263,7 +269,7 @@ data:
         idle: { threshold: 0,  guide: 4h, scanner: 4h }
         busy: { threshold: 10, guide: 2h, scanner: 2h }
     github:
-      app_id: 999999999               # placeholder until the real App is installed
+      app_id: 999999999               # the placeholder sentinel (config.PlaceholderAppID)
       installation_id:
       key_file: /secrets/gh-app-key.pem
       oauth_client_id: Ov23ligE2p0gjXg6xAUf   # public device-flow client (no secret)
@@ -282,11 +288,36 @@ data:
 YAML
 ```
 
+<a id="placeholder-app_id"></a>
+
 > **Gotcha — `github.app_id` cannot be empty.** Config validation requires
 > **either** `github.token` **or** `github.app_id` to be set
 > (`pkg/config/config.go`: `github.token or github.app_id is required`). A hive
-> awaiting its real App must carry a **placeholder** `app_id` (e.g. `999999999`)
-> or it will refuse to boot.
+> awaiting its real App must carry the **placeholder sentinel**
+> `app_id: 999999999` or it will refuse to boot.
+
+> **Use `999999999` exactly — it is a recognised sentinel, not a spare number.**
+> It is declared as `config.PlaceholderAppID`, and `GitHubConfig.HasApp()`
+> reports a hive carrying it as having **no** GitHub App. Such a hive boots into
+> dashboard-only mode: the dashboard serves, the heartbeat runs, and the "GitHub
+> App required" banner shows the install link. Agents stay idle until a real App
+> is linked.
+>
+> Any *other* non-zero placeholder is read as a **real** App ID. The hive will
+> then try to authenticate as an App that does not exist — and once
+> `installation_id` also becomes non-zero (which happens the moment the owner
+> installs an App), it attempts to load a private key that was never
+> provisioned. Before this was fixed, that combination exited the process
+> **before the HTTP listener bound**: permanent `CrashLoopBackOff`, no
+> heartbeat, the hive shown offline on the hub, and any in-flight rollout stuck
+> forever because the new pod never went Ready. The spoke now degrades instead
+> of exiting, but the hive still cannot do any GitHub work until the `app_id` is
+> corrected.
+>
+> Replacing the placeholder with the real value is normally automatic — the hub
+> delivers `app_id`, `installation_id` and the private key over the heartbeat
+> when the App is installed. To do it by hand, patch the PVC overlay
+> (`/data/hive.yaml.dashboard`, **not** the ConfigMap) and restart the pod.
 
 > **Gotcha — `hub_proxied` must be `false` on vllm-d.** vllm-d has no hub nginx
 > auth proxy. If `hub_proxied` is `true`, dashboard sign-in enters an OAuth
@@ -670,7 +701,9 @@ kubectl --context hive-oke -n hive-hub exec "$HUB_POD" -- \
 | Pod `1/1 Running` but hive shows **offline**; no 401, heartbeat just stopped | Heartbeat goroutine died; liveness probe on `/api/health` can't detect it | Point livenessProbe at `/api/livez`; restart to revive now |
 | Pod restarting repeatedly (`RESTARTS` climbing) while the app looks fine; hub unreachable/firewalled | Old liveness probe failed on stale *heartbeat success* — a connectivity condition a restart can't fix | Redeploy to pick up the attempt-based `/api/livez` (+ `startupProbe`); check `/api/health/deep` → `hub_heartbeat` for the real connectivity state |
 | Pod `CrashLoopBackOff` exit 255, SCC `restricted-v2` | `hive-anyuid` RoleBinding subject points at the wrong namespace | Set `subjects[].namespace` to the hive's own `$NS`, delete the pod |
-| Pod won't boot: `github.token or github.app_id is required` | `github.app_id` empty in the seed | Set a placeholder `app_id` (e.g. `999999999`) |
+| Pod won't boot: `github.token or github.app_id is required` | `github.app_id` empty in the seed | Set the placeholder sentinel `app_id: 999999999` — exactly that value, see [Placeholder `app_id`](#placeholder-app_id). Any other stand-in number is treated as a real App |
+| Pod `CrashLoopBackOff` with `failed to init GitHub App auth` / `reading app key ...: no such file`, restarts climbing, hive offline on the hub, rollout stuck with two crashlooping pods | A non-sentinel placeholder `app_id` plus a real `installation_id`, and no private key at `key_file`. Older builds exited before the listener bound, so nothing was visible in the dashboard | Set `app_id` to the real App ID and install the PEM at `key_file` (or set `app_id` to the sentinel `999999999` to park the hive in dashboard-only mode). Patch `/data/hive.yaml.dashboard` and restart. Current builds boot degraded and show the reason in the GitHub App banner instead of crashlooping |
+| Dashboard banner: "GitHub App private key could not be loaded from ..." | A real `app_id` + `installation_id`, but no readable PEM at the resolved path | The banner names the exact path tried and the resolution order (`$GH_APP_KEY_FILE` → `github.key_file` → PVC `/data/gh-app-key.pem` → provisioning mount `/secrets/gh-app-key.pem`). Write the PEM to that path, or point `github.key_file` at one |
 | Dashboard sign-in redirect loop (vllm-d) | `hub_proxied: true` on a cluster with no hub auth proxy | Set `hub_proxied: false` on the PVC overlay |
 | Hive online but **Upgrade** → `hive not found` | No `meta.json` on the hub | Create `/data/saas/hives/<id>/meta.json` |
 | Not visible in My Hives | No `meta.json`, or `owner` doesn't match | Create/patch `meta.json` with the right `owner` |

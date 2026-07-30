@@ -93,6 +93,15 @@ type AgentProcess struct {
 	lastInferKickMarks  int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
 	actionNudgeSent     bool      // no-action watchdog: at most one action nudge per kick
 	ActionNudges        int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+
+	// awaitingBobKey marks an agent that launchInTmux parked in StateFailed
+	// for the single, fully-recoverable reason "bob backend with no API key".
+	// It is what makes RelaunchBobAgentsAwaitingKey precise: StateFailed alone
+	// is ambiguous (a missing backend binary, a copilot auth timeout, and a
+	// hung diagnostic all land there too), and relaunching those on a bob-key
+	// save would restart agents whose problem the key does not fix.
+	// Set only on the missing-key branch, cleared on every launch attempt.
+	awaitingBobKey bool
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -110,6 +119,11 @@ type ProjectContext struct {
 	ACMMLevel  int
 	PRsAllowed bool
 	PolicyDir  string
+	// AppAuthoredPRs mirrors config github.app_authored_prs: when true, push-
+	// capable agents get the App installation token as GITHUB_TOKEN so the GitHub
+	// MCP server authors PRs/commits as the App bot. Default false → no token is
+	// injected and behavior is unchanged (opt-in per hive).
+	AppAuthoredPRs bool
 }
 
 type Manager struct {
@@ -134,6 +148,14 @@ type Manager struct {
 	// goroutine would deadlock startup before MarkReady and crash-loop every
 	// spoke. An atomic read is lock-free and safe from any lock context.
 	bobAPIKeyResolver atomic.Pointer[func() string]
+
+	// bobKeySourceResolver reports WHERE the key was found ("file:<path>" or
+	// "env:<NAME>"), never the value. The launch path needs the PATH so it can
+	// verify the file is readable by the AGENT UID — the hive process can read
+	// it as dev even when the agent cannot, so key presence alone is a false
+	// positive (see verifyBobKeyReadable). Same atomic.Pointer discipline and
+	// same deadlock reasoning as bobAPIKeyResolver above.
+	bobKeySourceResolver atomic.Pointer[func() string]
 
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
@@ -304,6 +326,31 @@ func (m *Manager) bobAPIKey() string {
 	return (*fnp)()
 }
 
+// SetBobKeySourceResolver injects the resolver reporting WHERE the bob key was
+// found. The returned string is safe to log ("file:<path>" / "env:<NAME>") and
+// never contains the key value.
+func (m *Manager) SetBobKeySourceResolver(fn func() string) {
+	m.bobKeySourceResolver.Store(&fn)
+}
+
+// bobKeyFilePath returns the FILE the bob key resolved from, or "" when it came
+// from an env var (nothing to permission-check) or is unconfigured.
+// Safe to call while holding m.mu.
+func (m *Manager) bobKeyFilePath() string {
+	fnp := m.bobKeySourceResolver.Load()
+	if fnp == nil || *fnp == nil {
+		return ""
+	}
+	source := (*fnp)()
+	// Only "file:" sources have a path whose permissions can be checked; an
+	// env-var key is inherited through tmux set-environment and needs none.
+	const filePrefix = "file:"
+	if !strings.HasPrefix(source, filePrefix) {
+		return ""
+	}
+	return strings.TrimPrefix(source, filePrefix)
+}
+
 // routableBackend reports whether a backend should be routed through the
 // inference proxy: either a built-in inference backend, or a configured gateway
 // name. Safe to call while holding m.mu (isGatewayBackend is read atomically).
@@ -361,6 +408,25 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 		tier := m.agentMode(a).TokenTier()
 		if err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID); err != nil {
 			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
+			continue
+		}
+		// Re-inject the freshly-minted App token into the running session so the
+		// GitHub MCP server keeps authenticating as the App bot. The scoped token
+		// expires hourly; WriteAgentToken above rewrites the cache FILE (which the
+		// git credential helper re-reads per call), but the Copilot CLI reads
+		// GITHUB_TOKEN once from its env at startup — so without this push the MCP
+		// token would go stale an hour after launch and GitHub writes would start
+		// 401ing. tmux set-environment only affects processes started AFTER it,
+		// which is fine: the Copilot CLI is (re)spawned per agent turn, so each new
+		// turn picks up the current token. Gated on the opt-in flag + CanPush() to
+		// match the launch injection — advisory agents stay GITHUB_TOKEN-less, and
+		// hives that have not opted in get nothing injected.
+		if m.project.AppAuthoredPRs && a.tmuxSession != "" && m.agentMode(a).CanPush() {
+			if data, err := os.ReadFile(ghpkg.AgentTokenCachePath(a.Name)); err == nil {
+				if tok := strings.TrimSpace(string(data)); tok != "" {
+					_ = m.tmuxCmd(a, "set-environment", "-t", a.tmuxSession, "GITHUB_TOKEN", tok).Run()
+				}
+			}
 		}
 	}
 }
@@ -654,7 +720,32 @@ var cliPaneMarkers = []string{
 	"Copilot",
 	"Gemini",
 	"goose",
+	// bob's markers. NONE of the entries above match a running bob: verified
+	// against the installed bundle (bobshell 1.0.6 bundle/bob.js), which
+	// contains zero "❯" characters and no "esc cancel" / "/ commands" /
+	// "? help" / "goose" strings. ("Claude"/"Gemini" occur only as model-name
+	// data, never as UI chrome.) Without these two entries
+	// waitForCLIReadyForAgent can never see a booted bob, so its startup kick
+	// would be dropped after cliReadyTimeout even though bob is healthy.
+	bobInputPlaceholder,
+	bobProductMarker,
 }
+
+const (
+	// bobInputPlaceholder is the placeholder bob renders inside its input box
+	// when it is idle and accepting input. This is bob's equivalent of the "❯"
+	// prompt for the other TUIs and is the PRIMARY readiness signal: the
+	// bundle renders it on the same component whose presence is gated by
+	// `isInputActive`, so seeing it means the input is live, not merely
+	// painted. Copied verbatim from bobshell 1.0.6 — see TestBobPaneMarkers.
+	bobInputPlaceholder = "Type your message or @path/to/file"
+	// bobProductMarker is bob's product name, which appears in its banner and
+	// dialogs. It is a weaker, secondary signal than bobInputPlaceholder — it
+	// also shows on trust/auth/license dialogs, which are NOT ready states —
+	// so it is used only for coarse CLI-presence detection (is anything other
+	// than bash in this pane?), never as the input-ready gate.
+	bobProductMarker = "Bob-Shell"
+)
 
 // paneHasCLIMarker reports whether the given pane content contains any known
 // CLI UI marker.
@@ -737,6 +828,37 @@ func paneShowsConsentScreen(pane string) bool {
 }
 
 
+// backendDefersStartupKick reports whether a backend's bootstrap prompt is
+// delivered AFTER the CLI is ready (deliverStartupKick) instead of being
+// embedded in the launch command.
+//
+// Embedding raced the CLI boot: the prompt-bearing launch line was typed into
+// the pane in the same second as the (re)start (observed live: `audit: agent
+// kicked trigger=startup` 60ms after `audit: agent restarting`), before the
+// CLI — or even bash — was ready to consume it, so the kick text landed in
+// bash and an unbalanced quote left the shell in PS2 continuation.
+//
+// goose is deliberately NOT in this set: `goose run` needs the embedded --text
+// prompt to stay interactive at all, and it exits on the ^C that
+// readiness-gated delivery sends (see deliverKickLocked). Unknown backends are
+// likewise excluded — they never embed and have no verified readiness signal.
+//
+// bob belongs in this set, not the goose set. It is a long-lived interactive
+// TUI (launched WITHOUT -p, see bobLaunchCmd) that sits at its prompt with no
+// prompt argument at all, so it has no goose-style reason to embed — and
+// embedding would expose it to exactly the PS2 race above. Before this it was
+// in NEITHER group: it fell through to the write-a-file branch in launchInTmux,
+// so its bootstrap prompt was serialized to /tmp/.hive-bootstrap-<name>.txt and
+// then never read, leaving bob idle at its prompt after every launch.
+func backendDefersStartupKick(backend string) bool {
+	switch backend {
+	case "claude", "copilot", "gemini", bobBackend:
+		return true
+	default:
+		return false
+	}
+}
+
 func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	backend := agent.Config.Backend
 	if agent.BackendOverride != "" {
@@ -758,9 +880,16 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	// return nil so one misconfigured agent never aborts the fleet.
 	// The key VALUE is not bound to a local here — only its presence is checked.
 	// It is delivered to the CLI via tmux set-environment in agentEnvPairs.
+	// Any launch attempt supersedes a previous missing-key parking: either the
+	// key is present now (cleared below) or we re-park on this same branch.
+	// Clearing unconditionally keeps the flag from outliving the condition it
+	// describes — a stale true would make a later key-save relaunch an agent
+	// that is actually failed for some other reason.
+	agent.awaitingBobKey = false
 	if backend == bobBackend {
 		if m.bobAPIKey() == "" {
 			agent.State = StateFailed
+			agent.awaitingBobKey = true
 			m.logger.Warn("bob requires "+config.BobAPIKeyEnvVar+" for headless operation; ask your hub admin to configure it",
 				"name", agent.Name,
 				"backend", backend,
@@ -769,6 +898,19 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			)
 			return nil
 		}
+		// Re-assert hive's ownership of the SHARED /data/home/.bob/settings.json
+		// auth block BEFORE bob starts. A persisted selectedType beats
+		// BOBSHELL_DEFAULT_AUTH_TYPE, so without this one agent that ever picked
+		// SSO leaves every bob agent on the hive stuck at the auth prompt.
+		// Pure filesystem work on locals only — takes no locks, so it is safe on
+		// this m.mu-holding path.
+		m.ensureBobAuthSettings(agent.Name, bobSharedHome)
+		// The key resolved above was read by the HIVE process as dev. bob will
+		// read it as the AGENT UID, which is a different question — and the one
+		// that actually failed in production. Probe it and log actionably.
+		// Advisory only: the Secret-mounted copy may still be readable, so this
+		// never blocks a launch that might succeed.
+		m.verifyBobKeyReadable(agent.Name, m.bobKeyFilePath(), agent.UID)
 	}
 
 	launchCmd := binary
@@ -888,23 +1030,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		bootstrapPrompt = "You are an AI agent. Await further instructions."
 	}
 
-	// Interactive backends get the bootstrap prompt delivered AFTER the CLI
-	// is ready (deliverStartupKick, spawned below) instead of embedding it in
-	// the launch command. Embedding raced the CLI boot: the prompt-bearing
-	// launch line was typed into the pane in the same second as the (re)start
-	// (observed live: `audit: agent kicked trigger=startup` 60ms after
-	// `audit: agent restarting`), before the CLI — or even bash — was ready
-	// to consume it, so the kick text landed in bash and an unbalanced quote
-	// left the shell in PS2 continuation. Goose keeps the embedded --text
-	// prompt: goose run needs it to stay interactive and exits on the ^C that
-	// readiness-gated delivery sends.
+	// See backendDefersStartupKick for why each backend is or is not deferred.
 	deferredStartupKick := ""
-	if bootstrapPrompt != "" {
-		switch backend {
-		case "claude", "copilot", "gemini":
-			deferredStartupKick = bootstrapPrompt
-			bootstrapPrompt = ""
-		}
+	if bootstrapPrompt != "" && backendDefersStartupKick(backend) {
+		deferredStartupKick = bootstrapPrompt
+		bootstrapPrompt = ""
 	}
 
 	if bootstrapPrompt != "" {
@@ -924,8 +1054,10 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.recordPrompt(agent.Name, "startup", bootstrapPrompt)
 
 		// Only goose (and unknown backends, which never embed) reach this
-		// block — claude/copilot/gemini bootstrap prompts were deferred to
-		// deliverStartupKick above.
+		// block — claude/copilot/gemini/bob bootstrap prompts were deferred to
+		// deliverStartupKick above, so no /tmp/.hive-bootstrap-<name>.txt is
+		// written for them. bob used to land here and get a file nothing ever
+		// read; that dead write is gone with the deferral above.
 		promptFile := fmt.Sprintf("/tmp/.hive-bootstrap-%s.txt", agent.Name)
 		if err := os.WriteFile(promptFile, []byte(bootstrapPrompt), 0o644); err != nil {
 			m.logger.Warn("failed to write bootstrap prompt", "name", agent.Name, "error", err)
@@ -1683,6 +1815,27 @@ func findOverlap(prev, curr []string) int {
 }
 
 
+// paneShowsInputPrompt reports whether the pane content shows a CLI input
+// prompt that is ready to accept a kick.
+//
+// The first four markers are the pre-existing set, preserved verbatim so
+// claude/copilot/gemini/goose readiness is bit-for-bit unchanged. The bob
+// placeholder is additive: bob's TUI renders none of the other four (verified
+// against bobshell 1.0.6 — the bundle contains no "❯" at all), so without it a
+// healthy bob never registers as ready and its startup kick is dropped.
+//
+// Callers pass captured pane text; empty input is not a prompt.
+func paneShowsInputPrompt(output string) bool {
+	if output == "" {
+		return false
+	}
+	return strings.Contains(output, "❯") ||
+		strings.Contains(output, "goose is ready") ||
+		strings.Contains(output, "> Enter to send") ||
+		strings.Contains(output, "\n>\n") ||
+		strings.Contains(output, bobInputPlaceholder)
+}
+
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
 // or the timeout expires. Returns true if the CLI became ready.
 func (m *Manager) waitForCLIReady(session string) bool {
@@ -1758,6 +1911,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"has_goose_ready", strings.Contains(output, "goose is ready"),
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
+				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
 			return false
 		case <-ticker.C:
@@ -1769,7 +1923,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				continue
 			}
 			output := m.captureTmuxPaneForAgent(agent)
-			if strings.Contains(output, "❯") || strings.Contains(output, "goose is ready") || strings.Contains(output, "> Enter to send") || strings.Contains(output, "\n>\n") {
+			if paneShowsInputPrompt(output) {
 				return true
 			}
 		}
@@ -1790,7 +1944,7 @@ func (m *Manager) waitForInputPrompt(session string) bool {
 			return false
 		case <-ticker.C:
 			output := m.captureTmuxPane(session)
-			if strings.Contains(output, "❯") || strings.Contains(output, "goose is ready") || strings.Contains(output, "> Enter to send") || strings.Contains(output, "\n>\n") {
+			if paneShowsInputPrompt(output) {
 				return true
 			}
 		}
@@ -2039,6 +2193,139 @@ func (m *Manager) CheckAndRestartCrashedAgents(ctx context.Context) []string {
 	return restarted
 }
 
+// RelaunchBobAgentsAwaitingKey restarts the bob-backend agents that
+// launchInTmux parked in StateFailed because no API key was configured, and
+// returns their names. It is the "absent → present" half of the key lifecycle:
+// the resolver makes a newly-saved key visible to the NEXT launch, but nothing
+// carries it into a session whose shell already exists, so an agent parked for
+// a missing key would otherwise sit at bob's key prompt until someone
+// intervened.
+//
+// Each relaunch RECREATES the tmux session rather than just re-typing the
+// launch command — see killSessionForRelaunch for why that is required and not
+// merely tidy.
+//
+// Call it after a key is stored. It is a no-op — returning nil — when the key
+// still does not resolve, so a clear (or a failed save) never launches
+// anything.
+//
+// Selection is deliberately narrow: awaitingBobKey is set on exactly one
+// branch of launchInTmux and cleared on every launch attempt, so a running
+// agent, a non-bob agent, and an agent failed for any other reason are all
+// skipped. An operator-paused agent is skipped too — a key save must not
+// override a deliberate pause. That also makes a double save harmless: the
+// first relaunch clears the flag, so the second finds nothing to do.
+//
+// Locking: candidates are collected under RLock, the lock is RELEASED, and
+// only then is Start called — Start takes m.mu.Lock() itself, and m.mu is a
+// non-reentrant RWMutex, so calling it under the read lock would deadlock
+// (incident #1980→#1988). This mirrors CheckAndRestartCrashedAgents.
+func (m *Manager) RelaunchBobAgentsAwaitingKey(ctx context.Context) []string {
+	// The key must actually resolve now; otherwise every relaunch would just
+	// re-park on the same branch. Read lock-free via the atomic resolver, and
+	// never bind or log the value — only its presence matters here.
+	if m.bobAPIKey() == "" {
+		return nil
+	}
+
+	candidates := m.bobAgentsAwaitingKey()
+
+	var relaunched []string
+	for _, name := range candidates {
+		m.logger.Info("relaunching bob agent parked for missing API key", "name", name)
+		// Kill the stale tmux session FIRST. This is load-bearing, not
+		// hygiene: BOBSHELL_API_KEY is Secret, so buildEnvPrefix omits it from
+		// the typed command line and it is delivered ONLY by tmux
+		// set-environment — which updates the SESSION environment and is
+		// inherited just by shells created afterwards. The pane's bash was
+		// started before the key existed, so it does not have the variable and
+		// never will; reapAgentCLI kills the bob CLI but leaves that bash
+		// alive, so a plain relaunch retypes the command into the same
+		// key-less shell and bob prompts for a key again (observed on
+		// hosted-available-vllmd-01: BOBSHELL_API_KEY present in the tmux
+		// session env, absent from every bob /proc/<pid>/environ).
+		// Killing the session makes ensureTmuxSession build a new one and
+		// re-run set-environment before any shell exists, so the fresh bash —
+		// and the bob it spawns — inherit the key.
+		if err := m.killSessionForRelaunch(name); err != nil {
+			m.logger.Warn("could not kill stale session before bob relaunch; launching anyway",
+				"name", name, "error", err)
+		}
+		if err := m.Start(ctx, name); err != nil {
+			// One agent's failure must never abort the rest of the fleet,
+			// exactly as in the crash-restart loop above.
+			m.logger.Error("failed to relaunch bob agent after key save", "name", name, "error", err)
+			continue
+		}
+		relaunched = append(relaunched, name)
+	}
+	return relaunched
+}
+
+// killSessionForRelaunch tears down an agent's tmux session so the next
+// ensureTmuxSession creates a fresh one whose shell inherits the current
+// set-environment values (including a newly-saved BOBSHELL_API_KEY).
+//
+// This is KillSession's behaviour, but it deliberately does not call
+// KillSession: that method takes m.mu.Lock() and is a public entry point.
+// Keeping a private helper with the same lock discipline (acquire, act,
+// release — never held across Start) keeps the relaunch loop's locking
+// obvious and avoids any temptation to hold a lock across the launch, which
+// is the deadlock class from incident #1980→#1988.
+func (m *Manager) killSessionForRelaunch(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	agent, ok := m.agents[name]
+	if !ok {
+		return fmt.Errorf("agent %s not found", name)
+	}
+	// Not an error if the session is already gone — the goal is "no stale
+	// shell", which a missing session already satisfies.
+	_ = m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).Run()
+	// State must not stay Running: Start refuses to launch a running agent,
+	// and the session backing that state no longer exists.
+	if agent.State == StateRunning {
+		agent.State = StateStopped
+	}
+	m.logger.Info("killed stale tmux session so the fresh shell inherits the bob key",
+		"name", name, "session", agent.tmuxSession)
+	return nil
+}
+
+// bobAgentsAwaitingKey returns the names of agents parked by launchInTmux for a
+// missing bob API key and eligible to be started now. Split out from
+// RelaunchBobAgentsAwaitingKey so the selection rules can be tested without
+// tmux: this is the part that must never pick up a running, paused, or non-bob
+// agent.
+//
+// Takes m.mu.RLock and releases it before returning; the caller must NOT hold
+// m.mu (non-reentrant RWMutex).
+func (m *Manager) bobAgentsAwaitingKey() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var candidates []string
+	for name, agent := range m.agents {
+		if agent == nil || !agent.awaitingBobKey {
+			continue
+		}
+		// Defensive: awaitingBobKey is only ever set on the bob branch, but
+		// re-check the effective backend so a backend override applied after
+		// parking cannot smuggle a non-bob agent into this path.
+		if effectiveBackend(agent) != bobBackend {
+			continue
+		}
+		// Never disturb a healthy agent, and never override a pause — a key
+		// save is not a resume.
+		if agent.State == StateRunning || agent.Paused {
+			continue
+		}
+		candidates = append(candidates, name)
+	}
+	return candidates
+}
+
 func (m *Manager) SendKick(name string, message string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2213,6 +2500,24 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 		m.logger.Warn("startup kick dropped: CLI never reached input prompt",
 			"name", agent.Name, "session", agent.tmuxSession, "trigger", "startup")
 		return
+	}
+
+	// bob needs an extra settle window that the other TUIs do not. Its UI is a
+	// React/Ink app (its crashes surface as React reconciler stack traces), and
+	// Ink paints the input box on an early render pass — so the placeholder
+	// that waitForInputPromptForAgent matches can be visible before the
+	// reconciler has finished mounting the input component and attached its
+	// stdin handler. Text typed in that window is painted into the pane but
+	// never reaches component state, so the kick is silently swallowed and bob
+	// stays idle — the exact failure this change exists to fix. claude/copilot/
+	// gemini do not need this: their input handlers are live as soon as the
+	// prompt renders, which is why the delay is bob-only rather than a new
+	// universal pause in the shared path.
+	//
+	// Read outside m.mu: effectiveBackend is a pure field read and this path
+	// must not hold the lock while sleeping.
+	if effectiveBackend(agent) == bobBackend {
+		time.Sleep(bobInputHandlerSettleDelay)
 	}
 
 	m.mu.Lock()
@@ -2673,6 +2978,20 @@ const (
 	// clears stale PS2 quote-continuation state before the launch command
 	// is typed into the pane.
 	preLaunchShellClearDelay = 500 * time.Millisecond
+	// bobInputHandlerSettleDelay is an extra pause applied ONLY to the bob
+	// backend after its input prompt becomes visible, before its startup kick
+	// is typed. bob's TUI is React/Ink: Ink paints the input box on an early
+	// render pass, so the placeholder can be on screen before the reconciler
+	// finishes mounting the input component and attaching its stdin handler.
+	// Typing in that gap paints characters that never reach component state —
+	// the kick is swallowed and bob sits idle. It is deliberately NOT reused
+	// from textToEnterDelay/staleCheckDelay (1s each): those cover tmux
+	// keystroke pacing, a different concern, and a value that merely happens
+	// to work is what this constant exists to avoid. 3s is a conservative
+	// multiple of the observed 1s pacing unit, chosen because over-waiting
+	// costs one agent a few seconds once per launch while under-waiting
+	// silently loses the bootstrap prompt entirely.
+	bobInputHandlerSettleDelay = 3 * time.Second
 	// cliBootGraceSeconds is how long after StartedAt a bare pane (no CLI
 	// marker) is tolerated before CheckAndRestartCrashedAgents treats it as a
 	// crash. It matches cliReadyTimeout (60s) so a still-booting CLI is never
@@ -3319,21 +3638,36 @@ const bobBackend = "bob"
 //
 // The launch stays INTERACTIVE — no -p/--prompt — so the agent drives bob in a
 // tmux pane exactly like every other CLI backend and a human can attach to it.
-// Two flags make that work in a headless pod. Both were verified against the
-// installed bundle (bobshell 1.0.6 bundle/bob.js), not assumed:
 //
-//   - --auth-method api-key: bob computes its default auth type as "if
-//     BOBSHELL_API_KEY is set AND the session is non-interactive then api-key,
-//     else W3ID_SSO". So in interactive mode the env var ALONE is not enough —
-//     bob still selects SSO, opens a browser, and dies on the 3-minute
-//     callback timeout; it merely prints 'Existing API key detected
-//     (BOBSHELL_API_KEY). Select "Bob-Shell API Key" option to use it.' This
-//     flag sets globalThis.authMethodByCliArg, which takes precedence over both
-//     the computed default and the persisted security.auth.selectedType, so an
-//     interactive session authenticates with the key and never reaches the
-//     browser flow. The value is bob's own enum constant USE_BOBSHELL="api-key".
-//     This is why interactive mode remains available rather than being
-//     hard-switched to -p.
+// Two flags are passed:
+//
+//   - --auth-method api-key: this flag DOES exist in bobshell 1.0.6. It was
+//     previously removed after `bob --help | grep auth-method` returned
+//     nothing, but that test is misleading: the bundle registers the option and
+//     then explicitly HIDES it from help output —
+//     `t.option("auth-method",{choices:[fr.W3ID_SSO,fr.USE_BOBSHELL]})` followed
+//     by `["debug",...,"auth-method"].forEach(c=>t.hide(c))`. Verified by
+//     running the real 1.0.6 bundle: `--help` is 67 lines with 0 matches for
+//     auth-method, yet the parser distinguishes it from a typo —
+//       $ bob --definitely-not-a-flag x -p hi
+//       Unknown arguments: definitely-not-a-flag, definitelyNotAFlag
+//       $ bob --auth-method bogus-value -p hi
+//       Invalid values: Argument: auth-method, Given: "bogus-value",
+//                       Choices: "sso", "api-key"
+//     while `--auth-method api-key` is accepted silently. An unknown flag under
+//     yargs .strict() would have errored, so the option is live.
+//
+//     It matters because it is the ONLY input that outranks the persisted,
+//     fleet-shared settings file: bob stores it as globalThis.authMethodByCliArg
+//     and resolves
+//     `authMethodByCliArg || merged.security.auth.selectedType || <default>`,
+//     and it also suppresses the setValue() write-back that would otherwise
+//     persist a competing value. BOBSHELL_DEFAULT_AUTH_TYPE
+//     (config.BobAuthTypeEnvVar) is only the FALLBACK default and loses to a
+//     persisted selectedType. Neither is the primary bug — an unreadable key
+//     file was (see verifyBobKeyReadable) — but both are real, and this flag is
+//     the cheapest guarantee that a stale settings file cannot re-break bob.
+//     Note IBM's public docs also document `--auth-method api-key`.
 //
 //   - --accept-license: bob hard-errors ("A license agreement is required.
 //     Please accept the license terms before proceeding.") before doing any
@@ -3350,7 +3684,8 @@ const bobBackend = "bob"
 // tmux set-environment (see agentEnvPairs) so it never lands in the command
 // line, `ps` output, or pane scrollback.
 func bobLaunchCmd(binary, model string) string {
-	cmd := fmt.Sprintf("%s --auth-method %s --accept-license", binary, config.BobAuthMethodAPIKey)
+	cmd := fmt.Sprintf("%s --accept-license %s %s",
+		binary, config.BobAuthMethodFlag, config.BobAuthTypeAPIKey)
 	if model != "" {
 		cmd = fmt.Sprintf("%s --model %s", cmd, model)
 	}
@@ -3882,6 +4217,30 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if m.copilotAuthToken != "" {
 		vars = append(vars, agentEnvPair{"COPILOT_GITHUB_TOKEN", m.copilotAuthToken, true})
 	}
+	// Point the GitHub MCP server at the App installation token so PRs, issue
+	// comments, and merges are authored by the App bot ("<slug>[bot]") — NOT by
+	// the Copilot login user. COPILOT_GITHUB_TOKEN above stays as the Copilot
+	// OAuth token because it authenticates the AI model (a separate concern from
+	// GitHub write identity); leaving it untouched keeps the Copilot CLI login
+	// working. The Copilot CLI reads GH_TOKEN / GITHUB_TOKEN for GitHub API auth
+	// (per its README: GH_TOKEN or GITHUB_TOKEN, in that precedence), so setting
+	// GITHUB_TOKEN here makes the built-in GitHub MCP server act as the App bot.
+	//
+	// Gated on the opt-in flag first (default OFF → no behavior change on any
+	// hive that has not explicitly enabled App-bot authorship), then on CanPush():
+	// advisory agents are deliberately kept GITHUB_TOKEN-less (see the -u
+	// GITHUB_TOKEN strip after the env loop) so they cannot write; only push-
+	// capable tiers — the ones that legitimately open/merge PRs — get the App
+	// token. m.appAuth != nil means an App is configured. The value is the
+	// per-agent tier-SCOPED App token, and refreshAgentTokens re-pushes it hourly
+	// so it never goes stale.
+	if m.project.AppAuthoredPRs && m.appAuth != nil && agent.UID > 0 && m.agentMode(agent).CanPush() {
+		if data, err := os.ReadFile(ghpkg.AgentTokenCachePath(agent.Name)); err == nil {
+			if tok := strings.TrimSpace(string(data)); tok != "" {
+				vars = append(vars, agentEnvPair{"GITHUB_TOKEN", tok, true})
+			}
+		}
+	}
 	if m.claudeAuthToken != "" && backend == "claude" {
 		vars = append(vars, agentEnvPair{"CLAUDE_CODE_OAUTH_TOKEN", m.claudeAuthToken, true})
 	}
@@ -3893,6 +4252,16 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		if key := m.bobAPIKey(); key != "" {
 			vars = append(vars, agentEnvPair{config.BobAPIKeyEnvVar, key, true})
 		}
+		// BOBSHELL_DEFAULT_AUTH_TYPE is what actually selects API-key auth;
+		// without it bob defaults to W3ID SSO and parks at the interactive key
+		// prompt forever. Deliberately NOT Secret: the value is the literal
+		// non-credential string "api-key", and secret pairs only reach a
+		// freshly-created pane shell via tmux set-environment, whereas
+		// non-secret pairs are re-applied on EVERY launch through
+		// buildEnvPrefix. That asymmetry is exactly what caused the sibling
+		// bug fixed in #2228, so the auth type must ride the always-reapplied
+		// path or a relaunch into an existing session loses it.
+		vars = append(vars, agentEnvPair{config.BobAuthTypeEnvVar, config.BobAuthTypeAPIKey, false})
 	}
 	// BD_DIR tells the `bd` CLI where to read/write beads. Without this,
 	// bd falls back to cwd (/data/agents/<name>) instead of the configured

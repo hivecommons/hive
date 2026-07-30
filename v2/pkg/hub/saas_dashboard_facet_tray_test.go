@@ -340,17 +340,19 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 		t.Errorf("header emits %d <th> cells but a row emits %d cells — "+
 			"every column right of the mismatch is shifted", thCount, tdCount)
 	}
-	// 16 since the Public column was folded into Location (visibility stacks
-	// beneath the location badge) — see the Location cell in buildRow.
-	const wantColumns = 16
+	// 17: the Public column was folded into Location (visibility stacks beneath
+	// the location badge) leaving 16 — see the Location cell in buildRow — and
+	// the AI Author column was then added alongside ACMM to show the GitHub
+	// identity a hive's agents open PRs as.
+	const wantColumns = 17
 	if thCount != wantColumns {
 		t.Errorf("hive table has %d columns, want %d", thCount, wantColumns)
 	}
 	// The colspan constants span the whole table; a stale value leaves the
 	// section separators and the pending-requests row visibly short.
 	for _, decl := range []string{
-		"var TOTAL_COLUMNS = 16;",
-		"var TOTAL_COLUMNS_HEADER = 16;",
+		"var TOTAL_COLUMNS = 17;",
+		"var TOTAL_COLUMNS_HEADER = 17;",
 	} {
 		if !strings.Contains(html, decl) {
 			t.Errorf("missing or stale colspan constant: %s", decl)

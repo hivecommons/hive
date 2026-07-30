@@ -683,6 +683,11 @@
     .gh-app-install-banner .gh-app-btn { display: inline-block; text-decoration: none; white-space: nowrap; }
     .gh-app-install-banner.perm-issue { background: color-mix(in srgb, var(--yellow) 12%, var(--panel)); border-color: var(--yellow); }
     .gh-app-install-banner.perm-issue .gh-app-desc { color: var(--text); }
+    /* Operator-side failure: informational, not alarming, and not the user's
+       fault. Deliberately neutral rather than the red "you must act" styling —
+       there is nothing for the reader to do. */
+    .gh-app-install-banner.operator-issue { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+    .gh-app-install-banner.operator-issue .gh-app-desc { color: var(--text); }
     .gh-app-perm-details { font-size: 0.8rem; margin-top: 6px; color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
     .gh-app-perm-details .perm-missing { color: var(--red); font-weight: 600; }
@@ -2597,7 +2602,7 @@
   <div class="cost-usage" id="cost-panel" style="margin-bottom: 24px;"></div>
 
   <div class="repos" id="repos-section">
-    <h2 class="section-header-toggle" onclick="toggleSection('repos-section')"><span class="section-chevron">▼</span> Repositories <button class="config-gear" onclick="event.stopPropagation();openConfigDialog('governor',null,'Repos')" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
+    <h2 class="section-header-toggle" onclick="toggleSection('repos-section')"><span class="section-chevron">▼</span> Repositories <span id="repos-host-badge" title="Every repo in this hive is on this single GitHub host" style="font-size:0.62em;font-weight:600;vertical-align:middle;padding:2px 7px;border-radius:10px;margin-left:6px"></span> <button class="config-gear" onclick="event.stopPropagation();openConfigDialog('governor',null,'Repos')" title="Manage monitored repositories" style="font-size:0.7em;vertical-align:middle">⚙️</button></h2>
     <div class="section-body">
       <div class="repo-grid" id="repos"></div>
     </div>
@@ -4760,9 +4765,70 @@
       }
     }
 
+    /* Classified GitHub App auth states, matching github.AppAuthState.String()
+       on the spoke. Only the two OPERATOR_* states describe a failure the hive
+       owner cannot fix: the App private key is distributed by the hub, so a
+       missing or mismatched key is never the user's doing. Warnings for those
+       states must not tell the user to install anything or edit config. */
+    var GH_APP_STATE_KEY_MISSING = 'key-missing';
+    var GH_APP_STATE_KEY_INVALID = 'key-invalid';
+    var GH_APP_OPERATOR_STATES = {};
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
+
+    /* True when the App failure is the operator's to fix. An unreported or
+       unrecognised state is deliberately NOT operator-side: a spoke too old to
+       classify must keep the existing user-facing guidance rather than silently
+       telling everyone to contact an admin. */
+    function ghAppIsOperatorSide(state) {
+      return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
+    }
+
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
+      var appState = data ? String(data.githubAppState || '').trim() : '';
+      var isOperatorSide = data && data.githubAppRequired && ghAppIsOperatorSide(appState);
+
+      /* Operator-side failure: the hive's App credentials were never delivered,
+         or the key it holds belongs to a different App. The user did nothing
+         wrong and has nothing to fix, so this banner states the cause, names
+         who fixes it, and offers NO install link or config instruction. */
+      if (isOperatorSide) {
+        banner.classList.remove('perm-issue');
+        banner.classList.add('operator-issue');
+        var oTitle = document.querySelector('#gh-app-install-banner .gh-app-title');
+        var oDesc = document.querySelector('#gh-app-install-banner .gh-app-desc');
+        var oLink = document.getElementById('gh-app-install-link');
+        if (oTitle) oTitle.textContent = 'GitHub App credentials pending — no action needed from you';
+        if (oDesc) {
+          /* Prefer the server-composed diagnosis; it already carries the
+             accurate, non-blaming copy. textContent keeps any org name or API
+             text safe to render verbatim. */
+          oDesc.textContent = (typeof data.githubAppPermIssue === 'string' && data.githubAppPermIssue)
+            ? data.githubAppPermIssue
+            : (appState === GH_APP_STATE_KEY_INVALID
+                ? 'This hive’s GitHub App private key does not match the App it authenticates as, so GitHub rejects its token. The key is supplied by the hub operator and cannot be corrected by you — your App installation and installation ID are not at fault. Please contact your hub administrator.'
+                : 'This hive’s GitHub App credentials have not been provisioned yet. The private key is supplied by the hub operator, not by you. Agents will start working automatically once it arrives; contact your hub administrator if this persists.');
+        }
+        /* No install link: sending the user to an install page for a key
+           problem is exactly the misdirection this banner exists to stop. */
+        if (oLink) {
+          oLink.removeAttribute('href');
+          oLink.textContent = '';
+          oLink.style.display = 'none';
+        }
+        var staleDetails = document.getElementById('gh-app-perm-details');
+        if (staleDetails) staleDetails.remove();
+        banner.removeAttribute('hidden');
+        banner.style.cssText = 'display:flex !important';
+        return;
+      }
+      /* Not operator-side — restore the action link the branch above hides. */
+      var resetLink = document.getElementById('gh-app-install-link');
+      if (resetLink) resetLink.style.display = '';
+      banner.classList.remove('operator-issue');
+
       var isPermIssue = data.githubAppRequired && data.githubAppPermIssue;
       if (data.githubAppRequired && (data.githubAppInstallURL || isPermIssue)) {
         var link = document.getElementById('gh-app-install-link');
@@ -5071,6 +5137,7 @@
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
           <div class="gov-stat" title="NEXT RUN — when the governor next wakes up.&#10;&#10;WHAT: The next scheduled moment the governor will re-evaluate mode and kick any agents that are due.&#10;&#10;HOW: Computed from the current mode's cadence schedule — the governor adds the mode's interval to the last run time. Faster modes (busy/surge) produce a nearer next run than idle/quiet."><div class="label">next run</div><div class="val">${escapeHtml(gov.nextKick || '—')}</div></div>
+          <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" onclick="openConfigDialog('governor',null,'Thresholds')" title="Click to adjust governor thresholds">
           <div class="temp-gauge-label"><span>Issues: ${issueCount}</span><span>max ${maxQ}</span></div>
@@ -5245,6 +5312,18 @@
 
     function renderRepos(repos) {
       const el = document.getElementById('repos');
+      // Definitive single-host badge in the section header: every repo in this
+      // hive is on ONE GitHub host (github.com or a GHE instance). Green =
+      // github.com, blue = GitHub Enterprise — matches the hub spokes-table pill.
+      const badge = document.getElementById('repos-host-badge');
+      if (badge) {
+        const base = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '');
+        const isPublic = (base === 'github.com' || base === '');
+        badge.textContent = isPublic ? 'github.com' : base;
+        badge.style.background = isPublic ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)';
+        badge.style.color = isPublic ? 'var(--green, #16a34a)' : 'var(--blue, #2563eb)';
+        badge.title = 'Every repo in this hive is on ' + (isPublic ? 'github.com' : base) + ' — this hive is single-host';
+      }
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)');
         const pSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.prs ?? 0), 'var(--purple)');
@@ -12046,6 +12125,13 @@ function burnAreaChart() {
     fetch("/api/config").then(r => r.json()).then(cfg => {
       const ghBase = cfg.github_base_url || 'https://github.com';
       window._githubBaseUrl = ghBase;
+      // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
+      // hive runs App-authored mode, else the configured ai_author. Surfaced on
+      // the governor card so operators can see the write identity at a glance.
+      // ai_author_effective already incorporates ai_author (else the App bot,
+      // else empty). Don't fall back to a raw ai_author — an App-less hive has
+      // no author and should render "—", not a stale personal value.
+      window._aiAuthor = cfg.ai_author_effective || '';
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');
@@ -12087,7 +12173,15 @@ function burnAreaChart() {
     const AGENT_PROMPTS_TAB = 'Prior Prompts';
     const AGENT_CONFIG_TABS = ['General', 'Cadences', 'Pipeline', 'Hooks', 'Restrictions', 'Channels', 'Tools', 'Connections', 'Stats', 'Prompt Template', AGENT_PROMPTS_TAB, 'Export'];
     const AGENT_CREATE_TABS = ['Import', 'General', 'Cadences', 'Channels', 'Tools', 'Prompt Template'];
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', 'Variables', 'Access'];
+    // 'Bob' holds the hive-wide credential for the IBM bobshell CLI backend.
+    // It is deliberately NOT part of 'Model Gateways': a gateway is an
+    // OpenAI-compatible inference ENDPOINT (endpoint + default_model, routed
+    // to by name), whereas the bob key authenticates a binary running in this
+    // pod and has neither. It is also not 'Access', which is read-only
+    // hub-synced user/role data. It sits next to Model Gateways because both
+    // are backend configuration.
+    const GOVERNOR_BOB_TAB = 'Bob';
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -12680,6 +12774,7 @@ function burnAreaChart() {
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Hub': return renderGovHub(d.hub || {});
         case 'Model Gateways': return renderGovGateways();
+        case GOVERNOR_BOB_TAB: return renderGovBob();
         case 'Variables': return renderGovVariables();
         case 'Access': return renderGovAccess();
         default: return '';
@@ -12826,6 +12921,83 @@ function burnAreaChart() {
     // Reads GET /api/config/authorized-users. Access is granted on the HUB
     // (Manage Access) and propagated to the spoke via heartbeat, so this view is
     // intentionally read-only — it shows the current allowlist, not an editor.
+    // ---- Bob tab -----------------------------------------------------------
+    // The IBM bobshell ("bob") API key. This is hive-wide, not per-agent:
+    // governor.bob.api_key_file is a single hive-scoped setting resolving to
+    // ONE file, so every bob agent shares the same key. It lives here rather
+    // than on an agent card so the scope the UI implies matches the scope the
+    // storage actually has.
+    function renderGovBob() {
+      loadBobKeyStatus();
+      return `
+        <div style="font-size:0.82rem;color:var(--muted);margin-bottom:14px;line-height:1.5">
+          The API key the <b>bob</b> (IBM bobshell) CLI backend authenticates with. It
+          applies to the whole hive — every agent using the bob backend shares this one
+          key. The key is stored in a private file on this hive and is never shown
+          again, never written to hive.yaml, and never included in config downloads.
+        </div>
+        <div id="gov-bob-host"><div style="color:var(--muted);font-size:0.8rem">Loading…</div></div>`;
+    }
+
+    // loadBobKeyStatus fetches presence-only status and paints the bob panel.
+    // The response carries `configured` (bool) and a safe `source` string
+    // ("file:<path>" / "env:<NAME>") — never the key value.
+    //
+    // The DOM target is resolved AFTER the first await, never before: the
+    // caller does `body.innerHTML = renderGovernorTab(tab)`, so this function
+    // starts while the PREVIOUS tab is still mounted (see loadAuthorizedUsers).
+    async function loadBobKeyStatus() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/governor/bob');
+        host = document.getElementById('gov-bob-host');
+        if (!host) return;
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        renderBobKeyPanel(host, d.configured === true, d.source || '');
+      } catch (e) {
+        host = host || document.getElementById('gov-bob-host');
+        if (host) host.innerHTML = '<div style="color:var(--red);font-size:0.8rem">Failed to load bob key status: ' + esc(e.message) + '</div>';
+      }
+    }
+
+    // renderBobKeyPanel paints the bob credential card. `source` is the safe
+    // source string only; the key value never reaches this function.
+    function renderBobKeyPanel(host, configured, source) {
+      if (!host) return;
+      const statusLine = configured
+        ? '<span style="color:var(--green)">✓ Key set</span>' + (source ? ' <span style="color:var(--muted)">(' + esc(source) + ')</span>' : '')
+        : '<span style="color:var(--muted)">No key set — agents using bob cannot start.</span>';
+      host.innerHTML = `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <span style="font-weight:600;font-size:0.9rem">bob</span>
+            <span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid #4589ff;color:#4589ff">IBM bobshell</span>
+            <span style="flex:1"></span>
+            ${configured ? '<button data-action="bobKeyClear" style="padding:4px 12px;border:1px solid var(--red);border-radius:6px;background:var(--bg);color:var(--red);cursor:pointer;font-size:0.74rem">Clear key</button>' : ''}
+            <button data-action="bobKeySet" style="padding:4px 12px;border:none;border-radius:6px;background:#0f62fe;color:#fff;cursor:pointer;font-size:0.74rem;font-weight:600">${configured ? 'Replace key' : 'Set API key'}</button>
+          </div>
+          <div style="font-size:0.78rem;margin-bottom:8px">${statusLine}</div>
+          <div style="font-size:0.74rem;color:var(--muted);line-height:1.5">
+            bob cannot complete browser sign-in inside a pod (its callback resolves to
+            the pod, not your machine) and offers no device-code flow, so an API key is
+            its only headless credential. Saving a key takes effect immediately — no pod
+            restart is needed — and any bob agent already parked for a missing key is
+            restarted automatically as part of the save, in a fresh session that picks
+            up the new key.
+          </div>
+          <div id="bob-key-inline-status" style="font-size:0.74rem;min-height:18px;margin-top:8px"></div>
+        </div>`;
+
+      // data-* + addEventListener rather than inline handlers. Bound here (not
+      // via the agent-card dispatcher) because this panel is repainted on every
+      // set/clear and owns its own buttons.
+      const setBtn = host.querySelector('[data-action="bobKeySet"]');
+      if (setBtn) setBtn.addEventListener('click', () => openBobKeyDialog(configured, source));
+      const clearBtn = host.querySelector('[data-action="bobKeyClear"]');
+      if (clearBtn) clearBtn.addEventListener('click', clearBobKey);
+    }
+
     function renderGovAccess() {
       loadAuthorizedUsers();
       return `
@@ -16455,6 +16627,139 @@ function burnAreaChart() {
       if (!keepOverlay) overlay.remove();
     }
 
+    // --- bob (IBM bobshell) API key ---
+    // bob cannot complete its browser SSO flow inside a pod: the callback is
+    // http://localhost:35227/bob-callback, which resolves to the pod rather
+    // than the operator's machine, and the CLI exposes no device-code flow.
+    // The API key is therefore the only headless credential.
+    //
+    // The key is hive-wide, not per-agent — governor.bob.api_key_file is a
+    // single hive-scoped setting resolving to one file — so this dialog is
+    // reached from the governor's Bob tab, not from an agent card. The key is
+    // PUT once and never read back; the dashboard only ever learns WHETHER one
+    // is configured and the safe source string.
+    //
+    // `configured` / `source` are passed in by the caller (the Bob tab already
+    // fetched them) so opening the dialog does not re-round-trip.
+    function openBobKeyDialog(configured, source) {
+      var overlay = document.getElementById('bob-key-overlay');
+      if (overlay) { overlay.remove(); }
+      overlay = document.createElement('div');
+      overlay.id = 'bob-key-overlay';
+      overlay.className = 'gh-auth-overlay';
+      overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:520px;text-align:left">' +
+        '<h3 style="color:#4589ff;text-align:center">bob API key</h3>' +
+        '<p style="color:var(--muted);font-size:0.85rem;margin:12px 0">' +
+          'bob cannot sign in with a browser inside this hive, so it authenticates with an API key. ' +
+          'The key applies to every agent using the bob backend. It is stored in a private file ' +
+          'on this hive and is never shown again.</p>' +
+        (configured
+          ? '<div style="color:var(--green);font-size:0.8rem;margin:8px 0">✓ A key is currently set' +
+              (source ? ' (' + esc(source) + ')' : '') + '. Entering a new one replaces it.</div>'
+          : '<div style="color:var(--muted);font-size:0.8rem;margin:8px 0">No key is set — agents using bob cannot start.</div>') +
+        '<input id="bob-key-input" type="password" autocomplete="off" spellcheck="false" ' +
+          'placeholder="Paste the bob API key" ' +
+          'style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);' +
+          'background:var(--panel);color:var(--fg);font-family:monospace;margin:8px 0">' +
+        '<div id="bob-key-status" style="color:var(--muted);font-size:0.8rem;min-height:20px;margin:4px 0"></div>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">' +
+          '<button id="bob-key-cancel" class="gh-cancel" style="margin-top:0">Cancel</button>' +
+          '<button id="bob-key-save" style="background:#0f62fe;color:#fff;border:none;padding:6px 16px;' +
+            'border-radius:6px;font-weight:600;cursor:pointer">Save key</button>' +
+        '</div>' +
+      '</div>';
+      document.body.appendChild(overlay);
+      overlay.style.display = 'flex';
+
+      var input = document.getElementById('bob-key-input');
+      var statusEl = document.getElementById('bob-key-status');
+      if (input) input.focus();
+
+      function closeDialog() {
+        // Drop the secret from the DOM before removing the node.
+        if (input) input.value = '';
+        overlay.remove();
+      }
+      function setStatus(msg, color) {
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+      }
+
+      var cancelBtn = document.getElementById('bob-key-cancel');
+      if (cancelBtn) cancelBtn.addEventListener('click', closeDialog);
+
+      var saveBtn = document.getElementById('bob-key-save');
+      if (saveBtn) saveBtn.addEventListener('click', async function() {
+        var key = (input && input.value || '').trim();
+        if (!key) { setStatus('Paste a key first.', 'var(--red)'); return; }
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          var resp = await fetch('/api/config/governor/bob', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ apiKey: key })
+          });
+          var data = await resp.json().catch(function() { return {}; });
+          if (!resp.ok) {
+            setStatus(data.error || ('Save failed (' + resp.status + ')'), 'var(--red)');
+            saveBtn.disabled = false;
+            return;
+          }
+          closeDialog();
+          // The hive reads the key at each agent launch, so no pod restart is
+          // needed — and the save also relaunches any bob agent that was parked
+          // for a missing key. Report the count the server actually relaunched
+          // rather than telling the user to go start agents by hand.
+          var relaunched = Number(data.relaunched) || 0;
+          showToast(relaunched > 0
+            ? 'bob API key saved — no restart needed; relaunched ' + relaunched +
+              ' bob agent' + (relaunched === 1 ? '' : 's') + ' that was waiting for a key'
+            : 'bob API key saved — no restart needed', 'success');
+          refreshBobKeyPanel();
+        } catch (e) {
+          setStatus('Save failed: ' + e.message, 'var(--red)');
+          saveBtn.disabled = false;
+        }
+      });
+    }
+
+    // clearBobKey revokes the stored key from the governor's Bob tab. Clearing
+    // is idempotent server-side; if an admin-managed Secret or env var still
+    // supplies a key the response says so, and we report that rather than
+    // falsely claiming the key was removed.
+    async function clearBobKey() {
+      if (!confirm('Remove the stored bob API key? Agents using bob will stop being able to start.')) return;
+      var statusEl = document.getElementById('bob-key-inline-status');
+      function setStatus(msg, color) {
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+      }
+      setStatus('Clearing…');
+      try {
+        var resp = await fetch('/api/config/governor/bob', { method: 'DELETE' });
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+          setStatus(data.error || ('Clear failed (' + resp.status + ')'), 'var(--red)');
+          return;
+        }
+        setStatus('');
+        if (data.configured) {
+          showToast('Stored key removed, but a key is still provided by ' + (data.source || 'another source'), 'info');
+        } else {
+          showToast('bob API key cleared', 'success');
+        }
+        refreshBobKeyPanel();
+      } catch (e) {
+        setStatus('Clear failed: ' + e.message, 'var(--red)');
+      }
+    }
+
+    // refreshBobKeyPanel repaints the Bob tab after a set/clear, but only if
+    // that tab is still mounted — the user may have switched tabs or closed
+    // the dialog in the meantime.
+    function refreshBobKeyPanel() {
+      if (document.getElementById('gov-bob-host')) loadBobKeyStatus();
+    }
+
     async function checkClaudeAuth() {
       // No UI elements to update — the agent cards show login state
       // via needsLogin from the SSE status stream. This just keeps
@@ -16763,7 +17068,15 @@ function burnAreaChart() {
       {
         id: 'github-app',
         title: 'Install the GitHub App',
-        auto: (data) => data ? data.githubAppRequired !== true : null,
+        // An operator-side credential failure is not an unfinished user step.
+        // Return null ("cannot tell") rather than false, so the checklist does
+        // not mark the user as having something left to do when the missing
+        // piece is a key the hub operator supplies.
+        auto: (data) => {
+          if (!data) return null;
+          if (ghAppIsOperatorSide(data.githubAppState)) return null;
+          return data.githubAppRequired !== true;
+        },
         body: 'The GitHub App unlocks issues, advisory reports, and PRs on your primary repo — without it the hive can only observe.',
         autoNote: 'Checks itself once the app is detected on your repository.',
         actions: [
@@ -16960,6 +17273,12 @@ function burnAreaChart() {
     }
     /** Open the GitHub App install page (same URL the banner links to). */
     function welcomeInstallGitHubApp() {
+      // Never send the user to an install page when the block is operator-side:
+      // installing again cannot fix a key they do not control.
+      if (window._lastStatus && ghAppIsOperatorSide(window._lastStatus.githubAppState)) {
+        showToast('This hive is waiting on GitHub App credentials from the hub operator — installing the App again will not help. Contact your hub administrator.', 'info');
+        return;
+      }
       const url = (window._lastStatus && window._lastStatus.githubAppInstallURL) || '';
       if (url) { window.open(url, '_blank', 'noopener'); return; }
       const installed = !!(window._lastStatus) && window._lastStatus.githubAppRequired !== true;

@@ -20,6 +20,9 @@ const (
 // EnsureAdvisoryIssue finds or creates the pinned advisory issue for a repo.
 // Returns the issue number.
 func (c *Client) EnsureAdvisoryIssue(ctx context.Context, repo string) (int, error) {
+	if c == nil {
+		return 0, ErrNoGitHubClient
+	}
 	owner := c.org
 	if parts := strings.SplitN(repo, "/", 2); len(parts) == 2 {
 		owner = parts[0]
@@ -79,6 +82,9 @@ const (
 // PostAdvisoryDigest updates the existing digest comment on the advisory issue,
 // or creates one if none exists. This prevents duplicate comments on each eval cycle.
 func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum int, digest string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
 	owner, repoName := c.splitRepo(repo)
 
 	digest = truncateDigest(digest)

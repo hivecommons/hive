@@ -143,10 +143,18 @@ type Server struct {
 	ready   bool
 	readyAt time.Time
 
-	githubAppMu               sync.RWMutex
-	githubAppRequired         bool
-	githubAppInstallURL       string
-	githubAppPermIssue        string // non-empty when app is installed but lacks required permissions
+	githubAppMu         sync.RWMutex
+	githubAppRequired   bool
+	githubAppInstallURL string
+	githubAppPermIssue  string // non-empty when app is installed but lacks required permissions
+	// githubAppState is the classified reason App auth is failing (a
+	// github.AppAuthState wire token: "key-missing", "not-installed", …).
+	// It exists so the UI can tell an OPERATOR-side failure (the hive's key
+	// was never delivered, or belongs to a different App) apart from a
+	// USER-side one (App not installed, wrong installation_id) and stop
+	// blaming users for problems only an admin can fix. Empty means the
+	// state was never classified.
+	githubAppState            string
 	pendingGitHubAppInstall   bool
 	pendingGitHubAppInstallAt time.Time
 
@@ -183,6 +191,7 @@ type StatusPayload struct {
 	GitHubAppRequired   bool                   `json:"githubAppRequired,omitempty"`
 	GitHubAppInstallURL string                 `json:"githubAppInstallURL,omitempty"`
 	GitHubAppPermIssue  string                 `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState      string                 `json:"githubAppState,omitempty"`
 	GitHubBaseURL       string                 `json:"githubBaseURL,omitempty"`
 	InferenceBackends   []InferenceBackend     `json:"inferenceBackends,omitempty"`
 	SystemAlerts        []SystemAlert          `json:"systemAlerts,omitempty"`
@@ -662,6 +671,16 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		if s.authToken == "" && !directRouteAuthz {
+			// Open by design — but still resolve a session if the caller has one,
+			// so an SSO handoff on a token-less spoke yields a request that KNOWS
+			// who the user is. Without this the handoff sets a cookie, the next
+			// request is let through anonymously, the UI sees no identity and
+			// sends the user back to log in — a bounce. This grants no extra
+			// access: everyone is already admitted on this branch.
+			if sess := s.sessionFromRequest(r); sess != nil {
+				r.Header.Set("X-Hive-User", sess.Username)
+				r.Header.Set("X-Hive-Role", sess.Role)
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -972,6 +991,7 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	status.GitHubAppRequired = s.githubAppRequired
 	status.GitHubAppInstallURL = s.githubAppInstallURL
 	status.GitHubAppPermIssue = s.githubAppPermIssue
+	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
 
 	status.InferenceBackends = s.buildInferenceBackends()
@@ -1115,7 +1135,25 @@ func (s *Server) SetGitHubAppRequired(required bool) {
 	} else {
 		s.githubAppInstallURL = ""
 		s.githubAppPermIssue = ""
+		s.githubAppState = ""
 	}
+}
+
+// SetGitHubAppState records the classified reason App auth is failing, as a
+// github.AppAuthState wire token. The banner and the hub both branch on this
+// to decide whether the failure is the user's to fix or the operator's, so it
+// must be set alongside every SetGitHubAppPermIssue call. Pass "" to clear.
+func (s *Server) SetGitHubAppState(state string) {
+	s.githubAppMu.Lock()
+	defer s.githubAppMu.Unlock()
+	s.githubAppState = state
+}
+
+// GetGitHubAppState returns the classified App auth state ("" when unknown).
+func (s *Server) GetGitHubAppState() string {
+	s.githubAppMu.RLock()
+	defer s.githubAppMu.RUnlock()
+	return s.githubAppState
 }
 
 // SetGitHubAppPermIssue records that the app IS installed but lacks a specific

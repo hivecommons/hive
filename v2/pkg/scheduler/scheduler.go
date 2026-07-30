@@ -214,7 +214,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"PROJECT_ORG":           lit(s.cfg.Project.Org),
 		"PROJECT_NAME":          lit(s.cfg.Project.Name),
 		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),
-		"PROJECT_AI_AUTHOR":     lit(s.cfg.Project.AIAuthor),
+		"PROJECT_AI_AUTHOR":     lit(s.cfg.EffectiveAIAuthor()),
 		"PROJECT_REPOS_LIST":    lit(reposList),
 		"PROJECT_HOMEBREW_REPO": lit(fmt.Sprintf("%s/homebrew-tap", s.cfg.Project.Org)),
 		"HIVE_REPO":             lit(fmt.Sprintf("%s/hive", s.cfg.Project.Org)),
@@ -349,16 +349,20 @@ func (s *Scheduler) BuildAgentMessageFromLastActionable(agentName string) string
 
 func (s *Scheduler) buildReposSection() string {
 	var b strings.Builder
-	b.WriteString("AUTHORIZED REPOS (you may ONLY interact with these):\n")
+	host := s.cfg.GitHub.ResolvedBaseURL() // always a full URL; github.com or the GHE instance
+	b.WriteString(fmt.Sprintf("AUTHORIZED REPOS (all on %s — you may ONLY interact with these):\n", host))
 	org := s.cfg.Project.Org
 	for _, repo := range s.cfg.Project.Repos {
-		if strings.Contains(repo, "/") {
-			b.WriteString(fmt.Sprintf("  %s\n", repo))
-		} else {
-			b.WriteString(fmt.Sprintf("  %s/%s\n", org, repo))
+		full := repo
+		if !strings.Contains(repo, "/") {
+			full = org + "/" + repo
 		}
+		// Print the fully-qualified URL so the host is unambiguous in the prompt —
+		// a github.ibm.com repo must never be mistaken for a github.com one.
+		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
+	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
 	return b.String()
 }
 
@@ -500,7 +504,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 
 	b.WriteString("\nWORKFLOW:\n")
 	b.WriteString("  1. Check beads (`bd list --status open`) for context from previous cycles\n")
-	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge green PRs with `--squash --admin`. Ensure `Fixes #<issue>` in body. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
+	b.WriteString("  2. Quick merges + cleanup (10 min cap) — merge PRs whose required checks are GREEN using a squash merge via your App token (MCP `merge_pull_request` with `merge_method: \"squash\"`, or `gh pr merge --squash`). Do NOT use `--admin` — never force-merge past pending or failing CI; wait for the required checks to pass. Ensure `Fixes #<issue>` in body. Close stale drafts (>48h, needs-rebase + dco-no, or fix already merged). `@dependabot rebase` stale ones. Move on after 10 min.\n")
 	b.WriteString("  3. Fix blockers — find the ONE fix that unblocks the most PRs/issues. Clone, fix, push, merge.\n")
 	b.WriteString("  4. Crank quick fixes — launch background agents using the Agent tool (run_in_background: true) to fix remaining issues in parallel. One PR per issue, move fast.\n")
 
@@ -604,13 +608,22 @@ func (s *Scheduler) buildCIFailingList() string {
 func (s *Scheduler) ghAuthInstructions(agentName string) string {
 	return fmt.Sprintf(`## Project Authentication
 
-- git push / git fetch: run them normally. A credential helper supplies a
-  push-capable token automatically. Do NOT export GH_TOKEN for git and do
+- The GitHub App is the WRITE GATE. Every write to GitHub — opening or updating
+  an issue or PR, commenting, and merging — goes through this hive's GitHub App
+  (github.com or GitHub Enterprise, per the primary repo). If the App is not
+  installed you have NO write credential: stay advisory (read, KB, beads) and do
+  not attempt to write. Never substitute a personal user token to work around a
+  missing App. Login/identity is a separate concern and is always github.com.
+- Writes are authored by the App bot identity, not a personal account. Do not
+  set git user.name/user.email to a human, and do not pass 'gh pr create' or
+  'git commit' an explicit --author: let the App identity stand.
+- git push / git fetch: run them normally. A credential helper supplies the
+  App-scoped push token automatically. Do NOT export GH_TOKEN for git and do
   NOT use HIVE_GITHUB_TOKEN (it is read-only; overriding breaks pushes).
 - gh CLI: export your per-agent token first:
     export GH_TOKEN=$(cat /var/run/hive-metrics/agent-tokens/gh-token-%s.cache)
-  It is scoped to YOUR tier. Never read another agent's token file or the
-  shared gh-app-token.cache.
+  It is scoped to YOUR tier and is an App installation token. Never read another
+  agent's token file or the shared gh-app-token.cache.
 - A missing GH_TOKEN at session start is expected (the Copilot CLI owns that
   variable) — it is never a blocker. All GitHub traffic flows through the
   hive proxy either way.
@@ -620,11 +633,16 @@ func (s *Scheduler) ghAuthInstructions(agentName string) string {
 
 func (s *Scheduler) reposSection() string {
 	var b strings.Builder
-	b.WriteString("## Project Repositories\n\nYour role covers these repositories:\n")
+	host := s.cfg.GitHub.ResolvedBaseURL()
+	b.WriteString(fmt.Sprintf("## Project Repositories\n\nYour role covers these repositories, all on **%s** (this hive is single-host):\n", host))
 	for _, repo := range s.cfg.Project.Repos {
-		b.WriteString(fmt.Sprintf("  %s/%s\n", s.cfg.Project.Org, repo))
+		full := repo
+		if !strings.Contains(repo, "/") {
+			full = s.cfg.Project.Org + "/" + repo
+		}
+		b.WriteString(fmt.Sprintf("  %s/%s\n", strings.TrimRight(host, "/"), full))
 	}
-	b.WriteString("\nAll work should be scoped to these repos.\n\n")
+	b.WriteString(fmt.Sprintf("\nAll work should be scoped to these repos on %s.\n\n", host))
 	return b.String()
 }
 

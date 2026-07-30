@@ -1,0 +1,369 @@
+package github
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"strings"
+
+	gh "github.com/google/go-github/v72/github"
+)
+
+// AppAuthState classifies WHY GitHub App authentication is not working, so the
+// UI can say the true thing instead of one catch-all "install the App" banner.
+//
+// The distinction that matters most is between the states a USER can fix
+// (install the App, correct installation_id) and the state only an OPERATOR can
+// fix (the private key this spoke signs with is missing or belongs to a
+// different App). Telling a user to "install the GitHub App" when the operator
+// has not delivered a usable key sends them to redo work they already did
+// correctly, and — via the journey nudges — can escalate to threatening
+// de-provisioning for our own failure.
+type AppAuthState int
+
+const (
+	// AppStateUnknown means classification was not attempted or could not
+	// reach a conclusion (network error, unparseable response). Callers must
+	// treat it as "we cannot tell" and never escalate on it.
+	AppStateUnknown AppAuthState = iota
+
+	// AppStateOK means the App authenticated and the installation resolved.
+	AppStateOK
+
+	// AppStateNotInstalled means the App is genuinely not installed on the
+	// target account. USER-ACTIONABLE: install the App.
+	AppStateNotInstalled
+
+	// AppStateWrongInstallation means the App authenticated fine, but the
+	// installation it resolved belongs to a different account than this hive
+	// targets. USER-ACTIONABLE: correct github.installation_id.
+	AppStateWrongInstallation
+
+	// AppStateInsufficientPerms means the App is installed on the right
+	// account but the org owner has not approved the permissions it needs.
+	// USER-ACTIONABLE (by an org owner): approve the permission update.
+	AppStateInsufficientPerms
+
+	// AppStateKeyMissing means no App private key is present on this spoke at
+	// all. OPERATOR-ACTIONABLE: the hub has not delivered the key.
+	AppStateKeyMissing
+
+	// AppStateKeyInvalid means a key IS present but GitHub rejected the JWT it
+	// signed — the key does not belong to the App this hive claims to be (the
+	// classic symptom of a public github.com key on a GitHub Enterprise hive).
+	// OPERATOR-ACTIONABLE: the hub must push the correct key.
+	AppStateKeyInvalid
+)
+
+// String returns the stable wire token for a state. These tokens cross the
+// heartbeat to the hub and into both dashboards, so they must not change
+// without updating the consumers.
+func (s AppAuthState) String() string {
+	switch s {
+	case AppStateOK:
+		return "ok"
+	case AppStateNotInstalled:
+		return "not-installed"
+	case AppStateWrongInstallation:
+		return "wrong-installation"
+	case AppStateInsufficientPerms:
+		return "insufficient-permissions"
+	case AppStateKeyMissing:
+		return "key-missing"
+	case AppStateKeyInvalid:
+		return "key-invalid"
+	default:
+		return "unknown"
+	}
+}
+
+// OperatorActionable reports whether this state can ONLY be fixed by whoever
+// operates the hub — never by the hive's owner. Warnings for these states must
+// not instruct the user to install anything or edit config, and the journey
+// nudges must never escalate against them.
+func (s AppAuthState) OperatorActionable() bool {
+	return s == AppStateKeyMissing || s == AppStateKeyInvalid
+}
+
+// UserActionable reports whether the hive's owner (or their org owner) can fix
+// this state themselves. Only these states justify a "do something" banner.
+func (s AppAuthState) UserActionable() bool {
+	switch s {
+	case AppStateNotInstalled, AppStateWrongInstallation, AppStateInsufficientPerms:
+		return true
+	default:
+		return false
+	}
+}
+
+// ParseAppAuthState turns a wire token back into a state. Unrecognised input
+// yields AppStateUnknown so an older spoke reporting a token we do not know
+// degrades to "cannot tell" rather than to a false accusation.
+func ParseAppAuthState(s string) AppAuthState {
+	switch strings.TrimSpace(s) {
+	case "ok":
+		return AppStateOK
+	case "not-installed":
+		return AppStateNotInstalled
+	case "wrong-installation":
+		return AppStateWrongInstallation
+	case "insufficient-permissions":
+		return AppStateInsufficientPerms
+	case "key-missing":
+		return AppStateKeyMissing
+	case "key-invalid":
+		return AppStateKeyInvalid
+	default:
+		return AppStateUnknown
+	}
+}
+
+// jwtUndecodableMarker is the message GitHub returns on
+// POST /app/installations/{id}/access_tokens (and GET /app/installations/{id})
+// when the JWT presented was signed by a key that does not belong to the App
+// named in its `iss` claim. It is the definitive signature of a key/App
+// mismatch, and is what distinguishes a broken KEY from a wrong INSTALLATION:
+// a wrong installation_id authenticates fine (the JWT decodes) and fails later
+// with 403/404 on the installation itself.
+const jwtUndecodableMarker = "a json web token could not be decoded"
+
+// Required issues permission for a hive to do any GitHub work.
+const requiredIssuesPerm = "write"
+
+// classifyAPIError maps a go-github error to an AppAuthState using the ACTUAL
+// HTTP status of the response, never a substring of a formatted error string.
+//
+// The three failure statuses mean genuinely different things on the App
+// endpoints:
+//
+//   - 401 Unauthorized — the JWT itself was rejected. On these endpoints the
+//     only credential is the App JWT, so a 401 means the signature did not
+//     verify against the App's registered public key: the private key is
+//     wrong. GitHub says "A JSON web token could not be decoded". This is
+//     OPERATOR-side; the user has no way to supply or correct this key.
+//   - 404 Not Found — the JWT verified (GitHub knows which App we are) but
+//     there is no such installation visible to this App. The App is not
+//     installed on the target.
+//   - 403 Forbidden — the JWT verified and the installation exists, but this
+//     App may not act on it ("Resource not accessible by integration"). That
+//     is a permissions/installation-mismatch problem, not a key problem.
+//
+// A nil resp (transport failure, DNS, timeout) yields AppStateUnknown: we did
+// not get an answer from GitHub and must not guess.
+func classifyAPIError(err error, resp *gh.Response) AppAuthState {
+	if err == nil {
+		return AppStateOK
+	}
+
+	status := 0
+	if resp != nil && resp.Response != nil {
+		status = resp.StatusCode
+	}
+	// go-github surfaces the parsed body on *gh.ErrorResponse even when the
+	// caller discarded the *gh.Response, so prefer it when we have one.
+	var ghErr *gh.ErrorResponse
+	if errors.As(err, &ghErr) && ghErr.Response != nil {
+		status = ghErr.Response.StatusCode
+	}
+
+	switch status {
+	case http.StatusUnauthorized:
+		// A 401 on an App endpoint is always a signing failure. The message
+		// check only refines the log/telemetry story; the status alone is
+		// sufficient to conclude the key is at fault.
+		return AppStateKeyInvalid
+	case http.StatusNotFound:
+		return AppStateNotInstalled
+	case http.StatusForbidden:
+		// 403 can also be a rate limit, which is transient and must never be
+		// reported as a credential problem.
+		if isRateLimitErr(err) {
+			return AppStateUnknown
+		}
+		return AppStateWrongInstallation
+	}
+
+	// No usable status. Fall back to the JWT marker, which some proxies
+	// surface without preserving the status code.
+	if strings.Contains(strings.ToLower(err.Error()), jwtUndecodableMarker) {
+		return AppStateKeyInvalid
+	}
+	return AppStateUnknown
+}
+
+// isRateLimitErr reports whether an error is a GitHub rate/abuse limit. These
+// are transient and must not latch a credential warning.
+func isRateLimitErr(err error) bool {
+	var rl *gh.RateLimitError
+	if errors.As(err, &rl) {
+		return true
+	}
+	var ab *gh.AbuseRateLimitError
+	return errors.As(err, &ab)
+}
+
+// AppAuthDiagnosis is the full result of checking this hive's GitHub App
+// credentials: what state they are in, and the supporting detail a caller
+// needs to compose accurate copy.
+type AppAuthDiagnosis struct {
+	State AppAuthState
+	// Account is the login the installation actually belongs to, when known.
+	Account string
+	// ExpectedAccount is the org/user this hive targets.
+	ExpectedAccount string
+	// InstallationID is the installation this hive is configured to use.
+	InstallationID int64
+	// IssuesPerm is the granted issues permission, when the installation
+	// resolved.
+	IssuesPerm string
+	// Err is the underlying error, for logs. Never rendered to a user
+	// verbatim, because it can carry raw API text.
+	Err error
+}
+
+// keyFileReadable reports whether path exists and holds non-empty content.
+// This is the cheap, pre-flight detection of AppStateKeyMissing: it needs no
+// API round-trip and is the clearest possible signal that the operator's key
+// push has not landed.
+func keyFileReadable(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Size() > 0
+}
+
+// DiagnoseAppAuth classifies this hive's GitHub App credential state against
+// expectedOwner (the org/user the hive targets).
+//
+// keyPaths are candidate private-key locations, checked in order. When NONE of
+// them holds content, the result is AppStateKeyMissing WITHOUT making any API
+// call — a missing key cannot possibly authenticate, and a failed round-trip
+// would only produce a less specific answer. Pass no paths to skip the
+// pre-flight and rely on the API classification alone.
+//
+// A nil receiver, or one with no loaded key, is AppStateKeyMissing: a hive
+// that cannot sign a JWT has no credentials, which is an operator problem.
+func (a *AppAuth) DiagnoseAppAuth(ctx context.Context, expectedOwner string, keyPaths ...string) AppAuthDiagnosis {
+	d := AppAuthDiagnosis{ExpectedAccount: expectedOwner}
+
+	if a == nil || !a.HasKey() {
+		d.State = AppStateKeyMissing
+		return d
+	}
+	d.InstallationID = a.InstallationID()
+
+	// Cheap pre-flight: if we were given key locations and none of them holds
+	// content, the key is missing. No API call needed.
+	if len(keyPaths) > 0 {
+		anyReadable := false
+		for _, p := range keyPaths {
+			if keyFileReadable(p) {
+				anyReadable = true
+				break
+			}
+		}
+		if !anyReadable {
+			d.State = AppStateKeyMissing
+			return d
+		}
+	}
+
+	jwtToken, err := a.generateJWT()
+	if err != nil {
+		// We hold a key but cannot sign with it — the key itself is unusable.
+		d.State = AppStateKeyInvalid
+		d.Err = fmt.Errorf("generating JWT: %w", err)
+		return d
+	}
+
+	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
+	setBaseURL(jwtClient, a.apiURL)
+	inst, resp, err := jwtClient.Apps.GetInstallation(ctx, a.installationID)
+	if err != nil {
+		d.State = classifyAPIError(err, resp)
+		d.Err = err
+		return d
+	}
+	if inst == nil {
+		d.State = AppStateUnknown
+		d.Err = errors.New("github returned no installation and no error")
+		return d
+	}
+
+	d.Account = inst.GetAccount().GetLogin()
+	d.IssuesPerm = inst.GetPermissions().GetIssues()
+
+	if expectedOwner != "" && d.Account != "" && !strings.EqualFold(d.Account, expectedOwner) {
+		d.State = AppStateWrongInstallation
+		return d
+	}
+	if d.IssuesPerm != requiredIssuesPerm {
+		d.State = AppStateInsufficientPerms
+		return d
+	}
+	d.State = AppStateOK
+	return d
+}
+
+// Message returns accurate, non-blaming, user-facing copy for a diagnosis.
+//
+// The contract for operator-side states is strict: say what is wrong, say that
+// an administrator fixes it, and do NOT ask the user to install anything or
+// edit any config. A user who has done everything right must never be sent
+// back to redo it.
+func (d AppAuthDiagnosis) Message() string {
+	owner := d.ExpectedAccount
+	if strings.TrimSpace(owner) == "" {
+		owner = "this hive's organization"
+	}
+
+	switch d.State {
+	case AppStateOK:
+		return ""
+
+	case AppStateKeyMissing:
+		return "This hive's GitHub App credentials have not been provisioned yet. " +
+			"The App private key is supplied by the hub operator, not by you — there is nothing to install or configure on your side. " +
+			"Agents will start working automatically once the key arrives. If this persists, contact your hub administrator."
+
+	case AppStateKeyInvalid:
+		return "This hive's GitHub App credentials are not valid for the GitHub instance it targets: " +
+			"the private key it holds does not match the App it authenticates as, so GitHub rejects its signed token. " +
+			"This key is distributed by the hub operator and cannot be supplied or corrected by you — " +
+			"your App installation and installation ID are not at fault. Please contact your hub administrator to have the correct key pushed to this hive."
+
+	case AppStateNotInstalled:
+		return fmt.Sprintf("The KubeStellar Hive GitHub App is not installed on %s. "+
+			"Until it is, agents cannot read issues or open pull requests. Install it from the link on this banner.", owner)
+
+	case AppStateWrongInstallation:
+		acct := d.Account
+		if strings.TrimSpace(acct) == "" {
+			acct = "a different account"
+		}
+		return fmt.Sprintf("This hive is authenticating as GitHub App installation %d, which belongs to '%s' — not '%s'. "+
+			"Check github.installation_id in the hive config.", d.InstallationID, acct, owner)
+
+	case AppStateInsufficientPerms:
+		granted := d.IssuesPerm
+		if granted == "" {
+			granted = "none"
+		}
+		acct := d.Account
+		if strings.TrimSpace(acct) == "" {
+			acct = owner
+		}
+		return fmt.Sprintf("The GitHub App is installed for '%s' but granted Issues: %s (Issues: Read & Write required). "+
+			"The org owner must approve the updated permissions at the app installation settings page.", acct, granted)
+
+	default:
+		return "Could not verify this hive's GitHub App credentials. This is usually transient — " +
+			"the check will run again automatically. No action is needed from you right now."
+	}
+}

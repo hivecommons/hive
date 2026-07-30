@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -13,6 +14,15 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 )
+
+// ErrNoGitHubClient is returned by *Client methods invoked on a nil receiver.
+//
+// A nil *Client is a legitimate, expected runtime state: a hive whose GitHub
+// App key is missing or whose app_id is still the placeholder boots in
+// dashboard-only mode so its owner can see and fix the problem, and it runs
+// with no GitHub client at all. Callers must treat this as "GitHub is
+// unavailable right now", not as a bug — it is never a reason to exit.
+var ErrNoGitHubClient = errors.New("no github client configured (hive is running without GitHub credentials)")
 
 type Client struct {
 	client       *gh.Client
@@ -168,7 +178,15 @@ func NewClientForTest(serverURL string, org string, repos []string, logger *slog
 	return c
 }
 
+// SetRepos is nil-receiver safe. A hive that booted without usable GitHub
+// credentials runs with a nil *Client for the life of the process, and the
+// config-reload / project-claim / override-migration paths all re-sync the repo
+// list unconditionally. Making the setter a no-op on nil is safer than adding a
+// guard at each of those call sites, which a future one would forget.
 func (c *Client) SetRepos(repos []string) {
+	if c == nil {
+		return
+	}
 	c.reposMu.Lock()
 	defer c.reposMu.Unlock()
 	c.repos = repos
@@ -183,6 +201,9 @@ func (c *Client) getRepos() []string {
 }
 
 func (c *Client) EnumerateActionable(ctx context.Context) (*ActionableResult, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
 	now := time.Now()
 	result := &ActionableResult{
 		GeneratedAt: now,
@@ -407,6 +428,9 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 // and sets the CIStatus field to "success", "failure", or "pending".
 // The "tide" check is skipped — it reports Prow merge-bot state, not CI.
 func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
+	if c == nil {
+		return
+	}
 	const ciStatusSuccess = "success"
 	const ciStatusFailure = "failure"
 	const ciStatusPending = "pending"
@@ -502,7 +526,11 @@ func isHeld(labels []string) bool {
 	return false
 }
 
+// SetExemptLabels is nil-receiver safe for the same reason as SetRepos.
 func (c *Client) SetExemptLabels(labels []string) {
+	if c == nil {
+		return
+	}
 	c.exemptLabels = labels
 }
 
@@ -719,6 +747,9 @@ type SHAHoldResult struct {
 }
 
 func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHoldResult, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
 	result := &SHAHoldResult{}
 	owner, repo := c.splitRepo(cfg.PrimaryRepo)
 

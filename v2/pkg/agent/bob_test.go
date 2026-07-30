@@ -209,6 +209,69 @@ func TestBobEnvPairInjection(t *testing.T) {
 	}
 }
 
+// TestBobAuthTypeEnvPair guards one of the three layers that keep bob off the
+// SSO prompt. BOBSHELL_DEFAULT_AUTH_TYPE is the weakest of them — per
+// bundle/bob.js it is only the FALLBACK default and loses to a persisted
+// security.auth.selectedType — but it still must be present on bob agents and
+// absent everywhere else. The stronger layers are --auth-method (see
+// TestBobLaunchCmd) and the settings file (see TestEnsureBobAuthSettings).
+func TestBobAuthTypeEnvPair(t *testing.T) {
+	tests := []struct {
+		name     string
+		backend  string
+		key      string
+		wantPair bool
+	}{
+		{"bob backend with key", "bob", "bob-key", true},
+		// The auth type is not a credential, so it does not depend on the key
+		// being resolvable — bob must still be told not to use SSO.
+		{"bob backend without key", "bob", "", true},
+		{"claude backend", "claude", "bob-key", false},
+		{"copilot backend", "copilot", "bob-key", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &Manager{logger: discardLogger()}
+			key := tc.key
+			m.SetBobAPIKeyResolver(func() string { return key })
+
+			agent := &AgentProcess{
+				Name:   "tester",
+				Config: config.AgentConfig{Backend: tc.backend},
+			}
+
+			var found *agentEnvPair
+			for _, p := range m.agentEnvPairs(agent) {
+				if p.Key == config.BobAuthTypeEnvVar {
+					pair := p
+					found = &pair
+				}
+			}
+			if tc.wantPair != (found != nil) {
+				t.Fatalf("%s pair present = %v, want %v", config.BobAuthTypeEnvVar, found != nil, tc.wantPair)
+			}
+			if found == nil {
+				return
+			}
+			if found.Value != config.BobAuthTypeAPIKey {
+				t.Errorf("pair value = %q, want %q", found.Value, config.BobAuthTypeAPIKey)
+			}
+			// Must be NON-secret: secret pairs only reach a freshly-created
+			// pane via tmux set-environment, while non-secret pairs are
+			// re-applied on every launch through buildEnvPrefix. See #2228.
+			if found.Secret {
+				t.Error("auth type must not be Secret: it is not a credential and must be re-applied on every launch")
+			}
+			prefix := m.buildEnvPrefix(agent)
+			want := config.BobAuthTypeEnvVar + "="
+			if !strings.Contains(prefix, want) {
+				t.Errorf("env prefix = %q, want it to contain %q so every launch re-applies it", prefix, want)
+			}
+		})
+	}
+}
+
 // TestBobKeyNotInEnvPrefix is the regression guard for leaking the key onto the
 // shell command line, where it would show up in `ps` and pane scrollback.
 func TestBobKeyNotInEnvPrefix(t *testing.T) {
@@ -241,17 +304,19 @@ func TestBobLaunchCmd(t *testing.T) {
 		{
 			name:  "no model",
 			model: "",
-			// --auth-method api-key is what stops bob choosing the browser SSO
-			// flow in interactive mode; --accept-license clears the license gate
-			// that would otherwise hard-error with no human to answer it.
-			wantContain: []string{"bob", "--auth-method api-key", "--accept-license"},
+			// --accept-license clears the license gate that would otherwise
+			// hard-error with no human to answer it.
+			// --auth-method api-key is the strongest auth control: it is a real
+			// (but --help-hidden) flag in bobshell 1.0.6 and is the only input
+			// that outranks the persisted, fleet-shared settings file.
+			wantContain: []string{"bob", "--accept-license", "--auth-method api-key"},
 			// No -p/--prompt: interactive mode must be preserved.
 			wantAbsent: []string{"--model", " -p ", "--prompt"},
 		},
 		{
 			name:        "with model",
 			model:       "granite-3",
-			wantContain: []string{"--auth-method api-key", "--accept-license", "--model granite-3"},
+			wantContain: []string{"--accept-license", "--auth-method api-key", "--model granite-3"},
 			wantAbsent:  []string{" -p ", "--prompt"},
 		},
 	}

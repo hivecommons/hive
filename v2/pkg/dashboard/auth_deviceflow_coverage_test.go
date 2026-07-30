@@ -283,8 +283,13 @@ func TestCovDF_SSO_NoSecret(t *testing.T) {
 	t.Setenv("HIVE_HUB_SECRET", "")
 	s, _, _ := dfServer(t, "complete", "octocat")
 	rec := doGet(s, "/sso?token=x")
-	if rec.Code != http.StatusSeeOther {
-		t.Fatalf("no secret: want 303, got %d", rec.Code)
+	// Terminates with an explanation instead of redirecting to "/", which
+	// bounced the browser in a loop.
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no secret: want 503, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("no secret must not redirect, got Location %q", loc)
 	}
 }
 

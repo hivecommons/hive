@@ -74,7 +74,11 @@ func TestFailingCheckSummaryEscapes(t *testing.T) {
 		{"inline pill tooltip escaped", "'<span title=\"' + esc(full) + '\""},
 		{"inline pill label escaped", "esc(label) + '</span>';"},
 		{"filter chip tooltip escaped", "title=\"' + esc(tip) + '\""},
-		{"filter chip label escaped", "esc(nm) + '<span class=\"filter-chip-count\">'"},
+		// The failing-check picker moved from the old standalone chip bar into
+		// the facet tray, so the label now sits in its own facet-value-label
+		// span. The invariant is unchanged: the spoke-supplied check name is
+		// escaped before it reaches the DOM.
+		{"filter chip label escaped", "'<span class=\"facet-value-label\">' + esc(nm) + '</span>'"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,11 +141,14 @@ func TestFilterComposition(t *testing.T) {
 		// Placeholder scoping is unchanged and still splits before filtering.
 		{"placeholder split retained", "(isPlaceholderHive(allHives[_si]) ? unassignedAll : assignedAll)"},
 		{"filters applied to assigned only", "applyDashFilters(assignedAll).concat(unassignedAll)"},
-		// Any-active must account for the check filter so the Clear button shows.
-		// Trailing ';' omitted so additional filters can be OR'd into anyActive
-		// without tripping this guard; the invariant is that the check filter
-		// participates, not that it terminates the expression.
-		{"clear button accounts for check filter", "|| !!_dashFailingCheckFilter"},
+		// Any-active must account for the check filter so the Clear button
+		// shows. The per-filter OR chain was replaced by activeFilterCount(),
+		// which also drives the "N filters active" summary; the check filter now
+		// participates by being counted there. Both halves are asserted so the
+		// link cannot be broken at either end: the counter must include the
+		// check filter, and anyActive must be derived from the counter.
+		{"check filter is counted", "if (_dashFailingCheckFilter) n++;"},
+		{"clear button accounts for check filter", "var anyActive = activeN > 0;"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
