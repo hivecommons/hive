@@ -768,6 +768,7 @@ var cliPaneMarkers = []string{
 	// waitForCLIReadyForAgent can never see a booted bob, so its startup kick
 	// would be dropped after cliReadyTimeout even though bob is healthy.
 	bobInputPlaceholder,
+	bobInputPlaceholderDefault,
 	bobProductMarker,
 }
 
@@ -779,6 +780,19 @@ const (
 	// `isInputActive`, so seeing it means the input is live, not merely
 	// painted. Copied verbatim from bobshell 1.0.6 — see TestBobPaneMarkers.
 	bobInputPlaceholder = "Type your message or @path/to/file"
+	// bobInputPlaceholderDefault is the OTHER placeholder bob renders in that
+	// same input box. The two are alternatives chosen by editor mode, not
+	// versions: the bundle picks bobInputPlaceholder only when vim-style
+	// modal editing is on, and this string in every other case — which is the
+	// default, so it is what a stock bob actually shows when idle and ready.
+	//
+	// Verified live on bobshell 1.0.6: a healthy authenticated bob pane
+	// contained this string and ZERO occurrences of bobInputPlaceholder, so
+	// waitForCLIReadyForAgent never saw it as ready and every governor kick
+	// was dropped with "CLI did not become ready after restart" while bob sat
+	// perfectly healthy at its prompt. Both strings are present in the 1.0.6
+	// bundle, so match either rather than replacing one with the other.
+	bobInputPlaceholderDefault = "Enter your prompt, / for commands"
 	// bobProductMarker is bob's product name, which appears in its banner and
 	// dialogs. It is a weaker, secondary signal than bobInputPlaceholder — it
 	// also shows on trust/auth/license dialogs, which are NOT ready states —
@@ -1877,7 +1891,8 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, "goose is ready") ||
 		strings.Contains(output, "> Enter to send") ||
 		strings.Contains(output, "\n>\n") ||
-		strings.Contains(output, bobInputPlaceholder)
+		strings.Contains(output, bobInputPlaceholder) ||
+		strings.Contains(output, bobInputPlaceholderDefault)
 }
 
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
