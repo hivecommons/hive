@@ -1277,17 +1277,32 @@ func (g GitHubConfig) ResolvedAPIURL() string {
 	return DefaultGitHubAPIURL
 }
 
-// ResolvedBaseURL returns the configured base URL or the default for github.com.
+// ResolvedBaseURL returns the base URL of the GitHub the hive's App/repos live
+// on, as a full "https://host" URL. It prefers an explicit base_url, but falls
+// back to the host of api_url when base_url is blank — pooled/placeholder GHE
+// hives legitimately carry base_url: "" with api_url: https://github.ibm.com/api/v3,
+// and resolving those to github.com breaks App-host-derived URLs (notably the
+// App install link, which would point at github.com/apps/... instead of the GHE
+// github.ibm.com/github-apps/... path). This mirrors HostLabel()'s base-or-api
+// derivation. Login/device-flow paths deliberately do NOT use this — see
+// OAuthBaseURL, which is always public github.com.
 func (g GitHubConfig) ResolvedBaseURL() string {
 	if g.BaseURL != "" {
 		return g.BaseURL
 	}
+	// base_url blank: derive from api_url's host if it points at a GHE instance.
+	if host := g.HostLabel(); host != DefaultGitHubBaseURL[len("https://"):] {
+		return "https://" + host
+	}
 	return DefaultGitHubBaseURL
 }
 
-// IsGHE returns true if the configured base URL points to a GitHub Enterprise instance.
+// IsGHE returns true if the hive's App/repos live on a GitHub Enterprise instance
+// rather than public github.com. It looks at BOTH base_url and api_url (via
+// HostLabel), so a hive carrying only a GHE api_url (base_url: "") is still
+// correctly recognized as GHE — matching ResolvedBaseURL and HostLabel.
 func (g GitHubConfig) IsGHE() bool {
-	return g.BaseURL != "" && g.BaseURL != DefaultGitHubBaseURL
+	return g.HostLabel() != DefaultGitHubBaseURL[len("https://"):]
 }
 
 // HostLabel returns the bare GitHub hostname this hive's App/repos live on:

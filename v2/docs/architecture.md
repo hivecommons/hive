@@ -36,7 +36,7 @@ flowchart LR
     notify["Notifications<br/>(ntfy · Slack · Discord)"]
 
     maintainer -->|HTTPS dashboard| hive
-    contributor -->|contribute relay| hive
+    contributor -->|ClankeR contributor relay| hive
     hive <-->|"REST · git (via MITM proxy)"| github
     hive <-->|inference| models
     hive -->|"heartbeat every 2 min"| hub
@@ -298,9 +298,9 @@ sequenceDiagram
 ```
 
 The hub also serves the public **registry**, cross-hive **leaderboard**, and the
-**contributor** flow: community members donate compute to a spoke via a relay,
-starting rate-limited and auto-promoting through trust tiers as tasks complete —
-their credentials never leave their machine.
+**contributor** flow: community members donate compute to a spoke via **ClankeR**,
+the contributor relay — starting rate-limited and auto-promoting through trust
+tiers as tasks complete — their credentials never leave their machine.
 
 ---
 
