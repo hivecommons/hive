@@ -302,6 +302,55 @@ func githubAppInstalled(h *RegistryEntry) bool {
 	return true
 }
 
+// githubAppBlockedByOperator reports whether this hive's GitHub App stage is
+// stalled for a reason ONLY the hub operator can fix — the App private key was
+// never delivered to the spoke, or the key it holds belongs to a different App
+// so GitHub rejects every JWT it signs.
+//
+// The owner cannot see, supply, or correct that key. Nudging them to "install
+// the GitHub App" is wrong, and escalating to a de-provision warning would
+// penalise a user for OUR failure. So when this is true the journey system
+// stays silent on stage 1 entirely: the hive is not on the adoption journey,
+// it is waiting on us.
+//
+// It reads the spoke-reported classification. An empty or unrecognised value
+// (a spoke too old to report it) is NOT treated as operator-blocked — that
+// would silence genuine "you have not installed the App" nudges for the whole
+// fleet. Unknown means "fall through to the existing behaviour".
+func githubAppBlockedByOperator(h *RegistryEntry) bool {
+	if h == nil {
+		return false
+	}
+	return appStateIsOperatorSide(h.GitHubAppState)
+}
+
+// appStateIsOperatorSide is the token-level predicate, so callers holding a
+// different entry type (MyHiveEntry in drift.go) share one definition.
+func appStateIsOperatorSide(state string) bool {
+	return operatorSideAppStates[strings.TrimSpace(state)]
+}
+
+// operatorSideAppStates are the github.AppAuthState wire tokens that describe
+// a credential failure only the hub operator can repair. Kept as literal
+// tokens rather than importing pkg/github so the hub does not take a
+// dependency on the spoke's GitHub client; pkg/github's
+// TestAppAuthState_WireRoundTrip locks the token strings on the other side.
+//
+//   - "key-missing" — no App private key reached this spoke at all.
+//   - "key-invalid" — a key is present but GitHub rejects the JWT it signs,
+//     i.e. it belongs to a different App than the hive claims to be.
+var operatorSideAppStates = map[string]bool{
+	appStateKeyMissingToken: true,
+	appStateKeyInvalidToken: true,
+}
+
+const (
+	// appStateKeyMissingToken / appStateKeyInvalidToken mirror
+	// github.AppStateKeyMissing.String() and github.AppStateKeyInvalid.String().
+	appStateKeyMissingToken = "key-missing"
+	appStateKeyInvalidToken = "key-invalid"
+)
+
 // methodModelAssigned reports whether any agent on this hive has a method
 // (backend) or model assigned.
 //
@@ -425,6 +474,14 @@ func nextNudge(h *RegistryEntry, now time.Time) nudge {
 
 	// ── Stage 1: GitHub App ────────────────────────────────────────────────
 	if !githubAppInstalled(h) {
+		// Never nudge — and above all never threaten de-provisioning — when
+		// the block is operator-side. The owner has done everything asked of
+		// them; the missing piece is a private key the hub distributes. Say
+		// nothing here and let the spoke's own banner explain that an admin is
+		// required.
+		if githubAppBlockedByOperator(h) {
+			return nudge{}
+		}
 		n := nudge{Stage: StageGitHubApp, Resend: stage1ResendInterval, StalledFor: age}
 		switch {
 		case age >= stage1WarnAfter:

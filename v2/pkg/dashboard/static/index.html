@@ -683,6 +683,11 @@
     .gh-app-install-banner .gh-app-btn { display: inline-block; text-decoration: none; white-space: nowrap; }
     .gh-app-install-banner.perm-issue { background: color-mix(in srgb, var(--yellow) 12%, var(--panel)); border-color: var(--yellow); }
     .gh-app-install-banner.perm-issue .gh-app-desc { color: var(--text); }
+    /* Operator-side failure: informational, not alarming, and not the user's
+       fault. Deliberately neutral rather than the red "you must act" styling —
+       there is nothing for the reader to do. */
+    .gh-app-install-banner.operator-issue { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+    .gh-app-install-banner.operator-issue .gh-app-desc { color: var(--text); }
     .gh-app-perm-details { font-size: 0.8rem; margin-top: 6px; color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
     .gh-app-perm-details .perm-missing { color: var(--red); font-weight: 600; }
@@ -4760,9 +4765,70 @@
       }
     }
 
+    /* Classified GitHub App auth states, matching github.AppAuthState.String()
+       on the spoke. Only the two OPERATOR_* states describe a failure the hive
+       owner cannot fix: the App private key is distributed by the hub, so a
+       missing or mismatched key is never the user's doing. Warnings for those
+       states must not tell the user to install anything or edit config. */
+    var GH_APP_STATE_KEY_MISSING = 'key-missing';
+    var GH_APP_STATE_KEY_INVALID = 'key-invalid';
+    var GH_APP_OPERATOR_STATES = {};
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
+
+    /* True when the App failure is the operator's to fix. An unreported or
+       unrecognised state is deliberately NOT operator-side: a spoke too old to
+       classify must keep the existing user-facing guidance rather than silently
+       telling everyone to contact an admin. */
+    function ghAppIsOperatorSide(state) {
+      return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
+    }
+
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
+      var appState = data ? String(data.githubAppState || '').trim() : '';
+      var isOperatorSide = data && data.githubAppRequired && ghAppIsOperatorSide(appState);
+
+      /* Operator-side failure: the hive's App credentials were never delivered,
+         or the key it holds belongs to a different App. The user did nothing
+         wrong and has nothing to fix, so this banner states the cause, names
+         who fixes it, and offers NO install link or config instruction. */
+      if (isOperatorSide) {
+        banner.classList.remove('perm-issue');
+        banner.classList.add('operator-issue');
+        var oTitle = document.querySelector('#gh-app-install-banner .gh-app-title');
+        var oDesc = document.querySelector('#gh-app-install-banner .gh-app-desc');
+        var oLink = document.getElementById('gh-app-install-link');
+        if (oTitle) oTitle.textContent = 'GitHub App credentials pending — no action needed from you';
+        if (oDesc) {
+          /* Prefer the server-composed diagnosis; it already carries the
+             accurate, non-blaming copy. textContent keeps any org name or API
+             text safe to render verbatim. */
+          oDesc.textContent = (typeof data.githubAppPermIssue === 'string' && data.githubAppPermIssue)
+            ? data.githubAppPermIssue
+            : (appState === GH_APP_STATE_KEY_INVALID
+                ? 'This hive’s GitHub App private key does not match the App it authenticates as, so GitHub rejects its token. The key is supplied by the hub operator and cannot be corrected by you — your App installation and installation ID are not at fault. Please contact your hub administrator.'
+                : 'This hive’s GitHub App credentials have not been provisioned yet. The private key is supplied by the hub operator, not by you. Agents will start working automatically once it arrives; contact your hub administrator if this persists.');
+        }
+        /* No install link: sending the user to an install page for a key
+           problem is exactly the misdirection this banner exists to stop. */
+        if (oLink) {
+          oLink.removeAttribute('href');
+          oLink.textContent = '';
+          oLink.style.display = 'none';
+        }
+        var staleDetails = document.getElementById('gh-app-perm-details');
+        if (staleDetails) staleDetails.remove();
+        banner.removeAttribute('hidden');
+        banner.style.cssText = 'display:flex !important';
+        return;
+      }
+      /* Not operator-side — restore the action link the branch above hides. */
+      var resetLink = document.getElementById('gh-app-install-link');
+      if (resetLink) resetLink.style.display = '';
+      banner.classList.remove('operator-issue');
+
       var isPermIssue = data.githubAppRequired && data.githubAppPermIssue;
       if (data.githubAppRequired && (data.githubAppInstallURL || isPermIssue)) {
         var link = document.getElementById('gh-app-install-link');
@@ -16763,7 +16829,15 @@ function burnAreaChart() {
       {
         id: 'github-app',
         title: 'Install the GitHub App',
-        auto: (data) => data ? data.githubAppRequired !== true : null,
+        // An operator-side credential failure is not an unfinished user step.
+        // Return null ("cannot tell") rather than false, so the checklist does
+        // not mark the user as having something left to do when the missing
+        // piece is a key the hub operator supplies.
+        auto: (data) => {
+          if (!data) return null;
+          if (ghAppIsOperatorSide(data.githubAppState)) return null;
+          return data.githubAppRequired !== true;
+        },
         body: 'The GitHub App unlocks issues, advisory reports, and PRs on your primary repo — without it the hive can only observe.',
         autoNote: 'Checks itself once the app is detected on your repository.',
         actions: [
@@ -16960,6 +17034,12 @@ function burnAreaChart() {
     }
     /** Open the GitHub App install page (same URL the banner links to). */
     function welcomeInstallGitHubApp() {
+      // Never send the user to an install page when the block is operator-side:
+      // installing again cannot fix a key they do not control.
+      if (window._lastStatus && ghAppIsOperatorSide(window._lastStatus.githubAppState)) {
+        showToast('This hive is waiting on GitHub App credentials from the hub operator — installing the App again will not help. Contact your hub administrator.', 'info');
+        return;
+      }
       const url = (window._lastStatus && window._lastStatus.githubAppInstallURL) || '';
       if (url) { window.open(url, '_blank', 'noopener'); return; }
       const installed = !!(window._lastStatus) && window._lastStatus.githubAppRequired !== true;

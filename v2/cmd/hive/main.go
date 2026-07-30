@@ -398,6 +398,11 @@ func main() {
 	notifier.SetHiveID(cfg.HiveID)
 	acmmLevel := inferACMMLevel(cfg)
 	githubAppRequired := false
+	// githubAppDiag/githubAppState carry the classified reason App auth failed,
+	// so the banner can name the true cause (and the hub can avoid escalating
+	// against a hive whose credentials the operator never delivered).
+	githubAppDiag := ""
+	githubAppState := github.AppStateUnknown
 
 	// Find or create the pinned advisory issue. Any level can have advisory
 	// agents whose findings should be posted to this issue.
@@ -418,7 +423,17 @@ func main() {
 					logger.Warn("GitHub API rate limit hit during advisory issue ensure", "repo", primaryRepo)
 				} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
 					githubAppRequired = true
-					logger.Warn("GitHub App not installed or credentials invalid — setting githubAppRequired flag", "error", err)
+					// Classify WHY before the banner renders. A bare 401/403
+					// here used to become "GitHub App Not Installed", which is
+					// wrong — and actively misleading — when the real cause is
+					// a key the operator has not delivered. Classification is
+					// on the live API response, and a missing key file
+					// short-circuits without any API call.
+					githubAppDiag, githubAppState = diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
+					logger.Warn("GitHub App authentication failed at startup",
+						"state", githubAppState.String(),
+						"operator_actionable", githubAppState.OperatorActionable(),
+						"error", err)
 				}
 			} else {
 				advisoryIssues[primaryRepo] = num
@@ -1172,6 +1187,15 @@ func main() {
 	})
 
 	dashSrv.SetGitHubAppRequired(githubAppRequired)
+	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
+	// classified state is applied only after it, and only when a failure was
+	// actually detected.
+	if githubAppRequired {
+		dashSrv.SetGitHubAppState(githubAppState.String())
+		if githubAppDiag != "" {
+			dashSrv.SetGitHubAppPermIssue(githubAppDiag)
+		}
+	}
 
 	// Wire up the manual re-check callback for the dashboard button.
 	{
@@ -1198,9 +1222,12 @@ func main() {
 				// this is the exact case rediscovery exists for. Cached by TTL,
 				// so a repeated re-check does not re-hit the API.
 				healGitHubAppInstallation(ctx, ghClient.AppAuth(), cfg, logger)
-				if diag := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
+				if diag, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
 					dashSrv.SetGitHubAppPermIssue(diag)
-					logger.Warn("github app recheck: app detected but write not verified", "repo", recheckRepo, "detail", diag)
+					dashSrv.SetGitHubAppState(state.String())
+					logger.Warn("github app recheck: app detected but write not verified",
+						"repo", recheckRepo, "state", state.String(),
+						"operator_actionable", state.OperatorActionable(), "detail", diag)
 					dashSrv.AuditLog("system", "github_app_check", "result=installed but write NOT verified: "+diag, "")
 					return false
 				}
@@ -1826,6 +1853,7 @@ func main() {
 				ImageRef:                hub.SelfDeploymentImage(),
 				GitHubAppRequired:       dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:      dashSrv.GetGitHubAppPermIssue(),
+				GitHubAppState:          dashSrv.GetGitHubAppState(),
 				PendingGitHubAppInstall: dashSrv.IsPendingGitHubAppInstall(),
 				AutoUpgrade:             cfg.Hub.AutoUpgrade,
 				ClusterHealth: func() *hub.HeartbeatClusterHealthReport {
@@ -2389,27 +2417,36 @@ func healGitHubAppInstallation(ctx context.Context, appAuth *github.AppAuth, cfg
 		"installation_id", newID, "org", org)
 }
 
-func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
+// diagnoseGitHubApp classifies this hive's GitHub App credential state and
+// returns both the machine-readable state and banner-ready copy.
+//
+// It supersedes a substring match on the formatted error ("403"/"401"), which
+// could not tell a user-side failure from an operator-side one and so showed
+// every hive the same "GitHub App Not Installed" banner. The most damaging
+// case that fixes: a spoke holding the WRONG private key (the hub's key push
+// has not landed, or delivered a public github.com key to a GitHub Enterprise
+// hive) gets `401 A JSON web token could not be decoded`. The user cannot see,
+// supply, or correct that key — telling them to install the App or check
+// github.installation_id sends them to redo work they already did correctly.
+//
+// The candidate key paths are passed so a MISSING key is detected without any
+// API round-trip at all.
+//
+// Returns ("", AppStateOK) when App auth is healthy, and ("", state) for a nil
+// appAuth (a token-authenticated hive has nothing to check).
+func diagnoseGitHubApp(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) (string, github.AppAuthState) {
 	if appAuth == nil {
-		return ""
+		return "", github.AppStateOK
 	}
-	info, err := appAuth.VerifyInstallation(ctx)
-	if err != nil {
-		return fmt.Sprintf("Could not verify the GitHub App installation: %v", err)
-	}
-	if expectedOwner != "" && !strings.EqualFold(info.Account, expectedOwner) {
-		return fmt.Sprintf("This hive is authenticating as GitHub App installation %d, which belongs to '%s' — not '%s'. Check github.installation_id in the hive config.",
-			info.InstallationID, info.Account, expectedOwner)
-	}
-	if info.IssuesPerm != "write" {
-		granted := info.IssuesPerm
-		if granted == "" {
-			granted = "none"
-		}
-		return fmt.Sprintf("The GitHub App is installed for '%s' but granted Issues: %s (Issues: Read & Write required). The org owner must approve the updated permissions at the app installation settings page.",
-			info.Account, granted)
-	}
-	return ""
+	d := appAuth.DiagnoseAppAuth(ctx, expectedOwner, spokeAppKeyPath, spokeProvisionedAppKeyPath)
+	return d.Message(), d.State
+}
+
+// diagnoseGitHubAppWrite is the string-only wrapper retained for callers that
+// only need banner copy.
+func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
+	msg, _ := diagnoseGitHubApp(ctx, appAuth, expectedOwner)
+	return msg
 }
 
 func runEvalCycle(
@@ -2704,17 +2741,32 @@ func runEvalCycle(
 							// Resolve the actual cause — pending permission approval
 							// vs. an installation_id pointing at the wrong org — so
 							// the banner tells the user what to actually fix.
-							msg := diagnoseGitHubAppWrite(ctx, ghClient.AppAuth(), cfg.Project.Org)
+							msg, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
 							if msg == "" {
 								msg = "The GitHub App is installed but lacks Issues: Read & Write permission. The org owner must approve updated permissions at the app installation settings page."
+								state = github.AppStateInsufficientPerms
 							}
-							dashSrv.SetGitHubAppPermIssue(msg)
 							dashSrv.SetGitHubAppRequired(true)
-							logger.Warn("GitHub App installed but insufficient permissions — cannot write issue comments", "repo", primaryRepo, "detail", msg)
+							dashSrv.SetGitHubAppPermIssue(msg)
+							dashSrv.SetGitHubAppState(state.String())
+							logger.Warn("GitHub App write failed — cannot write issue comments",
+								"repo", primaryRepo, "state", state.String(),
+								"operator_actionable", state.OperatorActionable(), "detail", msg)
 						} else if strings.Contains(err.Error(), "rate limit") {
 							logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", primaryRepo)
 						} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
+							// Same reasoning as the startup path: classify
+							// before raising a banner, so an operator-side key
+							// failure is never rendered as "not installed".
+							msg, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
 							dashSrv.SetGitHubAppRequired(true)
+							if msg != "" {
+								dashSrv.SetGitHubAppPermIssue(msg)
+							}
+							dashSrv.SetGitHubAppState(state.String())
+							logger.Warn("GitHub App authentication failed posting advisory digest",
+								"repo", primaryRepo, "state", state.String(),
+								"operator_actionable", state.OperatorActionable())
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")

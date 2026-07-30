@@ -247,10 +247,17 @@ type HeartbeatPayload struct {
 	// The hub cannot read this itself for firewalled spokes it reaches only by
 	// heartbeat, which is why it rides the payload. Empty when the spoke is
 	// not running in-cluster or the read failed — never a guess.
-	ImageRef                string                        `json:"image_ref,omitempty"`
-	Timestamp               string                        `json:"timestamp"`
-	GitHubAppRequired       bool                          `json:"github_app_required,omitempty"`
-	GitHubAppPermIssue      string                        `json:"github_app_perm_issue,omitempty"`
+	ImageRef           string `json:"image_ref,omitempty"`
+	Timestamp          string `json:"timestamp"`
+	GitHubAppRequired  bool   `json:"github_app_required,omitempty"`
+	GitHubAppPermIssue string `json:"github_app_perm_issue,omitempty"`
+	// GitHubAppState is the spoke's classification of WHY App auth is failing
+	// (a github.AppAuthState token: "key-missing", "key-invalid",
+	// "not-installed", "wrong-installation", "insufficient-permissions").
+	// The hub uses it to avoid nudging — let alone threatening de-provisioning
+	// — a hive whose credentials the OPERATOR has not delivered. Empty from a
+	// spoke too old to report it, which must be read as "cannot tell".
+	GitHubAppState          string                        `json:"github_app_state,omitempty"`
 	AutoUpgrade             bool                          `json:"auto_upgrade,omitempty"`
 	Upgrading               bool                          `json:"upgrading,omitempty"`
 	UpgradeTargetSHA        string                        `json:"upgrade_target_sha,omitempty"`

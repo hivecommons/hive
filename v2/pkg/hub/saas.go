@@ -6462,6 +6462,23 @@ const dashboardHTML = `<!DOCTYPE html>
       var tips = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
       return '<span class="acmm-badge acmm-' + l + '" title="' + esc(tips[l] || '') + '">' + (ACMM_LABELS[l] || 'L' + l) + '</span>';
     }
+    /* Classified GitHub App auth states, matching github.AppAuthState.String()
+       on the spoke and operatorSideAppStates in journey.go. The two OPERATOR
+       states describe a failure the hive OWNER cannot fix: the App private key
+       is distributed by the hub, so a missing or mismatched key is our problem,
+       not theirs. The UI must never present these as something the user should
+       install or reconfigure. */
+    var GH_APP_STATE_KEY_MISSING = 'key-missing';
+    var GH_APP_STATE_KEY_INVALID = 'key-invalid';
+    var GH_APP_OPERATOR_STATES = {};
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
+    /* An unreported or unrecognised state is deliberately NOT operator-side:
+       a spoke too old to classify keeps the existing behaviour. */
+    function ghAppIsOperatorSide(state) {
+      return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
+    }
+
     /* Labels for each journey stage, matching JourneyStage.String() on the hub. */
     var JOURNEY_STAGE_LABELS = {
       'none': 'On track',
@@ -6910,7 +6927,17 @@ const dashboardHTML = `<!DOCTYPE html>
         if (ck.detail) line += ': ' + ck.detail;
         lines.push(line);
       }
-      if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
+      if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
+        /* Operator-side: the key we distribute has not landed, or is for the
+           wrong App. Still degraded — the hive genuinely cannot work — but the
+           hover must name the real cause so an admin does not chase the user
+           about an installation that is already correct. */
+        lines.push(h.githubAppState === GH_APP_STATE_KEY_INVALID
+          ? '⚠ GitHub App: key does not match the App (operator must push the correct key)'
+          : '⚠ GitHub App: credentials not yet delivered by the hub (operator action)');
+        st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel;
+      }
+      else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (!h.githubAppRequired) { lines.push('✓ GitHub App installed'); }
       if (!checks.length) lines.push('No check data');
@@ -7026,6 +7053,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'heartbeat-stale': 'Heartbeat stale',
       'app-missing':     'GitHub App not installed',
       'app-perm-issue':  'GitHub App permissions',
+      'app-creds-operator': 'GitHub App key (operator)',
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
       'acmm-unset':      'ACMM level unset',

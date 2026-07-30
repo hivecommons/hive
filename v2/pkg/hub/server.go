@@ -111,6 +111,7 @@ type RegistryEntry struct {
 	PRHistory                 []SparkPoint       `json:"prHistory,omitempty"`
 	GitHubAppRequired         bool               `json:"githubAppRequired,omitempty"`
 	GitHubAppPermIssue        string             `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState            string             `json:"githubAppState,omitempty"`
 	PendingGitHubAppInstall   bool               `json:"pendingGitHubAppInstall,omitempty"`
 	PendingGitHubAppInstallAt time.Time          `json:"pendingGitHubAppInstallAt,omitempty"`
 	// Fleet contribution counts reported by the spoke (nil = not reported /
@@ -744,6 +745,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		Online:                  true,
 		GitHubAppRequired:       payload.GitHubAppRequired,
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
+		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
 		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {
