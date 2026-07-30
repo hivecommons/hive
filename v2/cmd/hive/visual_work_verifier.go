@@ -73,7 +73,10 @@ func (verifier *normalVisualPullRequestVerifier) VerifyPullRequest(ctx context.C
 		}
 		return normalservice.PullRequestVerdictReceipt{}, err
 	}
-	if verifier.inspectGate != nil {
+	// Production uses the verifier's GitHub client directly, while focused
+	// tests may inject an inspector. Either source must take the red/pending
+	// path before the success-bundle verifier binds the live default branch.
+	if verifier.hasPullRequestGateSource() {
 		gate, gateErr := verifier.inspectPullRequestGate(ctx, current.Repository, request.PullRequestNumber)
 		if gateErr != nil {
 			return normalservice.PullRequestVerdictReceipt{}, gateErr
@@ -124,6 +127,10 @@ func (verifier *normalVisualPullRequestVerifier) VerifyPullRequest(ctx context.C
 		HeadSHA: snapshot.Identity.Source.Head.SHA, Status: snapshot.Identity.Check.Conclusion,
 		Receipt: receiptBytes, ReceiptSHA256: snapshot.ReceiptSHA256,
 	}, nil
+}
+
+func (verifier *normalVisualPullRequestVerifier) hasPullRequestGateSource() bool {
+	return verifier != nil && (verifier.inspectGate != nil || verifier.github != nil)
 }
 
 type normalVisualFailedPullRequestReceiptIdentity struct {

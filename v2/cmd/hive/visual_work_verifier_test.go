@@ -162,6 +162,22 @@ func TestNormalVisualPullRequestVerifierRecordsVerifiedFailedReviewAfterDefaultB
 	}
 }
 
+func TestNormalVisualPullRequestVerifierProductionClientEnablesGatePreinspection(t *testing.T) {
+	if (&normalVisualPullRequestVerifier{}).hasPullRequestGateSource() {
+		t.Fatal("empty verifier unexpectedly exposes a pull-request gate source")
+	}
+	if !(&normalVisualPullRequestVerifier{github: &hivegithub.Client{}}).hasPullRequestGateSource() {
+		t.Fatal("production GitHub client did not enable pull-request gate preinspection")
+	}
+	if !(&normalVisualPullRequestVerifier{
+		inspectGate: func(context.Context, string, int) (hivegithub.PullRequestGate, error) {
+			return hivegithub.PullRequestGate{}, nil
+		},
+	}).hasPullRequestGateSource() {
+		t.Fatal("injected pull-request gate inspector did not enable preinspection")
+	}
+}
+
 func TestNormalVisualPullRequestVerifierKeepsUnfinishedExactHeadPending(t *testing.T) {
 	fingerprint := strings.Repeat("f", 64)
 	baseSHA, headSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
