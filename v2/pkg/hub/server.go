@@ -136,9 +136,17 @@ type RegistryEntry struct {
 	// UpgradeFailed records that the spoke reported an upgrade it could not
 	// complete, with the cause. Distinct from Upgrading: "failed" is a terminal
 	// state a human must see, not an in-flight one.
-	UpgradeFailed             bool         `json:"upgradeFailed,omitempty"`
-	UpgradeError              string       `json:"upgradeError,omitempty"`
-	UpgradeFailedAt           time.Time    `json:"upgradeFailedAt,omitempty"`
+	UpgradeFailed   bool      `json:"upgradeFailed,omitempty"`
+	UpgradeError    string    `json:"upgradeError,omitempty"`
+	UpgradeFailedAt time.Time `json:"upgradeFailedAt,omitempty"`
+	// OrphanedUpgradeSweeps counts how many times the orphan sweep has cleared
+	// and re-armed an upgrade for this hive without it ever landing. A spoke
+	// that cannot advance (it restarts, comes back on a SHA that is neither the
+	// old one nor the target, and goes quiet again) would otherwise be swept and
+	// re-armed forever, which looks like progress but never is. Past
+	// maxOrphanedUpgradeSweeps the hub stops retrying and records a failure a
+	// human can see. Reset whenever the hive reaches a target.
+	OrphanedUpgradeSweeps     int          `json:"orphanedUpgradeSweeps,omitempty"`
 	IssueHistory              []SparkPoint `json:"issueHistory,omitempty"`
 	PRHistory                 []SparkPoint `json:"prHistory,omitempty"`
 	GitHubAppRequired         bool         `json:"githubAppRequired,omitempty"`
@@ -1099,6 +1107,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// full SHA and the target/latest was the 7-char short form.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				// The upgrade landed, so any orphan-sweep retry budget spent
+				// getting here is no longer relevant. Reset it, or a hive that
+				// needed one sweep on each of three separate upgrades would be
+				// declared permanently faulty on the third.
+				entry.OrphanedUpgradeSweeps = 0
 			} else if h.Upgrading && !payload.Upgrading && h.UpgradeTarget == "" {
 				// Upgrading with no target (stale flag from config-only restart).
 				entry.Upgrading = false
