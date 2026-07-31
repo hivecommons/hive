@@ -35,7 +35,8 @@ RUN DETECTED_GIT_HASH=$(git -C /repo rev-parse HEAD 2>/dev/null || true) && \
     GIT_SHORT=$(printf '%s' "$GIT_HASH" | cut -c1-7) && \
     if [ "$GIT_BRANCH" = "unknown" ] || [ -z "$GIT_BRANCH" ]; then GIT_BRANCH=$(git -C /repo rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown"); fi && \
     GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH}" -o /hive ./cmd/hive && \
-    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd
+    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /bd ./cmd/bd && \
+    GOCACHE=/tmp/gobuild CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup
 
 
 # --- tmux from source (cached until TMUX_VERSION changes) ---
@@ -179,6 +180,7 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 
 COPY --from=builder /hive /usr/local/bin/hive
 COPY --from=builder /bd /usr/local/bin/bd
+COPY --from=builder /hive-backup /usr/local/bin/hive-backup
 
 COPY --from=visual-hive-builder /visual-hive-release /opt/hive/visual-hive
 ENV HIVE_VISUAL_HIVE_HOME=/opt/hive/visual-hive
