@@ -3981,6 +3981,22 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
+// mergeableJSONUnknown is the explicit wire value for "mergeability was never
+// determined". It is spelled out rather than left as "" so a consumer reading
+// merge-eligible.json cannot mistake an unpopulated field for a definitive
+// "no" — the failure mode that made every PR read as unmergeable.
+const mergeableJSONUnknown = "unknown"
+
+// mergeableJSON renders a tri-state mergeability verdict for the
+// merge-eligible.json marker, mapping the unknown zero value to an explicit
+// "unknown" rather than an empty string.
+func mergeableJSON(m github.Mergeable) string {
+	if m == github.MergeableUnknown {
+		return mergeableJSONUnknown
+	}
+	return string(m)
+}
+
 // claimLedger holds the duplicate-PR guard's persisted issue→PR claim mapping
 // across eval cycles. It is loaded lazily on first use (and retried on a load
 // failure) rather than at startup, so a missing or corrupt /data ledger can
@@ -4037,13 +4053,16 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	}
 
 	type eligiblePR struct {
-		Number    int      `json:"number"`
-		Repo      string   `json:"repo"`
-		Title     string   `json:"title"`
-		Author    string   `json:"author"`
-		Labels    []string `json:"labels,omitempty"`
-		Mergeable bool     `json:"mergeable"`
-		DCO       string   `json:"dco"`
+		Number int      `json:"number"`
+		Repo   string   `json:"repo"`
+		Title  string   `json:"title"`
+		Author string   `json:"author"`
+		Labels []string `json:"labels,omitempty"`
+		// Mergeable is a tri-state string ("yes"/"no"/"unknown"), not a bool.
+		// A bool here defaulted to false for every PR, because the value was
+		// read from a list endpoint that never returns it.
+		Mergeable string `json:"mergeable"`
+		DCO       string `json:"dco"`
 	}
 
 	type failingPR struct {
@@ -4094,7 +4113,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			Title:     pr.Title,
 			Author:    pr.Author,
 			Labels:    pr.Labels,
-			Mergeable: pr.Mergeable,
+			Mergeable: mergeableJSON(pr.Mergeable),
 			DCO:       dco,
 		})
 	}
