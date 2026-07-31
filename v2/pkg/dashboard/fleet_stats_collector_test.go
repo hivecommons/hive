@@ -87,6 +87,13 @@ func TestFleetStatsCollector_NilAndEmpty(t *testing.T) {
 }
 
 func TestFleetStatsCollector_StartCancels(t *testing.T) {
+	// Disable the startup jitter: it exists to spread a 50-spoke fleet across
+	// the GitHub search rate-limit window, and would otherwise delay this
+	// test's initial collect by up to minutes.
+	origJitter := fleetStatsStartupJitterMax
+	fleetStatsStartupJitterMax = 0
+	defer func() { fleetStatsStartupJitterMax = origJitter }()
+
 	c := newFleetTestClient(t, map[string]int{"is:merged merged:>=": 1})
 	fc := NewFleetStatsCollector(c, "bot", "org", slog.Default())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -117,6 +124,13 @@ func TestFleetStatsCollector_StartCancels(t *testing.T) {
 }
 
 func TestFleetStatsCollector_TickerReCollects(t *testing.T) {
+	// Disable the startup jitter: it exists to spread a 50-spoke fleet across
+	// the GitHub search rate-limit window, and would otherwise delay this
+	// test's initial collect by up to minutes.
+	origJitter := fleetStatsStartupJitterMax
+	fleetStatsStartupJitterMax = 0
+	defer func() { fleetStatsStartupJitterMax = origJitter }()
+
 	// Shrink the interval so the ticker branch fires within the test.
 	orig := fleetStatsCollectInterval
 	fleetStatsCollectInterval = 20 * time.Millisecond
@@ -164,10 +178,74 @@ func TestFleetStatsCollector_CollectError(t *testing.T) {
 	base, _ := url.Parse(srv.URL + "/")
 	c.GoGitHub().BaseURL = base
 
+	// Collapse the retry backoff so the test exercises the full retry ladder
+	// without waiting minutes of real time.
+	restore := fleetStatsRetryBaseDelay
+	fleetStatsRetryBaseDelay = time.Millisecond
+	t.Cleanup(func() { fleetStatsRetryBaseDelay = restore })
+
 	fc := NewFleetStatsCollector(c, "bot", "org", slog.Default())
 	fc.collect(context.Background())
 	// A failed collect must leave the collector not-ready (never a fake zero).
 	if _, ready := fc.Snapshot(); ready {
 		t.Error("collector should stay not-ready after a failed collect")
+	}
+	if !fc.CollectedAt().IsZero() {
+		t.Error("CollectedAt must stay zero when no collect has ever succeeded")
+	}
+}
+
+// TestFleetStatsCollector_RetriesThenSucceeds is the regression guard for the
+// fleet-wide stat collapse: the GitHub search API allows only 30 requests per
+// minute, so a rolling restart rate-limits most spokes on their first attempt.
+// Before retrying, a single rejection dropped that hive out of the public total
+// for a full 30-minute cycle. A transient failure must not cost a hive its
+// contribution.
+func TestFleetStatsCollector_RetriesThenSucceeds(t *testing.T) {
+	var calls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search/issues", func(w http.ResponseWriter, r *http.Request) {
+		// Fail every search of the first collect attempt, then succeed.
+		if calls.Add(1) <= 1 {
+			http.Error(w, "rate limited", http.StatusForbidden)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 7, "items": []any{}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := ghpkg.NewClient("fake", "org", []string{"repo"}, slog.Default(), "")
+	base, _ := url.Parse(srv.URL + "/")
+	c.GoGitHub().BaseURL = base
+
+	restore := fleetStatsRetryBaseDelay
+	fleetStatsRetryBaseDelay = time.Millisecond
+	t.Cleanup(func() { fleetStatsRetryBaseDelay = restore })
+
+	fc := NewFleetStatsCollector(c, "bot", "org", slog.Default())
+	fc.collect(context.Background())
+
+	counts, ready := fc.Snapshot()
+	if !ready {
+		t.Fatal("collector must be ready after a retry succeeds")
+	}
+	if counts.PRsMerged != 7 {
+		t.Errorf("PRsMerged = %d, want 7", counts.PRsMerged)
+	}
+	if fc.CollectedAt().IsZero() {
+		t.Error("CollectedAt must be set after a successful collect")
+	}
+}
+
+// TestFleetStatsCollector_StartupDelayWithinBound pins the startup jitter to
+// its configured window; it is what spreads the fleet's first collect across
+// the search rate-limit window instead of stampeding it.
+func TestFleetStatsCollector_StartupDelayWithinBound(t *testing.T) {
+	fc := NewFleetStatsCollector(nil, "bot", "org", slog.Default())
+	for i := 0; i < 100; i++ {
+		d := fc.startupDelay()
+		if d < 0 || d >= fleetStatsStartupJitterMax {
+			t.Fatalf("startupDelay() = %v, want within [0, %v)", d, fleetStatsStartupJitterMax)
+		}
 	}
 }
