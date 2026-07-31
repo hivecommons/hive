@@ -5071,9 +5071,17 @@
        perform. Kept out of GH_APP_OPERATOR_STATES: installing is the user's
        job, not the operator's. */
     var GH_APP_STATE_NOT_INSTALLED = 'not-installed';
+    /* Operator-side: this hive still carries the placeholder app_id and was
+       never assigned a real App. It is NOT 'not-installed' — the App may well be
+       installed and the installation ID correct (it usually is), but an app_id
+       that names no App can never authenticate. Treating it as user-actionable
+       sent owners to the install link and the Set-ID box, i.e. to fix the one
+       field that was already right. */
+    var GH_APP_STATE_NO_APP_ASSIGNED = 'no-app-assigned';
     var GH_APP_OPERATOR_STATES = {};
     GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
     GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
+    GH_APP_OPERATOR_STATES[GH_APP_STATE_NO_APP_ASSIGNED] = true;
 
     /* True when the App failure is the operator's to fix. An unreported or
        unrecognised state is deliberately NOT operator-side: a spoke too old to
@@ -5099,14 +5107,20 @@
         var oTitle = document.querySelector('#gh-app-install-banner .gh-app-title');
         var oDesc = document.querySelector('#gh-app-install-banner .gh-app-desc');
         var oLink = document.getElementById('gh-app-install-link');
-        if (oTitle) oTitle.textContent = 'GitHub App credentials pending — no action needed from you';
+        if (oTitle) {
+          oTitle.textContent = appState === GH_APP_STATE_NO_APP_ASSIGNED
+            ? 'This hive was never assigned a GitHub App ID'
+            : 'GitHub App credentials pending — no action needed from you';
+        }
         if (oDesc) {
           /* Prefer the server-composed diagnosis; it already carries the
              accurate, non-blaming copy. textContent keeps any org name or API
              text safe to render verbatim. */
           oDesc.textContent = (typeof data.githubAppPermIssue === 'string' && data.githubAppPermIssue)
             ? data.githubAppPermIssue
-            : (appState === GH_APP_STATE_KEY_INVALID
+            : (appState === GH_APP_STATE_NO_APP_ASSIGNED
+                ? 'This hive was provisioned as a placeholder and still carries the placeholder github.app_id, which does not name a real GitHub App. It cannot authenticate no matter which installation ID is set — your App installation and installation ID are not at fault. Only the hub operator can assign the real App ID. Please contact your hub administrator.'
+                : appState === GH_APP_STATE_KEY_INVALID
                 ? 'This hive’s GitHub App private key does not match the App it authenticates as, so GitHub rejects its token. The key is supplied by the hub operator and cannot be corrected by you — your App installation and installation ID are not at fault. Please contact your hub administrator.'
                 : 'This hive’s GitHub App credentials have not been provisioned yet. The private key is supplied by the hub operator, not by you. Agents will start working automatically once it arrives; contact your hub administrator if this persists.');
         }

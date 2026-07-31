@@ -32,7 +32,7 @@ func appCanWriteForAdvisory(e RegistryEntry) bool {
 		return false
 	}
 	switch e.GitHubAppState {
-	case "not-installed", "key-missing", "key-invalid",
+	case "not-installed", "key-missing", "key-invalid", "no-app-assigned",
 		"wrong-installation", "insufficient-permissions":
 		return false
 	default:

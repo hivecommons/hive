@@ -371,9 +371,13 @@ func appStateIsOperatorSide(state string) bool {
 //   - "key-missing" — no App private key reached this spoke at all.
 //   - "key-invalid" — a key is present but GitHub rejects the JWT it signs,
 //     i.e. it belongs to a different App than the hive claims to be.
+//   - "no-app-assigned" — the hive still carries the placeholder app_id and was
+//     never assigned a real App. The owner cannot fix this at all, so the
+//     journey must never nudge (or threaten de-provisioning) over it.
 var operatorSideAppStates = map[string]bool{
-	appStateKeyMissingToken: true,
-	appStateKeyInvalidToken: true,
+	appStateKeyMissingToken:    true,
+	appStateKeyInvalidToken:    true,
+	appStateNoAppAssignedToken: true,
 }
 
 const (
@@ -381,6 +385,8 @@ const (
 	// github.AppStateKeyMissing.String() and github.AppStateKeyInvalid.String().
 	appStateKeyMissingToken = "key-missing"
 	appStateKeyInvalidToken = "key-invalid"
+	// appStateNoAppAssignedToken mirrors github.AppStateNoAppAssigned.String().
+	appStateNoAppAssignedToken = "no-app-assigned"
 )
 
 // methodModelAssigned reports whether any agent on this hive has a method

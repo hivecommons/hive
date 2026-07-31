@@ -5382,8 +5382,22 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 	changed := false
 	prevLevel := h.ACMMLevel
 
-	// ACMM is operator-owned from the start — always adopt a non-zero level.
-	if level > 0 && level != h.ACMMLevel {
+	// ACMM follows the SAME ClaimDelivered handshake as org/repos below.
+	//
+	// #2061 made ACMM "operator-owned from the start — always adopt", which
+	// fixed the spyre revert (a dashboard level change bouncing back every
+	// beat) but left a gap on the ASSIGN path: a freshly-claimed placeholder
+	// has not yet been told its level, so it keeps reporting the level it was
+	// MINTED at (defaultAssignACMMLevel). Adopting that pre-delivery report
+	// overwrote the level the requester actually asked for — an approved L3
+	// request silently became L2 in meta.json, and the spoke stayed L2 forever
+	// because the hub then had no higher level left to push.
+	//
+	// Gating on ClaimDelivered keeps BOTH behaviours: before delivery the claim
+	// (including its level) is authoritative and a stale spoke report is
+	// ignored; after delivery the spoke's dashboard owns the level and operator
+	// edits are adopted exactly as #2061 intended.
+	if level > 0 && level != h.ACMMLevel && h.ClaimDelivered {
 		h.ACMMLevel = level
 		changed = true
 	}
@@ -5396,8 +5410,15 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 	orgMatches := org != "" && strings.EqualFold(org, h.Org)
 	reposMatch := len(repos) > 0 && sameStringSliceFold(repos, h.Repos)
 	primaryMatches := primary == "" || strings.EqualFold(primary, h.PrimaryRepo)
+	// The ACMM level is part of the claim payload, so delivery is not complete
+	// until the spoke reports THAT back too. Flipping the flag on org/repos
+	// alone declared the claim delivered while the spoke was still running the
+	// level it was minted at — which both stopped the push and handed level
+	// ownership to the spoke, permanently pinning the hive to the wrong level.
+	// A level-0 report means "too old / mid-boot to say", not a mismatch.
+	acmmMatches := level == 0 || level == h.ACMMLevel
 	if !h.ClaimDelivered {
-		if orgMatches && reposMatch && primaryMatches {
+		if orgMatches && reposMatch && primaryMatches && acmmMatches {
 			h.ClaimDelivered = true
 			changed = true
 		}
@@ -5514,15 +5535,23 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	//     spoke first reports the assigned project). After delivery the spoke's
 	//     dashboard owns them and the caller adopts operator edits instead.
 	//   - vanity URL: pushed until the spoke first reports it back.
-	//   - ACMM level: NEVER pushed — operator-owned from the start, always
-	//     adopted by the caller. Including it here (as the old code did) made any
-	//     dashboard level change get reverted every beat (the spyre bug).
-	// curACMM is unused for the push decision (kept for signature/back-compat).
-	_ = curACMM
+	//   - ACMM level: pushed ONLY until the claim is delivered, on exactly the
+	//     same handshake as org/repos. After delivery it is never pushed again —
+	//     the spoke's dashboard owns it and the caller adopts operator edits.
+	//
+	//     #2061 removed the ACMM push entirely because pushing it FOREVER
+	//     reverted every dashboard level change (the spyre bug). But dropping it
+	//     altogether meant a freshly-assigned placeholder was never told the
+	//     level its owner requested: it kept running the level it was minted at
+	//     (defaultAssignACMMLevel), reported that back, and the hub adopted the
+	//     stale report — so an approved L3 request ran, and displayed, as L2.
+	//     Bounding the push by ClaimDelivered delivers the requested level once
+	//     without ever reverting a later operator edit.
 	needClaimPush := !h.ClaimDelivered &&
 		!(strings.EqualFold(curOrg, h.Org) &&
 			sameStringSliceFold(curRepos, h.Repos) &&
-			strings.EqualFold(curPrimary, primary))
+			strings.EqualFold(curPrimary, primary) &&
+			curACMM == h.ACMMLevel)
 	needURLPush := h.VanityURL != "" && curURL != h.VanityURL
 	// A spoke reporting a repo that fails isValidRepoRef is wedged: the hub 400s
 	// its every heartbeat ("invalid repo name"), /api/livez then fails on the

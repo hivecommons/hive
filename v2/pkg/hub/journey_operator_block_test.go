@@ -128,10 +128,15 @@ func TestNextNudge_OperatorBlockedDoesNotSuppressOtherStages(t *testing.T) {
 // pkg/hub deliberately does not import pkg/github, so these literals must stay
 // in sync with github.AppAuthState.String() by test, not by compiler.
 func TestOperatorSideAppStateTokensMatchSpoke(t *testing.T) {
-	// These are exactly the tokens github.AppStateKeyMissing.String() and
-	// github.AppStateKeyInvalid.String() produce; pkg/github's
+	// These are exactly the tokens github.AppStateKeyMissing.String(),
+	// github.AppStateKeyInvalid.String() and
+	// github.AppStateNoAppAssigned.String() produce; pkg/github's
 	// TestAppAuthState_WireRoundTrip locks the other side.
-	want := map[string]bool{"key-missing": true, "key-invalid": true}
+	//
+	// "no-app-assigned" is operator-side: a hive still on the placeholder
+	// app_id cannot be fixed by its owner at all, so the journey must never
+	// nudge — let alone threaten de-provisioning — over it.
+	want := map[string]bool{"key-missing": true, "key-invalid": true, "no-app-assigned": true}
 	if len(operatorSideAppStates) != len(want) {
 		t.Fatalf("operatorSideAppStates = %v, want exactly %v", operatorSideAppStates, want)
 	}
