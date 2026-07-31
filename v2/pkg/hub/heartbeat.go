@@ -434,6 +434,49 @@ type HeartbeatPayload struct {
 	// read as "unknown": the hub falls back to the conservative per-hive
 	// override and declines to overwrite. Never infer a mismatch from silence.
 	GitHubAppID int64 `json:"github_app_id,omitempty"`
+	// GitHubAppSlug and GitHubInstallationID complete the spoke's report of the
+	// GitHub identity it is actually running.
+	//
+	// WHY THEY EXIST
+	//
+	// A GitHub App identity is an ATOMIC SET — app_id, app_slug, api_url and
+	// base_url must all name the same forge. The hub pushes app_id and app_slug
+	// (HeartbeatGitHubAppConfig) and api_url (HeartbeatProjectConfig), but until
+	// now it received back only app_id and the key fingerprint. Two of the
+	// pushed fields were therefore STRUCTURALLY UNCONFIRMABLE: the hub could
+	// push a slug or an installation id and had no way, ever, to learn whether
+	// it landed.
+	//
+	// That is not a theoretical gap. A cluster-config change pushed a GHE
+	// app_id to a set of hives WITHOUT a matching api_url. The spokes ended up
+	// with a GHE App ID pointed at api.github.com and every token request
+	// failed:
+	//
+	//	POST https://api.github.com/app/installations/<id>/access_tokens
+	//	404 Integration not found
+	//
+	// The hives that also received api_url=https://github.ibm.com/api/v3 were
+	// fine — the failure split exactly on that one field. With only app_id
+	// reported back, a half-applied identity is invisible to the hub: it looks
+	// like a successful delivery. Reporting the whole set is what makes the
+	// inconsistency detectable, and is a prerequisite for ever confirming a
+	// delivery of it.
+	//
+	// Both are NON-SECRET. Empty/zero means "too old to report, or not
+	// configured" — read as UNKNOWN, never as a mismatch. Never infer a
+	// half-applied identity from silence; see IdentitySetIssues.
+	GitHubAppSlug string `json:"github_app_slug,omitempty"`
+	// GitHubInstallationID is the installation the spoke is using. It is
+	// forge-scoped: an ID issued by one forge names nothing on another, which is
+	// why a forge switch deliberately never carries it across.
+	GitHubInstallationID int64 `json:"github_installation_id,omitempty"`
+	// GitHubBaseURL is the web base URL the spoke runs against (github.base_url).
+	// It is reported but never pushed — the spoke derives its host from
+	// base_url with a fallback to api_url (GitHubConfig.HostLabel), so pushing
+	// api_url alone is sufficient to move a hive between forges. It is reported
+	// here so the hub can see the COMPLETE identity set and detect a base_url
+	// that disagrees with api_url.
+	GitHubBaseURL string `json:"github_base_url,omitempty"`
 	// GitHubAppKeysHeld reports the NON-SECRET fingerprint of every ADDITIONAL
 	// per-app-id key file this spoke holds on its PVC, keyed by app_id as a
 	// decimal string (JSON object keys must be strings). It exists so the hub can

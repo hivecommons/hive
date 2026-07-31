@@ -447,7 +447,12 @@ func TestSwitchForgeSwapsTheWholeIdentity(t *testing.T) {
 
 	// The App identity queued for the spoke must carry the GHE app id AND the
 	// GHE slug, and must NOT carry an installation id from the old forge.
-	got := s.consumePendingGitHubAppConfig("vllmd03")
+	//
+	// The queue is now the DURABLE PendingAppConfig on the hive record rather
+	// than an in-memory one-shot map, so a hub restart between arming and the
+	// next beat no longer discards the switch. The assertions below are
+	// unchanged — only where the identity is read from.
+	got := h.PendingAppConfig
 	if got == nil {
 		t.Fatal("no App identity queued for the spoke — the hive would keep the github.com App")
 	}
@@ -460,8 +465,12 @@ func TestSwitchForgeSwapsTheWholeIdentity(t *testing.T) {
 	if got.InstallationID != 0 {
 		t.Errorf("installation_id = %d, want 0 — an ID from the previous forge must NEVER be carried over", got.InstallationID)
 	}
-	if got.PrivateKey != "" {
-		t.Errorf("this endpoint must not push key material; the per-cluster reconcile owns that, got a key of %d bytes", len(got.PrivateKey))
+	// PendingAppIdentity has no PrivateKey field at all: key material is owned
+	// by the per-cluster reconcile, which gates every push on HasKey(). The
+	// endpoint cannot push a key even by mistake, which is a stronger guarantee
+	// than the assertion this replaces.
+	if got.APIURL != "https://github.ibm.com/api/v3" {
+		t.Errorf("queued api_url = %q, want the GHE API — an identity queued without it is the half-applied state that 404s", got.APIURL)
 	}
 
 	// The response must tell the operator the install is still outstanding,

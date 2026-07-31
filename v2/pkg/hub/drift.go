@@ -77,10 +77,21 @@ const (
 	// work, and telling an operator to check credentials would repeat exactly
 	// the misdiagnosis this signal exists to end.
 	DriftKindAppIDPlaceholder = "app-id-placeholder"
-	DriftKindHealthDegraded   = "health-degraded"
-	DriftKindUpgradeStuck     = "upgrade-stuck"
-	DriftKindACMMUnset        = "acmm-unset"
-	DriftKindNoAgents         = "no-agents"
+	// DriftKindIdentitySplit marks a hive whose GitHub identity components
+	// disagree with each other — most importantly a GHE app_id/app_slug with an
+	// api_url that is empty or public, which authenticates as nothing and fails
+	// every token request with "404 Integration not found".
+	//
+	// It is operator-side and critical: the hive was working, a push moved one
+	// component of the identity without the others, and no owner action can fix
+	// it. Distinct from app-missing (no App installed) and app-id-placeholder
+	// (the App does not exist) because here the App is real and the credentials
+	// are right — they are simply pointed at the wrong forge.
+	DriftKindIdentitySplit  = "identity-split"
+	DriftKindHealthDegraded = "health-degraded"
+	DriftKindUpgradeStuck   = "upgrade-stuck"
+	DriftKindACMMUnset      = "acmm-unset"
+	DriftKindNoAgents       = "no-agents"
 )
 
 // DriftSignal is one detected deviation. Reason is a complete, human-readable
@@ -514,6 +525,21 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 			// misdiagnosis that sent the owner to correct an installation ID that
 			// was already right. app-id-placeholder above already says the true
 			// cause, so this row is suppressed rather than duplicated.
+		}
+		// A split GitHub identity: the components disagree about which forge
+		// they name. Raised on the spoke's OWN report of the whole set, which
+		// is only possible now that app_slug/api_url/base_url are reported
+		// back — with app_id alone, a half-applied identity was
+		// indistinguishable from a healthy one.
+		for _, issue := range IdentitySetIssues(IdentitySet{
+			AppID:          h.GitHubAppID,
+			AppSlug:        h.GitHubAppSlug,
+			InstallationID: h.GitHubInstallationID,
+			APIURL:         h.GitHubAPIURL,
+			BaseURL:        h.GitHubBaseURL,
+		}) {
+			add(DriftKindIdentitySplit, DriftCritical,
+				"GitHub identity is half-applied and only an operator can fix it: "+issue)
 		}
 		if h.ACMMLevel <= driftACMMUnsetLevel {
 			add(DriftKindACMMUnset, DriftWarn,

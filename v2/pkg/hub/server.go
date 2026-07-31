@@ -189,7 +189,21 @@ type RegistryEntry struct {
 	// cannot be silenced by a stale spoke.
 	//
 	// Zero means "not reported", never "no App".
-	GitHubAppID               int64     `json:"githubAppId,omitempty"`
+	GitHubAppID int64 `json:"githubAppId,omitempty"`
+	// GitHubAppSlug, GitHubInstallationID, GitHubAPIURL and GitHubBaseURL
+	// complete the hub's picture of the identity the spoke is RUNNING.
+	//
+	// They are carried here for the same reason GitHubAppID is: a hub-observed
+	// fact cannot be silenced by a stale or too-old spoke. Together they make a
+	// half-applied identity detectable — a GHE app_id with an empty api_url
+	// authenticates as nothing and 404s on every token request, and with only
+	// app_id reported it looked exactly like a healthy delivery.
+	//
+	// Zero/empty means "not reported", never "not configured".
+	GitHubAppSlug             string    `json:"githubAppSlug,omitempty"`
+	GitHubInstallationID      int64     `json:"githubInstallationId,omitempty"`
+	GitHubAPIURL              string    `json:"githubApiUrl,omitempty"`
+	GitHubBaseURL             string    `json:"githubBaseUrl,omitempty"`
 	PendingGitHubAppInstall   bool      `json:"pendingGitHubAppInstall,omitempty"`
 	PendingGitHubAppInstallAt time.Time `json:"pendingGitHubAppInstallAt,omitempty"`
 	// Fleet contribution counts reported by the spoke (nil = not reported /
@@ -1018,6 +1032,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
 		GitHubAppID:             payload.GitHubAppID,
+		GitHubAppSlug:           payload.GitHubAppSlug,
+		GitHubInstallationID:    payload.GitHubInstallationID,
+		GitHubAPIURL:            payload.GitHubAPIURL,
+		GitHubBaseURL:           payload.GitHubBaseURL,
 		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {
@@ -1442,7 +1460,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	if ghCfg := s.consumePendingGitHubAppConfig(payload.HiveID); ghCfg != nil {
+	if ghCfg := s.pendingAppIdentityForHeartbeat(&payload); ghCfg != nil {
 		resp.GitHubAppConfig = ghCfg
 		s.logger.Info("heartbeat: delivering github app config to spoke",
 			"hive_id", payload.HiveID,

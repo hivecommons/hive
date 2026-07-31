@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ============================================================================
@@ -339,11 +340,51 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		h.GitHubAPIURL = target.APIURL
 	}
 
+	// Refuse to arm an identity whose components disagree about their forge.
+	// This handler already resolves the whole set up front and 409s rather than
+	// half-applying; this is the same guarantee expressed as a check, so it also
+	// covers a cluster config that names, say, a GHE slug with a public api_url.
+	wantIdentity := IdentitySet{
+		AppID:          appID,
+		AppSlug:        identity.AppSlug,
+		InstallationID: installID,
+		APIURL:         target.APIURL,
+		BaseURL:        target.BaseURL,
+	}
+	if reason := ValidateIdentityPush(wantIdentity); reason != "" {
+		s.logger.Warn("forge switch: refusing inconsistent identity",
+			"hive_id", id, "reason", reason)
+		writeJSONError(w, http.StatusConflict, reason)
+		return
+	}
+
 	// Re-arm delivery. This is the #2354 handshake: the requested host is
 	// authoritative until the spoke reports it back, at which point the push
 	// stops permanently and the spoke owns the value again.
 	h.RequestedGitHubHost = target.Host
 	h.ForgeDelivered = false
+
+	// Queue the identity DURABLY on the hive record. The in-memory one-shot map
+	// this replaced was dropped on the first beat that carried it and lost
+	// entirely on a hub restart, so a missed beat meant the change silently
+	// never happened. Persisting it means the push repeats until the spoke
+	// reports the identity back — which the app_slug/installation_id read-back
+	// fields make verifiable for the first time.
+	h.PendingAppConfig = &PendingAppIdentity{
+		AppID: appID,
+		// Only a supplied ID is sent. Zero means "leave it alone" on the
+		// wire; the operator note below tells the operator it must be
+		// installed or supplied, so the failure is never silent.
+		InstallationID: installID,
+		AppSlug:        identity.AppSlug,
+		APIURL:         target.APIURL,
+		ArmedAt:        time.Now().UTC().Format(time.RFC3339),
+		Reason:         "forge switch to " + target.Host,
+		// PrivateKey is deliberately absent, and this record never stores key
+		// material. The per-cluster key reconcile (cluster_app_key.go) delivers
+		// keys on its own schedule and gates every push on HasKey();
+		// duplicating it here would risk blanking a working key.
+	}
 
 	if err := saveSaaSHive(h); err != nil {
 		s.logger.Error("forge switch: failed to persist hive", "hive_id", id, "error", err)
@@ -378,18 +419,6 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	// precondition above: identity.AppSlug is non-empty by construction here, so
 	// the spoke can never be left falling back to the github.com default slug on
 	// a GHE host — the state that produced the live install-link 404.
-	s.storePendingGitHubAppConfig(id, &HeartbeatGitHubAppConfig{
-		AppID: appID,
-		// Only a supplied ID is sent. Zero means "leave it alone" on the
-		// wire; the operator note below tells the operator it must be
-		// installed or supplied, so the failure is never silent.
-		InstallationID: installID,
-		AppSlug:        identity.AppSlug,
-		// PrivateKey is deliberately absent. The per-cluster key reconcile
-		// (cluster_app_key.go) delivers key material on its own schedule and
-		// gates every key push on HasKey(); duplicating it here would risk
-		// blanking a working key with an empty string.
-	})
 	deliveryPending := true
 
 	note := ""

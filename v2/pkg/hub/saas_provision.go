@@ -480,6 +480,29 @@ type SaaSHive struct {
 	// ForgeDelivered flips true once the spoke reports the requested forge host.
 	ForgeDelivered bool `json:"forge_delivered,omitempty"`
 
+	// PendingAppConfig is a GitHub App identity queued for delivery to the
+	// spoke over the heartbeat.
+	//
+	// WHY IT IS PERSISTED HERE RATHER THAN HELD IN MEMORY
+	//
+	// This delivery used to live only in HubServer.pendingGitHubAppConfigs, an
+	// in-memory map drained with delete() on the first beat that carried it. It
+	// had two failure modes with no diagnosis path:
+	//
+	//   - a hub restart between arming and the next beat lost the push
+	//     silently, and nothing anywhere recorded that an identity change had
+	//     been requested; and
+	//   - being one-shot, a spoke that missed or failed to apply that single
+	//     beat never got another.
+	//
+	// Persisting it to meta.json makes an outstanding identity change durable
+	// and inspectable — the same reason RequestedACMMLevel and
+	// RequestedGitHubHost live here rather than in memory.
+	//
+	// nil means nothing is queued. It is CLEARED on confirmation, not on
+	// delivery (see AppIdentityDelivered), so a lost beat is retried.
+	PendingAppConfig *PendingAppIdentity `json:"pending_app_config,omitempty"`
+
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`

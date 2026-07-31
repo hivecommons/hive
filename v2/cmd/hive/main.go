@@ -2507,6 +2507,14 @@ func main() {
 				// pairs it with the fingerprint above to tell a per-hive key that
 				// is WRONG for this App from one that is deliberately for another.
 				GitHubAppID: cfg.GitHub.AppID,
+				// Report the REST of the identity set too. app_id alone cannot
+				// distinguish a correctly-delivered identity from a
+				// half-applied one: a GHE app_id with an empty api_url looks
+				// identical to the hub, and 404s on every token request. All
+				// four together let the hub see the whole set.
+				GitHubAppSlug:        cfg.GitHub.AppSlug,
+				GitHubInstallationID: cfg.GitHub.InstallationID,
+				GitHubBaseURL:        cfg.GitHub.BaseURL,
 				// Report the fingerprint of every ADDITIONAL per-app-id key already
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
