@@ -77,6 +77,10 @@ const (
 	AlertTypeOffline = "offline"
 	// AlertTypeStuckUpgrade — Upgrading has been true past staleUpgradeTimeout.
 	AlertTypeStuckUpgrade = "stuck-upgrade"
+	// AlertTypeFailedUpgrade — the spoke explicitly reported an upgrade it could
+	// not complete. Distinct from stuck-upgrade: this one has a known cause the
+	// spoke told us, so it is Critical and carries the underlying error.
+	AlertTypeFailedUpgrade = "failed-upgrade"
 	// AlertTypeHealthCheckFailing — a named check inside Health reports "fail".
 	AlertTypeHealthCheckFailing = "health-check-failing"
 	// AlertTypeTokenBurn — token consumption is anomalous versus the fleet
@@ -432,6 +436,8 @@ type alertHive struct {
 	Upgrading        bool
 	UpgradeStartedAt time.Time
 	UpgradeTarget    string
+	UpgradeFailed    bool
+	UpgradeError     string
 	TotalTokens24h   int64
 	Health           map[string]any
 	ProvStatus       string
@@ -451,6 +457,8 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		Upgrading:        h.Upgrading,
 		UpgradeStartedAt: h.UpgradeStartedAt,
 		UpgradeTarget:    h.UpgradeTarget,
+		UpgradeFailed:    h.UpgradeFailed,
+		UpgradeError:     h.UpgradeError,
 		TotalTokens24h:   h.TotalTokens24h,
 		Health:           h.Health,
 		ProvStatus:       h.ProvStatus,
@@ -684,6 +692,20 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		// --- Rule: upgrade in flight past staleUpgradeTimeout. Reuses the
 		// EXISTING constant rather than introducing a second, divergent notion
 		// of "stuck upgrade". ---
+		// --- Rule: the spoke told us the upgrade FAILED. Reported ahead of the
+		// stuck-upgrade rule below because a known cause beats a timeout guess,
+		// and Critical because it never resolves on its own. ---
+		if h.UpgradeFailed {
+			reason := "Upgrade failed"
+			if t := strings.TrimSpace(h.UpgradeTarget); t != "" {
+				reason += " (target " + t + ")"
+			}
+			if e := strings.TrimSpace(h.UpgradeError); e != "" {
+				reason += ": " + e
+			}
+			add(h.ID, h.Name, AlertTypeFailedUpgrade, AlertSeverityCritical, reason)
+		}
+
 		if h.Upgrading && !h.UpgradeStartedAt.IsZero() {
 			if age := now.Sub(h.UpgradeStartedAt); age > staleUpgradeTimeout {
 				reason := "Upgrade in flight for " + roundedDuration(age) +

@@ -3,10 +3,10 @@ name: v2 CI
 on:
   push:
     branches: [v2]
-    paths: ['v2/**']
+    paths: ['v2/**', 'bin/contributor-relay*']
   pull_request:
     branches: [v2]
-    paths: ['v2/**']
+    paths: ['v2/**', 'bin/contributor-relay*']
 
 permissions:
   contents: read
@@ -37,6 +37,15 @@ jobs:
 
       - name: Proxy Tests
         run: cd proxy && npm ci && npm test
+
+      # bin/contributor-relay.sh is JavaScript run by node despite the .sh
+      # extension; node --check needs a .js path, so check a copy.
+      - name: Contributor Relay Syntax + Tests
+        working-directory: .
+        run: |
+          cp bin/contributor-relay.sh "${RUNNER_TEMP}/contributor-relay.js"
+          node --check "${RUNNER_TEMP}/contributor-relay.js"
+          node bin/contributor-relay.test.js
   create-issue-on-failure:
     if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/v2'
     runs-on: ubuntu-latest

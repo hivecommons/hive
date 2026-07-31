@@ -93,6 +93,24 @@ func bobSettingsPath(home string) string {
 	return filepath.Join(home, config.BobSettingsRelPath)
 }
 
+// nearestExistingDir walks up from dir and returns the first ancestor that
+// exists, or "" if none does. Used to locate the directory whose permissions
+// actually govern a recursive mkdir of a not-yet-existing path.
+func nearestExistingDir(dir string) string {
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		// filepath.Dir is its own fixed point at the root ("/" or "."), which
+		// is the loop's only termination condition.
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
 // verifyBobStateDirsWritable probes, AS THE AGENT UID, every directory bob
 // writes to during startup, and logs an actionable error for each one that is
 // not writable.
@@ -136,10 +154,26 @@ func (m *Manager) verifyBobStateDirsWritable(agentName, home, workDir string, ui
 		info, err := os.Stat(dir)
 		if err != nil {
 			if os.IsNotExist(err) {
-				// Not an error on its own: bob creates these with
-				// mkdirSync({recursive:true}) on first use. It only matters
-				// whether the PARENT is writable, which the next launch's
-				// probe reports once the dir exists.
+				// A missing dir is not itself a failure — bob creates these
+				// with mkdirSync({recursive:true}) on first use. But that
+				// mkdir runs as the AGENT UID, so it succeeds only if the
+				// PARENT is group-writable. Probing the parent here is the
+				// whole point on a fresh hive: this is precisely the
+				// first-run EACCES in #2284, and the original probe returned
+				// "all clear" for it because it skipped missing dirs
+				// entirely. Check the nearest existing ancestor instead.
+				if parent := nearestExistingDir(filepath.Dir(dir)); parent != "" {
+					if pInfo, pErr := os.Stat(parent); pErr == nil {
+						pMode := pInfo.Mode().Perm()
+						if pMode&bobStateGroupWriteBit == 0 || pMode&bobKeyGroupExecBit == 0 {
+							m.logger.Error("bob state dir does not exist and its parent is not writable by the agent UID; bob's first-run mkdir will fail with EACCES",
+								"agent", agentName, "dir", dir, "parent", parent,
+								"parent_mode", fs.FileMode(pMode).String(), "uid", uid,
+								"remedy", "chmod 2775 "+parent+" and ensure it is group-owned by node")
+							unwritable = append(unwritable, dir)
+						}
+					}
+				}
 				continue
 			}
 			m.logger.Warn("bob state dir not statable; bob may fail to persist settings or initialize its logger",

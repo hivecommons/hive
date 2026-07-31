@@ -513,9 +513,23 @@ func main() {
 	// previous version.
 	const upgradeMarkerStartupPath = "/data/upgrade-requested"
 	if markerData, err := os.ReadFile(upgradeMarkerStartupPath); err == nil {
-		if !strings.Contains(string(markerData), fmt.Sprintf(`"current_sha":"%s"`, gitShort)) {
+		m := parseUpgradeMarker(markerData)
+		if m.CurrentSHA != gitShort {
+			// We booted on a different SHA than the one that requested the
+			// upgrade: it landed. Drop the marker so the attempt budget resets.
 			os.Remove(upgradeMarkerStartupPath)
-			logger.Info("cleared stale upgrade marker (SHA changed)", "current", gitShort)
+			logger.Info("upgrade landed, cleared marker",
+				"current", gitShort, "previous", m.CurrentSHA, "target", m.TargetSHA)
+		} else {
+			// Same SHA as the attempt that ran before this boot: the image never
+			// changed, so that attempt FAILED. Say so at startup — previously
+			// this restart looked completely routine in the logs.
+			logger.Error("previous self-upgrade attempt did not land (still on the same image)",
+				"current", gitShort,
+				"target", m.TargetSHA,
+				"attempts", m.Attempts,
+				"last_error", m.LastError,
+			)
 		}
 	}
 
@@ -737,21 +751,29 @@ func main() {
 				// GitHub returns 403 for rate limiting too — a transient
 				// condition that must not raise the "App Not Installed"
 				// banner (matches the guard on the repo-change path).
-				if strings.Contains(err.Error(), "rate limit") {
+				if isGitHubRateLimitText(err) {
 					logger.Warn("GitHub API rate limit hit during advisory issue ensure", "repo", primaryRepo)
-				} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-					githubAppRequired = true
-					// Classify WHY before the banner renders. A bare 401/403
-					// here used to become "GitHub App Not Installed", which is
-					// wrong — and actively misleading — when the real cause is
-					// a key the operator has not delivered. Classification is
-					// on the live API response, and a missing key file
-					// short-circuits without any API call.
-					githubAppDiag, githubAppState = diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
-					logger.Warn("GitHub App authentication failed at startup",
-						"state", githubAppState.String(),
-						"operator_actionable", githubAppState.OperatorActionable(),
-						"error", err)
+				} else {
+					// Do NOT decide from the error string. This call site used
+					// to raise the banner on a substring match for "403"/"401"
+					// and set githubAppRequired=true BEFORE classifying, then
+					// never lower it again when classification came back OK or
+					// inconclusive — which is why the banner showed on boot and
+					// vanished on the first Re-check with nothing fixed.
+					// classifyGitHubAppFailure is the same verdict Re-check
+					// uses, and it declines to raise on AppStateUnknown.
+					raise, diag, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
+					if raise {
+						githubAppRequired = true
+						githubAppDiag, githubAppState = diag, state
+						logger.Warn("GitHub App authentication failed at startup",
+							"state", state.String(),
+							"operator_actionable", state.OperatorActionable(),
+							"error", err)
+					} else {
+						logger.Warn("advisory issue ensure failed but GitHub App auth verified healthy — not raising the App banner",
+							"repo", primaryRepo, "state", state.String(), "error", err)
+					}
 				}
 			} else {
 				advisoryIssues[primaryRepo] = num
@@ -1493,10 +1515,25 @@ func main() {
 				num, err := ghClient.EnsureAdvisoryIssue(ctx, newPrimaryRepo)
 				if err != nil {
 					logger.Error("failed to create advisory issue on new primary repo", "repo", newPrimaryRepo, "error", err)
-					if strings.Contains(err.Error(), "rate limit") {
+					if isGitHubRateLimitText(err) {
 						logger.Warn("GitHub API rate limit hit during advisory issue creation", "repo", newPrimaryRepo)
-					} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-						dashSrv.SetGitHubAppRequired(true)
+					} else {
+						// #2224 replaced error-string classification everywhere
+						// else but missed this site, which raised the banner on
+						// a bare "403"/"401" substring and recorded no state at
+						// all — so the UI fell back to "App Not Installed" even
+						// for an operator-side key fault. Classify properly.
+						raise, diag, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
+						if raise {
+							dashSrv.SetGitHubAppRequired(true)
+							dashSrv.SetGitHubAppState(state.String())
+							if diag != "" {
+								dashSrv.SetGitHubAppPermIssue(diag)
+							}
+							logger.Warn("GitHub App authentication failed creating advisory issue",
+								"repo", newPrimaryRepo, "state", state.String(),
+								"operator_actionable", state.OperatorActionable())
+						}
 					}
 				} else {
 					advisoryIssues[newPrimaryRepo] = num
@@ -1586,7 +1623,12 @@ func main() {
 				// this is the exact case rediscovery exists for. Cached by TTL,
 				// so a repeated re-check does not re-hit the API.
 				healGitHubAppInstallation(ctx, ghClient.AppAuth(), cfg, logger)
-				if diag, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
+				// Shared verdict with the boot and advisory-digest paths. Re-check
+				// previously branched on `diag != ""` while boot branched on the
+				// error string, which is how the two came to disagree about the
+				// same hive; routing both through classifyGitHubAppFailure means
+				// they cannot drift again.
+				if raise, diag, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger); raise {
 					dashSrv.SetGitHubAppPermIssue(diag)
 					dashSrv.SetGitHubAppState(state.String())
 					logger.Warn("github app recheck: app detected but write not verified",
@@ -2048,32 +2090,65 @@ func main() {
 	dashSrv.AuditLog("system", "hive_restart",
 		fmt.Sprintf("build=%s version=%s; restoring %d paused agent(s)", gitShort, "3.0.0", pausedCount), "")
 
-	const agentLaunchDelaySec = 15
-	agentIndex := 0
-	for name, ac := range cfg.EnabledAgents() {
-		isOnDemand := ac.OnDemand || onDemandFromPack[name]
-		if isOnDemand {
-			logger.Info("skipping on-demand agent at startup", "name", name)
-			continue
-		}
-		if agentIndex > 0 {
-			logger.Info("staggering agent launch", "name", name, "delay_sec", agentLaunchDelaySec)
-			time.Sleep(time.Duration(agentLaunchDelaySec) * time.Second)
-		}
-		logger.Info("audit: starting agent", "name", name, "trigger", "startup")
-		if err := agentMgr.Start(ctx, name); err != nil {
-			logger.Warn("failed to start agent", "name", name, "error", err)
-		} else {
-			// Surface whether a persisted operator pause was honored on this
-			// restart, so the audit log shows pause state survived (or didn't).
-			detail := "trigger=startup"
-			if ac.Paused {
-				detail = "trigger=startup; restored paused (persisted)"
+	// Mark the dashboard READY as soon as the HTTP server can serve requests —
+	// which is NOW: config is loaded, GitHub client/App auth are wired, the
+	// dashboard deps are set, and the listener (go dashSrv.Start() above) is up.
+	// None of /api/*, /sso, /open, /api/livez or /api/health depend on the agent
+	// fleet being up; the frontend already handles agents appearing over time.
+	//
+	// This MUST precede the staggered agent-launch loop below. That loop sleeps
+	// ~15s per agent (× the whole fleet = several minutes) and previously ran
+	// BEFORE MarkReady, so /api/livez returned 503 "starting" for the entire
+	// launch window. The liveness probe (period 30s × failureThreshold 3 ≈ 90s)
+	// then SIGKILLed the container (exit 137) before readiness was ever reached
+	// on cold start, and rolling upgrades left the Service with no Ready endpoint
+	// for minutes → 503s on /open and /sso. Flipping ready here makes the pod
+	// Ready in seconds and moves the fleet spin-up entirely off the critical path.
+	dashSrv.MarkReady()
+
+	// Launch the persistent (non-on-demand) agents in the BACKGROUND so the
+	// staggered start no longer gates pod readiness. The loop honors ctx: on
+	// shutdown the ctx-aware stagger returns immediately instead of leaking a
+	// goroutine parked in a bare time.Sleep.
+	go func() {
+		const agentLaunchDelaySec = 15
+		agentIndex := 0
+		for name, ac := range cfg.EnabledAgents() {
+			isOnDemand := ac.OnDemand || onDemandFromPack[name]
+			if isOnDemand {
+				logger.Info("skipping on-demand agent at startup", "name", name)
+				continue
 			}
-			dashSrv.AuditLog("system", "agent_start", detail, name)
+			if agentIndex > 0 {
+				logger.Info("staggering agent launch", "name", name, "delay_sec", agentLaunchDelaySec)
+				select {
+				case <-time.After(time.Duration(agentLaunchDelaySec) * time.Second):
+				case <-ctx.Done():
+					logger.Info("aborting staggered agent launch: shutting down")
+					return
+				}
+			}
+			// Bail before starting another agent if we are already shutting down,
+			// so a SIGTERM during the launch window doesn't spawn fresh processes.
+			if ctx.Err() != nil {
+				logger.Info("aborting staggered agent launch: shutting down")
+				return
+			}
+			logger.Info("audit: starting agent", "name", name, "trigger", "startup")
+			if err := agentMgr.Start(ctx, name); err != nil {
+				logger.Warn("failed to start agent", "name", name, "error", err)
+			} else {
+				// Surface whether a persisted operator pause was honored on this
+				// restart, so the audit log shows pause state survived (or didn't).
+				detail := "trigger=startup"
+				if ac.Paused {
+					detail = "trigger=startup; restored paused (persisted)"
+				}
+				dashSrv.AuditLog("system", "agent_start", detail, name)
+			}
+			agentIndex++
 		}
-		agentIndex++
-	}
+	}()
 
 	// Start hub heartbeat push if configured (env var or config)
 	hubURL := cfg.Hub.URL
@@ -2275,6 +2350,10 @@ func main() {
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
 
+			// attemptCount carries the number of PREVIOUS failed attempts for this
+			// (current_sha → target_sha) pair, read from the marker below.
+			attemptCount := 0
+
 			// Never self-upgrade to the commit we are already running. The hub
 			// may instruct an upgrade to a short SHA that is a prefix of our
 			// full gitShort (or vice-versa); treating that as "behind" caused a
@@ -2292,17 +2371,59 @@ func main() {
 				}
 			}
 
-			// If a previous process already attempted an upgrade and we booted
-			// with the same git hash, the image tag didn't actually change.
-			// Skip to avoid an infinite restart loop.
+			// A previous process attempted an upgrade and we booted with the same
+			// git hash, so the image did not actually change: the attempt FAILED.
+			// Back off rather than retrying instantly (that was a crash-loop), but
+			// do NOT latch forever — "image unchanged" is the signature of a failed
+			// upgrade, not a reason to stop trying. The latch is keyed on
+			// (current_sha → target_sha) and bounded to selfUpgradeMaxAttempts, so a
+			// NEW target always gets a fresh budget and a transient failure (an RBAC
+			// Role that showed up late, a registry blip) still converges.
 			if markerData, err := os.ReadFile(upgradeMarkerPath); err == nil {
-				if strings.Contains(string(markerData), fmt.Sprintf(`"current_sha":"%s"`, gitShort)) {
-					logger.Info("self-upgrade skipped: already attempted from this SHA (image unchanged)",
+				m := parseUpgradeMarker(markerData)
+				if m.CurrentSHA == gitShort && sameUpgradeTarget(m.TargetSHA, targetSHA) {
+					if m.Attempts >= selfUpgradeMaxAttempts {
+						// Terminal: report it LOUDLY and tell the hub, so the UI stops
+						// claiming "Upgrading" forever and a human sees the real cause.
+						logger.Error("self-upgrade FAILED: giving up after repeated attempts (image never changed)",
+							"target", targetSHA,
+							"current", gitShort,
+							"attempts", m.Attempts,
+							"max_attempts", selfUpgradeMaxAttempts,
+							"last_error", m.LastError,
+							"hint", "the spoke must be able to get/patch its own Deployment; check the hive-self-upgrade Role/RoleBinding in this namespace",
+						)
+						hub.ReportUpgradeFailure(hubURL, cfg.HiveID, targetSHA, gitShort,
+							fmt.Sprintf("self-upgrade failed after %d attempts: %s", m.Attempts, m.LastError), logger)
+						return
+					}
+					// Exponential backoff between attempts so a hard failure does not
+					// spin every heartbeat while a recoverable one still retries.
+					backoff := selfUpgradeBaseBackoff << (m.Attempts - 1)
+					if backoff > selfUpgradeMaxBackoff {
+						backoff = selfUpgradeMaxBackoff
+					}
+					if since := time.Since(m.RequestedAt); since < backoff {
+						logger.Warn("self-upgrade retry deferred: backing off after a failed attempt",
+							"target", targetSHA,
+							"current", gitShort,
+							"attempts", m.Attempts,
+							"retry_in", (backoff - since).Round(time.Second),
+							"last_error", m.LastError,
+						)
+						return
+					}
+					logger.Warn("self-upgrade retrying after a failed attempt (image unchanged)",
 						"target", targetSHA,
 						"current", gitShort,
+						"attempt", m.Attempts+1,
+						"max_attempts", selfUpgradeMaxAttempts,
+						"last_error", m.LastError,
 					)
+					attemptCount = m.Attempts
+				} else {
+					// Different SHA or a different target — the old marker is stale.
 					os.Remove(upgradeMarkerPath)
-					return
 				}
 			}
 
@@ -2319,11 +2440,15 @@ func main() {
 				return
 			}
 
-			marker := fmt.Sprintf(`{"target_sha":"%s","current_sha":"%s","requested_at":"%s"}`,
-				targetSHA, gitShort, time.Now().UTC().Format(time.RFC3339))
-			if err := os.WriteFile(upgradeMarkerPath, []byte(marker), 0o644); err != nil {
-				logger.Warn("failed to write upgrade marker", "path", upgradeMarkerPath, "error", err)
-			}
+			// Record the attempt BEFORE acting: if the process dies mid-upgrade the
+			// next boot must still see an incremented count, otherwise a crash loop
+			// would retry without ever exhausting the budget.
+			writeUpgradeMarker(upgradeMarkerPath, upgradeMarker{
+				TargetSHA:   targetSHA,
+				CurrentSHA:  gitShort,
+				RequestedAt: time.Now().UTC(),
+				Attempts:    attemptCount + 1,
+			}, logger)
 
 			logger.Info("self-upgrade triggered: sending upgrading heartbeat then exiting",
 				"current", gitShort,
@@ -2370,14 +2495,32 @@ func main() {
 			if err != nil {
 				logger.Warn("pinned-image upgrade failed, falling back to rolling restart",
 					"target", targetSHA, "error", err)
+				recordUpgradeError(upgradeMarkerPath, err, logger)
 				needsRestart = true
 			}
 			if needsRestart {
 				if err := hub.RolloutRestartSelf(logger); err != nil {
-					logger.Warn("rolling restart failed, falling back to os.Exit",
+					// This is the wedge. os.Exit here restarts the pod onto the
+					// SAME image, so the upgrade silently never lands. It is an
+					// ERROR, not a Warn, and the cause (typically a 403 because
+					// the spoke lacks patch on its own Deployment) must be both
+					// persisted for the next attempt and reported to the hub so
+					// the UI stops showing a permanent "Upgrading".
+					logger.Error("self-upgrade FAILED: could not patch own Deployment, restarting onto the same image",
+						"target", targetSHA,
+						"current", gitShort,
 						"error", err,
+						"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)",
 					)
-					os.Exit(0)
+					recordUpgradeError(upgradeMarkerPath, err, logger)
+					hub.ReportUpgradeFailure(hubURL, cfg.HiveID, targetSHA, gitShort, err.Error(), logger)
+					// Exit NON-ZERO. Exiting 0 on a failed upgrade told Kubernetes
+					// the process had completed successfully, so the restart looked
+					// routine and nothing — not the pod's exit code, not an event,
+					// not a probe — recorded that an upgrade had just failed. A
+					// non-zero code makes the failure visible in the pod's
+					// lastState.terminated and in `kubectl describe`.
+					os.Exit(selfUpgradeFailureExitCode)
 				}
 			}
 			// Rolling restart initiated — K8s will start a new pod and
@@ -2574,7 +2717,25 @@ func main() {
 			// possible. The hub keeps sending this every beat until we report the
 			// matching project back, so an idempotent no-op when already matched
 			// is expected and cheap.
-			if pc == nil || pc.Org == "" {
+			if pc == nil {
+				return
+			}
+			// A URL-only push (org empty, dashboard_url set) delivers the vanity
+			// dashboard URL to an already-claimed hive whose meta project is stale/
+			// empty on the hub — we must still adopt+report it, or the hub keeps
+			// showing the raw placeholder host forever. Handle it BEFORE the
+			// org-empty bail below, which exists so an empty project never blanks a
+			// working config: with no org there is nothing to reconcile except the
+			// URL, so adopt it, persist, and return without touching the project.
+			if pc.Org == "" {
+				if pc.DashboardURL != "" && cfg.Hub.DashboardURL != pc.DashboardURL {
+					logger.Info("adopting vanity dashboard URL from hub heartbeat (url-only push)",
+						"was", cfg.Hub.DashboardURL, "now", pc.DashboardURL)
+					cfg.Hub.DashboardURL = pc.DashboardURL
+					if err := cfg.Save(); err != nil {
+						logger.Error("failed to save adopted vanity dashboard URL", "error", err)
+					}
+				}
 				return
 			}
 			curACMM := 0
@@ -2711,8 +2872,9 @@ func main() {
 				"on_divergence", cfg.Governor.Trajectory.OnDivergence)
 		}
 	}
-	// Reconcile the not-configured alert from actual state (raises only when
-	// enabled AND no reviewer resolves; clears when off or configured).
+	// Clear any legacy "not configured" banner alert persisted by an older
+	// build. The half-configured state is shown inline in Governor Config →
+	// General, not in the top banner.
 	dashSrv.ReconcileTrajectoryAlert(&cfg.Governor)
 
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)
@@ -2727,7 +2889,11 @@ func main() {
 		logger.Info("fast agent status enabled", "interval_seconds", cfg.Dashboard.AgentPollIntervalS)
 	}
 
-	dashSrv.MarkReady()
+	// NOTE: dashSrv.MarkReady() was previously HERE, after the staggered agent
+	// launch and the heartbeat/trajectory/ticker setup. It has been moved to
+	// immediately after the HTTP listener starts (before the agent-launch loop),
+	// so the pod becomes Ready in seconds instead of minutes. See the MarkReady
+	// call and comment above the agent-launch goroutine.
 
 	const cliStartupDelay = 10 * time.Second
 	logger.Info("waiting for CLI startup before first eval", "delay", cliStartupDelay)
@@ -2915,6 +3081,87 @@ func diagnoseGitHubApp(ctx context.Context, appAuth *github.AppAuth, expectedOwn
 func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expectedOwner string) string {
 	msg, _ := diagnoseGitHubApp(ctx, appAuth, expectedOwner)
 	return msg
+}
+
+// githubRateLimitErrText is the substring GitHub's client surfaces on a rate or
+// abuse limit. Matching text is acceptable ONLY here: a rate limit is a reason
+// to skip classification entirely, never a reason to accuse anyone of anything,
+// so a false negative costs one extra (correct) classification round-trip.
+const githubRateLimitErrText = "rate limit"
+
+// isGitHubRateLimitText reports whether an error looks like a GitHub rate limit.
+func isGitHubRateLimitText(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), githubRateLimitErrText)
+}
+
+// githubAppBannerAttempts is how many times classifyGitHubAppFailure probes
+// before accepting an unclassifiable (AppStateUnknown) verdict. A cold start
+// races the cluster's DNS/egress-proxy readiness, so the FIRST App call a pod
+// makes is the one most likely to fail for reasons that have nothing to do
+// with the App. One retry converts that transient into a correct verdict.
+const githubAppBannerAttempts = 2
+
+// githubAppBannerRetryDelay spaces those attempts. Short enough not to stall
+// boot, long enough for an egress proxy or DNS cache to come up.
+const githubAppBannerRetryDelay = 3 * time.Second
+
+// classifyGitHubAppFailure is the SINGLE decision point for "should the GitHub
+// App banner be raised?" — used by the boot path, the advisory-digest path and
+// the manual Re-check button alike, so those three can never again disagree
+// about the same hive.
+//
+// It exists because they DID disagree. The boot path used to raise the banner
+// on a substring match for "403"/"401" in a formatted error string (the exact
+// pattern #2224 replaced), set githubAppRequired=true UNCONDITIONALLY, and
+// then classify — never lowering the flag again when classification came back
+// healthy or inconclusive. Re-check ran the very same diagnoseGitHubApp probe
+// but treated an empty diagnosis as success and cleared the banner. Same
+// evidence, opposite conclusion: the banner appeared on every cold start whose
+// first advisory-issue call blipped, and vanished the moment the user clicked
+// Re-check without anything having been fixed.
+//
+// Two rules make the verdict trustworthy:
+//
+//  1. Only a state that is genuinely actionable raises the banner. AppStateOK
+//     obviously does not, and neither does AppStateUnknown — #2224 defines it
+//     as "we could not reach a conclusion", and escalating on it is precisely
+//     the false accusation that design was meant to prevent.
+//  2. An unknown verdict is retried before it is accepted, so a transient
+//     startup network failure is not mistaken for a definitive one.
+//
+// Returns raise=false with an empty message when the App is fine or when we
+// simply cannot tell.
+func classifyGitHubAppFailure(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (raise bool, msg string, state github.AppAuthState) {
+	for attempt := 1; attempt <= githubAppBannerAttempts; attempt++ {
+		msg, state = diagnoseGitHubApp(ctx, appAuth, expectedOwner)
+		if state != github.AppStateUnknown {
+			break
+		}
+		if attempt < githubAppBannerAttempts {
+			logger.Debug("github app classification inconclusive — retrying before accepting a verdict",
+				"attempt", attempt, "owner", expectedOwner)
+			select {
+			case <-ctx.Done():
+				return false, "", github.AppStateUnknown
+			case <-time.After(githubAppBannerRetryDelay):
+			}
+		}
+	}
+
+	// AppStateUnknown must never raise the banner: we did not get an answer
+	// from GitHub, and a hive whose App is perfectly healthy would otherwise
+	// be told to reinstall it because of a momentary network fault. The
+	// self-heal loop and the next eval cycle both re-probe, so deferring the
+	// verdict costs nothing but a delay on a hive that IS genuinely broken.
+	if state == github.AppStateUnknown {
+		logger.Warn("github app state could not be determined — leaving the banner down rather than guessing",
+			"owner", expectedOwner)
+		return false, "", github.AppStateUnknown
+	}
+	if state == github.AppStateOK {
+		return false, "", github.AppStateOK
+	}
+	return true, msg, state
 }
 
 func runEvalCycle(
@@ -3242,21 +3489,23 @@ func runEvalCycle(
 							logger.Warn("GitHub App write failed — cannot write issue comments",
 								"repo", primaryRepo, "state", state.String(),
 								"operator_actionable", state.OperatorActionable(), "detail", msg)
-						} else if strings.Contains(err.Error(), "rate limit") {
+						} else if isGitHubRateLimitText(err) {
 							logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", primaryRepo)
-						} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-							// Same reasoning as the startup path: classify
-							// before raising a banner, so an operator-side key
-							// failure is never rendered as "not installed".
-							msg, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
-							dashSrv.SetGitHubAppRequired(true)
-							if msg != "" {
-								dashSrv.SetGitHubAppPermIssue(msg)
+						} else {
+							// Same verdict function as boot and Re-check, so a
+							// healthy or unclassifiable probe cannot raise the
+							// banner here either.
+							raise, msg, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
+							if raise {
+								dashSrv.SetGitHubAppRequired(true)
+								if msg != "" {
+									dashSrv.SetGitHubAppPermIssue(msg)
+								}
+								dashSrv.SetGitHubAppState(state.String())
+								logger.Warn("GitHub App authentication failed posting advisory digest",
+									"repo", primaryRepo, "state", state.String(),
+									"operator_actionable", state.OperatorActionable())
 							}
-							dashSrv.SetGitHubAppState(state.String())
-							logger.Warn("GitHub App authentication failed posting advisory digest",
-								"repo", primaryRepo, "state", state.String(),
-								"operator_actionable", state.OperatorActionable())
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
@@ -3414,6 +3663,88 @@ func convertKnowledgeLayers(cfgLayers []config.KnowledgeLayer) []knowledge.Layer
 const hiveIDFilePath = "/data/hive-id"
 
 // loadOrGenerateHiveID reads the Hive ID from disk, or generates and persists a new one.
+const (
+	// selfUpgradeMaxAttempts bounds how many times a spoke retries an upgrade
+	// that keeps leaving the image unchanged. Bounded rather than unlimited so a
+	// genuinely broken hive (e.g. missing RBAC) stops thrashing its pod, and
+	// bounded rather than "never again" so a transient failure still converges.
+	selfUpgradeMaxAttempts = 5
+	// selfUpgradeBaseBackoff is the delay before retry #2; it doubles per
+	// attempt up to selfUpgradeMaxBackoff.
+	selfUpgradeBaseBackoff = 2 * time.Minute
+	// selfUpgradeMaxBackoff caps the exponential backoff between retries.
+	selfUpgradeMaxBackoff = 30 * time.Minute
+	// selfUpgradeFailureExitCode marks a process exit caused by a FAILED
+	// self-upgrade. Distinct from 0 so the failure is visible in the container's
+	// termination state instead of looking like a clean shutdown.
+	selfUpgradeFailureExitCode = 17
+)
+
+// upgradeMarker is the on-PVC record at /data/upgrade-requested. It survives
+// pod restarts (that is the whole point: the process exits as part of an
+// upgrade), so it is the only place attempt bookkeeping can live.
+type upgradeMarker struct {
+	TargetSHA   string    `json:"target_sha"`
+	CurrentSHA  string    `json:"current_sha"`
+	RequestedAt time.Time `json:"requested_at"`
+	Attempts    int       `json:"attempts"`
+	LastError   string    `json:"last_error,omitempty"`
+}
+
+// parseUpgradeMarker decodes a marker, tolerating the legacy format that had no
+// attempts/last_error fields. A legacy marker counts as one prior attempt so an
+// already-wedged hive gets retries under the new budget instead of being
+// treated as fresh.
+func parseUpgradeMarker(data []byte) upgradeMarker {
+	var m upgradeMarker
+	if err := json.Unmarshal(data, &m); err != nil {
+		return upgradeMarker{}
+	}
+	if m.Attempts < 1 {
+		m.Attempts = 1
+	}
+	return m
+}
+
+// sameUpgradeTarget reports whether two target SHAs refer to the same commit,
+// tolerating short/full SHA length mismatch the way the hub's sameCommit does.
+// A DIFFERENT target must reset the attempt budget, so this comparison is what
+// keeps the latch from outliving the upgrade it was created for.
+func sameUpgradeTarget(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	return strings.EqualFold(a[:n], b[:n])
+}
+
+func writeUpgradeMarker(path string, m upgradeMarker, logger *slog.Logger) {
+	data, err := json.Marshal(m)
+	if err != nil {
+		logger.Warn("failed to encode upgrade marker", "error", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		logger.Warn("failed to write upgrade marker", "path", path, "error", err)
+	}
+}
+
+// recordUpgradeError annotates the existing marker with the cause of the failed
+// attempt so the NEXT boot can log why the previous one did not land — without
+// it the reason dies with the process and the failure is invisible.
+func recordUpgradeError(path string, upgradeErr error, logger *slog.Logger) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	m := parseUpgradeMarker(data)
+	m.LastError = upgradeErr.Error()
+	writeUpgradeMarker(path, m, logger)
+}
+
 func loadOrGenerateHiveID(logger *slog.Logger) string {
 	if envID := os.Getenv("HIVE_ID"); envID != "" {
 		if err := os.WriteFile(hiveIDFilePath, []byte(envID+"\n"), 0o644); err == nil {

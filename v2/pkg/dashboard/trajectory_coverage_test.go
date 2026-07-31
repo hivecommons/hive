@@ -110,7 +110,12 @@ func TestCov_ReconcileTrajectoryAlert(t *testing.T) {
 	s, deps := covServer(t)
 	g := &deps.Config.Governor
 
-	// Enabled + no reviewer endpoint/model → alert raised.
+	// The banner alert is no longer raised in ANY state — the half-configured
+	// case is surfaced inline in Governor Config → General instead. The lane
+	// defaults to ON, so raising it here fired on every unconfigured hive.
+
+	// Enabled + no reviewer endpoint/model → still no alert (the case that
+	// used to raise it; this is the behaviour change under test).
 	enabled := true
 	g.Trajectory.Enabled = &enabled
 	g.Trajectory.Endpoint = ""
@@ -118,25 +123,36 @@ func TestCov_ReconcileTrajectoryAlert(t *testing.T) {
 	g.LiteLLM.Endpoint = ""
 	g.LiteLLM.DefaultModel = ""
 	s.ReconcileTrajectoryAlert(g)
-	if !covHasAlert(s, TrajectoryNotConfiguredAlertID) {
-		t.Error("expected trajectory-not-configured alert to be raised")
+	if covHasAlert(s, TrajectoryNotConfiguredAlertID) {
+		t.Error("expected no banner alert when enabled but unconfigured")
 	}
 
-	// Disabled → alert cleared.
+	// Disabled → no alert.
 	disabled := false
 	g.Trajectory.Enabled = &disabled
 	s.ReconcileTrajectoryAlert(g)
 	if covHasAlert(s, TrajectoryNotConfiguredAlertID) {
-		t.Error("expected alert cleared when disabled")
+		t.Error("expected no alert when disabled")
 	}
 
-	// Enabled + reviewer ready → alert cleared.
+	// Enabled + reviewer ready → no alert.
 	g.Trajectory.Enabled = &enabled
 	g.Trajectory.Endpoint = "https://reviewer.local"
 	g.Trajectory.Model = "cheap-model"
 	s.ReconcileTrajectoryAlert(g)
 	if covHasAlert(s, TrajectoryNotConfiguredAlertID) {
-		t.Error("expected alert cleared when reviewer ready")
+		t.Error("expected no alert when reviewer ready")
+	}
+
+	// A stale alert persisted by an older build must be cleared, since that is
+	// now the function's only job.
+	s.AddSystemAlert(TrajectoryNotConfiguredAlertID, "warning", "stale alert from an older build")
+	g.Trajectory.Enabled = &enabled
+	g.Trajectory.Endpoint = ""
+	g.Trajectory.Model = ""
+	s.ReconcileTrajectoryAlert(g)
+	if covHasAlert(s, TrajectoryNotConfiguredAlertID) {
+		t.Error("expected a stale legacy alert to be cleared")
 	}
 }
 

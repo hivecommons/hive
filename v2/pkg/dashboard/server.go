@@ -2023,7 +2023,13 @@ func (s *Server) HealthSummary() map[string]any {
 	// 2. GitHub auth
 	if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {
-			checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "token error"})
+			// Surface the underlying error, not a bare "token error": this
+			// detail travels to the hub and into the dashboard tooltip, and a
+			// swallowed error string is exactly what left past github_auth flaps
+			// undiagnosable. Token() now serves a still-valid cached token
+			// through a transient mint blip, so reaching here means no usable
+			// token remains — a genuine, sustained auth failure worth showing.
+			checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "token error: " + err.Error()})
 			fails++
 		} else {
 			checks = append(checks, check{Name: "github_auth", Status: "pass"})
