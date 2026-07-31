@@ -2561,7 +2561,11 @@
       <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
       <div id="oc-gh-avatar-wrap" style="display:none;position:relative">
         <img id="oc-gh-avatar" src="" alt="" style="width:28px;height:28px;border-radius:50%;cursor:pointer;border:2px solid var(--green);vertical-align:middle" onclick="toggleGHUserMenu()">
-        <div id="oc-gh-user-menu" style="display:none;position:absolute;right:0;top:34px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 0;min-width:160px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
+        <!-- max-width keeps the longest entry ("Back up this hive") from
+             widening the menu past the right edge of a narrow viewport; the
+             menu is right-anchored, so extra width grows leftward and stays
+             on screen. Long labels wrap rather than overflow. -->
+        <div id="oc-gh-user-menu" style="display:none;position:absolute;right:0;top:34px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 0;min-width:160px;max-width:min(280px,calc(100vw - 24px));z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,0.4)">
           <div style="padding:8px 16px;border-bottom:1px solid var(--line);color:var(--text);font-weight:600;font-size:0.85rem" id="oc-gh-menu-user"></div>
           <div id="oc-gh-menu-role" style="display:none;padding:2px 16px 6px;border-bottom:1px solid var(--line);font-size:0.72rem;color:var(--muted)"></div>
           <!-- This nav avatar is NOT a profile link: its click already opens
@@ -2570,6 +2574,13 @@
                once the signed-in login is known. -->
           <a href="#" id="oc-gh-menu-profile" target="_blank" rel="noopener noreferrer" style="display:none;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">GitHub profile ↗</a>
           <a href="/api/config/download" id="oc-gh-menu-download" style="display:none;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">Download hive.yaml</a>
+          <!-- Owner-only self-service backup. Shown only for role === 'owner',
+               matching the hive.yaml entry above; the server enforces the same
+               check, so hiding this is UX, not the security boundary. -->
+          <button type="button" id="oc-gh-menu-backup" onclick="downloadHiveBackup()" style="display:none;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem;line-height:1.35">
+            Back up this hive
+            <span style="display:block;font-size:0.68rem;color:var(--muted)">Encrypted · includes beads</span>
+          </button>
           <a href="/api/docs" target="_blank" style="display:block;padding:8px 16px;color:var(--text);text-decoration:none;font-size:0.82rem">API Docs ↗</a>
           <button onclick="ghLogout()" style="display:block;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:0.82rem">Sign out</button>
         </div>
@@ -16839,6 +16850,8 @@ function burnAreaChart() {
           }
           const dlEl = document.getElementById('oc-gh-menu-download');
           if (dlEl) dlEl.style.display = role === 'owner' ? 'block' : 'none';
+          const bkEl = document.getElementById('oc-gh-menu-backup');
+          if (bkEl) bkEl.style.display = role === 'owner' ? 'block' : 'none';
         }
       } else {
         banner.style.display = 'flex';
@@ -16858,6 +16871,64 @@ function burnAreaChart() {
         document.getElementById('oc-gh-user-menu').style.display = 'none';
       }
     });
+
+    /* Owner-only self-service backup.
+       POSTs (not a plain link) because the response body carries GitHub App
+       private keys: keeping it fetch-only keeps it off the cross-origin
+       navigation path. The archive arrives already encrypted with the hive's
+       HIVE_BACKUP_KEY — the browser never sees that key, and it is NOT in the
+       file, so the owner must have it escrowed to restore. */
+    async function downloadHiveBackup() {
+      const btn = document.getElementById('oc-gh-menu-backup');
+      if (btn && btn.dataset.busy === '1') return;
+      if (btn) {
+        btn.dataset.busy = '1';
+        btn.style.opacity = '0.6';
+        btn.firstChild.textContent = ' Backing up… ';
+      }
+      document.getElementById('oc-gh-user-menu').style.display = 'none';
+      showToast('Building encrypted backup — this can take a moment…', 'info');
+      let url = null;
+      try {
+        const resp = await fetch('/api/backup', { method: 'POST' });
+        if (!resp.ok) {
+          let msg = 'Backup failed (' + resp.status + ')';
+          try { const d = await resp.json(); if (d && d.error) msg = d.error; } catch (e) { /* non-JSON body */ }
+          showToast(msg, 'error');
+          return;
+        }
+        const blob = await resp.blob();
+        /* Prefer the server's filename; fall back to a generic one rather
+           than parsing a header that may be absent. */
+        let name = 'hive-spoke-backup.tar.gz.enc';
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="([^"]+)"/);
+        if (m && m[1]) name = m[1];
+        url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        const beadDirs = resp.headers.get('X-Hive-Backup-Bead-Dirs') || '0';
+        const files = resp.headers.get('X-Hive-Backup-Files') || '0';
+        showToast(
+          'Encrypted backup downloaded — ' + files + ' files, ' + beadDirs +
+          ' bead ledgers. Decrypt with this hive’s HIVE_BACKUP_KEY; the key is not in the file.',
+          'success');
+      } catch (e) {
+        showToast('Backup failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+      } finally {
+        /* Revoke on the next tick so the click has already been dispatched. */
+        if (url) setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+        if (btn) {
+          btn.dataset.busy = '';
+          btn.style.opacity = '';
+          btn.firstChild.textContent = ' Back up this hive ';
+        }
+      }
+    }
 
     async function ghLogout() {
       document.getElementById('oc-gh-user-menu').style.display = 'none';
