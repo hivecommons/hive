@@ -240,16 +240,21 @@ const (
 	// kubestellar-hive-ghe GitHub App. This is the value that was pushed onto
 	// seven public-GitHub hives on 2026-07-31.
 	EnterpriseGitHubAppID int64 = 5686
-	// EnterpriseGitHubAppSlug is the slug the config/dashboard paths use for
-	// that App.
+	// EnterpriseGitHubAppSlug is the slug for that App, and the ONLY slug it
+	// may carry.
 	//
-	// NOTE: app_slug is NOT derivable from app_id, and no rule here treats it
-	// as such. App ID 5686 appears in this tree under TWO slugs — this one and
-	// "ibm-hive", which is what the vllm-d cluster fixture carries (see
-	// pkg/hub/cluster_app_key_test.go). Both are legitimate: the slug is an
-	// operator-chosen App URL name, so a rule asserting "app_id 5686 implies
-	// slug kubestellar-hive-ghe" refuses a real production cluster. Only the
-	// app_id → FORGE mapping below is safe to assert.
+	// A GitHub App has exactly one slug — it is the App's URL name, fixed when
+	// the App is registered, not a per-deployment label. So app_id DOES imply
+	// app_slug, and slugOfAppID below asserts it.
+	//
+	// An earlier revision of this file claimed 5686 legitimately appeared under
+	// a second slug ("ibm-hive") and declined to assert the mapping. That was
+	// wrong: "ibm-hive" existed only in _test.go fixtures — it appears in no
+	// production config, in no cluster entry, and on none of the 51 fleet
+	// spokes (live clusters.json carries github_app_slug
+	// "kubestellar-hive-ghe" for vllm-d). Relaxing the rule for an invented
+	// fixture left a GHE App under a non-"ghe" slug passing validation, which
+	// is precisely the shape this package exists to reject.
 	EnterpriseGitHubAppSlug = "kubestellar-hive-ghe"
 	// EnterpriseGitHubAPIURL and EnterpriseGitHubBaseURL are the forge URLs the
 	// enterprise App lives on.
@@ -275,6 +280,28 @@ func forgeOfAppID(appID int64) string {
 		return DefaultGitHubBaseURL[len("https://"):] // "github.com"
 	case EnterpriseGitHubAppID:
 		return EnterpriseGitHubBaseURL[len("https://"):] // "github.ibm.com"
+	}
+	return ""
+}
+
+// slugOfAppID returns the ONE slug a known App ID may carry.
+//
+// A GitHub App's slug is its URL name, fixed at registration — an App has
+// exactly one, so app_id determines app_slug. A mismatch means the identity
+// set was assembled from two different Apps, which is the defect this package
+// exists to catch: a GHE app_id carrying a public-looking slug (or the
+// reverse) passes every marker-based rule, because those markers key on the
+// string "ghe" appearing in a slug or URL.
+//
+// Returns "" for an unrecognised App ID (a third forge, self-hosted, the
+// placeholder sentinel). Unknown must never be treated as a mismatch, or a
+// legitimate deployment is refused — the same contract as forgeOfAppID.
+func slugOfAppID(appID int64) string {
+	switch appID {
+	case PublicGitHubAppID:
+		return DefaultGitHubAppSlug
+	case EnterpriseGitHubAppID:
+		return EnterpriseGitHubAppSlug
 	}
 	return ""
 }
@@ -336,10 +363,34 @@ func IdentitySetIssues(gh GitHubConfig) []string {
 		}
 	}
 
+	// app_slug must be THE slug of app_id. A GitHub App has one slug, so any
+	// other value means the set was assembled from two different Apps.
+	//
+	// This catches what the marker rules below structurally cannot: they ask
+	// whether the string "ghe" appears in the slug or the URLs, so a GHE App
+	// under a slug without that marker is invisible to them. Keying on app_id
+	// — always populated, unlike slug and both URLs — makes the check reachable
+	// on real fleet data.
+	//
+	// An EMPTY slug is not a mismatch: it resolves to DefaultGitHubAppSlug via
+	// ResolvedAppSlug(), and most of the fleet leaves it unset. Only a slug
+	// that is present AND wrong is refused.
+	if wantSlug := slugOfAppID(gh.AppID); wantSlug != "" && gh.AppSlug != "" &&
+		!strings.EqualFold(gh.AppSlug, wantSlug) {
+		issues = append(issues, "app_slug ("+gh.AppSlug+") is not the slug of app_id "+
+			strconv.FormatInt(gh.AppID, 10)+" (expected "+wantSlug+
+			") — a GitHub App has exactly one slug, so this identity set names two different Apps")
+	}
+
 	// The live regression: an App is configured and the forge markers
 	// disagree with each other.
 	if gh.AppID != 0 {
-		if slugIsGHE && !apiIsGHE {
+		// An empty api_url is not a public one when base_url already names GHE:
+		// pooled/placeholder GHE hives and the vllm-d cluster record carry
+		// exactly one of the two. Only claim a contradiction when api_url is
+		// populated, or when NEITHER url names the forge (the incident shape,
+		// which the app_id rule above catches on its own).
+		if slugIsGHE && !apiIsGHE && !baseIsGHE && gh.APIURL != "" {
 			issues = append(issues, "app_slug looks like a GitHub Enterprise slug ("+gh.AppSlug+
 				") but api_url is not a GHE API URL ("+displayOrEmpty(gh.APIURL)+
 				") — a GHE App ID presented to api.github.com returns 404 Integration not found")

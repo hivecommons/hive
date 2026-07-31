@@ -115,7 +115,7 @@ func TestPushGuard_UnderSpecifiedClusterIsNotGated(t *testing.T) {
 			"vllm-d": {
 				ID:            "vllm-d",
 				GitHubAppID:   config.EnterpriseGitHubAppID,
-				GitHubAppSlug: "ibm-hive",
+				GitHubAppSlug: "kubestellar-hive-ghe",
 			},
 		},
 		logger: appKeyTestLogger(),

@@ -39,16 +39,21 @@ func (c identityCombo) cfg() GitHubConfig {
 // separately in TestIdentitySet_RealFleetShapes so a failure tells you which of
 // the two is broken.
 //
-// ONE EXCEPTION, and it is a deliberate one. app_slug is NOT derivable from
-// app_id: App ID 5686 legitimately appears in this tree under both
-// "kubestellar-hive-ghe" and "ibm-hive" (the vllm-d cluster fixture), because a
-// slug is an operator-chosen App URL name. So the combination
+// NO EXCEPTIONS. app_slug IS derivable from app_id — a GitHub App has exactly
+// one slug, fixed at registration. So the combination
 //
 //	app_id 5686 + slug kubestellar-hive + GHE api_url + GHE base_url
 //
-// is a REAL, VALID production shape wearing a slug that happens not to contain
-// "ghe" — a rule rejecting it would refuse a live cluster. It is enumerated
-// below as wantValid, with the reason attached, rather than quietly skipped.
+// names two different Apps and is REJECTED. Exactly 2 of the 16 are valid.
+//
+// An earlier revision of this test carved out an exception for a second slug
+// on App 5686 ("ibm-hive"), citing pkg/hub/cluster_app_key_test.go. That
+// citation was to a TEST FIXTURE, not a deployment: "ibm-hive" appears in no
+// production config, no cluster entry, and on none of the 51 fleet spokes —
+// live clusters.json carries "kubestellar-hive-ghe" for vllm-d. The exception
+// let a GHE App under a non-"ghe" slug pass validation, which is the exact
+// shape this file exists to reject. Any future exception here needs a citation
+// to live config, not to a fixture. It is enumerated
 // See the note on EnterpriseGitHubAppSlug.
 func TestIdentitySet_All16Combinations(t *testing.T) {
 	appIDs := []int64{PublicGitHubAppID, EnterpriseGitHubAppID}
@@ -66,12 +71,9 @@ func TestIdentitySet_All16Combinations(t *testing.T) {
 					seen++
 					combo := identityCombo{appID: appID, slug: slug, apiURL: apiURL, baseURL: baseURL}
 					forgeAgrees := ai == pi && pi == bi
-					// The slug may lag the forge only in the direction that is
-					// genuinely ambiguous: a GHE App under a slug without the
-					// "ghe" marker. A public App under a GHE-marked slug is
-					// unambiguously wrong and stays rejected.
-					slugTolerated := si == ai || (ai == 1 && si == 0)
-					wantValid := forgeAgrees && slugTolerated
+					// A GitHub App has exactly one slug, so the slug must match
+					// the app_id — in BOTH directions. No tolerance.
+					wantValid := forgeAgrees && si == ai
 
 					err := RejectIdentitySet(combo.cfg())
 					if err != nil {
@@ -93,9 +95,9 @@ func TestIdentitySet_All16Combinations(t *testing.T) {
 	if seen != 16 {
 		t.Fatalf("walked %d combinations, want 16", seen)
 	}
-	// 3 valid: public×public, GHE×GHE, and the GHE App under the non-"ghe"
-	// slug. Pinning the count catches a rule that silently stops firing.
-	if want := 13; rejected != want {
+	// Exactly 2 valid: public×public×public×public and GHE×GHE×GHE×GHE.
+	// Pinning the count catches a rule that silently stops firing.
+	if want := 14; rejected != want {
 		t.Errorf("rejected %d of 16 combinations, want %d", rejected, want)
 	}
 }
@@ -184,14 +186,26 @@ func TestIdentitySet_RealFleetShapes(t *testing.T) {
 			wantReject: true,
 		},
 		{
-			// The vllm-d cluster's real shape: the GHE App under the operator-
-			// chosen slug "ibm-hive", which carries no "ghe" marker. This MUST
-			// be accepted — a rule tying app_id to a specific slug refuses a
-			// live production cluster. See pkg/hub/cluster_app_key_test.go.
-			name: "GHE app_id under the operator-chosen ibm-hive slug",
+			// A GHE App wearing a slug with no "ghe" marker. Every marker-based
+			// rule is blind to this: slugIsGHE is false, and both URLs agree
+			// with each other. Only the app_id -> slug rule catches it, which is
+			// why that rule has to key on app_id rather than on string markers.
+			name: "GHE app_id under a slug that is not its own",
 			gh: GitHubConfig{
 				AppID:   EnterpriseGitHubAppID,
 				AppSlug: "ibm-hive",
+				APIURL:  EnterpriseGitHubAPIURL,
+				BaseURL: EnterpriseGitHubBaseURL,
+			},
+			wantReject: true,
+		},
+		{
+			// The real fleet shape: slug UNSET. ResolvedAppSlug() supplies the
+			// default, so an empty slug is not a mismatch and must be accepted —
+			// most spokes run exactly this way.
+			name: "GHE app_id with slug unset",
+			gh: GitHubConfig{
+				AppID:   EnterpriseGitHubAppID,
 				APIURL:  EnterpriseGitHubAPIURL,
 				BaseURL: EnterpriseGitHubBaseURL,
 			},
@@ -248,7 +262,7 @@ func TestIdentitySet_RuleIsReachableWithoutStringMarkers(t *testing.T) {
 func TestIdentitySet_OneEmptyURLIsNotAContradiction(t *testing.T) {
 	valid := []GitHubConfig{
 		// The vllm-d cluster record: GHE base_url declared, api_url unset.
-		{AppID: EnterpriseGitHubAppID, AppSlug: "ibm-hive", BaseURL: EnterpriseGitHubBaseURL},
+		{AppID: EnterpriseGitHubAppID, AppSlug: EnterpriseGitHubAppSlug, BaseURL: EnterpriseGitHubBaseURL},
 		// Pooled/placeholder GHE hives: GHE api_url declared, base_url unset.
 		{AppID: EnterpriseGitHubAppID, AppSlug: EnterpriseGitHubAppSlug, APIURL: EnterpriseGitHubAPIURL},
 	}

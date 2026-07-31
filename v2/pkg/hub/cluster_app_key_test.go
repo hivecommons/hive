@@ -489,7 +489,7 @@ func TestAppIdentityForCluster(t *testing.T) {
 	}
 
 	s := &HubServer{clusters: map[string]ClusterConfig{
-		"vllm-d":   {ID: "vllm-d", GitHubAppID: 5686, GitHubAppSlug: "ibm-hive"},
+		"vllm-d":   {ID: "vllm-d", GitHubAppID: 5686, GitHubAppSlug: "kubestellar-hive-ghe"},
 		"keyonly":  {ID: "keyonly"},
 		"hive-oke": {ID: "hive-oke", GitHubAppID: 12345},
 	}}
@@ -505,7 +505,7 @@ func TestAppIdentityForCluster(t *testing.T) {
 		wantNoKey bool
 		reason    string
 	}{
-		{name: "app id and key present", clusterID: "vllm-d", wantAppID: 5686, wantSlug: "ibm-hive"},
+		{name: "app id and key present", clusterID: "vllm-d", wantAppID: 5686, wantSlug: "kubestellar-hive-ghe"},
 		{name: "key but no app id", clusterID: "keyonly", wantNil: true, reason: "an app_id-less cluster has no identity to enforce"},
 		// A configured app_id with no stored key IS an identity. Returning nil
 		// here is the bug that made #2333's sentinel repair unreachable in
@@ -580,7 +580,7 @@ func TestAppKeySyncForHeartbeat(t *testing.T) {
 
 	s := &HubServer{
 		logger:   appKeyTestLogger(),
-		clusters: map[string]ClusterConfig{"vllm-d": {ID: "vllm-d", GitHubAppID: 5686, GitHubAppSlug: "ibm-hive"}},
+		clusters: map[string]ClusterConfig{"vllm-d": {ID: "vllm-d", GitHubAppID: 5686, GitHubAppSlug: "kubestellar-hive-ghe"}},
 	}
 
 	tests := []struct {
@@ -594,14 +594,14 @@ func TestAppKeySyncForHeartbeat(t *testing.T) {
 			name:     "spoke with no key gets the cluster key",
 			payload:  &HeartbeatPayload{HiveID: "vllmd-06", ClusterID: "vllm-d"},
 			wantCfg:  true,
-			wantSlug: "ibm-hive",
+			wantSlug: "kubestellar-hive-ghe",
 			reason:   "the four keyless hives",
 		},
 		{
 			name:     "spoke with the wrong key gets corrected",
 			payload:  &HeartbeatPayload{HiveID: "vllmd-01", ClusterID: "vllm-d", GitHubAppKeyFingerprint: "sha256:deadbeefdeadbeefdeadbeefdeadbeef"},
 			wantCfg:  true,
-			wantSlug: "ibm-hive",
+			wantSlug: "kubestellar-hive-ghe",
 			reason:   "the three hives carrying the public github.com key",
 		},
 		{
@@ -696,7 +696,7 @@ func TestAppKeySyncForHeartbeatPublicPinnedHive(t *testing.T) {
 			"vllm-d": {
 				ID:            "vllm-d",
 				GitHubAppID:   5686,
-				GitHubAppSlug: "ibm-hive",
+				GitHubAppSlug: "kubestellar-hive-ghe",
 				GitHubBaseURL: "https://github.ibm.com",
 			},
 		},
@@ -786,7 +786,7 @@ func TestClusterKeyNeverSerializedIntoAPIPayload(t *testing.T) {
 		Name:          "GPU pool",
 		Domain:        "hive.example.com",
 		GitHubAppID:   5686,
-		GitHubAppSlug: "ibm-hive",
+		GitHubAppSlug: "kubestellar-hive-ghe",
 	}
 	identity := (&HubServer{clusters: map[string]ClusterConfig{"vllm-d": cluster}}).appIdentityForCluster("vllm-d")
 	if identity == nil {
