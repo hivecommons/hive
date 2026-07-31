@@ -2,6 +2,9 @@ package hub
 
 import (
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -225,19 +228,32 @@ func TestForgePushIsInertWithoutASwitch(t *testing.T) {
 	}
 }
 
-// TestForgeAppIDComesFromClusterConfigOnly locks the credential half: no App ID
-// is hardcoded in Go, and a cluster whose forge does not match the target must
-// contribute nothing rather than pushing an App from the wrong forge.
-func TestForgeAppIDComesFromClusterConfigOnly(t *testing.T) {
+// TestForgeIdentityIsAtomic is the regression test for a hive that was broken
+// by hand, and it is the most important test in this file.
+//
+// A hive was moved to github.ibm.com by editing github_host alone. The host
+// changed; the identity did not. It kept the github.com app_id (3568013 where
+// GHE needs its own), an EMPTY app_slug, and an installation_id belonging to
+// the old forge. The owner clicked "Install GitHub App" and got a GitHub 404,
+// because an empty app_slug falls back to config.DefaultGitHubAppSlug
+// ("kubestellar-hive") — the github.com App's slug, which names nothing on GHE.
+//
+// A wrong install link is worse than no link: it tells the user the product is
+// broken. So a forge switch resolves the identity as a SET and refuses when any
+// part of it is unknown, rather than half-applying.
+func TestForgeIdentityIsAtomic(t *testing.T) {
 	s := &HubServer{logger: slog.Default()}
 
-	// A github.com cluster (hive-oke shape): no GHE URLs, its own app id.
+	// A github.com cluster (hive-oke shape): no GHE URLs, its own app + slug.
 	const publicClusterApp int64 = 111
-	publicCluster := &ClusterConfig{ID: "hive-oke", GitHubAppID: publicClusterApp}
-	// An enterprise cluster (vllm-d shape): GHE base/api URLs, its own app id.
+	publicCluster := &ClusterConfig{
+		ID: "hive-oke", GitHubAppID: publicClusterApp, GitHubAppSlug: "kubestellar-hive",
+	}
+	// An enterprise cluster (vllm-d shape): GHE base/api URLs, its own app+slug.
 	const gheClusterApp int64 = 222
 	gheCluster := &ClusterConfig{
 		ID: "vllm-d", GitHubAppID: gheClusterApp,
+		GitHubAppSlug: "kubestellar-hive-ghe",
 		GitHubBaseURL: "https://github.ibm.com",
 		GitHubAPIURL:  "https://github.ibm.com/api/v3",
 	}
@@ -251,26 +267,250 @@ func TestForgeAppIDComesFromClusterConfigOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := s.forgeAppIDForTarget(publicCluster, public); got != publicClusterApp {
-		t.Errorf("github.com hive on a github.com cluster: app id = %d, want %d from cluster config", got, publicClusterApp)
+	// Fully configured clusters resolve a COMPLETE identity — id AND slug.
+	got, missing := s.forgeIdentityForTarget(publicCluster, public)
+	if len(missing) != 0 || got.AppID != publicClusterApp || got.AppSlug != "kubestellar-hive" {
+		t.Errorf("github.com cluster: identity = %+v missing = %v, want the configured app id and slug", got, missing)
 	}
-	if got := s.forgeAppIDForTarget(gheCluster, ghe); got != gheClusterApp {
-		t.Errorf("GHE hive on a GHE cluster: app id = %d, want %d from cluster config", got, gheClusterApp)
+	got, missing = s.forgeIdentityForTarget(gheCluster, ghe)
+	if len(missing) != 0 || got.AppID != gheClusterApp || got.AppSlug != "kubestellar-hive-ghe" {
+		t.Errorf("GHE cluster: identity = %+v missing = %v, want the configured GHE app id and slug", got, missing)
 	}
+
+	// THE LIVE BUG: a GHE cluster whose github_app_slug was never populated.
+	// This must be REFUSED, not silently accepted with an empty slug that falls
+	// back to the github.com default and 404s on the install link.
+	slugless := &ClusterConfig{
+		ID: "vllm-d", GitHubAppID: gheClusterApp,
+		GitHubBaseURL: "https://github.ibm.com",
+		GitHubAPIURL:  "https://github.ibm.com/api/v3",
+	}
+	got, missing = s.forgeIdentityForTarget(slugless, ghe)
+	if len(missing) == 0 {
+		t.Fatalf("a cluster with no github_app_slug must be refused — an empty slug 404s the install link on GHE; got identity %+v", got)
+	}
+	if got.AppSlug != "" || got.AppID != 0 {
+		t.Errorf("a refused identity must be entirely empty (all-or-nothing), got %+v", got)
+	}
+	if !strings.Contains(strings.Join(missing, " "), "github_app_slug") {
+		t.Errorf("the refusal must NAME the missing field so an operator can fix clusters.json, got %v", missing)
+	}
+
 	// Cross-forge: the cluster's App is registered on the OTHER forge, so it
-	// names nothing on the target. Zero = "say nothing", which leaves the
-	// spoke's credentials untouched rather than pushing a wrong-forge App.
-	if got := s.forgeAppIDForTarget(publicCluster, ghe); got != 0 {
-		t.Errorf("github.com cluster must contribute no App for a GHE target, got %d", got)
+	// names nothing on the target. Refused rather than pushed.
+	if _, missing = s.forgeIdentityForTarget(publicCluster, ghe); len(missing) == 0 {
+		t.Error("a github.com cluster must not supply an identity for a GHE target")
 	}
-	if got := s.forgeAppIDForTarget(gheCluster, public); got != 0 {
-		t.Errorf("GHE cluster must contribute no App for a github.com target, got %d", got)
+	if _, missing = s.forgeIdentityForTarget(gheCluster, public); len(missing) == 0 {
+		t.Error("a GHE cluster must not supply an identity for a github.com target")
 	}
-	// A cluster with no configured App, and a nil cluster, must both be silent.
-	if got := s.forgeAppIDForTarget(&ClusterConfig{ID: "bare"}, public); got != 0 {
-		t.Errorf("cluster with no github_app_id must contribute nothing, got %d", got)
+	// A cluster with no configured App, and a nil cluster, are both refusals.
+	if _, missing = s.forgeIdentityForTarget(&ClusterConfig{ID: "bare"}, public); len(missing) == 0 {
+		t.Error("a cluster with no github_app_id must be refused")
 	}
-	if got := s.forgeAppIDForTarget(nil, public); got != 0 {
-		t.Errorf("nil cluster must contribute nothing, got %d", got)
+	if _, missing = s.forgeIdentityForTarget(nil, public); len(missing) == 0 {
+		t.Error("a nil cluster must be refused")
+	}
+}
+
+// forgeTestSecret signs the auth cookie in the handler tests below.
+const forgeTestSecret = "forge-test-secret"
+
+// postForgeSwitch drives the real handler end to end as the given user.
+func postForgeSwitch(t *testing.T, s *HubServer, hiveID, username, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/saas/hives/"+hiveID+"/forge", strings.NewReader(body))
+	req.SetPathValue("id", hiveID)
+	if username != "" {
+		req.AddCookie(&http.Cookie{
+			Name:  "hive_hub_user",
+			Value: mintHubUserCookieValue(forgeTestSecret, username),
+		})
+	}
+	rec := httptest.NewRecorder()
+	s.handleSwitchForge(rec, req)
+	return rec
+}
+
+// TestSwitchForgeRefusesPartialIdentity drives the HANDLER through the live
+// failure: a GHE cluster whose github_app_slug was never populated.
+//
+// The switch must write NOTHING. A half-applied switch is what produced a hive
+// on github.ibm.com still carrying the github.com app_id and an empty slug —
+// and an "Install GitHub App" link that 404s.
+func TestSwitchForgeRefusesPartialIdentity(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "enricom8"}); err != nil {
+		t.Fatal(err)
+	}
+	saveSaaSHive(&SaaSHive{
+		ID: "vllmd03", Owner: "enricom8", Status: "running", ClusterID: "vllm-d",
+		Org: "enricom-ibm", Repos: []string{"jackrabbit"}, PrimaryRepo: "jackrabbit",
+		ACMMLevel: 2, GitHubHost: "github.com",
+	})
+	s := &HubServer{
+		logger:    slog.Default(),
+		hubSecret: forgeTestSecret,
+		clusters: map[string]ClusterConfig{
+			// The live vllm-d shape at the time of the incident: an app id, GHE
+			// URLs, and NO github_app_slug.
+			"vllm-d": {
+				ID: "vllm-d", GitHubAppID: 5686,
+				GitHubBaseURL: "https://github.ibm.com",
+				GitHubAPIURL:  "https://github.ibm.com/api/v3",
+			},
+		},
+		pendingGitHubAppConfigs: map[string]*HeartbeatGitHubAppConfig{},
+	}
+
+	rec := postForgeSwitch(t, s, "vllmd03", "enricom8", `{"host":"github.ibm.com"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 — an incomplete target identity must refuse, not half-apply (body=%q)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "github_app_slug") {
+		t.Errorf("the refusal must name the missing field, got %q", rec.Body.String())
+	}
+
+	// NOTHING may have been written: not the host, not the pin, not the
+	// delivery arming. This is the atomicity guarantee.
+	h := loadSaaSHive("vllmd03")
+	if h == nil {
+		t.Fatal("hive vanished")
+	}
+	if h.GitHubHost != "github.com" {
+		t.Errorf("github_host = %q, want the ORIGINAL github.com — a refused switch must not move the host", h.GitHubHost)
+	}
+	if h.RequestedGitHubHost != "" || h.ForgeDelivered {
+		t.Errorf("a refused switch must not arm delivery, got requested=%q delivered=%v", h.RequestedGitHubHost, h.ForgeDelivered)
+	}
+	if h.GitHubBaseURL != "" || h.GitHubAPIURL != "" {
+		t.Errorf("a refused switch must not pin URLs, got base=%q api=%q", h.GitHubBaseURL, h.GitHubAPIURL)
+	}
+	if got := s.consumePendingGitHubAppConfig("vllmd03"); got != nil {
+		t.Errorf("a refused switch must queue no App delivery, got %+v", got)
+	}
+}
+
+// TestSwitchForgeSwapsTheWholeIdentity is the success path, and it asserts that
+// every field in the identity set moves together — including the app_slug whose
+// absence caused the live 404.
+func TestSwitchForgeSwapsTheWholeIdentity(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "enricom8"}); err != nil {
+		t.Fatal(err)
+	}
+	saveSaaSHive(&SaaSHive{
+		ID: "vllmd03", Owner: "enricom8", Status: "running", ClusterID: "vllm-d",
+		Org: "enricom-ibm", Repos: []string{"jackrabbit"}, PrimaryRepo: "jackrabbit",
+		ACMMLevel: 2, GitHubHost: "github.com",
+	})
+	const gheAppID int64 = 5686
+	s := &HubServer{
+		logger:    slog.Default(),
+		hubSecret: forgeTestSecret,
+		clusters: map[string]ClusterConfig{
+			"vllm-d": {
+				ID: "vllm-d", GitHubAppID: gheAppID,
+				GitHubAppSlug: "kubestellar-hive-ghe",
+				GitHubBaseURL: "https://github.ibm.com",
+				GitHubAPIURL:  "https://github.ibm.com/api/v3",
+			},
+		},
+		pendingGitHubAppConfigs: map[string]*HeartbeatGitHubAppConfig{},
+	}
+
+	rec := postForgeSwitch(t, s, "vllmd03", "enricom8", `{"host":"github.ibm.com"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%q)", rec.Code, rec.Body.String())
+	}
+
+	h := loadSaaSHive("vllmd03")
+	if h == nil {
+		t.Fatal("hive vanished")
+	}
+	if h.GitHubHost != "github.ibm.com" {
+		t.Errorf("github_host = %q, want github.ibm.com", h.GitHubHost)
+	}
+	if h.GitHubBaseURL != "https://github.ibm.com" {
+		t.Errorf("base_url = %q, want the GHE web base — the field left empty by the manual edit", h.GitHubBaseURL)
+	}
+	if h.GitHubAPIURL != "https://github.ibm.com/api/v3" {
+		t.Errorf("api_url = %q, want the GHE API", h.GitHubAPIURL)
+	}
+	if h.RequestedGitHubHost != "github.ibm.com" || h.ForgeDelivered {
+		t.Errorf("delivery must be armed and undelivered, got requested=%q delivered=%v", h.RequestedGitHubHost, h.ForgeDelivered)
+	}
+
+	// The App identity queued for the spoke must carry the GHE app id AND the
+	// GHE slug, and must NOT carry an installation id from the old forge.
+	got := s.consumePendingGitHubAppConfig("vllmd03")
+	if got == nil {
+		t.Fatal("no App identity queued for the spoke — the hive would keep the github.com App")
+	}
+	if got.AppID != gheAppID {
+		t.Errorf("queued app_id = %d, want the cluster's GHE app %d", got.AppID, gheAppID)
+	}
+	if got.AppSlug != "kubestellar-hive-ghe" {
+		t.Errorf("queued app_slug = %q, want the GHE slug — an empty slug is what 404s the install link", got.AppSlug)
+	}
+	if got.InstallationID != 0 {
+		t.Errorf("installation_id = %d, want 0 — an ID from the previous forge must NEVER be carried over", got.InstallationID)
+	}
+	if got.PrivateKey != "" {
+		t.Errorf("this endpoint must not push key material; the per-cluster reconcile owns that, got a key of %d bytes", len(got.PrivateKey))
+	}
+
+	// The response must tell the operator the install is still outstanding,
+	// rather than reading as a completed success.
+	if !strings.Contains(rec.Body.String(), "installation_id was cleared") {
+		t.Errorf("response must flag the cleared installation_id, got %q", rec.Body.String())
+	}
+
+	// IDEMPOTENT and re-runnable: switching again to the same forge is safe.
+	rec2 := postForgeSwitch(t, s, "vllmd03", "enricom8", `{"host":"github.ibm.com"}`)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("re-running the same switch must succeed, got %d (%q)", rec2.Code, rec2.Body.String())
+	}
+}
+
+// TestSwitchForgeAuthorization locks the owner-or-admin rule.
+func TestSwitchForgeAuthorization(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	for _, u := range []string{"enricom8", "someoneelse", hubAdminUsername} {
+		if err := saveSaaSUser(&SaaSUser{GitHubUsername: u}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saveSaaSHive(&SaaSHive{
+		ID: "h", Owner: "enricom8", Status: "running", ClusterID: "c",
+		Org: "o", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2,
+	})
+	s := &HubServer{
+		logger:    slog.Default(),
+		hubSecret: forgeTestSecret,
+		clusters: map[string]ClusterConfig{
+			"c": {ID: "c", GitHubAppID: 111, GitHubAppSlug: "kubestellar-hive"},
+		},
+		pendingGitHubAppConfigs: map[string]*HeartbeatGitHubAppConfig{},
+	}
+
+	if rec := postForgeSwitch(t, s, "h", "someoneelse", `{"host":"github.com"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("a non-owner must be refused, got %d", rec.Code)
+	}
+	if rec := postForgeSwitch(t, s, "h", hubAdminUsername, `{"host":"github.com"}`); rec.Code != http.StatusOK {
+		t.Errorf("an admin must be allowed, got %d (%q)", rec.Code, rec.Body.String())
+	}
+	if rec := postForgeSwitch(t, s, "h", "enricom8", `{"host":"github.com"}`); rec.Code != http.StatusOK {
+		t.Errorf("the owner must be allowed, got %d (%q)", rec.Code, rec.Body.String())
+	}
+	// A bad host is rejected before anything is written.
+	if rec := postForgeSwitch(t, s, "h", "enricom8", `{"host":"not a host"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("an invalid forge host must 400, got %d", rec.Code)
 	}
 }

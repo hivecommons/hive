@@ -180,13 +180,17 @@ type SwitchForgeRequest struct {
 // identity the hive will now authenticate as, so the operator can see whether
 // the target cluster actually has an App configured before waiting on a beat.
 type switchForgeResponse struct {
-	Status          string `json:"status"`
-	ID              string `json:"id"`
-	FromHost        string `json:"from_host"`
-	ToHost          string `json:"to_host"`
-	ForgeKind       string `json:"forge_kind"`
-	APIURL          string `json:"api_url,omitempty"`
-	AppID           string `json:"app_id,omitempty"`
+	Status    string `json:"status"`
+	ID        string `json:"id"`
+	FromHost  string `json:"from_host"`
+	ToHost    string `json:"to_host"`
+	ForgeKind string `json:"forge_kind"`
+	APIURL    string `json:"api_url,omitempty"`
+	AppID     string `json:"app_id,omitempty"`
+	// AppSlug is the App slug now in effect on the target forge. Reported so an
+	// operator can see the install link will resolve, rather than discovering a
+	// 404 through the user.
+	AppSlug         string `json:"app_slug,omitempty"`
 	InstallationID  string `json:"installation_id,omitempty"`
 	AppInstallNote  string `json:"app_install_note,omitempty"`
 	DeliveryPending bool   `json:"delivery_pending"`
@@ -285,11 +289,39 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the App identity for the TARGET forge from CLUSTER CONFIG. No App
-	// ID is hardcoded anywhere in Go: hive-oke names its github.com App and
-	// vllm-d names its github.ibm.com App, both in clusters.json, exactly as
+	// ID or slug is hardcoded anywhere in Go: hive-oke names its github.com App
+	// and vllm-d names its github.ibm.com App, both in clusters.json, exactly as
 	// resolveProvisionAppID already reads them.
 	cluster := s.clusterForHive(h)
-	appID := s.forgeAppIDForTarget(cluster, target)
+	identity, missing := s.forgeIdentityForTarget(cluster, target)
+
+	// REFUSE RATHER THAN HALF-APPLY. Verified the hard way: a hive was moved to
+	// github.ibm.com by editing github_host alone. The host changed and nothing
+	// else did — it kept the github.com app_id, an empty app_slug, and a
+	// installation_id belonging to the old forge. The owner then clicked
+	// "Install GitHub App" and got a GitHub 404, because an empty app_slug falls
+	// back to config.DefaultGitHubAppSlug ("kubestellar-hive"), which is the
+	// github.com App's slug and names nothing on GHE. A wrong install link is
+	// worse than no link: it tells the user the product is broken.
+	//
+	// A forge switch is therefore an ATOMIC SWAP OF AN IDENTITY SET, not a
+	// single field. If the target forge's identity is not fully known for this
+	// cluster, nothing is written at all and the response names exactly what is
+	// missing so an operator can populate clusters.json and re-run.
+	if len(missing) > 0 {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": fmt.Sprintf("refusing to switch %s to %s: the target forge identity is incomplete for cluster %q, and a partial switch produces a broken hive (a wrong App install link 404s)",
+				id, target.Host, clusterIDForHive(h)),
+			"missing": missing,
+			"remedy":  forgeIdentityRemedy,
+		})
+		s.logger.Warn("forge switch refused: incomplete target identity",
+			"hive_id", id, "to_host", target.Host,
+			"cluster", clusterIDForHive(h), "missing", strings.Join(missing, ","))
+		return
+	}
+	appID := identity.AppID
 
 	// Record the target. GitHubHost is what projectConfigForHiveID derives the
 	// pushed api_url from; GitHubBaseURL/GitHubAPIURL pin the hive explicitly so
@@ -340,22 +372,24 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	// field" value, so a bare app_id switch leaves the spoke's stale ID in
 	// place. That is why an explicit clear is queued below via the hive's own
 	// record rather than relying on the heartbeat field alone.
-	deliveryPending := false
-	if appID > 0 {
-		s.storePendingGitHubAppConfig(id, &HeartbeatGitHubAppConfig{
-			AppID: appID,
-			// Only a supplied ID is sent. Zero means "leave it alone" on the
-			// wire; the operator note below tells the operator it must be
-			// installed or supplied, so the failure is never silent.
-			InstallationID: installID,
-			AppSlug:        forgeAppSlugForCluster(cluster),
-			// PrivateKey is deliberately absent. The per-cluster key reconcile
-			// (cluster_app_key.go) delivers key material on its own schedule and
-			// gates every key push on HasKey(); duplicating it here would risk
-			// blanking a working key with an empty string.
-		})
-		deliveryPending = true
-	}
+	//
+	// The SLUG travels with the app_id, and that is the whole point of the
+	// precondition above: identity.AppSlug is non-empty by construction here, so
+	// the spoke can never be left falling back to the github.com default slug on
+	// a GHE host — the state that produced the live install-link 404.
+	s.storePendingGitHubAppConfig(id, &HeartbeatGitHubAppConfig{
+		AppID: appID,
+		// Only a supplied ID is sent. Zero means "leave it alone" on the
+		// wire; the operator note below tells the operator it must be
+		// installed or supplied, so the failure is never silent.
+		InstallationID: installID,
+		AppSlug:        identity.AppSlug,
+		// PrivateKey is deliberately absent. The per-cluster key reconcile
+		// (cluster_app_key.go) delivers key material on its own schedule and
+		// gates every key push on HasKey(); duplicating it here would risk
+		// blanking a working key with an empty string.
+	})
+	deliveryPending := true
 
 	note := ""
 	if installID == 0 {
@@ -372,6 +406,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		"forge_kind", string(target.Kind),
 		"api_url", target.APIURL,
 		"app_id", appID,
+		"app_slug", identity.AppSlug,
 		"installation_id_supplied", installID != 0,
 		"cluster", clusterIDForHive(h),
 	)
@@ -385,6 +420,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		ToHost:          target.Host,
 		ForgeKind:       string(target.Kind),
 		APIURL:          target.APIURL,
+		AppSlug:         identity.AppSlug,
 		InstallationID:  strings.TrimSpace(body.InstallationID),
 		AppInstallNote:  note,
 		DeliveryPending: deliveryPending,
@@ -395,22 +431,47 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
-// forgeAppIDForTarget resolves the GitHub App ID to authenticate as on the
-// TARGET forge, from cluster config only.
+// forgeIdentity is the COMPLETE App identity for one forge. A forge switch
+// swaps all of it or none of it.
+type forgeIdentity struct {
+	// AppID is the numeric GitHub App ID registered on the target forge.
+	AppID int64
+	// AppSlug is that App's URL slug ON THAT FORGE. It is part of the identity,
+	// not a cosmetic extra: it is what the "Install GitHub App" link is built
+	// from, and an empty value silently falls back to the public github.com slug
+	// (config.ResolvedAppSlug -> DefaultGitHubAppSlug), which on a GHE host
+	// names an App that does not exist and 404s.
+	AppSlug string
+}
+
+// forgeIdentityRemedy is the operator-facing instruction attached to a refused
+// switch. It names the file and the fields, because the fix is a config edit and
+// nothing about the request itself is wrong.
+const forgeIdentityRemedy = "populate the target cluster's entry in /data/saas/clusters.json (github_app_id and github_app_slug for that forge), then re-run this switch — it is idempotent"
+
+// forgeIdentityForTarget resolves the FULL App identity for the target forge
+// from CLUSTER CONFIG ONLY, and reports everything that is missing.
 //
-// The cluster's configured app_id is correct exactly when the cluster's own
-// GitHub host matches the target — hive-oke is a github.com cluster and vllm-d
-// is a github.ibm.com cluster, so a hive switching to the cluster's own forge
-// gets the cluster's App. A hive switching to a forge the cluster does NOT
-// default to has no App the hub can name, and returning 0 is the honest answer:
-// zero means "say nothing about the App", which leaves the spoke's credentials
-// untouched rather than pushing an App ID from the wrong forge.
+// A cluster's configured App is correct exactly when the cluster's own GitHub
+// host matches the target — hive-oke is a github.com cluster naming its
+// github.com App, vllm-d is a github.ibm.com cluster naming its GHE App. A hive
+// switching to a forge its cluster does NOT serve has no App the hub can name.
 //
-// No App ID is hardcoded. This reads ClusterConfig.GitHubAppID, the same
-// non-secret field resolveProvisionAppID uses.
-func (s *HubServer) forgeAppIDForTarget(cluster *ClusterConfig, target ForgeTarget) int64 {
-	if cluster == nil || cluster.GitHubAppID == 0 {
-		return 0
+// # WHY MISSING FIELDS ARE AN ERROR AND NOT A DEFAULT
+//
+// Every field here has a plausible-looking fallback, and every one of those
+// fallbacks is wrong on the target forge:
+//   - app_id: falling back to the cluster's other App authenticates as an App
+//     that does not exist on this forge.
+//   - app_slug: falling back to DefaultGitHubAppSlug builds an install link at
+//     <ghe-host>/github-apps/kubestellar-hive/... — the exact live 404.
+//
+// So this returns the missing field NAMES and the caller refuses the switch.
+// Nothing is hardcoded: both values come from ClusterConfig, the same
+// non-secret fields resolveProvisionAppID and the provisioning template read.
+func (s *HubServer) forgeIdentityForTarget(cluster *ClusterConfig, target ForgeTarget) (forgeIdentity, []string) {
+	if cluster == nil {
+		return forgeIdentity{}, []string{"cluster config (this hive's cluster is unknown to the hub)"}
 	}
 	clusterHost := publicForgeHost
 	if cluster.GitHubBaseURL != "" {
@@ -419,20 +480,39 @@ func (s *HubServer) forgeAppIDForTarget(cluster *ClusterConfig, target ForgeTarg
 		clusterHost = strings.ToLower(githubHostLabel(cluster.GitHubAPIURL))
 	}
 	if !sameGitHubHost(clusterHost, target.Host) {
-		return 0
+		// The hub knows an App for this cluster, but it is registered on the
+		// WRONG forge. Naming the mismatch is far more useful than a bare
+		// "missing app_id", because the remedy is different: this cluster may
+		// simply not be able to host a hive on the requested forge.
+		return forgeIdentity{}, []string{
+			fmt.Sprintf("a GitHub App registered on %s (cluster %q serves %s)", target.Host, cluster.ID, clusterHost),
+		}
 	}
-	return cluster.GitHubAppID
+	var missing []string
+	if cluster.GitHubAppID == 0 {
+		missing = append(missing, fmt.Sprintf("github_app_id for cluster %q", cluster.ID))
+	}
+	if strings.TrimSpace(cluster.GitHubAppSlug) == "" {
+		// Deliberately required even for public github.com. The default slug
+		// happens to be right there, but accepting an unset value would mean the
+		// atomicity guarantee holds on one forge and not the other — and the
+		// operator would have no signal that the cluster entry is incomplete.
+		missing = append(missing, fmt.Sprintf("github_app_slug for cluster %q (an empty slug falls back to %q, which names no App on %s)",
+			cluster.ID, defaultPublicAppSlug, target.Host))
+	}
+	if len(missing) > 0 {
+		return forgeIdentity{}, missing
+	}
+	return forgeIdentity{
+		AppID:   cluster.GitHubAppID,
+		AppSlug: strings.TrimSpace(cluster.GitHubAppSlug),
+	}, nil
 }
 
-// forgeAppSlugForCluster returns the cluster's App slug, or "" when it has
-// none. Empty is the spoke's "leave my slug alone" value, so this never blanks
-// a working install link.
-func forgeAppSlugForCluster(cluster *ClusterConfig) string {
-	if cluster == nil {
-		return ""
-	}
-	return cluster.GitHubAppSlug
-}
+// defaultPublicAppSlug mirrors config.DefaultGitHubAppSlug. It appears here
+// only inside an operator-facing error message explaining what an empty slug
+// would fall back to — it is never used as a value.
+const defaultPublicAppSlug = "kubestellar-hive"
 
 // ============================================================================
 // FORGE DELIVERY HANDSHAKE
