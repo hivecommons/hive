@@ -101,6 +101,11 @@ const (
 	// certificate is broken and the link in the hub table returns 503. Raised by
 	// the auth-audit loop, which already makes this HTTPS request.
 	AlertTypeURLUnreachable = "url-unreachable"
+	// AlertTypeAgentsInactive — one or more agents are RUNNING but not doing
+	// any work: their tmux session has gone, they are sitting on a login
+	// prompt, or they have produced nothing while work is queued. Deliberately
+	// paused agents are excluded by the rule itself, never reported here.
+	AlertTypeAgentsInactive = "agents-inactive"
 )
 
 // --- Thresholds. Every one is a named constant with a rationale. ---
@@ -461,6 +466,14 @@ type alertHive struct {
 	// exactly how the panel and the row pill would start disagreeing.
 	AdvisoryStale       bool
 	AdvisoryStaleReason string
+
+	// InactiveAgents / InactiveAgentsReason are carried through verbatim from
+	// the entry rather than recomputed, exactly as the advisory pair above is:
+	// evaluateInactiveAgents owns the thresholds and the paused/on-demand
+	// gating, and duplicating either here is how the facet and the row pill
+	// would start disagreeing about which hives are affected.
+	InactiveAgents       int
+	InactiveAgentsReason string
 }
 
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
@@ -485,6 +498,9 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 
 		AdvisoryStale:       h.AdvisoryStale,
 		AdvisoryStaleReason: h.AdvisoryStaleReason,
+
+		InactiveAgents:       h.InactiveAgents,
+		InactiveAgentsReason: h.InactiveAgentsReason,
 	}
 }
 
@@ -770,6 +786,26 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 				reason = "Advisory digest has gone stale"
 			}
 			add(h.ID, h.Name, AlertTypeAdvisoryStale, AlertSeverityWarning, reason)
+		}
+
+		// --- Rule: agents are running but not working. ---
+		// The condition is NOT re-derived here: it is precomputed by
+		// evaluateInactiveAgents(), which already excludes paused and
+		// on-demand agents, already requires queued work before calling an
+		// agent idle, and already treats unknown timestamps as unknown. There
+		// is nothing to re-check beyond the placeholder guard every
+		// claimed-hive rule applies — an unclaimed pool slot has no agents.
+		//
+		// Warning, not critical: the hive is up and its other agents may be
+		// working, but capacity the operator believes they have is doing
+		// nothing.
+		if !h.IsPlaceholder && h.InactiveAgents > 0 {
+			reason := h.InactiveAgentsReason
+			if reason == "" {
+				// Only reached if the count arrives without a sentence.
+				reason = "Agents are running but not working"
+			}
+			add(h.ID, h.Name, AlertTypeAgentsInactive, AlertSeverityWarning, reason)
 		}
 
 		// --- Rule: token burn anomaly. Claimed hives only — an unassigned
@@ -1058,6 +1094,7 @@ var knownAlertTypes = map[string]bool{
 	AlertTypeTokenBurn:          true,
 	AlertTypeProvisionError:     true,
 	AlertTypeAdvisoryStale:      true,
+	AlertTypeAgentsInactive:     true,
 	AlertTypeURLUnreachable:     true,
 }
 

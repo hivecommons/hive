@@ -571,8 +571,22 @@ func TestSendKick_NonRunningAgentReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error kicking non-running agent, got nil")
 	}
-	if !strings.Contains(err.Error(), "not running") {
-		t.Errorf("error %q should say 'not running'", err.Error())
+	// The message must name the SPECIFIC state. It used to read "agent idle
+	// not running", which was identical for a deliberately paused agent, a
+	// crashed one and a never-started one — and was read as a launch failure
+	// during a live incident on agents that were paused exactly as intended.
+	if !strings.Contains(err.Error(), "cannot be kicked") {
+		t.Errorf("error %q should explain that the kick was refused", err.Error())
+	}
+	if !strings.Contains(err.Error(), "stopped") {
+		t.Errorf("error %q should name the state that blocked the kick", err.Error())
+	}
+	if !strings.Contains(err.Error(), "idle") {
+		t.Errorf("error %q should mention the agent name", err.Error())
+	}
+	// Never the old ambiguous phrasing.
+	if strings.Contains(err.Error(), "not running") {
+		t.Errorf("error %q reverted to the ambiguous wording", err.Error())
 	}
 }
 

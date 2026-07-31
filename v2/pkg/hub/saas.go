@@ -1692,6 +1692,20 @@ type MyHiveEntry struct {
 	AdvisoryStale       bool   `json:"advisoryStale,omitempty"`
 	AdvisoryStaleReason string `json:"advisoryStaleReason,omitempty"`
 
+	// InactiveAgents is how many of this hive's agents are RUNNING but not
+	// doing any work — session gone, sitting on a login prompt, or producing
+	// nothing while work is queued. Computed on read by
+	// evaluateInactiveAgents() so the browser never re-derives the thresholds
+	// or the paused/on-demand gating and cannot drift from the Go rule.
+	//
+	// Agents the operator deliberately PAUSED are excluded by that rule and
+	// never counted here: a pause is a choice, not a fault, and a facet that
+	// alarms on it would be wrong on every hive with a parked agent.
+	// InactiveAgentsReason is the tooltip cause. Both stay zero/empty for
+	// hives with nothing wrong, so the pill and the facet self-suppress.
+	InactiveAgents       int    `json:"inactiveAgents,omitempty"`
+	InactiveAgentsReason string `json:"inactiveAgentsReason,omitempty"`
+
 	// URLUnreachable is true when this hive's PUBLIC dashboard URL failed to
 	// serve on the last several probes — the link in this very table is dead.
 	// Computed on read from the auth-audit loop's observations, so the browser
@@ -2039,6 +2053,20 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		if stale, reason := advisoryStale(result[i].RegistryEntry, journeyNow); stale {
 			result[i].AdvisoryStale = true
 			result[i].AdvisoryStaleReason = reason
+		}
+
+		// Running-but-inactive agents, computed on read for the same reason:
+		// the thresholds and the paused/on-demand exclusions live ONLY in Go.
+		//
+		// The queue gate is the governor's own actionable backlog, which is
+		// what makes the idle rule safe on a genuinely quiet hive: with no
+		// issues and no PRs waiting, idle agents are CORRECT and nothing is
+		// reported. The two unambiguous faults (dead session, login prompt)
+		// are independent of it.
+		queuedWork := result[i].ActionableIssues + result[i].ActionablePRs
+		if rep := evaluateInactiveAgents(result[i].Agents, queuedWork, journeyNow); rep.Count > 0 {
+			result[i].InactiveAgents = rep.Count
+			result[i].InactiveAgentsReason = rep.Reason
 		}
 
 		// Sparkline history dominated this payload: at 42 hives the two series
@@ -8749,7 +8777,14 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Added by the hub in #2308. Without a label here the chip for a
          genuinely failed upgrade would render as the raw key 'failed-upgrade'. */
       'failed-upgrade': 'Failed upgrade',
-      'advisory-stale': 'Stale advisory'
+      'advisory-stale': 'Stale advisory',
+      /* Agents that are up but doing nothing — a session that has gone, a
+         login prompt, or no output while work is queued. Deliberately paused
+         agents are excluded server-side and never counted here. */
+      'agents-inactive': 'Idle agents',
+      /* Raised by the auth-audit loop since #2306 but never labelled, so its
+         chip rendered the raw key. */
+      'url-unreachable': 'Dashboard URL unreachable'
     };
 
     /* How many alert rows are listed before the panel collapses the remainder

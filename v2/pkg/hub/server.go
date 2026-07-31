@@ -966,6 +966,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
 				payload.Agents[i].State = sanitizeHeartbeatField(payload.Agents[i].State)
 				payload.Agents[i].Mode = sanitizeHeartbeatField(payload.Agents[i].Mode)
+				// Timestamps are spoke-reported strings like every other field
+				// here. An unparseable value is later read as "unknown" by the
+				// inactive-agent rule, never as evidence of idleness.
+				payload.Agents[i].StartedAt = sanitizeHeartbeatField(payload.Agents[i].StartedAt)
+				payload.Agents[i].LastActivityAt = sanitizeHeartbeatField(payload.Agents[i].LastActivityAt)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {

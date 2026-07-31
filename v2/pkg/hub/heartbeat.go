@@ -117,6 +117,68 @@ type AgentSummary struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	Mode  string `json:"mode,omitempty"`
+	// Paused distinguishes an agent the OPERATOR deliberately parked from one
+	// that is merely not running. State already carries "paused", but a paused
+	// agent that has not yet been through Start() reports its prior state with
+	// Paused set, so the two are not interchangeable. The hub's inactive-agent
+	// rule keys off this to guarantee a deliberate pause is never alerted on.
+	Paused bool `json:"paused,omitempty"`
+	// NeedsLogin is true when the agent's CLI is sitting on a login /
+	// device-code prompt. This is the "running but not logged in" state: the
+	// session is alive, the CLI process is alive, and the agent still cannot do
+	// any work. It is invisible in State, which reads "running" throughout.
+	NeedsLogin bool `json:"needsLogin,omitempty"`
+	// SessionMissing is true when the manager expected a live tmux session for
+	// a running agent and did not find one — the zombie case. Reported
+	// explicitly rather than inferred hub-side, because only the spoke can see
+	// the per-UID tmux socket (each agent runs on its own,
+	// e.g. /tmp/tmux-2007/hive-scanner; a default-socket check reports "no
+	// server running" even when every session is alive).
+	SessionMissing bool `json:"sessionMissing,omitempty"`
+	// StartedAt is when this agent's CLI was last launched (RFC3339), empty if
+	// it has never launched. Wiring it through closes #2324: AgentProcess has
+	// carried it all along, but both the dashboard and the heartbeat dropped
+	// it, so no persisted per-agent session duration existed anywhere.
+	StartedAt string `json:"startedAt,omitempty"`
+	// LastActivityAt is when the agent's pane content last changed (RFC3339),
+	// empty when the spoke has not yet observed a change. It is what separates
+	// "running and working" from "running and producing nothing" — State,
+	// StartedAt and the kick log all keep their values while a CLI sits idle.
+	LastActivityAt string `json:"lastActivityAt,omitempty"`
+}
+
+// AgentActivity is the per-agent liveness evidence the spoke has and the hub
+// does not. It exists so the two heartbeat build sites in cmd/hive (the
+// ordinary loop and the upgrade beat) fill AgentSummary identically — they
+// were already duplicated line for line, and a signal that is only reported on
+// one of the two paths is a signal that quietly disappears mid-upgrade.
+type AgentActivity struct {
+	Paused         bool
+	NeedsLogin     bool
+	SessionMissing bool
+	StartedAt      time.Time
+	LastActivityAt time.Time
+}
+
+// NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
+// activity evidence. Zero timestamps serialise as empty (not as a bogus
+// year-1 string), which the hub reads as "unknown" — never as "idle".
+func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
+	as := AgentSummary{
+		Name:           name,
+		State:          state,
+		Mode:           mode,
+		Paused:         act.Paused,
+		NeedsLogin:     act.NeedsLogin,
+		SessionMissing: act.SessionMissing,
+	}
+	if !act.StartedAt.IsZero() {
+		as.StartedAt = act.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if !act.LastActivityAt.IsZero() {
+		as.LastActivityAt = act.LastActivityAt.UTC().Format(time.RFC3339)
+	}
+	return as
 }
 
 type GovernorSummary struct {

@@ -91,6 +91,25 @@ const spokeAppKeyFileMode = 0o600
 // Returns "" for a non-positive app_id (0 = unknown/unset, the placeholder
 // sentinel, or a hand-corrupted value): there is no meaningful per-app file for
 // those, and the caller falls back to the existing single-file behaviour.
+// agentActivityFor gathers the per-agent liveness evidence the hub needs to
+// tell a deliberately-paused agent from one that is running but unable to
+// work. Shared by both heartbeat build sites so the ordinary beat and the
+// upgrade beat can never report different pictures of the same agent.
+func agentActivityFor(mgr *agent.Manager, name string, proc *agent.AgentProcess) hub.AgentActivity {
+	act := hub.AgentActivity{
+		Paused:         proc.Paused,
+		NeedsLogin:     proc.NeedsLogin,
+		LastActivityAt: proc.LastPaneChange,
+		// A missing tmux session is only meaningful for an agent the manager
+		// believes is running; SessionMissing enforces that itself.
+		SessionMissing: mgr.SessionMissing(name),
+	}
+	if proc.StartedAt != nil {
+		act.StartedAt = *proc.StartedAt
+	}
+	return act
+}
+
 func perAppIDKeyPath(appID int64) string {
 	if appID <= 0 {
 		return ""
@@ -2185,11 +2204,12 @@ func main() {
 			govState := gov.GetState()
 			agents := make([]hub.AgentSummary, 0, len(statuses))
 			for name, proc := range statuses {
-				as := hub.AgentSummary{Name: name, State: string(proc.State)}
+				mode := ""
 				if ac, ok := cfg.Agents[name]; (ok && ac.OnDemand) || onDemandFromPack[name] {
-					as.Mode = "on_demand"
+					mode = "on_demand"
 				}
-				agents = append(agents, as)
+				agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
+					agentActivityFor(agentMgr, name, proc)))
 			}
 			acmmLvl := 0
 			if cfg.ACMMLevel != nil {
@@ -2479,11 +2499,12 @@ func main() {
 				statuses := agentMgr.AllStatuses()
 				agents := make([]hub.AgentSummary, 0, len(statuses))
 				for name, proc := range statuses {
-					as := hub.AgentSummary{Name: name, State: string(proc.State)}
+					mode := ""
 					if ac, ok := cfg.Agents[name]; (ok && ac.OnDemand) || onDemandFromPack[name] {
-						as.Mode = "on_demand"
+						mode = "on_demand"
 					}
-					agents = append(agents, as)
+					agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
+						agentActivityFor(agentMgr, name, proc)))
 				}
 				acmmLvl := 0
 				if cfg.ACMMLevel != nil {
