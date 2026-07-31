@@ -1251,6 +1251,13 @@ type GitHubConfig struct {
 	// injected solely for agents whose tier CanPush() and only when a real App is
 	// installed (m.appAuth != nil), so an App-less or advisory hive is unaffected.
 	AppAuthoredPRs *bool `yaml:"app_authored_prs,omitempty"`
+	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
+	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
+	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be
+	// set from a hive.yaml, on the hub, or over the config API: only Go code in a
+	// test can assign them.
+	OAuthBaseURLOverride string `yaml:"-"`
+	OAuthAPIURLOverride  string `yaml:"-"`
 }
 
 // PlaceholderAppID is the sentinel `github.app_id` written into a hive's config
@@ -1381,8 +1388,26 @@ func (g GitHubConfig) HostLabel() string {
 // a GHE hive) makes GitHub return "Not Found" and the dashboard shows "could not
 // verify GitHub identity". Login must therefore use these fixed public hosts;
 // only the App-token / repo-API paths follow the per-hive (possibly GHE) host.
-func (g GitHubConfig) OAuthBaseURL() string { return DefaultGitHubBaseURL }
-func (g GitHubConfig) OAuthAPIURL() string  { return DefaultGitHubAPIURL }
+// The oauth_*_url_override fields exist ONLY as a test seam. They are
+// deliberately absent from every production config: a hive that sets them would
+// send its users' device-flow login to a non-github.com host, which is exactly
+// the misconfiguration the split above prevents. Tests point them at an
+// httptest server so the login path can be exercised without touching the real
+// github.com endpoints — see TestMain in pkg/dashboard, which additionally
+// hard-fails any test that leaves them unset and would otherwise dial out.
+func (g GitHubConfig) OAuthBaseURL() string {
+	if g.OAuthBaseURLOverride != "" {
+		return g.OAuthBaseURLOverride
+	}
+	return DefaultGitHubBaseURL
+}
+
+func (g GitHubConfig) OAuthAPIURL() string {
+	if g.OAuthAPIURLOverride != "" {
+		return g.OAuthAPIURLOverride
+	}
+	return DefaultGitHubAPIURL
+}
 
 // OAuthClientIDResolved returns the client ID for device-flow login: the
 // configured oauth_client_id, or the public github.com default. Because login
