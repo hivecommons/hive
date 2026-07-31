@@ -688,6 +688,62 @@
        there is nothing for the reader to do. */
     .gh-app-install-banner.operator-issue { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
     .gh-app-install-banner.operator-issue .gh-app-desc { color: var(--text); }
+    /* Installation-ID discoverability hint. The field is a bare numeric input
+       with no on-screen clue where the number comes from, which cost real
+       support round-trips. The `?` button reveals a rendered mock of the org's
+       installed-app settings URL with the ID segment highlighted.
+
+       Deliberately NOT hover-only: the button is a real <button> toggled by
+       click and by keyboard (Enter/Space activate it natively), so touch and
+       keyboard users reach it. Hover merely previews the same panel. The
+       dashboard already carries a hover-only defect in .oc-nav-actions /
+       .oc-group-actions; this must not become another instance. */
+    .gh-idhint { position: relative; display: inline-flex; align-items: center; margin-right: 6px; }
+    .gh-idhint-btn {
+      width: 18px; height: 18px; padding: 0; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--line-strong); border-radius: 50%;
+      background: var(--panel); color: var(--muted);
+      font-size: 0.68rem; font-weight: 700; cursor: pointer;
+    }
+    .gh-idhint-btn:hover, .gh-idhint-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+    .gh-idhint-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* z-index 10002: above the toast container (10001) so a toast fired by
+       "Set ID" cannot cover the panel explaining where the ID comes from. */
+    .gh-idhint-pop {
+      display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
+      transform: translateX(-50%);
+      /* Clamp to the viewport so the panel never overflows a narrow screen;
+         340px is the natural width of the URL mock at its default font size. */
+      width: min(340px, calc(100vw - 32px));
+      background: var(--panel-strong); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 10px 12px;
+      box-shadow: var(--shadow-raised); z-index: 10002;
+      text-align: left; white-space: normal; cursor: default;
+    }
+    .gh-idhint:hover .gh-idhint-pop,
+    .gh-idhint:focus-within .gh-idhint-pop,
+    .gh-idhint-btn[aria-expanded="true"] + .gh-idhint-pop { display: block; }
+    .gh-idhint-pop .gh-idhint-lead { font-size: var(--fs-xs); color: var(--text); margin-bottom: 8px; line-height: 1.45; }
+    .gh-idhint-pop .gh-idhint-foot { font-size: var(--fs-xs); color: var(--muted); margin-top: 8px; line-height: 1.45; }
+    /* The URL mock: a rendered address bar, not a screenshot. Scrolls inside
+       itself so a long org name cannot push the panel wider than the viewport. */
+    .gh-idhint-url {
+      font-family: var(--font-mono); font-size: 0.66rem; line-height: 1.6;
+      background: var(--bg-soft); border: 1px solid var(--line);
+      border-radius: var(--radius-sm); padding: 7px 9px;
+      color: var(--muted); overflow-x: auto; white-space: nowrap;
+    }
+    .gh-idhint-url .seg-host { color: var(--text); }
+    /* The highlighted segment. Digits are MASKED (see ghAppInstallIdHintHtml)
+       so nobody copies the example into the field as their own ID. */
+    .gh-idhint-url .seg-id {
+      color: var(--amber); font-weight: 700;
+      background: color-mix(in srgb, var(--amber) 18%, transparent);
+      border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+      border-radius: 3px; padding: 1px 4px;
+    }
+    .gh-idhint-url .seg-caret { display: block; color: var(--amber); font-size: 0.6rem; }
     .gh-app-perm-details { font-size: 0.8rem; margin-top: 6px; color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
     .gh-app-perm-details .perm-missing { color: var(--red); font-weight: 600; }
@@ -2610,6 +2666,17 @@
     <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
       title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
       style="width:120px;padding:6px 8px;margin-right:6px;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);font-size:0.8rem" />
+    <!-- Where-do-I-find-this hint. Content is injected by
+         renderGitHubAppInstallIdHint() because the GitHub host and org are only
+         known at runtime (a GHE hive must not be told to look at github.com).
+         The button is click/keyboard operable, not hover-only. -->
+    <span class="gh-idhint" id="gh-app-install-id-hint">
+      <button type="button" class="gh-idhint-btn" id="gh-app-install-id-hint-btn"
+        aria-expanded="false" aria-controls="gh-app-install-id-hint-pop"
+        aria-label="Where do I find my Installation ID?"
+        onclick="toggleInstallIdHint(event)">?</button>
+      <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
+    </span>
     <button onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
     <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
@@ -5102,9 +5169,114 @@
       return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
     }
 
+    /* ── Installation-ID discoverability hint ──────────────────────────────
+       The banner asks for a numeric Installation ID and gives no clue where it
+       comes from, so users ask an operator instead of self-serving. The answer
+       is that the ID is the LAST PATH SEGMENT of the org's installed-app
+       settings URL. We render that URL as a mock rather than embedding a
+       screenshot: a rendered mock is a fraction of the bytes in a
+       single-file embedded dashboard, inherits the theme variables so it stays
+       legible in light and dark, and is structurally incapable of leaking a
+       real installation ID the way a real screenshot would. */
+
+    /* Placeholder for the ID segment. The owner was explicit that the real
+       digits must be masked so nobody copies the example into the field as
+       their own ID; a run of filled circles reads as "a number goes here"
+       while being obviously un-copyable. Nine is the length of a present-day
+       GitHub installation ID, so the mock has the right visual weight. */
+    var INSTALL_ID_MASK_CHAR = '●';           /* ● BLACK CIRCLE */
+    var INSTALL_ID_MASK_LENGTH = 9;                /* typical installation ID digit count */
+    var INSTALL_ID_MASK = new Array(INSTALL_ID_MASK_LENGTH + 1).join(INSTALL_ID_MASK_CHAR);
+    /* Shown when the hive's org is not known yet — never a real org name. */
+    var INSTALL_ID_ORG_PLACEHOLDER = 'your-org';
+    /* Fallback host when the hive has not reported one. github.com is only
+       ever a fallback: a GHE hive reports its own host and must see that. */
+    var INSTALL_ID_DEFAULT_HOST = 'github.com';
+
+    /* Host label for the hint, derived from the hive's configured GitHub host
+       rather than hardcoded. Prefers the status payload's githubBaseURL (the
+       same signal the banner title already uses to say "GitHub App Not
+       Installed on github.ibm.com"), then the boot /api/config value, then
+       github.com. */
+    function ghAppHintHost(data) {
+      var base = (data && data.githubBaseURL)
+        || (typeof window !== 'undefined' && window._githubBaseUrl)
+        || '';
+      var host = String(base).replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      return host || INSTALL_ID_DEFAULT_HOST;
+    }
+
+    /* Org slug for the hint path, from the boot /api/config fetch. Falls back
+       to a placeholder rather than inventing an org name. */
+    function ghAppHintOrg() {
+      var org = (typeof window !== 'undefined' && window._githubOrg) || '';
+      org = String(org).trim();
+      return org || INSTALL_ID_ORG_PLACEHOLDER;
+    }
+
+    /* Builds the popover markup: a short lead, the mocked URL with the ID
+       segment highlighted and MASKED, and a footnote. Every interpolated value
+       is escaped — org and host originate from server config. */
+    function ghAppInstallIdHintHtml(data) {
+      var host = escapeHtml(ghAppHintHost(data));
+      var org = escapeHtml(ghAppHintOrg());
+      return '<span class="gh-idhint-lead">Your Installation ID is the <strong>last part of the URL</strong> '
+        + 'on your org’s installed-app settings page:</span>'
+        + '<span class="gh-idhint-url">'
+        +   'https://<span class="seg-host">' + host + '</span>/organizations/'
+        +   org + '/settings/installations/'
+        +   '<span class="seg-id">' + INSTALL_ID_MASK + '</span>'
+        +   '<span class="seg-caret">' + new Array(INSTALL_ID_MASK_LENGTH + 1).join('↑')
+        +     ' this number</span>'
+        + '</span>'
+        + '<span class="gh-idhint-foot">Open <strong>' + host + '</strong> → your org → '
+        + 'Settings → GitHub Apps → the Hive app → <em>Configure</em>, then copy the digits '
+        + 'from the address bar. The circles above are a placeholder — they are not a real ID.</span>';
+    }
+
+    /* Refreshes the hint content for the hive's current host/org. Safe to call
+       repeatedly; called on every banner render so a late /api/config response
+       still corrects a hint that first rendered with the fallback host. */
+    function renderGitHubAppInstallIdHint(data) {
+      var pop = document.getElementById('gh-app-install-id-hint-pop');
+      if (!pop) return;
+      pop.innerHTML = ghAppInstallIdHintHtml(data);
+    }
+
+    /* Click/keyboard toggle. Enter and Space activate a <button> natively, so
+       this one handler serves mouse, touch, and keyboard alike — the panel is
+       never hover-only. */
+    function toggleInstallIdHint(event) {
+      if (event) event.stopPropagation();
+      var btn = document.getElementById('gh-app-install-id-hint-btn');
+      if (!btn) return;
+      var open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+    }
+
+    /* Dismissal: a click anywhere outside the hint, or Escape, closes it.
+       Without this a tapped panel on touch would have no way to close, since
+       there is no hover-out event to rely on. */
+    document.addEventListener('click', function (e) {
+      var btn = document.getElementById('gh-app-install-id-hint-btn');
+      if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
+      var wrap = document.getElementById('gh-app-install-id-hint');
+      if (wrap && e.target && wrap.contains(e.target)) return;
+      btn.setAttribute('aria-expanded', 'false');
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      var btn = document.getElementById('gh-app-install-id-hint-btn');
+      if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
+      btn.setAttribute('aria-expanded', 'false');
+      btn.focus();
+    });
+
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
+      /* Keep the hint's host/org in step with whatever this render knows. */
+      renderGitHubAppInstallIdHint(data);
       var appState = data ? String(data.githubAppState || '').trim() : '';
       var isOperatorSide = data && data.githubAppRequired && ghAppIsOperatorSide(appState);
 
@@ -12547,6 +12719,14 @@ function burnAreaChart() {
     fetch("/api/config").then(r => r.json()).then(cfg => {
       const ghBase = cfg.github_base_url || 'https://github.com';
       window._githubBaseUrl = ghBase;
+      // Org slug, used by the Installation-ID hint to render this hive's own
+      // installed-app settings URL rather than a generic placeholder.
+      window._githubOrg = cfg.org || '';
+      // The banner may have rendered before this fetch resolved, in which case
+      // its hint shows the fallback host/org. Refresh it now that both are known.
+      if (typeof renderGitHubAppInstallIdHint === 'function') {
+        renderGitHubAppInstallIdHint(window._lastStatus || null);
+      }
       // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
       // hive runs App-authored mode, else the configured ai_author. Surfaced on
       // the governor card so operators can see the write identity at a glance.
