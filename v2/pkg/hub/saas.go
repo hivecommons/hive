@@ -7865,6 +7865,46 @@ const dashboardHTML = `<!DOCTYPE html>
       return false;
     }
 
+    /* ── Upgrade-state filter ──
+       Which upgrade state the list is narrowed to, or '' for none. Single-
+       select like the drift filter, not multi-select: "upgrading" and "queued"
+       are successive stages of one lifecycle, so a hive is in exactly one of
+       them and an OR across both would just mean "any pending upgrade" — which
+       is what clearing the filter already shows.
+
+       This exists so an operator can WATCH an upgrade roll across the fleet,
+       and — the reason it was asked for — pull up every wedged hive at once
+       when a rollout stalls. */
+    var UPGRADE_FILTER_UPGRADING = 'upgrading';
+    var UPGRADE_FILTER_QUEUED = 'queued';
+    var _dashUpgradeFilter = '';
+
+    /* hiveUpgradeState classifies a hive as 'upgrading', 'queued' or '' (in
+       neither state).
+
+       The definitions mirror the Version cell's render conditions on purpose,
+       so the facet count and the rows can never disagree:
+         upgrading — the hub says an upgrade is in flight (h.upgrading).
+         queued    — auto-upgrade is on and the hive is BEHIND latest, but the
+                     hub has not instructed the upgrade yet. This is the state
+                     with no upgradeStartedAt, which is precisely why the
+                     elapsed counter must not claim to know one.
+       'upgrading' is tested FIRST because an in-flight upgrade outranks a
+       queued one; without that ordering a hive would be double-counted. */
+    function hiveUpgradeState(h) {
+      if (!h) return '';
+      if (h.upgrading) return UPGRADE_FILTER_UPGRADING;
+      if (h.autoUpgrade && h.upgradeTarget) return UPGRADE_FILTER_QUEUED;
+      return '';
+    }
+
+    /* hiveMatchesUpgradeFilter answers whether a hive survives the upgrade-
+       state filter. Composes by AND with the status chips and facets. */
+    function hiveMatchesUpgradeFilter(h) {
+      if (!_dashUpgradeFilter) return true;
+      return hiveUpgradeState(h) === _dashUpgradeFilter;
+    }
+
     /* ────────────────────────────────────────────────────────────────────────
        Grouping and saved views for My Hives.
 
@@ -8231,6 +8271,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!hit) return false;
       }
       if (!hiveMatchesDriftFilter(h)) return false;
+      if (!hiveMatchesUpgradeFilter(h)) return false;
       var active = Object.keys(_dashStatusFilters || {}).filter(function(k) { return _dashStatusFilters[k]; });
       if (!active.length) return true;
       var f = hiveStatusFlags(h);
@@ -8278,7 +8319,10 @@ const dashboardHTML = `<!DOCTYPE html>
       'stuck-upgrade': 'Stuck upgrade',
       'health-check-failing': 'Health check failing',
       'token-burn': 'Token burn',
-      'provision-error': 'Provision error'
+      'provision-error': 'Provision error',
+      /* Added by the hub in #2308. Without a label here the chip for a
+         genuinely failed upgrade would render as the raw key 'failed-upgrade'. */
+      'failed-upgrade': 'Failed upgrade'
     };
 
     /* How many alert rows are listed before the panel collapses the remainder
@@ -8330,6 +8374,7 @@ const dashboardHTML = `<!DOCTYPE html>
       _dashStatusFilters = {};
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
+      _dashUpgradeFilter = '';
       _alertTypeFilter = '';
       _dashFacets = {};
       _dashSearchQuery = '';
@@ -8654,6 +8699,12 @@ const dashboardHTML = `<!DOCTYPE html>
        They share _dashFacetCollapsed only for the collapse chrome. */
     var FACET_GROUP_HEALTH = 'health';
     var FACET_GROUP_FAILING_CHECK = 'failing-check';
+    /* Upgrade-state group. Follows the HEALTH/FAILING_CHECK pattern rather than
+       the derived-facet one: the values are a fixed, hand-written lifecycle
+       ('upgrading', 'queued') with their own matching rule and their own state
+       (_dashUpgradeFilter), not a dimension enumerated from the data like
+       cluster or branch, so it stays OUT of HIVE_FACET_GROUPS. */
+    var FACET_GROUP_UPGRADE = 'upgrade-state';
 
     var HIVE_FACET_GROUPS = [
       {key: FACET_CLUSTER, label: 'Location'},
@@ -8714,6 +8765,7 @@ const dashboardHTML = `<!DOCTYPE html>
       n += Object.keys(_dashStatusFilters || {}).length;
       if (_dashFailingCheckFilter) n++;
       if (_dashDriftFilter) n++;
+      if (_dashUpgradeFilter) n++;
       if (_alertTypeFilter) n++;
       if (_dashSearchQuery) n++;
       var groups = Object.keys(_dashFacets || {});
@@ -8858,8 +8910,8 @@ const dashboardHTML = `<!DOCTYPE html>
       }).join('') +
       /* Group-scoped reset for the health + failing-check pair, so a user can
          undo just these without also dropping their search term and facets. */
-      (Object.keys(_dashStatusFilters || {}).length || _dashFailingCheckFilter || _dashDriftFilter
-        ? '<button type="button" class="facet-value" onclick="clearStatusFilters()" title="Clear the health, failing-check and drift filters">' +
+      (Object.keys(_dashStatusFilters || {}).length || _dashFailingCheckFilter || _dashDriftFilter || _dashUpgradeFilter
+        ? '<button type="button" class="facet-value" onclick="clearStatusFilters()" title="Clear the health, failing-check, drift and upgrade-state filters">' +
           '<span class="facet-value-label">Clear health filters</span></button>'
         : '') + '</div>';
       return facetGroupShell(FACET_GROUP_HEALTH, 'Health',
@@ -8900,6 +8952,77 @@ const dashboardHTML = `<!DOCTYPE html>
         !!_dashFacetCollapsed[FACET_GROUP_FAILING_CHECK], body);
     }
 
+    /* How long a hive must have been upgrading before the facet's tooltip
+       calls the fleet out as wedged rather than busy. Same limit the counter
+       and the hub's stuck-upgrade alert use — one definition of "too long",
+       reused, so the rail, the row and the alert panel cannot disagree. */
+    var UPGRADE_FACET_STUCK_MS = UPGRADE_ELAPSED_RED_MS;
+
+    /* renderUpgradeFacetGroup renders the upgrade-state picker. Single-select,
+       ANDed against the health chips like the failing-check group.
+
+       The 'upgrading' value additionally reports how many of those hives are
+       past the stuck limit, because the whole point of this filter is catching
+       a rollout that has stopped moving — a bare count of 15 upgrading hives
+       looks identical whether they are 10 seconds or 40 minutes in.
+
+       Returns '' when nothing is upgrading or queued AND no filter is on, so a
+       settled fleet sees no extra chrome; renders while the filter is on even
+       at count 0 so it can always be clicked back off. */
+    function renderUpgradeFacetGroup(assignedNoPlaceholders) {
+      var hives = assignedNoPlaceholders || [];
+      var counts = {};
+      counts[UPGRADE_FILTER_UPGRADING] = 0;
+      counts[UPGRADE_FILTER_QUEUED] = 0;
+      var stuck = 0;
+      var now = Date.now();
+      for (var i = 0; i < hives.length; i++) {
+        var st = hiveUpgradeState(hives[i]);
+        if (!st) continue;
+        counts[st]++;
+        if (st === UPGRADE_FILTER_UPGRADING) {
+          var ms = upgradeElapsedMs(hives[i], now);
+          /* null (unknown start time) is NOT counted as stuck — an unknown
+             elapsed is not evidence of a fault, and inflating this number
+             would make the warning untrustworthy. */
+          if (ms !== null && ms >= UPGRADE_FACET_STUCK_MS) stuck++;
+        }
+      }
+      var total = counts[UPGRADE_FILTER_UPGRADING] + counts[UPGRADE_FILTER_QUEUED];
+      if (!total && !_dashUpgradeFilter) return '';
+
+      var values = [
+        {key: UPGRADE_FILTER_UPGRADING, label: 'Upgrading'},
+        {key: UPGRADE_FILTER_QUEUED, label: 'Queued'}
+      ];
+      var body = '<div class="facet-values">' + (values || []).map(function(v) {
+        var on = _dashUpgradeFilter === v.key;
+        var n = counts[v.key] || 0;
+        var tip;
+        if (v.key === UPGRADE_FILTER_UPGRADING) {
+          tip = n + (n === 1 ? ' hive is' : ' hives are') + ' upgrading now';
+          if (stuck) {
+            tip += ' — ' + stuck + ' past ' + Math.round(UPGRADE_FACET_STUCK_MS / 60000) +
+              ' minutes and likely wedged rather than slow';
+          }
+        } else {
+          tip = n + (n === 1 ? ' hive is' : ' hives are') +
+            ' behind latest with auto-upgrade on, waiting to be instructed';
+        }
+        /* The count turns red when any upgrade is past the stuck limit, so the
+           fault is visible in the rail without opening the filter. */
+        var countStyle = (v.key === UPGRADE_FILTER_UPGRADING && stuck)
+          ? ' style="color:var(--red);font-weight:600"' : '';
+        return '<button type="button" class="facet-value' + (on ? ' on' : '') +
+          '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + escAttr(tip) + '"' +
+          ' onclick="toggleUpgradeFilter(' + jsArg(v.key) + ')">' +
+          '<span class="facet-value-label">' + esc(v.label) + '</span>' +
+          '<span class="facet-value-count"' + countStyle + '>' + n + '</span></button>';
+      }).join('') + '</div>';
+      return facetGroupShell(FACET_GROUP_UPGRADE, 'Upgrade state (one at a time)',
+        !!_dashFacetCollapsed[FACET_GROUP_UPGRADE], body);
+    }
+
     /* renderFacetRail draws the tray's body: the health chips and failing-check
        picker moved in from the old standalone bar, then the derived facet
        groups. Derived-group counts are computed over the assigned hives after
@@ -8917,7 +9040,8 @@ const dashboardHTML = `<!DOCTYPE html>
          strip any placeholder defensively so the counts match the old bar. */
       var assignedReal = (assignedAll || []).filter(function(h) { return !isPlaceholderHive(h); });
       var base = (assignedAll || []).filter(hiveMatchesFilters).filter(hiveMatchesSearch);
-      var head = renderStatusFacetGroup(assignedReal) + renderFailingCheckFacetGroup(assignedReal);
+      var head = renderStatusFacetGroup(assignedReal) + renderFailingCheckFacetGroup(assignedReal) +
+        renderUpgradeFacetGroup(assignedReal);
       if (!base.length && !Object.keys(_dashFacets || {}).length) {
         rail.innerHTML = head + clearFacetsButton();
         return;
@@ -8998,6 +9122,15 @@ const dashboardHTML = `<!DOCTYPE html>
          button look broken. */
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
+      _dashUpgradeFilter = '';
+      renderHives(_allDashHives, true);
+    }
+
+    /* toggleUpgradeFilter selects an upgrade state, or clears it when the
+       already-selected value is clicked again (single-select, like the drift
+       filter). */
+    function toggleUpgradeFilter(state) {
+      _dashUpgradeFilter = (_dashUpgradeFilter === state) ? '' : (state || '');
       renderHives(_allDashHives, true);
     }
 
@@ -9921,7 +10054,7 @@ const dashboardHTML = `<!DOCTYPE html>
          collapsing a section, switching group-by, collapsing a group or
          applying a saved view would all appear to do nothing. */
       var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) +
-        '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter +
+        '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter + '|' + _dashUpgradeFilter +
         '|' + _alertTypeFilter + '|' + _alertShowAcked + '|' + JSON.stringify(_fleetAlerts) +
         '|' + _dashSearchQuery + '|' + JSON.stringify(_dashFacets) +
         '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed) +
@@ -10106,7 +10239,11 @@ const dashboardHTML = `<!DOCTYPE html>
             /* In-flight state is not clickable, so it loses the box entirely:
                a border around a non-target was the padding that made this the
                tall line. The spinner is the affordance-free progress signal. */
-            upgradeIcon = '<span title="' + progressTitle + '" style="font-size:0.7rem;white-space:nowrap;opacity:0.8;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:currentColor;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>';
+            /* The elapsed counter rides INSIDE the pill so a long-running
+               upgrade cannot be read as progress. It self-suppresses when the
+               start time is unknown or the rollout is still fast (see
+               renderUpgradeElapsed), so a healthy fleet looks unchanged. */
+            upgradeIcon = '<span title="' + progressTitle + '" style="font-size:0.7rem;white-space:nowrap;opacity:0.8;color:var(--muted)"><span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.3);border-top-color:currentColor;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>' + progressLabel + '</span>' + renderUpgradeElapsed(h);
           } else if (!isCurrent && !latestUnknown && isHosted && h.role === 'owner' && h.autoUpgrade) {
             /* A daily-mode hive is NOT upgrading "shortly" — saying so would be
                a lie the operator would notice hours later. Name the window and
@@ -10626,6 +10763,113 @@ const dashboardHTML = `<!DOCTYPE html>
     var _upgradingHives = {};
     var _switchStartedAt = {}; // hiveId → ms timestamp the switch was initiated
     var SWITCH_STALE_MS = 8 * 60 * 1000; // warn if a switch hasn't landed in 8 min
+
+    /* ── Upgrade elapsed-time counter ──
+       A hive that has been "Upgrading" for a long time is a FAULT SIGNAL, not
+       progress: the incident this exists to prevent had 15 hives pinned at
+       upgrading:true for 20+ minutes while their spokes exited 0 in a restart
+       loop, and a static spinner made a permanently-wedged fleet look
+       identical to a merely slow one.
+
+       The thresholds below escalate the counter's colour so that state is
+       obvious at a glance instead of requiring the operator to notice a
+       number. UPGRADE_ELAPSED_RED_MS deliberately equals staleUpgradeTimeout
+       in server.go (10m) — the same instant the hub raises its stuck-upgrade
+       alert. Turning red EARLIER would accuse a hive the hub still considers
+       healthy; turning red LATER would leave a window where the alert panel
+       says stuck and the row still looks fine. The amber step sits at half of
+       that, an early warning while the upgrade is still plausibly in flight. */
+    var UPGRADE_ELAPSED_RED_MS = 10 * 60 * 1000;  // == staleUpgradeTimeout (server.go): hub calls this stuck
+    var UPGRADE_ELAPSED_AMBER_MS = 5 * 60 * 1000; // half the stuck limit: early warning, still plausible
+
+    /* Below this the counter is suppressed entirely. Every upgrade begins at
+       0s, and a counter that flickers "1s, 2s…" on every healthy rollout would
+       train the operator to ignore it — which is exactly the habit that let the
+       incident go unnoticed. It only appears once an upgrade is slow enough to
+       be worth a human's attention. */
+    var UPGRADE_ELAPSED_MIN_SHOW_MS = 30 * 1000; // don't nag during a normal fast rollout
+
+    /* Clocks are not synchronised. The browser's Date.now() and the hub's
+       upgradeStartedAt can disagree by seconds, which yields a small NEGATIVE
+       elapsed on a freshly-started upgrade. Tolerate that as "just started"
+       rather than rendering a negative duration; anything more negative than
+       this is real clock skew and the counter is suppressed instead of shown
+       as a lie. */
+    var UPGRADE_ELAPSED_SKEW_TOLERANCE_MS = 60 * 1000; // treat small negatives as 0
+
+    /* upgradeElapsedMs returns how long a hive has been upgrading, in ms, or
+       null when that cannot be known — a MISSING, EMPTY or UNPARSEABLE
+       upgradeStartedAt, or a negative elapsed beyond the skew tolerance.
+       Callers must render nothing on null; they must never render NaN, a
+       negative duration, or a fabricated "0s" that implies the upgrade just
+       started when in truth the timestamp was lost.
+
+       Note a real server behaviour this relies on: upgradeStartedAt is stamped
+       ONLY where Upgrading is set true, so a hive that is merely QUEUED has no
+       timestamp and correctly gets null here rather than a bogus counter. */
+    function upgradeElapsedMs(h, nowMs) {
+      if (!h) return null;
+      var started = h.upgradeStartedAt;
+      if (!started || typeof started !== 'string') return null;
+      var t = Date.parse(started);
+      if (isNaN(t)) return null; /* unparseable timestamp — show nothing, never NaN */
+      var elapsed = (typeof nowMs === 'number' ? nowMs : Date.now()) - t;
+      if (elapsed < 0) {
+        /* Clock skew. A small negative is the browser being marginally behind
+           the hub on an upgrade that genuinely just started; clamp it to zero.
+           A large negative means the timestamp is not trustworthy at all. */
+        if (elapsed > -UPGRADE_ELAPSED_SKEW_TOLERANCE_MS) return 0;
+        return null;
+      }
+      return elapsed;
+    }
+
+    /* formatUpgradeElapsed renders a compact duration: "45s", "3m", "1h12m".
+       Minutes are the operator's working unit here, so past an hour it keeps
+       the minutes rather than collapsing to a bare "1h" that would hide a
+       72-minute wedge behind the same string as a 61-minute one. */
+    function formatUpgradeElapsed(ms) {
+      if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return '';
+      var totalSec = Math.floor(ms / 1000);
+      if (totalSec < 60) return totalSec + 's';
+      var totalMin = Math.floor(totalSec / 60);
+      if (totalMin < 60) return totalMin + 'm';
+      var hours = Math.floor(totalMin / 60);
+      return hours + 'h' + (totalMin % 60) + 'm';
+    }
+
+    /* upgradeElapsedColor escalates the counter past the thresholds above.
+       Muted while the rollout is plausibly healthy, amber as an early warning,
+       red once the hub itself would call the upgrade stuck. */
+    function upgradeElapsedColor(ms) {
+      if (typeof ms !== 'number' || isNaN(ms)) return 'var(--muted)';
+      if (ms >= UPGRADE_ELAPSED_RED_MS) return 'var(--red)';
+      if (ms >= UPGRADE_ELAPSED_AMBER_MS) return 'var(--amber, #f59e0b)';
+      return 'var(--muted)';
+    }
+
+    /* renderUpgradeElapsed builds the counter fragment appended to the
+       "Upgrading" pill. Returns '' whenever the elapsed time is unknown or
+       still below the nag threshold, so the common healthy case renders
+       exactly what it renders today. */
+    function renderUpgradeElapsed(h, nowMs) {
+      var ms = upgradeElapsedMs(h, nowMs);
+      if (ms === null) return '';
+      if (ms < UPGRADE_ELAPSED_MIN_SHOW_MS) return '';
+      var label = formatUpgradeElapsed(ms);
+      if (!label) return '';
+      var stuck = ms >= UPGRADE_ELAPSED_RED_MS;
+      /* Past the red line the wording stops describing progress and names the
+         fault, because at that point the hub has raised its stuck-upgrade
+         alert and "still upgrading" would be the same misleading reassurance
+         the incident turned on. */
+      var tip = stuck
+        ? 'Upgrading for ' + label + ' — past the ' + Math.round(UPGRADE_ELAPSED_RED_MS / 60000) +
+          ' minute limit. This upgrade is almost certainly wedged, not slow; check the hive for a failed self-upgrade.'
+        : 'Upgrading for ' + label;
+      return '<span title="' + escAttr(tip) + '" style="margin-left:4px;font-variant-numeric:tabular-nums;color:' +
+        upgradeElapsedColor(ms) + (stuck ? ';font-weight:600' : '') + '">' + esc(label) + '</span>';
+    }
 
     /* Version and Location cells stack their contents vertically so neither
        column is forced as wide as the sum of its parts. The Version cell used
