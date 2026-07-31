@@ -211,7 +211,13 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/approve-access/{username}", s.requireAuth(s.handleApproveAccess))
 	s.mux.HandleFunc("DELETE /api/saas/hives/{id}/deny-access/{username}", s.requireAuth(s.handleDenyAccess))
 	s.mux.HandleFunc("GET /api/saas/access-status", s.handleAccessStatus)
-	s.mux.HandleFunc("GET /api/saas/repos", s.requireAuth(s.handleSaaSRepos))
+	// GET /api/saas/repos is deliberately gone. Repo discovery ran on the
+	// requester's github.com OAuth token, so it could only ever see public
+	// GitHub — invisible to GitHub Enterprise, and structurally unable to list
+	// a GitLab or Gitea repo when those forges arrive. The request flow now
+	// takes a typed repository URL, which works for every forge without new
+	// code, and that is what let the login drop to an empty OAuth scope.
+	// Restoring this endpoint would also require restoring that scope.
 	s.mux.HandleFunc("POST /api/saas/request-provision", s.requireAuth(s.handleRequestProvision))
 	s.mux.HandleFunc("PUT /api/saas/approve-provision/{username}", s.requireAdmin(s.handleApproveProvision))
 	s.mux.HandleFunc("DELETE /api/saas/deny-provision/{username}", s.requireAdmin(s.handleDenyProvision))
@@ -6711,6 +6717,21 @@ const dashboardHTML = `<!DOCTYPE html>
     });
 
     var ACMM_LABELS = {1:'L1 Assisted',2:'L2 Instructed',3:'L3 Measured',4:'L4 Adaptive',5:'L5 Semi-Automated',6:'L6 Autonomous'};
+    /* One-line "what this level actually does" per ACMM level, hoisted out of
+       acmmBadge so the badge tooltip and the Request-a-Hive level picker read
+       from the SAME strings. They used to be a local inside acmmBadge, and the
+       request modal carried its own hand-written copy that had drifted into
+       plain wrong ("L3 CI/CD", "L4 Auto PR", "L6 Fully Autonomous") — L4 in
+       particular is NOT fully autonomous, it opens hold-gated PRs for human
+       review. Anything describing a level must use this object. */
+    var ACMM_TIPS = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
+    /* The tip strings above lead with the level label; the picker renders the
+       label separately, so strip the redundant "Lx Name — " prefix there. */
+    function acmmTipDetail(level) {
+      var tip = ACMM_TIPS[level] || '';
+      var dash = tip.indexOf('—');
+      return dash >= 0 ? tip.slice(dash + 1).trim() : tip;
+    }
     function sparkline(points, color, w, h) {
       if (!points || points.length < 2) return '';
       var vals = points.map(function(p) { return p.v; });
@@ -6728,8 +6749,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function acmmBadge(level) {
       var l = level || 0;
-      var tips = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
-      return '<span class="acmm-badge acmm-' + l + '" title="' + esc(tips[l] || '') + '">' + (ACMM_LABELS[l] || 'L' + l) + '</span>';
+      return '<span class="acmm-badge acmm-' + l + '" title="' + esc(ACMM_TIPS[l] || '') + '">' + (ACMM_LABELS[l] || 'L' + l) + '</span>';
     }
     /* Classified GitHub App auth states, matching github.AppAuthState.String()
        on the spoke and operatorSideAppStates in journey.go. The two OPERATOR
@@ -11296,11 +11316,56 @@ const dashboardHTML = `<!DOCTYPE html>
       out.style.color = host !== PUBLIC_GITHUB_HOST ? 'var(--accent, #58a6ff)' : 'var(--muted)';
     }
 
+    /* REQUEST_DEFAULT_ACMM_LEVEL is where a new hive starts. L3 Measured is the
+       first level that produces useful output (hold-gated PRs that raise test
+       coverage) while still requiring a human on every merge, which is the
+       right default for someone who has not run a hive before. */
+    var REQUEST_DEFAULT_ACMM_LEVEL = 3;
+    /* ACMM levels offered on the request form, lowest to highest. All six are
+       offered — L5 and L6 are real, selectable levels, not hidden ones. */
+    var REQUEST_ACMM_LEVELS = [1, 2, 3, 4, 5, 6];
+
+    /* renderRequestLevelOptions builds the level picker from ACMM_LABELS and
+       ACMM_TIPS. Rendering rather than hardcoding is the point: the previous
+       hardcoded <option> list had drifted to names that appear nowhere else in
+       the product and described the wrong behaviour. */
+    function renderRequestLevelOptions() {
+      var sel = document.getElementById('rq-level');
+      if (!sel) return;
+      var prev = sel.value;
+      sel.innerHTML = (REQUEST_ACMM_LEVELS || []).map(function(l) {
+        var label = ACMM_LABELS[l] || ('L' + l);
+        var detail = acmmTipDetail(l);
+        /* Label and one-line description live in the option text itself: a
+           <select> shows only the selected option when closed, so a requester
+           browsing the list needs the description inline to compare levels. */
+        return '<option value="' + l + '">' + esc(label) + (detail ? ' &#x2014; ' + esc(detail) : '') + '</option>';
+      }).join('');
+      sel.value = prev || String(REQUEST_DEFAULT_ACMM_LEVEL);
+      if (!sel.value) sel.value = String(REQUEST_DEFAULT_ACMM_LEVEL);
+      if (!sel._rqLevelWired) {
+        sel._rqLevelWired = true;
+        sel.addEventListener('change', syncRequestLevelDesc);
+      }
+      syncRequestLevelDesc();
+    }
+
+    /* syncRequestLevelDesc restates the selected level's description under the
+       picker, so it stays readable once the dropdown is closed. */
+    function syncRequestLevelDesc() {
+      var sel = document.getElementById('rq-level');
+      var out = document.getElementById('rq-level-desc');
+      if (!sel || !out) return;
+      var lvl = parseInt(sel.value, 10) || REQUEST_DEFAULT_ACMM_LEVEL;
+      out.textContent = ACMM_TIPS[lvl] || '';
+    }
+
     /* openRequestHiveModal shows the modal with a freshly populated forge
        picker, so a cluster list that loaded after page render is reflected. */
     function openRequestHiveModal() {
       renderRequestForgeOptions();
       syncRequestForgePreview();
+      renderRequestLevelOptions();
       document.getElementById('request-modal').style.display = 'flex';
     }
 
@@ -12991,14 +13056,11 @@ const dashboardHTML = `<!DOCTYPE html>
         </div>
         <div style="margin-bottom:12px">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">ACMM Level</label>
-          <select id="rq-level" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-            <option value="1">L1 &#x2014; Assisted</option>
-            <option value="2">L2 &#x2014; Instructed</option>
-            <option value="3" selected>L3 &#x2014; CI/CD</option>
-            <option value="4">L4 &#x2014; Auto PR</option>
-            <option value="5">L5 &#x2014; Self-Governing</option>
-            <option value="6">L6 &#x2014; Fully Autonomous</option>
-          </select>
+          <!-- Options are rendered by renderRequestLevelOptions() from
+               ACMM_LABELS/ACMM_TIPS so this picker can never drift from the
+               names the rest of the hub shows. Do not hardcode them here. -->
+          <select id="rq-level" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"></select>
+          <div id="rq-level-desc" style="font-size:0.72rem;color:var(--muted);margin-top:6px"></div>
         </div>
       </div>
       <div style="display:flex;gap:12px;justify-content:flex-end;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
@@ -13573,116 +13635,4 @@ func (s *HubServer) handleGetHubBanner(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"banners": banners})
-}
-
-// handleSaaSRepos lists the repositories the requester can pick from in the
-// "Get a hosted hive" flow (step 3).
-//
-// The frontend has always called GET /api/saas/repos, but no handler was ever
-// registered — the fetch 404'd and the page fell through to "No repositories
-// found. Make sure the Hive GitHub App is installed on your org", which blamed
-// the user's App installation for a missing backend route. It failed for every
-// requester regardless of whether the App was installed.
-//
-// Repos come from the App installations the user's OAuth token can see, which
-// covers BOTH org installations and personal-account installations (the
-// original error text assumed orgs only — the first real report was a repo
-// under a personal account).
-//
-// Note this can only ever see public github.com. A GitHub Enterprise repo
-// (github.ibm.com, …) is invisible to a github.com OAuth token, so the UI also
-// lets the requester type a repo URL by hand; that path does not depend on this
-// endpoint.
-func (s *HubServer) handleSaaSRepos(w http.ResponseWriter, r *http.Request) {
-	username := s.getAuthUser(r)
-	if username == "" {
-		http.Error(w, `{"error":"not authenticated"}`, http.StatusUnauthorized)
-		return
-	}
-	user := loadSaaSUser(username)
-	if user == nil || user.EncryptedToken == "" {
-		// No stored token — return an empty list rather than an error so the UI
-		// shows its "install the App / paste a URL" guidance instead of a crash.
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"repos": []any{}})
-		return
-	}
-	token, err := decryptToken(user.EncryptedToken)
-	if err != nil {
-		s.logger.Warn("repos: failed to decrypt user token", "user", username, "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"repos": []any{}})
-		return
-	}
-
-	type repoOut struct {
-		FullName    string `json:"full_name"`
-		Name        string `json:"name"`
-		Description string `json:"description,omitempty"`
-	}
-	ghGet := func(url string, out any) error {
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Authorization", "token "+token)
-		req.Header.Set("Accept", "application/vnd.github+json")
-		resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return fmt.Errorf("github %s: status %d", url, resp.StatusCode)
-		}
-		return json.NewDecoder(resp.Body).Decode(out)
-	}
-
-	// 1. Which App installations can this user see? (orgs AND their own account)
-	var insts struct {
-		Installations []struct {
-			ID int64 `json:"id"`
-		} `json:"installations"`
-	}
-	if err := ghGet("https://api.github.com/user/installations?per_page=100", &insts); err != nil {
-		s.logger.Warn("repos: listing installations failed", "user", username, "error", err)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"repos": []any{}})
-		return
-	}
-
-	// 2. Repositories per installation, deduped by full_name.
-	seen := map[string]struct{}{}
-	repos := []repoOut{}
-	for _, inst := range insts.Installations {
-		for page := 1; page <= 5; page++ { // cap paging; 500 repos is plenty for a picker
-			var rr struct {
-				Repositories []struct {
-					FullName    string `json:"full_name"`
-					Name        string `json:"name"`
-					Description string `json:"description"`
-				} `json:"repositories"`
-			}
-			url := fmt.Sprintf("https://api.github.com/user/installations/%d/repositories?per_page=100&page=%d", inst.ID, page)
-			if err := ghGet(url, &rr); err != nil {
-				s.logger.Warn("repos: listing installation repos failed",
-					"user", username, "installation", inst.ID, "error", err)
-				break
-			}
-			for _, rp := range rr.Repositories {
-				if _, dup := seen[rp.FullName]; dup {
-					continue
-				}
-				seen[rp.FullName] = struct{}{}
-				repos = append(repos, repoOut{FullName: rp.FullName, Name: rp.Name, Description: rp.Description})
-			}
-			if len(rr.Repositories) < 100 {
-				break
-			}
-		}
-	}
-	sort.Slice(repos, func(i, j int) bool { return repos[i].FullName < repos[j].FullName })
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"repos": repos})
 }
