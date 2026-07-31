@@ -205,6 +205,11 @@ if [ "$(id -u)" = "0" ]; then
     echo "[entrypoint] Fixing /data ownership (currently uid=$DATA_OWNER)..."
     chown -R dev:node /data 2>/dev/null || true
   fi
+  # Every UID-isolated agent is a member of node. Keep the persistent-volume
+  # root private from world users while allowing those agents to traverse to
+  # their role-owned work, beads, and CLI homes. Do not depend on the volume
+  # driver's inherited mountpoint mode.
+  chmod 0750 /data 2>/dev/null || true
   chown dev:node /home/dev 2>/dev/null || true
   chown dev:node /etc/hive/hive.yaml "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
   chmod u+rw,go-w "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
@@ -570,6 +575,17 @@ print('\n'.join(sorted(names)))
         usermod -g "$ROLE_GROUP" -a -G node "hive-${agent_name}" 2>/dev/null || true
       fi
       usermod -a -G "$ROLE_GROUP" dev 2>/dev/null || true
+      # Pre-provision every per-agent Codex home while entrypoint still has
+      # root authority. Agents can switch to Codex through the supported live
+      # dashboard path after startup; waiting until launch to create this
+      # owner-gated directory fails when the persistent-volume root is
+      # private. The fixed auth link preserves the existing one-login bridge.
+      CODEX_AGENT_HOME="/data/home/.codex-${agent_name}"
+      mkdir -p "$CODEX_AGENT_HOME"
+      chown -R "hive-${agent_name}:node" "$CODEX_AGENT_HOME" 2>/dev/null || true
+      chmod 0750 "$CODEX_AGENT_HOME" 2>/dev/null || true
+      ln -sfn /data/home/.codex/auth.json "$CODEX_AGENT_HOME/auth.json"
+      chown -h "hive-${agent_name}:node" "$CODEX_AGENT_HOME/auth.json" 2>/dev/null || true
       mkdir -p "/data/agents/${agent_name}"
       # Skip recursive chown if already owned by this agent — avoids NFS
       # contention during rolling updates when the old pod is still writing.
