@@ -30,12 +30,30 @@ import (
 // ~88 user records with nothing to keep them in step. Nothing about the user
 // record changes in this PR.
 
-const (
-	// slackPostMessageURL is Slack's chat.postMessage endpoint. A bot token
-	// posting here can DM a user by member ID, which a webhook cannot do — a
-	// webhook is bound to one channel at creation time.
-	slackPostMessageURL = "https://slack.com/api/chat.postMessage"
+// slackPostMessageURL is Slack's chat.postMessage endpoint. A bot token
+// posting here can DM a user by member ID, which a webhook cannot do — a
+// webhook is bound to one channel at creation time.
+//
+// TEST SEAM. This is a var rather than a const solely so tests can point it at
+// an httptest server; production never assigns it. Without the seam the only
+// way to exercise sendSlackDM's error handling — Slack's 200-OK-with-ok:false
+// responses, the 429 path, a malformed body — would be to call the real Slack
+// API from CI, which is exactly the kind of live-external-service test that
+// makes a suite flaky and burns a shared quota. Override it with
+// withFakeSlackEndpoint in tests, never from application code.
+var slackPostMessageURL = "https://slack.com/api/chat.postMessage"
 
+// slackSendInterval paces sending. Slack rate-limits chat.postMessage at
+// roughly one message per second per workspace (its "Tier"/special limit for
+// this method), and bursting past it earns HTTP 429s that drop messages.
+// One second between sends is the documented sustainable rate.
+//
+// TEST SEAM, same rule as slackPostMessageURL: a var only so a test covering a
+// multi-recipient broadcast does not have to sleep one real second per
+// recipient. Production leaves it at the documented one second.
+var slackSendInterval = 1 * time.Second
+
+const (
 	// slackTokenEnvVar names the environment variable holding the Slack bot
 	// token (xoxb-...). It is read with NO DEFAULT: an unset variable disables
 	// Slack messaging entirely rather than falling back to anything. The token
@@ -53,12 +71,6 @@ const (
 	// normally sub-second; this is generous enough to ride out a slow response
 	// without letting one recipient stall a broadcast.
 	slackHTTPTimeout = 10 * time.Second
-
-	// slackSendInterval paces sending. Slack rate-limits chat.postMessage at
-	// roughly one message per second per workspace (its "Tier"/special limit for
-	// this method), and bursting past it earns HTTP 429s that drop messages.
-	// One second between sends is the documented sustainable rate.
-	slackSendInterval = 1 * time.Second
 
 	// slackMaxMessageLen bounds an operator-supplied message body. Slack itself
 	// truncates around 40000 characters; this is the last point before the text
