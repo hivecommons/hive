@@ -2505,7 +2505,7 @@
       <a class="oc-nav-item" data-section="contributors-section" onclick="ocNavigate('contributors-section')"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
       <a class="oc-nav-item" data-section="audit-section" onclick="ocNavigate('audit-section')"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="nous-section" onclick="ocNavigate('nous-section')"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
-      <a class="oc-nav-item" data-section="faq-section" onclick="ocNavigate('faq-section')" title="Answers to common first-time questions: the Advisory Digest, ACMM levels, and how to advance"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
+      <a class="oc-nav-item" data-section="faq-section" onclick="ocNavigate('faq-section')" title="Answers to common first-time questions: the Advisory Digest, ACMM levels, how to advance, and managing cost"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
     </div>
@@ -2782,6 +2782,74 @@
           <li><strong>L6 Autonomous</strong> — auto-merge once CI is green.</li>
         </ul>
         <p style="margin:0 0 16px;color:var(--muted)">L4 and above become available after provisioning; newly created hives start in the L1–L3 range.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">My spend jumped after I raised my ACMM level. How do I manage cost?</h3>
+        <p style="margin:0 0 8px"><strong>First, the honest framing: higher levels increase throughput <em>and</em> spend, and that is the design, not a
+        malfunction.</strong> A hive that merges ~60 PRs in an afternoon burned tokens roughly in proportion to the work it did. If
+        the PRs were good, that spend bought something. The lever you want is usually not "spend less per unit of work" but
+        <strong>"do less work per day"</strong> — and that lever is cadence.</p>
+        <p style="margin:0 0 8px">Five things you can actually turn, roughly in order of effect:</p>
+        <ol style="margin:0 0 8px;padding-left:20px">
+          <li><strong>Widen your agent cadences — the primary lever.</strong> Cadence is the interval between governor kicks, set
+              per agent <em>per governor mode</em>. The Governor panel shows this as a grid — agents down the side, the four modes
+              (<strong>idle / quiet / busy / surge</strong>) across the top, plus <strong>method</strong> and <strong>model</strong> columns.
+              <strong>Click any row</strong> (or the config gear on that agent's dashboard card) to adjust its cadences. Going from
+              <code>1h</code> to <code>6h</code> is roughly a 6× cut in that agent's kick count, and <code>12h</code> or <code>24h</code> cuts
+              further. Because the value is per mode, the highest-value edit is usually widening <strong>busy</strong> and
+              <strong>surge</strong> — those are the modes a high ACMM level spends most of its time in.
+              <br><span style="color:var(--muted)">Units are <code>m</code> and <code>h</code>. <strong>Write one day as <code>24h</code>, not <code>1D</code>.</strong>
+              A day suffix is <em>not</em> valid in <code>hive.yaml</code> — the governor parses cadences with Go's duration parser, which
+              rejects <code>1d</code>/<code>1D</code> outright, and an unparseable cadence is <em>skipped with a log warning</em>, leaving that
+              agent with no schedule at all rather than a slow one. <code>0</code> disables the agent in that mode.</span></li>
+          <li><strong>Pause agents you are not using.</strong> Each agent card on the Agents page has a <strong>⏸ pause</strong> button
+              — a paused agent is never kicked by the governor until you resume it. You can also set a mode's cadence to
+              <code>0</code> to switch an agent off in just that mode, which is a scalpel where pausing is a hammer.</li>
+          <li><strong>Set a real budget.</strong> <em>Governor Config → Budget</em> → <strong>Total Tokens</strong> is the cap
+              (<code>0</code> disables budget tracking entirely). The enforcement that actually bites is kick suppression: a soft
+              warning fires at 90% of the limit, and at 100% the governor <strong>stops kicking agents</strong> until the window rolls.
+              <strong>Per-Agent Exemptions</strong> lets chosen agents keep running through an exhausted budget.
+              <br><span style="color:var(--muted)">Three caveats before you lean on this. The budget is denominated in
+              <strong>tokens, not dollars</strong>, so it will not line up one-to-one with a provider's billing page. The accounting
+              window is a fixed 7 days and the warning fires at a fixed 90% — the <em>Period (days)</em> and <em>Critical Percent</em>
+              fields are stored but do not currently change that behaviour, so treat the window as weekly regardless of what they say.
+              And the governor panel's <strong>ignore budget</strong> checkbox disables enforcement entirely, so check that it is
+              unticked.</span></li>
+          <li><strong>Move work onto cheaper agents.</strong> Two independent dials on each agent card: the <strong>model</strong>
+              picker (higher tiers such as Opus cost more per token than Sonnet or Haiku) and the <strong>method</strong> picker
+              (the CLI or inference backend). Notably <strong>copilot</strong> and <strong>goose</strong> are treated as free backends and
+              <em>do not count toward the token budget</em> at all. Routine, high-frequency agents are the best candidates to move
+              down; leave the agents whose judgement you actually depend on where they are. Both columns also appear in the Governor
+              panel's grid, with a 📌 pin next to each to lock in a method or model you deliberately chose.</li>
+          <li><strong>Re-check the level itself.</strong> If the spend is not buying PRs you actually merge, the level — not the
+              cadence — is the wrong setting. Dropping from L5 to L4 or L3 is a legitimate cost control, and the ACMM dialog moves
+              in both directions.</li>
+        </ol>
+        <p style="margin:0 0 16px;color:var(--muted)">One correction to advice that circulates: <strong>do not turn off the supervisor to save money.</strong> The supervisor
+        is not a vLLM/llm-d-only component — it ships in the default agent pack for every level from L2 to L6, its shipped backend is
+        <code>copilot</code> (a free backend that does not bill against your budget), and its job is watching the <em>other</em> agents for
+        stalls and rate limits. The dashboard deliberately hides the pause button on it for that reason. If it is costing you
+        noticeably, widen its cadence instead — the shipped packs already set it to <code>pause</code> in idle mode at some levels.</p>
+        <p style="margin:0 0 16px;color:var(--muted)">Finally, some perspective: model pricing has been falling steadily, and cheap models keep getting more capable. Other
+        hives are already running successfully on low-cost models, so today's bill for a given amount of work is not a fixed
+        property of the system.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">How does cadence impact cost? My scanner seems to run non-stop.</h3>
+        <p style="margin:0 0 8px"><strong>Cadence is the wait <em>between</em> runs, not a limit on how long a run lasts.</strong> This is the
+        single most common misunderstanding about cost, so it is worth stating plainly. An agent session does not go on forever:
+        the agent works until it runs out of work, then stops. Cadence is how long Hive waits after that before kicking it again.</p>
+        <p style="margin:0 0 8px">Which means a busy agent can look like it is running continuously, and effectively be running continuously —
+        without anything being wrong. If your scanner faces a large queue (say, issues that <em>other</em> agents have been opening),
+        each session has plenty to chew on, so it runs long, finishes, and gets kicked again shortly after. Shortening cadence does
+        not make an agent work harder; <strong>widening cadence spreads the same work over more wall-clock time</strong>, which is exactly
+        what lowers the burn rate.</p>
+        <p style="margin:0 0 8px">There is a second, less obvious effect worth knowing. The governor picks its mode from the
+        <strong>count of actionable open issues</strong> — cross a threshold and it escalates idle → quiet → busy → surge, and every agent
+        switches to that mode's (shorter) cadence column. So a growing backlog raises spend on its own, without you changing any
+        setting. <strong>Working the backlog down lowers the mode, and the mode drives the pace.</strong> The thresholds themselves are
+        editable under <em>Governor Config → Thresholds</em>.</p>
+        <p style="margin:0 0 16px">Two cadence values in the grid are not durations. <strong>paused</strong> means the governor never kicks
+        that agent until you resume it. <strong>on demand</strong> means the agent is only ever kicked manually — it has no automatic
+        schedule at all.</p>
 
         <h3 style="font-size:0.95rem;margin:0 0 6px">Why couldn't the Guide agent answer my questions?</h3>
         <p style="margin:0 0 16px">Because the guide agent documents <em>your</em> project, not Hive itself. Its job is to audit your
