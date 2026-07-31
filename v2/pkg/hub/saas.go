@@ -6374,6 +6374,22 @@ const dashboardHTML = `<!DOCTYPE html>
     .alert-rows { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
     .alert-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 0.74rem; padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,0.03); }
     .alert-row.acked { opacity: 0.55; }
+    /* An alert row is a real button: clicking it jumps to that hive's row in the
+       table below. Styled to look clickable (pointer, hover lift, focus ring)
+       because the previous inert <div> gave no hint that anything would happen.
+       width:100%/text-align:left undo the <button> defaults so the row lays out
+       exactly as the old div did. */
+    /* The jump button and the Acknowledge button are siblings (a button cannot
+       nest inside a button), so this wrapper keeps them on one visual line. */
+    .alert-row-wrap { display: flex; align-items: center; gap: 6px; }
+    .alert-row-wrap .alert-ack-btn { flex: 0 0 auto; }
+    button.alert-row { flex: 1 1 auto; min-width: 0; width: 100%; text-align: left; font-family: inherit; color: inherit; border: 1px solid transparent; cursor: pointer; }
+    button.alert-row:hover { background: rgba(255,255,255,0.07); border-color: var(--border); }
+    button.alert-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* Target highlight: a brief ring on the hive row the operator was sent to,
+       so it is obvious WHICH row answered the click after the scroll settles. */
+    .hive-row-targeted > td { background: rgba(88,166,255,0.16) !important; }
+    .hive-row-targeted > td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
     .alert-row-hive { font-weight: 700; color: var(--text); }
     .alert-row-reason { color: var(--muted); }
     .alert-row-age { color: var(--muted); font-size: 0.68rem; margin-left: auto; white-space: nowrap; }
@@ -8416,9 +8432,22 @@ const dashboardHTML = `<!DOCTYPE html>
     };
 
     /* How many alert rows are listed before the panel collapses the remainder
-       behind a "show all" affordance. Enough to act on, few enough that the
-       panel never pushes the hive list off the screen. */
-    var ALERT_ROWS_SHOWN = 6;
+       behind the "+N more" toggle. Enough to act on, few enough that the panel
+       never pushes the hive list off the screen. */
+    var ALERT_ROWS_SHOWN_MIN = 6;
+
+    /* Which halves of the panel are expanded past ALERT_ROWS_SHOWN_MIN. Keyed
+       'live'/'acked' so the two lists expand independently. Not persisted: an
+       expanded list is a momentary "show me the rest", not a view preference,
+       and a panel that reloads 50 rows deep would bury the hive table. */
+    var _alertRowsExpanded = {live: false, acked: false};
+
+    /* toggleAlertRowsExpanded flips one half of the panel open or closed. */
+    function toggleAlertRowsExpanded(which) {
+      var key = (which === 'acked') ? 'acked' : 'live';
+      _alertRowsExpanded[key] = !_alertRowsExpanded[key];
+      renderHives(_allDashHives, true);
+    }
 
     function alertTypeLabel(t) { return ALERT_TYPE_LABELS[t] || t || 'Unknown'; }
 
@@ -8513,6 +8542,88 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch (e) {
         hiveToast('Error: ' + e.message, 'error');
       }
+    }
+
+    /* ── Jumping from an alert row to the hive's row in the table ──
+
+       hiveRowDomId builds the anchor id renderHives puts on each <tr>. Prefixed
+       so it can never collide with another element id, and encodeURIComponent'd
+       because a hive id is user-influenced and may contain characters that are
+       not valid raw in an id/selector. */
+    var HIVE_ROW_DOM_ID_PREFIX = 'hive-row-';
+    function hiveRowDomId(hiveId) {
+      return HIVE_ROW_DOM_ID_PREFIX + encodeURIComponent(String(hiveId || ''));
+    }
+
+    /* How long the targeted row stays highlighted. Long enough to find the row
+       after the smooth scroll finishes, short enough that a stale highlight does
+       not linger and get mistaken for a status. */
+    var HIVE_ROW_TARGET_HIGHLIGHT_MS = 2600;
+
+    /* Handle of the pending highlight-clear timer, so two jumps in quick
+       succession do not leave the first row highlighted forever. */
+    var _hiveRowTargetTimer = null;
+
+    /* focusHiveRow scrolls one hive's table row into view and highlights it.
+       Returns false when the row is not currently in the DOM. */
+    function focusHiveRow(hiveId) {
+      var row = document.getElementById(hiveRowDomId(hiveId));
+      if (!row) return false;
+      /* Clear any previous target first — only ever one highlighted row. */
+      if (_hiveRowTargetTimer) { clearTimeout(_hiveRowTargetTimer); _hiveRowTargetTimer = null; }
+      var prev = document.querySelectorAll('.hive-row-targeted');
+      (prev || []).forEach(function(el) { el.classList.remove('hive-row-targeted'); });
+
+      row.scrollIntoView({behavior: 'smooth', block: 'center'});
+      row.classList.add('hive-row-targeted');
+      /* Move keyboard focus to the row as well, so a keyboard user lands there
+         rather than being scrolled somewhere their focus ring is not. */
+      if (!row.hasAttribute('tabindex')) row.setAttribute('tabindex', '-1');
+      try { row.focus({preventScroll: true}); } catch (e) { /* focus is best-effort */ }
+
+      _hiveRowTargetTimer = setTimeout(function() {
+        row.classList.remove('hive-row-targeted');
+        _hiveRowTargetTimer = null;
+      }, HIVE_ROW_TARGET_HIGHLIGHT_MS);
+      return true;
+    }
+
+    /* jumpToHiveRow is what an "Attention needed" row does when clicked.
+
+       The hard case is a target the current view is HIDING. The hive list now
+       carries persisted filters, facets, a search box, an alert drill-down and
+       collapsible sections/groups (#2309, #2317), so the alerted hive may well
+       not be on screen. Scrolling to a row that is not in the DOM would look
+       like the click did nothing.
+
+       The choice made here: try the current view FIRST, and only if the row is
+       genuinely absent do we widen the view — clearing every narrowing control
+       and expanding the collapsed sections/groups. Filters are the user's state,
+       so they are never discarded silently: we clear them only when that is the
+       one thing that can satisfy the click, and we say so in a toast that names
+       the hive. The alternative (refusing to navigate and just warning) leaves
+       the operator to work out which of six controls is hiding the row, which is
+       the problem the panel exists to avoid. */
+    function jumpToHiveRow(hiveId, hiveName) {
+      if (!hiveId) return;
+      if (focusHiveRow(hiveId)) return;
+
+      /* Not rendered under the current view. Widen everything that can hide a
+         row, re-render synchronously, then try again. */
+      clearAllHiveFilters();
+      expandAllHiveSections();
+      _dashGroupCollapsed = {};
+      persistGroupCollapsed();
+      renderHives(_allDashHives, true);
+
+      if (focusHiveRow(hiveId)) {
+        hiveToast('Filters cleared to show ' + (hiveName || hiveId), 'info');
+        return;
+      }
+      /* Still absent: the hive is genuinely not in the loaded list (for example
+         it was deleted between the alert being evaluated and now). Say so rather
+         than leaving a click that silently did nothing. */
+      hiveToast('Could not find ' + (hiveName || hiveId) + ' in the hive list', 'error');
     }
 
     /* renderAlertsPanel draws the "Attention needed" panel above the hive list.
@@ -8638,7 +8749,11 @@ const dashboardHTML = `<!DOCTYPE html>
         rows = rows.filter(function(a) { return a.type === _alertTypeFilter; });
       }
       if (!rows.length) return '';
-      var shown = rows.slice(0, ALERT_ROWS_SHOWN);
+      /* Each half of the panel (live vs acknowledged) expands independently, so
+         expanding the acknowledged list does not also dump every live alert. */
+      var expanded = !!_alertRowsExpanded[acked ? 'acked' : 'live'];
+      var limit = expanded ? rows.length : ALERT_ROWS_SHOWN_MIN;
+      var shown = rows.slice(0, limit);
       var html = shown.map(function(a) {
         var color = ALERT_SEVERITY_COLORS[a.severity] || '#8b949e';
         var age = alertAge(a.firstSeen);
@@ -8647,24 +8762,51 @@ const dashboardHTML = `<!DOCTYPE html>
            error text), and the acking username. */
         var ackBtn = '';
         if (_isAdmin) {
+          /* jsArg for the same reason as the jump handler below: esc() leaves an
+             apostrophe intact, which would close the handler's quote early. */
           ackBtn = acked
-            ? '<button type="button" class="alert-ack-btn" onclick="ackAlert(\'' +
-              esc(a.hiveId) + '\',\'' + esc(a.type) + '\',true)">Restore</button>'
-            : '<button type="button" class="alert-ack-btn" onclick="ackAlert(\'' +
-              esc(a.hiveId) + '\',\'' + esc(a.type) + '\',false)">Acknowledge</button>';
+            ? '<button type="button" class="alert-ack-btn" onclick="ackAlert(' +
+              jsArg(a.hiveId) + ',' + jsArg(a.type) + ',true)">Restore</button>'
+            : '<button type="button" class="alert-ack-btn" onclick="ackAlert(' +
+              jsArg(a.hiveId) + ',' + jsArg(a.type) + ',false)">Acknowledge</button>';
         }
         var ackedBy = (acked && a.ackBy) ? '<span class="alert-row-reason">— ack by ' + esc(a.ackBy) + '</span>' : '';
-        return '<div class="alert-row' + (acked ? ' acked' : '') + '">' +
+        /* The row itself is a <button> that jumps to this hive's row in the
+           table below. A real button (not a div with role/tabindex) gets Enter,
+           Space and the focus ring for free.
+
+           The Acknowledge button is a SIBLING, not a child: nesting a button
+           inside a button is invalid HTML and browsers drop the inner one, which
+           would silently break acknowledging. Both sit in a flex wrapper so the
+           row still reads as one line. */
+        var label = a.hiveName || a.hiveId;
+        var jump = '<button type="button" class="alert-row' + (acked ? ' acked' : '') +
+          '" title="Show ' + escAttr(label) + ' in the hive list below"' +
+          /* jsArg, not esc: a hive or org name containing an apostrophe would
+             close the handler's quote early and break the click. */
+          ' onclick="jumpToHiveRow(' + jsArg(a.hiveId) + ',' + jsArg(label) + ')">' +
           '<span class="filter-chip-dot" style="background:' + color + '"></span>' +
-          '<span class="alert-row-hive">' + esc(a.hiveName || a.hiveId) + '</span>' +
+          '<span class="alert-row-hive">' + esc(label) + '</span>' +
           '<span class="alert-row-reason">' + esc(a.reason) + '</span>' + ackedBy +
-          '<span class="alert-row-age">' + esc(age) + '</span>' + ackBtn +
-        '</div>';
+          '<span class="alert-row-age">' + esc(age) + '</span>' +
+        '</button>';
+        return '<div class="alert-row-wrap">' + jump + ackBtn + '</div>';
       }).join('');
-      var more = rows.length > ALERT_ROWS_SHOWN
-        ? '<div class="alert-row-reason" style="font-size:0.7rem;padding-left:8px">+' +
-          (rows.length - ALERT_ROWS_SHOWN) + ' more</div>'
-        : '';
+      /* "+N more" used to be inert text, which was actively misleading once the
+         rows above it became clickable: it looked like the same kind of thing
+         and did nothing. It is now a real toggle that expands the full list in
+         place (and collapses it again), so every alerted hive is reachable —
+         which is the point, since the hive the operator needs is as likely to be
+         #7 as #1. */
+      var more = '';
+      if (rows.length > limit) {
+        more = '<button type="button" class="alert-panel-more" onclick="toggleAlertRowsExpanded(' +
+          jsArg(acked ? 'acked' : 'live') + ')">+' + (rows.length - limit) +
+          ' more</button>';
+      } else if (expanded && rows.length > ALERT_ROWS_SHOWN_MIN) {
+        more = '<button type="button" class="alert-panel-more" onclick="toggleAlertRowsExpanded(' +
+          jsArg(acked ? 'acked' : 'live') + ')">Show fewer</button>';
+      }
       return '<div class="alert-rows">' + html + more + '</div>';
     }
 
@@ -8693,6 +8835,20 @@ const dashboardHTML = `<!DOCTYPE html>
       localStorage.getItem(LS_SECTION_ASSIGNED_COLLAPSED) === 'true';
     _dashSectionCollapsed[HIVE_SECTION_UNASSIGNED] =
       localStorage.getItem(LS_SECTION_UNASSIGNED_COLLAPSED) !== 'false';
+
+    /* expandAllHiveSections opens both sections and PERSISTS that, matching
+       toggleHiveSection. An in-memory-only reset would silently re-collapse on
+       the next reload, so the row the operator was just sent to would vanish
+       again — the collapsed Unassigned pool is the default, so this matters for
+       any alert on an unassigned placeholder. */
+    function expandAllHiveSections() {
+      _dashSectionCollapsed[HIVE_SECTION_ASSIGNED] = false;
+      _dashSectionCollapsed[HIVE_SECTION_UNASSIGNED] = false;
+      try {
+        localStorage.setItem(LS_SECTION_ASSIGNED_COLLAPSED, 'false');
+        localStorage.setItem(LS_SECTION_UNASSIGNED_COLLAPSED, 'false');
+      } catch(e) {} /* private-browsing quota — expansion still works in-session */
+    }
 
     function toggleHiveSection(sectionKey) {
       _dashSectionCollapsed[sectionKey] = !_dashSectionCollapsed[sectionKey];
@@ -10343,6 +10499,9 @@ const dashboardHTML = `<!DOCTYPE html>
         '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter + '|' + _dashUpgradeFilter +
         '|' + _dashAdvisoryStaleFilter +
         '|' + _alertTypeFilter + '|' + _alertShowAcked + '|' + JSON.stringify(_fleetAlerts) +
+        /* Without this, expanding "+N more" changes no hive data and the
+           early-return below would make the click a silent no-op. */
+        '|' + JSON.stringify(_alertRowsExpanded) +
         '|' + _dashSearchQuery + '|' + JSON.stringify(_dashFacets) +
         '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed) +
         '|' + _dashGroupBy + '|' + JSON.stringify(_dashGroupCollapsed) +
@@ -10705,7 +10864,10 @@ const dashboardHTML = `<!DOCTYPE html>
           }).join('');
           pendingExpandRow = '<tr id="pending-row-' + esc(h.id) + '" style="display:none"><td colspan="' + TOTAL_COLUMNS + '"><div style="padding:8px 16px;background:rgba(59,130,246,0.05);border-radius:6px;margin:4px 0">' + prItems + '</div></td></tr>';
         }
-        return '<tr>' +
+        /* Stable per-hive anchor so the "Attention needed" panel can scroll a
+           specific row into view and highlight it. Built from the hive id, which
+           is unique across both the assigned and unassigned sections. */
+        return '<tr id="' + escAttr(hiveRowDomId(h.id)) + '">' +
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
           '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +

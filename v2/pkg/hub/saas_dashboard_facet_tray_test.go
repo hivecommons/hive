@@ -297,6 +297,15 @@ func TestFacetTrayLayersBelowRowHoverPanels(t *testing.T) {
 // every row must emit the same number of cells, and the colspan constants that
 // span the table must match that number. A past bug moved a <th> without moving
 // its <td>, which silently shifted every column right of it.
+// buildRowReturnAnchor locates the start of buildRow's return expression.
+//
+// Deliberately stops before the '>' of the <tr>: the row now carries an id
+// attribute (the anchor the "Attention needed" panel scrolls to), and matching
+// the bare "return '<tr>' +" broke the moment that attribute was added. These
+// tests are about which CELLS the row emits, so they must not be coupled to the
+// <tr>'s attributes.
+const buildRowReturnAnchor = "return '<tr"
+
 func TestHiveTableColumnCountsAgree(t *testing.T) {
 	html := dashScript(t)
 
@@ -320,7 +329,7 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 	if bStart < 0 {
 		t.Fatal("could not find buildRow")
 	}
-	retIdx := strings.Index(html[bStart:], "return '<tr>' +")
+	retIdx := strings.Index(html[bStart:], buildRowReturnAnchor)
 	if retIdx < 0 {
 		t.Fatal("could not find buildRow's return")
 	}
@@ -392,7 +401,7 @@ func TestDriftColumnSitsRightOfJourney(t *testing.T) {
 
 	// --- body order, over the same expression the row is built from.
 	bStart := strings.Index(html, "var buildRow = function(h, i, section) {")
-	retIdx := strings.Index(html[bStart:], "return '<tr>' +")
+	retIdx := strings.Index(html[bStart:], buildRowReturnAnchor)
 	rStart := bStart + retIdx
 	rEnd := strings.Index(html[rStart:], "'</tr>' + pendingExpandRow;")
 	if bStart < 0 || retIdx < 0 || rEnd < 0 {
