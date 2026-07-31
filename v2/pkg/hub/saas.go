@@ -1532,6 +1532,16 @@ type MyHiveEntry struct {
 	// must never show the pill.
 	AdvisoryStale       bool   `json:"advisoryStale,omitempty"`
 	AdvisoryStaleReason string `json:"advisoryStaleReason,omitempty"`
+
+	// URLUnreachable is true when this hive's PUBLIC dashboard URL failed to
+	// serve on the last several probes — the link in this very table is dead.
+	// Computed on read from the auth-audit loop's observations, so the browser
+	// never re-derives the failure threshold. Stays zero/empty for a hive that
+	// is serving, that is too new to have converged, or whose whole cluster is
+	// out (an outage is one condition, not N broken hives) — those must never
+	// show the pill.
+	URLUnreachable       bool   `json:"urlUnreachable,omitempty"`
+	URLUnreachableReason string `json:"urlUnreachableReason,omitempty"`
 }
 
 // myHivesRecentEventCount is how many timeline events ride the My Hives
@@ -1836,6 +1846,25 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	// been collected and enriched (a row still missing its provStatus would be
 	// misread as a claimed hive and flagged for having no App).
 	annotateDrift(result, getDisplaySHAs(), time.Now())
+
+	// Dead-link pill, computed once over the full visible set for the same
+	// reason as drift: the cluster-outage suppression is a property of the SET
+	// (most of a cluster failing is an outage, not N broken hives), so it
+	// cannot be decided one row at a time. Derived from the same alert list the
+	// panel renders, so pill and panel always agree.
+	{
+		regs := make([]RegistryEntry, 0, len(result))
+		for i := range result {
+			regs = append(regs, result[i].RegistryEntry)
+		}
+		urlAlerts := s.urlUnreachableAlerts(regs, time.Now())
+		for i := range result {
+			if bad, reason := urlUnreachableFacet(urlAlerts, result[i].ID); bad {
+				result[i].URLUnreachable = true
+				result[i].URLUnreachableReason = reason
+			}
+		}
+	}
 
 	// Attach the user-journey stage to every row so the table can show who is
 	// stalled where. Derived on read; never persisted on the registry entry.
@@ -5823,18 +5852,24 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 			// heartbeat-only OpenShift pool where the hub cannot kubectl to create
 			// it, so the create "fails" yet the *.apps.<domain> wildcard still
 			// serves the host — the vllm-d case).
-			if err := s.addVanityHostToIngress(hiveID, vanityHost, cluster); err != nil {
-				if cluster.IngressType == ingressTypeOpenShiftRoute {
-					s.logger.Info("vanity host: hub could not create a route (heartbeat-only OpenShift cluster) "+
-						"— relying on the cluster wildcard route to serve it",
-						"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
-				} else {
-					s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
-						"hub links to this hive will 503 until it is added by hand",
-						"hive", hiveID, "host", vanityHost, "error", err)
-				}
+			// Goes through the same seam as the retroactive repair so both
+			// adoption paths share one definition of "servable" (and so tests,
+			// which have no kubectl, can exercise the success path).
+			if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
+				// Do NOT adopt a host we could not make servable. This used to
+				// assume an OpenShift cluster wildcard would serve the host
+				// anyway and adopt it regardless; on vllm-d that assumption is
+				// false — only explicitly created *-vanity Routes are served, so
+				// the hub advertised a hostname that returned 503 while the raw
+				// placeholder host worked fine. Leaving VanityURL empty makes
+				// every read path fall back to the working placeholder, and the
+				// heartbeat repair re-attempts adoption once a route exists.
+				s.logger.Warn("vanity host is not served: could not add it to the spoke ingress/route — "+
+					"keeping the working placeholder host; the heartbeat repair will retry",
+					"hive", hiveID, "host", vanityHost, "cluster", cluster.ID, "error", err)
+			} else {
+				h.VanityURL = "https://" + vanityHost
 			}
-			h.VanityURL = "https://" + vanityHost
 		}
 	}
 	if err := saveSaaSHive(h); err != nil {
@@ -7282,6 +7317,25 @@ const dashboardHTML = `<!DOCTYPE html>
         'border-radius:9999px;font-size:0.62rem;font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
         'color:' + col + ';background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.35)">' +
         'stale advisory</span>';
+    }
+
+    /* deadLinkSummary renders a "dead link" pill when this hive's own public
+       URL did not serve on the last several probes. Red, not amber: unlike a
+       stale digest this is user-facing breakage — the link in this very row
+       returns an error page, and because the spoke itself is healthy and
+       heartbeating, NOTHING else on the row indicates a problem.
+       h.urlUnreachable and its reason are computed server-side from the same
+       alert list the panel renders (see urlUnreachableFacet), gated on
+       consecutive failures AND minimum age AND cluster-outage suppression, so
+       this renderer never re-derives the rule and a converging or
+       whole-cluster-out hive is filtered out before it gets here. */
+    function deadLinkSummary(h) {
+      if (!h || !h.urlUnreachable) return '';
+      var title = h.urlUnreachableReason || 'This hive public URL did not respond';
+      return '<span title="' + esc(title) + '" style="display:inline-block;margin-left:6px;padding:0 6px;' +
+        'border-radius:9999px;font-size:0.62rem;font-weight:600;line-height:1.5;cursor:help;white-space:nowrap;' +
+        'color:#f85149;background:rgba(248,81,73,0.12);border:1px solid rgba(248,81,73,0.35)">' +
+        'dead link</span>';
     }
 
     /* ---- ClankeR, the contributor relay (hover panel) ------------------
@@ -10679,7 +10733,7 @@ const dashboardHTML = `<!DOCTYPE html>
         return '<tr>' +
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + (h.migrationStatus === 'migrating' ? '<span style="font-size:1.1rem;color:var(--border);user-select:none;cursor:not-allowed" title="Disabled during migration">⋮</span>' : '<span style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:4px 0;z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var isHostedRow = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-'))); var dh = isHostedRow && h.id ? ('/api/saas/hives/' + encodeURIComponent(h.id) + '/open') : (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; var rp = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : ''; var ghIcon = rp ? '<a href="https://github.com/' + esc(rp) + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : ''; /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only meaningful on hosted rows: a non-hosted row's dh IS rb already. */ var vanityDisplay = isHostedRow && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online ? advisoryStaleSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + link(repoName, false) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fcPill + advPill + dlPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:4px;padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
           /* No white-space:nowrap on the cell itself: the stacked lines each

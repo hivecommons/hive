@@ -21,7 +21,7 @@ func TestProbeWideOpen_OpenIsFlagged(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	open, reachable := probeWideOpen(context.Background(), auditTestClient(), srv.URL)
+	_, open, reachable := probeWideOpen(context.Background(), auditTestClient(), srv.URL)
 	if !reachable {
 		t.Fatal("expected reachable")
 	}
@@ -36,7 +36,7 @@ func TestProbeWideOpen_RedirectIsProtected(t *testing.T) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	}))
 	defer srv.Close()
-	open, reachable := probeWideOpen(context.Background(), auditTestClient(), srv.URL)
+	_, open, reachable := probeWideOpen(context.Background(), auditTestClient(), srv.URL)
 	if !reachable {
 		t.Fatal("expected reachable")
 	}
@@ -50,7 +50,7 @@ func TestProbeWideOpen_UnauthorizedIsProtected(t *testing.T) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer srv.Close()
-	open, reachable := probeWideOpen(context.Background(), auditTestClient(), srv.URL)
+	_, open, reachable := probeWideOpen(context.Background(), auditTestClient(), srv.URL)
 	if !reachable || open {
 		t.Fatalf("401 must be reachable+protected, got open=%v reachable=%v", open, reachable)
 	}
@@ -58,7 +58,7 @@ func TestProbeWideOpen_UnauthorizedIsProtected(t *testing.T) {
 
 func TestProbeWideOpen_UnreachableIsNotOpen(t *testing.T) {
 	// A firewalled/down spoke: transport error → unreachable, never "open".
-	open, reachable := probeWideOpen(context.Background(), auditTestClient(), "https://127.0.0.1:1")
+	_, open, reachable := probeWideOpen(context.Background(), auditTestClient(), "https://127.0.0.1:1")
 	if reachable {
 		t.Fatal("expected unreachable for a dead endpoint")
 	}
