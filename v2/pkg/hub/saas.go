@@ -4969,11 +4969,16 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	const minACMMLevel = 1
-	const maxACMMLevel = 6
+	// A hive is never REQUESTED above L3 Measured. L4-L6 are real levels, but
+	// they are reached after provisioning, from the hive's own dashboard, once
+	// the project has the coverage and CI history to justify them. The
+	// get-started wizard only offers L1-L3, but the wizard is one client: clamp
+	// here so a crafted request cannot provision straight into auto-merge.
+	// Admin paths (assign/provision) keep the full 0..6 range on purpose — an
+	// operator setting a level deliberately is not the case being guarded.
 	acmm := body.ACMMLevel
-	if acmm < minACMMLevel || acmm > maxACMMLevel {
-		acmm = minACMMLevel
+	if acmm < minRequestACMMLevel || acmm > maxRequestACMMLevel {
+		acmm = minRequestACMMLevel
 	}
 
 	primaryRepo := body.PrimaryRepo
@@ -11500,9 +11505,16 @@ const dashboardHTML = `<!DOCTYPE html>
        coverage) while still requiring a human on every merge, which is the
        right default for someone who has not run a hive before. */
     var REQUEST_DEFAULT_ACMM_LEVEL = 3;
-    /* ACMM levels offered on the request form, lowest to highest. All six are
-       offered — L5 and L6 are real, selectable levels, not hidden ones. */
-    var REQUEST_ACMM_LEVELS = [1, 2, 3, 4, 5, 6];
+    /* ACMM levels offered on the request form, lowest to highest. Capped at L3
+       Measured, matching maxRequestACMMLevel on POST /api/saas/request-provision
+       and the get-started wizard: a hive is never REQUESTED above L3. L4-L6 are
+       real levels, reached after provisioning from the hive's own dashboard
+       once coverage and CI history have earned them. This form posts to the
+       same clamped endpoint as the wizard, so offering L4-L6 here would not
+       grant them — it would silently record L1 instead. */
+    var REQUEST_ACMM_LEVELS = [1, 2, 3];
+    /* Restated under the picker so the cap reads as "later", not "denied". */
+    var REQUEST_LEVELS_LATER_NOTE = 'L4 Adaptive, L5 Semi-Automated and L6 Autonomous become available after provisioning, from your hive dashboard.';
 
     /* renderRequestLevelOptions builds the level picker from ACMM_LABELS and
        ACMM_TIPS. Rendering rather than hardcoding is the point: the previous
@@ -11536,7 +11548,8 @@ const dashboardHTML = `<!DOCTYPE html>
       var out = document.getElementById('rq-level-desc');
       if (!sel || !out) return;
       var lvl = parseInt(sel.value, 10) || REQUEST_DEFAULT_ACMM_LEVEL;
-      out.textContent = ACMM_TIPS[lvl] || '';
+      var tip = ACMM_TIPS[lvl] || '';
+      out.textContent = tip ? (tip + ' ' + REQUEST_LEVELS_LATER_NOTE) : REQUEST_LEVELS_LATER_NOTE;
     }
 
     /* openRequestHiveModal shows the modal with a freshly populated forge

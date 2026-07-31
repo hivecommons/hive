@@ -112,6 +112,19 @@ const (
 	defaultAssignACMMLevel = 2
 )
 
+// ACMM level bounds for a SELF-SERVICE provision request (the get-started
+// wizard). Narrower than the assign bounds above on purpose: nobody starts a
+// hive above L3 Measured. L4 Adaptive and higher are reached after
+// provisioning, from the hive's own dashboard, once the project's test
+// coverage and CI history have earned the extra automation. The wizard renders
+// levels up to maxRequestACMMLevel as radios and lists the rest as "available
+// after provisioning"; this pair is the enforcement behind that copy, since the
+// wizard is only one possible client of the endpoint.
+const (
+	minRequestACMMLevel = 1
+	maxRequestACMMLevel = 3
+)
+
 // clustersConfigPath is the on-disk location where the hub reads cluster
 // definitions. It is a JSON array of ClusterConfig objects. A var (not a const)
 // so tests can point it at a temp file; production never reassigns it.
