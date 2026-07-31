@@ -78,7 +78,7 @@ func TestDecideAppKeySync_RepairsPlaceholderSentinel(t *testing.T) {
 		{"no key at all", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideAppKeySync(tc.fingerprint, tc.hasPerHive, false, config.PlaceholderAppID, cluster)
+			got := decideAppKeySync(tc.fingerprint, tc.hasPerHive, false, false, config.PlaceholderAppID, cluster)
 			if !got.Push {
 				t.Errorf("sentinel app_id not repaired (%s): %+v", tc.name, got)
 			}
@@ -91,7 +91,7 @@ func TestDecideAppKeySync_RepairsPlaceholderSentinel(t *testing.T) {
 	// A spoke on a genuinely different (real) App is still protected — the
 	// sentinel is the ONLY app_id treated as unconditionally wrong.
 	const someOtherRealApp = 4240368
-	if got := decideAppKeySync("other-fp", true, false, someOtherRealApp, cluster); got.Push {
+	if got := decideAppKeySync("other-fp", true, false, false, someOtherRealApp, cluster); got.Push {
 		t.Errorf("a real non-matching app_id must stay protected as a deliberate pin: %+v", got)
 	}
 }

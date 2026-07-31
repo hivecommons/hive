@@ -5220,7 +5220,29 @@
           if (desc) desc.textContent = isGHE
             ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org to enable full functionality.'
             : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.';
-          if (link) { link.textContent = 'Install GitHub App'; link.href = data.githubAppInstallURL; }
+          /* A GitHub Enterprise host whose App slug was never configured yields
+             an EMPTY install URL from the server, deliberately: the public
+             "kubestellar-hive" slug names no App on an enterprise host, so a
+             best-effort link would 404 and read as a broken product. Say what is
+             missing instead of offering a dead button. */
+          if (link) {
+            if (data.githubAppInstallURL) {
+              link.textContent = 'Install GitHub App';
+              link.href = data.githubAppInstallURL;
+              link.removeAttribute('aria-disabled');
+            } else {
+              link.removeAttribute('href');
+              link.setAttribute('aria-disabled', 'true');
+              link.textContent = isGHE ? 'Install link unavailable for this GitHub host' : 'Install URL unavailable';
+              if (desc) {
+                desc.textContent = isGHE
+                  ? 'This hive cannot post advisory reports. The GitHub App slug for '
+                    + String(data.githubBaseURL).replace(/^https?:\/\//, '')
+                    + ' is not configured, so an install link cannot be built. Ask your hub operator to set github_app_slug for this cluster.'
+                  : desc.textContent;
+              }
+            }
+          }
         }
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';

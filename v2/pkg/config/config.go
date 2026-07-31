@@ -1456,13 +1456,35 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // AppInstallURL returns the full URL to install the GitHub App.
 // For GHE: {base_url}/github-apps/{slug}/installations/new
 // For github.com: https://github.com/apps/{slug}/installations/new
+//
+// It returns "" for a GitHub Enterprise host whose App slug is not configured.
+//
+// WHY EMPTY RATHER THAN A BEST-EFFORT URL
+//
+// DefaultGitHubAppSlug ("kubestellar-hive") names the App registered on PUBLIC
+// github.com. GitHub Enterprise hosts a SEPARATE App registry, and an enterprise
+// registration is rarely given the same slug — so falling back to the default on
+// a GHE host emits a link to an App that provably does not exist there, and the
+// user lands on a GitHub 404. That is strictly worse than no link: a dead link
+// reads as "this product is broken", and it sent a real user to
+// github.ibm.com/github-apps/kubestellar-hive/installations/new.
+//
+// The empty string is the honest answer — "this host's App slug was never
+// recorded" — and callers render it as a legible message naming the missing
+// config instead of a button that 404s. Public github.com keeps the default,
+// where it is correct by construction.
 func (g GitHubConfig) AppInstallURL() string {
 	base := strings.TrimRight(g.ResolvedBaseURL(), "/")
-	slug := g.ResolvedAppSlug()
 	if g.IsGHE() {
+		// No default is admissible here: only an explicitly configured slug can
+		// name an App on this enterprise host.
+		slug := strings.TrimSpace(g.AppSlug)
+		if slug == "" {
+			return ""
+		}
 		return base + "/github-apps/" + slug + "/installations/new"
 	}
-	return base + "/apps/" + slug + "/installations/new"
+	return base + "/apps/" + g.ResolvedAppSlug() + "/installations/new"
 }
 
 type NotificationsConfig struct {

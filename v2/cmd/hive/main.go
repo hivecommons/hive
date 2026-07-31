@@ -2656,6 +2656,25 @@ func main() {
 				cfg.GitHub.AppSlug = ghCfg.AppSlug
 			}
 
+			// Persist the adopted App IDENTITY to the PVC overlay, exactly as the
+			// claimed-project-config callback persists what it adopts.
+			//
+			// Without this the adoption lived only in memory. The key files are
+			// written to /data (durable), but app_id/app_slug/installation_id were
+			// not, so on every pod restart the entrypoint re-merged the ConfigMap
+			// seed and the spoke reverted to whatever App it was provisioned with —
+			// silently undoing a completed repair and making the hub's push look
+			// like it had never happened. That is how a GHE hive kept re-appearing
+			// with the github.com app_id and an empty slug across restarts.
+			//
+			// Saved even when the App is not yet usable (installation_id still 0):
+			// the corrected app_id and slug are precisely what the owner needs on
+			// disk so the dashboard renders a working install link BEFORE they have
+			// installed anything.
+			if err := cfg.Save(); err != nil {
+				logger.Error("failed to persist github app config from heartbeat", "error", err)
+			}
+
 			// Resolve the key file the same way startup does, so a hive whose
 			// only correct key arrived as an ADDITIONAL per-app-id key (no
 			// primary key_file configured — the exact vllm-d state) still finds
