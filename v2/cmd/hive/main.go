@@ -2290,9 +2290,17 @@ func main() {
 			// successful compute — nil pointers until then, so the hub never
 			// aggregates a not-yet-computed zero into the public fleet total.
 			var prsMerged, prsRejected, cvesClosed *int
+			fleetStatsCollectedAt := ""
 			if fc, ok := fleetStatsCollector.Snapshot(); ok {
 				m, rj, cv := fc.PRsMerged, fc.PRsRejected, fc.CVEsClosed
 				prsMerged, prsRejected, cvesClosed = &m, &rj, &cv
+				// Report WHEN these were computed, not when this beat was sent.
+				// The hub carries counts forward across spoke restarts, so this
+				// timestamp is the only way it can tell a fresh contribution
+				// from one frozen by a collector that has started failing.
+				if t := fleetStatsCollector.CollectedAt(); !t.IsZero() {
+					fleetStatsCollectedAt = t.UTC().Format(time.RFC3339)
+				}
 			}
 			// Count agents with a method/model assigned for the hub's
 			// user-journey stage detection. Always a non-nil pointer from a
@@ -2427,9 +2435,10 @@ func main() {
 					}
 					return hub.CollectClusterHealth(logger)
 				}(),
-				PRsMerged90d:   prsMerged,
-				PRsRejected90d: prsRejected,
-				CVEsClosed:     cvesClosed,
+				PRsMerged90d:          prsMerged,
+				PRsRejected90d:        prsRejected,
+				CVEsClosed:            cvesClosed,
+				FleetStatsCollectedAt: fleetStatsCollectedAt,
 				// Report WHICH App key we hold, never the key. The hub compares
 				// this against its per-cluster key and pushes a correction only
 				// on a mismatch, so a spoke already holding the right key costs

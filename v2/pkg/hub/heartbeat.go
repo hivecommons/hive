@@ -313,6 +313,11 @@ type HeartbeatPayload struct {
 	PRsMerged90d   *int `json:"prs_merged_90d,omitempty"`
 	PRsRejected90d *int `json:"prs_rejected_90d,omitempty"`
 	CVEsClosed     *int `json:"cves_closed,omitempty"`
+	// FleetStatsCollectedAt (RFC3339) is when the counts above were last
+	// successfully computed, so the hub can age out a stale contribution
+	// instead of summing a frozen number forever. Empty from a spoke too old
+	// to report it, which the hub treats as "not stale".
+	FleetStatsCollectedAt string `json:"fleet_stats_collected_at,omitempty"`
 	// AgentsWithModel counts this hive's agents that have an effective method
 	// (backend) or model assigned — override first, then agent config, exactly
 	// as the launcher resolves it. The hub uses it for user-journey stage

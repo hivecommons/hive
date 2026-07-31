@@ -153,6 +153,14 @@ type RegistryEntry struct {
 	PRsMerged90d   *int `json:"prsMerged90d,omitempty"`
 	PRsRejected90d *int `json:"prsRejected90d,omitempty"`
 	CVEsClosed     *int `json:"cvesClosed,omitempty"`
+	// FleetStatsCollectedAt is when the spoke last SUCCESSFULLY computed the
+	// counts above — not when it last sent a heartbeat. The counts are carried
+	// forward across restarts, so without this the hub cannot tell a count
+	// gathered minutes ago from one frozen since a collector started failing.
+	// The aggregator refuses to count contributions older than
+	// fleetStatsMaxAge. Zero means the spoke is too old to report it, which is
+	// treated as "not stale" so an upgrade does not blank the strip.
+	FleetStatsCollectedAt time.Time `json:"fleetStatsCollectedAt,omitempty"`
 	// AgentsWithModel is the spoke-reported count of agents that have a method
 	// (backend) or model assigned. nil = the spoke is too old to report it, so
 	// journey stage 2 is treated as unknown rather than unsatisfied.
@@ -960,6 +968,16 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		PRsMerged90d:   clampFleetCount(payload.PRsMerged90d),
 		PRsRejected90d: clampFleetCount(payload.PRsRejected90d),
 		CVEsClosed:     clampFleetCount(payload.CVEsClosed),
+		FleetStatsCollectedAt: func() time.Time {
+			if payload.FleetStatsCollectedAt == "" {
+				return time.Time{}
+			}
+			t, err := time.Parse(time.RFC3339, payload.FleetStatsCollectedAt)
+			if err != nil {
+				return time.Time{}
+			}
+			return t
+		}(),
 		// Preserve nil (old spoke, unknown) vs a real count — journey stage
 		// detection depends on telling those two apart.
 		AgentsWithModel: clampFleetCount(payload.AgentsWithModel),
@@ -1029,6 +1047,27 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			// to public, don't let the spoke's heartbeat revert it.
 			if h.IsPublic && !payload.IsPublic {
 				entry.IsPublic = h.IsPublic
+			}
+			// Carry the last known fleet-stat counts forward when this
+			// heartbeat does not carry them. The counts live only in the
+			// spoke's memory, so every restart reports nil until the periodic
+			// collector next succeeds. Overwriting the stored value with nil
+			// dropped the hive out of the public total for that whole gap —
+			// with a fleet-wide restart, that silently collapsed the landing
+			// page's numbers. Preserving the previous value (with its
+			// collection timestamp, which the aggregator ages out) keeps the
+			// total honest instead of quietly shrinking it.
+			if entry.PRsMerged90d == nil && h.PRsMerged90d != nil {
+				entry.PRsMerged90d = h.PRsMerged90d
+			}
+			if entry.PRsRejected90d == nil && h.PRsRejected90d != nil {
+				entry.PRsRejected90d = h.PRsRejected90d
+			}
+			if entry.CVEsClosed == nil && h.CVEsClosed != nil {
+				entry.CVEsClosed = h.CVEsClosed
+			}
+			if entry.FleetStatsCollectedAt.IsZero() {
+				entry.FleetStatsCollectedAt = h.FleetStatsCollectedAt
 			}
 			branchForLatest := payload.GitBranch
 			if branchForLatest == "" {
@@ -1543,7 +1582,40 @@ type FleetStats struct {
 	CVEsClosed   int    `json:"cves_closed"`
 	Hives        int    `json:"hives"`
 	UpdatedAt    string `json:"updated_at"`
+	// Reporting is the number of eligible hives that actually contributed a
+	// fresh count to the totals above; Eligible is how many were considered.
+	// Without this pair the totals are indistinguishable from a healthy fleet:
+	// summing 2 of 50 hives yields a small, confident, WRONG number and the
+	// page has no way to know. The landing page compares the two and refuses
+	// to present a total assembled from too little of the fleet.
+	Reporting int `json:"reporting"`
+	Eligible  int `json:"eligible"`
+	// Stale counts eligible hives whose newest successful collect is older
+	// than fleetStatsMaxAge — surfaced so a fleet quietly failing to collect
+	// is visible as degradation rather than as a shrinking total.
+	Stale int `json:"stale"`
+	// Trustworthy is false when too little of the fleet reported for the
+	// totals to stand as a fleet-wide figure. The landing page shows a
+	// "collecting" state instead of the numbers when this is false.
+	Trustworthy bool `json:"trustworthy"`
 }
+
+// fleetStatsMaxAge is how old a spoke's last successful collect may be and
+// still count toward the public total. The spoke recollects every 30 minutes,
+// so a contribution older than this means that hive's collector has been
+// failing for many consecutive cycles and its number is no longer current.
+// Generous enough to ride out a restart or a transient GitHub outage without
+// blanking the strip, short enough that a genuinely broken collector drops out
+// rather than freezing a stale figure on the public page forever.
+const fleetStatsMaxAge = 6 * time.Hour
+
+// fleetStatsMinReportingFraction is the share of eligible hives that must
+// report fresh counts before the aggregate is considered trustworthy enough to
+// display as a fleet-wide total. Below this the landing page shows a degraded
+// state instead of a confidently wrong number — the regression this guards
+// against is precisely a total silently assembled from a small minority of the
+// fleet (2 of 50) and rendered as though it were complete.
+const fleetStatsMinReportingFraction = 0.5
 
 // computeFleetStats aggregates fleet-wide contribution counts across public,
 // non-stale hives. A hive that never reported a given count (nil pointer) is
@@ -1573,6 +1645,26 @@ func (s *HubServer) computeFleetStats() FleetStats {
 			}
 			repoSet[key] = struct{}{}
 		}
+		// Only hives that could meaningfully report are counted as eligible.
+		// A placeholder with no repos has nothing to contribute and must not
+		// drag the reporting fraction down as though data were missing.
+		if len(h.Repos) == 0 {
+			continue
+		}
+		fs.Eligible++
+
+		hasCount := h.PRsMerged90d != nil || h.PRsRejected90d != nil || h.CVEsClosed != nil
+		if !hasCount {
+			continue
+		}
+		// Age out contributions whose last successful collect is too old. A
+		// zero timestamp means the spoke predates the field, so it is trusted
+		// rather than dropped — an upgrade must not blank the strip.
+		if !h.FleetStatsCollectedAt.IsZero() && time.Since(h.FleetStatsCollectedAt) > fleetStatsMaxAge {
+			fs.Stale++
+			continue
+		}
+		fs.Reporting++
 		if h.PRsMerged90d != nil {
 			fs.PRsMerged += *h.PRsMerged90d
 		}
@@ -1587,6 +1679,17 @@ func (s *HubServer) computeFleetStats() FleetStats {
 	return fs
 }
 
+// FleetStatsTrustworthy reports whether enough of the eligible fleet
+// contributed fresh counts for the totals to be presented as a fleet-wide
+// figure. A total built from a small minority is worse than no total at all:
+// it renders as a confident, precise, badly wrong number.
+func (fs FleetStats) FleetStatsTrustworthy() bool {
+	if fs.Eligible == 0 || fs.Reporting == 0 {
+		return false
+	}
+	return float64(fs.Reporting)/float64(fs.Eligible) >= fleetStatsMinReportingFraction
+}
+
 func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	offlineEvents := s.markStaleHives()
@@ -1597,6 +1700,21 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	fs := s.computeFleetStats()
 	s.mu.RUnlock()
 	fs.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	fs.Trustworthy = fs.FleetStatsTrustworthy()
+
+	// Make the degraded case loud on the server too. The landing page hides the
+	// numbers, but a silent hide is how this regressed unnoticed before: with
+	// no log line, a fleet-wide collector failure looks identical to a quiet
+	// day. This is the operator-visible signal that the data, not the fleet,
+	// is what shrank.
+	if !fs.Trustworthy {
+		s.logger.Warn("fleet stats degraded: too few hives reporting to publish a fleet total",
+			"reporting", fs.Reporting,
+			"eligible", fs.Eligible,
+			"stale", fs.Stale,
+			"min_fraction", fleetStatsMinReportingFraction,
+		)
+	}
 
 	data, _ := json.Marshal(fs)
 	w.Header().Set("Content-Type", "application/json")
