@@ -91,9 +91,15 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 			// templates and models even though acmm_level had moved up. Reconcile
 			// these replace-on-diff (kick_template and mode already did; model,
 			// description, role, bead_role, display_name did NOT — that gap is the
-			// bug). Genuine per-agent overrides belong in the explicit override
-			// fields (BackendOverride, ModelOverride, pins), which live on the
-			// agent process and are NOT touched here.
+			// bug).
+			//
+			// Model/Backend are the exception: an operator sets them from the
+			// Governor grid, so they carry an ownership marker and are reconciled
+			// only while still pack-owned (see below). The in-memory
+			// ModelOverride/BackendOverride on the agent process are NOT a
+			// durable home for that choice — they are replayed from
+			// /data/hive-state.json, while hive.yaml (which this writes) is what
+			// the pack re-reads on the next restart.
 			if pa.KickTemplate != "" && existing.KickTemplate != pa.KickTemplate {
 				existing.KickTemplate = pa.KickTemplate
 				changed = true
@@ -102,8 +108,16 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 				existing.Mode = pa.Mode
 				changed = true
 			}
-			if pa.Model != "" && existing.Model != pa.Model {
+			// Model is reconciled to the pack ONLY while the pack still owns
+			// it. Once an operator picks a model in the Governor grid the
+			// field becomes operator-owned and the pack must leave it alone:
+			// ApplyPack runs on every restart ("merging pack updates"), so an
+			// unconditional replace-on-diff here silently reverted the
+			// operator's choice on the next pod restart — repeatedly, which is
+			// exactly the reported "they always come back".
+			if pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
 				existing.Model = pa.Model
+				existing.ModelOwner = config.FieldOwnerPack
 				changed = true
 			}
 			if pa.Description != "" && existing.Description != pa.Description {
@@ -126,8 +140,9 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 			// Backend is fill-if-empty: it never varies by level (always the same
 			// per agent across all packs), and users legitimately pin it, so the
 			// pack must not stomp a user's choice.
-			if existing.Backend == "" && pa.Backend != "" {
+			if existing.Backend == "" && pa.Backend != "" && !existing.BackendIsOperatorOwned() {
 				existing.Backend = pa.Backend
+				existing.BackendOwner = config.FieldOwnerPack
 				changed = true
 			}
 
@@ -144,8 +159,12 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 
 		includeRepos := pa.IncludeRepos
 		agentCfg := config.AgentConfig{
-			Backend:      pa.Backend,
-			Model:        pa.Model,
+			Backend: pa.Backend,
+			Model:   pa.Model,
+			// A freshly created agent's model/backend come from the pack, so
+			// the pack owns them until an operator overrides in the grid.
+			ModelOwner:   config.FieldOwnerPack,
+			BackendOwner: config.FieldOwnerPack,
 			Enabled:      true,
 			DisplayName:  pa.DisplayName,
 			Description:  pa.Description,

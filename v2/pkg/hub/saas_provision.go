@@ -643,7 +643,19 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 	if cluster == nil || cluster.Domain == "" {
 		return false
 	}
-	vanityHost := generateHiveID(h.Org, h.PrimaryRepo) + "." + cluster.Domain
+	// Reuse the host an EXISTING vanity route already serves before minting a
+	// new one. generateHiveID appends a fresh random suffix on every call, so a
+	// hive whose repair keeps failing used to burn a brand-new hostname every
+	// heartbeat (observed churning four hosts in eight minutes). Worse, when a
+	// vanity_url had been cleared by hand to repair a mismatch, the next beat
+	// minted a DIFFERENT suffix instead of re-adopting the host the spoke's
+	// route was already serving — leaving the registry pointing at a hostname
+	// nothing serves while the working route sat unused. Adopting the existing
+	// route's host first makes this repair converge instead of oscillate.
+	vanityHost := s.existingVanityHost(hiveID, cluster)
+	if vanityHost == "" {
+		vanityHost = generateHiveID(h.Org, h.PrimaryRepo) + "." + cluster.Domain
+	}
 	// Make it servable BEFORE adopting it; on failure leave VanityURL empty so
 	// every read path keeps falling back to the working placeholder host.
 	if err := s.makeVanityHostServable(hiveID, vanityHost, cluster); err != nil {
@@ -660,6 +672,49 @@ func (s *HubServer) repairVanityURLForHive(hiveID string) bool {
 		"hive", hiveID, "org", h.Org, "primary_repo", h.PrimaryRepo,
 		"cluster", cluster.ID, "vanity_url", h.VanityURL)
 	return true
+}
+
+// existingVanityHost returns the host an already-created vanity route/ingress
+// on the spoke is serving, or "" when there is none (or the cluster cannot be
+// reached).
+//
+// This exists so the retroactive repair is CONVERGENT. The vanity host carries
+// a random suffix, so re-minting is not idempotent: any path that mints a host
+// without first looking for the one already in place will invent a new name,
+// and the hub can end up advertising a hostname that no route serves while the
+// real route answers on a different one. Reading the live object first makes
+// the repair adopt reality instead of overwriting it.
+//
+// Best-effort by design: on any error it returns "" and the caller mints a
+// fresh host exactly as before, so an unreachable cluster is no worse off.
+func (s *HubServer) existingVanityHost(hiveID string, cluster *ClusterConfig) string {
+	if cluster == nil {
+		return ""
+	}
+	ns := "hive-hosted-" + hiveID
+	placeholderHost := hiveID + "." + cluster.Domain
+
+	if cluster.IngressType == ingressTypeOpenShiftRoute {
+		out, err := kubectlForCluster(cluster, "-n", ns, "get", "route",
+			routeBaseDashboard+"-vanity", "-o", "jsonpath={.spec.host}").Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	// nginx: the vanity host is the rule whose host is not the placeholder.
+	out, err := kubectlForCluster(cluster, "-n", ns, "get", "ingress", "hive",
+		"-o", "jsonpath={.spec.rules[*].host}").Output()
+	if err != nil {
+		return ""
+	}
+	for _, host := range strings.Fields(string(out)) {
+		if host != placeholderHost && host != "" {
+			return host
+		}
+	}
+	return ""
 }
 
 // makeVanityHostServable creates the ingress/route that makes vanityHost resolve,
