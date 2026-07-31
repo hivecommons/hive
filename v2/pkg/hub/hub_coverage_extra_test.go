@@ -398,17 +398,51 @@ func TestHandleHubAutoUpgradeEnable(t *testing.T) {
 // handleHubSelfUpgrade
 // ============================================================
 
+// TestHandleHubSelfUpgrade asserts the handler REFUSES to upgrade when no
+// target SHA is known, and does so without touching a cluster.
+//
+// The previous version of this test asserted nothing: it accepted both 200 and
+// 500 and merely t.Logf'd anything else, so it could not fail. Worse, its
+// premise was wrong. It reasoned "will fail because kubectl doesn't exist or
+// cluster not accessible" — untrue inside a hive pod, where kubectl exists and
+// the pod's ServiceAccount holds patch on the hub Deployment. Combined with a
+// sibling test seeding latestSHAByBranch["v2"] = "target1", it issued a real
+//
+//	kubectl set image deployment/hive-hub hub=ghcr.io/kubestellar/hive-hub:target1
+//
+// against production, leaving the hub serving stale code behind an
+// ImagePullBackOff. See TestMain, which removes the in-cluster credentials
+// that made it reachable.
+//
+// The SHA cache is a package-level global shared across the suite, so this
+// clears it and restores it rather than assuming a starting state.
 func TestHandleHubSelfUpgrade(t *testing.T) {
+	latestSHAMu.Lock()
+	saved, had := latestSHAByBranch["v2"]
+	delete(latestSHAByBranch, "v2")
+	latestSHAMu.Unlock()
+	t.Cleanup(func() {
+		latestSHAMu.Lock()
+		if had {
+			latestSHAByBranch["v2"] = saved
+		} else {
+			delete(latestSHAByBranch, "v2")
+		}
+		latestSHAMu.Unlock()
+	})
+
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
 	req := httptest.NewRequest("POST", "/hub-self-upgrade", nil)
 	w := httptest.NewRecorder()
 	srv.handleHubSelfUpgrade(w, req)
 
-	// Will fail because kubectl doesn't exist or cluster not accessible
-	// but exercises the code path
-	if w.Code != http.StatusInternalServerError && w.Code != http.StatusOK {
-		t.Logf("hub self-upgrade: %d", w.Code)
+	// No cached SHA means an empty target, which rolloutHubToSHA must reject
+	// before it ever builds a kubectl command. This is deterministic: it does
+	// not depend on whether a cluster happens to be reachable.
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("hub self-upgrade with no target SHA: got %d, want %d",
+			w.Code, http.StatusInternalServerError)
 	}
 }
 
