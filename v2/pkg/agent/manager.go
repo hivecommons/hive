@@ -2046,8 +2046,7 @@ func paneShowsInputPrompt(output string) bool {
 		strings.Contains(output, "> Enter to send") ||
 		strings.Contains(output, "\n>\n") ||
 		strings.Contains(output, bobInputPlaceholder) ||
-		strings.Contains(output, bobInputPlaceholderDefault) ||
-		strings.Contains(output, codexInputPromptMarker)
+		strings.Contains(output, bobInputPlaceholderDefault)
 }
 
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
