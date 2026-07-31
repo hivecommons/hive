@@ -5164,6 +5164,16 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	h.Repos = repos
 	h.PrimaryRepo = primaryRepo
 	h.ACMMLevel = acmm
+	// Record the level as REQUESTED, not merely as current. ACMMLevel is
+	// overwritten the moment the spoke reports the level it was minted at, so it
+	// cannot be the source of truth for "what did the owner ask for". Keeping the
+	// requested value in its own field is what lets the delivery reconcile below
+	// remain correct — and idempotent — across any number of heartbeats.
+	h.RequestedACMMLevel = acmm
+	// Re-arm the level handshake for this claim. A placeholder is reused across
+	// assignments, so a flag left true by a previous tenancy would suppress
+	// delivery for the new owner.
+	h.ACMMDelivered = false
 	h.Status = ""
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
@@ -5411,23 +5421,66 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 	changed := false
 	prevLevel := h.ACMMLevel
 
-	// ACMM follows the SAME ClaimDelivered handshake as org/repos below.
+	// ACMM runs its OWN delivery handshake (ACMMDelivered), not the org/repos
+	// one (ClaimDelivered).
 	//
-	// #2061 made ACMM "operator-owned from the start — always adopt", which
-	// fixed the spyre revert (a dashboard level change bouncing back every
-	// beat) but left a gap on the ASSIGN path: a freshly-claimed placeholder
-	// has not yet been told its level, so it keeps reporting the level it was
-	// MINTED at (defaultAssignACMMLevel). Adopting that pre-delivery report
-	// overwrote the level the requester actually asked for — an approved L3
-	// request silently became L2 in meta.json, and the spoke stayed L2 forever
-	// because the hub then had no higher level left to push.
+	// #2061 made ACMM "operator-owned from the start — always adopt", which fixed
+	// the spyre revert but left a gap on the ASSIGN path: a freshly-claimed
+	// placeholder keeps reporting the level it was MINTED at, and adopting that
+	// pre-delivery report overwrote the level the requester asked for. #2333
+	// closed that by gating on ClaimDelivered — correct for hives claimed after
+	// it shipped, but a no-op for every hive claimed BEFORE, whose
+	// ClaimDelivered was already true from the old org/repos-only rule. Those
+	// hives adopt the stale report on the very first beat after upgrade and the
+	// push stays disabled, which is why the live oke-11 hive is still L2 against
+	// an approved L3 request.
 	//
-	// Gating on ClaimDelivered keeps BOTH behaviours: before delivery the claim
-	// (including its level) is authoritative and a stale spoke report is
-	// ignored; after delivery the spoke's dashboard owns the level and operator
-	// edits are adopted exactly as #2061 intended.
-	if level > 0 && level != h.ACMMLevel && h.ClaimDelivered {
+	// The dedicated flag defaults to false on those hives, so the level is
+	// delivered exactly once, then ownership passes to the spoke as #2061
+	// intended.
+
+	// Backfill the requested level for hives assigned before the field existed.
+	// Without this the reconcile has no target on exactly the hives that need
+	// it. ACMMLevel is the best available record of the assignment at this
+	// point, and using it is safe: if the spoke already agrees, the delivery is
+	// a no-op that simply marks itself done.
+	if h.RequestedACMMLevel == 0 && h.ACMMLevel > 0 {
+		h.RequestedACMMLevel = h.ACMMLevel
+		changed = true
+	}
+
+	// Delivery is complete once the spoke reports the level the hub asked for.
+	// A level-0 report means "too old / mid-boot to say", never a mismatch.
+	if !h.ACMMDelivered && h.RequestedACMMLevel > 0 && level == h.RequestedACMMLevel {
+		h.ACMMDelivered = true
+		changed = true
+		s.logger.Info("acmm level delivered to spoke",
+			"hive_id", hiveID, "acmm_level", level)
+	}
+
+	switch {
+	case level <= 0:
+		// Nothing reported — say nothing, change nothing.
+	case !h.ACMMDelivered && h.RequestedACMMLevel > 0:
+		// Pre-delivery the REQUESTED level is authoritative. Hold meta at it so
+		// the stale spoke report cannot overwrite the target the push below is
+		// still working toward — the exact loop that lost the L3.
+		if h.ACMMLevel != h.RequestedACMMLevel {
+			h.ACMMLevel = h.RequestedACMMLevel
+			changed = true
+		}
+		if level != h.RequestedACMMLevel {
+			s.logger.Info("acmm level not yet applied on spoke; holding requested level",
+				"hive_id", hiveID,
+				"spoke_reports", level,
+				"requested", h.RequestedACMMLevel)
+		}
+	case level != h.ACMMLevel:
+		// Post-delivery the spoke's dashboard owns the level: adopt operator
+		// edits, and keep the requested level in step so a later re-delivery
+		// never reverts the operator's choice.
 		h.ACMMLevel = level
+		h.RequestedACMMLevel = level
 		changed = true
 	}
 
@@ -5439,15 +5492,15 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 	orgMatches := org != "" && strings.EqualFold(org, h.Org)
 	reposMatch := len(repos) > 0 && sameStringSliceFold(repos, h.Repos)
 	primaryMatches := primary == "" || strings.EqualFold(primary, h.PrimaryRepo)
-	// The ACMM level is part of the claim payload, so delivery is not complete
-	// until the spoke reports THAT back too. Flipping the flag on org/repos
-	// alone declared the claim delivered while the spoke was still running the
-	// level it was minted at — which both stopped the push and handed level
-	// ownership to the spoke, permanently pinning the hive to the wrong level.
-	// A level-0 report means "too old / mid-boot to say", not a mismatch.
-	acmmMatches := level == 0 || level == h.ACMMLevel
+	// ACMM is NO LONGER part of this condition. #2333 added it here so the claim
+	// could not be declared delivered while the level was outstanding, but that
+	// coupled two independent deliveries: a hive whose level lagged would also
+	// have its org/repos pushed forever, and — worse — the level had no way to
+	// re-arm on a hive whose ClaimDelivered was already true. ACMMDelivered
+	// above now tracks the level on its own, so this returns to being purely
+	// about the project payload.
 	if !h.ClaimDelivered {
-		if orgMatches && reposMatch && primaryMatches && acmmMatches {
+		if orgMatches && reposMatch && primaryMatches {
 			h.ClaimDelivered = true
 			changed = true
 		}
@@ -5564,23 +5617,28 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	//     spoke first reports the assigned project). After delivery the spoke's
 	//     dashboard owns them and the caller adopts operator edits instead.
 	//   - vanity URL: pushed until the spoke first reports it back.
-	//   - ACMM level: pushed ONLY until the claim is delivered, on exactly the
-	//     same handshake as org/repos. After delivery it is never pushed again —
-	//     the spoke's dashboard owns it and the caller adopts operator edits.
+	//   - ACMM level: pushed on its OWN handshake (ACMMDelivered), until the
+	//     spoke reports the requested level back. After that it is never pushed
+	//     again — the spoke's dashboard owns it and the caller adopts operator
+	//     edits, exactly as #2061 intended.
 	//
 	//     #2061 removed the ACMM push entirely because pushing it FOREVER
-	//     reverted every dashboard level change (the spyre bug). But dropping it
+	//     reverted every dashboard level change (the spyre bug). Dropping it
 	//     altogether meant a freshly-assigned placeholder was never told the
-	//     level its owner requested: it kept running the level it was minted at
-	//     (defaultAssignACMMLevel), reported that back, and the hub adopted the
-	//     stale report — so an approved L3 request ran, and displayed, as L2.
-	//     Bounding the push by ClaimDelivered delivers the requested level once
-	//     without ever reverting a later operator edit.
+	//     level its owner requested. #2333 bounded the push by ClaimDelivered,
+	//     which is right in principle but dead in practice for every hive
+	//     claimed before it shipped: their ClaimDelivered was already true, so
+	//     the push never fires. Bounding by the level's own flag is what makes
+	//     the delivery reachable for those hives — and it is self-limiting, so
+	//     re-running it is harmless.
 	needClaimPush := !h.ClaimDelivered &&
 		!(strings.EqualFold(curOrg, h.Org) &&
 			sameStringSliceFold(curRepos, h.Repos) &&
-			strings.EqualFold(curPrimary, primary) &&
-			curACMM == h.ACMMLevel)
+			strings.EqualFold(curPrimary, primary))
+	// Independent of the project claim: deliver the requested level until the
+	// spoke confirms it. curACMM == 0 means the spoke did not report a level, so
+	// there is nothing to correct yet.
+	needACMMPush := !h.ACMMDelivered && h.RequestedACMMLevel > 0 && curACMM != h.RequestedACMMLevel
 	needURLPush := h.VanityURL != "" && curURL != h.VanityURL
 	// A spoke reporting a repo that fails isValidRepoRef is wedged: the hub 400s
 	// its every heartbeat ("invalid repo name"), /api/livez then fails on the
@@ -5608,7 +5666,7 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// would re-send on every beat with no read-back to ever stop it.
 	wantAPIURL := gheAPIURLForHost(h.GitHubHost)
 	needGHEAPIPush := wantAPIURL != "" && curAPIURL != "" && curAPIURL != wantAPIURL
-	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush {
+	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush && !needACMMPush {
 		return nil // nothing left to push
 	}
 	// Sanitize before pushing. A repo pasted as a URL
@@ -5632,11 +5690,20 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		pushPrimary = primary
 	}
 
+	// Pre-delivery the REQUESTED level is what goes down the wire. The adopt path
+	// also holds h.ACMMLevel at that value, so the two normally agree — but
+	// stating it here means a push cannot deliver a stale level if this function
+	// ever runs against a record the adopt path has not touched yet.
+	pushACMM := h.ACMMLevel
+	if !h.ACMMDelivered && h.RequestedACMMLevel > 0 {
+		pushACMM = h.RequestedACMMLevel
+	}
+
 	return &HeartbeatProjectConfig{
 		Org:          h.Org,
 		Repos:        pushRepos,
 		PrimaryRepo:  pushPrimary,
-		ACMMLevel:    h.ACMMLevel,
+		ACMMLevel:    pushACMM,
 		DashboardURL: h.VanityURL,
 		// Point a GHE hive at its enterprise API. jjs-world
 		// (hosted-open-source-osscar) is the working reference: a bare
@@ -5850,6 +5917,11 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		h.ProjectName = body.ProjectName
 	}
 	h.ACMMLevel = acmm
+	// Same as the approve-provision path: the admin-assigned level is what the
+	// hub must deliver, and it needs its own field because the spoke will
+	// overwrite ACMMLevel with whatever it is currently running.
+	h.RequestedACMMLevel = acmm
+	h.ACMMDelivered = false
 	h.IsPublic = body.IsPublic
 	h.Status = ""
 	h.Error = ""
@@ -7624,6 +7696,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'app-missing':     'GitHub App not installed',
       'app-perm-issue':  'GitHub App permissions',
       'app-creds-operator': 'GitHub App key (operator)',
+      'app-id-placeholder': 'Placeholder App ID (operator)',
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
       'acmm-unset':      'ACMM level unset',
