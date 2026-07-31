@@ -513,9 +513,23 @@ func main() {
 	// previous version.
 	const upgradeMarkerStartupPath = "/data/upgrade-requested"
 	if markerData, err := os.ReadFile(upgradeMarkerStartupPath); err == nil {
-		if !strings.Contains(string(markerData), fmt.Sprintf(`"current_sha":"%s"`, gitShort)) {
+		m := parseUpgradeMarker(markerData)
+		if m.CurrentSHA != gitShort {
+			// We booted on a different SHA than the one that requested the
+			// upgrade: it landed. Drop the marker so the attempt budget resets.
 			os.Remove(upgradeMarkerStartupPath)
-			logger.Info("cleared stale upgrade marker (SHA changed)", "current", gitShort)
+			logger.Info("upgrade landed, cleared marker",
+				"current", gitShort, "previous", m.CurrentSHA, "target", m.TargetSHA)
+		} else {
+			// Same SHA as the attempt that ran before this boot: the image never
+			// changed, so that attempt FAILED. Say so at startup — previously
+			// this restart looked completely routine in the logs.
+			logger.Error("previous self-upgrade attempt did not land (still on the same image)",
+				"current", gitShort,
+				"target", m.TargetSHA,
+				"attempts", m.Attempts,
+				"last_error", m.LastError,
+			)
 		}
 	}
 
@@ -2336,6 +2350,10 @@ func main() {
 		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
 
+			// attemptCount carries the number of PREVIOUS failed attempts for this
+			// (current_sha → target_sha) pair, read from the marker below.
+			attemptCount := 0
+
 			// Never self-upgrade to the commit we are already running. The hub
 			// may instruct an upgrade to a short SHA that is a prefix of our
 			// full gitShort (or vice-versa); treating that as "behind" caused a
@@ -2353,17 +2371,59 @@ func main() {
 				}
 			}
 
-			// If a previous process already attempted an upgrade and we booted
-			// with the same git hash, the image tag didn't actually change.
-			// Skip to avoid an infinite restart loop.
+			// A previous process attempted an upgrade and we booted with the same
+			// git hash, so the image did not actually change: the attempt FAILED.
+			// Back off rather than retrying instantly (that was a crash-loop), but
+			// do NOT latch forever — "image unchanged" is the signature of a failed
+			// upgrade, not a reason to stop trying. The latch is keyed on
+			// (current_sha → target_sha) and bounded to selfUpgradeMaxAttempts, so a
+			// NEW target always gets a fresh budget and a transient failure (an RBAC
+			// Role that showed up late, a registry blip) still converges.
 			if markerData, err := os.ReadFile(upgradeMarkerPath); err == nil {
-				if strings.Contains(string(markerData), fmt.Sprintf(`"current_sha":"%s"`, gitShort)) {
-					logger.Info("self-upgrade skipped: already attempted from this SHA (image unchanged)",
+				m := parseUpgradeMarker(markerData)
+				if m.CurrentSHA == gitShort && sameUpgradeTarget(m.TargetSHA, targetSHA) {
+					if m.Attempts >= selfUpgradeMaxAttempts {
+						// Terminal: report it LOUDLY and tell the hub, so the UI stops
+						// claiming "Upgrading" forever and a human sees the real cause.
+						logger.Error("self-upgrade FAILED: giving up after repeated attempts (image never changed)",
+							"target", targetSHA,
+							"current", gitShort,
+							"attempts", m.Attempts,
+							"max_attempts", selfUpgradeMaxAttempts,
+							"last_error", m.LastError,
+							"hint", "the spoke must be able to get/patch its own Deployment; check the hive-self-upgrade Role/RoleBinding in this namespace",
+						)
+						hub.ReportUpgradeFailure(hubURL, cfg.HiveID, targetSHA, gitShort,
+							fmt.Sprintf("self-upgrade failed after %d attempts: %s", m.Attempts, m.LastError), logger)
+						return
+					}
+					// Exponential backoff between attempts so a hard failure does not
+					// spin every heartbeat while a recoverable one still retries.
+					backoff := selfUpgradeBaseBackoff << (m.Attempts - 1)
+					if backoff > selfUpgradeMaxBackoff {
+						backoff = selfUpgradeMaxBackoff
+					}
+					if since := time.Since(m.RequestedAt); since < backoff {
+						logger.Warn("self-upgrade retry deferred: backing off after a failed attempt",
+							"target", targetSHA,
+							"current", gitShort,
+							"attempts", m.Attempts,
+							"retry_in", (backoff - since).Round(time.Second),
+							"last_error", m.LastError,
+						)
+						return
+					}
+					logger.Warn("self-upgrade retrying after a failed attempt (image unchanged)",
 						"target", targetSHA,
 						"current", gitShort,
+						"attempt", m.Attempts+1,
+						"max_attempts", selfUpgradeMaxAttempts,
+						"last_error", m.LastError,
 					)
+					attemptCount = m.Attempts
+				} else {
+					// Different SHA or a different target — the old marker is stale.
 					os.Remove(upgradeMarkerPath)
-					return
 				}
 			}
 
@@ -2380,11 +2440,15 @@ func main() {
 				return
 			}
 
-			marker := fmt.Sprintf(`{"target_sha":"%s","current_sha":"%s","requested_at":"%s"}`,
-				targetSHA, gitShort, time.Now().UTC().Format(time.RFC3339))
-			if err := os.WriteFile(upgradeMarkerPath, []byte(marker), 0o644); err != nil {
-				logger.Warn("failed to write upgrade marker", "path", upgradeMarkerPath, "error", err)
-			}
+			// Record the attempt BEFORE acting: if the process dies mid-upgrade the
+			// next boot must still see an incremented count, otherwise a crash loop
+			// would retry without ever exhausting the budget.
+			writeUpgradeMarker(upgradeMarkerPath, upgradeMarker{
+				TargetSHA:   targetSHA,
+				CurrentSHA:  gitShort,
+				RequestedAt: time.Now().UTC(),
+				Attempts:    attemptCount + 1,
+			}, logger)
 
 			logger.Info("self-upgrade triggered: sending upgrading heartbeat then exiting",
 				"current", gitShort,
@@ -2431,14 +2495,32 @@ func main() {
 			if err != nil {
 				logger.Warn("pinned-image upgrade failed, falling back to rolling restart",
 					"target", targetSHA, "error", err)
+				recordUpgradeError(upgradeMarkerPath, err, logger)
 				needsRestart = true
 			}
 			if needsRestart {
 				if err := hub.RolloutRestartSelf(logger); err != nil {
-					logger.Warn("rolling restart failed, falling back to os.Exit",
+					// This is the wedge. os.Exit here restarts the pod onto the
+					// SAME image, so the upgrade silently never lands. It is an
+					// ERROR, not a Warn, and the cause (typically a 403 because
+					// the spoke lacks patch on its own Deployment) must be both
+					// persisted for the next attempt and reported to the hub so
+					// the UI stops showing a permanent "Upgrading".
+					logger.Error("self-upgrade FAILED: could not patch own Deployment, restarting onto the same image",
+						"target", targetSHA,
+						"current", gitShort,
 						"error", err,
+						"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)",
 					)
-					os.Exit(0)
+					recordUpgradeError(upgradeMarkerPath, err, logger)
+					hub.ReportUpgradeFailure(hubURL, cfg.HiveID, targetSHA, gitShort, err.Error(), logger)
+					// Exit NON-ZERO. Exiting 0 on a failed upgrade told Kubernetes
+					// the process had completed successfully, so the restart looked
+					// routine and nothing — not the pod's exit code, not an event,
+					// not a probe — recorded that an upgrade had just failed. A
+					// non-zero code makes the failure visible in the pod's
+					// lastState.terminated and in `kubectl describe`.
+					os.Exit(selfUpgradeFailureExitCode)
 				}
 			}
 			// Rolling restart initiated — K8s will start a new pod and
@@ -3581,6 +3663,88 @@ func convertKnowledgeLayers(cfgLayers []config.KnowledgeLayer) []knowledge.Layer
 const hiveIDFilePath = "/data/hive-id"
 
 // loadOrGenerateHiveID reads the Hive ID from disk, or generates and persists a new one.
+const (
+	// selfUpgradeMaxAttempts bounds how many times a spoke retries an upgrade
+	// that keeps leaving the image unchanged. Bounded rather than unlimited so a
+	// genuinely broken hive (e.g. missing RBAC) stops thrashing its pod, and
+	// bounded rather than "never again" so a transient failure still converges.
+	selfUpgradeMaxAttempts = 5
+	// selfUpgradeBaseBackoff is the delay before retry #2; it doubles per
+	// attempt up to selfUpgradeMaxBackoff.
+	selfUpgradeBaseBackoff = 2 * time.Minute
+	// selfUpgradeMaxBackoff caps the exponential backoff between retries.
+	selfUpgradeMaxBackoff = 30 * time.Minute
+	// selfUpgradeFailureExitCode marks a process exit caused by a FAILED
+	// self-upgrade. Distinct from 0 so the failure is visible in the container's
+	// termination state instead of looking like a clean shutdown.
+	selfUpgradeFailureExitCode = 17
+)
+
+// upgradeMarker is the on-PVC record at /data/upgrade-requested. It survives
+// pod restarts (that is the whole point: the process exits as part of an
+// upgrade), so it is the only place attempt bookkeeping can live.
+type upgradeMarker struct {
+	TargetSHA   string    `json:"target_sha"`
+	CurrentSHA  string    `json:"current_sha"`
+	RequestedAt time.Time `json:"requested_at"`
+	Attempts    int       `json:"attempts"`
+	LastError   string    `json:"last_error,omitempty"`
+}
+
+// parseUpgradeMarker decodes a marker, tolerating the legacy format that had no
+// attempts/last_error fields. A legacy marker counts as one prior attempt so an
+// already-wedged hive gets retries under the new budget instead of being
+// treated as fresh.
+func parseUpgradeMarker(data []byte) upgradeMarker {
+	var m upgradeMarker
+	if err := json.Unmarshal(data, &m); err != nil {
+		return upgradeMarker{}
+	}
+	if m.Attempts < 1 {
+		m.Attempts = 1
+	}
+	return m
+}
+
+// sameUpgradeTarget reports whether two target SHAs refer to the same commit,
+// tolerating short/full SHA length mismatch the way the hub's sameCommit does.
+// A DIFFERENT target must reset the attempt budget, so this comparison is what
+// keeps the latch from outliving the upgrade it was created for.
+func sameUpgradeTarget(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	return strings.EqualFold(a[:n], b[:n])
+}
+
+func writeUpgradeMarker(path string, m upgradeMarker, logger *slog.Logger) {
+	data, err := json.Marshal(m)
+	if err != nil {
+		logger.Warn("failed to encode upgrade marker", "error", err)
+		return
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		logger.Warn("failed to write upgrade marker", "path", path, "error", err)
+	}
+}
+
+// recordUpgradeError annotates the existing marker with the cause of the failed
+// attempt so the NEXT boot can log why the previous one did not land — without
+// it the reason dies with the process and the failure is invisible.
+func recordUpgradeError(path string, upgradeErr error, logger *slog.Logger) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	m := parseUpgradeMarker(data)
+	m.LastError = upgradeErr.Error()
+	writeUpgradeMarker(path, m, logger)
+}
+
 func loadOrGenerateHiveID(logger *slog.Logger) string {
 	if envID := os.Getenv("HIVE_ID"); envID != "" {
 		if err := os.WriteFile(hiveIDFilePath, []byte(envID+"\n"), 0o644); err == nil {

@@ -291,10 +291,16 @@ type HeartbeatPayload struct {
 	// The hub uses it to avoid nudging — let alone threatening de-provisioning
 	// — a hive whose credentials the OPERATOR has not delivered. Empty from a
 	// spoke too old to report it, which must be read as "cannot tell".
-	GitHubAppState          string                        `json:"github_app_state,omitempty"`
-	AutoUpgrade             bool                          `json:"auto_upgrade,omitempty"`
-	Upgrading               bool                          `json:"upgrading,omitempty"`
-	UpgradeTargetSHA        string                        `json:"upgrade_target_sha,omitempty"`
+	GitHubAppState   string `json:"github_app_state,omitempty"`
+	AutoUpgrade      bool   `json:"auto_upgrade,omitempty"`
+	Upgrading        bool   `json:"upgrading,omitempty"`
+	UpgradeTargetSHA string `json:"upgrade_target_sha,omitempty"`
+	// UpgradeFailed / UpgradeError let a spoke tell the hub that an instructed
+	// upgrade did NOT land. Without them a failed upgrade is indistinguishable
+	// from a slow one: the hub keeps re-instructing and the UI shows a permanent
+	// "Upgrading" spinner that is simply a lie.
+	UpgradeFailed           bool                          `json:"upgrade_failed,omitempty"`
+	UpgradeError            string                        `json:"upgrade_error,omitempty"`
 	PendingGitHubAppInstall bool                          `json:"pending_github_app_install,omitempty"`
 	ClusterHealth           *HeartbeatClusterHealthReport `json:"cluster_health,omitempty"`
 	// Fleet contribution counts — the spoke's AI-author PR activity across its
@@ -629,6 +635,52 @@ func SendUpgradingHeartbeat(hubURL string, collect StatusCollector, targetSHA st
 		recordHeartbeatSuccess()
 	}
 	logger.Info("upgrading heartbeat sent to hub", "target", targetSHA)
+}
+
+// ReportUpgradeFailure tells the hub that an instructed upgrade failed, with
+// the underlying cause. This is the counterpart to SendUpgradingHeartbeat: that
+// one says "I am upgrading", this one says "I could not". Without it the hub
+// only ever learns about upgrades that succeed, so a wedged spoke stays
+// "Upgrading" forever while the hub silently re-instructs it every heartbeat.
+//
+// Best-effort and non-fatal: the caller is usually seconds from exiting, and a
+// failure to report must never mask the upgrade failure itself.
+func ReportUpgradeFailure(hubURL, hiveID, targetSHA, currentSHA, cause string, logger *slog.Logger) {
+	if hubURL == "" || hiveID == "" {
+		return
+	}
+	payload := HeartbeatPayload{
+		HiveID:           hiveID,
+		GitHash:          currentSHA,
+		UpgradeTargetSHA: targetSHA,
+		UpgradeFailed:    true,
+		UpgradeError:     cause,
+		Timestamp:        time.Now().UTC().Format(time.RFC3339),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), heartbeatTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hubURL+"/api/heartbeat", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret := os.Getenv("HIVE_HUB_SECRET"); secret != "" {
+		req.Header.Set("Authorization", "Bearer "+secret)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logger.Warn("could not report upgrade failure to hub", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+	logger.Info("reported upgrade failure to hub", "target", targetSHA, "cause", cause)
 }
 
 // HeartbeatGitHubAppConfig carries GitHub App credentials from the hub to

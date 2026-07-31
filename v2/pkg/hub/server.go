@@ -126,20 +126,26 @@ type RegistryEntry struct {
 	//      spokes too old to report it;
 	//   3. "github.com" at render time, so a chip is never blank.
 	// Empty here means "not reported" — resolved on read, never guessed.
-	GitHubHost                string             `json:"githubHost,omitempty"`
-	Agents                    []AgentSummary     `json:"agents,omitempty"`
-	Leaderboard               []LeaderboardEntry `json:"leaderboard,omitempty"`
-	Online                    bool               `json:"online"`
-	Upgrading                 bool               `json:"upgrading,omitempty"`
-	UpgradeTarget             string             `json:"upgradeTarget,omitempty"`
-	UpgradeStartedAt          time.Time          `json:"upgradeStartedAt,omitempty"`
-	IssueHistory              []SparkPoint       `json:"issueHistory,omitempty"`
-	PRHistory                 []SparkPoint       `json:"prHistory,omitempty"`
-	GitHubAppRequired         bool               `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue        string             `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState            string             `json:"githubAppState,omitempty"`
-	PendingGitHubAppInstall   bool               `json:"pendingGitHubAppInstall,omitempty"`
-	PendingGitHubAppInstallAt time.Time          `json:"pendingGitHubAppInstallAt,omitempty"`
+	GitHubHost       string             `json:"githubHost,omitempty"`
+	Agents           []AgentSummary     `json:"agents,omitempty"`
+	Leaderboard      []LeaderboardEntry `json:"leaderboard,omitempty"`
+	Online           bool               `json:"online"`
+	Upgrading        bool               `json:"upgrading,omitempty"`
+	UpgradeTarget    string             `json:"upgradeTarget,omitempty"`
+	UpgradeStartedAt time.Time          `json:"upgradeStartedAt,omitempty"`
+	// UpgradeFailed records that the spoke reported an upgrade it could not
+	// complete, with the cause. Distinct from Upgrading: "failed" is a terminal
+	// state a human must see, not an in-flight one.
+	UpgradeFailed             bool         `json:"upgradeFailed,omitempty"`
+	UpgradeError              string       `json:"upgradeError,omitempty"`
+	UpgradeFailedAt           time.Time    `json:"upgradeFailedAt,omitempty"`
+	IssueHistory              []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory                 []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired         bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue        string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState            string       `json:"githubAppState,omitempty"`
+	PendingGitHubAppInstall   bool         `json:"pendingGitHubAppInstall,omitempty"`
+	PendingGitHubAppInstallAt time.Time    `json:"pendingGitHubAppInstallAt,omitempty"`
 	// Fleet contribution counts reported by the spoke (nil = not reported /
 	// not yet computed). Aggregated across public, non-stale hives into the
 	// /api/fleet-stats total. Pointers preserve the nil-vs-zero distinction so
@@ -979,6 +985,27 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.Upgrading = true
 	}
 
+	// A spoke that explicitly reports a FAILED upgrade must not be left showing
+	// the "Upgrading" spinner, and must not be re-instructed on a loop. Record
+	// the cause so operators can see WHY, and drop the pending instruction: the
+	// spoke has already exhausted its own retry budget, so re-sending the same
+	// target every heartbeat only reproduces the failure.
+	if payload.UpgradeFailed {
+		entry.Upgrading = false
+		entry.UpgradeFailed = true
+		entry.UpgradeError = sanitizeHeartbeatField(payload.UpgradeError)
+		entry.UpgradeFailedAt = time.Now()
+		s.mu.Lock()
+		delete(s.heartbeatUpgrade, payload.HiveID)
+		s.mu.Unlock()
+		s.logger.Error("heartbeat: spoke reported a FAILED upgrade",
+			"hive_id", payload.HiveID,
+			"from", payload.GitHash,
+			"to", payload.UpgradeTargetSHA,
+			"error", payload.UpgradeError,
+		)
+	}
+
 	// Timeline: capture the pre-heartbeat entry inside the lock (it is the only
 	// place old and new coexist), but diff and persist AFTER unlocking —
 	// s.mu is a write lock held across the whole registry scan, so a file
@@ -1008,6 +1035,22 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				branchForLatest = "v2"
 			}
 			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
+			// Carry a previously-reported upgrade failure forward across ordinary
+			// heartbeats (which do not repeat it), but clear it the moment the
+			// spoke actually reports a NEW git hash — that means it finally moved.
+			if h.UpgradeFailed && !payload.UpgradeFailed {
+				if entry.GitHash != "" && h.GitHash != "" && entry.GitHash != h.GitHash {
+					entry.UpgradeFailed = false
+					entry.UpgradeError = ""
+					entry.UpgradeFailedAt = time.Time{}
+					s.logger.Info("heartbeat: previously failed upgrade has landed",
+						"hive_id", payload.HiveID, "git_hash", entry.GitHash)
+				} else {
+					entry.UpgradeFailed = true
+					entry.UpgradeError = h.UpgradeError
+					entry.UpgradeFailedAt = h.UpgradeFailedAt
+				}
+			}
 			if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
 				// Non-upgrading heartbeat at the target SHA or at latest —
 				// upgrade completed (image may have advanced past the
@@ -1019,6 +1062,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				entry.UpgradeTarget = ""
 			} else if h.Upgrading && !payload.Upgrading && h.UpgradeTarget == "" {
 				// Upgrading with no target (stale flag from config-only restart).
+				entry.Upgrading = false
+				entry.UpgradeTarget = ""
+			} else if payload.UpgradeFailed {
+				// The spoke just told us the upgrade FAILED. That is direct
+				// evidence and must beat the inference below, which would
+				// otherwise re-assert the stale Upgrading flag (same GitHash as
+				// before is exactly what a failed upgrade looks like) and put the
+				// permanent spinner straight back.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
 			} else if h.Upgrading && h.UpgradeTarget != "" {
