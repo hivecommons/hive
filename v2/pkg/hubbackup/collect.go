@@ -36,16 +36,42 @@ const (
 // Spoke files captured. This set is the minimum required to rebuild a working
 // spoke; everything else on a spoke PVC is regenerable agent scratch.
 //
-// hive.yaml.bak is THE authoritative running config. The spoke's copy-config
-// init container does:
+// TWO config files are captured, because neither alone restores a spoke.
 //
-//	if [ -f /data/hive.yaml.bak ]; then cp /data/hive.yaml.bak /etc/hive/hive.yaml
-//	else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml; fi
+// hive.yaml.dashboard is the PVC OVERLAY, and it is what the boot-time merge
+// applies over the ConfigMap seed on every hive. It dominates the resulting
+// config: sampled seeds are 4–11% of the running config and omit whole
+// top-level blocks (policies, data, knowledge, notifications, hive_id). This
+// is the file that actually carries a hive's configuration.
 //
-// so a restore that omits hive.yaml.bak silently falls back to the stale
-// ConfigMap seed with NO error, losing every user customization. The plain
-// /data/hive.yaml is NOT authoritative and is not what must be restored.
+// hive.yaml.bak is a POST-MERGE SNAPSHOT written by the entrypoint after the
+// merge (deploy/entrypoint.sh:150) — not an input on most hives. It is read in
+// two cases: the disaster fallback when the ConfigMap is missing or empty
+// (entrypoint.sh:152-161), and on every boot by the minority of spokes running
+// the older ".bak wins" copy-config variant.
+//
+// A PREVIOUS VERSION OF THIS COMMENT ASSERTED that copy-config always restores
+// from .bak and falls back to the seed. That is true on only 3 of 51 live
+// hives. The variant new hives get merely REPORTS whether .bak exists:
+//
+//	cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied
+//	if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi
+//
+// Capturing only .bak was therefore capturing the snapshot while omitting the
+// file that wins the merge — a restore would produce a differently-configured
+// spoke with no error at backup time and no symptom until the owner noticed
+// their settings had reverted.
+//
+// The two files are near-copies but NOT interchangeable: the overlay is
+// written secret-free on purpose (config.dashboardOverlayBytes collapses
+// HIVE_GITHUB_TOKEN back to ${HIVE_GITHUB_TOKEN} and blanks a pod-env-derived
+// dashboard.auth_token), while .bak retains those values. Observed live on one
+// spoke: .bak 14609 B with a real auth_token, overlay 14547 B with "".
+//
+// The plain /data/hive.yaml is NOT authoritative — it is regenerated from seed
+// + overlay on every boot — and is deliberately excluded.
 var spokeFiles = []string{
+	"hive.yaml.dashboard",
 	"hive.yaml.bak",
 	"hive-id",
 }
@@ -267,15 +293,33 @@ func (k KubectlSpokeCollector) collectOne(target ClusterTarget, id string, logge
 	}
 	sc.Files = files
 
-	// hive.yaml.bak is the authoritative config; without it the spoke cannot
-	// be faithfully rebuilt, so surface that as an explicit error.
-	if _, ok := sc.Files["hive.yaml.bak"]; !ok {
-		sc.Err = "hive.yaml.bak absent — spoke config not recoverable from this backup"
+	if reason := spokeConfigUnrecoverable(sc.Files); reason != "" {
+		sc.Err = reason
 		logger.Warn("backup: spoke missing authoritative config", "hive", id)
 		return sc
 	}
 	logger.Info("backup: captured spoke", "hive", id, "files", len(sc.Files))
 	return sc
+}
+
+// spokeConfigUnrecoverable returns why a captured spoke cannot be rebuilt from
+// its config files, or "" if it can.
+//
+// EITHER config file is sufficient. The overlay carries the configuration that
+// wins the boot merge; .bak is a post-merge snapshot of the same config that
+// additionally serves the disaster fallback. Missing both means the spoke
+// cannot be faithfully rebuilt.
+//
+// This deliberately does not require the overlay specifically: a spoke that has
+// never had a dashboard save legitimately has no overlay yet, and failing its
+// backup would be a false alarm.
+func spokeConfigUnrecoverable(files map[string][]byte) string {
+	_, haveOverlay := files["hive.yaml.dashboard"]
+	_, haveBak := files["hive.yaml.bak"]
+	if !haveOverlay && !haveBak {
+		return "hive.yaml.dashboard and hive.yaml.bak both absent — spoke config not recoverable from this backup"
+	}
+	return ""
 }
 
 // spokeStreamDelim separates the filename marker from its base64 payload.

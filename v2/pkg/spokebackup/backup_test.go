@@ -32,10 +32,14 @@ func seedSpoke(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	// hive.yaml and hive.yaml.bak deliberately DIFFER, as they did on the
-	// sampled production spoke.
+	// The three config files deliberately DIFFER, as they do on a live spoke:
+	// hive.yaml is regenerated each boot, the overlay wins the boot merge and
+	// is written secret-free, and .bak is the post-merge snapshot that retains
+	// env-derived secrets. Distinct content is what proves which file the
+	// archive captured.
 	mustWrite(t, filepath.Join(dir, "hive.yaml"), "stale: configmap-seed\n")
-	mustWrite(t, filepath.Join(dir, "hive.yaml.bak"), "live: owner-customised\n")
+	mustWrite(t, filepath.Join(dir, "hive.yaml.dashboard"), "live: owner-customised\noverlay: wins-the-merge\n")
+	mustWrite(t, filepath.Join(dir, "hive.yaml.bak"), "live: owner-customised\nbak: post-merge-snapshot\n")
 	mustWrite(t, filepath.Join(dir, "hive-id"), "hive-abc123")
 	mustWrite(t, filepath.Join(dir, "hive-state.json"), `{"agents":[]}`)
 	mustWrite(t, filepath.Join(dir, "gh-app-key.pem"), "-----BEGIN PRIVATE KEY-----\nAAA\n")

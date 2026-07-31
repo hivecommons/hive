@@ -352,12 +352,24 @@ func TestBuildArchiveExtractsThroughSharedPath(t *testing.T) {
 		t.Fatalf("Extract: %v", err)
 	}
 
-	got, err := os.ReadFile(filepath.Join(dest, spokePrefix, configBackupFile))
+	// Both config files must survive the round trip: the overlay because it
+	// wins the boot merge, .bak because it serves the disaster fallback and
+	// the variant-A/B hives. The fixture gives them a shared marker plus a
+	// distinguishing line, so this asserts the owner's config came back AND
+	// that the two files were not conflated.
+	gotBak, err := os.ReadFile(filepath.Join(dest, spokePrefix, configBackupFile))
 	if err != nil {
-		t.Fatalf("authoritative config missing from the restore: %v", err)
+		t.Fatalf("post-merge snapshot missing from the restore: %v", err)
 	}
-	if string(got) != "live: owner-customised\n" {
-		t.Fatalf("restored the WRONG config: %q", got)
+	if !strings.Contains(string(gotBak), "owner-customised") {
+		t.Fatalf("restored the WRONG config for %s: %q", configBackupFile, gotBak)
+	}
+	gotOverlay, err := os.ReadFile(filepath.Join(dest, spokePrefix, configOverlayFile))
+	if err != nil {
+		t.Fatalf("overlay missing from the restore: %v", err)
+	}
+	if !strings.Contains(string(gotOverlay), "owner-customised") {
+		t.Fatalf("restored the WRONG config for %s: %q", configOverlayFile, gotOverlay)
 	}
 	// The stale hive.yaml must not be present at all.
 	if _, err := os.Stat(filepath.Join(dest, spokePrefix, "hive.yaml")); err == nil {

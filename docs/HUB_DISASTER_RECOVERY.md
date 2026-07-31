@@ -34,20 +34,76 @@ undecryptable ciphertext and every user must re-authorize via OAuth.** No
 restore procedure recovers it. This backup is the only thing standing between
 you and that outcome.
 
-### 3. The authoritative spoke config is `hive.yaml.bak` — NOT `hive.yaml`
+### 3. The authoritative spoke config is the PVC overlay — usually NOT `hive.yaml.bak`
 
-Each spoke's running config is **`/data/hive.yaml.bak`** on its own PVC. The
-ConfigMap is only a fallback seed read at startup. The spoke's `copy-config`
-init container does:
+> **Corrected.** This section previously stated that `copy-config` restores from
+> `/data/hive.yaml.bak`, and that restoring that file is what brings a spoke
+> back. **That is true on only 3 of 51 live hives.** Following it on the other
+> 48 produces a differently-configured spoke with no error — the worst kind of
+> DR bug, because it fails only when you are already in an emergency.
+
+The fleet runs **two different `copy-config` variants**, baked into each
+spoke's Deployment at provision time and never migrated.
+
+| Variant | Init-container behaviour | Hives |
+|---|---|---|
+| **A/B — `.bak` wins** | restores `/data/hive.yaml.bak` over the seed | **3**: `kubestellar-console`, `projectbluefin-knuckle`, `aslom-hive-agent` |
+| **C — seed wins** | copies the ConfigMap seed; merely *echoes* whether `.bak` exists | **48**: everything else (15 on hive-oke, 33 on vllm-d) |
+
+Variant C, which is what new hives get:
 
 ```sh
-if [ -f /data/hive.yaml.bak ]; then cp /data/hive.yaml.bak /etc/hive/hive.yaml
-else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml; fi
+cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied
+if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi
 ```
 
-**A restore that omits `hive.yaml.bak` silently falls back to the stale
-ConfigMap seed with no error**, losing every customization the user made. There
-is no warning — the spoke just comes up wrong. Always restore `hive.yaml.bak`.
+Note it only *reports* `.bak`. It never restores from it.
+
+**How to tell which variant a hive runs** — this is the only way to know:
+
+```sh
+kubectl -n hive-hosted-<id> get deploy -o jsonpath\
+='{.items[*].spec.template.spec.initContainers[?(@.name=="copy-config")].command}'
+```
+
+#### What actually holds the running config
+
+On **every** hive, the config in effect is dominated by the PVC overlay
+`/data/hive.yaml.dashboard`, which the entrypoint merges over the seed at boot.
+The ConfigMap seed is 4–11% of the running config on sampled hives and omits
+whole top-level blocks (`policies`, `data`, `knowledge`, `notifications`,
+`hive_id`).
+
+**So the file to restore is `/data/hive.yaml.dashboard`.** It is the only
+writable layer and the one that wins. See `v2/docs/config-layering.md` for the
+full precedence order, and `GET /api/config/provenance` on a running spoke to
+ask which layer set any given field.
+
+#### `hive.yaml.bak` is a snapshot, not a restore source
+
+The name misleads. `.bak` is written by the entrypoint **after** the merge
+(`v2/deploy/entrypoint.sh:150`) — it is a snapshot of the *result*, not an
+input. On variant-C hives nothing reads it during a normal boot.
+
+It has exactly one non-redundant role: the **disaster fallback** at
+`entrypoint.sh:152-161`, which restores from `.bak` when the ConfigMap is
+missing or empty. That is a genuinely different scenario from the overlay path,
+which is why the file is still worth capturing.
+
+`.bak` and the overlay are **near-copies but not interchangeable**. The overlay
+is written secret-free on purpose (`dashboardOverlayBytes` collapses
+`HIVE_GITHUB_TOKEN` back to `${HIVE_GITHUB_TOKEN}` and blanks a
+pod-env-derived `dashboard.auth_token`), while `.bak` is a verbatim copy of the
+merged config **including** those secrets. Observed live on
+`projectbluefin-knuckle`:
+
+```
+/data/hive.yaml.bak        14609 B   auth_token: 55c076f9…
+/data/hive.yaml.dashboard  14547 B   auth_token: ""
+```
+
+On a hive with no such env vars set the two files are byte-identical — but that
+is incidental, not structural. **Capture both.**
 
 ### 4. A PVC-only backup is NOT restorable
 
@@ -81,7 +137,7 @@ the first three is missing.
 | `/data/saas/**` | users, hives, keys, timeline, provisioning state |
 | `/data/hub-registry.json` | the 50-hive fleet registry |
 | 4 Kubernetes Secrets | credentials outside the PVC |
-| per-spoke `hive.yaml.bak`, `gh-app-key*.pem`, `hive-id` | rebuild each spoke |
+| per-spoke `hive.yaml.dashboard`, `hive.yaml.bak`, `gh-app-key*.pem`, `hive-id` | rebuild each spoke |
 
 **Deliberately excluded** as regenerable agent scratch: `nous/`, `home/`,
 `beads/`, `logs/`. These are ~110MB of the hub's ~125MB and ~796MB per spoke.
@@ -231,8 +287,10 @@ NS=hive-hosted-$HIVE
 POD=$(kubectl get pods -n $NS --field-selector=status.phase=Running \
         -o jsonpath='{.items[0].metadata.name}')
 
-# hive.yaml.bak is authoritative — without it the spoke silently uses the
-# stale ConfigMap seed.
+# Restore BOTH config files. The overlay is what wins on a normal boot
+# (all 51 hives); .bak is what the disaster fallback reads when the
+# ConfigMap is missing/empty, and what variant-A/B hives boot from.
+kubectl cp restore/spokes/$HIVE/hive.yaml.dashboard $NS/$POD:/data/hive.yaml.dashboard -c hive
 kubectl cp restore/spokes/$HIVE/hive.yaml.bak $NS/$POD:/data/hive.yaml.bak -c hive
 kubectl cp restore/spokes/$HIVE/hive-id       $NS/$POD:/data/hive-id       -c hive
 for k in restore/spokes/$HIVE/gh-app-key*.pem; do
@@ -242,10 +300,26 @@ done
 kubectl rollout restart deploy/hive -n $NS
 ```
 
-Confirm the spoke used the restored config, not the seed:
+Confirm the spoke used the restored config. **Which log line to expect depends
+on the variant** (see §3):
 
 ```bash
-kubectl logs -n $NS -c copy-config $POD    # expect "override-used", not "seed-copied"
+kubectl logs -n $NS -c copy-config $POD
+#   variant A/B  -> "override-used"     (.bak restored)
+#   variant C    -> "configmap-copied"  (seed copied; .bak NOT read)
+
+# On variant C the overlay is what matters, and the merge happens in the
+# main container, not copy-config:
+kubectl logs -n $NS -c hive $POD | grep '\[entrypoint\]'
+#   expect: "dashboard overlay merged over ConfigMap seed"
+#   NOT:    "dashboard overlay invalid, using ConfigMap seed as-is"
+```
+
+The best confirmation is to ask the spoke directly:
+
+```bash
+kubectl -n $NS exec $POD -c hive -- \
+  curl -s localhost:3002/api/config/provenance | jq '.overlay_rejected, .fields'
 ```
 
 ### Step 6 — Re-link GitHub
@@ -264,7 +338,7 @@ Manual, and unavoidable:
 - [ ] users can log in without re-authorizing (proves `hmac.key` restored)
 - [ ] hive count and vanity URLs unchanged
 - [ ] spokes appear online and heartbeat to the hub
-- [ ] `copy-config` logged `override-used` on each spoke
+- [ ] `copy-config` logged the expected line for the spoke's variant (`override-used` on A/B, `configmap-copied` on C), and the hive container logged "dashboard overlay merged over ConfigMap seed"
 - [ ] a fresh `hive-backup run` succeeds against the rebuilt hub
 
 ---
@@ -290,7 +364,7 @@ writes confined to a throwaway namespace that was deleted afterwards):
 - Wrong key and bit-flips are rejected (GCM auth tag)
 - Restored `hmac.key` byte-identical to production
 - **All 88 restored user tokens decrypt successfully**
-- Restored `hive.yaml.bak` byte-identical to the live spoke
+- Restored `hive.yaml.dashboard` and `hive.yaml.bak` byte-identical to the live spoke
 - Secrets restored into a throwaway namespace matched live values
 - Hub PVC data restored into a live pod: 88 users, 50 hives
 
@@ -331,7 +405,8 @@ they had already found, claimed, deferred or closed. This backup preserves that.
 
 | Path | Why |
 |---|---|
-| `hive.yaml.bak` | The **authoritative** spoke config (see below) |
+| `hive.yaml.dashboard` | The **overlay** — the layer that wins the boot merge (see below) |
+| `hive.yaml.bak` | Post-merge snapshot; disaster fallback + variant-A/B boot source |
 | `hive-id` | Hive identity as known to the hub |
 | `hive-state.json` | Agent runtime state |
 | `gh-app-key*.pem` | GitHub App private keys — **credentials** |
@@ -358,15 +433,25 @@ Bead directories are **discovered, not hardcoded**. A production spoke had ten
 production spoke (beads 2.6MB dominating), versus ~796MB for the whole PVC.
 Small enough to stream to a browser and stay responsive.
 
-## `hive.yaml.bak`, not `hive.yaml`
+## Capture the overlay and `.bak`, not `hive.yaml`
 
-The same trap as the hub backup, and worth repeating because it is silent. The
-`copy-config` init container restores from `hive.yaml.bak` and falls back to the
-stale ConfigMap seed only when it is absent. On a sampled production spoke the
-two files had **different content and different timestamps** — `hive.yaml` was a
-root-owned copy days older than the live, user-customised `hive.yaml.bak`.
-Backing up the wrong one produces no error at backup time and no symptom until a
-restore quietly reverts the owner's settings. A test locks this in.
+The same trap as the hub backup, and worth repeating because it is silent.
+
+`/etc/hive/hive.yaml` is **not** the file to back up. On a sampled production
+spoke it was a root-owned copy days older than the live config. It is
+regenerated from the seed plus the overlay on every boot.
+
+The two files worth capturing are:
+
+| File | Why |
+|---|---|
+| `/data/hive.yaml.dashboard` | The **overlay** — the only writable layer, and the one that wins the boot-time merge on all 51 hives. This is the real running config. |
+| `/data/hive.yaml.bak` | The post-merge snapshot. Read by the disaster fallback when the ConfigMap is missing/empty, and by variant-A/B hives on every boot. Also the only copy that retains env-derived secrets. |
+
+They are near-copies but **not interchangeable** — the overlay is deliberately
+secret-free. Backing up the wrong one produces no error at backup time and no
+symptom until a restore quietly reverts the owner's settings. Tests lock this
+in.
 
 ## Encryption is mandatory
 
@@ -407,7 +492,7 @@ hive-backup extract --archive hive-spoke-backup-<id>-<ts>.tar.gz.enc --dest ./re
 
 # Layout:
 #   ./restore/MANIFEST.json
-#   ./restore/spoke/{hive.yaml.bak,hive-id,hive-state.json,gh-app-key*.pem}
+#   ./restore/spoke/{hive.yaml.dashboard,hive.yaml.bak,hive-id,hive-state.json,gh-app-key*.pem}
 #   ./restore/beads/<agent>/**
 
 # 1. Identify the target spoke pod.
@@ -427,7 +512,9 @@ kubectl -n $NS scale deploy/hive --replicas=1
 POD=$(kubectl -n $NS get pods --field-selector=status.phase=Running \
         -o jsonpath='{.items[0].metadata.name}')
 
-# 3. Config FIRST — .bak is what copy-config actually restores from.
+# 3. Config FIRST. Restore BOTH: the overlay is what wins the boot merge on
+#    every hive; .bak covers the disaster fallback and variant-A/B hives.
+kubectl -n $NS cp ./restore/spoke/hive.yaml.dashboard $POD:/data/hive.yaml.dashboard -c hive
 kubectl -n $NS cp ./restore/spoke/hive.yaml.bak   $POD:/data/hive.yaml.bak -c hive
 kubectl -n $NS cp ./restore/spoke/hive-id         $POD:/data/hive-id       -c hive
 kubectl -n $NS cp ./restore/spoke/hive-state.json $POD:/data/hive-state.json -c hive
@@ -445,7 +532,7 @@ for d in ./restore/beads/*/; do
   kubectl -n $NS cp "$d" $POD:/data/beads/$agent -c hive
 done
 
-# 6. Restart so copy-config picks up hive.yaml.bak.
+# 6. Restart so the boot-time merge picks up the restored config.
 kubectl -n $NS rollout restart deploy/hive
 kubectl -n $NS rollout status  deploy/hive --timeout=300s
 ```
@@ -464,7 +551,7 @@ ownership to match the surrounding directories rather than loosening the mode.
 
 **Verified:**
 
-- Unit tests cover: `hive.yaml.bak` captured and `hive.yaml` excluded; beads
+- Unit tests cover: `hive.yaml.dashboard` and `hive.yaml.bak` captured and `hive.yaml` excluded; beads
   captured for every discovered agent; `nous`/`logs`/`home`/`audit.jsonl`/
   `dashboard-sessions.json` excluded; App keys captured; sealed archive is
   opaque ciphertext with no plaintext key/config leakage; wrong key and

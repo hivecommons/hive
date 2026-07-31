@@ -57,16 +57,30 @@ const (
 	// agent roster rather than being a fixed set of five.
 	beadsSubdir = "beads"
 
-	// configBackupFile is the AUTHORITATIVE spoke config.
+	// configOverlayFile is the PVC overlay — the layer that wins the boot-time
+	// merge over the ConfigMap seed, and therefore the file that actually
+	// carries a hive's configuration. Sampled seeds are 4–11% of the running
+	// config and omit whole top-level blocks (policies, data, knowledge,
+	// notifications, hive_id).
+	configOverlayFile = "hive.yaml.dashboard"
+
+	// configBackupFile is the POST-MERGE SNAPSHOT, written by the entrypoint
+	// after the merge (deploy/entrypoint.sh:150).
 	//
-	// It is hive.yaml.bak, NOT hive.yaml. The copy-config init container
-	// restores from .bak and falls back to the ConfigMap seed only when .bak is
-	// absent, so .bak is what actually comes back after a restart. On a sampled
-	// production spoke the two files had DIFFERENT content and different
-	// timestamps — hive.yaml was a stale root-owned copy while hive.yaml.bak
-	// carried the live user customizations. Backing up hive.yaml instead would
-	// silently capture the wrong config with no error at backup time and no
-	// symptom until a restore quietly reverted the owner's settings.
+	// An earlier comment here stated that copy-config restores from .bak and
+	// falls back to the seed only when .bak is absent. That is true on only 3
+	// of 51 live hives; the variant new hives get merely reports whether .bak
+	// exists and never restores from it. So .bak is not, in general, "what
+	// comes back after a restart" — the overlay is.
+	//
+	// It is still captured, for two reasons: it is what the disaster fallback
+	// reads when the ConfigMap is missing or empty (entrypoint.sh:152-161),
+	// and it is the only copy retaining env-derived secrets, since the overlay
+	// is written secret-free on purpose (config.dashboardOverlayBytes).
+	//
+	// hive.yaml itself remains excluded: it is regenerated from seed + overlay
+	// on every boot, and on a sampled production spoke was a stale root-owned
+	// copy days older than the live config.
 	configBackupFile = "hive.yaml.bak"
 
 	// hiveIDFile identifies this hive to the hub.
@@ -132,8 +146,10 @@ const BuildTimeout = 2 * time.Minute
 //   - dashboard-sessions.json  live browser session tokens. Excluded on
 //     purpose: these are credentials with no restore value, and restoring
 //     them would resurrect sessions that should have expired.
-//   - hive.yaml  the stale ConfigMap-seeded copy; see configBackupFile.
+//   - hive.yaml  regenerated from seed + overlay on every boot; see
+//     configOverlayFile and configBackupFile.
 var includedRootFiles = []string{
+	configOverlayFile,
 	configBackupFile,
 	hiveIDFile,
 	stateFile,
