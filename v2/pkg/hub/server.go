@@ -1947,12 +1947,35 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	// The hub secret is never returned from this browser-reachable endpoint; the
 	// raw shared secret has no legitimate consumer over HTTP.
+	// latest_shas is the SPOKE-image-verified target actually advertised to
+	// spokes (see the heartbeat response in handleHeartbeat). It legitimately
+	// lags head_shas while a new commit's spoke image builds, so a bare
+	// "latest_shas is behind HEAD" reading cannot distinguish a healthy
+	// mid-build window from a wedged poller. head_shas + image_statuses make
+	// that difference explicit:
+	//
+	//   head == latest                      → fully rolled out
+	//   head > latest, status "building"    → normal, transient, no action
+	//   head > latest, status "failed"      → the image build failed
+	//   head > latest, status "ready"       → poller fault: the image exists
+	//                                         but the advertised SHA never
+	//                                         advanced
+	//   head_shas empty / far behind GitHub → poller not running or erroring
+	//
+	// latest_hub_shas is the HUB image for the same commits, a SEPARATE build
+	// that can land in either order. upgrade_state is computed from it, not
+	// from latest_shas, so "upgrade_state: current" beside an older
+	// latest_shas is a legitimate state (hub image published, spoke image
+	// still building) rather than a contradiction.
 	resp := map[string]any{
-		"git_hash":      s.hubGitHash,
-		"git_branch":    s.hubGitBranch,
-		"latest_sha":    getLatestSHA(),
-		"latest_shas":   getLatestSHAs(),
-		"upgrade_state": s.hubUpgradeState(),
+		"git_hash":        s.hubGitHash,
+		"git_branch":      s.hubGitBranch,
+		"latest_sha":      getLatestSHA(),
+		"latest_shas":     getLatestSHAs(),
+		"latest_hub_shas": getLatestHubSHAs(),
+		"head_shas":       getHeadSHAs(),
+		"image_statuses":  getImageStatuses(),
+		"upgrade_state":   s.hubUpgradeState(),
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")

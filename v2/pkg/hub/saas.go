@@ -3654,6 +3654,37 @@ func getLatestHubSHAForBranch(branch string) string {
 	return latestHubSHAByBranch[branch].SHA
 }
 
+// getLatestHubSHAs returns a branch→SHA map of the newest commit per branch
+// whose HUB image is verified pullable. Exposed alongside getLatestSHAs so an
+// operator can see the two independent build results side by side: the hub and
+// spoke images are separate builds that can succeed in either order (or fail
+// independently) for the same commit, which is why the caches are separate.
+func getLatestHubSHAs() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(latestHubSHAByBranch))
+	for k, v := range latestHubSHAByBranch {
+		cp[k] = v.SHA
+	}
+	return cp
+}
+
+// getHeadSHAs returns a branch→HEAD-SHA map: the newest commit the poller has
+// seen on each branch, regardless of whether its images exist yet. Comparing
+// this against getLatestSHAs tells an operator WHY the advertised SHA is behind
+// HEAD — see getImageStatuses for the distinguishing signal.
+func getHeadSHAs() map[string]string {
+	latestSHAMu.RLock()
+	defer latestSHAMu.RUnlock()
+	cp := make(map[string]string, len(headSHAByBranch))
+	for k, v := range headSHAByBranch {
+		if v.SHA != "" {
+			cp[k] = v.SHA
+		}
+	}
+	return cp
+}
+
 // getLatestSHAs returns a branch→SHA map (backward-compatible string values).
 func getLatestSHAs() map[string]string {
 	latestSHAMu.RLock()
