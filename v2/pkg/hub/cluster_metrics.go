@@ -203,6 +203,20 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 			node.GPUs = ni.gpuCapacity
 			node.GPUType = ni.gpuType
 		}
+		// LIVE node filesystem usage from the kubelet stats/summary endpoint.
+		// The node object's ephemeral-storage capacity is only the declared
+		// size and cannot tell us how full the disk is. Best-effort per node:
+		// a failure leaves the disk fields nil (rendered as unknown).
+		if rawStats, statsErr := k8sAPIGet(nodeStatsSummaryPath(name)); statsErr != nil {
+			logger.Debug("spoke metrics: node disk stats unavailable", "node", name, "error", statsErr)
+		} else if usage, ok := parseNodeStatsSummaryDisk(rawStats); ok {
+			totalMB := usage.capacityBytes / bytesPerMB
+			usedMB := usage.usedBytes / bytesPerMB
+			diskPct := int(usage.usedBytes * percentMultiplier / usage.capacityBytes)
+			node.DiskTotalMB = &totalMB
+			node.DiskUsedMB = &usedMB
+			node.DiskPercent = &diskPct
+		}
 		nodes = append(nodes, node)
 	}
 
@@ -285,6 +299,9 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	var totalMemAlloc int64
 	var totalMemUsed int64
 	var totalPods int
+	// Disk totals accumulate only over nodes that actually reported usage, so
+	// partial coverage stays honest instead of averaging in phantom zeros.
+	var totalDiskBytes, totalDiskUsedBytes int64
 	readyNodes := 0
 
 	for _, n := range nodes {
@@ -293,6 +310,10 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 		totalPods += n.Pods
 		if n.Ready {
 			readyNodes++
+		}
+		if n.DiskTotalMB != nil && n.DiskUsedMB != nil {
+			totalDiskBytes += *n.DiskTotalMB * bytesPerMB
+			totalDiskUsedBytes += *n.DiskUsedMB * bytesPerMB
 		}
 		if ni, ok := nodeMap[n.Name]; ok {
 			totalCPUAlloc += ni.cpuAllocatable
@@ -311,6 +332,16 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 	}
 	totalMemGB := int(totalMemAlloc / giToBytes)
 
+	// nil when no node reported disk usage, so the hub omits disk for this
+	// cluster rather than displaying a misleading 0%.
+	var totalDiskGB, totalDiskPct *int
+	if totalDiskBytes > 0 {
+		gb := int(totalDiskBytes / giToBytes)
+		pct := int(totalDiskUsedBytes * percentMultiplier / totalDiskBytes)
+		totalDiskGB = &gb
+		totalDiskPct = &pct
+	}
+
 	report := &HeartbeatClusterHealthReport{
 		Nodes: nodes,
 		Summary: HeartbeatClusterSummary{
@@ -320,6 +351,8 @@ func collectClusterHealthUncached(logger *slog.Logger) *HeartbeatClusterHealthRe
 			TotalCPUPct:           totalCPUPct,
 			TotalMemGB:            totalMemGB,
 			TotalMemPct:           totalMemPct,
+			TotalDiskGB:           totalDiskGB,
+			TotalDiskPct:          totalDiskPct,
 			TotalPods:             totalPods,
 			HiveCapacityRemaining: hiveCapacityRemaining,
 		},
