@@ -291,3 +291,66 @@ func TestCancelForUninstallRemovesOnlyJournaledZeroByteBrokenRef(t *testing.T) {
 		})
 	}
 }
+
+func TestRetireBrokenUnpublishedBranchForUninstall(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		remoteAbsent bool
+		refBytes     []byte
+		wantRemoved  bool
+		wantError    string
+	}{
+		{name: "exact zero-byte unpublished branch", remoteAbsent: true, wantRemoved: true},
+		{name: "remote absence required", wantError: "absence was not proven"},
+		{name: "non-empty invalid ref is preserved", remoteAbsent: true, refBytes: []byte("foreign\n"), wantError: "not an ordinary zero-byte loose ref"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository, _ := seedGitRepository(t)
+			fingerprint := "owner/repo:unpublished-branch"
+			attempt := Attempt{
+				Repository: "owner/repo", RepositoryFingerprint: fingerprint, Attempt: 1,
+				Branch: repairBranchName(fingerprint, 0, 1), Worktree: "discarded-worktree", Stage: StageCancelled,
+			}
+			commonDir := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "--git-common-dir"))
+			if !filepath.IsAbs(commonDir) {
+				commonDir = filepath.Join(repository, commonDir)
+			}
+			refPath := filepath.Join(commonDir, filepath.FromSlash("refs/heads/"+attempt.Branch))
+			if err := os.MkdirAll(filepath.Dir(refPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(refPath, test.refBytes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			removed, err := RetireBrokenUnpublishedBranchForUninstall(context.Background(), repository, attempt, test.remoteAbsent)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) || removed {
+					t.Fatalf("result removed=%t err=%v", removed, err)
+				}
+				if data, readErr := os.ReadFile(refPath); readErr != nil || string(data) != string(test.refBytes) {
+					t.Fatalf("denied ref changed: data=%q err=%v", data, readErr)
+				}
+				return
+			}
+			if err != nil || removed != test.wantRemoved {
+				t.Fatalf("result removed=%t err=%v", removed, err)
+			}
+			if _, statErr := os.Lstat(refPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("zero-byte unpublished ref survived: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestRetireBrokenUnpublishedBranchRejectsDifferentBinding(t *testing.T) {
+	repository, _ := seedGitRepository(t)
+	attempt := Attempt{
+		Repository: "owner/repo", RepositoryFingerprint: "owner/repo:different-binding", Attempt: 1,
+		Branch: "hive/repair-foreign-a1", Stage: StageCancelled,
+	}
+	removed, err := RetireBrokenUnpublishedBranchForUninstall(context.Background(), repository, attempt, true)
+	if err != nil || removed {
+		t.Fatalf("different branch binding removed=%t err=%v", removed, err)
+	}
+}

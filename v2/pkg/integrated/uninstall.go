@@ -928,7 +928,9 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			// ref therefore has no external repair resource left to retire.
 			absentInterruptedModel := attempt.Stage == repair.StageModelRunning &&
 				!attempt.AttemptCounted
-			if (attempt.Stage != repair.StageNoChange && !absentUnpublishedFailure && !absentInterruptedModel) || attempt.PRNumber != 0 {
+			absentCancelled := attempt.Stage == repair.StageCancelled &&
+				!attempt.AttemptCounted && repair.UninstallRefsRetired(attempt)
+			if (attempt.Stage != repair.StageNoChange && !absentUnpublishedFailure && !absentInterruptedModel && !absentCancelled) || attempt.PRNumber != 0 {
 				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 			}
 			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, attempt.Branch)
@@ -940,6 +942,17 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			}
 			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_absent_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", attempt.RepositoryFingerprint, attempt.Branch, attempt.Stage)}); err != nil {
 				return err
+			}
+			if absentInterruptedModel || absentCancelled {
+				removed, err := repair.RetireBrokenUnpublishedBranchForUninstall(ctx, config.CheckoutDir, attempt, true)
+				if err != nil {
+					return err
+				}
+				if removed {
+					if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_remove_broken_local_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", attempt.RepositoryFingerprint, attempt.Branch, attempt.Stage)}); err != nil {
+						return err
+					}
+				}
 			}
 		} else {
 			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_delete_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s head=%s", attempt.RepositoryFingerprint, attempt.Branch, attempt.CommitSHA)}); err != nil {
