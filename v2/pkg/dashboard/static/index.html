@@ -2687,6 +2687,77 @@
     </div>
   </div>
 
+  <div id="nous-section" style="display:none; margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('nous-section')"><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:0.75rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span> <button onclick="event.stopPropagation();openNousConfig()" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--muted);margin-left:6px;padding:2px" title="Strategy Lab Configuration">⚙️</button></h2>
+    <div class="section-body">
+      <div id="nous-panel"></div>
+      <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
+    </div>
+  </div>
+
+  <div id="inception-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('inception-section')"><span class="section-chevron">▼</span> 💡 Project Inception</h2>
+    <div class="section-body">
+      <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
+    </div>
+  </div>
+
+  <div id="knowledge-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('knowledge-section')"><span class="section-chevron">▼</span> 📚 Knowledge Base <span id="kb-status-badge" style="font-size:0.7rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span></h2>
+    <div class="section-body">
+      <div id="knowledge-panel"></div>
+    </div>
+  </div>
+
+  <div id="contributors-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap" class="section-header-toggle" onclick="toggleSection('contributors-section')">
+      <span class="section-chevron">▼</span>
+      <h2 class="section-label" style="margin:0;">👥 Contributors <span id="contributors-status-badge" style="font-size:0.7rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span></h2>
+      <a href="/contribute" target="_blank" onclick="event.stopPropagation()" style="font-size:0.75rem;padding:4px 12px;background:var(--green);color:var(--bg);border-radius:6px;text-decoration:none;font-weight:600">Share /contribute link &rarr;</a>
+      <a href="/leaderboard" target="_blank" onclick="event.stopPropagation()" style="font-size:0.75rem;padding:4px 12px;background:transparent;color:var(--blue);border:1px solid var(--blue);border-radius:6px;text-decoration:none">🏆 Leaderboard</a>
+    </div>
+    <div class="section-body">
+      <div id="contributors-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px"></div>
+      <div id="contributors-panel"></div>
+    </div>
+  </div>
+
+  </div>
+
+  <div id="debug-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 12px;" class="section-label section-header-toggle" onclick="toggleSection('debug-section')"><span class="section-chevron">▼</span> 🔍 System Diagnostics</h2>
+    <div class="section-body">
+      <div id="debug-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;"></div>
+    </div>
+  </div>
+
+  <div id="logs-section" style="display: none; margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 12px;" class="section-label section-header-toggle" onclick="toggleSection('logs-section')"><span class="section-chevron">▼</span> 📋 Agent Logs</h2>
+    <div class="section-body">
+      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+        <select id="logs-agent-select" style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.82rem; background: var(--surface); color: var(--text); cursor: pointer;" title="Filter logs to a specific agent or view all agents combined">
+          <option value="all">All Agents</option>
+        </select>
+        <label style="display: flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--muted); cursor: pointer;" title="When enabled, the log output auto-scrolls to show the most recent entries as they arrive">
+          <input type="checkbox" id="logs-follow" checked> Follow
+        </label>
+      </div>
+      <div id="logs-output" style="font-size: 0.75rem; line-height: 1.5; padding: 14px; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;"></div>
+    </div>
+  </div>
+
+  <div id="oc-gov-strip-outer" class="oc-gov-strip"></div>
+  <div id="oc-agent-detail" class="oc-agent-detail"></div>
+  <div id="agents-section">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <h2 style="margin:0; cursor:pointer" class="section-label section-header-toggle" onclick="toggleSection('agents-section')"><span class="section-chevron">▼</span> Agents</h2>
+      <button id="agents-compact-all-btn" onclick="event.stopPropagation();toggleAllAgentsCompact()" style="font-size:0.7rem;padding:2px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer" title="Toggle all agent cards between compact and expanded view"></button>
+    </div>
+    <div class="section-body">
+      <div class="agents" id="agents"></div>
+    </div>
+  </div>
+
   <!-- FAQ — intentionally NOT ACMM-gated (no entry in applyACMMVisibility's
        sidebarItems list and no display:none default), because the audience for
        it is a confused L1/L2 user. Static content only: no JS, no fetch. -->
@@ -2959,77 +3030,6 @@
         </ol>
 
       </div>
-    </div>
-  </div>
-
-  <div id="nous-section" style="display:none; margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('nous-section')"><span class="section-chevron">▼</span> 🧪 Strategy Lab <span id="nous-mode-badge" style="font-size:0.75rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span> <button onclick="event.stopPropagation();openNousConfig()" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--muted);margin-left:6px;padding:2px" title="Strategy Lab Configuration">⚙️</button></h2>
-    <div class="section-body">
-      <div id="nous-panel"></div>
-      <div id="nous-config-overlay" class="nous-config-overlay" style="display:none"></div>
-    </div>
-  </div>
-
-  <div id="inception-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('inception-section')"><span class="section-chevron">▼</span> 💡 Project Inception</h2>
-    <div class="section-body">
-      <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
-    </div>
-  </div>
-
-  <div id="knowledge-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('knowledge-section')"><span class="section-chevron">▼</span> 📚 Knowledge Base <span id="kb-status-badge" style="font-size:0.7rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span></h2>
-    <div class="section-body">
-      <div id="knowledge-panel"></div>
-    </div>
-  </div>
-
-  <div id="contributors-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap" class="section-header-toggle" onclick="toggleSection('contributors-section')">
-      <span class="section-chevron">▼</span>
-      <h2 class="section-label" style="margin:0;">👥 Contributors <span id="contributors-status-badge" style="font-size:0.7rem;padding:2px 8px;border-radius:9999px;margin-left:8px"></span></h2>
-      <a href="/contribute" target="_blank" onclick="event.stopPropagation()" style="font-size:0.75rem;padding:4px 12px;background:var(--green);color:var(--bg);border-radius:6px;text-decoration:none;font-weight:600">Share /contribute link &rarr;</a>
-      <a href="/leaderboard" target="_blank" onclick="event.stopPropagation()" style="font-size:0.75rem;padding:4px 12px;background:transparent;color:var(--blue);border:1px solid var(--blue);border-radius:6px;text-decoration:none">🏆 Leaderboard</a>
-    </div>
-    <div class="section-body">
-      <div id="contributors-filters" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px"></div>
-      <div id="contributors-panel"></div>
-    </div>
-  </div>
-
-  </div>
-
-  <div id="debug-section" style="margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 12px;" class="section-label section-header-toggle" onclick="toggleSection('debug-section')"><span class="section-chevron">▼</span> 🔍 System Diagnostics</h2>
-    <div class="section-body">
-      <div id="debug-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;"></div>
-    </div>
-  </div>
-
-  <div id="logs-section" style="display: none; margin-top: 16px; margin-bottom: 24px;">
-    <h2 style="margin-bottom: 12px;" class="section-label section-header-toggle" onclick="toggleSection('logs-section')"><span class="section-chevron">▼</span> 📋 Agent Logs</h2>
-    <div class="section-body">
-      <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-        <select id="logs-agent-select" style="padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.82rem; background: var(--surface); color: var(--text); cursor: pointer;" title="Filter logs to a specific agent or view all agents combined">
-          <option value="all">All Agents</option>
-        </select>
-        <label style="display: flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--muted); cursor: pointer;" title="When enabled, the log output auto-scrolls to show the most recent entries as they arrive">
-          <input type="checkbox" id="logs-follow" checked> Follow
-        </label>
-      </div>
-      <div id="logs-output" style="font-size: 0.75rem; line-height: 1.5; padding: 14px; max-height: 500px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;"></div>
-    </div>
-  </div>
-
-  <div id="oc-gov-strip-outer" class="oc-gov-strip"></div>
-  <div id="oc-agent-detail" class="oc-agent-detail"></div>
-  <div id="agents-section">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-      <h2 style="margin:0; cursor:pointer" class="section-label section-header-toggle" onclick="toggleSection('agents-section')"><span class="section-chevron">▼</span> Agents</h2>
-      <button id="agents-compact-all-btn" onclick="event.stopPropagation();toggleAllAgentsCompact()" style="font-size:0.7rem;padding:2px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer" title="Toggle all agent cards between compact and expanded view"></button>
-    </div>
-    <div class="section-body">
-      <div class="agents" id="agents"></div>
     </div>
   </div>
 
