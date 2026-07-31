@@ -1327,6 +1327,17 @@ subjects:
   name: hive-sa
   namespace: {{.Namespace}}
 ---
+{{- end}}
+# hive-self-upgrade must NOT be gated on RequiresSCC. The spoke patches its own
+# Deployment (UpgradeSelfToSHA / SwitchImageSelf in pkg/hub/self_upgrade.go) on
+# EVERY cluster, not just OpenShift ones. While this Role was inside the
+# RequiresSCC conditional block, non-OpenShift spokes ran as the "default"
+# ServiceAccount with no patch permission, so every hub-instructed upgrade hit
+# HTTP 403, fell through to os.Exit(0), and the pod restarted onto the SAME
+# image — a crash-loop that re-ran on each heartbeat and never advanced. It also
+# froze the init containers on whatever tag they were provisioned with, since
+# the only code path that rewrites init-container images is the very patch that
+# was being denied.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -1349,10 +1360,13 @@ roleRef:
   name: hive-self-upgrade
 subjects:
 - kind: ServiceAccount
+{{- if .RequiresSCC}}
   name: hive-sa
+{{- else}}
+  name: default
+{{- end}}
   namespace: {{.Namespace}}
 ---
-{{- end}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

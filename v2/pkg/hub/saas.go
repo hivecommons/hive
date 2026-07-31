@@ -2806,6 +2806,19 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"branch does not map to a valid image tag"}`, http.StatusBadRequest)
 		return
 	}
+	// Shape is not existence. A DEPRECATED branch (v3 was retired while hives
+	// were still pointed at it) keeps a perfectly well-formed "<branch>-latest"
+	// tag that CI no longer publishes, so validateImageTag passes and the pull
+	// then fails with an opaque "manifest unknown". Kubernetes keeps the old
+	// ReplicaSet serving, so the hive looks alive while silently running stale
+	// code. Verify the tag is actually pullable before writing it.
+	if !spokeImageExists(imageTag, s.logger) {
+		s.logger.Error("branch switch REFUSED: image tag not published on GHCR",
+			"hive", id, "branch", body.Branch, "tag", imageTag,
+			"hint", "branch may be deprecated or its CI image build never completed")
+		http.Error(w, `{"error":"no published image for that branch (deprecated branch, or its image build has not completed)"}`, http.StatusBadRequest)
+		return
+	}
 	// "*=" updates every container including init containers (copy-config,
 	// init-permissions) — pinning only "hive" left inits on the old branch tag.
 	cmd := kubectlForCluster(cluster, "set", "image", "deployment/hive", "*="+image, "-n", ns)
@@ -3152,6 +3165,16 @@ const (
 var hubImageExists = func(sha string, logger *slog.Logger) bool {
 	client := &http.Client{Timeout: 10 * time.Second}
 	return ghcrTagExists(client, ghcrRepoHub, sha, logger)
+}
+
+// spokeImageExists is the ghcrRepoSpoke counterpart of hubImageExists: it
+// reports whether a SPOKE tag (a "<branch>-latest" channel tag or a SHA) is
+// actually published. Separate from hubImageExists because the two repos are
+// independent build jobs — the hub image for a SHA can exist while the spoke
+// image for that same SHA does not. A var so tests can stub the GHCR round-trip.
+var spokeImageExists = func(tag string, logger *slog.Logger) bool {
+	client := &http.Client{Timeout: 10 * time.Second}
+	return ghcrTagExists(client, ghcrRepoSpoke, tag, logger)
 }
 
 var (
