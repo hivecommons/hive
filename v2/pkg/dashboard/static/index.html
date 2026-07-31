@@ -2909,10 +2909,20 @@
         <strong>daily</strong>, <strong>weekly</strong>, <strong>monthly</strong>, and <strong>custom</strong> ranges, so you can line a
         spike up against what the fleet was doing at the time. Each agent card also shows a <strong>spend</strong> figure attributed to
         that agent over whichever timeframe the Cost section is set to, which is how you find the one agent responsible for a jump.</p>
-        <p style="margin:0 0 16px;color:var(--muted)">Treat it as an estimate, not a bill. It is derived from token counts and list prices, so a subscription plan, a
+        <p style="margin:0 0 8px;color:var(--muted)">Treat it as an estimate, not a bill. It is derived from token counts and list prices, so a subscription plan, a
         discounted rate, or self-hosted inference will all diverge from it — and models without an exact price entry fall back to a
         coarse tier estimate (shown with a <code>~</code>). It is the right tool for <em>attribution</em> — which agent, which model, which
-        day — rather than for reconciling against an invoice.</p>
+        day — rather than for reconciling against an invoice. The per-agent figure is also derived from a cumulative counter, so it
+        can read blank for a window that spans a restart.</p>
+        <p style="margin:0 0 8px">To see <em>what</em> an agent was asked to do, open that agent's <strong>Prior Prompts</strong> tab —
+        each kick is recorded with its timestamp and the fully expanded prompt text, with a <em>Window</em> selector offering
+        <strong>Last hour</strong>, <strong>Last day</strong>, and <strong>Last week</strong>. The <strong>📋 Audit Log</strong> is the
+        other half: it records that a kick, start, or restart happened and what triggered it.</p>
+        <p style="margin:0 0 16px;color:var(--muted)"><strong>What you cannot currently see is time.</strong> Nothing records how long a past session ran, so there is no
+        way to confirm "it ran flat out for four hours" from the UI — and no per-run cost figure either, since spend is bucketed by
+        time rather than attributed to individual kicks. The nearest proxy is <em>Last Run</em> on an agent card, which is when the
+        governor last kicked it, not how long it worked. Agent output is a live 500-line tmux buffer that is lost on restart, so it
+        cannot be used to reconstruct older activity.</p>
 
         <h3 style="font-size:0.95rem;margin:0 0 6px">Why couldn't the Guide agent answer my questions?</h3>
         <p style="margin:0 0 16px">Because the guide agent documents <em>your</em> project, not Hive itself. Its job is to audit your
