@@ -88,6 +88,12 @@ const (
 	AlertTypeTokenBurn = "token-burn"
 	// AlertTypeProvisionError — the SaaS provisioning record is in "error".
 	AlertTypeProvisionError = "provision-error"
+	// AlertTypeAdvisoryStale — the hive should be posting advisory digests but
+	// its digest has quietly gone stale. The condition is NOT re-derived here:
+	// it is the AdvisoryStale flag advisoryStale() already computed on read,
+	// so the panel, the facet and the row pill can never disagree about which
+	// hives are affected.
+	AlertTypeAdvisoryStale = "advisory-stale"
 )
 
 // --- Thresholds. Every one is a named constant with a rationale. ---
@@ -442,6 +448,12 @@ type alertHive struct {
 	Health           map[string]any
 	ProvStatus       string
 	ProvError        string
+	// AdvisoryStale / AdvisoryStaleReason are carried through verbatim from
+	// the entry rather than recomputed. advisoryStale() owns the threshold and
+	// the advisory-mode + app-can-write gating; duplicating either here is
+	// exactly how the panel and the row pill would start disagreeing.
+	AdvisoryStale       bool
+	AdvisoryStaleReason string
 }
 
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
@@ -463,6 +475,9 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 		Health:           h.Health,
 		ProvStatus:       h.ProvStatus,
 		ProvError:        h.ProvError,
+
+		AdvisoryStale:       h.AdvisoryStale,
+		AdvisoryStaleReason: h.AdvisoryStaleReason,
 	}
 }
 
@@ -733,6 +748,23 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 				itoa(len(failing))+" health "+noun+" failing: "+strings.Join(shown, ", ")+suffix)
 		}
 
+		// --- Rule: the advisory digest has gone stale. ---
+		// The flag is precomputed by advisoryStale(), which already gates on
+		// advisory-mode participation AND app-can-write, and already excludes
+		// unknown timestamps — so there is nothing to re-check here beyond the
+		// placeholder guard every claimed-hive rule applies. Severity is
+		// warning, not critical: the hive is still running and doing work, but
+		// the digest path a human relies on has quietly wedged.
+		if !h.IsPlaceholder && h.AdvisoryStale {
+			reason := h.AdvisoryStaleReason
+			if reason == "" {
+				// Only reached if a spoke reports the flag without a reason.
+				// The server-supplied reason is preferred wherever it exists.
+				reason = "Advisory digest has gone stale"
+			}
+			add(h.ID, h.Name, AlertTypeAdvisoryStale, AlertSeverityWarning, reason)
+		}
+
 		// --- Rule: token burn anomaly. Claimed hives only — an unassigned
 		// placeholder has no agents and therefore legitimately spends nothing. ---
 		if !h.IsPlaceholder {
@@ -997,6 +1029,7 @@ var knownAlertTypes = map[string]bool{
 	AlertTypeHealthCheckFailing: true,
 	AlertTypeTokenBurn:          true,
 	AlertTypeProvisionError:     true,
+	AlertTypeAdvisoryStale:      true,
 }
 
 func isKnownAlertType(t string) bool { return knownAlertTypes[t] }
