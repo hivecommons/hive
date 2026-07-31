@@ -1,0 +1,135 @@
+# Hive hub disaster-recovery backup.
+#
+# Captures hub state, the four out-of-PVC Kubernetes Secrets, and every spoke's
+# authoritative config (hive.yaml.bak, gh-app-key*.pem, hive-id), encrypts the
+# result with AES-256-GCM and uploads it to OCI Object Storage.
+#
+# See docs/HUB_DISASTER_RECOVERY.md before deploying. In particular:
+#   HIVE_BACKUP_KEY MUST be escrowed OUTSIDE the cluster (password manager /
+#   offline). A backup encrypted with a key that only exists inside the hub is
+#   worthless after the hub is destroyed.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hive-hub-backup
+  namespace: hive-hub
+---
+# The backup reads Secrets in its own namespace and execs into spoke pods on
+# this cluster. Read-only apart from pod/exec, which is required to read
+# per-spoke PVC state the hub cannot mount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hive-hub-backup
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: hive-hub-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: hive-hub-backup
+subjects:
+  - kind: ServiceAccount
+    name: hive-hub-backup
+    namespace: hive-hub
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hive-hub-backup
+  namespace: hive-hub
+  labels:
+    app.kubernetes.io/name: hive-hub-backup
+    app.kubernetes.io/component: backup
+spec:
+  # 03:17 UTC daily — off the hour to avoid contending with other cron traffic.
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      # A hung spoke exec must not leave the job running until the next fire.
+      activeDeadlineSeconds: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: hive-hub-backup
+          restartPolicy: Never
+          containers:
+            - name: backup
+              image: ghcr.io/kubestellar/hive:v2-latest
+              command: ["/usr/local/bin/hive-backup", "run"]
+              env:
+                # AES-256 key for the archive. MUST be escrowed outside the
+                # cluster. No default: an unset key aborts the backup rather
+                # than writing plaintext.
+                - name: HIVE_BACKUP_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: hive-hub-backup-key
+                      key: backup-key
+                - name: HIVE_BACKUP_BUCKET
+                  valueFrom:
+                    configMapKeyRef:
+                      name: hive-hub-backup-config
+                      key: bucket
+                - name: HIVE_BACKUP_RETENTION
+                  valueFrom:
+                    configMapKeyRef:
+                      name: hive-hub-backup-config
+                      key: retention
+              # OCI credentials for Object Storage, reusing the Secret the hub
+              # already uses for File Storage provisioning.
+              envFrom:
+                - secretRef:
+                    name: oci-api-key
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+                  readOnly: true
+                - name: kubeconfigs
+                  mountPath: /etc/hive/kubeconfigs
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+          volumes:
+            # The hub PVC, mounted read-only: the backup never writes to it.
+            - name: data
+              persistentVolumeClaim:
+                claimName: hive-hub-data-rwx
+                readOnly: true
+            # Kubeconfigs for remote spoke clusters (e.g. vllm-d). Without
+            # this, spokes on remote clusters cannot be captured.
+            - name: kubeconfigs
+              secret:
+                secretName: hive-hub-kubeconfigs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hive-hub-backup-config
+  namespace: hive-hub
+data:
+  bucket: "hive-hub-backups"
+  retention: "30"
