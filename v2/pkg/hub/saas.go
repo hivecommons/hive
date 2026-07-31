@@ -4918,6 +4918,19 @@ type ProvisionRequest struct {
 	RequestedAt string `json:"requested_at"`
 	Status      string `json:"status"`
 
+	// Who is asking, as a person rather than as a GitHub login. Both reuse the
+	// SaaSUser contact fields of the same name and the same caps
+	// (maxContactNameLen / maxContactSlackIDLen) — deliberately NOT new keys.
+	// A second Slack key would split one fact across two names, with the
+	// request form writing one and the admin users panel reading the other.
+	//
+	// These are captured here and copied onto the SaaSUser record on approval
+	// (handleApproveProvision); asking and then dropping the answer would be
+	// worse than not asking. Both are omitempty so requests filed before these
+	// fields existed round-trip unchanged.
+	FullName string `json:"full_name,omitempty"`
+	SlackID  string `json:"slack_id,omitempty"`
+
 	// Decision audit. Previously a request only carried its final Status, so
 	// once it left "pending" there was no record of WHO decided, WHEN, or —
 	// for an approval — which hive the requester actually got. That made the
@@ -5037,6 +5050,33 @@ func enrichProvisionRequests(requests []ProvisionRequest) []ProvisionRequest {
 	return requests
 }
 
+// applyRequestContactToUser carries the requester's contact details from an
+// approved provision request onto their SaaSUser record.
+//
+// This is what makes asking for them worth anything. The admin users panel and
+// the Slack sender both read SaaSUser, NOT ProvisionRequest — a value that
+// stops at the request file is invisible to every consumer of it. Slack
+// messaging shipped with no user having a slack_id, settable only by hand one
+// user at a time; approval is the natural point of capture.
+//
+// It only ever FILLS A BLANK. An admin who has already curated these fields (or
+// a user who corrected them later) outranks whatever was typed into a request
+// form, and a re-approval must not silently revert that.
+//
+// Nil-safe on both sides: it runs on the approval path beside other work that
+// can legitimately leave either side absent, and must not panic there.
+func applyRequestContactToUser(user *SaaSUser, pr *ProvisionRequest) {
+	if user == nil || pr == nil {
+		return
+	}
+	if user.FullName == "" && pr.FullName != "" {
+		user.FullName = truncateRunes(strings.TrimSpace(pr.FullName), maxContactNameLen)
+	}
+	if user.SlackID == "" && pr.SlackID != "" {
+		user.SlackID = truncateRunes(strings.TrimSpace(pr.SlackID), maxContactSlackIDLen)
+	}
+}
+
 func loadProvisionRequest(username string) *ProvisionRequest {
 	if strings.Contains(username, "..") || strings.Contains(username, "/") || strings.Contains(username, "\\") {
 		return nil
@@ -5118,6 +5158,8 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		PrimaryRepo string `json:"primary_repo"`
 		ACMMLevel   int    `json:"acmm_level"`
 		AuthMethod  string `json:"auth_method"`
+		FullName    string `json:"full_name"`
+		SlackID     string `json:"slack_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
@@ -5127,6 +5169,19 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		http.Error(w, `{"error":"org and repos are required"}`, http.StatusBadRequest)
 		return
 	}
+	// Contact details for the person asking.
+	//
+	// No charset validation on purpose: isValidName() is for identifiers
+	// (org/repo/host names) and would reject spaces, apostrophes and every
+	// non-ASCII script. These are display strings — trimmed, rune-capped and
+	// escaped at every render site, exactly as the admin contact editor
+	// (handleAdminUpdateUser) already treats these same two fields. We also do
+	// NOT try to detect a "real" name: any pattern for that (two words,
+	// capitalised, Latin script) is wrong for a large fraction of the world's
+	// names, and a determined user types junk regardless. Human review is the
+	// check, not a regex.
+	body.FullName = truncateRunes(strings.TrimSpace(body.FullName), maxContactNameLen)
+	body.SlackID = truncateRunes(strings.TrimSpace(body.SlackID), maxContactSlackIDLen)
 	// Accept a pasted org/repo URL, not just a bare name. Users read
 	// "GitHub Organization" and paste the org's URL; the old validator rejected
 	// ":" and "/" and returned a bare "invalid org name" that explained nothing.
@@ -5187,6 +5242,29 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Name is REQUIRED; Slack ID is optional.
+	//
+	// The name exists to map a GitHub login to a person an operator can talk
+	// to, which only works if it is actually populated — a field that is
+	// usually blank cannot be relied on and stops being read. Requesting a hive
+	// is a deliberate, one-per-user action already reviewed by a human, so one
+	// short field is negligible friction at the moment the requester is most
+	// motivated to answer.
+	//
+	// Checked AFTER the org/forge/repo validation above so the more specific
+	// "which GitHub is this org on?" errors keep their precedence — a request
+	// missing both should be told about the forge, not sent round the loop one
+	// field at a time.
+	//
+	// This does tighten an existing endpoint: a caller that posted no full_name
+	// now gets a 400 where it used to get a 200. That is intended — the whole
+	// point is that the field is reliably present — and the wizard is the only
+	// caller in-tree. Called out in the PR body rather than hidden here.
+	if body.FullName == "" {
+		http.Error(w, `{"error":"your name is required — we use it to know who the request is from"}`, http.StatusBadRequest)
+		return
+	}
+
 	// A hive is never REQUESTED above L3 Measured. L4-L6 are real levels, but
 	// they are reached after provisioning, from the hive's own dashboard, once
 	// the project has the coverage and CI history to justify them. The
@@ -5215,6 +5293,8 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		PrimaryRepo: primaryRepo,
 		ACMMLevel:   acmm,
 		AuthMethod:  body.AuthMethod,
+		FullName:    body.FullName,
+		SlackID:     body.SlackID,
 		RequestedAt: time.Now().UTC().Format(time.RFC3339),
 		Status:      provisionStatusPending,
 	}
@@ -5398,6 +5478,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	}
 	user.Hives[hiveID] = "owner"
 	user.SaaSQuota++
+	applyRequestContactToUser(user, pr)
 	if err := saveSaaSUser(user); err != nil {
 		s.logger.Warn("assigned placeholder but failed to grant owner access", "user", targetUsername, "hive", hiveID, "error", err)
 	}
@@ -12167,6 +12248,28 @@ const dashboardHTML = `<!DOCTYPE html>
     // github.ibm.com means GitHub Enterprise — hardcoding github.com would send
     // an admin to a 404 (or worse, an unrelated public repo of the same name).
     // Requests with no repo recorded fall back to plain escaped text.
+    /* provisionRequesterLabel renders the requester's real name and Slack ID
+       beside their GitHub login on the review card. Mapping a login to a person
+       is the reason the wizard asks for a name at all, and this is where the
+       operator deciding the request needs it.
+
+       Both are free text a user typed. esc() everywhere, and the whole label is
+       built as a text node's escaped HTML rather than interpolated into an
+       attribute — nothing here is ever placed inside an inline handler, where
+       esc() alone would leave an apostrophe live. Older requests predate these
+       fields and simply render nothing. */
+    function provisionRequesterLabel(pr) {
+      if (!pr) return '';
+      var name = (pr.full_name || '').trim();
+      var slack = (pr.slack_id || '').trim();
+      if (!name && !slack) return '';
+      var bits = [];
+      if (name) bits.push(esc(name));
+      if (slack) bits.push('slack: ' + esc(slack));
+      return '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' +
+        bits.join(' &middot; ') + '</span>';
+    }
+
     function provisionRepoLabel(pr) {
       if (!pr) return '';
       var org = pr.org || '';
@@ -12310,6 +12413,10 @@ const dashboardHTML = `<!DOCTYPE html>
           avatar +
           '<div>' +
           '<span style="font-size:0.85rem;font-weight:600">' + esc(pr.username) + '</span>' +
+          // Who the requester actually IS. Mapping a login to a person is the
+          // reason the wizard asks for a name, and this review card is where an
+          // operator needs it. esc() only — free text, never markup.
+          provisionRequesterLabel(pr) +
           // org/repo links to the repo on the instance the request targets.
           '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' + provisionRepoLabel(pr) + '</span>' +
           // Show which GitHub instance the request targets — same pill the Past

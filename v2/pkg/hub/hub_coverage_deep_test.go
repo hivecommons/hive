@@ -604,7 +604,7 @@ func TestHandleRequestProvisionValidBody(t *testing.T) {
 
 	// github_host is required: a request must name the GitHub forge its org
 	// lives on, so a "valid body" fixture has to carry one.
-	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token"}`
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token","full_name":"Ada Lovelace"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_prov_valid")
