@@ -2762,8 +2762,9 @@ func main() {
 				"on_divergence", cfg.Governor.Trajectory.OnDivergence)
 		}
 	}
-	// Reconcile the not-configured alert from actual state (raises only when
-	// enabled AND no reviewer resolves; clears when off or configured).
+	// Clear any legacy "not configured" banner alert persisted by an older
+	// build. The half-configured state is shown inline in Governor Config →
+	// General, not in the top banner.
 	dashSrv.ReconcileTrajectoryAlert(&cfg.Governor)
 
 	logger.Info("entering governor loop", "interval_seconds", cfg.Governor.EvalIntervalS)

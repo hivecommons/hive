@@ -2196,6 +2196,9 @@
     .welcome-more-item { font-size: var(--fs-sm); color: var(--muted); padding: 3px 0 3px 8px; line-height: 1.5; }
     .welcome-more-link { color: var(--blue); cursor: pointer; font-weight: 600; }
     .welcome-more-link:hover { text-decoration: underline; }
+    /* Marks a "More to explore" entry as an advanced/optional capability, so a
+       new operator does not read it as part of the required setup path. */
+    .welcome-more-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); }
     .welcome-footer { justify-content: space-between; }
     @media (max-width: 480px) {
       .welcome-step-body { padding-left: 12px; }
@@ -15266,7 +15269,7 @@ function burnAreaChart() {
             <div style="grid-column:1 / -1">
               <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer endpoint <span class="config-info">i<span class="config-tooltip">OpenAI-compatible base URL for the reviewer (LiteLLM / vLLM / llm-d). Empty = inherit the Governor's LiteLLM endpoint. The API key is inherited from LiteLLM or set in hive.yaml (governor.trajectory.api_key_env/api_key_file); a bare vLLM server needs none.</span></span></label>
               <input type="text" value="${esc(traj.endpoint || '')}" placeholder="${trajEndpoint ? esc(trajEndpoint) + '  (inherited from LiteLLM)' : 'https://litellm-or-vllm-or-llmd:port'}" onchange="saveTrajectoryField('endpoint', this.value)" style="width:100%">
-              <span style="font-size:0.62rem;color:var(--muted);margin-top:3px;display:block">Resolved: ${trajEndpoint ? esc(trajEndpoint) + ' (' + esc(traj.endpointSource || '') + (traj.hasKey ? ', key set' : ', no key') + ')' : 'none — reviewer will not run'}</span>
+              <span style="font-size:0.62rem;margin-top:3px;display:block;color:${trajOn && !trajEndpoint ? 'var(--amber)' : 'var(--muted)'}">Resolved: ${trajEndpoint ? esc(trajEndpoint) + ' (' + esc(traj.endpointSource || '') + (traj.hasKey ? ', key set' : ', no key') + ')' : (trajOn ? 'none — Trajectory Review is ON but no agents are being reviewed. Set an endpoint above (or a Governor LiteLLM endpoint) to activate it.' : 'none — reviewer will not run')}</span>
             </div>
             <div style="grid-column:1 / -1">
               <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">On divergence</label>
@@ -17321,13 +17324,23 @@ function burnAreaChart() {
       }
     ];
 
-    // Collapsed "More to explore" one-liners under the core steps.
+    // Governor Config tab hosting the Trajectory Review controls (toggle,
+    // reviewer endpoint/model, on-divergence mode) — see renderGovGeneral().
+    // Named so the Getting Started deep link cannot drift from the tab list
+    // in GOVERNOR_CONFIG_TABS.
+    const TRAJECTORY_CONFIG_TAB = 'General';
+
+    // Collapsed "More to explore" one-liners under the core steps. These are
+    // OPTIONAL/advanced capabilities, deliberately kept out of WELCOME_STEPS:
+    // updateWelcomeProgress() counts only WELCOME_STEPS, so nothing listed
+    // here can inflate the "N of M done" counter or read as a required step.
     const WELCOME_MORE_ITEMS = [
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Governor Config → Budget).', onclick: "welcomeShowConfigTab('Budget')" },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Governor Config → Notifications).', onclick: "welcomeShowConfigTab('Notifications')" },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', onclick: "welcomeShowSection('knowledge-section')" },
       { id: 'contributors', label: 'ClankeR (Contributor Relay)', desc: 'let outside contributors drive agents, with a leaderboard.', onclick: "welcomeShowSection('contributors-section')" },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).', onclick: "welcomeShowConfigTab('Hub')" },
+      { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Governor Config → General).', onclick: `welcomeShowConfigTab('${TRAJECTORY_CONFIG_TAB}')` },
       { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', onclick: 'toggleLayout()' }
     ];
 
