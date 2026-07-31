@@ -16330,12 +16330,25 @@ function burnAreaChart() {
         .catch(err => showToast(`Failed: ${err.message}`, 'error'));
     }
 
+    // _packAgentNote returns an extra confirm-dialog line when the agent is part
+    // of the active ACMM pack. Deleting a pack agent used to look like it had
+    // silently failed — the pack re-added it on the next config reload — so the
+    // dialog now states up front that the deletion is recorded and permanent.
+    function _packAgentNote(name) {
+      const packAgents = (window._lastStatus && window._lastStatus.acmmPackAgents) || [];
+      if (!packAgents.includes(name)) return '';
+      return `\n\n"${name}" is part of this hive's ACMM pack. The deletion will be recorded, so no restart or ACMM level change will bring it back. Add it again from the Agents tab if you change your mind.`;
+    }
+
     async function deleteAgentFromConfig(name) {
-      if (!(await hiveConfirm(`Delete agent "${name}"?\n\nThis will remove its env file, governor config, and sidebar entry. The tmux session (if running) will NOT be killed.`))) return;
+      if (!(await hiveConfirm(`Delete agent "${name}"?\n\nThis will remove its env file, governor config, and sidebar entry. The tmux session (if running) will NOT be killed.${_packAgentNote(name)}`))) return;
       fetch(`/api/config/governor/agents/${name}`, { method: 'DELETE' })
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then(() => {
-          showToast(`Agent "${name}" deleted`, 'success');
+        .then(d => {
+          // Say out loud when the agent belongs to an ACMM pack. The pack used
+          // to re-add it on the next reload/restart with no explanation, which
+          // is why this was reported as a bug rather than asked about.
+          showToast(((d || {}).note) || `Agent "${name}" deleted`, 'success');
           closeConfigDialog();
           // Remove from cached agents so cards disappear immediately
           window._lastAgents = (window._lastAgents || []).filter(a => a.name !== name);
@@ -16353,11 +16366,11 @@ function burnAreaChart() {
     }
 
     async function removeAgent(name) {
-      if (!(await hiveConfirm(`Remove agent "${name}"? This will delete its configuration.`))) return;
+      if (!(await hiveConfirm(`Remove agent "${name}"? This will delete its configuration.${_packAgentNote(name)}`))) return;
       fetch(`/api/config/governor/agents/${name}`, { method: 'DELETE' })
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then(() => {
-          showToast(`Agent "${name}" removed`, 'success');
+        .then(d => {
+          showToast(((d || {}).note) || `Agent "${name}" removed`, 'success');
           _configState.data.agents = (_configState.data.agents || []).filter(a => a !== name);
           renderConfigTab('Agents');
         })

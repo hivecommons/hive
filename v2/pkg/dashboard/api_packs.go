@@ -48,6 +48,10 @@ type ApplyPackResult struct {
 	Skipped []string `json:"skipped"`
 	Paused  []string `json:"paused"`
 	Resumed []string `json:"resumed"`
+	// Tombstoned lists pack agents deliberately deleted by the operator and
+	// therefore NOT re-created. Surfaced so an under-full roster reads as an
+	// honored choice rather than an apply that quietly dropped agents.
+	Tombstoned []string `json:"tombstoned,omitempty"`
 }
 
 // ApplyPack applies the ACMM pack for the given level. It creates agents,
@@ -76,7 +80,19 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 	// are fixing. We reconcile every agent we can, then surface a combined
 	// error so the caller does NOT record the level as cleanly applied.
 	var createErrs []string
+	// tombstoned collects pack agents skipped because the operator deleted
+	// them. Reported back so the caller (and the apply-pack response) can say
+	// so out loud instead of silently under-delivering the level's roster.
+	var tombstoned []string
 	for _, pa := range pack.Agents {
+		// A deliberately deleted agent is NOT re-created, at any level. The
+		// pack listing it is exactly why deletion did not stick: ApplyPack
+		// runs on every restart, so the pack re-added `brainstorm`/`guide` to
+		// a hive whose operator had removed them, four times over.
+		if s.deps.Config.IsAgentRemoved(pa.Name) {
+			tombstoned = append(tombstoned, pa.Name)
+			continue
+		}
 		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
 			changed := false
 
@@ -275,15 +291,23 @@ func (s *Server) ApplyPack(level int) (*ApplyPackResult, error) {
 
 	s.persistOnly()
 	go s.refreshAsync()
-	s.logger.Info("ACMM pack applied", "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed))
+	s.logger.Info("ACMM pack applied", "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned))
+	if len(tombstoned) > 0 {
+		// Say it plainly in the log too: an operator reading "this level has 6
+		// agents but I see 4" needs the reason, not a silent gap.
+		s.logger.Info("ACMM pack: agents NOT re-created because the operator deleted them",
+			"agents", strings.Join(tombstoned, ", "),
+			"hint", "re-add the agent from the Governor grid to undo the deletion")
+	}
 
 	result := &ApplyPackResult{
-		Name:    pack.Name,
-		Created: created,
-		Updated: updated,
-		Skipped: skipped,
-		Paused:  paused,
-		Resumed: resumed,
+		Name:       pack.Name,
+		Created:    created,
+		Updated:    updated,
+		Skipped:    skipped,
+		Paused:     paused,
+		Resumed:    resumed,
+		Tombstoned: tombstoned,
 	}
 	if len(createErrs) > 0 {
 		// Return the result alongside the error so callers can still see what
@@ -322,6 +346,8 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		"skipped": result.Skipped,
 		"paused":  result.Paused,
 		"resumed": result.Resumed,
+		// Empty unless the operator deleted one of this level's agents.
+		"tombstoned": result.Tombstoned,
 	})
 }
 
