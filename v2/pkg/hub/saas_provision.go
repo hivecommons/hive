@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -960,7 +961,68 @@ func authorizedUsersForHive(h *SaaSHive) string {
 	return strings.Join(entries, ",")
 }
 
-func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, logger *slog.Logger) error {
+// provisionAppKey is one additional App key rendered into the provisioning
+// Secret: the app_id that names its file and the PEM body, pre-indented for the
+// YAML block scalar it is written into.
+type provisionAppKey struct {
+	AppID int64
+	PEM   string
+}
+
+// provisionAdditionalAppKeys turns the fleet's key set into the ADDITIONAL keys a
+// newly provisioned spoke should hold — every fleet key except the primary the
+// spoke is already getting as gh-app-key.pem.
+//
+// This is the provisioning-time twin of attachMissingAppKeys: the heartbeat gets
+// a spoke to the both-keys state eventually, this gets it there at birth, so a
+// forge switch never has to wait a beat for the target forge's key to arrive.
+//
+// Excluding primaryAppID is what keeps key selection identity-safe. A hive's
+// GitHub identity is the atomic set (app_id, app_slug, api_url, base_url); the
+// key it signs with must match the app_id it claims. Writing the primary only
+// under its canonical gh-app-key.pem name — never also as a per-app-id file —
+// means there is exactly one copy of it and no chance of two diverging.
+//
+// Results are sorted by app_id so the rendered manifest is deterministic: an
+// unstable order would make every reconcile look like a change.
+func provisionAdditionalAppKeys(fleetKeys map[int64]fleetAppKey, primaryAppID string) []provisionAppKey {
+	if len(fleetKeys) == 0 {
+		return nil
+	}
+	var primary int64
+	if v, err := strconv.ParseInt(strings.TrimSpace(primaryAppID), 10, 64); err == nil {
+		primary = v
+	}
+	ids := make([]int64, 0, len(fleetKeys))
+	for id := range fleetKeys {
+		if id == primary {
+			continue // already delivered as gh-app-key.pem
+		}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	out := make([]provisionAppKey, 0, len(ids))
+	for _, id := range ids {
+		pem := strings.TrimSpace(fleetKeys[id].PrivateKey)
+		if !strings.HasPrefix(pem, "-----BEGIN") {
+			// Never render a truncated or garbage key: it would shadow a good one.
+			continue
+		}
+		lines := strings.Split(pem, "\n")
+		for i := range lines {
+			lines[i] = "    " + strings.TrimSpace(lines[i])
+		}
+		out = append(out, provisionAppKey{AppID: id, PEM: strings.Join(lines, "\n")})
+	}
+	return out
+}
+
+// fleetKeys carries every GitHub App private key the fleet knows, keyed by
+// app_id, so a freshly provisioned spoke starts life holding ALL of them rather
+// than waiting for the heartbeat's additional-key delivery to catch up. Pass nil
+// to provision with only the primary key (the pre-existing behaviour).
+func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, fleetKeys map[int64]fleetAppKey, logger *slog.Logger) error {
 	dir := filepath.Join(saasHivesDir, h.ID, "manifests")
 	os.MkdirAll(dir, 0o755)
 
@@ -1027,6 +1089,17 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return strings.Join(lines, "\n")
 		}(),
+		// AdditionalAppKeys delivers the fleet's OTHER App keys at provision time,
+		// each in its own per-app-id Secret entry. Naming is by APP ID, not by
+		// cluster: a key's identity is the App it belongs to, and the spoke selects
+		// by matching its configured app_id (resolveAppKeyFile). Per-cluster naming
+		// would be a lie here — the same PEM is valid on every cluster whose hives
+		// authenticate as that App, and a spoke has no way to know which cluster a
+		// file named for one was meant to serve. The primary key is excluded: it is
+		// already written as gh-app-key.pem above, and duplicating it would let the
+		// two copies drift.
+		"AdditionalAppKeys": provisionAdditionalAppKeys(
+			fleetKeys, resolveProvisionAppID(req.AppID, h, cluster)),
 		"CPURequest":            cpuRequest,
 		"CPULimit":              cpuLimit,
 		"MemRequest":            memRequest,
@@ -1307,7 +1380,7 @@ func (s *HubServer) migrateHive(h *SaaSHive, fromCluster, toCluster *ClusterConf
 
 	// Step 2: Provision on target cluster.
 	logger.Info("migration: provisioning on target cluster")
-	if provErr := provisionHive(h, req, toCluster, logger); provErr != nil {
+	if provErr := provisionHive(h, req, toCluster, s.appKeysByAppID(), logger); provErr != nil {
 		logger.Error("migration: provisioning on target failed", "error", provErr)
 		h.MigrationStatus = "failed"
 		h.Error = fmt.Sprintf("migration failed during provisioning on %s: %s", toCluster.ID, provErr.Error())
@@ -1638,6 +1711,10 @@ stringData:
 {{.AppPrivateKey}}
 {{- else if not .UseApp}}
   github-token: {{.Token}}
+{{- end}}
+{{- range .AdditionalAppKeys}}
+  gh-app-key-{{.AppID}}.pem: |
+{{.PEM}}
 {{- end}}
 ---
 {{- if .IsNFSStorage}}

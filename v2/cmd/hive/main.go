@@ -77,6 +77,13 @@ var (
 	// already holds spokeAppKeyPath, so both survive restarts. A var so tests can
 	// redirect it; production never reassigns it.
 	spokeAppKeyDir = "/data"
+	// spokeProvisionedAppKeyDir is the read-only projected-Secret mount where
+	// PROVISIONING places per-app-id keys (gh-app-key-<appid>.pem), mirroring
+	// spokeAppKeyDir on the PVC. A hive provisioned with the fleet's full key set
+	// holds them here from its very first boot — before any heartbeat has run — so
+	// a forge switch never has to wait a beat for the target forge's key. The
+	// mount is readOnly, so nothing ever writes here; it is a lookup source only.
+	spokeProvisionedAppKeyDir = "/secrets"
 )
 
 // spokeAppKeyFileMode is rw------- : signing material must never be readable by
@@ -96,6 +103,17 @@ func perAppIDKeyPath(appID int64) string {
 		return ""
 	}
 	return filepath.Join(spokeAppKeyDir, fmt.Sprintf("gh-app-key-%d.pem", appID))
+}
+
+// perAppIDProvisionedKeyPath is perAppIDKeyPath's read-only twin: the same
+// per-app-id filename under the provisioning Secret mount. It is consulted only
+// when the PVC has no usable key for the app_id, so a heartbeat-delivered key
+// (which can be rotated) always wins over the one baked in at provision time.
+func perAppIDProvisionedKeyPath(appID int64) string {
+	if appID <= 0 {
+		return ""
+	}
+	return filepath.Join(spokeProvisionedAppKeyDir, fmt.Sprintf("gh-app-key-%d.pem", appID))
 }
 
 // perAppIDKeyFilePrefix / Suffix bracket the per-app-id key filename so a scan
@@ -291,6 +309,16 @@ func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 			return p
 		}
 	}
+	// Same idea, but from the read-only provisioning mount: a hive provisioned
+	// with the fleet's full key set can sign as its configured App on its very
+	// first boot, before any heartbeat has delivered anything to the PVC. Ranked
+	// BELOW the PVC copy so a rotated key delivered by heartbeat always wins over
+	// the one frozen into the Secret at provision time.
+	if p := perAppIDProvisionedKeyPath(appID); p != "" {
+		if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
+			return p
+		}
+	}
 	// Prefer a usable hub-delivered key on the PVC; fall back to the provisioning
 	// mount only when /data has no parseable key.
 	if fp, err := config.AppKeyFingerprintFromFile(spokeAppKeyPath); err == nil && fp != "" {
@@ -312,6 +340,8 @@ func describeAppKeyFailure(configured, envOverride, resolved string, err error) 
 	order := []string{
 		fmt.Sprintf("$GH_APP_KEY_FILE=%s", describeKeySource(envOverride)),
 		fmt.Sprintf("github.key_file=%s", describeKeySource(configured)),
+		fmt.Sprintf("per-app-id PVC key %s/gh-app-key-<app_id>.pem", spokeAppKeyDir),
+		fmt.Sprintf("per-app-id provisioning key %s/gh-app-key-<app_id>.pem", spokeProvisionedAppKeyDir),
 		fmt.Sprintf("PVC fallback %s", spokeAppKeyPath),
 		fmt.Sprintf("provisioning mount %s", spokeProvisionedAppKeyPath),
 	}
