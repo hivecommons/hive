@@ -584,6 +584,13 @@ type HubServer struct {
 	// its own leaf mutex and is never touched while s.mu is held — see
 	// alerts.go.
 	alerts *alertState
+
+	// urlHealth remembers how many consecutive times each hive's PUBLIC
+	// dashboard URL failed to serve, so a transient blip can be told apart from
+	// a link that has been dead for hours. Populated by the auth-audit loop,
+	// which already probes those URLs. Carries its own leaf mutex and is never
+	// touched while s.mu is held — see url_reachability.go.
+	urlHealth *urlHealthState
 }
 
 // HubBannerEntry stores an admin banner targeted at a specific hive.
@@ -712,6 +719,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		timeline:                newTimelineStore(),
 		journey:                 newJourneyStore(),
 		alerts:                  newAlertState(),
+		urlHealth:               newURLHealthState(),
 	}
 
 	s.loadRegistry()
