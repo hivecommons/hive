@@ -114,8 +114,8 @@ func TestStatusFiltersMovedIntoTray(t *testing.T) {
 	}
 	// Semantics unchanged: same state, same predicate, same handlers.
 	for _, want := range []string{
-		"_dashStatusFilters",       // health chips still OR among themselves
-		"_dashFailingCheckFilter",  // failing check still single-select, ANDed
+		"_dashStatusFilters",      // health chips still OR among themselves
+		"_dashFailingCheckFilter", // failing check still single-select, ANDed
 		"toggleStatusFilter(",
 		"setFailingCheckFilter(",
 	} {
@@ -340,19 +340,20 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 		t.Errorf("header emits %d <th> cells but a row emits %d cells — "+
 			"every column right of the mismatch is shifted", thCount, tdCount)
 	}
-	// 17: the Public column was folded into Location (visibility stacks beneath
-	// the location badge) leaving 16 — see the Location cell in buildRow — and
-	// the AI Author column was then added alongside ACMM to show the GitHub
-	// identity a hive's agents open PRs as.
-	const wantColumns = 17
+	// 18: the Public column was folded into Location (visibility stacks beneath
+	// the location badge) leaving 16 — see the Location cell in buildRow — the
+	// AI Author column was then added alongside ACMM to show the GitHub
+	// identity a hive's agents open PRs as, and Provisioned was added at the
+	// end so the fleet can be ordered by when each hive was first seen.
+	const wantColumns = 18
 	if thCount != wantColumns {
 		t.Errorf("hive table has %d columns, want %d", thCount, wantColumns)
 	}
 	// The colspan constants span the whole table; a stale value leaves the
 	// section separators and the pending-requests row visibly short.
 	for _, decl := range []string{
-		"var TOTAL_COLUMNS = 17;",
-		"var TOTAL_COLUMNS_HEADER = 17;",
+		"var TOTAL_COLUMNS = 18;",
+		"var TOTAL_COLUMNS_HEADER = 18;",
 	} {
 		if !strings.Contains(html, decl) {
 			t.Errorf("missing or stale colspan constant: %s", decl)
