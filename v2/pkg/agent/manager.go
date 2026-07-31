@@ -750,9 +750,25 @@ func (m *Manager) tmuxSessionExists(session string) bool {
 	return cmd.Run() == nil
 }
 
-func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {
+// tmuxSessionExists probes for a live tmux session. It is a function variable
+// solely as a TEST SEAM: production never assigns it, and the default below is
+// the real probe.
+//
+// Without the seam, any test reaching this line executes a REAL `tmux
+// has-session` against the developer's or the CI runner's own tmux server.
+// That is the same class of hazard as a test shelling to a real kubectl, which
+// previously created ~196 stray namespaces on live clusters: the outcome
+// depends on machine state rather than on the code under test, so a test can
+// pass for the wrong reason. Tests that need to assert WHETHER the probe was
+// consulted — SessionMissing's early returns exist precisely so it is not —
+// replace this and observe the calls.
+var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 	cmd := m.tmuxCmd(agent, "has-session", "-t", agent.tmuxSession)
 	return cmd.Run() == nil
+}
+
+func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {
+	return tmuxSessionExists(m, agent)
 }
 
 // cliPaneMarkers are strings that appear in a tmux pane when a CLI (claude,
