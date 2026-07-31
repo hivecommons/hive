@@ -295,3 +295,185 @@ writes confined to a throwaway namespace that was deleted afterwards):
 - Upload to OCI Object Storage from *inside* the cluster (write permission was
   verified out-of-band with the hub's own credentials; the in-cluster upload
   path itself has not been exercised)
+
+---
+
+# Spoke self-service backup (owner-triggered)
+
+This is a **second, complementary** backup, separate from the fleet-wide hub
+backup described above. A spoke owner triggers it themselves from the avatar
+menu on their spoke dashboard (**Back up this hive**), and it downloads an
+encrypted archive to their browser.
+
+## Why it exists — and why it includes beads
+
+The hub backup is deliberately config-only. It excludes `/data/beads`,
+`/data/nous`, `/data/home` and `/data/logs`, because including them across ~50
+spokes would be roughly 40GB — too slow and expensive to run nightly and too
+slow to restore in an emergency. That trade-off is recorded in issue #2318.
+
+The cost profile of a *single owner backing up their own hive on demand* is
+completely different. So this backup **includes `/data/beads`** — the agent
+work ledger that #2318 identifies as the most painful documented loss. After a
+hub-backup-only restore, agents come back configured but with no memory of what
+they had already found, claimed, deferred or closed. This backup preserves that.
+
+## What is captured
+
+| Path | Why |
+|---|---|
+| `hive.yaml.bak` | The **authoritative** spoke config (see below) |
+| `hive-id` | Hive identity as known to the hub |
+| `hive-state.json` | Agent runtime state |
+| `gh-app-key*.pem` | GitHub App private keys — **credentials** |
+| `beads/<agent>/**` | The agent work ledger, one directory per agent |
+
+Bead directories are **discovered, not hardcoded**. A production spoke had ten
+(`architect`, `brainstorm`, `ci-maintainer`, `guide`, `outreach`, `quality`,
+`scanner`, `sec-check`, `strategist`, `supervisor`), not the five named in
+#2318, so a fixed list would silently miss ledgers.
+
+### What is excluded, and why
+
+| Path | Size (measured) | Why excluded |
+|---|---|---|
+| `nous/` | **287MB** | Timestamped learned-context snapshots; regenerable and by far the largest directory |
+| `logs/` | 32MB | Diagnostic, not state |
+| `graph/`, `snapshots/`, `vaults/` | ~19MB | Derived/bulk artifacts |
+| `prompt-history.jsonl` | 3.1MB | Diagnostic transcript |
+| `audit.jsonl` | 860KB | A record *of* actions, not state needed to reconstitute the hive |
+| `dashboard-sessions.json` | 1KB | **Live browser session tokens** — credentials with no restore value; restoring them would resurrect sessions that should have expired |
+| `hive.yaml` | 16KB | The *stale* ConfigMap seed — not authoritative |
+
+**Resulting archive: roughly 3–5MB before compression** on a measured
+production spoke (beads 2.6MB dominating), versus ~796MB for the whole PVC.
+Small enough to stream to a browser and stay responsive.
+
+## `hive.yaml.bak`, not `hive.yaml`
+
+The same trap as the hub backup, and worth repeating because it is silent. The
+`copy-config` init container restores from `hive.yaml.bak` and falls back to the
+stale ConfigMap seed only when it is absent. On a sampled production spoke the
+two files had **different content and different timestamps** — `hive.yaml` was a
+root-owned copy days older than the live, user-customised `hive.yaml.bak`.
+Backing up the wrong one produces no error at backup time and no symptom until a
+restore quietly reverts the owner's settings. A test locks this in.
+
+## Encryption is mandatory
+
+The archive contains GitHub App private keys, so it is **always** sealed with
+AES-256-GCM using the same code path as the hub backup.
+
+- The key comes from **`HIVE_BACKUP_KEY`** on the spoke, with **no default**.
+  If it is unset the endpoint returns `412 Precondition Failed` and refuses —
+  it never streams plaintext credentials to a browser.
+- The key is **not in the archive** and is not derivable from it. An artifact
+  carrying its own decryption key is not encrypted. The owner must have the key
+  escrowed separately, or the backup is unreadable.
+- The response is `Cache-Control: no-store` and is served over `POST` only, so
+  it cannot be pulled by a cross-origin navigation or `<img>` tag.
+
+The UI states plainly that the file is encrypted and that the key is not
+included.
+
+## Authorization
+
+**Owner-only**, enforced server-side on both `POST /api/backup` and
+`GET /api/backup/status`, matching `handleConfigDownload` and
+`handleSelfUpgrade`. Viewers and read-write members get `403`. Hiding the menu
+entry for non-owners is UX; the server check is the boundary.
+
+## Restore procedure
+
+There is **no restore button** — restoring is a deliberate, disruptive act on a
+running hive, so it is a documented operator procedure rather than a one-click
+control. The archive shares the hub format, so the same tooling reads it.
+
+```bash
+# 0. Decrypt and verify. Uses the SAME archive format as the hub backup,
+#    so hive-backup verifies and extracts it unchanged.
+export HIVE_BACKUP_KEY=<the key escrowed for THIS hive>
+hive-backup verify --archive hive-spoke-backup-<id>-<ts>.tar.gz.enc
+hive-backup extract --archive hive-spoke-backup-<id>-<ts>.tar.gz.enc --dest ./restore
+
+# Layout:
+#   ./restore/MANIFEST.json
+#   ./restore/spoke/{hive.yaml.bak,hive-id,hive-state.json,gh-app-key*.pem}
+#   ./restore/beads/<agent>/**
+
+# 1. Identify the target spoke pod.
+NS=hive-hosted-hosted-<org>-<repo>-<suffix>
+POD=$(kubectl -n $NS get pods --field-selector=status.phase=Running \
+        -o jsonpath='{.items[0].metadata.name}')
+
+# 2. Scale down so agents are not writing beads while you restore them.
+kubectl -n $NS scale deploy/hive --replicas=0
+kubectl -n $NS wait --for=delete pod/$POD --timeout=120s
+```
+
+Then bring up a pod with the PVC mounted and copy the files back:
+
+```bash
+kubectl -n $NS scale deploy/hive --replicas=1
+POD=$(kubectl -n $NS get pods --field-selector=status.phase=Running \
+        -o jsonpath='{.items[0].metadata.name}')
+
+# 3. Config FIRST — .bak is what copy-config actually restores from.
+kubectl -n $NS cp ./restore/spoke/hive.yaml.bak   $POD:/data/hive.yaml.bak -c hive
+kubectl -n $NS cp ./restore/spoke/hive-id         $POD:/data/hive-id       -c hive
+kubectl -n $NS cp ./restore/spoke/hive-state.json $POD:/data/hive-state.json -c hive
+
+# 4. GitHub App keys. Mode 0600 — never world-readable.
+for k in ./restore/spoke/gh-app-key*.pem; do
+  kubectl -n $NS cp "$k" $POD:/data/$(basename "$k") -c hive
+  kubectl -n $NS exec $POD -c hive -- chmod 600 /data/$(basename "$k")
+done
+
+# 5. The bead ledger.
+for d in ./restore/beads/*/; do
+  agent=$(basename "$d")
+  kubectl -n $NS exec $POD -c hive -- mkdir -p /data/beads/$agent
+  kubectl -n $NS cp "$d" $POD:/data/beads/$agent -c hive
+done
+
+# 6. Restart so copy-config picks up hive.yaml.bak.
+kubectl -n $NS rollout restart deploy/hive
+kubectl -n $NS rollout status  deploy/hive --timeout=300s
+```
+
+**Verify:** the dashboard loads, the hive ID matches, config changes the owner
+made are present (not the ConfigMap defaults), and agents show their prior bead
+counts rather than starting from an empty ledger.
+
+### Bead ownership
+
+Bead directories are owned per-agent UID on the spoke (`hive-scanner`,
+`hive-quality`, …). If agents cannot write their ledgers after a restore, fix
+ownership to match the surrounding directories rather than loosening the mode.
+
+## Testing status
+
+**Verified:**
+
+- Unit tests cover: `hive.yaml.bak` captured and `hive.yaml` excluded; beads
+  captured for every discovered agent; `nous`/`logs`/`home`/`audit.jsonl`/
+  `dashboard-sessions.json` excluded; App keys captured; sealed archive is
+  opaque ciphertext with no plaintext key/config leakage; wrong key and
+  bit-flips rejected; manifest digests non-empty so `Verify` is not vacuous;
+  build refuses with no key; missing files recorded rather than silently
+  dropped; hostile hive IDs cannot escape the filename.
+- Handler tests cover: `403` for `read`/`read-write`/`write`/`viewer` on both
+  endpoints, `412` with no `HIVE_BACKUP_KEY` and no download offered,
+  `no-store` caching, and an `.enc` attachment.
+- Archives are extracted through `hubbackup.Extract`, proving both backups
+  share one format and one restore path.
+- Spoke layout, `hive.yaml`/`hive.yaml.bak` divergence, bead directory names
+  and all sizes above were read from a live production spoke (read-only).
+
+**UNTESTED:**
+
+- The restore procedure above has **not** been executed against a live spoke.
+- No real backup was run against a user's hive; the endpoint was exercised
+  only against temporary directories in tests.
+- Browser download of a multi-MB archive was not exercised end-to-end in a
+  real browser.
