@@ -65,11 +65,11 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 		{
 			name:        "daily before the window does not fire",
 			mode:        AutoUpgradeModeDaily,
-			now:         mustET(t, 2026, time.July, 15, 16, 59),
+			now:         mustET(t, 2026, time.July, 15, autoUpgradeDailyHour-1, 59),
 			wantAllowed: false,
 		},
 		{
-			name:        "daily exactly at 17:00 fires",
+			name:        "daily exactly at the window hour fires",
 			mode:        AutoUpgradeModeDaily,
 			now:         mustET(t, 2026, time.July, 15, autoUpgradeDailyHour, 0),
 			wantAllowed: true,
@@ -78,15 +78,15 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 		{
 			name:        "daily after the window fires",
 			mode:        AutoUpgradeModeDaily,
-			now:         mustET(t, 2026, time.July, 15, 17, 2),
+			now:         mustET(t, 2026, time.July, 15, autoUpgradeDailyHour, 2),
 			wantAllowed: true,
 			wantFire:    "2026-07-15",
 		},
 		{
-			name:        "daily already fired today does not fire again at 17:04",
+			name:        "daily already fired today does not fire again minutes later",
 			mode:        AutoUpgradeModeDaily,
 			lastFired:   "2026-07-15",
-			now:         mustET(t, 2026, time.July, 15, 17, 4),
+			now:         mustET(t, 2026, time.July, 15, autoUpgradeDailyHour, 4),
 			wantAllowed: false,
 		},
 		{
@@ -100,7 +100,7 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 			name:        "daily fires again the next day",
 			mode:        AutoUpgradeModeDaily,
 			lastFired:   "2026-07-15",
-			now:         mustET(t, 2026, time.July, 16, 17, 0),
+			now:         mustET(t, 2026, time.July, 16, autoUpgradeDailyHour, 0),
 			wantAllowed: true,
 			wantFire:    "2026-07-16",
 		},
@@ -139,7 +139,7 @@ func TestShouldAutoUpgradeNow(t *testing.T) {
 
 // TestShouldAutoUpgradeNowDST is the reason autoUpgradeTimezone is a ZONE NAME
 // and not a fixed offset. On these dates a hardcoded UTC-5 or UTC-4 would put
-// the 17:00 boundary an hour off, firing early or holding a hive an extra day.
+// the daily boundary an hour off, firing early or holding a hive an extra day.
 // Each case asserts on a wall-clock ET time that is only correct if the offset
 // is resolved from tzdata.
 func TestShouldAutoUpgradeNowDST(t *testing.T) {
@@ -152,50 +152,50 @@ func TestShouldAutoUpgradeNowDST(t *testing.T) {
 		{
 			// Spring forward 2026: DST begins Sunday March 8. The day before is
 			// still EST (UTC-5).
-			name:        "day before spring forward is EST, 16:59 holds",
-			now:         mustET(t, 2026, time.March, 7, 16, 59),
+			name:        "day before spring forward is EST, the minute before holds",
+			now:         mustET(t, 2026, time.March, 7, autoUpgradeDailyHour-1, 59),
 			wantOffset:  -5 * 60 * 60,
 			wantAllowed: false,
 		},
 		{
-			name:        "day before spring forward is EST, 17:00 fires",
+			name:        "day before spring forward is EST, the window fires",
 			now:         mustET(t, 2026, time.March, 7, autoUpgradeDailyHour, 0),
 			wantOffset:  -5 * 60 * 60,
 			wantAllowed: true,
 		},
 		{
-			// After the transition the same wall-clock 17:00 is EDT (UTC-4).
+			// After the transition the same wall-clock hour is EDT (UTC-4).
 			// A hardcoded -5 offset would treat this instant as 16:00 and hold.
-			name:        "day after spring forward is EDT, 17:00 still fires",
+			name:        "day after spring forward is EDT, the window still fires",
 			now:         mustET(t, 2026, time.March, 9, autoUpgradeDailyHour, 0),
 			wantOffset:  -4 * 60 * 60,
 			wantAllowed: true,
 		},
 		{
-			name:        "day after spring forward is EDT, 16:59 still holds",
-			now:         mustET(t, 2026, time.March, 9, 16, 59),
+			name:        "day after spring forward is EDT, the minute before still holds",
+			now:         mustET(t, 2026, time.March, 9, autoUpgradeDailyHour-1, 59),
 			wantOffset:  -4 * 60 * 60,
 			wantAllowed: false,
 		},
 		{
 			// Fall back 2026: DST ends Sunday November 1. The day before is EDT.
-			name:        "day before fall back is EDT, 17:00 fires",
+			name:        "day before fall back is EDT, the window fires",
 			now:         mustET(t, 2026, time.October, 31, autoUpgradeDailyHour, 0),
 			wantOffset:  -4 * 60 * 60,
 			wantAllowed: true,
 		},
 		{
-			// After the transition 17:00 is EST again. A hardcoded -4 offset
-			// would treat this as 18:00 — still firing, but the 16:59 case
+			// After the transition the window hour is EST again. A hardcoded -4 offset
+			// would treat this as an hour later — still firing, but the minute-before case
 			// below is what a wrong offset actually breaks.
-			name:        "day after fall back is EST, 17:00 fires",
+			name:        "day after fall back is EST, the window fires",
 			now:         mustET(t, 2026, time.November, 2, autoUpgradeDailyHour, 0),
 			wantOffset:  -5 * 60 * 60,
 			wantAllowed: true,
 		},
 		{
-			name:        "day after fall back is EST, 16:59 holds",
-			now:         mustET(t, 2026, time.November, 2, 16, 59),
+			name:        "day after fall back is EST, the minute before holds",
+			now:         mustET(t, 2026, time.November, 2, autoUpgradeDailyHour-1, 59),
 			wantOffset:  -5 * 60 * 60,
 			wantAllowed: false,
 		},
