@@ -2788,7 +2788,7 @@
         malfunction.</strong> A hive that merges ~60 PRs in an afternoon burned tokens roughly in proportion to the work it did. If
         the PRs were good, that spend bought something. The lever you want is usually not "spend less per unit of work" but
         <strong>"do less work per day"</strong> — and that lever is cadence.</p>
-        <p style="margin:0 0 8px">Six things you can actually turn, roughly in order of effect:</p>
+        <p style="margin:0 0 8px">Seven things you can actually turn, roughly in order of effect:</p>
         <ol style="margin:0 0 8px;padding-left:20px">
           <li><strong>Widen your agent cadences — the primary lever.</strong> Cadence is the interval between governor kicks, set
               per agent <em>per governor mode</em>. The Governor panel shows this as a grid — agents down the side, the four modes
@@ -2823,9 +2823,16 @@
           <li><strong>Re-check the level itself.</strong> If the spend is not buying PRs you actually merge, the level — not the
               cadence — is the wrong setting. Dropping from L5 to L4 or L3 is a legitimate cost control, and the ACMM dialog moves
               in both directions.</li>
+          <li><strong>Move inference off metered APIs entirely.</strong> Two options change the cost model rather than trimming it.
+              <em>Self-hosted models</em> — point agents at <strong>vLLM</strong> or <strong>llm-d</strong> via the <strong>method</strong>
+              picker, and per-token API charges become fixed infrastructure you already run. <em>Donated compute</em> — <strong>ClankeR</strong>,
+              the contributor relay, hands tasks from your hive's backlog to CLI agents running on <em>contributors'</em> machines, on
+              their credentials, which never leave their machine. Contributors start rate-limited and auto-promote as tasks complete.
+              <br><span style="color:var(--muted)">If you move to vLLM or llm-d, revisit the next item: self-hosted models are exactly the
+              case where the supervisor earns its keep.</span></li>
         </ol>
         <p style="margin:0 0 8px">And one more that is easy to miss, because it is on by default and you did not choose it:</p>
-        <ol start="6" style="margin:0 0 8px;padding-left:20px">
+        <ol start="7" style="margin:0 0 8px;padding-left:20px">
           <li><strong>Turn the supervisor off if you are on <code>claude</code>, <code>copilot</code>, <code>bob</code>, or
               <code>litellm</code>.</strong> The supervisor's core job is watching the other agents' tmux panes for ones
               <em>stuck at a prompt</em> — waiting on a human instead of running to completion. That failure mode is now
@@ -2836,9 +2843,11 @@
               stall this way; in practice they no longer do. <strong>If you are running only CLI backends or litellm, the supervisor
               is mostly watching for a condition that no longer occurs</strong> — and it is not free: the shipped packs kick it every
               <code>5m</code> in most modes (every <code>1m</code> at L6), which is the tightest cadence of any agent.
-              <br><span style="color:var(--muted)">Keep it if you run vLLM or llm-d agents. It is also doing secondary work —
-              spotting idle, crashed, and rate-limited agents — so on a mixed fleet, widening its cadence is the safer move than
-              switching it off outright.</span></li>
+              <br><span style="color:var(--muted)"><strong>Keep it if you run vLLM or llm-d agents</strong> — that is the case it was built
+              for, and it is the direct trade-off against the self-hosted option above: moving inference in-house cuts your token bill
+              but reintroduces the stalling behaviour the supervisor exists to catch. It is also doing secondary work — spotting idle,
+              crashed, and rate-limited agents — so on a mixed fleet, widening its cadence is the safer move than switching it off
+              outright.</span></li>
         </ol>
         <p style="margin:0 0 8px;color:var(--muted)"><strong>Why it is on in the first place, and how to turn it off.</strong> The supervisor ships <em>enabled</em> in every
         default pack from L2 to L6 (on <code>copilot</code>), so you will find it running even though you never asked for it. That
@@ -2871,6 +2880,39 @@
         <p style="margin:0 0 16px">Two cadence values in the grid are not durations. <strong>paused</strong> means the governor never kicks
         that agent until you resume it. <strong>on demand</strong> means the agent is only ever kicked manually — it has no automatic
         schedule at all.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">Is the first day supposed to cost this much?</h3>
+        <p style="margin:0 0 8px"><strong>Yes, and it is the least representative day you will have. Budget for a day-one spike, then expect
+        it to fall.</strong> Pointing a hive at an existing repo for the first time is the single most expensive thing you will ask it to
+        do, because a mature codebase carries years of accumulated technical debt that nobody has triaged — and the scanner finds
+        essentially all of it at once.</p>
+        <p style="margin:0 0 8px">That produces enough queued work to keep agents busy continuously, which is exactly what
+        "running non-stop" looks like. It is not a runaway loop; it is a real backlog being worked. One early adopter saw ~60 PRs in
+        an afternoon — small, targeted ones — at roughly five minutes of agent work apiece, which is about five hours of genuine
+        output. The bill tracked the work.</p>
+        <p style="margin:0 0 8px"><strong>Two things compound on day one</strong>, and both unwind on their own:</p>
+        <ul style="margin:0 0 8px;padding-left:20px">
+          <li>The backlog is at its deepest, so agents rarely run out of work and stop early — sessions run long.</li>
+          <li>A deep backlog of actionable issues pushes the governor into <strong>busy</strong> or <strong>surge</strong>, which is the
+              mode column with the <em>shortest</em> cadences. So the pace goes up at precisely the moment there is most to do.</li>
+        </ul>
+        <p style="margin:0 0 8px">As the backlog drains, both effects reverse: agents finish their queue and sit idle until the next
+        kick, and the governor settles back toward quiet or idle with its longer intervals. <strong>Steady-state cost is materially lower
+        than onboarding cost</strong>, so extrapolating your first day into a monthly figure will overestimate — usually by a lot.</p>
+        <p style="margin:0 0 16px;color:var(--muted)">If you would rather not absorb the spike all at once, the levers above still apply on day one — start at a lower ACMM
+        level, widen cadences before the first run, or set a <em>Total Tokens</em> budget so the spike is capped. Draining the initial
+        backlog is a one-time cost, and paying it more slowly is a legitimate choice.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">Where did the money actually go?</h3>
+        <p style="margin:0 0 8px">The <strong>💵 Cost</strong> section is the place to look. It reports an <strong>estimated</strong> total —
+        token counts multiplied by a dated list-price table — with a timeframe selector offering <strong>hourly</strong>,
+        <strong>daily</strong>, <strong>weekly</strong>, <strong>monthly</strong>, and <strong>custom</strong> ranges, so you can line a
+        spike up against what the fleet was doing at the time. Each agent card also shows a <strong>spend</strong> figure attributed to
+        that agent over whichever timeframe the Cost section is set to, which is how you find the one agent responsible for a jump.</p>
+        <p style="margin:0 0 16px;color:var(--muted)">Treat it as an estimate, not a bill. It is derived from token counts and list prices, so a subscription plan, a
+        discounted rate, or self-hosted inference will all diverge from it — and models without an exact price entry fall back to a
+        coarse tier estimate (shown with a <code>~</code>). It is the right tool for <em>attribution</em> — which agent, which model, which
+        day — rather than for reconciling against an invoice.</p>
 
         <h3 style="font-size:0.95rem;margin:0 0 6px">Why couldn't the Guide agent answer my questions?</h3>
         <p style="margin:0 0 16px">Because the guide agent documents <em>your</em> project, not Hive itself. Its job is to audit your
