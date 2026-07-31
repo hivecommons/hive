@@ -1426,3 +1426,97 @@ func indexOf(h, n string) int {
 	}
 	return -1
 }
+
+func TestEvaluateAlerts_AdvisoryStaleRule(t *testing.T) {
+	h := baseHive("h1")
+	h.AdvisoryStale = true
+	h.AdvisoryStaleReason = "No advisory digest posted for 3h20m"
+
+	got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	a, ok := findAlert(got.Alerts, "h1", AlertTypeAdvisoryStale)
+	if !ok {
+		t.Fatalf("expected a stale-advisory alert, got %+v", got.Alerts)
+	}
+	if a.Severity != AlertSeverityWarning {
+		t.Fatalf("severity = %q, want %q", a.Severity, AlertSeverityWarning)
+	}
+	// The SERVER-supplied reason must be surfaced verbatim rather than replaced
+	// by generic wording — advisoryStale() owns the explanation.
+	if a.Reason != h.AdvisoryStaleReason {
+		t.Fatalf("reason = %q, want the server-supplied %q", a.Reason, h.AdvisoryStaleReason)
+	}
+}
+
+func TestEvaluateAlerts_AdvisoryStaleNotRaisedWhenFlagUnset(t *testing.T) {
+	// The gating (advisory-mode participation, app-can-write, unknown
+	// timestamps) lives entirely in advisoryStale(). The evaluator must trust
+	// the flag and never re-derive it, so a cleared flag means no alert even
+	// though a reason string is present.
+	h := baseHive("h1")
+	h.AdvisoryStale = false
+	h.AdvisoryStaleReason = "stale-looking but not flagged"
+
+	got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	if hasAlert(got.Alerts, "h1", AlertTypeAdvisoryStale) {
+		t.Fatal("a hive the hub did not flag stale must not raise a stale-advisory alert")
+	}
+}
+
+func TestEvaluateAlerts_AdvisoryStaleFallsBackWhenReasonEmpty(t *testing.T) {
+	h := baseHive("h1")
+	h.AdvisoryStale = true
+	h.AdvisoryStaleReason = ""
+
+	got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	a, ok := findAlert(got.Alerts, "h1", AlertTypeAdvisoryStale)
+	if !ok {
+		t.Fatalf("expected a stale-advisory alert, got %+v", got.Alerts)
+	}
+	if a.Reason == "" {
+		t.Fatal("reason must never be empty — the panel renders it as the detail line")
+	}
+}
+
+func TestEvaluateAlerts_AdvisoryStalePlaceholderExclusion(t *testing.T) {
+	// An unassigned pool slot posts no advisory digests by definition, so it
+	// must never be flagged, matching every other claimed-hive rule.
+	ph := baseHive("placeholder-1")
+	ph.IsPlaceholder = true
+	ph.AdvisoryStale = true
+	ph.AdvisoryStaleReason = "stale"
+
+	claimed := baseHive("claimed-1")
+	claimed.AdvisoryStale = true
+	claimed.AdvisoryStaleReason = "stale"
+
+	got := evaluateAlerts(newAlertState(), []alertHive{ph, claimed}, nil, fixedNow)
+	if hasAlert(got.Alerts, "placeholder-1", AlertTypeAdvisoryStale) {
+		t.Fatal("an unassigned placeholder must not raise a stale-advisory alert")
+	}
+	if !hasAlert(got.Alerts, "claimed-1", AlertTypeAdvisoryStale) {
+		t.Fatal("the claimed control hive should raise the alert; " +
+			"if not, the placeholder exclusion is not what is being tested")
+	}
+}
+
+func TestAdvisoryStaleIsAKnownAlertType(t *testing.T) {
+	// The ack endpoint rejects unknown types, so omitting this would leave the
+	// new alert permanently un-acknowledgeable from the panel.
+	if !isKnownAlertType(AlertTypeAdvisoryStale) {
+		t.Fatal("AlertTypeAdvisoryStale must be ack-able via the alert ack endpoint")
+	}
+}
+
+func TestAlertHiveFromEntry_CarriesAdvisoryStaleness(t *testing.T) {
+	// The projection is the only path from MyHiveEntry into the evaluator; if
+	// it drops these fields the rule can never fire in production even though
+	// every unit test above passes.
+	got := alertHiveFromEntry(MyHiveEntry{
+		RegistryEntry:       RegistryEntry{ID: "h1"},
+		AdvisoryStale:       true,
+		AdvisoryStaleReason: "why",
+	})
+	if !got.AdvisoryStale || got.AdvisoryStaleReason != "why" {
+		t.Fatalf("advisory staleness not projected: %+v", got)
+	}
+}

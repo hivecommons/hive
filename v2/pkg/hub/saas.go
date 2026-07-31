@@ -7911,6 +7911,24 @@ const dashboardHTML = `<!DOCTYPE html>
       return hiveUpgradeState(h) === _dashUpgradeFilter;
     }
 
+    /* ── Stale-advisory filter ──
+       When true, the list is narrowed to hives whose advisory digest the hub
+       has flagged stale. A single boolean, not a value set: the underlying
+       signal is itself boolean, so there is no second value to OR against.
+       Composes by AND with the status chips and the facets, like the drift
+       filter above. */
+    var _dashAdvisoryStaleFilter = false;
+
+    /* hiveMatchesAdvisoryStaleFilter answers whether a hive survives the
+       stale-advisory filter. Reads the SERVER-computed h.advisoryStale flag —
+       the browser must never re-derive the threshold or the advisory-mode /
+       app-can-write gating, or the filter and the row pill would drift apart
+       (see advisoryStale() in advisory_staleness.go). */
+    function hiveMatchesAdvisoryStaleFilter(h) {
+      if (!_dashAdvisoryStaleFilter) return true;
+      return !!(h && h.advisoryStale);
+    }
+
     /* ────────────────────────────────────────────────────────────────────────
        Grouping and saved views for My Hives.
 
@@ -8307,6 +8325,7 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       if (!hiveMatchesDriftFilter(h)) return false;
       if (!hiveMatchesUpgradeFilter(h)) return false;
+      if (!hiveMatchesAdvisoryStaleFilter(h)) return false;
       var active = Object.keys(_dashStatusFilters || {}).filter(function(k) { return _dashStatusFilters[k]; });
       if (!active.length) return true;
       var f = hiveStatusFlags(h);
@@ -8357,7 +8376,8 @@ const dashboardHTML = `<!DOCTYPE html>
       'provision-error': 'Provision error',
       /* Added by the hub in #2308. Without a label here the chip for a
          genuinely failed upgrade would render as the raw key 'failed-upgrade'. */
-      'failed-upgrade': 'Failed upgrade'
+      'failed-upgrade': 'Failed upgrade',
+      'advisory-stale': 'Stale advisory'
     };
 
     /* How many alert rows are listed before the panel collapses the remainder
@@ -8410,6 +8430,7 @@ const dashboardHTML = `<!DOCTYPE html>
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
       _dashUpgradeFilter = '';
+      _dashAdvisoryStaleFilter = false;
       _alertTypeFilter = '';
       _dashFacets = {};
       _dashSearchQuery = '';
@@ -8740,6 +8761,13 @@ const dashboardHTML = `<!DOCTYPE html>
        (_dashUpgradeFilter), not a dimension enumerated from the data like
        cluster or branch, so it stays OUT of HIVE_FACET_GROUPS. */
     var FACET_GROUP_UPGRADE = 'upgrade-state';
+    /* Stale-advisory group. Follows the HEALTH/FAILING_CHECK pattern rather
+       than the derived-facet one: "is this hive's advisory digest stale" is a
+       boolean health signal read off a server-computed flag, not an enumerated
+       dimension of the hive like cluster or branch, so it keeps its own state
+       (_dashAdvisoryStaleFilter) and its own matching rule and stays OUT of
+       HIVE_FACET_GROUPS. */
+    var FACET_GROUP_ADVISORY_STALE = 'advisory-stale';
 
     var HIVE_FACET_GROUPS = [
       {key: FACET_CLUSTER, label: 'Location'},
@@ -8801,6 +8829,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (_dashFailingCheckFilter) n++;
       if (_dashDriftFilter) n++;
       if (_dashUpgradeFilter) n++;
+      if (_dashAdvisoryStaleFilter) n++;
       if (_alertTypeFilter) n++;
       if (_dashSearchQuery) n++;
       var groups = Object.keys(_dashFacets || {});
@@ -8945,8 +8974,8 @@ const dashboardHTML = `<!DOCTYPE html>
       }).join('') +
       /* Group-scoped reset for the health + failing-check pair, so a user can
          undo just these without also dropping their search term and facets. */
-      (Object.keys(_dashStatusFilters || {}).length || _dashFailingCheckFilter || _dashDriftFilter || _dashUpgradeFilter
-        ? '<button type="button" class="facet-value" onclick="clearStatusFilters()" title="Clear the health, failing-check, drift and upgrade-state filters">' +
+      (Object.keys(_dashStatusFilters || {}).length || _dashFailingCheckFilter || _dashDriftFilter || _dashUpgradeFilter || _dashAdvisoryStaleFilter
+        ? '<button type="button" class="facet-value" onclick="clearStatusFilters()" title="Clear the health, failing-check, drift, upgrade-state and stale-advisory filters">' +
           '<span class="facet-value-label">Clear health filters</span></button>'
         : '') + '</div>';
       return facetGroupShell(FACET_GROUP_HEALTH, 'Health',
@@ -9058,6 +9087,34 @@ const dashboardHTML = `<!DOCTYPE html>
         !!_dashFacetCollapsed[FACET_GROUP_UPGRADE], body);
     }
 
+    /* renderAdvisoryStaleFacetGroup renders the stale-advisory toggle as a
+       facet group. One value, because the signal is boolean: picking it means
+       "only hives whose advisory digest has gone stale".
+
+       Returns '' when no hive is affected AND the filter is off, so a fleet
+       with healthy digests sees no new chrome at all — the same self-
+       suppressing contract advisoryStaleSummary() uses for the row pill. When
+       the filter IS on the group always renders, even at count 0, so it can
+       always be clicked back off (the failing-check group does the same). */
+    function renderAdvisoryStaleFacetGroup(assignedNoPlaceholders) {
+      var n = (assignedNoPlaceholders || []).filter(function(h) {
+        return !!(h && h.advisoryStale);
+      }).length;
+      if (!n && !_dashAdvisoryStaleFilter) return '';
+      var on = _dashAdvisoryStaleFilter;
+      var tip = n === 1
+        ? '1 hive should be posting advisory digests but its digest has gone stale'
+        : n + ' hives should be posting advisory digests but their digests have gone stale';
+      var body = '<div class="facet-values">' +
+        '<button type="button" class="facet-value' + (on ? ' on' : '') +
+        '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + esc(tip) + '"' +
+        ' onclick="toggleAdvisoryStaleFilter()">' +
+        '<span class="facet-value-label">Stale advisory</span>' +
+        '<span class="facet-value-count">' + n + '</span></button></div>';
+      return facetGroupShell(FACET_GROUP_ADVISORY_STALE, 'Advisory digest',
+        !!_dashFacetCollapsed[FACET_GROUP_ADVISORY_STALE], body);
+    }
+
     /* renderFacetRail draws the tray's body: the health chips and failing-check
        picker moved in from the old standalone bar, then the derived facet
        groups. Derived-group counts are computed over the assigned hives after
@@ -9076,7 +9133,7 @@ const dashboardHTML = `<!DOCTYPE html>
       var assignedReal = (assignedAll || []).filter(function(h) { return !isPlaceholderHive(h); });
       var base = (assignedAll || []).filter(hiveMatchesFilters).filter(hiveMatchesSearch);
       var head = renderStatusFacetGroup(assignedReal) + renderFailingCheckFacetGroup(assignedReal) +
-        renderUpgradeFacetGroup(assignedReal);
+        renderUpgradeFacetGroup(assignedReal) + renderAdvisoryStaleFacetGroup(assignedReal);
       if (!base.length && !Object.keys(_dashFacets || {}).length) {
         rail.innerHTML = head + clearFacetsButton();
         return;
@@ -9158,6 +9215,7 @@ const dashboardHTML = `<!DOCTYPE html>
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
       _dashUpgradeFilter = '';
+      _dashAdvisoryStaleFilter = false;
       renderHives(_allDashHives, true);
     }
 
@@ -9166,6 +9224,12 @@ const dashboardHTML = `<!DOCTYPE html>
        filter). */
     function toggleUpgradeFilter(state) {
       _dashUpgradeFilter = (_dashUpgradeFilter === state) ? '' : (state || '');
+      renderHives(_allDashHives, true);
+    }
+
+    /* toggleAdvisoryStaleFilter flips the stale-advisory narrowing on or off. */
+    function toggleAdvisoryStaleFilter() {
+      _dashAdvisoryStaleFilter = !_dashAdvisoryStaleFilter;
       renderHives(_allDashHives, true);
     }
 
@@ -10242,6 +10306,7 @@ const dashboardHTML = `<!DOCTYPE html>
          applying a saved view would all appear to do nothing. */
       var sig = JSON.stringify(allHives) + '|' + JSON.stringify(_dashStatusFilters) +
         '|' + _dashFailingCheckFilter + '|' + _dashDriftFilter + '|' + _dashUpgradeFilter +
+        '|' + _dashAdvisoryStaleFilter +
         '|' + _alertTypeFilter + '|' + _alertShowAcked + '|' + JSON.stringify(_fleetAlerts) +
         '|' + _dashSearchQuery + '|' + JSON.stringify(_dashFacets) +
         '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed) +
@@ -11452,9 +11517,33 @@ const dashboardHTML = `<!DOCTYPE html>
         bg = 'rgba(245,158,11,0.12)'; border = 'rgba(245,158,11,0.3)';
         msg = 'Your hive request for <strong>' + project + '</strong> is pending admin approval.';
       }
+      /* Dismissal is offered for the INFORMATIONAL states only. An 'approved'
+         banner carries the Provision button — it is the only place that action
+         is offered, and dismissals never expire (see dismissBanner: the stored
+         timestamp is written but no reader ever compares it), so a single
+         stray click would strand the user with an approved request and no way
+         to act on it. Pending and denied carry no action and are safe to hide.
+
+         The key embeds the request identity AND its status, so it is scoped to
+         exactly the state the user chose to dismiss: when a pending request is
+         later approved or denied the key changes and the banner re-raises on
+         its own. That is the same content-derived keying the access banner
+         uses ('pending:' + ids). */
+      var dismissable = status === 'pending' || status === 'denied';
+      var dismissBtn = '';
+      if (dismissable) {
+        var reqKey = ('provision:' + (req.id || project) + ':' + status).replace(/'/g, '');
+        var dismissedReqs = {};
+        try {
+          dismissedReqs = JSON.parse(localStorage.getItem('hive-dismissed-banners') || '{}') || {};
+        } catch (e) { dismissedReqs = {}; } /* corrupted value — show the banner */
+        if (dismissedReqs[reqKey]) { el.style.display = 'none'; return; }
+        dismissBtn = '<button onclick="dismissBanner(\'' + esc(reqKey) + '\',this)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px" title="Dismiss">&times;</button>';
+      }
       el.innerHTML = '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px">' +
         '<span style="font-size:1.1rem">' + icon + '</span>' +
         '<span style="flex:1;font-size:0.85rem;color:var(--text)">' + msg + '</span>' +
+        dismissBtn +
         '</div>';
     }
 
