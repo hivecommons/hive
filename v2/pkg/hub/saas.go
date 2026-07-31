@@ -193,6 +193,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/visibility", s.requireAuth(s.handleToggleVisibility))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", s.requireAuth(s.handleToggleAutoUpgrade))
+	// Move a hive between forges (github.com <-> a GitHub Enterprise host).
+	// requireAuth plus an inner owner-or-admin check, exactly like
+	// switch-branch and auto-upgrade above.
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/forge", s.requireAuth(s.handleSwitchForge))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
@@ -5747,6 +5751,16 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		// (addVanityHostToIngress succeeded, or a cluster wildcard route already
 		// serves it), so this never pushes an unserved host and never reintroduces
 		// the 503.
+		//
+		// A pending FORGE SWITCH is likewise independent of project
+		// completeness — a hive can be moved between forges whether or not its
+		// meta carries a complete claim, and the switch is precisely the
+		// operator action that must not be silently dropped. Push the API URL
+		// alone (never the stale project) until the spoke reports the requested
+		// host back.
+		if apiURL := pendingForgeAPIURL(h, curAPIURL); apiURL != "" {
+			return &HeartbeatProjectConfig{GitHubAPIURL: apiURL}
+		}
 		if h.VanityURL != "" && curURL != h.VanityURL {
 			return &HeartbeatProjectConfig{DashboardURL: h.VanityURL}
 		}
@@ -5806,7 +5820,15 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// would re-send on every beat with no read-back to ever stop it.
 	wantAPIURL := gheAPIURLForHost(h.GitHubHost)
 	needGHEAPIPush := wantAPIURL != "" && curAPIURL != "" && curAPIURL != wantAPIURL
-	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush && !needACMMPush {
+	// A pending FORGE SWITCH pushes on its own handshake. It cannot ride
+	// needGHEAPIPush: that gate is deliberately conservative about an empty
+	// curAPIURL (unknown, not a mismatch) and — more importantly — it can never
+	// deliver a switch TO public github.com, whose wantAPIURL is "" by
+	// definition. An operator moving a hive back to github.com must be able to,
+	// so the switch carries its own target and its own read-back.
+	forgeAPIURL := pendingForgeAPIURL(h, curAPIURL)
+	needForgePush := forgeAPIURL != ""
+	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush && !needACMMPush && !needForgePush {
 		return nil // nothing left to push
 	}
 	// Sanitize before pushing. A repo pasted as a URL
@@ -5849,7 +5871,17 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		// (hosted-open-source-osscar) is the working reference: a bare
 		// primary_repo plus github.api_url = https://<host>/api/v3. Empty host
 		// pushes nothing, so a github.com hive keeps the spoke's own default.
-		GitHubAPIURL: gheAPIURLForHost(h.GitHubHost),
+		// A pending forge switch wins: forgeAPIURL is the host the operator
+		// asked for and is only non-empty while that delivery is outstanding.
+		// Once the spoke reports the requested host, ForgeDelivered latches and
+		// this falls back to the ordinary host-derived value — which by then
+		// derives from the SAME host, so the two agree and nothing flaps.
+		GitHubAPIURL: func() string {
+			if forgeAPIURL != "" {
+				return forgeAPIURL
+			}
+			return gheAPIURLForHost(h.GitHubHost)
+		}(),
 		// AIAuthor is deliberately left empty here. Provisioning state never
 		// knows the agents' GitHub account — the spoke owns it — and the spoke
 		// treats an empty author as "leave mine alone". Setting it from this

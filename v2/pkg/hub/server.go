@@ -1302,6 +1302,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// an unclaimed placeholder, or sits on a non-GHE cluster.
 	s.repairGitHubHostForHive(payload.HiveID)
 
+	// Close the FORGE handshake before building the project config, so the beat
+	// on which the spoke first reports the requested host is also the beat the
+	// push stops. Ordering matters for the same reason it does above: doing this
+	// after projectConfigForHiveID would re-send an api_url that has already
+	// landed. No-op (and silent) for every hive with no outstanding switch,
+	// which is all of them until an operator runs one.
+	s.adoptSpokeForge(payload.HiveID, payload.GitHubHost)
+
 	// Retroactively mint the vanity host for a hive CLAIMED BEFORE the vanity
 	// feature existed, also BEFORE building the project config, so the URL-only
 	// push below delivers it on this very beat. VanityURL is otherwise written
