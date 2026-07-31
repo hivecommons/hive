@@ -512,15 +512,23 @@ func resolveProvisionAppID(reqAppID string, h *SaaSHive, cluster *ClusterConfig)
 	if cluster == nil || cluster.GitHubAppID == 0 {
 		return sanitize(reqAppID)
 	}
-	// A hive pinned to public github.com on a cluster whose own App is a GHE
-	// App: the cluster App is registered on the wrong host for this hive, so the
-	// request's public app_id stands. Detected as "the hive resolves to no GHE
-	// base URL while the cluster has one" — the same public-pin semantics
-	// effectiveGitHubBaseURL already implements.
-	if cluster.GitHubBaseURL != "" && effectiveGitHubBaseURL(h, cluster) == "" {
+	// Routed through the ONE resolver so provisioning, the heartbeat answer and
+	// the key lookup cannot drift apart again. The rule below is the one this
+	// function already implemented — a hive pinned to public github.com on a
+	// GHE-default cluster keeps its public app_id, because the cluster's App is
+	// registered on the wrong host for it — now generalised to both directions
+	// and shared with every other caller.
+	identity := ResolveHiveIdentity(h, cluster)
+	if identity.FromHiveIntent {
+		// The hive elected a forge its cluster does not serve. If the hub can
+		// name an App there, use it; otherwise the REQUEST's app_id stands,
+		// exactly as before — the cluster's App would be the wrong forge's.
+		if identity.AppID != 0 && identity.AppID != cluster.GitHubAppID {
+			return strconv.FormatInt(identity.AppID, 10)
+		}
 		return sanitize(reqAppID)
 	}
-	return strconv.FormatInt(cluster.GitHubAppID, 10)
+	return strconv.FormatInt(identity.AppID, 10)
 }
 
 // backfillGitHubHostFromCluster returns the GitHub host a hive should inherit

@@ -488,11 +488,16 @@ func (s *HubServer) forgeIdentityForTarget(cluster *ClusterConfig, target ForgeT
 			fmt.Sprintf("a GitHub App registered on %s (cluster %q serves %s)", target.Host, cluster.ID, clusterHost),
 		}
 	}
+	// Route through the ONE resolver: a forge switch must resolve identity the
+	// same way provisioning, the heartbeat answer and the key lookup do. The
+	// hive is synthesised from the target because the switch is precisely the
+	// act of electing that forge.
+	resolved := ResolveHiveIdentity(&SaaSHive{ID: cluster.ID, GitHubHost: target.Host}, cluster)
 	var missing []string
-	if cluster.GitHubAppID == 0 {
+	if resolved.AppID == 0 {
 		missing = append(missing, fmt.Sprintf("github_app_id for cluster %q", cluster.ID))
 	}
-	if strings.TrimSpace(cluster.GitHubAppSlug) == "" {
+	if strings.TrimSpace(resolved.AppSlug) == "" {
 		// Deliberately required even for public github.com. The default slug
 		// happens to be right there, but accepting an unset value would mean the
 		// atomicity guarantee holds on one forge and not the other — and the
@@ -504,8 +509,8 @@ func (s *HubServer) forgeIdentityForTarget(cluster *ClusterConfig, target ForgeT
 		return forgeIdentity{}, missing
 	}
 	return forgeIdentity{
-		AppID:   cluster.GitHubAppID,
-		AppSlug: strings.TrimSpace(cluster.GitHubAppSlug),
+		AppID:   resolved.AppID,
+		AppSlug: strings.TrimSpace(resolved.AppSlug),
 	}, nil
 }
 

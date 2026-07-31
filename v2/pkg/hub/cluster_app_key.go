@@ -226,6 +226,18 @@ func (i *clusterAppIdentity) HasKey() bool {
 // proceed, while every key-pushing decision still gates on HasKey() so a hub
 // holding no key can never blank a spoke's working one.
 func (s *HubServer) appIdentityForCluster(clusterID string) *clusterAppIdentity {
+	// No hive in hand: the cluster's own default identity. Callers that DO have
+	// a hive must use appIdentityForHive so the hive's election is honoured.
+	return s.appIdentityForHive(nil, clusterID)
+}
+
+// appIdentityForHive resolves the App identity the hub should answer with for a
+// specific hive, routing through ResolveHiveIdentity so this path cannot give a
+// different answer from provisioning or the forge endpoint.
+//
+// A nil hive means "no election known" and yields the cluster default, which is
+// exactly the previous behaviour of appIdentityForCluster.
+func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAppIdentity {
 	if s == nil || s.clusters == nil {
 		return nil
 	}
@@ -233,12 +245,26 @@ func (s *HubServer) appIdentityForCluster(clusterID string) *clusterAppIdentity 
 	if !ok {
 		return nil
 	}
-	if c.GitHubAppID == 0 {
+	resolved := ResolveHiveIdentityInFleet(h, &c, s.forgeAppsAcrossFleet())
+	if resolved.AppID == 0 {
 		return nil
 	}
 	identity := &clusterAppIdentity{
-		AppID:   c.GitHubAppID,
-		AppSlug: c.GitHubAppSlug,
+		AppID:   resolved.AppID,
+		AppSlug: resolved.AppSlug,
+	}
+	// The KEY must follow the APP, not the cluster. A hive that elected a forge
+	// its cluster does not default to needs that App's key; the cluster's key
+	// belongs to a different App and would fail auth even with a correct app_id.
+	if resolved.FromHiveIntent && resolved.AppID != c.GitHubAppID {
+		if k, found := s.appKeysByAppID()[resolved.AppID]; found && k.PrivateKey != "" {
+			identity.PrivateKey = k.PrivateKey
+			identity.Fingerprint = k.Fingerprint
+			if identity.AppSlug == "" {
+				identity.AppSlug = k.AppSlug
+			}
+		}
+		return identity
 	}
 	pem := loadClusterAppKey(clusterID)
 	if pem == "" {
@@ -733,8 +759,18 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, 
 // installation_id. Zero is passed through as zero — the spoke's callback only
 // rebuilds its client once app_id, installation_id and key file are all present,
 // so a key delivered ahead of an installation ID lands on disk and waits.
-func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, installationID int64, logger *slog.Logger) *HeartbeatGitHubAppConfig {
-	identity := s.appIdentityForCluster(clusterID)
+func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, installationID int64, logger *slog.Logger, hiveOpt ...*SaaSHive) *HeartbeatGitHubAppConfig {
+	// hiveOpt carries the hub's record for this hive, whose github_host is the
+	// hive's OWN elected forge. Without it this path answered from the cluster
+	// alone and overwrote correctly-repaired spokes on the next beat.
+	//
+	// Variadic so the existing callers/tests with no hive record keep compiling
+	// and keep their exact previous behaviour (no election -> cluster default).
+	var hive *SaaSHive
+	if len(hiveOpt) > 0 {
+		hive = hiveOpt[0]
+	}
+	identity := s.appIdentityForHive(hive, clusterID)
 	// Does this cluster's App live on a GitHub Enterprise host? Read from cluster
 	// config, never inferred from the App ID — an App ID is an opaque number and
 	// carries no forge information. Empty github_base_url means public github.com.
@@ -1086,5 +1122,6 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		payload.GitHubAppID,
 		installationIDUnchanged,
 		s.logger,
+		sh,
 	)
 }
