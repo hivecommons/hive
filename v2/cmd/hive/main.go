@@ -155,6 +155,24 @@ func perAppIDKeyPath(appID int64) string {
 	return filepath.Join(spokeAppKeyDir, fmt.Sprintf("gh-app-key-%d.pem", appID))
 }
 
+// deliveredKeyPath is where a hub-delivered private key for appID is stored.
+//
+// The filename NAMES the App, so a key can only ever be found under the App it
+// was delivered for. The generic /data/gh-app-key.pem carries no such evidence:
+// a key written there for one App silently becomes "the key" for whatever
+// app_id the config later claims, which is how all 33 vllm-d spokes ended up
+// signing as the public App with the GHE key and getting
+// 404 Integration not found.
+//
+// Falls back to the generic path only when the delivery names no App, so a key
+// is never dropped on the floor.
+func deliveredKeyPath(appID int64) string {
+	if p := perAppIDKeyPath(appID); p != "" {
+		return p
+	}
+	return spokeAppKeyPath
+}
+
 // perAppIDProvisionedKeyPath is perAppIDKeyPath's read-only twin: the same
 // per-app-id filename under the provisioning Secret mount. It is consulted only
 // when the PVC has no usable key for the app_id, so a heartbeat-delivered key
@@ -347,6 +365,28 @@ func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 		return v
 	}
 	if v := strings.TrimSpace(configured); v != "" {
+		// MIGRATION. A configured key_file that is the GENERIC path is not an
+		// operator's choice — it is a value older builds wrote automatically on
+		// every key delivery, and it does not name the App it holds. When we can
+		// see a per-app-id key for the app_id we actually claim, that key is
+		// correct by construction and the generic pin is stale, so ignore it.
+		//
+		// Without this, the ~33 spokes already carrying
+		// key_file: /data/gh-app-key.pem keep signing with whichever App's key
+		// happens to sit there — the live 404 Integration not found — because an
+		// explicit value short-circuits the per-app-id lookup below.
+		//
+		// Deliberately narrow: only the exact generic path is overridden, and
+		// only when a usable per-app-id key exists. Any other path is a genuine
+		// operator override (a hive on a third App with a bespoke key location)
+		// and still wins outright.
+		if v == spokeAppKeyPath {
+			if p := perAppIDKeyPath(appID); p != "" {
+				if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
+					return p
+				}
+			}
+		}
 		return v
 	}
 	// Nothing explicitly configured. Prefer a per-app-id key matching the App we
@@ -2672,7 +2712,24 @@ func main() {
 				}
 			}
 
-			keyPath := spokeAppKeyPath
+			// Write the delivered key to the path that NAMES the App it belongs
+			// to, not to a generic filename.
+			//
+			// /data/gh-app-key.pem carries no evidence of which App signed it, so
+			// a key delivered for one App silently becomes "the key" for whatever
+			// app_id the config later claims. On 2026-07-31 that is exactly what
+			// happened: all 33 vllm-d spokes had key_file pinned to the generic
+			// path holding the GHE key, so correcting app_id to the public App
+			// still produced 404 Integration not found — the right key was
+			// already on disk at gh-app-key-3568013.pem and unreachable, because
+			// an explicit key_file short-circuits resolveAppKeyFile before the
+			// per-app-id lookup runs.
+			//
+			// Deriving the filename from the app_id makes that mismatch
+			// unrepresentable: a key can only be found under the App it was
+			// delivered for. Falls back to the generic path when the delivery
+			// names no App, so a key is never dropped on the floor.
+			keyPath := deliveredKeyPath(ghCfg.AppID)
 			// keyChanged gates dropping the cached installation token below: a
 			// token minted under the previous key is invalid the moment the key
 			// is replaced, but a redelivery of the SAME key must not throw away a
@@ -2766,9 +2823,21 @@ func main() {
 			if ghCfg.InstallationID != 0 {
 				cfg.GitHub.InstallationID = ghCfg.InstallationID
 			}
-			if ghCfg.PrivateKey != "" {
-				cfg.GitHub.KeyFile = keyPath
-			}
+			// Deliberately NOT `cfg.GitHub.KeyFile = keyPath`.
+			//
+			// key_file is DERIVABLE from app_id (resolveAppKeyFile prefers
+			// /data/gh-app-key-<app_id>.pem, the only key correct by
+			// construction). Persisting the path turns a derived value into a
+			// stored one that outlives the App it was derived for: once written,
+			// it short-circuits resolveAppKeyFile on every later boot, so a
+			// corrected app_id keeps signing with the previous App's key. That is
+			// what left all 33 vllm-d spokes pinned to the GHE key.
+			//
+			// Leaving it empty lets derivation run every time, so the key always
+			// tracks the App actually in effect. An operator-set key_file still
+			// wins — that override is intentional, for a hive whose App this
+			// build does not know (e.g. a hive on a third App ID with a key at a
+			// bespoke path).
 			// Same "empty means unchanged" contract as installation_id: adopting
 			// an empty slug would blank a working install link.
 			if ghCfg.AppSlug != "" && cfg.GitHub.AppSlug != ghCfg.AppSlug {
@@ -2808,10 +2877,12 @@ func main() {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
 					return
 				}
-				// Record the key file actually in effect so subsequent config
-				// reads and heartbeat fingerprint reports reflect the resolved
-				// per-app-id key rather than an empty configured value.
-				cfg.GitHub.KeyFile = rebuildKeyFile
+				// Deliberately NOT persisted. rebuildKeyFile is the RESOLVED
+				// path, and writing a resolved value back into config is what
+				// converts a derivation into a pin: the next boot reads it as an
+				// explicit key_file, short-circuits resolveAppKeyFile, and keeps
+				// using this App's key even after app_id changes. Re-resolving on
+				// every use costs a stat and cannot go stale.
 				// Hub-delivered creds can carry a wrong installation_id just as
 				// easily as a hand-edited config; correct (and persist) it
 				// before building a client that would 403 on every write.
