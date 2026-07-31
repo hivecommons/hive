@@ -3636,6 +3636,11 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	}
 	// On first poll, check if any auto-upgrade hives are behind
 	s.triggerAutoUpgrades()
+	// Clear Upgrading flags orphaned by spoke pods that vanished mid-upgrade.
+	// Runs alongside — not inside — triggerAutoUpgrades because that function
+	// only ever considers hives with AutoUpgrade enabled, while the flag is set
+	// by the admin and bulk upgrade paths for any hive.
+	s.sweepOrphanedUpgrades()
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -3655,6 +3660,7 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 		}
 		// Always check for pending auto-upgrades (retries failed/missed hives).
 		s.triggerAutoUpgrades()
+		s.sweepOrphanedUpgrades()
 		changed := false
 		for branch, sha := range newSHAs {
 			if sha != "" && sha != oldSHAs[branch] {
