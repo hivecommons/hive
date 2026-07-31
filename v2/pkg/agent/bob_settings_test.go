@@ -405,10 +405,17 @@ func TestVerifyBobStateDirsWritable(t *testing.T) {
 
 			m := &Manager{logger: discardLogger()}
 			// workDir points at a non-existent path on purpose: a state dir
-			// bob has not created yet must NOT be reported, since bob creates
-			// it recursively on first use.
+			// bob has not created yet must NOT be reported, PROVIDED its
+			// parent is group-writable so bob's recursive mkdir can succeed.
+			// The parent is made 0770 explicitly (t.TempDir is 0700) to keep
+			// this case isolating the $HOME/.bob mode under test — otherwise
+			// the unwritable-parent check would fire on every row.
+			workRoot := t.TempDir()
+			if err := os.Chmod(workRoot, 0o770); err != nil {
+				t.Fatalf("chmod workRoot: %v", err)
+			}
 			got := m.verifyBobStateDirsWritable("tester", home,
-				filepath.Join(t.TempDir(), "agents", "tester"), tc.uid)
+				filepath.Join(workRoot, "agents", "tester"), tc.uid)
 
 			if gotUnwritable := len(got) > 0; gotUnwritable != tc.wantUnwritable {
 				t.Errorf("verifyBobStateDirsWritable() unwritable=%v (%v), want %v",
@@ -418,15 +425,48 @@ func TestVerifyBobStateDirsWritable(t *testing.T) {
 	}
 }
 
-// TestVerifyBobStateDirsWritableIgnoresMissingDirs covers the fresh-PVC case:
-// neither state dir exists yet. bob creates them with mkdirSync recursive on
-// first use, so a missing dir is not a fault and must not be reported.
-func TestVerifyBobStateDirsWritableIgnoresMissingDirs(t *testing.T) {
+// TestVerifyBobStateDirsWritableIgnoresMissingDirsWithWritableParent covers the
+// fresh-PVC case where the state dirs do not exist yet but their parents ARE
+// group-writable. bob creates them with mkdirSync recursive on first use, so a
+// missing dir with a writable parent is not a fault and must not be reported.
+func TestVerifyBobStateDirsWritableIgnoresMissingDirsWithWritableParent(t *testing.T) {
+	home := t.TempDir()
+	workDir := t.TempDir()
+	// t.TempDir() is 0700; production parents are group-writable (2775).
+	for _, d := range []string{home, workDir} {
+		if err := os.Chmod(d, 0o770); err != nil {
+			t.Fatalf("chmod %s: %v", d, err)
+		}
+	}
 	m := &Manager{logger: discardLogger()}
-	got := m.verifyBobStateDirsWritable("tester", t.TempDir(),
-		filepath.Join(t.TempDir(), "nope"), 2004)
+	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
 	if len(got) != 0 {
-		t.Errorf("verifyBobStateDirsWritable() = %v for missing dirs, want none", got)
+		t.Errorf("verifyBobStateDirsWritable() = %v for missing dirs with writable parents, want none", got)
+	}
+}
+
+// TestVerifyBobStateDirsWritableFlagsMissingDirWithUnwritableParent is the
+// regression test for #2284. On the reporting hive $HOME/.bob did not exist and
+// $HOME itself was root-owned 0755, so bob's first-run mkdir failed with EACCES.
+// The original probe skipped missing dirs outright and therefore reported "all
+// clear" for exactly the failure it was added to catch.
+func TestVerifyBobStateDirsWritableFlagsMissingDirWithUnwritableParent(t *testing.T) {
+	home := t.TempDir()
+	workDir := t.TempDir()
+	// 0755: world-readable, NOT group-writable — the production $HOME mode.
+	if err := os.Chmod(home, 0o755); err != nil {
+		t.Fatalf("chmod home: %v", err)
+	}
+	if err := os.Chmod(workDir, 0o770); err != nil {
+		t.Fatalf("chmod workDir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o770) })
+
+	m := &Manager{logger: discardLogger()}
+	got := m.verifyBobStateDirsWritable("tester", home, workDir, 2004)
+	wantDir := filepath.Dir(bobSettingsPath(home))
+	if len(got) != 1 || got[0] != wantDir {
+		t.Errorf("verifyBobStateDirsWritable() = %v, want [%s]", got, wantDir)
 	}
 }
 
