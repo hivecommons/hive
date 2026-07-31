@@ -2738,22 +2738,27 @@
         </ol>
 
         <h3 style="font-size:0.95rem;margin:0 0 6px">How do I move from L2 to L3?</h3>
-        <p style="margin:0 0 8px"><strong>You advance when you trust the ledger.</strong> There is no quota to clear. L2's purpose
-        is to let you judge whether the findings are sound; once you have read enough of them to believe the hive's judgement,
-        you are ready to let it write.</p>
+        <p style="margin:0 0 8px"><strong>Change to L3 whenever you like — there is no gate.</strong> No quota, no checklist,
+        no criteria that must go green first. The only criterion is your own judgement: <em>do you trust the advisory findings
+        you have been reading?</em> That is what L2 is for. Once you believe the beads, you are ready.</p>
         <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Instructed</em>) the only thing the hive touches in
-        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Measured</em>) is the first level where agents touch your
-        actual code: the quality agent may open GitHub issues
+        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Measured</em>) introduces the <strong>quality agent</strong>, and
+        its job is building test cases — making your repo resilient to code changes from <em>any</em> contributor that would
+        destabilise it, break it, or violate patterns you prefer. That is the next step in gaining trust: not more findings,
+        but a safety net. Concretely, the quality agent may open GitHub issues
         and <strong>hold-gated pull requests</strong> that add test coverage. "Hold-gated" means every PR is opened with a
         <code>hold</code> label, and the agent is forbidden from merging it or removing that label — so a human merges every
         change, always. L3 is deliberately scoped to <em>tests only</em>: no production code, no refactors, no features.
         The point of L3 is to build the test coverage that makes the more automated levels above it safe.</p>
-        <p style="margin:0 0 8px"><strong>Before advancing,</strong> check the <strong>ACMM Eval</strong> page in this sidebar. It scores your
-        repo against per-level criteria and reports a <em>Codebase Readiness</em> level — the highest level whose criteria
-        you pass, counting up without gaps. If readiness already says L3 or better, your repo has the CI and test
-        scaffolding L3 expects. If it says L1 or L2, click into <em>Criteria Passed</em> to see exactly which checks fail;
-        those are your prerequisites. Readiness is advisory — nothing blocks you from setting a higher level — but
-        advancing past your readiness score means agents will open PRs against a repo with no CI to judge them.</p>
+        <p style="margin:0 0 8px"><strong>Why this is the pivotal level.</strong> Test coverage is the critical safeguard that
+        makes every later level defensible. Agents opening issues and PRs on their own (L4–L5), and eventually auto-merging
+        them (L6), are only safe once there are tests that can catch a bad change. So the ACMM ladder is not a feature ladder
+        you climb for more capability — each level earns the trust that makes the next one safe. L3 is where you build the
+        net that the automation above it falls into.</p>
+        <p style="margin:0 0 8px"><strong>Optional aid, not a gate:</strong> the <strong>ACMM Eval</strong> page scores your repo
+        against per-level criteria and reports a <em>Codebase Readiness</em> level. It is useful for seeing where your test and
+        CI scaffolding currently stands, and <em>Criteria Passed</em> will show you which checks fail. But nothing there blocks
+        or licenses a level change — you can move to L3 with readiness reading L1. Treat it as information, not permission.</p>
         <p style="margin:0 0 16px"><strong>How to actually change it:</strong> use the ACMM badge in the sidebar, or the
         <em>Change level ▾</em> button on the ACMM Eval section. Both open the same dialog. It offers two distinct actions,
         and the difference matters: <strong>Preview</strong> only changes what this dashboard displays and leaves running
@@ -2762,13 +2767,15 @@
         the supported path.</p>
 
         <h3 style="font-size:0.95rem;margin:0 0 6px">What about L4, L5, L6?</h3>
-        <p style="margin:0 0 8px">Each level widens what agents may do without you, and each still stops short of full autonomy
-        until L6:</p>
+        <p style="margin:0 0 8px">Each level hands over more of the <em>acting</em>, and each is only safe because of the level
+        below it. The end-to-end journey: <strong>L2 shows you what Hive would find; L3 builds the safety net that makes acting
+        on those findings safe; L4–L6 progressively hand over more of the acting.</strong> Nothing is fully autonomous until L6:</p>
         <ul style="margin:0 0 16px;padding-left:20px">
           <li><strong>L1 Assisted</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
           <li><strong>L2 Instructed</strong> — the trust level. Advisory beads only; the sole GitHub write is the
               🐝 Hive Advisory Report issue and its digest comment.</li>
-          <li><strong>L3 Measured</strong> — hold-gated PRs, CI gates.</li>
+          <li><strong>L3 Measured</strong> — introduces the quality agent: hold-gated test-coverage PRs, CI gates. The
+              safeguard everything above depends on.</li>
           <li><strong>L4 Adaptive</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
               issues and PRs remain hold-gated for human review.</li>
           <li><strong>L5 Semi-Automated</strong> — PRs carry a hold label, reviewed in batches.</li>
@@ -2792,11 +2799,11 @@
               <code>copilot</code> on your laptop at that issue and ask whether the findings hold up. This is the core L2
               activity — you are calibrating whether the hive's judgement matches yours.</li>
           <li><strong>Act on a handful.</strong> File real issues for the findings you agree with; ignore the rest.</li>
-          <li><strong>Open ACMM Eval</strong> and note your Codebase Readiness and which criteria fail.</li>
-          <li><strong>Advance to L3</strong> via the ACMM dialog once you trust the ledger and readiness supports it,
-              using <em>Apply</em> (not Preview).</li>
-          <li><strong>Review the first hold-gated PRs.</strong> They will be test-coverage PRs. Merging them is a manual
-              step, by design — that review habit is the thing L4+ depends on.</li>
+          <li><strong>Advance to L3 when you trust the findings</strong> — that judgement is the only prerequisite. Use the
+              ACMM dialog and choose <em>Apply</em> (not Preview). Optionally glance at ACMM Eval first for context on where
+              your test and CI scaffolding stands.</li>
+          <li><strong>Review the first hold-gated PRs.</strong> They will be test-coverage PRs from the quality agent.
+              Merging them is a manual step, by design — and the coverage they add is what makes L4+ safe to turn on.</li>
         </ol>
 
       </div>
