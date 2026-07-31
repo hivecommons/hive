@@ -55,13 +55,22 @@ Four Kubernetes Secrets live **outside** the hub PVC and are required:
 
 | Secret | Without it |
 |---|---|
-| `hive-hub-secrets` | OAuth login broken for all users |
+| `hive-hub-secrets` | OAuth login broken for all users; Slack messaging disabled |
 | `oci-api-key` | Hub cannot provision spoke storage or write backups |
 | `hive-hub-kubeconfigs` | Hub cannot reach remote spoke clusters (vllm-d) |
 | `hive-hub-tls` | Cert-manager reissues automatically (not fatal) |
 
 `hive-backup` captures these automatically and **fails the backup** if any of
 the first three is missing.
+
+> **Adding a new hub credential?** Put it in the **existing `hive-hub-secrets`**
+> Secret rather than creating a new one. That Secret is already in
+> `hubbackup.DefaultHubSecrets`, so a key added to it is captured — and restored
+> — for free. A brand-new Secret is **silently lost in a restore** unless it is
+> also added to `DefaultHubSecrets`.
+>
+> This is why the Slack bot token (`HIVE_HUB_SLACK_BOT_TOKEN`, see
+> [Slack messaging](#slack-messaging)) is a key on `hive-hub-secrets`.
 
 ---
 
@@ -477,3 +486,82 @@ ownership to match the surrounding directories rather than loosening the mode.
   only against temporary directories in tests.
 - Browser download of a multi-MB archive was not exercised end-to-end in a
   real browser.
+
+---
+
+## Slack messaging
+
+The hub can send Slack DMs to a single user, to the owner of a hive, or to every
+user. Recipients are resolved from the **existing** `slack_id` contact field on
+each user record (`/data/saas/users/<GitHubUsername>.json`), which admins edit
+from the Users panel.
+
+### Credential
+
+The bot token is read from the environment with **no default**:
+
+| Variable | Source |
+|---|---|
+| `HIVE_HUB_SLACK_BOT_TOKEN` | key on the existing `hive-hub-secrets` Secret |
+
+It is deliberately a key on `hive-hub-secrets` rather than a new Secret, so it is
+already inside the DR-captured set (`hubbackup.DefaultHubSecrets`) and survives a
+restore. **The token must never be committed to this repository** — a previous
+leak required scrubbing the git history.
+
+Add it without disturbing the other keys:
+
+```bash
+kubectl -n <hub-namespace> patch secret hive-hub-secrets \
+  --type merge \
+  -p "{\"stringData\":{\"slack-bot-token\":\"$SLACK_BOT_TOKEN\"}}"
+```
+
+...and reference it from the hub Deployment:
+
+```yaml
+- name: HIVE_HUB_SLACK_BOT_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: hive-hub-secrets
+      key: slack-bot-token
+      optional: true   # unset simply disables Slack messaging
+```
+
+The token needs the `chat:write` scope. A webhook will **not** work: a webhook is
+bound to one channel at creation time and cannot DM a user.
+
+If the variable is unset, the send endpoints return **503** naming the variable.
+They never report a successful send that did not happen.
+
+### Endpoints
+
+| Endpoint | Auth | Notes |
+|---|---|---|
+| `POST /api/saas/slack/user/{username}` | admin, or the user themselves | |
+| `POST /api/saas/hives/{id}/slack` | hive owner or admin | messages the hive's owner |
+| `POST /api/saas/admin/slack/broadcast` | **admin only** | requires confirmation |
+
+Body: `{"message": "...", "dry_run": false, "confirm": "..."}`.
+
+### Broadcast safety
+
+Broadcast reaches every user with a `slack_id` and cannot be recalled, so:
+
+1. **Dry-run first.** `{"dry_run": true}` sends nothing and returns the recipient
+   count, the **names** of users who will be skipped, a message preview, and an
+   estimated duration.
+2. **Confirm explicitly.** A real broadcast requires `"confirm": "SEND TO ALL
+   USERS"` — a typed string, not a boolean, so no client can set it by accident.
+   Without it the request returns **409** and reports the blast radius.
+3. **Sending is paced and backgrounded.** Slack throttles `chat.postMessage` at
+   roughly 1/sec, so sends are spaced one second apart and run in a goroutine;
+   ~88 users takes about a minute and a half. The HTTP response returns
+   immediately with the estimate.
+
+### Users without a Slack ID are skipped VISIBLY
+
+A user with no `slack_id` cannot be reached. Every response reports how many were
+skipped **and names them**, and the full skipped list is written to the hub log on
+a broadcast. Silent drops are not acceptable: "sent to 61" while 27 people never
+heard anything is worse than a clear failure.

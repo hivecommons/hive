@@ -53,9 +53,11 @@ func TestSelfDeploymentImageReadsContainerImage(t *testing.T) {
 // The namespace comes from the mounted ServiceAccount; without it the hub
 // cannot address its own Deployment and must error rather than guess.
 //
-// The mock rejects a request whose path carries an empty namespace segment, so
-// this fails if the blank-namespace guard is removed rather than silently
-// "succeeding" against a permissive stub.
+// The stub deliberately accepts everything and records the paths it is asked
+// for. An earlier version had the mock reject a "/namespaces//" path, which
+// meant the test still passed with the production guard deleted — it was
+// asserting the stub's behaviour. Asserting that no request is issued at all
+// pins the guard itself.
 func TestSelfDeploymentImageRequiresNamespace(t *testing.T) {
 	// The server must NOT be the thing that rejects an empty namespace.
 	// Previously it returned 400 for a "/namespaces//" path, so this test still

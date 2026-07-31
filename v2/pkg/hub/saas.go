@@ -193,6 +193,10 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/switch-branch", s.requireAuth(s.handleSwitchBranch))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/visibility", s.requireAuth(s.handleToggleVisibility))
 	s.mux.HandleFunc("PUT /api/saas/hives/{id}/auto-upgrade", s.requireAuth(s.handleToggleAutoUpgrade))
+	// Move a hive between forges (github.com <-> a GitHub Enterprise host).
+	// requireAuth plus an inner owner-or-admin check, exactly like
+	// switch-branch and auto-upgrade above.
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/forge", s.requireAuth(s.handleSwitchForge))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
@@ -240,6 +244,14 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
 	s.mux.HandleFunc("GET /api/saas/admin/hub-banner", s.requireAdmin(s.handleGetHubBanner))
 	s.registerBulkRoutes()
+	// Slack messaging. The single-user and hive-owner routes are admin-or-owner
+	// (checked inside each handler, like switch-branch); the BROADCAST is
+	// admin-only, because it reaches every user with a slack_id and cannot be
+	// recalled. It additionally requires a typed confirmation and offers a dry
+	// run — see slack.go.
+	s.mux.HandleFunc("POST /api/saas/slack/user/{username}", s.requireAuth(s.handleSlackMessageUser))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/slack", s.requireAuth(s.handleSlackMessageHiveOwner))
+	s.mux.HandleFunc("POST /api/saas/admin/slack/broadcast", s.requireAdmin(s.handleSlackBroadcast))
 	s.mux.HandleFunc("POST /api/saas/admin/journey-snooze", s.requireAdmin(s.handleJourneySnooze))
 	s.mux.HandleFunc("GET /api/saas/admin/journey-status", s.requireAdmin(s.handleJourneyStatus))
 
@@ -513,7 +525,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	username := r.PathValue("username")
 	u := loadSaaSUser(username)
 	if u == nil {
-		http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
 	// Free-text fields land on a PVC, so bound the body before decoding it.
@@ -526,7 +538,7 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 		Notes     *string `json:"notes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	if body.SaaSQuota != nil {
@@ -546,7 +558,14 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 	if body.Notes != nil {
 		u.Notes = truncateRunes(strings.TrimSpace(*body.Notes), maxContactNotesLen)
 	}
-	saveSaaSUser(u)
+	// A failed write is the one outcome the admin MUST hear about: the dashboard
+	// closes the editor on a 2xx, so reporting success here after the PVC write
+	// failed would silently discard the edit.
+	if err := saveSaaSUser(u); err != nil {
+		s.logger.Error("admin update user: save failed", "target", username, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to save user record")
+		return
+	}
 	// Do not log the note bodies — they are free text and may hold anything an
 	// admin jotted down. Log only that contact fields were touched.
 	s.logger.Info("audit: admin updated user", "target", username, "quota", u.SaaSQuota, "blocked", u.Blocked,
@@ -563,16 +582,16 @@ func (s *HubServer) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request
 func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
 	if username == hubAdminUsername {
-		http.Error(w, `{"error":"cannot delete the hub admin"}`, http.StatusForbidden)
+		writeJSONError(w, http.StatusForbidden, "cannot delete the hub admin")
 		return
 	}
 	if strings.Contains(username, "..") || strings.Contains(username, "/") || strings.Contains(username, "\\") {
-		http.Error(w, `{"error":"invalid username"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid username")
 		return
 	}
 	u := loadSaaSUser(username)
 	if u == nil {
-		http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
 	var ownedHives []string
@@ -582,14 +601,14 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if len(ownedHives) > 0 {
-		msg, _ := json.Marshal(fmt.Sprintf("user still owns %d hive(s); delete or reassign them first: %s", len(ownedHives), strings.Join(ownedHives, ", ")))
-		http.Error(w, `{"error":`+string(msg)+`}`, http.StatusConflict)
+		writeJSONError(w, http.StatusConflict, fmt.Sprintf("user still owns %d hive(s); delete or reassign them first: %s",
+			len(ownedHives), strings.Join(ownedHives, ", ")))
 		return
 	}
 	path := filepath.Join(saasUsersDir, username+".json")
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		s.logger.Warn("admin delete user: remove failed", "target", username, "error", err)
-		http.Error(w, `{"error":"failed to delete user record"}`, http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "failed to delete user record")
 		return
 	}
 	s.logger.Info("audit: admin deleted user", "target", username, "by", s.getAuthUser(r))
@@ -1673,6 +1692,20 @@ type MyHiveEntry struct {
 	AdvisoryStale       bool   `json:"advisoryStale,omitempty"`
 	AdvisoryStaleReason string `json:"advisoryStaleReason,omitempty"`
 
+	// InactiveAgents is how many of this hive's agents are RUNNING but not
+	// doing any work — session gone, sitting on a login prompt, or producing
+	// nothing while work is queued. Computed on read by
+	// evaluateInactiveAgents() so the browser never re-derives the thresholds
+	// or the paused/on-demand gating and cannot drift from the Go rule.
+	//
+	// Agents the operator deliberately PAUSED are excluded by that rule and
+	// never counted here: a pause is a choice, not a fault, and a facet that
+	// alarms on it would be wrong on every hive with a parked agent.
+	// InactiveAgentsReason is the tooltip cause. Both stay zero/empty for
+	// hives with nothing wrong, so the pill and the facet self-suppress.
+	InactiveAgents       int    `json:"inactiveAgents,omitempty"`
+	InactiveAgentsReason string `json:"inactiveAgentsReason,omitempty"`
+
 	// URLUnreachable is true when this hive's PUBLIC dashboard URL failed to
 	// serve on the last several probes — the link in this very table is dead.
 	// Computed on read from the auth-audit loop's observations, so the browser
@@ -2022,6 +2055,20 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 			result[i].AdvisoryStaleReason = reason
 		}
 
+		// Running-but-inactive agents, computed on read for the same reason:
+		// the thresholds and the paused/on-demand exclusions live ONLY in Go.
+		//
+		// The queue gate is the governor's own actionable backlog, which is
+		// what makes the idle rule safe on a genuinely quiet hive: with no
+		// issues and no PRs waiting, idle agents are CORRECT and nothing is
+		// reported. The two unambiguous faults (dead session, login prompt)
+		// are independent of it.
+		queuedWork := result[i].ActionableIssues + result[i].ActionablePRs
+		if rep := evaluateInactiveAgents(result[i].Agents, queuedWork, journeyNow); rep.Count > 0 {
+			result[i].InactiveAgents = rep.Count
+			result[i].InactiveAgentsReason = rep.Reason
+		}
+
 		// Sparkline history dominated this payload: at 42 hives the two series
 		// were ~755 KB of an 818 KB response (92%), yet they are drawn into a
 		// 50 px-wide SVG. Downsample on the WIRE only — the registry keeps the
@@ -2164,7 +2211,7 @@ func (s *HubServer) handleCreateHive(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCreateHiveBodyBytes)
 	var req CreateHiveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
@@ -2529,7 +2576,7 @@ func (s *HubServer) handleMigrateHive(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, migrateMaxBodyBytes)
 	var req MigrateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
@@ -4536,7 +4583,7 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	target := loadSaaSUser(targetUsername)
 	if target == nil {
-		http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
 	if target.Hives[hiveID] == "owner" {
@@ -4899,6 +4946,19 @@ type ProvisionRequest struct {
 	RequestedAt string `json:"requested_at"`
 	Status      string `json:"status"`
 
+	// Who is asking, as a person rather than as a GitHub login. Both reuse the
+	// SaaSUser contact fields of the same name and the same caps
+	// (maxContactNameLen / maxContactSlackIDLen) — deliberately NOT new keys.
+	// A second Slack key would split one fact across two names, with the
+	// request form writing one and the admin users panel reading the other.
+	//
+	// These are captured here and copied onto the SaaSUser record on approval
+	// (handleApproveProvision); asking and then dropping the answer would be
+	// worse than not asking. Both are omitempty so requests filed before these
+	// fields existed round-trip unchanged.
+	FullName string `json:"full_name,omitempty"`
+	SlackID  string `json:"slack_id,omitempty"`
+
 	// Decision audit. Previously a request only carried its final Status, so
 	// once it left "pending" there was no record of WHO decided, WHEN, or —
 	// for an approval — which hive the requester actually got. That made the
@@ -5018,6 +5078,33 @@ func enrichProvisionRequests(requests []ProvisionRequest) []ProvisionRequest {
 	return requests
 }
 
+// applyRequestContactToUser carries the requester's contact details from an
+// approved provision request onto their SaaSUser record.
+//
+// This is what makes asking for them worth anything. The admin users panel and
+// the Slack sender both read SaaSUser, NOT ProvisionRequest — a value that
+// stops at the request file is invisible to every consumer of it. Slack
+// messaging shipped with no user having a slack_id, settable only by hand one
+// user at a time; approval is the natural point of capture.
+//
+// It only ever FILLS A BLANK. An admin who has already curated these fields (or
+// a user who corrected them later) outranks whatever was typed into a request
+// form, and a re-approval must not silently revert that.
+//
+// Nil-safe on both sides: it runs on the approval path beside other work that
+// can legitimately leave either side absent, and must not panic there.
+func applyRequestContactToUser(user *SaaSUser, pr *ProvisionRequest) {
+	if user == nil || pr == nil {
+		return
+	}
+	if user.FullName == "" && pr.FullName != "" {
+		user.FullName = truncateRunes(strings.TrimSpace(pr.FullName), maxContactNameLen)
+	}
+	if user.SlackID == "" && pr.SlackID != "" {
+		user.SlackID = truncateRunes(strings.TrimSpace(pr.SlackID), maxContactSlackIDLen)
+	}
+}
+
 func loadProvisionRequest(username string) *ProvisionRequest {
 	if strings.Contains(username, "..") || strings.Contains(username, "/") || strings.Contains(username, "\\") {
 		return nil
@@ -5099,15 +5186,30 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		PrimaryRepo string `json:"primary_repo"`
 		ACMMLevel   int    `json:"acmm_level"`
 		AuthMethod  string `json:"auth_method"`
+		FullName    string `json:"full_name"`
+		SlackID     string `json:"slack_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 	if body.Org == "" || body.Repos == "" {
 		http.Error(w, `{"error":"org and repos are required"}`, http.StatusBadRequest)
 		return
 	}
+	// Contact details for the person asking.
+	//
+	// No charset validation on purpose: isValidName() is for identifiers
+	// (org/repo/host names) and would reject spaces, apostrophes and every
+	// non-ASCII script. These are display strings — trimmed, rune-capped and
+	// escaped at every render site, exactly as the admin contact editor
+	// (handleAdminUpdateUser) already treats these same two fields. We also do
+	// NOT try to detect a "real" name: any pattern for that (two words,
+	// capitalised, Latin script) is wrong for a large fraction of the world's
+	// names, and a determined user types junk regardless. Human review is the
+	// check, not a regex.
+	body.FullName = truncateRunes(strings.TrimSpace(body.FullName), maxContactNameLen)
+	body.SlackID = truncateRunes(strings.TrimSpace(body.SlackID), maxContactSlackIDLen)
 	// Accept a pasted org/repo URL, not just a bare name. Users read
 	// "GitHub Organization" and paste the org's URL; the old validator rejected
 	// ":" and "/" and returned a bare "invalid org name" that explained nothing.
@@ -5168,6 +5270,29 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Name is REQUIRED; Slack ID is optional.
+	//
+	// The name exists to map a GitHub login to a person an operator can talk
+	// to, which only works if it is actually populated — a field that is
+	// usually blank cannot be relied on and stops being read. Requesting a hive
+	// is a deliberate, one-per-user action already reviewed by a human, so one
+	// short field is negligible friction at the moment the requester is most
+	// motivated to answer.
+	//
+	// Checked AFTER the org/forge/repo validation above so the more specific
+	// "which GitHub is this org on?" errors keep their precedence — a request
+	// missing both should be told about the forge, not sent round the loop one
+	// field at a time.
+	//
+	// This does tighten an existing endpoint: a caller that posted no full_name
+	// now gets a 400 where it used to get a 200. That is intended — the whole
+	// point is that the field is reliably present — and the wizard is the only
+	// caller in-tree. Called out in the PR body rather than hidden here.
+	if body.FullName == "" {
+		http.Error(w, `{"error":"your name is required — we use it to know who the request is from"}`, http.StatusBadRequest)
+		return
+	}
+
 	// A hive is never REQUESTED above L3 Measured. L4-L6 are real levels, but
 	// they are reached after provisioning, from the hive's own dashboard, once
 	// the project has the coverage and CI history to justify them. The
@@ -5196,6 +5321,8 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		PrimaryRepo: primaryRepo,
 		ACMMLevel:   acmm,
 		AuthMethod:  body.AuthMethod,
+		FullName:    body.FullName,
+		SlackID:     body.SlackID,
 		RequestedAt: time.Now().UTC().Format(time.RFC3339),
 		Status:      provisionStatusPending,
 	}
@@ -5243,7 +5370,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		// An empty body is valid (auto-pick); ignore EOF/empty decode errors and
 		// fall through to auto-pick. Any non-empty malformed body is rejected.
 		if err := json.NewDecoder(r.Body).Decode(&approveBody); err != nil && err != io.EOF {
-			http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
 	}
@@ -5379,6 +5506,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	}
 	user.Hives[hiveID] = "owner"
 	user.SaaSQuota++
+	applyRequestContactToUser(user, pr)
 	if err := saveSaaSUser(user); err != nil {
 		s.logger.Warn("assigned placeholder but failed to grant owner access", "user", targetUsername, "hive", hiveID, "error", err)
 	}
@@ -5747,6 +5875,16 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		// (addVanityHostToIngress succeeded, or a cluster wildcard route already
 		// serves it), so this never pushes an unserved host and never reintroduces
 		// the 503.
+		//
+		// A pending FORGE SWITCH is likewise independent of project
+		// completeness — a hive can be moved between forges whether or not its
+		// meta carries a complete claim, and the switch is precisely the
+		// operator action that must not be silently dropped. Push the API URL
+		// alone (never the stale project) until the spoke reports the requested
+		// host back.
+		if apiURL := pendingForgeAPIURL(h, curAPIURL); apiURL != "" {
+			return &HeartbeatProjectConfig{GitHubAPIURL: apiURL}
+		}
 		if h.VanityURL != "" && curURL != h.VanityURL {
 			return &HeartbeatProjectConfig{DashboardURL: h.VanityURL}
 		}
@@ -5806,7 +5944,15 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// would re-send on every beat with no read-back to ever stop it.
 	wantAPIURL := gheAPIURLForHost(h.GitHubHost)
 	needGHEAPIPush := wantAPIURL != "" && curAPIURL != "" && curAPIURL != wantAPIURL
-	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush && !needACMMPush {
+	// A pending FORGE SWITCH pushes on its own handshake. It cannot ride
+	// needGHEAPIPush: that gate is deliberately conservative about an empty
+	// curAPIURL (unknown, not a mismatch) and — more importantly — it can never
+	// deliver a switch TO public github.com, whose wantAPIURL is "" by
+	// definition. An operator moving a hive back to github.com must be able to,
+	// so the switch carries its own target and its own read-back.
+	forgeAPIURL := pendingForgeAPIURL(h, curAPIURL)
+	needForgePush := forgeAPIURL != ""
+	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush && !needACMMPush && !needForgePush {
 		return nil // nothing left to push
 	}
 	// Sanitize before pushing. A repo pasted as a URL
@@ -5849,7 +5995,17 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		// (hosted-open-source-osscar) is the working reference: a bare
 		// primary_repo plus github.api_url = https://<host>/api/v3. Empty host
 		// pushes nothing, so a github.com hive keeps the spoke's own default.
-		GitHubAPIURL: gheAPIURLForHost(h.GitHubHost),
+		// A pending forge switch wins: forgeAPIURL is the host the operator
+		// asked for and is only non-empty while that delivery is outstanding.
+		// Once the spoke reports the requested host, ForgeDelivered latches and
+		// this falls back to the ordinary host-derived value — which by then
+		// derives from the SAME host, so the two agree and nothing flaps.
+		GitHubAPIURL: func() string {
+			if forgeAPIURL != "" {
+				return forgeAPIURL
+			}
+			return gheAPIURLForHost(h.GitHubHost)
+		}(),
 		// AIAuthor is deliberately left empty here. Provisioning state never
 		// knows the agents' GitHub account — the spoke owns it — and the spoke
 		// treats an empty author as "leave mine alone". Setting it from this
@@ -5911,7 +6067,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxAssignRequestBodyBytes)
 	var body AssignHiveRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
 
@@ -6211,7 +6367,7 @@ func (s *HubServer) handleUserToken(w http.ResponseWriter, r *http.Request) {
 
 	user := loadSaaSUser(body.Username)
 	if user == nil {
-		http.Error(w, `{"error":"user not found"}`, http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "user not found")
 		return
 	}
 
@@ -6958,10 +7114,17 @@ const dashboardHTML = `<!DOCTYPE html>
 
     <div id="admin-section" style="display:none;margin-top:48px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-        <h2 style="font-size:1.3rem;color:var(--accent)">Hub Admin — Users</h2>
+        <h2 id="admin-users-header" role="button" tabindex="0" aria-expanded="false" aria-controls="admin-users-body"
+            onclick="toggleAdminUsers()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleAdminUsers();}"
+            style="font-size:1.3rem;color:var(--accent);margin:0;cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px">
+          <span id="admin-users-toggle" aria-hidden="true" style="font-size:0.7rem">&#9656;</span><span>Hub Admin &mdash; Users</span>
+          <span id="admin-users-count" style="font-size:0.75rem;color:var(--muted);font-weight:400"></span>
+        </h2>
         <input type="text" id="user-search" placeholder="Search users..." oninput="filterUsers()" style="padding:8px 14px;background:var(--surface);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem;width:250px">
       </div>
-      <div id="users-container"><div class="loading">Loading users...</div></div>
+      <div id="admin-users-body" style="display:none">
+        <div id="users-container"><div class="loading">Loading users...</div></div>
+      </div>
     </div>
 
     <div id="hub-banner-section" style="display:none;margin-top:48px">
@@ -8695,7 +8858,14 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Added by the hub in #2308. Without a label here the chip for a
          genuinely failed upgrade would render as the raw key 'failed-upgrade'. */
       'failed-upgrade': 'Failed upgrade',
-      'advisory-stale': 'Stale advisory'
+      'advisory-stale': 'Stale advisory',
+      /* Agents that are up but doing nothing — a session that has gone, a
+         login prompt, or no output while work is queued. Deliberately paused
+         agents are excluded server-side and never counted here. */
+      'agents-inactive': 'Idle agents',
+      /* Raised by the auth-audit loop since #2306 but never labelled, so its
+         chip rendered the raw key. */
+      'url-unreachable': 'Dashboard URL unreachable'
     };
 
     /* How many alert rows are listed before the panel collapses the remainder
@@ -12113,6 +12283,28 @@ const dashboardHTML = `<!DOCTYPE html>
     // github.ibm.com means GitHub Enterprise — hardcoding github.com would send
     // an admin to a 404 (or worse, an unrelated public repo of the same name).
     // Requests with no repo recorded fall back to plain escaped text.
+    /* provisionRequesterLabel renders the requester's real name and Slack ID
+       beside their GitHub login on the review card. Mapping a login to a person
+       is the reason the wizard asks for a name at all, and this is where the
+       operator deciding the request needs it.
+
+       Both are free text a user typed. esc() everywhere, and the whole label is
+       built as a text node's escaped HTML rather than interpolated into an
+       attribute — nothing here is ever placed inside an inline handler, where
+       esc() alone would leave an apostrophe live. Older requests predate these
+       fields and simply render nothing. */
+    function provisionRequesterLabel(pr) {
+      if (!pr) return '';
+      var name = (pr.full_name || '').trim();
+      var slack = (pr.slack_id || '').trim();
+      if (!name && !slack) return '';
+      var bits = [];
+      if (name) bits.push(esc(name));
+      if (slack) bits.push('slack: ' + esc(slack));
+      return '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' +
+        bits.join(' &middot; ') + '</span>';
+    }
+
     function provisionRepoLabel(pr) {
       if (!pr) return '';
       var org = pr.org || '';
@@ -12256,6 +12448,10 @@ const dashboardHTML = `<!DOCTYPE html>
           avatar +
           '<div>' +
           '<span style="font-size:0.85rem;font-weight:600">' + esc(pr.username) + '</span>' +
+          // Who the requester actually IS. Mapping a login to a person is the
+          // reason the wizard asks for a name, and this review card is where an
+          // operator needs it. esc() only — free text, never markup.
+          provisionRequesterLabel(pr) +
           // org/repo links to the repo on the instance the request targets.
           '<span style="font-size:0.75rem;color:var(--muted);margin-left:8px">' + provisionRepoLabel(pr) + '</span>' +
           // Show which GitHub instance the request targets — same pill the Past
@@ -13128,6 +13324,69 @@ const dashboardHTML = `<!DOCTYPE html>
     var _hiveRegistry = [];
     var _userSortKey = 'created_at', _userSortAsc = false;
 
+    /* --- Collapsible "Hub Admin — Users" section ---
+       The roster runs to ~90 records, so an expanded users table pushes the
+       Hub Banner and Cluster Health sections far below the fold. An operator
+       is normally here for hives, not for the roster, so this follows the same
+       convention as the other long admin sections (Past Requests, Cluster
+       Health): collapsed by default, remembered per browser under the same
+       'hive-*-collapsed' localStorage key convention. Absent key means
+       collapsed; only an explicit 'false' expands, so a first visit and a
+       corrupted value behave identically. */
+    var ADMIN_USERS_COLLAPSED_KEY = 'hive-admin-users-collapsed';
+    var _adminUsersCollapsed = localStorage.getItem(ADMIN_USERS_COLLAPSED_KEY) !== 'false';
+
+    /* applyAdminUsersCollapsed pushes _adminUsersCollapsed onto the DOM. Split
+       out from the toggle so the initial render and expandAdminUsersSection()
+       can restore state without duplicating the show/hide + aria bookkeeping. */
+    function applyAdminUsersCollapsed() {
+      var body = document.getElementById('admin-users-body');
+      var toggle = document.getElementById('admin-users-toggle');
+      var header = document.getElementById('admin-users-header');
+      if (body) body.style.display = _adminUsersCollapsed ? 'none' : '';
+      /* ▸ collapsed / ▾ expanded */
+      if (toggle) toggle.innerHTML = _adminUsersCollapsed ? '&#9656;' : '&#9662;';
+      if (header) header.setAttribute('aria-expanded', _adminUsersCollapsed ? 'false' : 'true');
+    }
+
+    /* persistAdminUsersCollapsed writes the current state. localStorage throws
+       under private-browsing quota; collapsing must still work in-session, so
+       the write is best-effort. */
+    function persistAdminUsersCollapsed() {
+      try {
+        localStorage.setItem(ADMIN_USERS_COLLAPSED_KEY, _adminUsersCollapsed ? 'true' : 'false');
+      } catch(e) {}
+    }
+
+    function toggleAdminUsers() {
+      _adminUsersCollapsed = !_adminUsersCollapsed;
+      persistAdminUsersCollapsed();
+      applyAdminUsersCollapsed();
+    }
+
+    /* expandAdminUsersSection opens the section and PERSISTS that, mirroring
+       expandAllHiveSections (#2348). Anything that reveals a row inside this
+       section must go through here rather than flipping display directly: an
+       in-memory-only expand silently re-collapses on the next reload, so the
+       row the operator was just sent to would vanish again. */
+    function expandAdminUsersSection() {
+      if (!_adminUsersCollapsed) return;
+      _adminUsersCollapsed = false;
+      persistAdminUsersCollapsed();
+      applyAdminUsersCollapsed();
+    }
+
+    /* The count beside the header is the only signal of roster size while the
+       section is collapsed, so it is kept current on every render. */
+    function updateAdminUsersCount(shown, total) {
+      var el = document.getElementById('admin-users-count');
+      if (!el) return;
+      var n = Number(total) || 0;
+      el.textContent = (Number(shown) === n)
+        ? '(' + n + ')'
+        : '(' + (Number(shown) || 0) + ' of ' + n + ')';
+    }
+
     function fmtUserTS(ts) {
       if (!ts) return '';
       var d = new Date(ts);
@@ -13171,6 +13430,7 @@ const dashboardHTML = `<!DOCTYPE html>
         if (typeof va === 'number' && typeof vb === 'number') return _userSortAsc ? va - vb : vb - va;
         return _userSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
       });
+      updateAdminUsersCount(sorted.length, (_allUsers || []).length);
       renderUsers(sorted, true);
     }
 
@@ -13191,6 +13451,10 @@ const dashboardHTML = `<!DOCTYPE html>
         }
         _adminLoaded = true;
         document.getElementById('admin-section').style.display = '';
+        /* The section is display:none until the admin check passes, so this is
+           the first point at which the persisted collapse state can be pushed
+           onto real DOM. Idempotent, so running it on every poll is fine. */
+        applyAdminUsersCollapsed();
         document.getElementById('hub-banner-section').style.display = '';
         document.getElementById('btn-send-banner-top').style.display = '';
         loadActiveBanner();
@@ -13351,10 +13615,63 @@ const dashboardHTML = `<!DOCTYPE html>
       var summary = bits.length
         ? '<div style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1px;max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
         : '<span style="color:var(--muted);font-size:0.72rem">—</span>';
+      var open = !!(_contactExpandedUsers && _contactExpandedUsers[u.github_username]);
       var btn = '<button type="button" data-contact-toggle="' + escAttr(u.github_username) + '"' +
-        ' style="margin-top:2px;padding:1px 7px;background:none;border:1px solid var(--border);border-radius:4px;' +
-        'color:var(--muted);cursor:pointer;font-size:0.65rem">Edit</button>';
+        ' id="' + contactToggleId(u.github_username) + '"' +
+        ' aria-controls="' + contactPanelId(u.github_username) + '"' +
+        ' aria-expanded="' + (open ? 'true' : 'false') + '"' +
+        ' aria-label="' + escAttr(contactToggleAriaLabel(u.github_username, open)) + '"' +
+        ' style="' + contactToggleStyle(open) + '">' + contactToggleLabel(open) + '</button>';
       return summary + btn;
+    }
+
+    /* --- The Edit/Save toggle ---
+       The button in the CONTACT column is the operator's primary affordance:
+       "Edit" while the panel is shut, "Save" while it is open. Clicking Save
+       commits every pending field and closes the panel.
+
+       Save is styled as the primary action (accent border and text) so the eye
+       lands on it; the × and the Close button inside the panel remain the
+       escape hatches, and Escape still works. Making the row button the commit
+       is what gives an explicit save point WITHOUT fighting the per-field blur
+       saves: blur keeps storing silently as the admin tabs around, and this
+       button is the only thing that closes on success. */
+
+    /* Style is derived from state in one place so the initial markup and the
+       live in-place update below can never drift apart. */
+    function contactToggleStyle(open) {
+      var color = open ? 'var(--accent)' : 'var(--muted)';
+      return 'margin-top:2px;padding:1px 7px;background:none;border:1px solid ' + color +
+        ';border-radius:4px;color:' + color + ';cursor:pointer;font-size:0.65rem' +
+        (open ? ';font-weight:600' : '');
+    }
+
+    function contactToggleLabel(open) { return open ? 'Save' : 'Edit'; }
+
+    /* The accessible name carries the username as well as the verb, because a
+       screen-reader user tabbing a table of ~90 identical "Save" buttons needs
+       to know which row they are on. */
+    function contactToggleAriaLabel(username, open) {
+      return (open ? 'Save contact details for ' : 'Edit contact details for ') + String(username || '');
+    }
+
+    function contactToggleId(username) {
+      return 'contact-toggle-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    /* refreshContactToggleLabel re-derives the button from _contactExpandedUsers
+       and writes label, style, aria-expanded and the accessible name TOGETHER.
+       Updating the visible text without the aria state would leave a screen
+       reader announcing "Edit, collapsed" over an open editor. */
+    function refreshContactToggleLabel(username) {
+      if (!username) return;
+      var btn = document.getElementById(contactToggleId(username));
+      if (!btn) return;
+      var open = !!(_contactExpandedUsers && _contactExpandedUsers[username]);
+      btn.textContent = contactToggleLabel(open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.setAttribute('aria-label', contactToggleAriaLabel(username, open));
+      btn.setAttribute('style', contactToggleStyle(open));
     }
 
     // renderContactPanelRow is the expandable editor row that follows each user
@@ -13366,7 +13683,8 @@ const dashboardHTML = `<!DOCTYPE html>
       var lbl = 'display:block;font-size:0.66rem;color:var(--muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.04em';
       var user = escAttr(u.github_username);
       return '<tr id="' + contactPanelId(u.github_username) + '" style="display:' + (open ? '' : 'none') + '">' +
-        '<td class="contact-panel-cell" colspan="' + USERS_TABLE_COLSPAN + '" style="background:var(--surface)">' +
+        /* position:relative anchors the absolutely-positioned × below. */
+        '<td class="contact-panel-cell" colspan="' + USERS_TABLE_COLSPAN + '" style="background:var(--surface);position:relative">' +
         '<div style="padding:10px 14px 12px 40px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">' +
           '<div style="flex:1 1 ' + CONTACT_W_NAME_BASIS + ';min-width:' + CONTACT_W_NAME_MIN + '">' +
             '<label style="' + lbl + '">Full name</label>' +
@@ -13383,9 +13701,137 @@ const dashboardHTML = `<!DOCTYPE html>
             '<textarea data-contact-user="' + user + '" data-contact-field="notes" rows="' + CONTACT_NOTES_ROWS + '"' +
               ' maxlength="' + CONTACT_MAX_NOTES + '" style="' + fld + ';resize:vertical;font-family:inherit">' + esc(u.notes || '') + '</textarea>' +
           '</div>' +
-          '<div style="align-self:flex-end;font-size:0.65rem;color:var(--muted);padding-bottom:6px">Saves on blur</div>' +
-        '</div></td></tr>';
+          '<div style="align-self:flex-end;display:flex;align-items:center;gap:10px;padding-bottom:4px">' +
+            '<span style="font-size:0.65rem;color:var(--muted)">Save closes &middot; Esc cancels</span>' +
+            '<button type="button" data-contact-close="' + user + '"' +
+              ' style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;' +
+              'color:var(--muted);cursor:pointer;font-size:0.7rem">Cancel</button>' +
+          '</div>' +
+        '</div>' +
+        /* The × sits top-right of the panel, the conventional place to look for
+           a dismiss control, and duplicates the Close button so the affordance
+           is visible without reading to the end of a wide row. */
+        '<button type="button" data-contact-close="' + user + '" aria-label="Close editor for ' + user + '"' +
+          ' style="position:absolute;top:6px;right:10px;background:none;border:none;color:var(--muted);' +
+          'cursor:pointer;font-size:1rem;line-height:1;padding:2px 6px">&#10005;</button>' +
+        '</td></tr>';
     }
+
+    /* contactPanelHasUnsavedEdits reports whether anything in this user's panel
+       has been typed but not yet handed to the save path. The fields save on
+       blur, so text that has never been blurred lives ONLY in the DOM node —
+       closing the panel without a warning would be real data loss. */
+    function contactPanelHasUnsavedEdits(username) {
+      if (!username) return false;
+      for (var k in _contactDirty) {
+        if (Object.prototype.hasOwnProperty.call(_contactDirty, k) &&
+            k.indexOf(username + '::') === 0) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /* closeContactPanel is the single exit for the editor: the ×, the Close
+       button, Escape, and a successful save all funnel through here.
+
+       Unsaved text is committed rather than discarded when the admin confirms:
+       blur normally saves, but Escape and the × can fire while a field still
+       has focus and has never blurred, so the value would otherwise be lost. */
+    async function closeContactPanel(username, opts) {
+      if (!username) return;
+      var force = !!(opts && opts.force);
+      if (!force && contactPanelHasUnsavedEdits(username)) {
+        var keep = await hiveConfirm('You have unsaved changes for ' + username +
+          '. Save them and close?');
+        if (!keep) return;
+        /* Save first, and close only if the save actually landed. A failed
+           save keeps the editor open with the typed text still in the fields
+           so the admin can read the toast, fix the cause and retry — closing
+           here would discard the very edit the server just rejected. */
+        var saved = await commitContactPanelEdits(username);
+        if (!saved) return;
+      }
+      setContactPanelOpen(username, false);
+    }
+
+    /* commitContactPanelEdits flushes every dirty field for one user through
+       the normal save path and resolves true only when every one succeeded.
+       saveContactField is a no-op for unchanged values, so this is safe to
+       call broadly. Dirty marks are cleared only for fields that saved, so a
+       rejected field stays dirty and the poll keeps backing off rather than
+       rebuilding the table over text the admin has not managed to store. */
+    async function commitContactPanelEdits(username) {
+      var prefix = username + '::';
+      var keys = Object.keys(_contactDirty || {}).filter(function(k) {
+        return k.indexOf(prefix) === 0;
+      });
+      /* Also flush whatever is currently in the panel's inputs. The commit can
+         be triggered by a click on Save while a field still holds focus and has
+         never blurred, so its text may not be in _contactDirty yet. */
+      var panel = document.getElementById(contactPanelId(username));
+      if (panel) {
+        var live = panel.querySelectorAll('[data-contact-field]');
+        Array.prototype.forEach.call(live || [], function(el) {
+          var f = el.getAttribute('data-contact-field');
+          if (!f) return;
+          var k = prefix + f;
+          _contactDirty[k] = el.value;
+          if (keys.indexOf(k) < 0) keys.push(k);
+        });
+      }
+      /* Saves are sequential, not Promise.all: the handler is a read-modify-write
+         over one JSON file per user, so three concurrent PUTs for the same user
+         can interleave and lose a field. */
+      var allOK = true;
+      for (var i = 0; i < (keys || []).length; i++) {
+        var k = keys[i];
+        var field = k.substring(prefix.length);
+        /* Not silent: this IS the explicit commit, so a failure here is exactly
+           what the admin needs to see. */
+        var ok = await saveContactField(username, field, _contactDirty[k]);
+        if (ok) { delete _contactDirty[k]; } else { allOK = false; }
+      }
+      /* A field can be clean here yet still have failed earlier during a silent
+         blur-save. Surface that recorded reason rather than closing on what
+         would look like a no-op success. */
+      if (allOK && _contactLastError[username]) {
+        hiveToast('Could not save ' + username + ': ' + _contactLastError[username], 'error');
+        return false;
+      }
+      return allOK;
+    }
+
+    /* openContactPanelUsername returns the username of the contact editor that
+       currently owns focus, or '' when focus is elsewhere. Escape must only
+       close the editor the admin is actually working in — a stray Escape with
+       focus on the page body should fall through to the global handler that
+       closes create-modal and friends (#2321). */
+    function openContactPanelUsername() {
+      var active = document.activeElement;
+      if (!active || !active.closest) return '';
+      var cell = active.closest('.contact-panel-cell');
+      if (!cell) return '';
+      var field = cell.querySelector('[data-contact-user]');
+      return field ? (field.getAttribute('data-contact-user') || '') : '';
+    }
+
+    /* Escape-to-close for the contact editor. Registered in the CAPTURE phase
+       so it can decide before the global Escape handler (#2321) runs, and it
+       stops propagation ONLY when it actually closed an editor — otherwise the
+       global handler keeps its existing behaviour for create-modal, the
+       request modal, the confirm overlay and the timeline/access modals. */
+    document.addEventListener('keydown', function(e) {
+      if (e.key !== 'Escape') return;
+      /* hiveConfirm puts a modal overlay on top and binds its own Escape; while
+         one is up it owns the key, so never steal it. */
+      if (document.querySelector('.hive-confirm-overlay')) return;
+      var username = openContactPanelUsername();
+      if (!username) return;
+      e.stopPropagation();
+      e.preventDefault();
+      closeContactPanel(username);
+    }, true);
 
     // bindContactPanels attaches listeners after renderUsers writes the table.
     // Listeners rather than inline on* attributes: esc() leaves apostrophes
@@ -13399,6 +13845,16 @@ const dashboardHTML = `<!DOCTYPE html>
       Array.prototype.forEach.call(toggles || [], function(btn) {
         btn.addEventListener('click', function() {
           toggleContactPanel(btn.getAttribute('data-contact-toggle'));
+        });
+      });
+      /* The × and the Close button share data-contact-close, so one binding
+         covers both. Bound here rather than as inline on* attributes for the
+         same reason as the toggles: nothing user-controlled is interpolated
+         into executable markup. */
+      var closers = container.querySelectorAll('[data-contact-close]');
+      Array.prototype.forEach.call(closers || [], function(btn) {
+        btn.addEventListener('click', function() {
+          closeContactPanel(btn.getAttribute('data-contact-close'));
         });
       });
       var fields = container.querySelectorAll('[data-contact-field]');
@@ -13425,42 +13881,96 @@ const dashboardHTML = `<!DOCTYPE html>
         el.addEventListener('focus', markContactEditing);
         // Save on blur so an admin can tab between fields and type freely
         // without a request per keystroke.
+        //
+        // Blur-saves are SILENT: no toast on success, and on failure the value
+        // stays dirty so the field keeps the typed text and the Save button
+        // keeps reading "Save". Blur fires constantly (tabbing between the
+        // three fields, clicking the Save button itself), so a toast per blur
+        // would be noise, and a blur-triggered error would fire while the
+        // admin is mid-sentence in the next field. The Save button is the
+        // explicit commit point where failures are reported — see
+        // commitContactPanelEdits.
         el.addEventListener('blur', function() {
           markContactEditing();
-          // Clear dirty only after handing the value to the save path, so
-          // there is no window where the value is neither dirty nor saved.
+          // Clear dirty only once the save has actually landed, so there is no
+          // window where the value is neither dirty nor stored. A rejected
+          // blur-save therefore leaves the panel dirty and Save still armed.
           var pending = el.value;
-          saveContactField(user, field, pending);
-          delete _contactDirty[key];
+          saveContactField(user, field, pending, {silent: true}).then(function(ok) {
+            if (ok && _contactDirty[key] === pending) delete _contactDirty[key];
+            refreshContactToggleLabel(user);
+          });
         });
       });
     }
 
-    function toggleContactPanel(username) {
+    /* The row button is stateful: "Edit" when shut, "Save" when open.
+
+       Shut  -> open the panel (a plain display flip, which is what keeps focus
+                and caret intact) and relabel to Save.
+       Open  -> this IS the Save action: commit every pending field, and close
+                only if the commit succeeded. A failure keeps the panel open,
+                keeps the label on Save, and lets the error toast stand — with
+                a visible Save button, a false success is the worst outcome, so
+                nothing here closes on an unverified save.
+
+       Note this deliberately does NOT go through closeContactPanel: that path
+       is for the escape hatches (×, Close, Escape), where the right question is
+       "you have unsaved changes, save them?". Pressing Save has already
+       answered that question. */
+    async function toggleContactPanel(username) {
       if (!username) return;
-      _contactExpandedUsers[username] = !_contactExpandedUsers[username];
+      if (_contactExpandedUsers[username]) {
+        var saved = await commitContactPanelEdits(username);
+        if (!saved) return;
+        setContactPanelOpen(username, false);
+        return;
+      }
+      setContactPanelOpen(username, true);
+    }
+
+    /* setContactPanelOpen is the ONLY place panel visibility changes, so the
+       row/panel display and the button's label + aria state can never fall out
+       of step with _contactExpandedUsers. */
+    function setContactPanelOpen(username, open) {
+      _contactExpandedUsers[username] = !!open;
       var row = document.getElementById(contactPanelId(username));
-      if (row) row.style.display = _contactExpandedUsers[username] ? '' : 'none';
+      if (row) row.style.display = open ? '' : 'none';
+      refreshContactToggleLabel(username);
     }
 
     // Last value saved per user+field, so a blur that changed nothing (tabbing
     // through, or a re-render restoring focus) does not fire a pointless PUT.
     var _contactLastSaved = {};
 
-    function saveContactField(username, field, value) {
-      if (!username || !field) return;
+    // Always returns a Promise<boolean> so callers can sequence on the outcome;
+    // a no-op resolves true because "nothing to do" is not a failure.
+    // opts.silent suppresses the failure toast, for blur-saves where the Save
+    // button is the reporting point. The boolean result is unaffected.
+    function saveContactField(username, field, value, opts) {
+      if (!username || !field) return Promise.resolve(true);
       var key = username + '::' + field;
       var current = _allUsers ? (_allUsers.find(function(x) { return x.github_username === username; }) || {}) : {};
       var previous = (_contactLastSaved[key] !== undefined) ? _contactLastSaved[key] : (current[field] || '');
       var next = (value || '').trim();
-      if (next === previous) return;
+      if (next === previous) return Promise.resolve(true);
       _contactLastSaved[key] = next;
       // Keep the in-memory copy in step so the next poll's signature check does
       // not treat our own edit as an external change and re-render mid-typing.
       if (current) current[field] = next;
       var payload = {};
       payload[field] = next;
-      updateUser(username, payload);
+      // On failure, roll the optimistic bookkeeping back to the previous value.
+      // Without this the cache claims the value was stored, so the
+      // next-equals-previous short-circuit above would skip the retry of the very
+      // same value — the edit could never be saved again without a reload.
+      return updateUser(username, payload, opts).then(function(ok) {
+        if (!ok) {
+          _contactLastSaved[key] = previous;
+          if (current) current[field] = previous;
+        }
+        return ok;
+      });
     }
 
     // scheduleDeferredUsersRender keeps re-checking until editing has stopped
@@ -13561,15 +14071,68 @@ const dashboardHTML = `<!DOCTYPE html>
       bindContactPanels();
     }
 
-    async function updateUser(username, updates) {
+    /* updateUser previously ignored the response entirely: a 404/400/500 was
+       indistinguishable from success, so a rejected edit looked like it had
+       been saved until the next poll quietly reverted the field. It now checks
+       resp.ok and reports the server's reason, and returns a boolean so
+       callers can decide whether to close the editor.
+
+       readErrorMessage is used rather than a bare resp.json(): the handler
+       writes errors with writeJSONError so the body IS JSON, but a proxy or
+       middleware fault can still return HTML/plain text, and resp.json() on
+       that throws — which is exactly how #2348's handleAlertAck turned a real
+       cause into a generic "failed". */
+    async function readErrorMessage(resp, fallback) {
       try {
-        await fetch('/api/saas/admin/users/' + encodeURIComponent(username), {
+        var text = await resp.text();
+        if (text) {
+          try {
+            var parsed = JSON.parse(text);
+            if (parsed && parsed.error) return String(parsed.error);
+          } catch(je) {
+            /* Not JSON — show the raw text, which is still more useful than
+               a bare status code. */
+            return text.trim().substring(0, ERROR_TEXT_MAX_CHARS);
+          }
+        }
+      } catch(e) {}
+      return fallback + ' (HTTP ' + resp.status + ')';
+    }
+
+    /* Longest slice of a non-JSON error body shown in a toast. Long enough for
+       a real proxy/server message, short enough not to fill the screen. */
+    var ERROR_TEXT_MAX_CHARS = 200;
+
+    /* Reason for the most recent failed save, per user. A silent blur-save
+       records the cause here instead of toasting it, so the Save button can
+       report the REAL reason rather than a generic "failed" when the admin
+       finally commits. Cleared on any success for that user. */
+    var _contactLastError = {};
+
+    /* opts.silent suppresses the toast (blur-saves); the failure is still
+       recorded in _contactLastError and still returns false. */
+    async function updateUser(username, updates, opts) {
+      var silent = !!(opts && opts.silent);
+      function fail(reason) {
+        _contactLastError[username] = reason;
+        if (!silent) hiveToast('Could not save ' + username + ': ' + reason, 'error');
+        return false;
+      }
+      try {
+        var resp = await fetch('/api/saas/admin/users/' + encodeURIComponent(username), {
           method: 'PUT',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(updates)
         });
+        if (!resp.ok) {
+          return fail(await readErrorMessage(resp, 'update failed'));
+        }
+        delete _contactLastError[username];
         loadAdminUsers();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
+        return true;
+      } catch(e) {
+        return fail(e.message);
+      }
     }
 
     async function deleteUser(username, hiveCount) {

@@ -447,6 +447,22 @@ func (p *GitHubProxy) identifyAgentFromReq(r *http.Request) string {
 	return extractAgentName(r)
 }
 
+// identifyAgentFromConn identifies the calling agent for a request read off a
+// raw connection. It MUST be used instead of identifyAgentFromReq on any path
+// where the request came from http.ReadRequest rather than http.Server:
+// ReadRequest does not populate Request.RemoteAddr (only http.Server does), so
+// the UID lookup silently gets an empty address, finds no agent, and the caller
+// falls back to ADVISORY — downgrading every write-capable agent to read-only.
+// Taking the peer address from the connection itself removes that trap.
+func (p *GitHubProxy) identifyAgentFromConn(conn net.Conn, r *http.Request) string {
+	if p.uidMap != nil && conn != nil {
+		if name := p.identifyAgentByUID(conn.RemoteAddr().String()); name != "" {
+			return name
+		}
+	}
+	return extractAgentName(r)
+}
+
 // identifyAgentByUID reads /proc/net/tcp to find the UID of the process
 // that owns the socket connected to the proxy, then looks up the agent name.
 func (p *GitHubProxy) identifyAgentByUID(remoteAddr string) string {
@@ -479,7 +495,9 @@ func (p *GitHubProxy) handleConnectDirect(conn net.Conn, r *http.Request) {
 		host = r.Host
 	}
 
-	agentName := p.identifyAgentFromReq(r)
+	// Identify from the connection, NOT from r.RemoteAddr: this request came
+	// from http.ReadRequest, which leaves RemoteAddr empty.
+	agentName := p.identifyAgentFromConn(conn, r)
 
 	// Anthropic hosts with an inference route: reroute to self-hosted backend.
 	if IsAnthropicHost(host) {
@@ -585,6 +603,14 @@ func (p *GitHubProxy) proxyHTTP(client net.Conn, upstream net.Conn, agentName st
 			req.ContentLength = int64(len(body))
 		} else if !AllowedByMode(mode, req.Method, req.URL.Path) {
 			blocked = true
+			// An unidentified agent is silently treated as ADVISORY, which turns
+			// a permissions bug into an indistinguishable "policy denial". Say so
+			// loudly on writes: a write from an unknown caller means UID
+			// attribution failed, not that the agent lacks the mode.
+			if agentName == "" && writeMethods[req.Method] {
+				p.logger.Warn("proxy: agent could not be identified — defaulting to ADVISORY and blocking a write; UID attribution failed (check the uid map and /proc/net/tcp visibility), this is NOT an agent-mode misconfiguration",
+					"method", req.Method, "path", req.URL.Path)
+			}
 			// A hard-deny rule (e.g. direct PR creation) carries an agent-facing
 			// directive explaining the sanctioned alternative — surface it so the
 			// agent knows to use hive-open-pr rather than seeing only a mode error.

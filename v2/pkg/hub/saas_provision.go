@@ -339,14 +339,42 @@ type SaaSHive struct {
 	// meta. It is the level the hub delivers; ACMMLevel is the level currently
 	// in effect. Zero means "nothing was explicitly requested" — the ordinary
 	// case for admin-created and pre-existing hives — and delivers nothing.
-	RequestedACMMLevel int                    `json:"requested_acmm_level,omitempty"`
-	Error              string                 `json:"error,omitempty"`
-	AutoUpgrade        bool                   `json:"auto_upgrade"`
-	IsPublic           bool                   `json:"is_public"`
-	PendingRequests    []PendingAccessRequest `json:"pending_requests,omitempty"`
-	OCIFileSystemID    string                 `json:"oci_file_system_id,omitempty"`
-	OCIExportID        string                 `json:"oci_export_id,omitempty"`
-	ClusterID          string                 `json:"cluster_id,omitempty"`
+	RequestedACMMLevel int `json:"requested_acmm_level,omitempty"`
+
+	// RequestedGitHubHost / ForgeDelivered are the FORGE half of the same
+	// delivery handshake, added for the operator-facing forge switch
+	// (handleSwitchForge). They exist for exactly the reason ACMMDelivered
+	// does, and the reason is worth stating because it was verified the hard
+	// way on the live fleet.
+	//
+	// WHY A HUB-SIDE EDIT OF GitHubHost DOES NOT STICK
+	//
+	// github_host was edited to "github.ibm.com" in a live hive's meta.json and
+	// the hub restarted. Within one beat the registry was back to "github.com".
+	// handleHeartbeat records RegistryEntry.GitHubHost from the SPOKE's
+	// HeartbeatPayload.GitHubHost every beat, and the spoke derives that from
+	// its own config via GitHubConfig.HostLabel(). The hub's edit changed
+	// nothing the spoke reports, so the spoke simply re-reported the unchanged
+	// truth and the hub adopted it. This is the same adopt-stale-value class as
+	// the ACMM revert fixed in #2354.
+	//
+	// RequestedGitHubHost records what the operator asked for, so it survives
+	// the spoke reporting the old host, and ForgeDelivered latches true the
+	// moment the spoke reports the requested host back — after which the push
+	// stops for good and the spoke owns the value again. Both default to their
+	// zero values on every existing hive, so nothing is delivered to a hive
+	// nobody switched: the push is gated on a NON-EMPTY RequestedGitHubHost.
+	RequestedGitHubHost string `json:"requested_github_host,omitempty"`
+	// ForgeDelivered flips true once the spoke reports the requested forge host.
+	ForgeDelivered bool `json:"forge_delivered,omitempty"`
+
+	Error           string                 `json:"error,omitempty"`
+	AutoUpgrade     bool                   `json:"auto_upgrade"`
+	IsPublic        bool                   `json:"is_public"`
+	PendingRequests []PendingAccessRequest `json:"pending_requests,omitempty"`
+	OCIFileSystemID string                 `json:"oci_file_system_id,omitempty"`
+	OCIExportID     string                 `json:"oci_export_id,omitempty"`
+	ClusterID       string                 `json:"cluster_id,omitempty"`
 
 	// AutoUpgradeMode gates WHEN an enabled auto-upgrade may fire:
 	// AutoUpgradeModeInstant (or empty) upgrades as soon as the hive is seen

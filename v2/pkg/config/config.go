@@ -42,6 +42,30 @@ type Config struct {
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	Variables     VariablesConfig        `yaml:"variables,omitempty"`
 
+	// RemovedAgents are agent names an operator deliberately deleted. It is a
+	// TOMBSTONE list, and it exists because deletion had no durable record
+	// anywhere: the delete handlers dropped the agent from the in-memory map
+	// and re-saved the overlay, but an agent lives in THREE places — the
+	// ConfigMap seed, /data/agent-configs/<name>.yaml, and the dashboard
+	// overlay — and Load() UNIONS all three via MergeAgentOverrides, which
+	// only ever adds. So the next config reload (fsnotify, observed ~36s after
+	// the delete on a live hive) re-materialized the agent, and even after
+	// that the next ApplyPack re-created it from the ACMM pack. That is the
+	// reported "I deleted brainstorm and guide and they always come back".
+	//
+	// A tombstone is scoped to the agent NAME and persists indefinitely,
+	// including across ACMM level changes. The alternative — clearing
+	// tombstones on a level change so a higher pack can reintroduce the agent
+	// — was rejected: an operator who deletes `guide` is expressing "I do not
+	// want this agent", not "I do not want it at this level", and silently
+	// resurrecting it during an unrelated level bump is the same class of
+	// silent revert as the bug itself. Re-adding the agent explicitly (the
+	// Governor grid's add, the agent CRUD create, or an import) clears the
+	// tombstone, which is the one unambiguous signal that the operator changed
+	// their mind. A genuinely NEW pack agent — one never deleted here — is
+	// unaffected and is still added on a level increase.
+	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
+
 	SourcePath string `yaml:"-" json:"-"`
 }
 
@@ -1481,13 +1505,35 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // AppInstallURL returns the full URL to install the GitHub App.
 // For GHE: {base_url}/github-apps/{slug}/installations/new
 // For github.com: https://github.com/apps/{slug}/installations/new
+//
+// It returns "" for a GitHub Enterprise host whose App slug is not configured.
+//
+// WHY EMPTY RATHER THAN A BEST-EFFORT URL
+//
+// DefaultGitHubAppSlug ("kubestellar-hive") names the App registered on PUBLIC
+// github.com. GitHub Enterprise hosts a SEPARATE App registry, and an enterprise
+// registration is rarely given the same slug — so falling back to the default on
+// a GHE host emits a link to an App that provably does not exist there, and the
+// user lands on a GitHub 404. That is strictly worse than no link: a dead link
+// reads as "this product is broken", and it sent a real user to
+// github.ibm.com/github-apps/kubestellar-hive/installations/new.
+//
+// The empty string is the honest answer — "this host's App slug was never
+// recorded" — and callers render it as a legible message naming the missing
+// config instead of a button that 404s. Public github.com keeps the default,
+// where it is correct by construction.
 func (g GitHubConfig) AppInstallURL() string {
 	base := strings.TrimRight(g.ResolvedBaseURL(), "/")
-	slug := g.ResolvedAppSlug()
 	if g.IsGHE() {
+		// No default is admissible here: only an explicitly configured slug can
+		// name an App on this enterprise host.
+		slug := strings.TrimSpace(g.AppSlug)
+		if slug == "" {
+			return ""
+		}
 		return base + "/github-apps/" + slug + "/installations/new"
 	}
-	return base + "/apps/" + slug + "/installations/new"
+	return base + "/apps/" + g.ResolvedAppSlug() + "/installations/new"
 }
 
 type NotificationsConfig struct {
@@ -1766,6 +1812,10 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	if overlay.Project.Org == "" || len(overlay.Agents) == 0 {
 		return cfg, nil
 	}
+	// Tombstones live in the dashboard overlay because that is the only agent
+	// source the dashboard can write. Adopt them BEFORE merging so a deleted
+	// agent is neither re-merged from the overlay nor left behind by the seed.
+	cfg.RemovedAgents = overlay.RemovedAgents
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
 	cfg.MergeAgentOverrides(overlay.Agents)
 	for name := range overlay.Agents {

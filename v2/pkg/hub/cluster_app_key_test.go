@@ -71,6 +71,7 @@ func TestDecideAppKeySync(t *testing.T) {
 		spokeFP      string
 		perHive      bool
 		publicPinned bool
+		clusterIsGHE bool
 		spokeAppID   int64
 		cluster      *clusterAppIdentity
 		wantPush     bool
@@ -182,6 +183,73 @@ func TestDecideAppKeySync(t *testing.T) {
 			wantToFP:    clusterFP,
 			description: "a hive pinned to its own App keeps its own key; the cluster key would break it",
 		},
+		// --- WRONG-FORGE APP: a cross-forge app_id is a fault, not a pin ---
+		{
+			name:         "GHE cluster, spoke carries the github.com app - PUSH",
+			spokeFP:      wrongFP,
+			perHive:      true,
+			clusterIsGHE: true,
+			spokeAppID:   3568013, // the public github.com App
+			cluster:      identity,
+			wantPush:     true,
+			wantReason:   appKeyReasonWrongForgeApp,
+			wantFromFP:   wrongFP,
+			wantToFP:     clusterFP,
+			description:  "vllmd-03 (Enrico): app_id 3568013 names no App on github.ibm.com, so the per-hive shield must not protect it",
+		},
+		{
+			name:         "GHE cluster, spoke app_id unknown (0) - no push",
+			spokeFP:      wrongFP,
+			perHive:      true,
+			clusterIsGHE: true,
+			spokeAppID:   0,
+			cluster:      identity,
+			wantPush:     false,
+			wantReason:   appKeyReasonPerHiveOverride,
+			wantFromFP:   wrongFP,
+			wantToFP:     clusterFP,
+			description:  "a spoke too old to report its app_id is silent, and silence is never evidence of a cross-forge fault",
+		},
+		{
+			name:         "GHE cluster, spoke already on the cluster app - no wrong-forge push",
+			spokeFP:      clusterFP,
+			perHive:      true,
+			clusterIsGHE: true,
+			spokeAppID:   5686,
+			cluster:      identity,
+			wantPush:     false,
+			wantReason:   appKeyReasonMatch,
+			wantFromFP:   clusterFP,
+			wantToFP:     clusterFP,
+			description:  "idempotence: once the spoke carries the GHE App the repair stops firing",
+		},
+		{
+			name:         "public cluster keeps protecting a deliberate different app",
+			spokeFP:      wrongFP,
+			perHive:      true,
+			clusterIsGHE: false,
+			spokeAppID:   99999,
+			cluster:      identity,
+			wantPush:     false,
+			wantReason:   appKeyReasonDifferentApp,
+			wantFromFP:   wrongFP,
+			wantToFP:     clusterFP,
+			description:  "same-forge pins stay protected; the repair is scoped to cross-forge clusters only",
+		},
+		{
+			name:         "public-pinned hive on a GHE cluster is never wrong-forge repaired",
+			spokeFP:      wrongFP,
+			perHive:      true,
+			publicPinned: true,
+			clusterIsGHE: true,
+			spokeAppID:   3568013,
+			cluster:      identity,
+			wantPush:     false,
+			wantReason:   appKeyReasonPublicHiveOnGHECluster,
+			wantFromFP:   wrongFP,
+			wantToFP:     clusterFP,
+			description:  "a hive deliberately pinned to public github.com must keep its github.com App even on a GHE cluster",
+		},
 		{
 			name:        "per-hive key already matches the cluster key - no push",
 			spokeFP:     clusterFP,
@@ -260,7 +328,7 @@ func TestDecideAppKeySync(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decideAppKeySync(tc.spokeFP, tc.perHive, tc.publicPinned, tc.spokeAppID, tc.cluster)
+			got := decideAppKeySync(tc.spokeFP, tc.perHive, tc.publicPinned, tc.clusterIsGHE, tc.spokeAppID, tc.cluster)
 			if got.Push != tc.wantPush {
 				t.Errorf("Push = %v, want %v (%s)", got.Push, tc.wantPush, tc.description)
 			}
@@ -295,7 +363,7 @@ func TestDecideAppKeySyncIsIdempotent(t *testing.T) {
 	identity := &clusterAppIdentity{AppID: 5686, PrivateKey: keyPEM, Fingerprint: fp}
 
 	// Beat 1: spoke has nothing → push.
-	first := decideAppKeySync("", false, false, 0, identity)
+	first := decideAppKeySync("", false, false, false, 0, identity)
 	if !first.Push {
 		t.Fatal("first beat should push to a spoke with no key")
 	}
@@ -307,7 +375,7 @@ func TestDecideAppKeySyncIsIdempotent(t *testing.T) {
 	}
 	// Beat 2: spoke now reports the delivered key → no push, forever after.
 	for beat := 2; beat <= 5; beat++ {
-		d := decideAppKeySync(delivered, false, false, 0, identity)
+		d := decideAppKeySync(delivered, false, false, false, 0, identity)
 		if d.Push {
 			t.Fatalf("beat %d re-pushed a key the spoke already holds", beat)
 		}
@@ -746,7 +814,7 @@ func TestClusterKeyNeverSerializedIntoAPIPayload(t *testing.T) {
 			Fingerprint: identity.Fingerprint,
 		},
 		// The decision record that feeds every log line.
-		"appKeySyncDecision": decideAppKeySync("sha256:00000000000000000000000000000000", false, false, 0, identity),
+		"appKeySyncDecision": decideAppKeySync("sha256:00000000000000000000000000000000", false, false, false, 0, identity),
 	}
 
 	for name, payload := range payloads {

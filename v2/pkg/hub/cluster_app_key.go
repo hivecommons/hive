@@ -497,6 +497,29 @@ const (
 	// key on disk. This mirrors resolveProvisionAppID, which likewise honours the
 	// public pin instead of forcing the cluster GHE app_id.
 	appKeyReasonPublicHiveOnGHECluster = "hive is pinned to public github.com on a GHE-default cluster"
+	// appKeyReasonWrongForgeApp repairs a spoke carrying an App registered on a
+	// DIFFERENT GitHub host than the one the hive actually talks to.
+	//
+	// appKeyReasonDifferentApp protects a deliberate pin, and that protection is
+	// right whenever both Apps live on the same forge — an operator may genuinely
+	// want a hive on its own App. But an App ID is only meaningful ON the host that
+	// issued it: GitHub Enterprise and github.com maintain entirely separate App
+	// registries, so a github.com app_id names NOTHING on github.ibm.com. Such a
+	// pairing is not a configuration choice, it is provably broken in the same way
+	// the placeholder sentinel is — every JWT is signed for an App the host has
+	// never heard of, and no installation_id the owner enters can rescue it.
+	//
+	// It is also the state a forge migration leaves behind: moving a hive's host
+	// without swapping its App identity strands the old forge's app_id on the new
+	// host. That is exactly how a live GHE hive ended up emitting an install link
+	// for the github.com App slug and 404ing on GitHub Enterprise.
+	//
+	// The discriminator is narrow and evidence-based: the hive is NOT public-pinned
+	// (that case is already handled above and must keep its github.com App), its
+	// cluster declares a GHE base URL, and the spoke's app_id differs from the
+	// cluster's. Under those three conditions the spoke's App cannot be the
+	// cluster's forge's App, so the cluster identity is the only workable one.
+	appKeyReasonWrongForgeApp = "hive carries an app_id registered on a different github host"
 )
 
 // decideAppKeySync decides whether the hub should push its cluster App key to a
@@ -559,7 +582,14 @@ const (
 // key rides only as an ADDITIONAL key (attachMissingAppKeys). This is the app-KEY
 // reconcile finally honouring the same public pin that resolveProvisionAppID and
 // effectiveGitHubBaseURL already honour on the provisioning path.
-func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
+//
+// WRONG-FORGE APP — clusterIsGHE carries the one fact this function cannot see
+// for itself: whether the cluster's App lives on a GitHub Enterprise host rather
+// than public github.com. Combined with a non-public-pinned hive whose app_id
+// differs from the cluster's, that proves the spoke's App was issued by a
+// different forge and therefore names nothing on the host this hive uses. See
+// appKeyReasonWrongForgeApp.
+func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, clusterIsGHE bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
 	if cluster == nil {
 		return appKeySyncDecision{Reason: appKeyReasonNoClusterKey, FromFingerprint: spokeFingerprint}
 	}
@@ -599,6 +629,29 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 			Push:            true,
 			PushKey:         cluster.HasKey(),
 			Reason:          appKeyReasonPlaceholderAppID,
+			FromFingerprint: fp,
+			ToFingerprint:   cluster.Fingerprint,
+		}
+	}
+	// A spoke holding an App from ANOTHER forge is broken for the same reason the
+	// sentinel is: the app_id names no App on the host this hive actually uses.
+	// Decided here — after the sentinel and the public pin, but BEFORE the
+	// per-hive-key shield — because a stranded hive typically does hold a per-hive
+	// key (for the other forge's App) and would otherwise be protected as
+	// appKeyReasonDifferentApp and never repaired.
+	//
+	// Requires a POSITIVE, non-zero app_id disagreement: zero means "too old to
+	// report", and silence is never evidence of a fault (same contract as the
+	// per-hive exception above).
+	//
+	// Like the sentinel repair this does NOT require the hub to hold the cluster's
+	// key — correcting a cross-forge app_id/app_slug is a non-secret change and is
+	// the whole fix for a hive whose owner has yet to install the App at all.
+	if clusterIsGHE && spokeAppID != 0 && spokeAppID != cluster.AppID {
+		return appKeySyncDecision{
+			Push:            true,
+			PushKey:         cluster.HasKey(),
+			Reason:          appKeyReasonWrongForgeApp,
 			FromFingerprint: fp,
 			ToFingerprint:   cluster.Fingerprint,
 		}
@@ -682,7 +735,14 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 // so a key delivered ahead of an installation ID lands on disk and waits.
 func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, installationID int64, logger *slog.Logger) *HeartbeatGitHubAppConfig {
 	identity := s.appIdentityForCluster(clusterID)
-	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, spokeAppID, identity)
+	// Does this cluster's App live on a GitHub Enterprise host? Read from cluster
+	// config, never inferred from the App ID — an App ID is an opaque number and
+	// carries no forge information. Empty github_base_url means public github.com.
+	clusterIsGHE := false
+	if c, ok := s.clusters[clusterID]; ok {
+		clusterIsGHE = strings.TrimSpace(c.GitHubBaseURL) != ""
+	}
+	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, clusterIsGHE, spokeAppID, identity)
 	// A spoke carrying the sentinel is broken and must be legible even when the
 	// hub can do nothing about it — that silence is what made this bug cost days
 	// of debugging while the dashboard blamed the installation ID. Logged BEFORE

@@ -48,14 +48,72 @@ func LoadAgentOverrides(dir string) (map[string]AgentConfig, error) {
 
 // MergeAgentOverrides merges overlay agents into the config's agent map.
 // Overlay agents override base config agents with the same name.
+//
+// Tombstoned agents (Config.RemovedAgents) are skipped AND evicted from the
+// base map. Both halves matter: skipping stops a stale
+// /data/agent-configs/<name>.yaml from resurrecting a deleted agent, and the
+// eviction stops the ConfigMap seed — which the dashboard cannot rewrite —
+// from doing the same. Before this, either source alone brought the agent
+// back on the very next config reload.
 func (c *Config) MergeAgentOverrides(overlays map[string]AgentConfig) {
 	if c.Agents == nil {
 		c.Agents = make(map[string]AgentConfig)
 	}
 	for name, agent := range overlays {
+		if c.IsAgentRemoved(name) {
+			continue
+		}
 		agent.Managed = true
 		c.Agents[name] = agent
 	}
+	c.PruneRemovedAgents()
+}
+
+// PruneRemovedAgents drops every tombstoned agent from the in-memory agent
+// map. Safe to call repeatedly; a no-op when nothing is tombstoned.
+func (c *Config) PruneRemovedAgents() {
+	for _, name := range c.RemovedAgents {
+		delete(c.Agents, name)
+	}
+}
+
+// IsAgentRemoved reports whether an operator deliberately deleted this agent.
+func (c *Config) IsAgentRemoved(name string) bool {
+	for _, removed := range c.RemovedAgents {
+		if removed == name {
+			return true
+		}
+	}
+	return false
+}
+
+// MarkAgentRemoved records a deliberate deletion so no later merge, reload, or
+// ACMM pack apply brings the agent back. Returns true when the tombstone was
+// newly added (a repeat delete of the same agent is a no-op).
+func (c *Config) MarkAgentRemoved(name string) bool {
+	if name == "" || c.IsAgentRemoved(name) {
+		return false
+	}
+	c.RemovedAgents = append(c.RemovedAgents, name)
+	return true
+}
+
+// ClearAgentRemoved lifts a tombstone. This is the operator explicitly
+// re-adding an agent they had previously deleted — the one unambiguous signal
+// that the deletion no longer reflects their intent. Returns true when a
+// tombstone was actually lifted.
+func (c *Config) ClearAgentRemoved(name string) bool {
+	kept := make([]string, 0, len(c.RemovedAgents))
+	for _, removed := range c.RemovedAgents {
+		if removed != name {
+			kept = append(kept, removed)
+		}
+	}
+	if len(kept) == len(c.RemovedAgents) {
+		return false
+	}
+	c.RemovedAgents = kept
+	return true
 }
 
 // SaveAgentFile writes a single agent config to dir/<name>.yaml.

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -227,5 +228,155 @@ func TestComputeFleetStatsSkipsRepolessHives(t *testing.T) {
 	}
 	if !got.FleetStatsTrustworthy() {
 		t.Error("a fully-reporting fleet of one must be trustworthy")
+	}
+}
+
+// fleetStatsLKGTestServer builds a hub whose registry save path is redirected
+// into a temp dir, so recordFleetStatsLKG's requestSave cannot touch /data.
+func fleetStatsLKGTestServer(t *testing.T) *HubServer {
+	t.Helper()
+	old := registryPath
+	registryPath = t.TempDir() + "/reg.json"
+	t.Cleanup(func() { registryPath = old })
+	return &HubServer{logger: slog.Default()}
+}
+
+func decodeFleetStats(t *testing.T, s *HubServer) FleetStats {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.handleFleetStats(rec, httptest.NewRequest(http.MethodGet, "/api/fleet-stats", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var fs FleetStats
+	if err := json.Unmarshal(rec.Body.Bytes(), &fs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return fs
+}
+
+// A collection that clears the coverage bar must be recorded as last-known-good
+// and served as fresh (not stale).
+func TestHandleFleetStats_TrustworthyRecordsLKG(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(),
+			Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(20)},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(),
+			Org: "a", Repos: []string{"r2"}, PRsMerged90d: ptrInt(6)},
+	}
+
+	fs := decodeFleetStats(t, s)
+	if !fs.Trustworthy {
+		t.Fatalf("Trustworthy = false, want true (2 of 2 reporting)")
+	}
+	if fs.StaleData {
+		t.Error("StaleData = true, want false for a fresh trustworthy aggregate")
+	}
+	if fs.PRsMerged != 26 {
+		t.Errorf("PRsMerged = %d, want 26", fs.PRsMerged)
+	}
+	if fs.AsOf != fs.UpdatedAt {
+		t.Errorf("AsOf = %q, want it to equal UpdatedAt %q when fresh", fs.AsOf, fs.UpdatedAt)
+	}
+	lkg := s.fleetStatsLKG()
+	if lkg == nil {
+		t.Fatal("fleetStatsLKG() = nil, want the trustworthy aggregate recorded")
+	}
+	if lkg.PRsMerged != 26 || lkg.Reporting != 2 || lkg.Eligible != 2 {
+		t.Errorf("LKG = %+v, want PRsMerged 26 / Reporting 2 / Eligible 2", *lkg)
+	}
+}
+
+// The regression this whole change exists for: once coverage collapses, the
+// page must still get NUMBERS (from the cache) plus an honest stale label —
+// not a blank strip.
+func TestHandleFleetStats_DegradedServesLabelledLKG(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	collectedAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		ReposManaged: 42, PRsMerged: 26, PRsRejected: 3, CVEsClosed: 1,
+		Hives: 18, Reporting: 12, Eligible: 18, CollectedAt: collectedAt,
+	}
+	// Live fleet: only 1 of 4 eligible hives reporting → 25%, below the bar.
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(),
+			Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(2)},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r2"}},
+		{ID: "h3", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r3"}},
+		{ID: "h4", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r4"}},
+	}
+
+	fs := decodeFleetStats(t, s)
+	if fs.Trustworthy {
+		t.Fatal("Trustworthy = true, want false (1 of 4 reporting)")
+	}
+	if !fs.StaleData {
+		t.Error("StaleData = false, want true when serving the cache")
+	}
+	// Counts come from the cache, NOT from the 1 live hive (which would be 2).
+	if fs.PRsMerged != 26 {
+		t.Errorf("PRsMerged = %d, want 26 from LKG (not the degraded live 2)", fs.PRsMerged)
+	}
+	if fs.ReposManaged != 42 {
+		t.Errorf("ReposManaged = %d, want 42 from LKG", fs.ReposManaged)
+	}
+	// Coverage figures stay LIVE so the page can show recollection progress.
+	if fs.Reporting != 1 || fs.Eligible != 4 {
+		t.Errorf("Reporting/Eligible = %d/%d, want live 1/4", fs.Reporting, fs.Eligible)
+	}
+	if fs.AsOf != collectedAt.Format(time.RFC3339) {
+		t.Errorf("AsOf = %q, want the LKG collection time %q", fs.AsOf, collectedAt.Format(time.RFC3339))
+	}
+	// A degraded aggregate must never overwrite the cache.
+	if lkg := s.fleetStatsLKG(); lkg == nil || lkg.PRsMerged != 26 {
+		t.Errorf("degraded aggregate overwrote the LKG: %+v", lkg)
+	}
+}
+
+// Genuine first boot — never collected, nothing cached — is the only state
+// that legitimately shows no total.
+func TestHandleFleetStats_NoLKGShowsNothing(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r1"}},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r2"}},
+	}
+	fs := decodeFleetStats(t, s)
+	if fs.Trustworthy || fs.StaleData {
+		t.Errorf("Trustworthy=%v StaleData=%v, want both false on first boot", fs.Trustworthy, fs.StaleData)
+	}
+	if fs.PRsMerged != 0 || fs.AsOf != "" {
+		t.Errorf("PRsMerged=%d AsOf=%q, want 0 and empty with no cache", fs.PRsMerged, fs.AsOf)
+	}
+}
+
+// The LKG must round-trip through the registry file, or a hub restart would
+// blank the strip again — the durability half of the fix.
+func TestFleetStatsLKG_PersistsAcrossReload(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	collectedAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		PRsMerged: 26, Reporting: 12, Eligible: 18, CollectedAt: collectedAt,
+	}
+	if err := s.saveRegistryNow(); err != nil {
+		t.Fatalf("saveRegistryNow: %v", err)
+	}
+	var reloaded Registry
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatalf("read registry: %v", err)
+	}
+	if err := json.Unmarshal(data, &reloaded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if reloaded.FleetStatsLKG == nil {
+		t.Fatal("FleetStatsLKG did not survive the registry round-trip")
+	}
+	if reloaded.FleetStatsLKG.PRsMerged != 26 {
+		t.Errorf("PRsMerged = %d, want 26", reloaded.FleetStatsLKG.PRsMerged)
+	}
+	if !reloaded.FleetStatsLKG.CollectedAt.Equal(collectedAt) {
+		t.Errorf("CollectedAt = %v, want %v", reloaded.FleetStatsLKG.CollectedAt, collectedAt)
 	}
 }
