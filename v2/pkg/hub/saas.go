@@ -11506,8 +11506,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (status === 'approved') {
         icon = '&#x2705;';
         bg = 'rgba(34,197,94,0.12)'; border = 'rgba(34,197,94,0.3)';
-        msg = 'Your hive request for <strong>' + project + '</strong> has been approved! Click <strong>Provision</strong> to set up your hive.' +
-          ' <button onclick="openProvisionDialog(\'' + esc(req.org) + '\',\'' + esc(req.repos) + '\',\'' + esc(req.primary_repo || '') + '\',' + (req.acmm_level || 1) + ')" style="margin-left:8px;padding:4px 12px;background:#238636;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.8rem;font-weight:600">Provision</button>';
+        msg = 'Your hive request for <strong>' + project + '</strong> has been approved! An admin will assign your hive shortly.';
       } else if (status === 'denied') {
         icon = '&#x274C;';
         bg = 'rgba(239,68,68,0.12)'; border = 'rgba(239,68,68,0.3)';
@@ -11517,33 +11516,33 @@ const dashboardHTML = `<!DOCTYPE html>
         bg = 'rgba(245,158,11,0.12)'; border = 'rgba(245,158,11,0.3)';
         msg = 'Your hive request for <strong>' + project + '</strong> is pending admin approval.';
       }
-      /* Dismissal is offered for the INFORMATIONAL states only. An 'approved'
-         banner carries the Provision button — it is the only place that action
-         is offered, and dismissals never expire (see dismissBanner: the stored
-         timestamp is written but no reader ever compares it), so a single
-         stray click would strand the user with an approved request and no way
-         to act on it. Pending and denied carry no action and are safe to hide.
+      /* The banner is purely informational in EVERY state now that the
+         Provision button is gone (hives are assigned by an admin), so all
+         three states are dismissable. The earlier carve-out that kept
+         'approved' non-dismissable existed only because that state carried the
+         Provision button — the sole place the action was offered — and
+         dismissals never expire (see dismissBanner: the stored timestamp is
+         written but no reader ever compares it), so a stray click would have
+         stranded the user. With no unique action left in any state, there is
+         nothing to strand and the carve-out no longer applies.
 
-         The key embeds the request identity AND its status, so it is scoped to
-         exactly the state the user chose to dismiss: when a pending request is
-         later approved or denied the key changes and the banner re-raises on
-         its own. That is the same content-derived keying the access banner
-         uses ('pending:' + ids). */
-      var dismissable = status === 'pending' || status === 'denied';
-      var dismissBtn = '';
-      if (dismissable) {
-        var reqKey = ('provision:' + (req.id || project) + ':' + status).replace(/'/g, '');
-        var dismissedReqs = {};
-        try {
-          dismissedReqs = JSON.parse(localStorage.getItem('hive-dismissed-banners') || '{}') || {};
-        } catch (e) { dismissedReqs = {}; } /* corrupted value — show the banner */
-        if (dismissedReqs[reqKey]) { el.style.display = 'none'; return; }
-        dismissBtn = '<button onclick="dismissBanner(\'' + esc(reqKey) + '\',this)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px" title="Dismiss">&times;</button>';
-      }
+         The key embeds BOTH the request identity and its status, so a
+         dismissed 'pending' banner re-raises on its own once the request flips
+         to approved or denied — a stray click can never permanently hide a
+         status change. ProvisionRequest carries no id, so identity is the
+         org/primary-repo pair it targets: the same thing the banner text
+         names. */
+      var dismissKey = ('provision:' + (req.org || '') + '/' +
+        (req.primary_repo || req.repos || '') + ':' + status).replace(/'/g, '');
+      var dismissedReqs = {};
+      try {
+        dismissedReqs = JSON.parse(localStorage.getItem('hive-dismissed-banners') || '{}') || {};
+      } catch (e) { dismissedReqs = {}; } /* corrupted value — show the banner */
+      if (dismissedReqs[dismissKey]) { el.style.display = 'none'; return; }
       el.innerHTML = '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px">' +
         '<span style="font-size:1.1rem">' + icon + '</span>' +
         '<span style="flex:1;font-size:0.85rem;color:var(--text)">' + msg + '</span>' +
-        dismissBtn +
+        '<button onclick="dismissBanner(\'' + esc(dismissKey) + '\',this)" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px" title="Dismiss">&times;</button>' +
         '</div>';
     }
 
@@ -13445,15 +13444,6 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _createInProgress = false;
-    function openProvisionDialog(org, repos, primaryRepo, acmmLevel) {
-      document.getElementById('f-org').value = org || '';
-      document.getElementById('f-repos').value = repos || '';
-      document.getElementById('f-primary').value = primaryRepo || '';
-      var levelSelect = document.getElementById('f-level');
-      if (levelSelect && acmmLevel) levelSelect.value = String(acmmLevel);
-      document.getElementById('create-modal').style.display = 'flex';
-    }
-
     async function createHive() {
       if (_createInProgress) return;
       _createInProgress = true;
