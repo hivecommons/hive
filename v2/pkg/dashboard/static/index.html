@@ -2788,7 +2788,7 @@
         malfunction.</strong> A hive that merges ~60 PRs in an afternoon burned tokens roughly in proportion to the work it did. If
         the PRs were good, that spend bought something. The lever you want is usually not "spend less per unit of work" but
         <strong>"do less work per day"</strong> — and that lever is cadence.</p>
-        <p style="margin:0 0 8px">Five things you can actually turn, roughly in order of effect:</p>
+        <p style="margin:0 0 8px">Six things you can actually turn, roughly in order of effect:</p>
         <ol style="margin:0 0 8px;padding-left:20px">
           <li><strong>Widen your agent cadences — the primary lever.</strong> Cadence is the interval between governor kicks, set
               per agent <em>per governor mode</em>. The Governor panel shows this as a grid — agents down the side, the four modes
@@ -2824,11 +2824,32 @@
               cadence — is the wrong setting. Dropping from L5 to L4 or L3 is a legitimate cost control, and the ACMM dialog moves
               in both directions.</li>
         </ol>
-        <p style="margin:0 0 16px;color:var(--muted)">One correction to advice that circulates: <strong>do not turn off the supervisor to save money.</strong> The supervisor
-        is not a vLLM/llm-d-only component — it ships in the default agent pack for every level from L2 to L6, its shipped backend is
-        <code>copilot</code> (a free backend that does not bill against your budget), and its job is watching the <em>other</em> agents for
-        stalls and rate limits. The dashboard deliberately hides the pause button on it for that reason. If it is costing you
-        noticeably, widen its cadence instead — the shipped packs already set it to <code>pause</code> in idle mode at some levels.</p>
+        <p style="margin:0 0 8px">And one more that is easy to miss, because it is on by default and you did not choose it:</p>
+        <ol start="6" style="margin:0 0 8px;padding-left:20px">
+          <li><strong>Turn the supervisor off if you are on <code>claude</code>, <code>copilot</code>, <code>bob</code>, or
+              <code>litellm</code>.</strong> The supervisor's core job is watching the other agents' tmux panes for ones
+              <em>stuck at a prompt</em> — waiting on a human instead of running to completion. That failure mode is now
+              predominantly a <strong>self-hosted inference</strong> problem: open-source models served via <strong>vLLM</strong> or
+              <strong>llm-d</strong> need an injected preamble telling them to never ask for permission and never stop, precisely
+              because they otherwise stop and ask. Frontier CLI agents are explicitly unaffected by that preamble, and
+              <code>litellm</code> opts out of it too, on the grounds that it usually fronts frontier models. CLI agents used to
+              stall this way; in practice they no longer do. <strong>If you are running only CLI backends or litellm, the supervisor
+              is mostly watching for a condition that no longer occurs</strong> — and it is not free: the shipped packs kick it every
+              <code>5m</code> in most modes (every <code>1m</code> at L6), which is the tightest cadence of any agent.
+              <br><span style="color:var(--muted)">Keep it if you run vLLM or llm-d agents. It is also doing secondary work —
+              spotting idle, crashed, and rate-limited agents — so on a mixed fleet, widening its cadence is the safer move than
+              switching it off outright.</span></li>
+        </ol>
+        <p style="margin:0 0 8px;color:var(--muted)"><strong>Why it is on in the first place, and how to turn it off.</strong> The supervisor ships <em>enabled</em> in every
+        default pack from L2 to L6 (on <code>copilot</code>), so you will find it running even though you never asked for it. That
+        default dates from when CLI agents genuinely did stall; it has outlived the problem. Turning it off is therefore a
+        deliberate act.</p>
+        <p style="margin:0 0 16px;color:var(--muted)">Note that the supervisor's agent card has <strong>no ⏸ pause button</strong> — it is suppressed for this one agent, so the
+        usual route does not work and it can look undisableable. It is not. Use the <strong>Governor panel's cadence grid</strong>: click
+        the supervisor row to open its <em>Cadences</em> tab and set the modes you want silenced to <code>pause</code> (or
+        <code>0</code>). This is a supported, first-class value — the shipped L3 and L4 packs already use
+        <code>supervisor: pause</code> for idle mode — and the governor applies it to the supervisor with no special-casing. The
+        equivalent edit in <code>hive.yaml</code> is the same key under each mode's <code>cadences:</code> block.</p>
         <p style="margin:0 0 16px;color:var(--muted)">Finally, some perspective: model pricing has been falling steadily, and cheap models keep getting more capable. Other
         hives are already running successfully on low-cost models, so today's bill for a given amount of work is not a fixed
         property of the system.</p>
