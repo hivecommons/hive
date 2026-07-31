@@ -296,7 +296,7 @@
       <div class="wizard-steps" id="wizard-steps">
         <div class="wizard-step active" data-step="1"><span class="step-dot">1</span> Login</div>
         <span class="step-arrow">→</span>
-        <div class="wizard-step" data-step="2"><span class="step-dot">2</span> Add Repos</div>
+        <div class="wizard-step" data-step="2"><span class="step-dot">2</span> Your Repo</div>
         <span class="step-arrow">→</span>
         <div class="wizard-step" data-step="3"><span class="step-dot">3</span> Request</div>
       </div>
@@ -333,18 +333,21 @@
            to another forge. A URL needs no permission on the requester's
            account and describes any forge. -->
       <div class="wizard-panel" id="panel-2">
-        <h2>Add your repositories</h2>
-        <p>Paste the URL of each repository the hive should manage. You can add more later from your dashboard.</p>
+        <h2>Your repository</h2>
+        <p>Paste the URL of the repository the hive should manage. You can add more later from your dashboard.</p>
         <div>
           <label for="repo-manual" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
             Repository URL
           </label>
-          <div style="display:flex;gap:8px">
-            <input type="text" id="repo-manual" placeholder="github.com/my-org/my-repo"
-              onkeydown="if(event.key==='Enter'){event.preventDefault();addManualRepo()}"
-              style="flex:1;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
-            <button class="btn-secondary" type="button" onclick="addManualRepo()">Add</button>
-          </div>
+          <!-- No "Add" button: onboarding expects ONE repo, so Continue commits
+               the typed URL and advances (commitManualRepo). The input is not
+               inside a <form>, so Enter has no default submit to suppress — the
+               preventDefault is kept anyway so a future wrapping form cannot
+               turn Enter into a page reload. -->
+          <input type="text" id="repo-manual" placeholder="github.com/my-org/my-repo"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();continueFromRepos()}"
+            onblur="validateRepoInput()" oninput="clearRepoError()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
           <div id="repo-manual-err" style="display:none;margin-top:6px;font-size:0.8rem;color:var(--red)"></div>
           <p style="font-size:0.8rem;margin-top:8px;margin-bottom:0">
             With or without <code>https://</code>. Works for public GitHub and for GitHub Enterprise
@@ -355,7 +358,10 @@
         </div>
         <div style="display:flex;gap:12px;margin-top:16px">
           <button class="btn-secondary" onclick="goToStep(1)">← Back</button>
-          <button class="btn-primary" id="repos-continue" onclick="goToStep(3)" disabled>Continue →</button>
+          <!-- Enabled unconditionally: validation now happens ON click, so a
+               disabled button would give the user no way to learn WHY it is
+               disabled. continueFromRepos() refuses to advance on bad input. -->
+          <button class="btn-primary" id="repos-continue" onclick="continueFromRepos()">Continue →</button>
         </div>
       </div>
 
@@ -370,7 +376,7 @@
         <div class="acmm-options" id="acmm-options"></div>
         <div id="request-summary" style="margin:20px 0;padding:16px;background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
           <div style="margin-bottom:8px"><strong>Summary</strong></div>
-          <div style="color:var(--muted)">Repos: <span id="summary-repos" style="color:var(--text)">none selected</span></div>
+          <div style="color:var(--muted)">Repo: <span id="summary-repos" style="color:var(--text)">none added</span></div>
           <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)"></span></div>
         </div>
         <!-- The wizard no longer asks anyone to install the GitHub App. This
@@ -606,62 +612,72 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       ' — github.com or a GitHub Enterprise host such as github.ibm.com.' +
       ' Support for GitLab, Gitea, and other forges is planned.';
 
-    // Add a repository the user typed. This is the ONLY way repos enter the
-    // request — see the panel comment for why the picker is gone.
-    function addManualRepo() {
-      var input = document.getElementById('repo-manual');
-      var err = document.getElementById('repo-manual-err');
-      var raw = (input.value || '').trim();
-      err.style.display = 'none';
-      if (!raw) return;
+    /* Shown when Continue is pressed with an empty field. This is NOT cosmetic:
+       handleRequestProvision (pkg/hub/saas.go) rejects a request whose org or
+       repos is empty, so advancing with no repo would walk the user to the final
+       step and fail there. Refusing here reports it where it can be fixed. */
+    var REPO_REQUIRED_MSG = 'Enter the repository your hive should manage — for example github.com/my-org/my-repo';
+    /* Shown when the field holds something that is not a repository reference. */
+    var REPO_UNPARSEABLE_MSG = 'Enter a repository URL — for example github.com/my-org/my-repo or https://github.ibm.com/my-org/my-repo';
 
+    function clearRepoError() {
+      var err = document.getElementById('repo-manual-err');
+      if (err) err.style.display = 'none';
+    }
+
+    function showRepoError(msg) {
+      var err = document.getElementById('repo-manual-err');
+      if (!err) return;
+      err.textContent = msg;
+      err.style.display = 'block';
+    }
+
+    /* Validate the typed repository and return {full_name, name, github_host},
+       or null if it cannot be used. Every check the old Add button ran is kept
+       here and in the same order: parseable, then forge policy.
+
+       `requireValue` separates the two callers. On blur we must NOT nag about an
+       empty field the user simply tabbed through, but on Continue an empty field
+       IS the error. Neither caller validates per keystroke — oninput only CLEARS
+       a stale error, so a half-typed URL never flashes red. */
+    function validateManualRepo(requireValue) {
+      var input = document.getElementById('repo-manual');
+      var raw = ((input && input.value) || '').trim();
+      clearRepoError();
+      if (!raw) {
+        if (requireValue) showRepoError(REPO_REQUIRED_MSG);
+        return null;
+      }
       var ref = parseRepoRef(raw);
       if (!ref) {
-        err.textContent = 'Enter a repository URL — for example github.com/my-org/my-repo or https://github.ibm.com/my-org/my-repo';
-        err.style.display = 'block';
-        return;
+        showRepoError(REPO_UNPARSEABLE_MSG);
+        return null;
       }
       if (!isSupportedForgeHost(ref.host)) {
-        err.textContent = ref.host + UNSUPPORTED_FORGE_MSG;
-        err.style.display = 'block';
-        return;
+        showRepoError(ref.host + UNSUPPORTED_FORGE_MSG);
+        return null;
       }
-      var fullName = ref.org + '/' + ref.name;
-      if ((_selectedRepos || []).some(function(r) { return r.full_name === fullName; })) {
-        err.textContent = fullName + ' is already added';
-        err.style.display = 'block';
-        return;
-      }
-      _selectedRepos.push({full_name: fullName, name: ref.name, github_host: ref.host});
-      input.value = '';
-      renderManualRepos();
-      document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
+      return {full_name: ref.org + '/' + ref.name, name: ref.name, github_host: ref.host};
     }
 
-    // Show the repositories added so far as removable chips.
-    function renderManualRepos() {
-      var host = document.getElementById('repo-manual-added');
-      if (!host) {
-        host = document.createElement('div');
-        host.id = 'repo-manual-added';
-        host.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:6px';
-        document.getElementById('repo-manual').parentNode.parentNode.appendChild(host);
-      }
-      host.innerHTML = (_selectedRepos || []).map(function(r) {
-        // Show the Enterprise host when there is one, so the user can see which
-        // instance we recorded before they submit.
-        var shown = (r.github_host ? r.github_host + '/' : '') + r.full_name;
-        return '<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:0.8rem">' +
-          esc(shown) +
-          '<a href="#" onclick="removeManualRepo(\'' + esc(r.full_name) + '\');return false" style="color:var(--muted);text-decoration:none" title="Remove">&times;</a></span>';
-      }).join('');
-    }
+    /* Surface a bad URL as soon as the user leaves the field, rather than making
+       them press Continue to find out. Empty is not an error here. */
+    function validateRepoInput() { validateManualRepo(false); }
 
-    function removeManualRepo(fullName) {
-      var i = _selectedRepos.findIndex(function(r) { return r.full_name === fullName; });
-      if (i >= 0) _selectedRepos.splice(i, 1);
-      renderManualRepos();
-      document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
+    /* Continue does what the old "Add" button did, then advances. Onboarding
+       expects a single repo, so the typed value REPLACES _selectedRepos rather
+       than appending — that also makes the old "already added" dedupe branch
+       unreachable, so it is gone rather than left as dead list-building code.
+
+       _selectedRepos stays an ARRAY of one: submitRequest() reads
+       _selectedRepos[0], .map(), and .find() on it, and the server wants a
+       comma-separated repos string, so keeping the shape means the submit path
+       is untouched and can still carry more repos if a later screen adds them. */
+    function continueFromRepos() {
+      var repo = validateManualRepo(true);
+      if (!repo) return;
+      _selectedRepos = [repo];
+      goToStep(WIZARD_STEP_LEVEL);
     }
 
     async function submitRequest() {
