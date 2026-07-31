@@ -203,3 +203,25 @@ func TestCancelForUninstallRecoversJournaledRefAfterWorktreeLocatorLoss(t *testi
 		})
 	}
 }
+
+func TestRepairSymbolicRefMissingAcceptsOnlyExactGitMissingRefDiagnostic(t *testing.T) {
+	ref := "refs/hive/repair-sealed-trees/model_base/" + strings.Repeat("a", 24) + "/" + strings.Repeat("b", 32)
+	for _, test := range []struct {
+		name     string
+		exitCode int
+		output   string
+		want     bool
+	}{
+		{name: "traditional quiet missing ref", exitCode: 1, want: true},
+		{name: "new Git missing ref", exitCode: 128, output: "fatal: No such ref: " + ref + "\n", want: true},
+		{name: "different missing ref", exitCode: 128, output: "fatal: No such ref: refs/hive/other", want: false},
+		{name: "repository corruption", exitCode: 128, output: "fatal: not a git repository", want: false},
+		{name: "unexpected exit", exitCode: 2, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := repairSymbolicRefMissing(test.exitCode, test.output, ref); got != test.want {
+				t.Fatalf("repairSymbolicRefMissing()=%t, want %t", got, test.want)
+			}
+		})
+	}
+}
