@@ -920,7 +920,10 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 		}
 		if attempt.CommitSHA == "" {
-			if attempt.Stage != repair.StageNoChange || attempt.PRNumber != 0 {
+			absentUnpublishedFailure := attempt.Stage == repair.StageFailed &&
+				attempt.ResumeStage == repair.StagePrepared &&
+				!attempt.AttemptCounted
+			if (attempt.Stage != repair.StageNoChange && !absentUnpublishedFailure) || attempt.PRNumber != 0 {
 				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 			}
 			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, attempt.Branch)
