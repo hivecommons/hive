@@ -3,6 +3,7 @@ package repair
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -166,20 +167,16 @@ func validUninstallRepairRef(guard uninstallRepairRef) bool {
 }
 
 func (s *Store) retireJournaledUninstallRef(ctx context.Context, attempt Attempt, guard uninstallRepairRef) error {
-	commonDir, err := repairGitCommonDir(ctx, attempt.Worktree)
-	if err != nil {
-		return err
-	}
-	identity, err := repairRepositoryIdentity(ctx, attempt.Worktree, attempt.Repository, commonDir)
-	if err != nil {
-		return err
-	}
 	entries, err := s.repairRefJournalEntries()
 	if err != nil {
 		return err
 	}
 	matching := func(entry repairRefJournalEntry) bool {
 		return entry.Kind == guard.kind && entry.Ref == guard.ref && entry.Commit == guard.commit && entry.Binding == guard.binding && entry.Repository == attempt.Repository
+	}
+	repositoryDir, commonDir, identity, err := resolveUninstallRepairRepository(ctx, attempt, guard, entries)
+	if err != nil {
+		return err
 	}
 	sawCurrentIntent := false
 	originalConsumed := false
@@ -208,7 +205,7 @@ func (s *Store) retireJournaledUninstallRef(ctx context.Context, attempt Attempt
 		if !sameRepairCommonDir(entry.GitCommonDir, commonDir) || entry.RepositoryIdentity != identity {
 			return fmt.Errorf("unconsumed repair ref tombstone belongs to a different repository identity")
 		}
-		if err := resumeRepairRefTombstone(ctx, attempt.Worktree, attempt.Repository, s, entry, originalConsumed); err != nil {
+		if err := resumeRepairRefTombstone(ctx, repositoryDir, attempt.Repository, s, entry, originalConsumed); err != nil {
 			return err
 		}
 		originalConsumed = true
@@ -217,7 +214,62 @@ func (s *Store) retireJournaledUninstallRef(ctx context.Context, attempt Attempt
 	if originalConsumed {
 		return nil
 	}
-	return retireRepairRef(ctx, attempt.Worktree, attempt.Repository, s, guard.kind, guard.ref, guard.commit, guard.binding)
+	return retireRepairRef(ctx, repositoryDir, attempt.Repository, s, guard.kind, guard.ref, guard.commit, guard.binding)
+}
+
+// resolveUninstallRepairRepository normally uses the recorded repair worktree.
+// If that disposable worktree's .git locator was truncated after Hive durably
+// journaled an exact guard ref, uninstall may recover only through the single
+// common repository identity already bound by that journal. The fallback never
+// trusts a path from the damaged worktree and cannot cross repository identity.
+func resolveUninstallRepairRepository(ctx context.Context, attempt Attempt, guard uninstallRepairRef, entries []repairRefJournalEntry) (string, string, string, error) {
+	commonDir, commonErr := repairGitCommonDir(ctx, attempt.Worktree)
+	if commonErr == nil {
+		identity, identityErr := repairRepositoryIdentity(ctx, attempt.Worktree, attempt.Repository, commonDir)
+		if identityErr == nil {
+			return attempt.Worktree, commonDir, identity, nil
+		}
+		commonErr = identityErr
+	}
+
+	journalCommonDir := ""
+	journalIdentity := ""
+	sawIntent := false
+	for _, entry := range entries {
+		if entry.Kind != guard.kind || entry.Ref != guard.ref || entry.Commit != guard.commit || entry.Binding != guard.binding || entry.Repository != attempt.Repository {
+			continue
+		}
+		if entry.Phase == "intent" {
+			sawIntent = true
+		}
+		if journalCommonDir == "" {
+			journalCommonDir, journalIdentity = entry.GitCommonDir, entry.RepositoryIdentity
+			continue
+		}
+		if !sameRepairCommonDir(entry.GitCommonDir, journalCommonDir) || entry.RepositoryIdentity != journalIdentity {
+			return "", "", "", fmt.Errorf("repair worktree Git metadata is unavailable and exact journal records span repository identities: %w", commonErr)
+		}
+	}
+	if !sawIntent || journalCommonDir == "" || journalIdentity == "" {
+		return "", "", "", fmt.Errorf("repair worktree Git metadata is unavailable without an exact journaled repository identity: %w", commonErr)
+	}
+	journalCommonDir = filepath.Clean(journalCommonDir)
+	if filepath.Base(journalCommonDir) != ".git" {
+		return "", "", "", fmt.Errorf("repair worktree Git metadata is unavailable and the journaled common directory is not an ordinary repository .git directory: %w", commonErr)
+	}
+	repositoryDir := filepath.Dir(journalCommonDir)
+	control, err := captureRepositoryGitControl(repositoryDir, journalCommonDir)
+	if err != nil {
+		return "", "", "", fmt.Errorf("repair worktree Git metadata is unavailable and the journaled repository controls are unsafe: %w", err)
+	}
+	identity, err := repairRepositoryIdentity(ctx, repositoryDir, attempt.Repository, control.CommonDir.Path)
+	if err != nil {
+		return "", "", "", fmt.Errorf("repair worktree Git metadata is unavailable and the journaled repository identity cannot be verified: %w", err)
+	}
+	if identity != journalIdentity {
+		return "", "", "", fmt.Errorf("repair worktree Git metadata is unavailable and the journaled repository identity changed")
+	}
+	return repositoryDir, control.CommonDir.Path, identity, nil
 }
 
 func sameUninstallRepairRefs(left, right []uninstallRepairRef) bool {

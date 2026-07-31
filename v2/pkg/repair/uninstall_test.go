@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,5 +131,75 @@ func TestCancelForUninstallRetiresAllJournaledRefsAcrossCrashAndPreservesForeign
 		if value, err := readRepairRef(ctx, repository, foreign); err != nil || value != head {
 			t.Fatalf("foreign ref %s was consumed by retry: value=%q err=%v", foreign, value, err)
 		}
+	}
+}
+
+func TestCancelForUninstallRecoversJournaledRefAfterWorktreeLocatorLoss(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		changeIdentity bool
+		wantError      bool
+	}{
+		{name: "exact journaled repository"},
+		{name: "changed repository identity", changeIdentity: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			repository, _ := seedGitRepository(t)
+			worktree := filepath.Join(t.TempDir(), "repair-worktree")
+			branch := "hive/repair-uninstall-locator-loss"
+			runCommand(t, repository, "git", "worktree", "add", "-b", branch, worktree)
+			state, err := NewStore(filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := strings.TrimSpace(gitOutput(t, worktree, "rev-parse", "HEAD"))
+			tree := strings.TrimSpace(gitOutput(t, worktree, "rev-parse", "HEAD^{tree}"))
+			attempt := Attempt{
+				Repository: "owner/repo", RepositoryFingerprint: "owner/repo:locator-loss", Attempt: 1, AttemptCounted: true,
+				Branch: branch, Worktree: worktree, Stage: StageModelComplete, Provider: "test", StartedAt: time.Now().UTC(),
+			}
+			worker := &Worker{State: state}
+			ref, commit, binding, err := worker.createSealedTreeGuard(ctx, attempt, sealedTreeModelBase, tree, head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt.ModelBaseTree, attempt.ModelBaseParent = tree, head
+			attempt.ModelBaseGuardRef, attempt.ModelBaseGuardCommit, attempt.ModelBaseGuardBinding, attempt.ModelBaseGuardKind = ref, commit, binding, sealedTreeModelBase
+			if err := state.Put(attempt); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(worktree, ".git"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if test.changeIdentity {
+				runCommand(t, repository, "git", "remote", "set-url", "origin", "https://example.invalid/other.git")
+			}
+
+			err = state.CancelForUninstall(ctx, attempt.RepositoryFingerprint)
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "journaled repository identity changed") {
+					t.Fatalf("expected fail-closed identity error, got %v", err)
+				}
+				if value, readErr := readRepairRef(ctx, repository, ref); readErr != nil || value != commit {
+					t.Fatalf("guard ref changed after rejected recovery: value=%q err=%v", value, readErr)
+				}
+				current, exists := state.Get(attempt.RepositoryFingerprint)
+				if !exists || current.Stage == StageCancelled {
+					t.Fatalf("attempt was cancelled after rejected recovery: %+v", current)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, readErr := readRepairRef(ctx, repository, ref); readErr != nil || value != "" {
+				t.Fatalf("journal-owned guard ref survived recovery: value=%q err=%v", value, readErr)
+			}
+			current, exists := state.Get(attempt.RepositoryFingerprint)
+			if !exists || current.Stage != StageCancelled || !UninstallRefsRetired(current) {
+				t.Fatalf("recovered attempt did not reach a retired terminal state: %+v", current)
+			}
+		})
 	}
 }
