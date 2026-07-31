@@ -48,11 +48,7 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 			return replay, replayErr
 		}
 		if recoverStale {
-			result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
-			if mutationErr == nil {
-				result = reconcileDashboardSetupRuntime(ctx, result)
-			}
-			return result, mutationErr
+			return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token)
 		}
 	}
 	plan, planBytes, err := dashboardSetupCLIRunner(ctx, append(append([]string(nil), baseArgs...), "--plan"), token)
@@ -74,11 +70,32 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	if request.ExpectedPlanSHA256 != planSHA256 {
 		return nil, fmt.Errorf("integrated setup plan changed: expected %s, current %s", request.ExpectedPlanSHA256, planSHA256)
 	}
-	result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
-	if mutationErr == nil {
-		result = reconcileDashboardSetupRuntime(ctx, result)
+	return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token)
+}
+
+func runDashboardSetupMutationWithRuntimeRebind(
+	ctx context.Context,
+	stateDir string,
+	request dashboard.IntegratedSetupRequest,
+	baseArgs []string,
+	token string,
+) (map[string]any, error) {
+	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
+	if normalVisualRuntime != nil {
+		if err := normalVisualRuntime.Stop(ctx); err != nil {
+			return nil, fmt.Errorf("quiesce normal Visual Hive runtime before managed setup apply: %w", err)
+		}
 	}
-	return result, mutationErr
+	result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
+	if mutationErr != nil {
+		if normalVisualRuntime != nil {
+			if _, resumeErr := normalVisualRuntime.ResumeReconciliation(ctx); resumeErr != nil {
+				return result, errors.Join(mutationErr, fmt.Errorf("restore normal Visual Hive runtime after failed managed setup apply: %w", resumeErr))
+			}
+		}
+		return result, mutationErr
+	}
+	return reconcileDashboardSetupRuntime(ctx, result), nil
 }
 
 func reconcileDashboardSetupRuntime(ctx context.Context, result map[string]any) map[string]any {

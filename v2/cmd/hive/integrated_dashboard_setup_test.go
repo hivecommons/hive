@@ -104,6 +104,105 @@ func TestDashboardIntegratedSetupBindsApplyToFreshPlan(t *testing.T) {
 	}
 }
 
+func TestDashboardIntegratedSetupRebindsChangedAuthorityInProcess(t *testing.T) {
+	original := dashboardSetupCLIRunner
+	t.Cleanup(func() { dashboardSetupCLIRunner = original })
+	stateDir := filepath.Join(t.TempDir(), "repository-state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+	installed := testInstalledNormalVisualContract(t, stateDir)
+	installed.Automation = "issues"
+	installed.ACMMLevel = 4
+	contract := &testNormalVisualContract{config: installed, exists: true}
+	runtimeManager, factoryCalls, instances := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		return &fakeNormalVisualRuntime{binding: binding}
+	})
+	if active, err := runtimeManager.Ensure(context.Background()); err != nil || !active {
+		t.Fatalf("activate issues intake active=%t err=%v", active, err)
+	}
+	originalRuntime := dashboardNormalVisualRuntime.Load()
+	dashboardNormalVisualRuntime.Store(runtimeManager)
+	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(originalRuntime) })
+
+	planBytes := []byte("{\"applied\":false}\n")
+	dashboardSetupCLIRunner = func(_ context.Context, args []string, _ string) (map[string]any, []byte, error) {
+		if args[len(args)-1] == "--plan" {
+			return map[string]any{"applied": false}, planBytes, nil
+		}
+		installed.Automation = "repair-pr"
+		installed.ACMMLevel = 5
+		contract.set(installed, true, nil)
+		return map[string]any{"applied": true}, []byte("{\"applied\":true}\n"), nil
+	}
+	request := dashboard.IntegratedSetupRequest{
+		RequestID: "setup-l4-l5-rebind-001", Repository: "owner/repository",
+		Coverage: "comprehensive", Automation: "repair-pr", Provider: "codex",
+		VisualHiveRef: strings.Repeat("a", 40),
+	}
+	planDigest, err := dashboardSetupPlanDigest(request, planBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedPlanSHA256 = planDigest
+	result, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, _ := result["visual_runtime_activation"].(map[string]any)
+	if activation["state"] != "ready" || factoryCalls.Load() != 2 || len(*instances) != 2 ||
+		(*instances)[0].stops.Load() != 1 || (*instances)[1].starts.Load() != 1 {
+		t.Fatalf("activation=%v factory=%d instances=%d first_stops=%d second_starts=%d",
+			activation, factoryCalls.Load(), len(*instances), (*instances)[0].stops.Load(), (*instances)[1].starts.Load())
+	}
+}
+
+func TestDashboardIntegratedSetupFailureRestoresPriorRuntime(t *testing.T) {
+	original := dashboardSetupCLIRunner
+	t.Cleanup(func() { dashboardSetupCLIRunner = original })
+	stateDir := filepath.Join(t.TempDir(), "repository-state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+	contract := &testNormalVisualContract{config: testInstalledNormalVisualContract(t, stateDir), exists: true}
+	runtimeManager, factoryCalls, instances := newTestNormalVisualRuntimeManager(t, contract, func(binding normalVisualRuntimeBinding) *fakeNormalVisualRuntime {
+		return &fakeNormalVisualRuntime{binding: binding}
+	})
+	if active, err := runtimeManager.Ensure(context.Background()); err != nil || !active {
+		t.Fatalf("activate prior runtime active=%t err=%v", active, err)
+	}
+	originalRuntime := dashboardNormalVisualRuntime.Load()
+	dashboardNormalVisualRuntime.Store(runtimeManager)
+	t.Cleanup(func() { dashboardNormalVisualRuntime.Store(originalRuntime) })
+
+	planBytes := []byte("{\"applied\":false}\n")
+	dashboardSetupCLIRunner = func(_ context.Context, args []string, _ string) (map[string]any, []byte, error) {
+		if args[len(args)-1] == "--plan" {
+			return map[string]any{"applied": false}, planBytes, nil
+		}
+		return nil, nil, errors.New("setup mutation failed")
+	}
+	request := dashboard.IntegratedSetupRequest{
+		RequestID: "setup-failure-restore-001", Repository: "owner/repository",
+		Coverage: "comprehensive", Automation: "repair-pr", Provider: "codex",
+		VisualHiveRef: strings.Repeat("a", 40),
+	}
+	planDigest, err := dashboardSetupPlanDigest(request, planBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.ExpectedPlanSHA256 = planDigest
+	if _, err := runDashboardIntegratedSetup(context.Background(), request, "owner-token"); err == nil || !strings.Contains(err.Error(), "setup mutation failed") {
+		t.Fatalf("unexpected setup error: %v", err)
+	}
+	if factoryCalls.Load() != 2 || len(*instances) != 2 || (*instances)[0].stops.Load() != 1 || (*instances)[1].starts.Load() != 1 {
+		t.Fatalf("factory=%d instances=%d first_stops=%d restored_starts=%d",
+			factoryCalls.Load(), len(*instances), (*instances)[0].stops.Load(), (*instances)[1].starts.Load())
+	}
+}
+
 func TestDashboardSetupPlanDigestIgnoresOnlyGeneratedAt(t *testing.T) {
 	request := dashboard.IntegratedSetupRequest{
 		RequestID: "setup-cycle-a-003", Repository: "owner/repository",
