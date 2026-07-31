@@ -240,6 +240,14 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("DELETE /api/saas/admin/hub-banner", s.requireAdmin(s.handleClearHubBanner))
 	s.mux.HandleFunc("GET /api/saas/admin/hub-banner", s.requireAdmin(s.handleGetHubBanner))
 	s.registerBulkRoutes()
+	// Slack messaging. The single-user and hive-owner routes are admin-or-owner
+	// (checked inside each handler, like switch-branch); the BROADCAST is
+	// admin-only, because it reaches every user with a slack_id and cannot be
+	// recalled. It additionally requires a typed confirmation and offers a dry
+	// run — see slack.go.
+	s.mux.HandleFunc("POST /api/saas/slack/user/{username}", s.requireAuth(s.handleSlackMessageUser))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/slack", s.requireAuth(s.handleSlackMessageHiveOwner))
+	s.mux.HandleFunc("POST /api/saas/admin/slack/broadcast", s.requireAdmin(s.handleSlackBroadcast))
 	s.mux.HandleFunc("POST /api/saas/admin/journey-snooze", s.requireAdmin(s.handleJourneySnooze))
 	s.mux.HandleFunc("GET /api/saas/admin/journey-status", s.requireAdmin(s.handleJourneyStatus))
 
