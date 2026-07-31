@@ -2505,6 +2505,7 @@
       <a class="oc-nav-item" data-section="contributors-section" onclick="ocNavigate('contributors-section')"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
       <a class="oc-nav-item" data-section="audit-section" onclick="ocNavigate('audit-section')"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="nous-section" onclick="ocNavigate('nous-section')"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
+      <a class="oc-nav-item" data-section="faq-section" onclick="ocNavigate('faq-section')" title="Answers to common first-time questions: the Advisory Digest, ACMM levels, and how to advance"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
     </div>
@@ -2671,6 +2672,133 @@
       </div>
       <div id="audit-panel" style="padding:12px;max-height:320px;overflow-y:auto">
         <div class="loading">Loading audit log...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAQ — intentionally NOT ACMM-gated (no entry in applyACMMVisibility's
+       sidebarItems list and no display:none default), because the audience for
+       it is a confused L1/L2 user. Static content only: no JS, no fetch. -->
+  <div id="faq-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('faq-section')"><span class="section-chevron">▼</span> ❓ FAQ</h2>
+    <div class="section-body">
+      <div id="faq-panel" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:0.85rem;line-height:1.6;max-width:900px">
+
+        <p style="color:var(--muted);margin:0 0 18px">Common questions from first-time users. Everything below describes what this hive
+        actually does today — where behaviour is surprising, it is called out rather than smoothed over.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What is the Advisory Digest for?</h3>
+        <p style="margin:0 0 8px"><strong>The Advisory Digest is the work ledger.</strong> It is the collection of
+        <strong>beads</strong> your agents open — the running record of what the hive has found and what it would act on,
+        if you let it. Agents create each bead with <code>bd create</code>; the digest rolls up every open bead of type
+        <code>advisory</code>, <code>bug</code>, or <code>feature</code>, grouped by the agent that filed it. Internal agent
+        work items (<code>task</code>, <code>decision</code>) are deliberately excluded so the ledger stays readable.</p>
+        <p style="margin:0 0 16px">You can read the same ledger in two places. Here in the dashboard, and in GitHub: the hive
+        opens a single issue titled <strong>🐝 Hive Advisory Report</strong> in your default repo and keeps a digest comment on
+        it up to date each cycle. That issue is the whole of the hive's GitHub footprint at Level 2 — reading it in GitHub
+        means the ledger lands where your normal workflow already lives.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What do the colors mean?</h3>
+        <p style="margin:0 0 8px">The colored bar on the left of each finding, and its dot, encode <strong>severity</strong>, which is
+        derived directly from the priority the agent set on the bead (<code>--priority 0</code> through <code>3</code>):</p>
+        <ul style="margin:0 0 8px;padding-left:20px">
+          <li>🔴 <strong>critical</strong> (priority 0) — red bar</li>
+          <li>🟠 <strong>high</strong> (priority 1) — orange bar</li>
+          <li>🟡 <strong>medium</strong> (priority 2) — yellow bar</li>
+          <li>🔵 <strong>low</strong> (priority 3) — grey bar</li>
+          <li>⚪ <strong>info</strong> — anything else; grey bar</li>
+        </ul>
+        <p style="margin:0 0 16px;color:var(--muted)">Note the icon and the bar disagree slightly at the bottom end: <em>low</em> shows a blue dot but a
+        grey bar, since only critical/high/medium have dedicated bar colors. Severity is set by the agent that filed the
+        bead, using the priority rubric in that agent's policy — it is a judgement call, not a measurement.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">How are digest items selected and ordered?</h3>
+        <p style="margin:0 0 16px"><strong>They are not ranked by severity.</strong> This is the single most common misreading of the digest.
+        Findings are grouped by agent (agents sorted alphabetically), and within each agent they appear in the order the
+        beads were created — <strong>oldest first, chronologically</strong>. Severity is a label you can scan for; it has no
+        effect on position. A critical finding filed this morning sits <em>below</em> a low-severity one filed last week.
+        So: read the whole of an agent's group, or scan for 🔴/🟠, but do not assume the top of the list is the most
+        important thing. Selection is simply "every open advisory/bug/feature bead" — there is no cutoff or scoring.
+        Beads closed in the last 48 hours appear separately as recently resolved.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What am I supposed to do with it?</h3>
+        <p style="margin:0 0 8px"><strong>Level 2 is a trust level.</strong> It exists to show you how Hive works, what it
+        would find, and how it might fix it — <em>if you let it</em>. So the job at L2 is not to fix everything in the ledger.
+        It is to decide whether you believe the ledger.</p>
+        <p style="margin:0 0 8px">The intended way to do that: point <strong>your own</strong> agent — <code>claude</code> CLI,
+        <code>bob</code> shell, <code>copilot</code> CLI, running on your own laptop — at the 🐝 Hive Advisory Report issue, and
+        have it read the findings and suss out whether they make sense. You are reviewing the hive's judgement using a tool
+        you already control, on a repo the hive cannot write to. That is the whole point of the level.</p>
+        <p style="margin:0 0 8px">Alongside that:</p>
+        <ol style="margin:0 0 16px;padding-left:20px">
+          <li>Skim for 🔴 and 🟠 first, since ordering will not surface them for you (see below).</li>
+          <li>For anything you agree with and want tracked, open a real GitHub issue yourself — at L2 the agents cannot.</li>
+          <li>A large ledger on a first run is normal. It is the accumulated backlog of a codebase nobody has audited
+              before, not a list of new problems, and not a queue you are expected to burn down.</li>
+        </ol>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">How do I move from L2 to L3?</h3>
+        <p style="margin:0 0 8px"><strong>You advance when you trust the ledger.</strong> There is no quota to clear. L2's purpose
+        is to let you judge whether the findings are sound; once you have read enough of them to believe the hive's judgement,
+        you are ready to let it write.</p>
+        <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Instructed</em>) the only thing the hive touches in
+        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Measured</em>) is the first level where agents touch your
+        actual code: the quality agent may open GitHub issues
+        and <strong>hold-gated pull requests</strong> that add test coverage. "Hold-gated" means every PR is opened with a
+        <code>hold</code> label, and the agent is forbidden from merging it or removing that label — so a human merges every
+        change, always. L3 is deliberately scoped to <em>tests only</em>: no production code, no refactors, no features.
+        The point of L3 is to build the test coverage that makes the more automated levels above it safe.</p>
+        <p style="margin:0 0 8px"><strong>Before advancing,</strong> check the <strong>ACMM Eval</strong> page in this sidebar. It scores your
+        repo against per-level criteria and reports a <em>Codebase Readiness</em> level — the highest level whose criteria
+        you pass, counting up without gaps. If readiness already says L3 or better, your repo has the CI and test
+        scaffolding L3 expects. If it says L1 or L2, click into <em>Criteria Passed</em> to see exactly which checks fail;
+        those are your prerequisites. Readiness is advisory — nothing blocks you from setting a higher level — but
+        advancing past your readiness score means agents will open PRs against a repo with no CI to judge them.</p>
+        <p style="margin:0 0 16px"><strong>How to actually change it:</strong> use the ACMM badge in the sidebar, or the
+        <em>Change level ▾</em> button on the ACMM Eval section. Both open the same dialog. It offers two distinct actions,
+        and the difference matters: <strong>Preview</strong> only changes what this dashboard displays and leaves running
+        agents untouched, while <strong>Apply</strong> is the real move — it creates the agents in that level's pack, resumes
+        them, and pauses agents not in the pack. Do not edit <code>hive.yaml</code> by hand to change level; the dialog is
+        the supported path.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What about L4, L5, L6?</h3>
+        <p style="margin:0 0 8px">Each level widens what agents may do without you, and each still stops short of full autonomy
+        until L6:</p>
+        <ul style="margin:0 0 16px;padding-left:20px">
+          <li><strong>L1 Assisted</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
+          <li><strong>L2 Instructed</strong> — the trust level. Advisory beads only; the sole GitHub write is the
+              🐝 Hive Advisory Report issue and its digest comment.</li>
+          <li><strong>L3 Measured</strong> — hold-gated PRs, CI gates.</li>
+          <li><strong>L4 Adaptive</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
+              issues and PRs remain hold-gated for human review.</li>
+          <li><strong>L5 Semi-Automated</strong> — PRs carry a hold label, reviewed in batches.</li>
+          <li><strong>L6 Autonomous</strong> — auto-merge once CI is green.</li>
+        </ul>
+        <p style="margin:0 0 16px;color:var(--muted)">L4 and above become available after provisioning; newly created hives start in the L1–L3 range.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">Why couldn't the Guide agent answer my questions?</h3>
+        <p style="margin:0 0 16px">Because the guide agent documents <em>your</em> project, not Hive itself. Its job is to audit your
+        repo's README, getting-started, architecture and contributing docs and report the gaps — at L1–L2 as beads and an
+        issue, at L3+ as doc PRs. It is explicitly barred from writing code, filing triage issues, or reviewing PRs, and it
+        has no special knowledge of Hive's own workflow or ACMM levels. Questions about how to <em>operate</em> your hive
+        belong here, not to an agent.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">A first week, end to end</h3>
+        <ol style="margin:0;padding-left:20px">
+          <li><strong>Start at L1–L2.</strong> Let the agents run a full cycle against your repos and populate the ledger.</li>
+          <li><strong>Read the ledger</strong> on the Advisory page, or on the 🐝 Hive Advisory Report issue in your default
+              repo. Expect it to be long. Scan for 🔴/🟠 rather than reading top-down.</li>
+          <li><strong>Audit it with your own agent.</strong> Point <code>claude</code>, <code>bob</code>, or
+              <code>copilot</code> on your laptop at that issue and ask whether the findings hold up. This is the core L2
+              activity — you are calibrating whether the hive's judgement matches yours.</li>
+          <li><strong>Act on a handful.</strong> File real issues for the findings you agree with; ignore the rest.</li>
+          <li><strong>Open ACMM Eval</strong> and note your Codebase Readiness and which criteria fail.</li>
+          <li><strong>Advance to L3</strong> via the ACMM dialog once you trust the ledger and readiness supports it,
+              using <em>Apply</em> (not Preview).</li>
+          <li><strong>Review the first hold-gated PRs.</strong> They will be test-coverage PRs. Merging them is a manual
+              step, by design — that review habit is the thing L4+ depends on.</li>
+        </ol>
+
       </div>
     </div>
   </div>
@@ -9994,7 +10122,8 @@ function burnAreaChart() {
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'repos-section', 'beads-section', 'acmm-eval-section',
         'audit-section', 'nous-section', 'inception-section', 'knowledge-section',
-        'contributors-section', 'debug-section', 'logs-section', 'agents-section'
+        'contributors-section', 'debug-section', 'logs-section', 'agents-section',
+        'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       // Update compact-all button text
