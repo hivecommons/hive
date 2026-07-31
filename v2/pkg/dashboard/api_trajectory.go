@@ -49,29 +49,45 @@ func (s *Server) handleGovernorTrajectory(w http.ResponseWriter, r *http.Request
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after trajectory update", "error", err)
 	}
-	// Reconcile the "enabled but no reviewer endpoint" alert against the new
-	// state: it must clear when the lane is turned off or an endpoint is set,
-	// not linger from a stale startup evaluation.
+	// Clear any legacy "not configured" banner alert. The half-configured
+	// state is surfaced inline in Governor Config → General instead of the
+	// top banner (see ReconcileTrajectoryAlert).
 	s.ReconcileTrajectoryAlert(&s.deps.Config.Governor)
 	s.auditFromRequest(r, "config_governor_trajectory", auditDetail("section", "trajectory"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
-// TrajectoryNotConfiguredAlertID is the dashboard system-alert id for
-// "trajectory review is enabled but has no reviewer endpoint."
+// TrajectoryNotConfiguredAlertID is the dashboard system-alert id formerly
+// used for "trajectory review is enabled but has no reviewer endpoint."
+// The alert is no longer raised; the id is retained so ReconcileTrajectoryAlert
+// can clear one persisted by an older build.
 const TrajectoryNotConfiguredAlertID = "trajectory-not-configured"
 
-// ReconcileTrajectoryAlert raises the "enabled but no reviewer endpoint" alert
-// only when the lane is BOTH enabled AND not runnable, and clears it in every
-// other case (disabled, or an endpoint now resolves). Safe to call from
-// startup and from the config PUT handler.
-func (s *Server) ReconcileTrajectoryAlert(g *config.GovernorConfig) {
-	if g.Trajectory.IsEnabled() && !g.ReviewerReady() {
-		s.AddSystemAlert(TrajectoryNotConfiguredAlertID, "warning",
-			"Trajectory review is ON but has no reviewer endpoint configured — no agents are being reviewed. Set a reviewer endpoint (LiteLLM, vLLM, or llm-d) in Governor Config.")
-		return
-	}
+// ReconcileTrajectoryAlert clears the legacy "enabled but no reviewer
+// endpoint" system alert. It no longer raises it.
+//
+// Why the banner went away: the lane defaults to ON (TrajectoryConfig.IsEnabled
+// returns true when Enabled is nil), so on a hive that has never configured a
+// LiteLLM endpoint the alert fired on first boot for everyone — it flagged the
+// untouched default, not an operator who opted in and then misconfigured it.
+// That made it a "you have not set up an optional feature" nag occupying the
+// top banner, which is reserved for conditions demanding action. The lane also
+// fails open (an unreachable reviewer returns "not divergent"), so the inert
+// state never pauses or breaks a working agent.
+//
+// The half-configured state is still surfaced, just not as a top-of-page
+// warning: Governor Config → General shows an amber "On — no reviewer endpoint
+// (not running)" status chip plus a "Resolved: none — reviewer will not run"
+// hint next to the endpoint field, and Getting Started → More to explore
+// mentions the feature as an advanced capability.
+//
+// This is still called from startup and the config PUT handler so that an
+// alert persisted by an older build is cleared rather than left stuck in the
+// banner forever.
+// The config argument is retained (unused) so both call sites and any future
+// re-introduction of a narrower, opt-in-only alert keep a stable signature.
+func (s *Server) ReconcileTrajectoryAlert(_ *config.GovernorConfig) {
 	s.ClearSystemAlert(TrajectoryNotConfiguredAlertID)
 }
 

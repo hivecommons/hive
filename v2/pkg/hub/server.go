@@ -126,20 +126,26 @@ type RegistryEntry struct {
 	//      spokes too old to report it;
 	//   3. "github.com" at render time, so a chip is never blank.
 	// Empty here means "not reported" — resolved on read, never guessed.
-	GitHubHost                string             `json:"githubHost,omitempty"`
-	Agents                    []AgentSummary     `json:"agents,omitempty"`
-	Leaderboard               []LeaderboardEntry `json:"leaderboard,omitempty"`
-	Online                    bool               `json:"online"`
-	Upgrading                 bool               `json:"upgrading,omitempty"`
-	UpgradeTarget             string             `json:"upgradeTarget,omitempty"`
-	UpgradeStartedAt          time.Time          `json:"upgradeStartedAt,omitempty"`
-	IssueHistory              []SparkPoint       `json:"issueHistory,omitempty"`
-	PRHistory                 []SparkPoint       `json:"prHistory,omitempty"`
-	GitHubAppRequired         bool               `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue        string             `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState            string             `json:"githubAppState,omitempty"`
-	PendingGitHubAppInstall   bool               `json:"pendingGitHubAppInstall,omitempty"`
-	PendingGitHubAppInstallAt time.Time          `json:"pendingGitHubAppInstallAt,omitempty"`
+	GitHubHost       string             `json:"githubHost,omitempty"`
+	Agents           []AgentSummary     `json:"agents,omitempty"`
+	Leaderboard      []LeaderboardEntry `json:"leaderboard,omitempty"`
+	Online           bool               `json:"online"`
+	Upgrading        bool               `json:"upgrading,omitempty"`
+	UpgradeTarget    string             `json:"upgradeTarget,omitempty"`
+	UpgradeStartedAt time.Time          `json:"upgradeStartedAt,omitempty"`
+	// UpgradeFailed records that the spoke reported an upgrade it could not
+	// complete, with the cause. Distinct from Upgrading: "failed" is a terminal
+	// state a human must see, not an in-flight one.
+	UpgradeFailed             bool         `json:"upgradeFailed,omitempty"`
+	UpgradeError              string       `json:"upgradeError,omitempty"`
+	UpgradeFailedAt           time.Time    `json:"upgradeFailedAt,omitempty"`
+	IssueHistory              []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory                 []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired         bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue        string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState            string       `json:"githubAppState,omitempty"`
+	PendingGitHubAppInstall   bool         `json:"pendingGitHubAppInstall,omitempty"`
+	PendingGitHubAppInstallAt time.Time    `json:"pendingGitHubAppInstallAt,omitempty"`
 	// Fleet contribution counts reported by the spoke (nil = not reported /
 	// not yet computed). Aggregated across public, non-stale hives into the
 	// /api/fleet-stats total. Pointers preserve the nil-vs-zero distinction so
@@ -213,6 +219,71 @@ func sanitizeField(s string) string {
 
 func isValidName(s string) bool {
 	return safeNamePattern.MatchString(s) && len(s) <= 100
+}
+
+// publicGitHubHost is the bare hostname of public GitHub. A hive record stores
+// "" for public GitHub, but a REQUEST must name its forge explicitly, and this
+// is the label a requester types (or the picker submits) to mean "public".
+const publicGitHubHost = "github.com"
+
+// minForgeHostLabels is the fewest dot-separated labels a forge hostname can
+// have. A GitHub forge is always at least "host.tld" (github.com,
+// github.ibm.com); a single bare label like "github" is a typo, not a forge,
+// and accepting it would provision a hive against a host that resolves nowhere.
+const minForgeHostLabels = 2
+
+// normalizeForgeHost turns whatever a user typed into a "GitHub forge" field
+// into a bare hostname, and reports whether the result is a usable forge.
+//
+// It accepts every form the request modal advertises — with or without a
+// scheme, with or without a trailing slash — because those are what people
+// actually paste out of a browser address bar:
+//
+//	github.com            -> ("github.com",     true)
+//	https://github.com    -> ("github.com",     true)
+//	github.ibm.com        -> ("github.ibm.com", true)
+//	https://github.ibm.com/ -> ("github.ibm.com", true)
+//	""                    -> ("",               false)
+//	"not a host"          -> ("not a host",     false)
+//
+// Normalization runs BEFORE validation deliberately. isValidName rejects ":"
+// and "/", so validating the raw input would reject "https://github.ibm.com" —
+// a form the request form explicitly tells users to use. Callers must
+// normalize first and validate the result.
+//
+// githubHostLabel does the scheme/slash stripping and is reused here rather
+// than duplicated, so the hostname a request records and the hostname the
+// dashboard renders can never drift into two spellings.
+func normalizeForgeHost(s string) (string, bool) {
+	host := strings.ToLower(githubHostLabel(strings.TrimSpace(s)))
+	// githubHostLabel maps empty -> "github.com". For a REQUEST that default is
+	// wrong: an omitted forge must fail, not silently become public GitHub.
+	if strings.TrimSpace(s) == "" {
+		return "", false
+	}
+	// A pasted org URL ("github.ibm.com/my-org") carries a path; keep only the
+	// host so the forge field tolerates the same paste the org field does.
+	if i := strings.Index(host, "/"); i >= 0 {
+		host = host[:i]
+	}
+	if !isValidName(host) {
+		return host, false
+	}
+	// Every label must be non-empty and contain something other than dots, so
+	// "..", "../..", and ".github.com" are rejected. isValidName permits dots
+	// (legitimately — hostnames need them), which on its own would let a
+	// path-traversal prefix like "../../etc/passwd" survive truncation at the
+	// first slash and be stored as the forge "..".
+	labels := strings.Split(host, ".")
+	if len(labels) < minForgeHostLabels {
+		return host, false
+	}
+	for _, label := range labels {
+		if label == "" {
+			return host, false
+		}
+	}
+	return host, true
 }
 
 // normalizeOrgRef accepts what a user actually pastes into an "org" field and
@@ -398,12 +469,24 @@ type HubServer struct {
 	// the admin-triggered path. hubUpgradeTarget is the SHA being rolled to.
 	lastHubUpgradeTrigger time.Time
 	hubUpgradeTarget      string
-	hubUpgradeMu          sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget
-	httpServer            *http.Server
-	httpMu                sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
-	clusters              map[string]ClusterConfig
-	heartbeatHealth       map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
-	heartbeatHealthMu     sync.RWMutex
+	// hubUpgradeFault holds a human-readable reason the last self-upgrade did
+	// not land: a refused (malformed) image tag, or a rollout that never became
+	// Ready. Empty means healthy. It exists so a stuck upgrade is visible in the
+	// dashboard instead of only in `kubectl describe` — the `target1` incident
+	// left the hub serving stale code for ~20 minutes with nothing surfaced.
+	hubUpgradeFault string
+	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault
+	httpServer      *http.Server
+	httpMu          sync.Mutex // guards httpServer (Start runs in a goroutine; Shutdown races it)
+	clusters        map[string]ClusterConfig
+
+	// vanityHostServable overrides how the retroactive vanity-URL repair makes a
+	// vanity host servable (see makeVanityHostServable). nil in production, where
+	// the real addVanityHostToIngress runs; set by tests, which have no cluster to
+	// kubectl to.
+	vanityHostServable func(hiveID, vanityHost string, cluster *ClusterConfig) error
+	heartbeatHealth    map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
+	heartbeatHealthMu  sync.RWMutex
 
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to
@@ -902,6 +985,27 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.Upgrading = true
 	}
 
+	// A spoke that explicitly reports a FAILED upgrade must not be left showing
+	// the "Upgrading" spinner, and must not be re-instructed on a loop. Record
+	// the cause so operators can see WHY, and drop the pending instruction: the
+	// spoke has already exhausted its own retry budget, so re-sending the same
+	// target every heartbeat only reproduces the failure.
+	if payload.UpgradeFailed {
+		entry.Upgrading = false
+		entry.UpgradeFailed = true
+		entry.UpgradeError = sanitizeHeartbeatField(payload.UpgradeError)
+		entry.UpgradeFailedAt = time.Now()
+		s.mu.Lock()
+		delete(s.heartbeatUpgrade, payload.HiveID)
+		s.mu.Unlock()
+		s.logger.Error("heartbeat: spoke reported a FAILED upgrade",
+			"hive_id", payload.HiveID,
+			"from", payload.GitHash,
+			"to", payload.UpgradeTargetSHA,
+			"error", payload.UpgradeError,
+		)
+	}
+
 	// Timeline: capture the pre-heartbeat entry inside the lock (it is the only
 	// place old and new coexist), but diff and persist AFTER unlocking —
 	// s.mu is a write lock held across the whole registry scan, so a file
@@ -931,6 +1035,22 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				branchForLatest = "v2"
 			}
 			registryLatestSHA := getLatestSHAForBranch(branchForLatest)
+			// Carry a previously-reported upgrade failure forward across ordinary
+			// heartbeats (which do not repeat it), but clear it the moment the
+			// spoke actually reports a NEW git hash — that means it finally moved.
+			if h.UpgradeFailed && !payload.UpgradeFailed {
+				if entry.GitHash != "" && h.GitHash != "" && entry.GitHash != h.GitHash {
+					entry.UpgradeFailed = false
+					entry.UpgradeError = ""
+					entry.UpgradeFailedAt = time.Time{}
+					s.logger.Info("heartbeat: previously failed upgrade has landed",
+						"hive_id", payload.HiveID, "git_hash", entry.GitHash)
+				} else {
+					entry.UpgradeFailed = true
+					entry.UpgradeError = h.UpgradeError
+					entry.UpgradeFailedAt = h.UpgradeFailedAt
+				}
+			}
 			if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
 				// Non-upgrading heartbeat at the target SHA or at latest —
 				// upgrade completed (image may have advanced past the
@@ -942,6 +1062,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				entry.UpgradeTarget = ""
 			} else if h.Upgrading && !payload.Upgrading && h.UpgradeTarget == "" {
 				// Upgrading with no target (stale flag from config-only restart).
+				entry.Upgrading = false
+				entry.UpgradeTarget = ""
+			} else if payload.UpgradeFailed {
+				// The spoke just told us the upgrade FAILED. That is direct
+				// evidence and must beat the inference below, which would
+				// otherwise re-assert the stale Upgrading flag (same GitHash as
+				// before is exactly what a failed upgrade looks like) and put the
+				// permanent spinner straight back.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
 			} else if h.Upgrading && h.UpgradeTarget != "" {
@@ -1100,6 +1228,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// very beat. No-op (and silent) for every hive that already has a host, is
 	// an unclaimed placeholder, or sits on a non-GHE cluster.
 	s.repairGitHubHostForHive(payload.HiveID)
+
+	// Retroactively mint the vanity host for a hive CLAIMED BEFORE the vanity
+	// feature existed, also BEFORE building the project config, so the URL-only
+	// push below delivers it on this very beat. VanityURL is otherwise written
+	// only at assign time, so those hives would display and open their raw
+	// placeholder host forever. No-op (and silent) for unclaimed placeholders,
+	// hives that already have a vanity URL, and hives whose vanity host the hub
+	// cannot make servable (heartbeat-only clusters keep their placeholder).
+	s.repairVanityURLForHive(payload.HiveID)
 
 	if projCfg := projectConfigForHiveID(payload.HiveID, payload.Org, payload.Repos, payload.PrimaryRepo, payload.ACMMLevel, payload.DashboardURL, payload.GitHubAPIURL); projCfg != nil {
 		resp.ProjectConfig = projCfg
@@ -1466,19 +1603,55 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// removeRegistryEntry removes a hive from the in-memory registry by ID.
+// removeRegistryEntry removes a hive from the in-memory registry by ID and
+// flushes the registry to disk before returning.
+//
+// The flush is synchronous rather than going through requestSave because
+// requestSave defers the write by registrySaveDelay. A hub restart inside that
+// window would reload the pre-delete registry from disk and the deleted hive
+// would reappear in "My Hives" — the in-memory removal alone is not durable.
+// Deletion is rare and user-initiated, so paying the write cost inline is fine.
 func (s *HubServer) removeRegistryEntry(id, by string) {
 	s.mu.Lock()
+	removed := false
 	for i, h := range s.registry.Hives {
 		if h.ID == id {
 			s.registry.Hives = append(s.registry.Hives[:i], s.registry.Hives[i+1:]...)
-			s.mu.Unlock()
-			s.requestSave()
-			s.logger.Info("audit: registry entry removed", "id", id, "by", by)
-			return
+			removed = true
+			break
 		}
 	}
 	s.mu.Unlock()
+	if !removed {
+		return
+	}
+	if err := s.saveRegistryNow(); err != nil {
+		// The in-memory removal already happened, so the listing is correct for
+		// this process. Log loudly: only a restart before the next periodic save
+		// would resurrect the entry.
+		s.logger.Error("registry entry removed in memory but persist failed", "id", id, "error", err)
+		s.requestSave()
+	}
+	s.logger.Info("audit: registry entry removed", "id", id, "by", by)
+}
+
+// saveRegistryNow marshals and writes the registry to disk immediately, via a
+// temp file plus atomic rename so a crash mid-write cannot truncate it.
+func (s *HubServer) saveRegistryNow() error {
+	s.mu.RLock()
+	data, err := json.MarshalIndent(s.registry, "", "  ")
+	s.mu.RUnlock()
+	if err != nil {
+		return fmt.Errorf("marshal hub registry: %w", err)
+	}
+	tmpPath := registryPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("write hub registry: %w", err)
+	}
+	if err := os.Rename(tmpPath, registryPath); err != nil {
+		return fmt.Errorf("rename hub registry: %w", err)
+	}
+	return nil
 }
 
 func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request) {
@@ -1498,7 +1671,11 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 	}
 	s.mu.Unlock()
 	if removed {
-		s.requestSave()
+		// Synchronous flush for the same durability reason as removeRegistryEntry.
+		if err := s.saveRegistryNow(); err != nil {
+			s.logger.Error("admin registry removal persist failed", "id", id, "error", err)
+			s.requestSave()
+		}
 		s.logger.Info("audit: admin removed registry entry", "id", id, "admin", hubAdminUsername)
 	}
 	w.Header().Set("Content-Type", "application/json")

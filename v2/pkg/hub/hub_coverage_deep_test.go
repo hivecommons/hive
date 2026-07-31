@@ -606,7 +606,9 @@ func TestHandleRequestProvisionValidBody(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	body := `{"org":"validorg","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token"}`
+	// github_host is required: a request must name the GitHub forge its org
+	// lives on, so a "valid body" fixture has to carry one.
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_prov_valid")
@@ -779,7 +781,7 @@ func TestHandleHeartbeatAutoUpgradeSpokeRequest(t *testing.T) {
 
 	// Set latest SHA
 	latestSHAMu.Lock()
-	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "target1", Message: "latest"}
+	latestSHAByBranch["v2"] = branchSHAInfo{SHA: "7a41e01", Message: "latest"}
 	latestSHAMu.Unlock()
 	defer func() {
 		latestSHAMu.Lock()
@@ -799,8 +801,8 @@ func TestHandleHeartbeatAutoUpgradeSpokeRequest(t *testing.T) {
 
 	var resp HeartbeatResponse
 	json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp.UpgradeTo != "target1" {
-		t.Errorf("upgrade_to = %q, want target1", resp.UpgradeTo)
+	if resp.UpgradeTo != "7a41e01" {
+		t.Errorf("upgrade_to = %q, want 7a41e01", resp.UpgradeTo)
 	}
 }
 

@@ -694,6 +694,16 @@
     /* .gh-auth-overlay/.gh-auth-modal — modal overlay/panel recipes (end of style block).
        z-index encodes stacking intent — do not change. */
     .gh-auth-overlay { z-index: 9999; }
+    /* Credential dialogs opened FROM Governor config must stack above it.
+       .config-overlay is 10000 and .gh-auth-overlay is 9999, so a bob /
+       Copilot / Claude key dialog launched from the config modal rendered
+       BEHIND it — visible only as a dimmed backdrop, with the key field
+       unreachable. These are always launched on top of another modal, never
+       beneath one, so they sit above .config-overlay (10000) and below
+       .hive-dialog-overlay (20000), which is a full-page takeover. The shared
+       9999 stays untouched: the other .gh-auth-overlay users (sign-in,
+       setup) open from the page itself and their stacking intent is correct. */
+    .cred-dialog-overlay { z-index: 10001; }
     .gh-auth-modal { padding: 32px; max-width: 420px; width: 90%; text-align: center; }
     .gh-auth-modal h3 { margin: 0 0 8px; font-size: var(--fs-lg); font-weight: 700; color: var(--text); }
     .gh-auth-modal p { color: var(--muted); font-size: 0.85rem; margin: 4px 0; }
@@ -1258,6 +1268,11 @@
     .toast.error { background: color-mix(in srgb, var(--red) 14%, var(--panel)); border-color: color-mix(in srgb, var(--red) 35%, var(--line)); border-left-color: var(--red); }
     .toast.info { background: color-mix(in srgb, var(--blue) 14%, var(--panel)); border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); border-left-color: var(--blue); }
     .toast-spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid color-mix(in srgb, var(--text) 30%, transparent); border-top-color: var(--text); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+    /* Error toasts never auto-dismiss (a failed save must stay readable), so
+       they carry an explicit close affordance and a click-anywhere target. */
+    .toast.sticky { cursor: pointer; padding-right: 30px; position: relative; }
+    .toast-close { position: absolute; top: 4px; right: 8px; font-size: 0.9rem; line-height: 1; color: var(--muted); background: none; border: none; padding: 2px 4px; cursor: pointer; }
+    .toast-close:hover { color: var(--text); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { opacity: 0; transform: translateX(40px); } to { opacity: 1; transform: translateX(0); } }
     @keyframes toast-out { from { opacity: 1; } to { opacity: 0; transform: translateY(-10px); } }
@@ -1985,7 +2000,7 @@
        encode stacking intent). The acmm JS-built overlay keeps its inline
        styles until the Phase 4 template sweep. */
     body.modal-open { overflow: hidden; }
-    .gh-auth-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
+    .gh-auth-overlay, .cred-dialog-overlay, .config-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay {
       position: fixed; inset: 0;
       background: rgba(0, 0, 0, 0.55);
       -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
@@ -2181,6 +2196,9 @@
     .welcome-more-item { font-size: var(--fs-sm); color: var(--muted); padding: 3px 0 3px 8px; line-height: 1.5; }
     .welcome-more-link { color: var(--blue); cursor: pointer; font-weight: 600; }
     .welcome-more-link:hover { text-decoration: underline; }
+    /* Marks a "More to explore" entry as an advanced/optional capability, so a
+       new operator does not read it as part of the required setup path. */
+    .welcome-more-tag { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--amber); background: color-mix(in srgb, var(--amber) 14%, transparent); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); }
     .welcome-footer { justify-content: space-between; }
     @media (max-width: 480px) {
       .welcome-step-body { padding-left: 12px; }
@@ -2487,6 +2505,7 @@
       <a class="oc-nav-item" data-section="contributors-section" onclick="ocNavigate('contributors-section')"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="oc-nav-count" style="display:none"></span></a>
       <a class="oc-nav-item" data-section="audit-section" onclick="ocNavigate('audit-section')"><span class="oc-nav-emoji">📋</span><span class="oc-nav-text">Audit Log</span></a>
       <a class="oc-nav-item" data-section="nous-section" onclick="ocNavigate('nous-section')"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Strategy Lab</span></a>
+      <a class="oc-nav-item" data-section="faq-section" onclick="ocNavigate('faq-section')" title="Answers to common first-time questions: the Advisory Digest, ACMM levels, and how to advance"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
     </div>
@@ -2653,6 +2672,140 @@
       </div>
       <div id="audit-panel" style="padding:12px;max-height:320px;overflow-y:auto">
         <div class="loading">Loading audit log...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAQ — intentionally NOT ACMM-gated (no entry in applyACMMVisibility's
+       sidebarItems list and no display:none default), because the audience for
+       it is a confused L1/L2 user. Static content only: no JS, no fetch. -->
+  <div id="faq-section" style="margin-top: 16px; margin-bottom: 24px;">
+    <h2 style="margin-bottom: 8px;" class="section-label section-header-toggle" onclick="toggleSection('faq-section')"><span class="section-chevron">▼</span> ❓ FAQ</h2>
+    <div class="section-body">
+      <div id="faq-panel" style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:16px;font-size:0.85rem;line-height:1.6;max-width:900px">
+
+        <p style="color:var(--muted);margin:0 0 18px">Common questions from first-time users. Everything below describes what this hive
+        actually does today — where behaviour is surprising, it is called out rather than smoothed over.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What is the Advisory Digest for?</h3>
+        <p style="margin:0 0 8px"><strong>The Advisory Digest is the work ledger.</strong> It is the collection of
+        <strong>beads</strong> your agents open — the running record of what the hive has found and what it would act on,
+        if you let it. Agents create each bead with <code>bd create</code>; the digest rolls up every open bead of type
+        <code>advisory</code>, <code>bug</code>, or <code>feature</code>, grouped by the agent that filed it. Internal agent
+        work items (<code>task</code>, <code>decision</code>) are deliberately excluded so the ledger stays readable.</p>
+        <p style="margin:0 0 16px">You can read the same ledger in two places. Here in the dashboard, and in GitHub: the hive
+        opens a single issue titled <strong>🐝 Hive Advisory Report</strong> in your default repo and keeps a digest comment on
+        it up to date each cycle. That issue is the whole of the hive's GitHub footprint at Level 2 — reading it in GitHub
+        means the ledger lands where your normal workflow already lives.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What do the colors mean?</h3>
+        <p style="margin:0 0 8px">The colored bar on the left of each finding, and its dot, encode <strong>severity</strong>, which is
+        derived directly from the priority the agent set on the bead (<code>--priority 0</code> through <code>3</code>):</p>
+        <ul style="margin:0 0 8px;padding-left:20px">
+          <li>🔴 <strong>critical</strong> (priority 0) — red bar</li>
+          <li>🟠 <strong>high</strong> (priority 1) — orange bar</li>
+          <li>🟡 <strong>medium</strong> (priority 2) — yellow bar</li>
+          <li>🔵 <strong>low</strong> (priority 3) — grey bar</li>
+          <li>⚪ <strong>info</strong> — anything else; grey bar</li>
+        </ul>
+        <p style="margin:0 0 16px;color:var(--muted)">Note the icon and the bar disagree slightly at the bottom end: <em>low</em> shows a blue dot but a
+        grey bar, since only critical/high/medium have dedicated bar colors. Severity is set by the agent that filed the
+        bead, using the priority rubric in that agent's policy — it is a judgement call, not a measurement.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">How are digest items selected and ordered?</h3>
+        <p style="margin:0 0 16px"><strong>They are not ranked by severity.</strong> This is the single most common misreading of the digest.
+        Findings are grouped by agent (agents sorted alphabetically), and within each agent they appear in the order the
+        beads were created — <strong>oldest first, chronologically</strong>. Severity is a label you can scan for; it has no
+        effect on position. A critical finding filed this morning sits <em>below</em> a low-severity one filed last week.
+        So: read the whole of an agent's group, or scan for 🔴/🟠, but do not assume the top of the list is the most
+        important thing. Selection is simply "every open advisory/bug/feature bead" — there is no cutoff or scoring.
+        Beads closed in the last 48 hours appear separately as recently resolved.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What am I supposed to do with it?</h3>
+        <p style="margin:0 0 8px"><strong>Level 2 is a trust level.</strong> It exists to show you how Hive works, what it
+        would find, and how it might fix it — <em>if you let it</em>. So the job at L2 is not to fix everything in the ledger.
+        It is to decide whether you believe the ledger.</p>
+        <p style="margin:0 0 8px">The intended way to do that: point <strong>your own</strong> agent — <code>claude</code> CLI,
+        <code>bob</code> shell, <code>copilot</code> CLI, running on your own laptop — at the 🐝 Hive Advisory Report issue, and
+        have it read the findings and suss out whether they make sense. You are reviewing the hive's judgement using a tool
+        you already control, on a repo the hive cannot write to. That is the whole point of the level.</p>
+        <p style="margin:0 0 8px">Alongside that:</p>
+        <ol style="margin:0 0 16px;padding-left:20px">
+          <li>Skim for 🔴 and 🟠 first, since ordering will not surface them for you (see below).</li>
+          <li>For anything you agree with and want tracked, open a real GitHub issue yourself — at L2 the agents cannot.</li>
+          <li>A large ledger on a first run is normal. It is the accumulated backlog of a codebase nobody has audited
+              before, not a list of new problems, and not a queue you are expected to burn down.</li>
+        </ol>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">How do I move from L2 to L3?</h3>
+        <p style="margin:0 0 8px"><strong>Change to L3 whenever you like — there is no gate.</strong> No quota, no checklist,
+        no criteria that must go green first. The only criterion is your own judgement: <em>do you trust the advisory findings
+        you have been reading?</em> That is what L2 is for. Once you believe the beads, you are ready.</p>
+        <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Instructed</em>) the only thing the hive touches in
+        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Measured</em>) introduces the <strong>quality agent</strong>, and
+        its job is building test cases — making your repo resilient to code changes from <em>any</em> contributor that would
+        destabilise it, break it, or violate patterns you prefer. That is the next step in gaining trust: not more findings,
+        but a safety net. Concretely, the quality agent may open GitHub issues
+        and <strong>hold-gated pull requests</strong> that add test coverage. "Hold-gated" means every PR is opened with a
+        <code>hold</code> label, and the agent is forbidden from merging it or removing that label — so a human merges every
+        change, always. L3 is deliberately scoped to <em>tests only</em>: no production code, no refactors, no features.
+        The point of L3 is to build the test coverage that makes the more automated levels above it safe.</p>
+        <p style="margin:0 0 8px"><strong>Why this is the pivotal level.</strong> Test coverage is the critical safeguard that
+        makes every later level defensible. Agents opening issues and PRs on their own (L4–L5), and eventually auto-merging
+        them (L6), are only safe once there are tests that can catch a bad change. So the ACMM ladder is not a feature ladder
+        you climb for more capability — each level earns the trust that makes the next one safe. L3 is where you build the
+        net that the automation above it falls into.</p>
+        <p style="margin:0 0 8px"><strong>Optional aid, not a gate:</strong> the <strong>ACMM Eval</strong> page scores your repo
+        against per-level criteria and reports a <em>Codebase Readiness</em> level. It is useful for seeing where your test and
+        CI scaffolding currently stands, and <em>Criteria Passed</em> will show you which checks fail. But nothing there blocks
+        or licenses a level change — you can move to L3 with readiness reading L1. Treat it as information, not permission.</p>
+        <p style="margin:0 0 16px"><strong>How to actually change it:</strong> use the ACMM badge in the sidebar, or the
+        <em>Change level ▾</em> button on the ACMM Eval section. Both open the same dialog. It offers two distinct actions,
+        and the difference matters: <strong>Preview</strong> only changes what this dashboard displays and leaves running
+        agents untouched, while <strong>Apply</strong> is the real move — it creates the agents in that level's pack, resumes
+        them, and pauses agents not in the pack. Do not edit <code>hive.yaml</code> by hand to change level; the dialog is
+        the supported path.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">What about L4, L5, L6?</h3>
+        <p style="margin:0 0 8px">Each level hands over more of the <em>acting</em>, and each is only safe because of the level
+        below it. The end-to-end journey: <strong>L2 shows you what Hive would find; L3 builds the safety net that makes acting
+        on those findings safe; L4–L6 progressively hand over more of the acting.</strong> Nothing is fully autonomous until L6:</p>
+        <ul style="margin:0 0 16px;padding-left:20px">
+          <li><strong>L1 Assisted</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
+          <li><strong>L2 Instructed</strong> — the trust level. Advisory beads only; the sole GitHub write is the
+              🐝 Hive Advisory Report issue and its digest comment.</li>
+          <li><strong>L3 Measured</strong> — introduces the quality agent: hold-gated test-coverage PRs, CI gates. The
+              safeguard everything above depends on.</li>
+          <li><strong>L4 Adaptive</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
+              issues and PRs remain hold-gated for human review.</li>
+          <li><strong>L5 Semi-Automated</strong> — PRs carry a hold label, reviewed in batches.</li>
+          <li><strong>L6 Autonomous</strong> — auto-merge once CI is green.</li>
+        </ul>
+        <p style="margin:0 0 16px;color:var(--muted)">L4 and above become available after provisioning; newly created hives start in the L1–L3 range.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">Why couldn't the Guide agent answer my questions?</h3>
+        <p style="margin:0 0 16px">Because the guide agent documents <em>your</em> project, not Hive itself. Its job is to audit your
+        repo's README, getting-started, architecture and contributing docs and report the gaps — at L1–L2 as beads and an
+        issue, at L3+ as doc PRs. It is explicitly barred from writing code, filing triage issues, or reviewing PRs, and it
+        has no special knowledge of Hive's own workflow or ACMM levels. Questions about how to <em>operate</em> your hive
+        belong here, not to an agent.</p>
+
+        <h3 style="font-size:0.95rem;margin:0 0 6px">A first week, end to end</h3>
+        <ol style="margin:0;padding-left:20px">
+          <li><strong>Start at L1–L2.</strong> Let the agents run a full cycle against your repos and populate the ledger.</li>
+          <li><strong>Read the ledger</strong> on the Advisory page, or on the 🐝 Hive Advisory Report issue in your default
+              repo. Expect it to be long. Scan for 🔴/🟠 rather than reading top-down.</li>
+          <li><strong>Audit it with your own agent.</strong> Point <code>claude</code>, <code>bob</code>, or
+              <code>copilot</code> on your laptop at that issue and ask whether the findings hold up. This is the core L2
+              activity — you are calibrating whether the hive's judgement matches yours.</li>
+          <li><strong>Act on a handful.</strong> File real issues for the findings you agree with; ignore the rest.</li>
+          <li><strong>Advance to L3 when you trust the findings</strong> — that judgement is the only prerequisite. Use the
+              ACMM dialog and choose <em>Apply</em> (not Preview). Optionally glance at ACMM Eval first for context on where
+              your test and CI scaffolding stands.</li>
+          <li><strong>Review the first hold-gated PRs.</strong> They will be test-coverage PRs from the quality agent.
+              Merging them is a manual step, by design — and the coverage they add is what makes L4+ safe to turn on.</li>
+        </ol>
+
       </div>
     </div>
   </div>
@@ -2927,7 +3080,7 @@
     // hive-dialog, nous) and any added later; per-modal open/close handlers
     // no longer need to touch body.style.overflow.
     (function installModalScrollLock() {
-      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, #oc-drawer-backdrop';
+      var OVERLAY_SELECTOR = '.config-overlay, .gh-auth-overlay, .cred-dialog-overlay, .hive-dialog-overlay, .nous-config-overlay, .acmm-dialog-overlay, #oc-drawer-backdrop';
       function anyOverlayOpen() {
         var overlays = document.querySelectorAll(OVERLAY_SELECTOR);
         for (var i = 0; i < overlays.length; i++) {
@@ -4772,6 +4925,11 @@
        states must not tell the user to install anything or edit config. */
     var GH_APP_STATE_KEY_MISSING = 'key-missing';
     var GH_APP_STATE_KEY_INVALID = 'key-invalid';
+    /* User-actionable, but distinct from a permission problem: the App is not
+       installed at all, so there are no settings to view — only an install to
+       perform. Kept out of GH_APP_OPERATOR_STATES: installing is the user's
+       job, not the operator's. */
+    var GH_APP_STATE_NOT_INSTALLED = 'not-installed';
     var GH_APP_OPERATOR_STATES = {};
     GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_MISSING] = true;
     GH_APP_OPERATOR_STATES[GH_APP_STATE_KEY_INVALID] = true;
@@ -4829,7 +4987,18 @@
       if (resetLink) resetLink.style.display = '';
       banner.classList.remove('operator-issue');
 
-      var isPermIssue = data.githubAppRequired && data.githubAppPermIssue;
+      /* githubAppPermIssue carries the diagnostic string for EVERY
+         user-actionable App failure, including "not installed at all", so it
+         cannot decide between "installed but under-permissioned" and "never
+         installed". Using it alone told a hive carrying a placeholder app_id
+         that "the app is installed but cannot write" and offered
+         "View App Settings" — settings for an App that does not exist — while
+         the banner's own body text said it was not yet linked to any App.
+         githubAppState (added with the operator/user classification) is the
+         authoritative signal, so an explicitly not-installed state is never
+         treated as a permission problem. */
+      var isNotInstalled = appState === GH_APP_STATE_NOT_INSTALLED;
+      var isPermIssue = data.githubAppRequired && data.githubAppPermIssue && !isNotInstalled;
       if (data.githubAppRequired && (data.githubAppInstallURL || isPermIssue)) {
         var link = document.getElementById('gh-app-install-link');
         var title = document.querySelector('#gh-app-install-banner .gh-app-title');
@@ -5315,14 +5484,22 @@
       // Definitive single-host badge in the section header: every repo in this
       // hive is on ONE GitHub host (github.com or a GHE instance). Green =
       // github.com, blue = GitHub Enterprise — matches the hub spokes-table pill.
+      // hostLabel is the hive's forge. window._githubBaseUrl now comes from the
+      // backend's ResolvedBaseURL() (base_url, else the api_url host), so a
+      // pooled GHE hive carrying base_url: "" + api_url github.ibm.com resolves
+      // to github.ibm.com here — not github.com. This is the fix for the pill
+      // that read "GITHUB.COM" on a github.ibm.com hive.
+      const hostLabel = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '') || 'github.com';
+      const isPublic = hostLabel === 'github.com';
       const badge = document.getElementById('repos-host-badge');
       if (badge) {
-        const base = (window._githubBaseUrl || 'https://github.com').replace(/^https?:\/\//, '').replace(/\/$/, '');
-        const isPublic = (base === 'github.com' || base === '');
-        badge.textContent = isPublic ? 'github.com' : base;
-        badge.style.background = isPublic ? 'rgba(34,197,94,0.15)' : 'rgba(59,130,246,0.15)';
-        badge.style.color = isPublic ? 'var(--green, #16a34a)' : 'var(--blue, #2563eb)';
-        badge.title = 'Every repo in this hive is on ' + (isPublic ? 'github.com' : base) + ' — this hive is single-host';
+        // Definitive single-host badge in the section header: every repo in this
+        // hive is on ONE GitHub host. Green = github.com, indigo = GHE — GHE also
+        // gets an "Enterprise" tag so an operator instantly sees it is not public.
+        badge.textContent = isPublic ? 'github.com' : hostLabel + ' · Enterprise';
+        badge.style.background = isPublic ? 'color-mix(in srgb, var(--green) 15%, transparent)' : 'color-mix(in srgb, var(--indigo) 15%, transparent)';
+        badge.style.color = isPublic ? 'var(--green)' : 'var(--indigo)';
+        badge.title = 'Every repo in this hive is on ' + hostLabel + (isPublic ? '' : ' (GitHub Enterprise)') + ' — this hive is single-host';
       }
       setIfChanged(el, repos.map(r => {
         const iSpark = sparkSvg(historyData.map(s => s.repos?.[r.name]?.issues ?? 0), 'var(--blue)');
@@ -5347,6 +5524,7 @@
         const pillsHtml = allPills ? `<div class="repo-issues">${allPills}</div>` : '';
         return `
         <div class="repo-card">
+          <div style="font-size:0.62rem;font-weight:600;letter-spacing:0.02em;color:${isPublic ? 'var(--muted)' : 'var(--indigo)'};margin-bottom:2px" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>
           <div class="repo-name"><a href="${esc(repoUrl)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl)}/issues" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a></div>
@@ -9951,7 +10129,8 @@ function burnAreaChart() {
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'repos-section', 'beads-section', 'acmm-eval-section',
         'audit-section', 'nous-section', 'inception-section', 'knowledge-section',
-        'contributors-section', 'debug-section', 'logs-section', 'agents-section'
+        'contributors-section', 'debug-section', 'logs-section', 'agents-section',
+        'faq-section'
       ];
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       // Update compact-all button text
@@ -11067,6 +11246,21 @@ function burnAreaChart() {
         overlay.querySelector('.primary').focus();
       });
     }
+    // makeToastSticky turns a toast into one that never auto-dismisses. Used
+    // for errors: a failed save may carry a validation message the user has
+    // not finished reading, so it waits for an explicit click or × instead of
+    // vanishing on a timer. Success/info toasts keep their timeout.
+    function makeToastSticky(el) {
+      if (el._sticky) return;
+      el._sticky = true;
+      el.classList.add('sticky');
+      const close = document.createElement('button');
+      close.className = 'toast-close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', 'Dismiss');
+      el.appendChild(close);
+      el.addEventListener('click', () => dismissToast(el, null, null, true));
+    }
     function showToast(msg, type = 'info', persistent = false) {
       const container = document.getElementById('toast-container');
       const el = document.createElement('div');
@@ -11081,16 +11275,28 @@ function burnAreaChart() {
         setTimeout(() => { if (el.parentNode) dismissToast(el); }, TOAST_PROGRESS_MAX_MS);
         return el;
       }
+      if (type === 'error') {
+        makeToastSticky(el);
+        return el;
+      }
       setTimeout(() => dismissToast(el), TOAST_DURATION_MS);
       return el;
     }
-    function dismissToast(el, newMsg, newType) {
+    // dismissToast removes a toast, or (with newMsg) rewrites an in-flight
+    // toast into its result. `force` bypasses stickiness for the user-initiated
+    // click/× path, so a sticky error can still be dismissed on demand.
+    function dismissToast(el, newMsg, newType, force) {
       if (!el || !el.parentNode) return;
       if (newMsg) {
         el.textContent = newMsg;
         el.className = `toast ${newType || 'success'}`;
+        el._sticky = false;
+        // A resolved in-flight toast that resolved to an error stays put for
+        // the same reason a direct error toast does.
+        if (newType === 'error') { makeToastSticky(el); return; }
         setTimeout(() => { el.style.animation = 'toast-out 0.3s ease-in forwards'; setTimeout(() => el.remove(), 300); }, TOAST_DURATION_MS);
       } else {
+        if (el._sticky && !force) return;
         el.style.animation = 'toast-out 0.3s ease-in forwards';
         setTimeout(() => el.remove(), 300);
       }
@@ -11186,7 +11392,7 @@ function burnAreaChart() {
         // Compact first-selection prompt on the gh-auth-modal pattern (the
         // Claude login modal): centered amber title, tight labeled inputs,
         // centered buttons, 480px max width (#1787).
-        overlay.className = 'gh-auth-overlay';
+        overlay.className = 'gh-auth-overlay cred-dialog-overlay';
         overlay.innerHTML = `<div class="gh-auth-modal" style="max-width:480px;text-align:left">
           <h3 style="color:var(--amber);text-align:center">Configure LiteLLM</h3>
           <p style="margin:0 0 14px;line-height:1.5">No LiteLLM gateway is configured yet. Enter the gateway URL and your API key (editable later under Governor Config → LiteLLM).</p>
@@ -15199,7 +15405,7 @@ function burnAreaChart() {
             <div style="grid-column:1 / -1">
               <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">Reviewer endpoint <span class="config-info">i<span class="config-tooltip">OpenAI-compatible base URL for the reviewer (LiteLLM / vLLM / llm-d). Empty = inherit the Governor's LiteLLM endpoint. The API key is inherited from LiteLLM or set in hive.yaml (governor.trajectory.api_key_env/api_key_file); a bare vLLM server needs none.</span></span></label>
               <input type="text" value="${esc(traj.endpoint || '')}" placeholder="${trajEndpoint ? esc(trajEndpoint) + '  (inherited from LiteLLM)' : 'https://litellm-or-vllm-or-llmd:port'}" onchange="saveTrajectoryField('endpoint', this.value)" style="width:100%">
-              <span style="font-size:0.62rem;color:var(--muted);margin-top:3px;display:block">Resolved: ${trajEndpoint ? esc(trajEndpoint) + ' (' + esc(traj.endpointSource || '') + (traj.hasKey ? ', key set' : ', no key') + ')' : 'none — reviewer will not run'}</span>
+              <span style="font-size:0.62rem;margin-top:3px;display:block;color:${trajOn && !trajEndpoint ? 'var(--amber)' : 'var(--muted)'}">Resolved: ${trajEndpoint ? esc(trajEndpoint) + ' (' + esc(traj.endpointSource || '') + (traj.hasKey ? ', key set' : ', no key') + ')' : (trajOn ? 'none — Trajectory Review is ON but no agents are being reviewed. Set an endpoint above (or a Governor LiteLLM endpoint) to activate it.' : 'none — reviewer will not run')}</span>
             </div>
             <div style="grid-column:1 / -1">
               <label style="font-size:0.7rem;color:var(--muted);display:block;margin-bottom:3px">On divergence</label>
@@ -15419,9 +15625,30 @@ function burnAreaChart() {
 
     function renderGovRepos(repos) {
       const primary = _configState.data.primaryRepo || '';
+      // ghHost is the hive's forge, derived server-side by ResolvedBaseURL()
+      // (base_url, or the api_url host for pooled GHE hives that carry
+      // base_url: ""). A hive is single-forge — validateSingleRepoHost rejects
+      // off-host repos — so every repo below lives on THIS host. We surface it
+      // both in the header and as a per-row pill so an org/repo can never be
+      // mistaken for github.com when it actually lives on github.ibm.com.
       const ghBase = window._githubBaseUrl || 'https://github.com';
-      const ghHost = ghBase.replace(/^https?:\/\//, '');
+      const ghHost = ghBase.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const isGHE = ghHost !== 'github.com';
+      // GHE hosts get an indigo "Enterprise" pill so an operator instantly sees
+      // this is an Enterprise hive; public github.com gets a muted host pill.
+      // Inline styles mirror the pill recipe (--pill-c tint + border) and the
+      // ACMM badge pattern — self-contained, no external resources (CSP-safe).
+      const pillColor = isGHE ? 'var(--indigo)' : 'var(--muted)';
+      const pillBase = 'display:inline-flex;align-items:center;gap:4px;flex-shrink:0;'
+        + 'font-size:0.62rem;font-weight:700;letter-spacing:0.02em;padding:1px 7px;'
+        + 'border-radius:999px;white-space:nowrap;'
+        + 'background:color-mix(in srgb, ' + pillColor + ' 12%, transparent);'
+        + 'border:1px solid color-mix(in srgb, ' + pillColor + ' 40%, transparent);'
+        + 'color:' + pillColor;
+      const pillLabel = isGHE ? esc(ghHost) + ' · Enterprise' : esc(ghHost);
+      const pillTitle = isGHE
+        ? 'This repo lives on the GitHub Enterprise host ' + esc(ghHost) + ' — NOT public github.com'
+        : 'This repo lives on public github.com';
       const list = repos.map((r, i) => {
         const isDefault = r === primary;
         const starStyle = isDefault
@@ -15430,15 +15657,19 @@ function burnAreaChart() {
         const starTitle = isDefault
           ? 'Default repo (advisory issue lives here)'
           : 'Set as default repo for advisory issue';
-        const displayName = isGHE ? ghHost + '/' + r : r;
-        return `<div class="config-list-item" style="align-items:center"><span onclick="setDefaultRepo('${esc(r)}')" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1">${esc(displayName)}</span><button class="remove-item" onclick="removeListItem('repos','list',${i})">&#x2715;</button></div>`;
+        // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
+        const displayName = ghHost + '/' + r;
+        return `<div class="config-list-item" style="align-items:center;gap:6px"><span onclick="setDefaultRepo('${esc(r)}')" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(displayName)}">${esc(displayName)}</span><span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" onclick="removeListItem('repos','list',${i})">&#x2715;</button></div>`;
       }).join('');
+      const hostNote = isGHE
+        ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
+        : ` on <strong>${esc(ghHost)}</strong>`;
       return `
-        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive. Click the star to set the default repo where the advisory issue is maintained.</p>
+        <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive${hostNote}. Click the star to set the default repo where the advisory issue is maintained.</p>
         <div class="config-list">
           ${list || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">No repos configured</div>'}
           <div class="config-list-add">
-            <input type="text" id="cfg-repo-input" placeholder="org/repo" title="GitHub repository in org/repo format (e.g. kubestellar/console). The governor will monitor this repo for issues, PRs, and CI status.">
+            <input type="text" id="cfg-repo-input" placeholder="org/repo (on ${esc(ghHost)})" title="GitHub repository in org/repo format (e.g. kubestellar/console). It must live on this hive's forge, ${esc(ghHost)} — the governor rejects repos on other GitHub hosts. It will be monitored for issues, PRs, and CI status.">
             <button onclick="addListItem('repos','list','cfg-repo-input')" title="Add this repository to the monitored list">+ Add</button>
           </div>
         </div>`;
@@ -16625,7 +16856,7 @@ function burnAreaChart() {
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
       overlay.id = 'copilot-auth-overlay';
-      overlay.className = 'gh-auth-overlay';
+      overlay.className = 'gh-auth-overlay cred-dialog-overlay';
       overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:480px;text-align:center">' +
         '<h3 style="color:var(--green)">Login GitHub Copilot</h3>' +
         '<p style="color:var(--muted);font-size:0.85rem;margin:12px 0">Enter this one-time code at github.com/login/device:</p>' +
@@ -16691,12 +16922,24 @@ function burnAreaChart() {
     //
     // `configured` / `source` are passed in by the caller (the Bob tab already
     // fetched them) so opening the dialog does not re-round-trip.
+    // Where an operator obtains a bob API key. Named constants rather than
+    // inline literals so the three links stay in one place if IBM moves them.
+    //
+    // NOTE ON SCOPE: IBM's own docs disagree. The API-keys page describes
+    // General as usable across services, while the bob Shell setup page says
+    // "Create an API key with Scope set to Inference". The Shell page is the
+    // authoritative one for this CLI, so the dialog says Inference and links
+    // BOTH pages so the operator can check if a key is rejected.
+    var BOB_PORTAL_URL = 'https://bob.ibm.com';
+    var BOB_API_KEY_DOCS_URL = 'https://bob.ibm.com/docs/ide/account/api-keys';
+    var BOB_SHELL_SETUP_DOCS_URL = 'https://bob.ibm.com/docs/shell/getting-started/install-and-setup';
+
     function openBobKeyDialog(configured, source) {
       var overlay = document.getElementById('bob-key-overlay');
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
       overlay.id = 'bob-key-overlay';
-      overlay.className = 'gh-auth-overlay';
+      overlay.className = 'gh-auth-overlay cred-dialog-overlay';
       overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:520px;text-align:left">' +
         '<h3 style="color:#4589ff;text-align:center">bob API key</h3>' +
         '<p style="color:var(--muted);font-size:0.85rem;margin:12px 0">' +
@@ -16707,6 +16950,26 @@ function burnAreaChart() {
           ? '<div style="color:var(--green);font-size:0.8rem;margin:8px 0">✓ A key is currently set' +
               (source ? ' (' + esc(source) + ')' : '') + '. Entering a new one replaces it.</div>'
           : '<div style="color:var(--muted);font-size:0.8rem;margin:8px 0">No key is set — agents using bob cannot start.</div>') +
+        /* Where to get a key. Without this the dialog assumes the operator
+           already knows the portal flow, and the scope choice is easy to get
+           wrong: an Inference-scoped key is what bob Shell documents, and a
+           key is shown exactly once, so a mis-scoped key means starting over. */
+        '<div style="background:rgba(69,137,255,0.08);border:1px solid rgba(69,137,255,0.25);' +
+          'border-radius:6px;padding:10px 12px;margin:12px 0;font-size:0.8rem;color:var(--muted)">' +
+          '<div style="color:var(--text);font-weight:600;margin-bottom:6px">How to get a key</div>' +
+          '<ol style="margin:0;padding-left:18px;line-height:1.6">' +
+            '<li>Sign in at <a href="' + BOB_PORTAL_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">bob.ibm.com</a> and open your subscription instance.</li>' +
+            '<li>Go to API key management and create a key with <strong>Scope: Inference</strong>.</li>' +
+            '<li>Copy it immediately — IBM shows the value only once.</li>' +
+          '</ol>' +
+          '<div style="margin-top:8px">' +
+            '<a href="' + BOB_API_KEY_DOCS_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">API key docs</a> · ' +
+            '<a href="' + BOB_SHELL_SETUP_DOCS_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">bob Shell setup</a>' +
+          '</div>' +
+        '</div>' +
         '<input id="bob-key-input" type="password" autocomplete="off" spellcheck="false" ' +
           'placeholder="Paste the bob API key" ' +
           'style="width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid var(--border);' +
@@ -16839,7 +17102,7 @@ function burnAreaChart() {
       if (overlay) { overlay.remove(); }
       overlay = document.createElement('div');
       overlay.id = 'claude-auth-overlay';
-      overlay.className = 'gh-auth-overlay';
+      overlay.className = 'gh-auth-overlay cred-dialog-overlay';
       var countdownSec = CLAUDE_AUTH_TAB_DELAY_MS / 1000;
       overlay.innerHTML = '<div class="gh-auth-modal" style="max-width:560px;text-align:left">' +
         '<h3 style="color:#d97706;text-align:center">Login Claude Code</h3>' +
@@ -17197,13 +17460,23 @@ function burnAreaChart() {
       }
     ];
 
-    // Collapsed "More to explore" one-liners under the core steps.
+    // Governor Config tab hosting the Trajectory Review controls (toggle,
+    // reviewer endpoint/model, on-divergence mode) — see renderGovGeneral().
+    // Named so the Getting Started deep link cannot drift from the tab list
+    // in GOVERNOR_CONFIG_TABS.
+    const TRAJECTORY_CONFIG_TAB = 'General';
+
+    // Collapsed "More to explore" one-liners under the core steps. These are
+    // OPTIONAL/advanced capabilities, deliberately kept out of WELCOME_STEPS:
+    // updateWelcomeProgress() counts only WELCOME_STEPS, so nothing listed
+    // here can inflate the "N of M done" counter or read as a required step.
     const WELCOME_MORE_ITEMS = [
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Governor Config → Budget).', onclick: "welcomeShowConfigTab('Budget')" },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Governor Config → Notifications).', onclick: "welcomeShowConfigTab('Notifications')" },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', onclick: "welcomeShowSection('knowledge-section')" },
       { id: 'contributors', label: 'ClankeR (Contributor Relay)', desc: 'let outside contributors drive agents, with a leaderboard.', onclick: "welcomeShowSection('contributors-section')" },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Governor Config → Hub).', onclick: "welcomeShowConfigTab('Hub')" },
+      { id: 'trajectory', label: 'Trajectory Review <span class="welcome-more-tag">advanced</span>', desc: 'an LLM reviewer periodically reads each running agent’s transcript and pauses or alerts you if the agent drifts from the task it was given. Needs one OpenAI-compatible reviewer endpoint (LiteLLM, vLLM, or llm-d) — without it the lane stays inert (Governor Config → General).', onclick: `welcomeShowConfigTab('${TRAJECTORY_CONFIG_TAB}')` },
       { id: 'theme', label: 'Light / Dark mode', desc: 'switch layouts any time from the toggle in the top bar.', onclick: 'toggleLayout()' }
     ];
 

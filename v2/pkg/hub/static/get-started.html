@@ -6,10 +6,10 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍯</text></svg>">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta property="og:title" content="Get started — put your repo on autopilot">
-  <meta property="og:description" content="Request a hosted hive in four steps, self-host with Docker Compose, or contribute compute to a public hive. No Kubernetes, no setup.">
+  <meta property="og:description" content="Request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive. No Kubernetes, no setup.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://hive.kubestellar.io/get-started">
-  <meta name="description" content="Get started with Hive — request a hosted hive in four steps, self-host with Docker Compose, or contribute compute to a public hive.">
+  <meta name="description" content="Get started with Hive — request a hosted hive in three steps, self-host with Docker Compose, or contribute compute to a public hive.">
   <title>Get started — put your repo on autopilot</title>
   <style>
     :root {
@@ -216,6 +216,12 @@
     .acmm-option input[type=radio] { accent-color: var(--amber); margin-top: 2px; flex-shrink: 0; }
     .acmm-option .acmm-label { font-weight: 700; font-size: .9rem; color: var(--text); margin-bottom: 2px; }
     .acmm-option .acmm-desc { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+    /* Levels above the onboarding ceiling: a quiet informational note, not a
+       disabled choice. Deliberately not styled like .acmm-option so it never
+       reads as a radio the requester failed to earn. */
+    .acmm-later { margin-top: .35rem; padding: .7rem .85rem; border-left: 2px solid var(--border); }
+    .acmm-later-title { font-size: .74rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+    .acmm-later-body { font-size: .78rem; color: var(--muted); line-height: 1.55; }
     .acmm-rec {
       display: inline-block; padding: 2px 10px; border-radius: 9999px;
       font-size: .65rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase;
@@ -290,23 +296,24 @@
   <section class="section-pad">
     <p class="section-label">Get started</p>
     <h1>Get a hosted hive</h1>
-    <p class="lede">Request a hive for your project in four steps. We provision it on our infrastructure &mdash; no Kubernetes, no setup, no compute needed.</p>
+    <p class="lede">Request a hive for your project in three steps. We provision it on our infrastructure &mdash; no Kubernetes, no setup, no compute needed.</p>
 
     <div class="wizard">
       <div class="wizard-steps" id="wizard-steps">
         <div class="wizard-step active" data-step="1"><span class="step-dot">1</span> Login</div>
         <span class="step-arrow">→</span>
-        <div class="wizard-step" data-step="2"><span class="step-dot">2</span> Install App</div>
+        <div class="wizard-step" data-step="2"><span class="step-dot">2</span> Your Repo</div>
         <span class="step-arrow">→</span>
-        <div class="wizard-step" data-step="3"><span class="step-dot">3</span> Select Repos</div>
-        <span class="step-arrow">→</span>
-        <div class="wizard-step" data-step="4"><span class="step-dot">4</span> Request</div>
+        <div class="wizard-step" data-step="3"><span class="step-dot">3</span> Request</div>
       </div>
 
       <!-- Step 1: Login -->
       <div class="wizard-panel active" id="panel-1">
         <h2>Login with GitHub</h2>
-        <p>We use your GitHub identity to verify org membership and to install the Hive GitHub App on your repositories. No passwords are stored.</p>
+        <!-- Identity only. The login requests an EMPTY OAuth scope (see
+             handleLogin in oauth.go) because nothing in this flow reads your
+             account: you tell us the repository URL yourself. -->
+        <p>We use your GitHub identity to know who is asking &mdash; nothing more. We request <strong>no permissions</strong> on your account, and no passwords are stored.</p>
         <div id="login-area">
           <a href="/login?redirect=/get-started" class="btn-github">
             <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -325,118 +332,71 @@
         </div>
       </div>
 
-      <!-- Step 2: Install GitHub App -->
+      <!-- Step 2: Add repositories by URL.
+           The typed URL is the ONLY input here, by design. The old picker
+           listed repos from the requester's github.com OAuth token, which
+           could never see a GitHub Enterprise repo and could never generalize
+           to another forge. A URL needs no permission on the requester's
+           account and describes any forge. -->
       <div class="wizard-panel" id="panel-2">
-        <h2>Install the Hive GitHub App</h2>
-        <p>The Hive GitHub App lets our agents read issues, open PRs, and respond to CI on your repos. Install it on the org or repos you want to manage.</p>
-        <!-- This button is correct ONLY for public github.com. This page signs
-             you in with the public github.com OAuth app and no hive exists yet,
-             so we genuinely do not know which GitHub instance your repos live
-             on — we must not fake a per-user link here. GitHub Enterprise users
-             get the explicit note below instead of a link that would send their
-             install request to the wrong GitHub entirely. -->
-        <div style="margin:20px 0">
-          <a href="https://github.com/apps/kubestellar-hive" target="_blank" rel="noopener" class="btn-github" id="install-app-btn">
-            <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-            Install Hive GitHub App
-          </a>
-        </div>
-        <p style="font-size:0.82rem;color:var(--muted)">Already installed? Click continue.</p>
-        <div style="margin-top:18px;padding:12px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:.7rem">
-          <p style="margin:0 0 6px;font-size:0.86rem;font-weight:700">Using GitHub Enterprise?</p>
-          <p style="margin:0;font-size:0.82rem;color:var(--muted);line-height:1.55">
-            The button above installs on <strong>public github.com</strong>. If your repos live on a
-            GitHub Enterprise instance (<code>github.example.com</code>, and similar), that link will
-            not work &mdash; the install request lands on public GitHub and your Enterprise org admin
-            will never see it.
-            <br><br>
-            Instead: continue to step&nbsp;3 and add your repository by <strong>URL</strong>. We record
-            which Enterprise instance it lives on, and provision your hive against a GitHub App
-            registered on <em>that</em> instance. Your org admin approves the installation from your own
-            Enterprise host &mdash; your hive's dashboard will show the correct install link once it is
-            provisioned. If no App is registered on your Enterprise instance yet, we will set that up
-            with your admin as part of provisioning.
+        <h2>Your repository</h2>
+        <p>Paste the URL of the repository the hive should manage. You can add more later from your dashboard.</p>
+        <div>
+          <label for="repo-manual" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Repository URL
+          </label>
+          <!-- No "Add" button: onboarding expects ONE repo, so Continue commits
+               the typed URL and advances (commitManualRepo). The input is not
+               inside a <form>, so Enter has no default submit to suppress — the
+               preventDefault is kept anyway so a future wrapping form cannot
+               turn Enter into a page reload. -->
+          <input type="text" id="repo-manual" placeholder="github.com/my-org/my-repo"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();continueFromRepos()}"
+            onblur="validateRepoInput()" oninput="clearRepoError()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+          <div id="repo-manual-err" style="display:none;margin-top:6px;font-size:0.8rem;color:var(--red)"></div>
+          <p style="font-size:0.8rem;margin-top:8px;margin-bottom:0">
+            With or without <code>https://</code>. Works for public GitHub and for GitHub Enterprise
+            (<code>github.ibm.com</code> and similar) &mdash; we record which instance the repo lives on
+            and provision against it. Examples: <code>github.com/my-org/my-repo</code>,
+            <code>https://github.ibm.com/my-org/my-repo</code>.
           </p>
         </div>
         <div style="display:flex;gap:12px;margin-top:16px">
           <button class="btn-secondary" onclick="goToStep(1)">← Back</button>
-          <button class="btn-primary" onclick="goToStep(3)">Continue →</button>
+          <!-- Enabled unconditionally: validation now happens ON click, so a
+               disabled button would give the user no way to learn WHY it is
+               disabled. continueFromRepos() refuses to advance on bad input. -->
+          <button class="btn-primary" id="repos-continue" onclick="continueFromRepos()">Continue →</button>
         </div>
       </div>
 
-      <!-- Step 3: Select repos -->
+      <!-- Step 3: ACMM level + submit.
+           Options are rendered by renderAcmmOptions() from ACMM_LEVELS so the
+           names match the hub dashboard and the spoke. They previously read
+           "L1 Advisory / L2 Measured / L4 Auto PR", which named the levels
+           wrongly AND described L4 as auto-merging — it does not. -->
       <div class="wizard-panel" id="panel-3">
-        <h2>Select repositories</h2>
-        <p>Choose which repos the hive should manage. You can add more later from your dashboard.</p>
-        <div id="repo-loading" style="color:var(--muted);padding:24px;text-align:center">Loading your repositories...</div>
-        <div id="repo-list" class="repo-list" style="display:none"></div>
-        <div id="repo-none" style="display:none;padding:24px;text-align:center;color:var(--muted)">
-          <p>No repositories found. Install the <a href="https://github.com/apps/kubestellar-hive" target="_blank" rel="noopener" style="color:var(--blue)">Hive GitHub App</a> on the account or org that owns them &mdash; or add a repo URL below.</p>
-          <p style="font-size:0.82rem">That link is public github.com. <strong>GitHub Enterprise repos will never appear in this list</strong> and cannot be installed from there &mdash; add the repo by URL below and we will provision against your Enterprise instance.</p>
-        </div>
-        <!-- Manual entry. Repo discovery uses the github.com OAuth token, so a
-             GitHub Enterprise repo (github.ibm.com, github.cisco.com, …) can
-             never appear in the list above. Typing the URL is the only way to
-             request one, and it also covers a repo the App has not been
-             installed on yet. -->
-        <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line)">
-          <label for="repo-manual" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
-            Or add a repository by URL &mdash; required for GitHub Enterprise (github.ibm.com and similar), which cannot be listed above
-          </label>
-          <div style="display:flex;gap:8px">
-            <input type="text" id="repo-manual" placeholder="https://github.ibm.com/my-org/my-repo"
-              style="flex:1;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
-            <button class="btn-secondary" type="button" onclick="addManualRepo()">Add</button>
-          </div>
-          <div id="repo-manual-err" style="display:none;margin-top:6px;font-size:0.8rem;color:var(--red)"></div>
-        </div>
-        <div style="display:flex;gap:12px;margin-top:16px">
-          <button class="btn-secondary" onclick="goToStep(2)">← Back</button>
-          <button class="btn-primary" id="repos-continue" onclick="goToStep(4)" disabled>Continue →</button>
-        </div>
-      </div>
-
-      <!-- Step 4: ACMM level + submit -->
-      <div class="wizard-panel" id="panel-4">
         <h2>Choose autonomy level</h2>
         <p>How much should the agents do on their own? Start low and increase as you build confidence. This only controls the mundane work &mdash; security patches, dependency updates, issue triage, test fixes &mdash; so your team can focus on what matters: innovation, outreach, and strategy.</p>
-        <div class="acmm-options" id="acmm-options">
-          <label class="acmm-option selected" onclick="selectAcmm(this, 1)">
-            <input type="radio" name="acmm" value="1" checked>
-            <div>
-              <div class="acmm-label">L1 &mdash; Advisory <span class="acmm-rec">Recommended to start</span></div>
-              <div class="acmm-desc">Agents scan issues and suggest fixes but take no action. You review everything. A safe way to see what the hive would do before granting more autonomy.</div>
-            </div>
-          </label>
-          <label class="acmm-option" onclick="selectAcmm(this, 2)">
-            <input type="radio" name="acmm" value="2">
-            <div>
-              <div class="acmm-label">L2 &mdash; Measured</div>
-              <div class="acmm-desc">Agents open issues to track findings. No PRs, no merges.</div>
-            </div>
-          </label>
-          <label class="acmm-option" onclick="selectAcmm(this, 3)">
-            <input type="radio" name="acmm" value="3">
-            <div>
-              <div class="acmm-label">L3 &mdash; CI-Gated PRs</div>
-              <div class="acmm-desc">Agents open hold-gated pull requests. CI must pass, and a human approves each merge.</div>
-            </div>
-          </label>
-          <label class="acmm-option" onclick="selectAcmm(this, 4)">
-            <input type="radio" name="acmm" value="4">
-            <div>
-              <div class="acmm-label">L4 &mdash; Auto PR</div>
-              <div class="acmm-desc">Agents open and merge PRs on green CI. Human review optional. Best for repos with strong CI coverage.</div>
-            </div>
-          </label>
-        </div>
+        <div class="acmm-options" id="acmm-options"></div>
         <div id="request-summary" style="margin:20px 0;padding:16px;background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
           <div style="margin-bottom:8px"><strong>Summary</strong></div>
-          <div style="color:var(--muted)">Repos: <span id="summary-repos" style="color:var(--text)">none selected</span></div>
-          <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)">L1 Advisory</span></div>
+          <div style="color:var(--muted)">Repo: <span id="summary-repos" style="color:var(--text)">none added</span></div>
+          <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)"></span></div>
         </div>
+        <!-- The wizard no longer asks anyone to install the GitHub App. This
+             note is the handoff to where that now happens: after provisioning,
+             the hive's own dashboard knows its forge and renders a correct
+             per-instance install link (githubAppInstallURL, from
+             config.GitHubConfig.AppInstallURL). -->
+        <p style="font-size:0.8rem;margin-top:4px">
+          <strong>What happens next:</strong> an admin reviews your request. Once your hive is provisioned,
+          its dashboard will prompt you to install the Hive GitHub App &mdash; with a link pointing at the
+          right GitHub instance for your repos. Nothing to install before then.
+        </p>
         <div style="display:flex;gap:12px;margin-top:16px">
-          <button class="btn-secondary" onclick="goToStep(3)">← Back</button>
+          <button class="btn-secondary" onclick="goToStep(2)">← Back</button>
           <button class="btn-primary" id="submit-request" onclick="submitRequest()">Request a Hive</button>
         </div>
       </div>
@@ -506,11 +466,79 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
     var _step = 1;
     var _user = null;
     var _selectedRepos = [];
-    var _selectedAcmm = 1;
+
+    /* WIZARD_STEP_* name the panels so a renumber is a one-line change instead
+       of a hunt for bare integers. The wizard lost its old "Install the GitHub
+       App" step: the App is installed AFTER provisioning, from the hive's own
+       dashboard, where the hive knows its forge and can build a correct
+       per-instance install link. */
+    var WIZARD_STEP_LOGIN = 1;
+    var WIZARD_STEP_REPOS = 2;
+    var WIZARD_STEP_LEVEL = 3;
+
+    /* ACMM levels, mirroring ACMM_LABELS/ACMM_TIPS on the hub dashboard
+       (pkg/hub/saas.go) and acmmLevelLabel() on the spoke. Keep all three in
+       step — a requester must not be shown one name here and another one on
+       the dashboard of the hive they receive. */
+    var ACMM_LEVELS = [
+      {level: 1, label: 'L1 Assisted',       desc: 'Start a new feature with spec-driven tooling. Agents look, plan and report; they never write to your repo.'},
+      {level: 2, label: 'L2 Instructed',     desc: 'Advisory beads, no GitHub writes. Agents follow the house rules you set for the project.'},
+      {level: 3, label: 'L3 Measured',       desc: 'Improve quality through better test coverage. Agents open hold-gated PRs that raise coverage behind CI gates; every PR waits for a human.'},
+      {level: 4, label: 'L4 Adaptive',       desc: 'Agents open issues and hold-gated PRs, plus security checks. Still a human on every merge.'},
+      {level: 5, label: 'L5 Semi-Automated', desc: 'PRs carry a hold label for batch review, so you approve in groups rather than one at a time.'},
+      {level: 6, label: 'L6 Autonomous',     desc: 'Auto-merge on green CI. Only for repos with CI you already trust.'}
+    ];
+    /* L3 Measured is the recommended entry point: it is the first level that
+       produces useful work (test-coverage PRs) while still gating every merge
+       on a human. */
+    var DEFAULT_ACMM_LEVEL = 3;
+    /* Highest level a hive can be REQUESTED at. Levels above this are real and
+       reachable, but only after provisioning, from the hive's own dashboard —
+       nobody starts a hive at L4+. The wizard therefore offers 1..3 as radios
+       and lists the rest as "available later". The hub enforces the same
+       ceiling on POST /api/saas/request-provision; this constant is the copy
+       of that rule the UI renders from, not the rule itself. */
+    var ONBOARDING_MAX_ACMM_LEVEL = 3;
+    var _selectedAcmm = DEFAULT_ACMM_LEVEL;
+
+    function acmmEntry(level) {
+      return (ACMM_LEVELS || []).filter(function(a) { return a.level === level; })[0] || null;
+    }
+
+    /* renderAcmmOptions builds the level radios from ACMM_LEVELS.
+
+       Only levels up to ONBOARDING_MAX_ACMM_LEVEL are selectable. The higher
+       levels are rendered as a short "what comes next" note rather than as
+       disabled radios: a greyed-out radio reads as a choice being refused,
+       which is the wrong message. They are not forbidden, they are simply
+       earned later — a hive advances to them from its own dashboard once it
+       has the coverage and CI history to justify them. */
+    function renderAcmmOptions() {
+      var host = document.getElementById('acmm-options');
+      if (!host) return;
+      var startable = (ACMM_LEVELS || []).filter(function(a) { return a.level <= ONBOARDING_MAX_ACMM_LEVEL; });
+      var later = (ACMM_LEVELS || []).filter(function(a) { return a.level > ONBOARDING_MAX_ACMM_LEVEL; });
+      var html = (startable || []).map(function(a) {
+        var sel = a.level === _selectedAcmm;
+        return '<label class="acmm-option' + (sel ? ' selected' : '') + '" onclick="selectAcmm(this, ' + a.level + ')">' +
+          '<input type="radio" name="acmm" value="' + a.level + '"' + (sel ? ' checked' : '') + '>' +
+          '<div><div class="acmm-label">' + esc(a.label) +
+          (a.level === DEFAULT_ACMM_LEVEL ? ' <span class="acmm-rec">Recommended to start</span>' : '') +
+          '</div>' +
+          '<div class="acmm-desc">' + esc(a.desc) + '</div></div></label>';
+      }).join('');
+      if ((later || []).length) {
+        html += '<div class="acmm-later">' +
+          '<div class="acmm-later-title">Available after provisioning</div>' +
+          '<div class="acmm-later-body">Once your hive is running you can advance it from its own dashboard, as its test coverage and CI history earn more automation: ' +
+          (later || []).map(function(a) { return esc(a.label); }).join(', ') + '.</div>' +
+          '</div>';
+      }
+      host.innerHTML = html;
+    }
 
     function goToStep(n) {
-      if (n === 3) loadRepos();
-      if (n === 4) updateSummary();
+      if (n === WIZARD_STEP_LEVEL) { renderAcmmOptions(); updateSummary(); }
       _step = n;
       var steps = document.querySelectorAll('.wizard-step');
       steps.forEach(function(s) {
@@ -524,129 +552,166 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
     }
 
     function selectAcmm(el, level) {
+      /* Clamp rather than trust the caller: renderAcmmOptions only emits
+         startable levels, but this is the one place _selectedAcmm is written
+         and it is what the submit body carries. */
+      if (level > ONBOARDING_MAX_ACMM_LEVEL) { level = ONBOARDING_MAX_ACMM_LEVEL; }
       _selectedAcmm = level;
       document.querySelectorAll('.acmm-option').forEach(function(o) { o.classList.remove('selected'); });
       el.classList.add('selected');
     }
 
     function updateSummary() {
-      var names = _selectedRepos.map(function(r) { return r.name || r; });
-      document.getElementById('summary-repos').textContent = names.length ? names.join(', ') : 'none selected';
-      var acmmNames = {1: 'L1 Advisory', 2: 'L2 Measured', 3: 'L3 CI-Gated PRs', 4: 'L4 Auto PR'};
-      document.getElementById('summary-acmm').textContent = acmmNames[_selectedAcmm] || 'L1 Advisory';
+      var names = (_selectedRepos || []).map(function(r) { return r.full_name || r.name || r; });
+      document.getElementById('summary-repos').textContent = names.length ? names.join(', ') : 'none added';
+      var entry = acmmEntry(_selectedAcmm);
+      document.getElementById('summary-acmm').textContent = entry ? entry.label : ('L' + _selectedAcmm);
     }
 
-    async function loadRepos() {
-      var loading = document.getElementById('repo-loading');
-      var list = document.getElementById('repo-list');
-      var none = document.getElementById('repo-none');
-      loading.style.display = 'block';
-      list.style.display = 'none';
-      none.style.display = 'none';
+    /* parseRepoRef turns whatever a user pastes into {host, org, name}.
+       It mirrors the server's normalizeForgeHost (pkg/hub/server.go): strip the
+       scheme, drop a trailing slash, lowercase the HOST only. It is a separate
+       JS function rather than a call into that Go helper for the obvious reason
+       — this runs in the browser — but the accepted forms are kept identical so
+       what the page accepts is what the server will store.
 
-      try {
-        var resp = await fetch('/api/saas/repos');
-        var data = await resp.json();
-        var repos = data.repos || [];
-        loading.style.display = 'none';
+       Accepts:  github.com/org/repo   https://github.ibm.com/org/repo
+                 host/org/repo/        org/repo         (bare -> public GitHub)
 
-        if (!repos.length) {
-          none.style.display = 'block';
-          return;
-        }
-
-        list.style.display = 'flex';
-        list.innerHTML = repos.map(function(r) {
-          var checked = _selectedRepos.some(function(s) { return s.full_name === r.full_name; });
-          return '<label class="repo-item' + (checked ? ' selected' : '') + '" onclick="toggleRepo(this, \'' + esc(r.full_name) + '\', \'' + esc(r.name) + '\')">' +
-            '<input type="checkbox" ' + (checked ? 'checked' : '') + '>' +
-            '<div><div class="repo-name">' + esc(r.full_name) + '</div>' +
-            (r.description ? '<div class="repo-desc">' + esc(r.description) + '</div>' : '') +
-            '</div></label>';
-        }).join('');
-      } catch(e) {
-        loading.style.display = 'none';
-        none.style.display = 'block';
-      }
-    }
-
-    function toggleRepo(el, fullName, name) {
-      var cb = el.querySelector('input[type=checkbox]');
-      var idx = _selectedRepos.findIndex(function(r) { return r.full_name === fullName; });
-      if (idx >= 0) {
-        _selectedRepos.splice(idx, 1);
-        el.classList.remove('selected');
-        cb.checked = false;
-      } else {
-        _selectedRepos.push({full_name: fullName, name: name});
-        el.classList.add('selected');
-        cb.checked = true;
-      }
-      document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
-    }
-
-    // Add a repo the picker cannot show. Repo discovery runs on the github.com
-    // OAuth token, so GitHub Enterprise repos (github.ibm.com and friends) never
-    // appear in the list — typing the URL is the only way to request one.
-    // Accepts a full URL, "host/org/repo", or "org/repo".
-    function addManualRepo() {
-      var input = document.getElementById('repo-manual');
-      var err = document.getElementById('repo-manual-err');
-      var raw = (input.value || '').trim();
-      err.style.display = 'none';
-      if (!raw) return;
-
-      var v = raw.replace(/^https?:\/\//, '').replace(/\/+$/, '').replace(/\.git$/, '');
+       Parsing is deliberately separate from forge policy: this function will
+       happily split gitlab.com/org/repo, and isSupportedForgeHost then rejects
+       it. Keeping the two apart means supporting a new forge later is a change
+       to the predicate alone, not to URL handling. */
+    function parseRepoRef(raw) {
+      var v = (raw || '').trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+      v = v.replace(/[?#].*$/, '').replace(/\/+$/, '');
       var parts = v.split('/').filter(function(p) { return p.length; });
-      // Split off a leading hostname (anything with a dot) so host/org/repo ->
-      // org/repo, but KEEP the host: a GitHub Enterprise repo is only reachable
-      // if the request records which instance it lives on.
-      var ghHost = '';
-      if (parts.length > 2 && parts[0].indexOf('.') !== -1) { ghHost = parts[0]; parts = parts.slice(1); }
-      if (parts.length < 2) {
-        err.textContent = 'Enter a repository URL or org/repo — for example https://github.ibm.com/my-org/my-repo';
-        err.style.display = 'block';
-        return;
+      // Strip a leading hostname (anything with a dot) but KEEP it: an
+      // Enterprise repo is only reachable if the request records its instance.
+      var host = '';
+      if (parts.length > 2 && parts[0].indexOf('.') !== -1) {
+        host = parts[0].toLowerCase();
+        parts = parts.slice(1);
       }
-      var org = parts[0], name = parts[1], fullName = org + '/' + name;
-      if (_selectedRepos.some(function(r) { return r.full_name === fullName; })) {
-        err.textContent = fullName + ' is already selected';
-        err.style.display = 'block';
-        return;
-      }
-      _selectedRepos.push({full_name: fullName, name: name, github_host: ghHost});
-      input.value = '';
-      renderManualRepos();
-      document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
+      if (parts.length < 2) return null;
+      // ".git" is part of a clone URL, not the repo name. Strip it AFTER the
+      // trailing slash is gone so "…/repo.git/" is handled too.
+      var name = parts[1].replace(/\.git$/i, '');
+      if (!parts[0] || !name) return null;
+      return {host: host, org: parts[0], name: name};
     }
 
-    // Show manually added repos (they have no checkbox row in the picker list).
-    function renderManualRepos() {
-      var host = document.getElementById('repo-manual-added');
-      if (!host) {
-        host = document.createElement('div');
-        host.id = 'repo-manual-added';
-        host.style.cssText = 'margin-top:10px;display:flex;flex-wrap:wrap;gap:6px';
-        document.getElementById('repo-manual').parentNode.parentNode.appendChild(host);
-      }
-      var listed = {};
-      document.querySelectorAll('#repo-list .repo-item').forEach(function(el) {
-        var n = el.querySelector('.repo-name');
-        if (n) listed[n.textContent] = true;
-      });
-      var manual = _selectedRepos.filter(function(r) { return !listed[r.full_name]; });
-      host.innerHTML = manual.map(function(r) {
-        return '<span style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border:1px solid var(--line);border-radius:999px;font-size:0.8rem">' +
-          esc(r.full_name) +
-          '<a href="#" onclick="removeManualRepo(\'' + esc(r.full_name) + '\');return false" style="color:var(--muted);text-decoration:none" title="Remove">&times;</a></span>';
-      }).join('');
+    /* Only GitHub can be provisioned today: App auth, AppInstallURL, and the
+       write gate are all GitHub-specific, so a GitLab or Gitea URL would be
+       accepted here and then fail after the request was already filed. This is
+       an ALLOW-list, not a deny-list — a deny-list of known forges would let
+       "gitlab.mycorp.com" through simply by not having heard of it.
+
+       Accepts:  github.com                (public GitHub)
+                 github.<org>.<tld>        (GitHub Enterprise: github.ibm.com,
+                                            github.cisco.com)
+                 github.<org>.<sub>.<tld>  (github.corp.example.com)
+       Rejects:  gitlab.com, gitea.example.com, codeberg.org, bitbucket.org.
+
+       The pattern is anchored at BOTH ends and bounded in length, so the
+       lookalikes "mygithub.com" and "notgithub.com" fail at the front.
+
+       "github.com.evil.net" needs a SEPARATE rule, and it is worth being honest
+       about why: it is structurally identical to the legitimate
+       "github.corp.example.com" (github + label + label + tld). No pattern can
+       tell them apart, so the second label is checked against public GitHub's
+       own name instead — "github.com.<anything>" is the classic prefix-spoof
+       and never a real Enterprise host. */
+    var PUBLIC_GITHUB_HOST = 'github.com';
+    /* Labels permitted AFTER the leading "github." and before the TLD. Real GHE
+       hosts are github.<org>.<tld>, occasionally with one extra internal label
+       (github.corp.example.com). Two is the ceiling; more is a spoofing shape,
+       not a deployment anyone runs. */
+    var GITHUB_ENTERPRISE_HOST_RE = /^github\.[a-z0-9-]+(\.[a-z0-9-]+)?\.[a-z]{2,}$/;
+    /* Rejects github.com.evil.net and github.com.co — a host whose first two
+       labels spell public GitHub, with anything appended after it. */
+    var GITHUB_SPOOF_PREFIX_RE = /^github\.com\./;
+    function isSupportedForgeHost(host) {
+      // No host means a bare "org/repo", which we read as public GitHub.
+      if (!host) return true;
+      var h = host.toLowerCase();
+      if (h === PUBLIC_GITHUB_HOST) return true;
+      if (GITHUB_SPOOF_PREFIX_RE.test(h)) return false;
+      return GITHUB_ENTERPRISE_HOST_RE.test(h);
+    }
+    /* One message, used wherever a forge is rejected. It states the limit, names
+       the accepted forms, and says other forges are coming — a GitLab user
+       should read this as a roadmap gap, not a refusal. */
+    var UNSUPPORTED_FORGE_MSG = ' is not supported yet. Hives can currently be provisioned on GitHub only' +
+      ' — github.com or a GitHub Enterprise host such as github.ibm.com.' +
+      ' Support for GitLab, Gitea, and other forges is planned.';
+
+    /* Shown when Continue is pressed with an empty field. This is NOT cosmetic:
+       handleRequestProvision (pkg/hub/saas.go) rejects a request whose org or
+       repos is empty, so advancing with no repo would walk the user to the final
+       step and fail there. Refusing here reports it where it can be fixed. */
+    var REPO_REQUIRED_MSG = 'Enter the repository your hive should manage — for example github.com/my-org/my-repo';
+    /* Shown when the field holds something that is not a repository reference. */
+    var REPO_UNPARSEABLE_MSG = 'Enter a repository URL — for example github.com/my-org/my-repo or https://github.ibm.com/my-org/my-repo';
+
+    function clearRepoError() {
+      var err = document.getElementById('repo-manual-err');
+      if (err) err.style.display = 'none';
     }
 
-    function removeManualRepo(fullName) {
-      var i = _selectedRepos.findIndex(function(r) { return r.full_name === fullName; });
-      if (i >= 0) _selectedRepos.splice(i, 1);
-      renderManualRepos();
-      document.getElementById('repos-continue').disabled = _selectedRepos.length === 0;
+    function showRepoError(msg) {
+      var err = document.getElementById('repo-manual-err');
+      if (!err) return;
+      err.textContent = msg;
+      err.style.display = 'block';
+    }
+
+    /* Validate the typed repository and return {full_name, name, github_host},
+       or null if it cannot be used. Every check the old Add button ran is kept
+       here and in the same order: parseable, then forge policy.
+
+       `requireValue` separates the two callers. On blur we must NOT nag about an
+       empty field the user simply tabbed through, but on Continue an empty field
+       IS the error. Neither caller validates per keystroke — oninput only CLEARS
+       a stale error, so a half-typed URL never flashes red. */
+    function validateManualRepo(requireValue) {
+      var input = document.getElementById('repo-manual');
+      var raw = ((input && input.value) || '').trim();
+      clearRepoError();
+      if (!raw) {
+        if (requireValue) showRepoError(REPO_REQUIRED_MSG);
+        return null;
+      }
+      var ref = parseRepoRef(raw);
+      if (!ref) {
+        showRepoError(REPO_UNPARSEABLE_MSG);
+        return null;
+      }
+      if (!isSupportedForgeHost(ref.host)) {
+        showRepoError(ref.host + UNSUPPORTED_FORGE_MSG);
+        return null;
+      }
+      return {full_name: ref.org + '/' + ref.name, name: ref.name, github_host: ref.host};
+    }
+
+    /* Surface a bad URL as soon as the user leaves the field, rather than making
+       them press Continue to find out. Empty is not an error here. */
+    function validateRepoInput() { validateManualRepo(false); }
+
+    /* Continue does what the old "Add" button did, then advances. Onboarding
+       expects a single repo, so the typed value REPLACES _selectedRepos rather
+       than appending — that also makes the old "already added" dedupe branch
+       unreachable, so it is gone rather than left as dead list-building code.
+
+       _selectedRepos stays an ARRAY of one: submitRequest() reads
+       _selectedRepos[0], .map(), and .find() on it, and the server wants a
+       comma-separated repos string, so keeping the shape means the submit path
+       is untouched and can still carry more repos if a later screen adds them. */
+    function continueFromRepos() {
+      var repo = validateManualRepo(true);
+      if (!repo) return;
+      _selectedRepos = [repo];
+      goToStep(WIZARD_STEP_LEVEL);
     }
 
     async function submitRequest() {

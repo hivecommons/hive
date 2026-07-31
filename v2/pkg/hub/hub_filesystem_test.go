@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -977,7 +978,9 @@ func TestHandleRequestProvisionWithFilesystem(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	body := `{"org":"validorg","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3}`
+	// github_host is required — the forge the org lives on must be captured at
+	// request time, so this end-to-end save fixture carries one.
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_reqprov_fs")
@@ -995,6 +998,84 @@ func TestHandleRequestProvisionWithFilesystem(t *testing.T) {
 	}
 	if pr.Org != "validorg" {
 		t.Errorf("org = %q", pr.Org)
+	}
+	if pr.GitHubHost != "github.com" {
+		t.Errorf("github_host = %q, want it persisted as github.com", pr.GitHubHost)
+	}
+}
+
+// TestHandleRequestProvisionClampsAboveOnboardingCeiling pins the rule that a
+// self-service request can never provision a hive above L3 Measured. The
+// get-started wizard and the Request-a-Hive modal both only offer L1-L3, but
+// they are clients: this asserts the SERVER refuses to record L4-L6 from a
+// crafted body, so the UI is not the only gate.
+func TestHandleRequestProvisionClampsAboveOnboardingCeiling(t *testing.T) {
+	for _, requested := range []int{maxRequestACMMLevel + 1, 5, 6, 99} {
+		t.Run(fmt.Sprintf("level%d", requested), func(t *testing.T) {
+			cleanup := helperSetupTempDirs(t)
+			defer cleanup()
+
+			token := fmt.Sprintf("ghp_clamp_%d", requested)
+			username := fmt.Sprintf("clamp-user-%d", requested)
+			authCleanup := helperSetupAuthUser(t, token, username)
+			defer authCleanup()
+
+			srv := NewHubServer(0, slog.Default(), "test", "v2")
+
+			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d}`, requested)
+			req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			srv.handleRequestProvision(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+			}
+			pr := loadProvisionRequest(username)
+			if pr == nil {
+				t.Fatal("provision request should be saved")
+			}
+			if pr.ACMMLevel > maxRequestACMMLevel {
+				t.Errorf("acmm_level = %d, want it clamped to at most %d — nobody starts a hive above L3", pr.ACMMLevel, maxRequestACMMLevel)
+			}
+		})
+	}
+}
+
+// TestHandleRequestProvisionAcceptsOnboardingLevels is the other half: the
+// levels the wizard DOES offer must survive the clamp unchanged.
+func TestHandleRequestProvisionAcceptsOnboardingLevels(t *testing.T) {
+	for requested := minRequestACMMLevel; requested <= maxRequestACMMLevel; requested++ {
+		t.Run(fmt.Sprintf("level%d", requested), func(t *testing.T) {
+			cleanup := helperSetupTempDirs(t)
+			defer cleanup()
+
+			token := fmt.Sprintf("ghp_ok_%d", requested)
+			username := fmt.Sprintf("ok-user-%d", requested)
+			authCleanup := helperSetupAuthUser(t, token, username)
+			defer authCleanup()
+
+			srv := NewHubServer(0, slog.Default(), "test", "v2")
+
+			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d}`, requested)
+			req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+token)
+			w := httptest.NewRecorder()
+			srv.handleRequestProvision(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d (body: %s)", w.Code, w.Body.String())
+			}
+			pr := loadProvisionRequest(username)
+			if pr == nil {
+				t.Fatal("provision request should be saved")
+			}
+			if pr.ACMMLevel != requested {
+				t.Errorf("acmm_level = %d, want %d preserved", pr.ACMMLevel, requested)
+			}
+		})
 	}
 }
 

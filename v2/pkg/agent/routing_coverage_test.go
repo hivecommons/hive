@@ -501,17 +501,36 @@ func TestAgentModeTokenTier(t *testing.T) {
 // claude-sonnet-4-6 reaches bob as claude-sonnet-4.6 — an id bob's backend
 // does not know — and every prompt dies with "Cannot read properties of
 // undefined (reading 'maxTokens')". bob auto-selects its own model.
+//
+// The assertion is deliberately about the ABSENCE of --model and the INVARIANCE
+// of the command across models, not equality against a fixed string. bob's
+// launch command legitimately carries required flags (--accept-license,
+// --auth-method api-key, --approval-mode yolo, --trust) that this test must not
+// re-litigate; bobLaunchCmd's own doc comment and
+// TestToolRulesToLaunchCmdBobHasNoModel in bob_test.go own that contract and
+// assert those flags are present. An earlier `cmd != "bob"` check here duplicated
+// that ownership badly: it pinned the whole command to the bare binary name and
+// so contradicted the sibling test the moment a required flag was added.
 func TestToolRulesToLaunchCmd_BobNeverGetsModel(t *testing.T) {
 	tools := &config.ToolsConfig{}
 	// Includes "auto": the dashboard's only bob option is a display/stored
 	// placeholder, and `bob --model auto` is untested and must not be emitted.
-	for _, model := range []string{"", "auto", "claude-sonnet-4.6", "claude-sonnet-4-6", "granite-3"} {
+	models := []string{"", "auto", "claude-sonnet-4.6", "claude-sonnet-4-6", "granite-3"}
+
+	// The command bob gets must not vary with the configured model at all, so
+	// every iteration is compared against the first one rather than a literal.
+	want := toolRulesToLaunchCmd("bob", models[0], bobBackend, tools, false)
+	for _, model := range models {
 		cmd := toolRulesToLaunchCmd("bob", model, bobBackend, tools, false)
 		if strings.Contains(cmd, "--model") {
 			t.Errorf("bob launch cmd with model %q must not contain --model: %q", model, cmd)
 		}
-		if cmd != "bob" {
-			t.Errorf("bob launch cmd with model %q = %q, want %q", model, cmd, "bob")
+		// Catches a model leaking in under any spelling, not just as --model.
+		if model != "" && strings.Contains(cmd, model) {
+			t.Errorf("bob launch cmd with model %q leaked the model id: %q", model, cmd)
+		}
+		if cmd != want {
+			t.Errorf("bob launch cmd with model %q = %q, want it identical to the no-model command %q", model, cmd, want)
 		}
 	}
 }
