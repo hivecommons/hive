@@ -354,9 +354,26 @@ type AgentConfig struct {
 	// Paused persists an operator pause across restarts/upgrades. Without
 	// this, every pod restart rebuilt agents un-paused (Go zero value), so
 	// an operator pause was silently undone on the next upgrade.
-	Paused          bool   `yaml:"paused" json:"paused,omitempty"`
-	ClearOnKick     bool   `yaml:"clear_on_kick" json:"clear_on_kick"`
-	CLIPinned       bool   `yaml:"cli_pinned" json:"cli_pinned,omitempty"`
+	Paused      bool `yaml:"paused" json:"paused,omitempty"`
+	ClearOnKick bool `yaml:"clear_on_kick" json:"clear_on_kick"`
+	CLIPinned   bool `yaml:"cli_pinned" json:"cli_pinned,omitempty"`
+
+	// ModelOwner / BackendOwner record WHO last set Model / Backend. An ACMM
+	// pack owns these fields until an operator changes them in the Governor
+	// grid; from that point the operator owns them and ApplyPack must not
+	// reconcile them back to the pack value.
+	//
+	// Without this, a pack re-apply — which happens on EVERY hive restart
+	// (cmd/hive/main.go "merging pack updates") — rewrote Model back to the
+	// pack default, so an operator's model choice silently reverted on the
+	// next restart. That is the "I've deleted those 4 times, they always come
+	// back" report: the revert was a restart, not a propagation delay.
+	//
+	// Stored as a string owner rather than a bool so "never set" (empty),
+	// "pack-owned" and "operator-owned" stay distinguishable across upgrades
+	// of hives whose config predates this field.
+	ModelOwner      string `yaml:"model_owner" json:"model_owner,omitempty"`
+	BackendOwner    string `yaml:"backend_owner" json:"backend_owner,omitempty"`
 	StaleTimeout    int    `yaml:"stale_timeout" json:"stale_timeout,omitempty"`
 	RestartStrategy string `yaml:"restart_strategy" json:"restart_strategy,omitempty"`
 	LaunchCmd       string `yaml:"launch_cmd" json:"launch_cmd,omitempty"`
@@ -502,6 +519,28 @@ func (a *AgentConfig) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
+// Ownership markers for AgentConfig.ModelOwner / BackendOwner.
+const (
+	// FieldOwnerPack marks a value written by an ACMM pack. Pack-owned values
+	// are reconciled to the current pack on every apply.
+	FieldOwnerPack = "pack"
+	// FieldOwnerOperator marks a value an operator chose in the Governor grid.
+	// Operator-owned values are never overwritten by a pack apply.
+	FieldOwnerOperator = "operator"
+)
+
+// ModelIsOperatorOwned reports whether an operator explicitly chose this
+// agent's model, which makes it immune to pack reconciliation.
+func (a AgentConfig) ModelIsOperatorOwned() bool {
+	return a.ModelOwner == FieldOwnerOperator
+}
+
+// BackendIsOperatorOwned reports whether an operator explicitly chose this
+// agent's backend (the grid's "method" column).
+func (a AgentConfig) BackendIsOperatorOwned() bool {
+	return a.BackendOwner == FieldOwnerOperator
+}
+
 // EnabledExplicitlySet returns true when the user's YAML explicitly set the
 // "enabled" field (allowing us to distinguish "not specified" from "enabled: false").
 func (a *AgentConfig) EnabledExplicitlySet() bool {
@@ -522,8 +561,8 @@ type GovernorConfig struct {
 	// Bob holds the IBM bobshell CLI backend's API-key location. Required for
 	// agents with backend "bob": bobshell's browser SSO flow cannot complete in
 	// a headless pod.
-	Bob BobConfig `yaml:"bob"`
-	Trajectory    TrajectoryConfig      `yaml:"trajectory"`
+	Bob        BobConfig        `yaml:"bob"`
+	Trajectory TrajectoryConfig `yaml:"trajectory"`
 	// Gateways is the list of named model gateways (OpenAI-compatible endpoints
 	// like OpenRouter, a LiteLLM proxy, vLLM, or llm-d). An agent routes through
 	// a gateway by naming it as its backend. When empty, a single implicit

@@ -88,14 +88,20 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 		for _, pa := range pack.Agents {
 			if existing, exists := candidate.Agents[pa.Name]; exists {
 				changed := false
-				if existing.Backend == "" && pa.Backend != "" {
-					existing.Backend = pa.Backend
-					changed = true
-				}
-				if pa.Model != "" && existing.Model != pa.Model {
-					existing.Model = pa.Model
-					changed = true
-				}
+
+				// Pack-behavior fields define what an agent DOES at a given ACMM
+				// level (which kick template it runs, its issue/PR mode, which model,
+				// its role/description). These MUST be reconciled to the current pack
+				// on every level change — otherwise a value written by a PREVIOUS
+				// level's pack is indistinguishable from a user override and sticks
+				// forever, so the agent keeps behaving at its old level. That is the
+				// exact drift observed in the field: hives that climbed levels kept
+				// scanner/ci-maintainer/quality on their lower-level advisory
+				// templates and models even though acmm_level had moved up.
+				//
+				// Model/Backend are the exception: an operator sets them from the
+				// Governor grid, so they carry an ownership marker and are reconciled
+				// only while still pack-owned (see below).
 				if pa.KickTemplate != "" && existing.KickTemplate != pa.KickTemplate {
 					existing.KickTemplate = pa.KickTemplate
 					changed = true
@@ -104,8 +110,16 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 					existing.Mode = pa.Mode
 					changed = true
 				}
-				if pa.DisplayName != "" && existing.DisplayName != pa.DisplayName {
-					existing.DisplayName = pa.DisplayName
+				// Model is reconciled to the pack ONLY while the pack still owns
+				// it. Once an operator picks a model in the Governor grid the
+				// field becomes operator-owned and the pack must leave it alone:
+				// ApplyPack runs on every restart ("merging pack updates"), so an
+				// unconditional replace-on-diff here silently reverted the
+				// operator's choice on the next pod restart — repeatedly, which is
+				// exactly the reported "they always come back".
+				if pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
+					existing.Model = pa.Model
+					existing.ModelOwner = config.FieldOwnerPack
 					changed = true
 				}
 				if pa.Description != "" && existing.Description != pa.Description {
@@ -120,12 +134,29 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 					existing.BeadRole = pa.BeadRole
 					changed = true
 				}
+				if pa.DisplayName != "" && existing.DisplayName != pa.DisplayName {
+					existing.DisplayName = pa.DisplayName
+					changed = true
+				}
+
+				// Backend is fill-if-empty: it never varies by level (always the same
+				// per agent across all packs), and users legitimately pin it, so the
+				// pack must not stomp a user's choice.
+				if existing.Backend == "" && pa.Backend != "" && !existing.BackendIsOperatorOwned() {
+					existing.Backend = pa.Backend
+					existing.BackendOwner = config.FieldOwnerPack
+					changed = true
+				}
+
 				if pa.StaleTimeout > 0 && existing.StaleTimeout != pa.StaleTimeout {
 					existing.StaleTimeout = pa.StaleTimeout
 					changed = true
 				}
+
+				// Respect user's enabled: false — don't override it.
 				if changed {
 					candidate.Agents[pa.Name] = existing
+					_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
 					updated = append(updated, pa.Name)
 				} else {
 					skipped = append(skipped, pa.Name)
@@ -135,8 +166,12 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 
 			includeRepos := pa.IncludeRepos
 			agentConfig := config.AgentConfig{
-				Backend:      pa.Backend,
-				Model:        pa.Model,
+				Backend: pa.Backend,
+				Model:   pa.Model,
+				// A freshly created agent's model/backend come from the pack, so
+				// the pack owns them until an operator overrides in the grid.
+				ModelOwner:   config.FieldOwnerPack,
+				BackendOwner: config.FieldOwnerPack,
 				Enabled:      true,
 				DisplayName:  pa.DisplayName,
 				Description:  pa.Description,
@@ -154,6 +189,11 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 				Managed:      true,
 			}
 			if err := config.SaveAgentFile(agentsDir, pa.Name, agentConfig); err != nil {
+				// Do not abort: keep reconciling the rest of the roster. The agent
+				// is still added to the in-memory config below so it appears in
+				// /api/status and is retried on the next apply; the combined error
+				// returned at the end prevents the level from being recorded as
+				// cleanly applied.
 				s.logger.Error("failed to save agent overlay file from pack (continuing)", "agent", pa.Name, "error", err)
 				createErrs = append(createErrs, fmt.Sprintf("%s: %v", pa.Name, err))
 			}
