@@ -1935,6 +1935,41 @@ func TestHandleConfig_WithPrimaryRepo(t *testing.T) {
 	}
 }
 
+// handleConfig must report the RESOLVED GitHub host so the dashboard's
+// forge indicators (Repositories section pill, per-repo cards, Repos config
+// modal) show the real host. A pooled/placeholder GHE hive legitimately
+// carries base_url: "" with a GHE api_url — reading base_url alone rendered
+// those as github.com, so operators mistook a github.ibm.com hive for
+// github.com (the vllmd-06 case). ResolvedBaseURL falls back to the api_url
+// host in exactly that case.
+func TestHandleConfig_GitHubBaseURL_BlankBaseGHEApi(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.GitHub.BaseURL = ""
+	deps.Config.GitHub.APIURL = "https://github.ibm.com/api/v3"
+	rec := doGet(s, "/api/config")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if got := result["github_base_url"]; got != "https://github.ibm.com" {
+		t.Errorf("github_base_url = %v, want https://github.ibm.com", got)
+	}
+}
+
+func TestHandleConfig_GitHubBaseURL_PublicDefault(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.GitHub.BaseURL = ""
+	deps.Config.GitHub.APIURL = ""
+	rec := doGet(s, "/api/config")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	result := decodeJSON(t, rec)
+	if got := result["github_base_url"]; got != "https://github.com" {
+		t.Errorf("github_base_url = %v, want https://github.com", got)
+	}
+}
+
 // ---- handleKnowledgeToggle enable with layers ----
 
 func TestHandleKnowledgeToggle_EnableWithLayers(t *testing.T) {
@@ -3800,5 +3835,127 @@ func TestHandleRestart_NotRunning(t *testing.T) {
 	rec := doPost(s, "/api/restart/scanner", nil)
 	if rec.Code == http.StatusOK {
 		t.Log("restart succeeded despite stopped agent (depends on impl)")
+	}
+}
+
+// ── Budget partial-update regression tests ──
+// Reported by Cyril Nestor: editing only "Total Tokens" in the Governor
+// Budget tab failed with "periodDays must be between 1 and 365" even though
+// the UI showed a valid period. The dashboard PUTs only the fields the user
+// touched, so periodDays/criticalPct were absent and decoded to 0.
+
+// budgetTestPeriodDays / budgetTestCriticalPct are the pre-existing stored
+// values these tests seed so they can assert the values survive a partial PUT.
+const (
+	budgetTestPeriodDays  = 7
+	budgetTestCriticalPct = 90
+)
+
+// seedBudget puts a known-good budget into the server config so that a
+// partial update has something meaningful to preserve.
+func seedBudget(deps *Dependencies, totalTokens int64) {
+	deps.Config.Governor.Budget.TotalTokens = totalTokens
+	deps.Config.Governor.Budget.PeriodDays = budgetTestPeriodDays
+	deps.Config.Governor.Budget.CriticalPct = budgetTestCriticalPct
+}
+
+func TestHandleGovernorBudget_PartialUpdatePreservesOtherFields(t *testing.T) {
+	s, deps := apiServer(t)
+	seedBudget(deps, 1000)
+
+	// Exactly what the dashboard sends when only Total Tokens is edited.
+	rec := doPutRaw(s, "/api/config/governor/budget", `{"totalTokens":50}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	b := deps.Config.Governor.Budget
+	if b.TotalTokens != 50 {
+		t.Errorf("TotalTokens = %d, want 50", b.TotalTokens)
+	}
+	if b.PeriodDays != budgetTestPeriodDays {
+		t.Errorf("PeriodDays = %d, want %d preserved", b.PeriodDays, budgetTestPeriodDays)
+	}
+	if b.CriticalPct != budgetTestCriticalPct {
+		t.Errorf("CriticalPct = %d, want %d preserved", b.CriticalPct, budgetTestCriticalPct)
+	}
+}
+
+func TestHandleGovernorBudget_PartialPeriodDaysOnly(t *testing.T) {
+	s, deps := apiServer(t)
+	seedBudget(deps, 1000)
+
+	rec := doPutRaw(s, "/api/config/governor/budget", `{"periodDays":30}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	b := deps.Config.Governor.Budget
+	if b.PeriodDays != 30 {
+		t.Errorf("PeriodDays = %d, want 30", b.PeriodDays)
+	}
+	if b.TotalTokens != 1000 {
+		t.Errorf("TotalTokens = %d, want 1000 preserved", b.TotalTokens)
+	}
+	if b.CriticalPct != budgetTestCriticalPct {
+		t.Errorf("CriticalPct = %d, want %d preserved", b.CriticalPct, budgetTestCriticalPct)
+	}
+}
+
+// An explicit zero for totalTokens disables budget tracking per the UI
+// tooltip, so it must be applied — not mistaken for an absent field.
+func TestHandleGovernorBudget_ExplicitZeroTotalTokensHonored(t *testing.T) {
+	s, deps := apiServer(t)
+	seedBudget(deps, 1000)
+
+	rec := doPutRaw(s, "/api/config/governor/budget", `{"totalTokens":0}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if got := deps.Config.Governor.Budget.TotalTokens; got != 0 {
+		t.Errorf("TotalTokens = %d, want 0 (explicit zero disables tracking)", got)
+	}
+	if got := deps.Config.Governor.Budget.PeriodDays; got != budgetTestPeriodDays {
+		t.Errorf("PeriodDays = %d, want %d preserved", got, budgetTestPeriodDays)
+	}
+}
+
+// An explicit out-of-range value must still be rejected — the pointer change
+// fixes absence, it does not relax validation.
+func TestHandleGovernorBudget_ExplicitOutOfRangeStillRejected(t *testing.T) {
+	s, deps := apiServer(t)
+	seedBudget(deps, 1000)
+
+	for _, tc := range []struct{ name, payload string }{
+		{"periodDays zero", `{"periodDays":0}`},
+		{"periodDays too high", `{"periodDays":400}`},
+		{"criticalPct zero", `{"criticalPct":0}`},
+		{"criticalPct too high", `{"criticalPct":101}`},
+		{"negative totalTokens", `{"totalTokens":-1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doPutRaw(s, "/api/config/governor/budget", tc.payload)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400 for %s", rec.Code, tc.payload)
+			}
+		})
+	}
+	// Nothing should have been mutated by the rejected requests.
+	b := deps.Config.Governor.Budget
+	if b.PeriodDays != budgetTestPeriodDays || b.CriticalPct != budgetTestCriticalPct || b.TotalTokens != 1000 {
+		t.Errorf("config mutated by rejected requests: %+v", b)
+	}
+}
+
+// An empty object touches nothing and must succeed without zeroing anything.
+func TestHandleGovernorBudget_EmptyPayloadPreservesAll(t *testing.T) {
+	s, deps := apiServer(t)
+	seedBudget(deps, 1000)
+
+	rec := doPutRaw(s, "/api/config/governor/budget", `{}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	b := deps.Config.Governor.Budget
+	if b.TotalTokens != 1000 || b.PeriodDays != budgetTestPeriodDays || b.CriticalPct != budgetTestCriticalPct {
+		t.Errorf("empty payload mutated config: %+v", b)
 	}
 }

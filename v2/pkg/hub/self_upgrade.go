@@ -67,6 +67,18 @@ func RolloutRestartSelf(logger *slog.Logger) error {
 // deployment/hive). A strategic-merge patch merges containers by name, so we
 // enumerate the deployment's containers first and set each image.
 func SwitchImageSelf(logger *slog.Logger, image string) error {
+	// Same contract as the hub self-upgrade: never write a tag that cannot
+	// resolve. A spoke that patches itself to a bogus tag goes
+	// ImagePullBackOff while its old ReplicaSet keeps serving — it looks alive,
+	// silently runs stale code, and keeps reporting the OLD git hash, so the
+	// hub re-sends the same doomed target every heartbeat forever.
+	if err := validateImageRef(image); err != nil {
+		logger.Error("self image switch REFUSED: invalid image reference",
+			"image", image,
+			"deployment", selfUpgradeDeployName,
+			"error", err)
+		return err
+	}
 	ns, err := os.ReadFile(k8sNamespacePath)
 	if err != nil {
 		return fmt.Errorf("reading namespace: %w", err)

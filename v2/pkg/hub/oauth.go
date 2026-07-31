@@ -172,7 +172,22 @@ func (s *HubServer) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	state := url.QueryEscape(redirect)
-	authURL := fmt.Sprintf("%s?client_id=%s&scope=read:user&redirect_uri=%s&state=%s",
+	// An EMPTY scope is deliberate, not an omission. The hub only needs to know
+	// WHO is logging in: the callback reads GET /user for the login name and
+	// signs it into the session cookie. GitHub serves /user's public profile —
+	// including "login" — for a token with no scopes at all, so identity works
+	// unscoped.
+	//
+	// The hub used to ask for read:user because the request wizard listed the
+	// user's repositories for them to pick from. That listing is gone: it could
+	// only ever see public github.com, and it could never generalize to GitLab
+	// or Gitea. Requesters now type a repository URL instead, which needs no
+	// permission on the requester's account whatsoever.
+	//
+	// Do NOT restore a scope here without also restoring a feature that needs
+	// it — asking for access the product does not use is a consent prompt users
+	// are right to refuse.
+	authURL := fmt.Sprintf("%s?client_id=%s&scope=&redirect_uri=%s&state=%s",
 		defaultGHAuthorizeURL, clientID, "https://hive.kubestellar.io/api/auth/callback", state)
 	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
 }

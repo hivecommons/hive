@@ -174,7 +174,7 @@ func TestSwitchImageSelfSuccess(t *testing.T) {
 	defer srv.Close()
 	withFakeK8sAPI(t, srv)
 
-	if err := SwitchImageSelf(slog.Default(), "ghcr.io/kubestellar/hive:dev-abc"); err != nil {
+	if err := SwitchImageSelf(slog.Default(), "ghcr.io/kubestellar/hive:dev-latest"); err != nil {
 		t.Fatalf("SwitchImageSelf: %v", err)
 	}
 }
