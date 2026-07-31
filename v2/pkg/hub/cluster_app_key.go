@@ -792,12 +792,77 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 			"to_fingerprint", decision.ToFingerprint,
 		)
 	}
+	// WRITE-PATH GUARD, hub side. This struct is the exact channel that carried
+	// the 2026-07-31 breakage: it delivers app_id and app_slug and has no field
+	// for api_url, so a cluster whose github_app_id names one forge while its
+	// URLs name another pushes a half identity the spoke cannot reassemble.
+	// Refuse to construct it.
+	//
+	// Validated against the identity the CLUSTER declares — app_id and app_slug
+	// from the App identity, api_url and base_url from the cluster record — so a
+	// clusters.json entry naming a GHE App beside public-GitHub URLs is caught
+	// at the source. The spoke re-validates against its own current values,
+	// which is the half this side cannot see.
+	//
+	// GATED ON THE CLUSTER DECLARING A FORGE AT ALL. A cluster record with both
+	// URLs empty is UNDER-SPECIFIED, not public: several real records carry only
+	// github_app_id and github_app_slug, and clusterIsGHE above already treats
+	// empty github_base_url as "no forge information". Reading that silence as
+	// "public github.com" here would refuse every GHE cluster that has not
+	// backfilled its URLs and stop the key/app_id repair path fleet-wide — the
+	// same class of outage this guard exists to prevent, in the other direction.
+	// Silence is never evidence. When the cluster does declare a forge, the full
+	// set is checked.
+	clusterAPIURL := clusterAPIURLForIdentity(s, clusterID)
+	clusterBaseURL := clusterBaseURLForIdentity(s, clusterID)
+	clusterDeclaresForge := clusterAPIURL != "" || clusterBaseURL != ""
+
+	if err := config.RejectIdentitySet(config.GitHubConfig{
+		AppID:   identity.AppID,
+		AppSlug: identity.AppSlug,
+		APIURL:  clusterAPIURL,
+		BaseURL: clusterBaseURL,
+	}); err != nil && clusterDeclaresForge {
+		if logger != nil {
+			logger.Error("REFUSING to push cluster github app config: the cluster's identity set is inconsistent and would half-apply on the spoke — nothing was sent",
+				"error", err,
+				"hive_id", hiveID,
+				"cluster_id", clusterID,
+				"app_id", identity.AppID,
+				"app_slug", identity.AppSlug,
+				"remedy", "correct github_app_id/github_app_slug/github_api_url/github_base_url for this cluster in clusters.json",
+			)
+		}
+		return nil
+	}
+
 	return &HeartbeatGitHubAppConfig{
 		AppID:          identity.AppID,
 		InstallationID: installationID,
 		PrivateKey:     privateKey,
 		AppSlug:        identity.AppSlug,
 	}
+}
+
+// clusterAPIURLForIdentity and clusterBaseURLForIdentity read the cluster's
+// declared forge URLs so the hub-side guard validates the FULL identity set the
+// cluster declares, not just the two fields the heartbeat channel can carry.
+//
+// An unknown cluster, or one that declares neither URL, yields empty strings.
+// The caller reads that as "no forge declared" and skips the check entirely
+// rather than assuming public github.com — see clusterDeclaresForge.
+func clusterAPIURLForIdentity(s *HubServer, clusterID string) string {
+	if c, ok := s.clusters[clusterID]; ok {
+		return strings.TrimSpace(c.GitHubAPIURL)
+	}
+	return ""
+}
+
+func clusterBaseURLForIdentity(s *HubServer, clusterID string) string {
+	if c, ok := s.clusters[clusterID]; ok {
+		return strings.TrimSpace(c.GitHubBaseURL)
+	}
+	return ""
 }
 
 // --- Operator API ---

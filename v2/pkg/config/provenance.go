@@ -20,8 +20,11 @@ package config
 // It changes no behaviour.
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // FieldOrigin records where one field's effective value came from.
@@ -223,6 +226,59 @@ func (p *Provenance) Report(cfg *Config) []FieldOrigin {
 // api.github.com (or an empty api_url, which defaults to it).
 const gheAPIURLMarker = "/api/v3"
 
+// The two valid GitHub identity sets, as named constants. Every one of these
+// values appears somewhere in the tree as a bare literal today; the rules below
+// must never grow one.
+const (
+	// PublicGitHubAppID is the numeric App ID of the public github.com
+	// kubestellar-hive GitHub App.
+	PublicGitHubAppID int64 = 3568013
+	// PublicGitHubAppSlug is that App's URL slug (== DefaultGitHubAppSlug).
+	PublicGitHubAppSlug = DefaultGitHubAppSlug
+
+	// EnterpriseGitHubAppID is the numeric App ID of the github.ibm.com
+	// kubestellar-hive-ghe GitHub App. This is the value that was pushed onto
+	// seven public-GitHub hives on 2026-07-31.
+	EnterpriseGitHubAppID int64 = 5686
+	// EnterpriseGitHubAppSlug is the slug the config/dashboard paths use for
+	// that App.
+	//
+	// NOTE: app_slug is NOT derivable from app_id, and no rule here treats it
+	// as such. App ID 5686 appears in this tree under TWO slugs — this one and
+	// "ibm-hive", which is what the vllm-d cluster fixture carries (see
+	// pkg/hub/cluster_app_key_test.go). Both are legitimate: the slug is an
+	// operator-chosen App URL name, so a rule asserting "app_id 5686 implies
+	// slug kubestellar-hive-ghe" refuses a real production cluster. Only the
+	// app_id → FORGE mapping below is safe to assert.
+	EnterpriseGitHubAppSlug = "kubestellar-hive-ghe"
+	// EnterpriseGitHubAPIURL and EnterpriseGitHubBaseURL are the forge URLs the
+	// enterprise App lives on.
+	EnterpriseGitHubAPIURL  = "https://github.ibm.com/api/v3"
+	EnterpriseGitHubBaseURL = "https://github.ibm.com"
+)
+
+// forgeOfAppID classifies an app_id as belonging to a KNOWN forge.
+//
+// This is the only identity marker that is reliably populated on the real
+// fleet. api_url and base_url are empty on ~41 of ~51 spokes (empty is the
+// public default and nothing ever backfilled it), and app_slug is empty on many
+// more — so every rule keyed on those three strings is unreachable in
+// production for exactly the hives that need checking. app_id is required by
+// config validation and is therefore always present.
+//
+// Returns "" for an App ID this build does not recognise (a third forge, a
+// self-hosted deployment, the placeholder sentinel): unknown must never be
+// treated as a mismatch, or a legitimate deployment is refused.
+func forgeOfAppID(appID int64) string {
+	switch appID {
+	case PublicGitHubAppID:
+		return DefaultGitHubBaseURL[len("https://"):] // "github.com"
+	case EnterpriseGitHubAppID:
+		return EnterpriseGitHubBaseURL[len("https://"):] // "github.ibm.com"
+	}
+	return ""
+}
+
 // IdentitySetIssues reports inconsistencies within the GitHub identity set:
 // app_id, app_slug, api_url and base_url are ONE atomic identity and no valid
 // mixture of forges exists.
@@ -243,14 +299,42 @@ const gheAPIURLMarker = "/api/v3"
 // refuses half-applied identities by construction; the cluster-config push
 // path has no such guard.
 //
-// This function only DETECTS and NAMES the invalid state — it changes no
-// behaviour and rejects nothing. Surfacing it in provenance is what makes the
-// split visible at a glance instead of via a 404 in agent logs.
+// This function DETECTS and NAMES the invalid state. Callers on the WRITE path
+// (see RejectIdentitySet) refuse a config carrying any of these issues rather
+// than applying it partially; the provenance API renders the same list for
+// display.
 func IdentitySetIssues(gh GitHubConfig) []string {
 	var issues []string
 	apiIsGHE := containsFold(gh.APIURL, gheAPIURLMarker)
 	baseIsGHE := gh.BaseURL != "" && !containsFold(gh.BaseURL, "github.com")
 	slugIsGHE := containsFold(gh.AppSlug, "ghe")
+
+	// RULE 0 — the app_id rule. Keyed on the ONE identity field that is always
+	// populated on the real fleet, so unlike the three string-marker rules below
+	// it actually fires on the shape the incident produced:
+	//
+	//	app_id:   5686                  <- GHE App
+	//	app_slug: kubestellar-hive-ghe
+	//	api_url:  ""                    <- EMPTY, resolves to api.github.com
+	//	base_url: ""
+	//
+	// HostLabel() resolves an empty api_url/base_url to "github.com", which is
+	// what makes this comparison meaningful: it asks "does the forge this App
+	// belongs to match the forge this hive will actually talk to?", where the
+	// second half already accounts for empty-means-public. A healthy public hive
+	// (app_id 3568013, both URLs empty) compares github.com against github.com
+	// and passes — which it must, because ~41 spokes run exactly that way.
+	//
+	// Unknown App IDs (a third forge, self-hosted, the placeholder sentinel) are
+	// skipped: forgeOfAppID returns "" and no claim is made.
+	if appForge := forgeOfAppID(gh.AppID); appForge != "" {
+		if host := gh.HostLabel(); !strings.EqualFold(host, appForge) {
+			issues = append(issues, "app_id "+strconv.FormatInt(gh.AppID, 10)+
+				" is the GitHub App on "+appForge+", but api_url ("+displayOrEmpty(gh.APIURL)+
+				") and base_url ("+displayOrEmpty(gh.BaseURL)+") resolve to "+host+
+				" — an App ID presented to the wrong forge returns 404 Integration not found")
+		}
+	}
 
 	// The live regression: an App is configured and the forge markers
 	// disagree with each other.
@@ -260,16 +344,59 @@ func IdentitySetIssues(gh GitHubConfig) []string {
 				") but api_url is not a GHE API URL ("+displayOrEmpty(gh.APIURL)+
 				") — a GHE App ID presented to api.github.com returns 404 Integration not found")
 		}
-		if baseIsGHE && !apiIsGHE {
-			issues = append(issues, "base_url is "+gh.BaseURL+" but api_url is "+
-				displayOrEmpty(gh.APIURL)+" — base_url and api_url must name the same forge")
-		}
-		if apiIsGHE && gh.BaseURL != "" && !baseIsGHE {
-			issues = append(issues, "api_url is a GHE API URL but base_url is "+gh.BaseURL+
-				" — base_url and api_url must name the same forge")
+		// base_url and api_url must name the same forge — but ONLY when both are
+		// actually set.
+		//
+		// An empty one is not a public one. ResolvedBaseURL and HostLabel are
+		// explicit that a GHE hive legitimately carries
+		// api_url: https://github.ibm.com/api/v3 with base_url: "" (pooled and
+		// placeholder GHE hives all do), and the symmetric case — a declared GHE
+		// base_url with api_url unset — is the shape of the vllm-d cluster
+		// record. Treating either silence as "public github.com" makes these two
+		// rules fire on VALID configs.
+		//
+		// That was harmless while this function only rendered a dashboard panel.
+		// It is not harmless now that RejectIdentitySet refuses writes: reading
+		// an empty api_url as a contradiction would refuse the GHE App push to
+		// every GHE hive that has not backfilled both URLs. Requiring both to be
+		// populated before comparing them is what keeps the rule true rather
+		// than merely loud. The app_id rule above still catches the incident,
+		// which is the case where BOTH are empty.
+		if gh.APIURL != "" && gh.BaseURL != "" {
+			if baseIsGHE && !apiIsGHE {
+				issues = append(issues, "base_url is "+gh.BaseURL+" but api_url is "+
+					gh.APIURL+" — base_url and api_url must name the same forge")
+			}
+			if apiIsGHE && !baseIsGHE {
+				issues = append(issues, "api_url is a GHE API URL but base_url is "+gh.BaseURL+
+					" — base_url and api_url must name the same forge")
+			}
 		}
 	}
 	return issues
+}
+
+// ErrIdentitySetMismatch is the sentinel returned by RejectIdentitySet. Callers
+// on the write path test for it with errors.Is to distinguish "this push is
+// internally inconsistent" from any other failure.
+var ErrIdentitySetMismatch = errors.New("github identity set is internally inconsistent")
+
+// RejectIdentitySet is the WRITE-PATH guard. It returns a non-nil error when
+// applying gh would leave a hive with a half-applied GitHub identity.
+//
+// It is the caller IdentitySetIssues never had. Detection alone is what let the
+// 2026-07-31 push land: the mismatch was rendered on a dashboard panel while
+// every spoke applied it field by field, adopting the GHE app_id and leaving
+// api_url empty because "empty means unchanged".
+//
+// Callers must apply NOTHING when this returns an error. Applying the
+// consistent subset is the failure mode, not the remedy.
+func RejectIdentitySet(gh GitHubConfig) error {
+	issues := IdentitySetIssues(gh)
+	if len(issues) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrIdentitySetMismatch, strings.Join(issues, "; "))
 }
 
 // displayOrEmpty renders an empty string as an explicit marker, so a report

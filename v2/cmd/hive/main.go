@@ -117,6 +117,37 @@ func agentActivityFor(mgr *agent.Manager, name string, proc *agent.AgentProcess)
 	return act
 }
 
+// prospectiveGitHubIdentity returns the GitHub identity the spoke WOULD hold
+// after adopting ghCfg, or nil when the push speaks to no identity field and
+// there is nothing to validate.
+//
+// It mirrors the adoption rules in the GitHubAppConfigCallback exactly — a
+// zero app_id and an empty app_slug both mean "not speaking to this field", and
+// the placeholder sentinel is never adopted over a real App. Mirroring rather
+// than validating ghCfg alone is what makes the check correct: the damaging
+// state is a combination of PUSHED and EXISTING fields (a GHE app_id landing
+// beside the spoke's own empty api_url), and validating the push in isolation
+// cannot see it.
+func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *hub.HeartbeatGitHubAppConfig) *config.GitHubConfig {
+	if ghCfg == nil {
+		return nil
+	}
+	touched := false
+	next := cur
+	if ghCfg.AppID != 0 && ghCfg.AppID != config.PlaceholderAppID {
+		next.AppID = ghCfg.AppID
+		touched = true
+	}
+	if ghCfg.AppSlug != "" && ghCfg.AppSlug != cur.AppSlug {
+		next.AppSlug = ghCfg.AppSlug
+		touched = true
+	}
+	if !touched {
+		return nil
+	}
+	return &next
+}
+
 func perAppIDKeyPath(appID int64) string {
 	if appID <= 0 {
 		return ""
@@ -2611,6 +2642,36 @@ func main() {
 				"has_key", ghCfg.PrivateKey != "",
 			)
 
+			// WRITE-PATH GUARD. Compute the identity this push WOULD produce and
+			// refuse the whole delivery if it is internally inconsistent.
+			//
+			// This is the guard the 2026-07-31 incident needed. That push carried
+			// the GHE app_id and slug with no api_url; the adoption below applies
+			// each field independently under an "empty means unchanged" contract,
+			// so seven public-GitHub hives took the GHE App ID, kept api_url: "",
+			// and every token request 404'd. Refusing the whole delivery leaves
+			// those hives on their previous, working identity instead of a half of
+			// two identities.
+			//
+			// Rejection is loud and repeats on every beat: the hub keeps pushing
+			// until the spoke reports back, so a silent skip would be an invisible
+			// permanent stall. There is no auto-repair here — the fix is on the
+			// hub, in clusters.json.
+			if prospective := prospectiveGitHubIdentity(cfg.GitHub, ghCfg); prospective != nil {
+				if err := config.RejectIdentitySet(*prospective); err != nil {
+					logger.Error("REFUSING hub github app config: the pushed identity set is inconsistent and would half-apply — nothing was changed",
+						"error", err,
+						"pushed_app_id", ghCfg.AppID,
+						"pushed_app_slug", ghCfg.AppSlug,
+						"current_app_id", cfg.GitHub.AppID,
+						"current_api_url", cfg.GitHub.APIURL,
+						"current_base_url", cfg.GitHub.BaseURL,
+						"remedy", "correct github_app_id/github_app_slug/github_api_url/github_base_url for this cluster on the hub",
+					)
+					return
+				}
+			}
+
 			keyPath := spokeAppKeyPath
 			// keyChanged gates dropping the cached installation token below: a
 			// token minted under the previous key is invalid the moment the key
@@ -2877,9 +2938,26 @@ func main() {
 			// means "leave mine alone" — the spoke's own default is already
 			// api.github.com, so this never clobbers a working config.
 			if pc.GitHubAPIURL != "" && cfg.GitHub.APIURL != pc.GitHubAPIURL {
-				logger.Info("adopting GitHub API URL from hub heartbeat",
-					"was", cfg.GitHub.APIURL, "now", pc.GitHubAPIURL)
-				cfg.GitHub.APIURL = pc.GitHubAPIURL
+				// WRITE-PATH GUARD, mirroring the App-config callback: an api_url
+				// that names a different forge than our app_id is the same
+				// half-applied identity arriving from the other direction. Skip
+				// only this field — the org/repos/ACMM adoption around it is
+				// unrelated and must still land.
+				prospective := cfg.GitHub
+				prospective.APIURL = pc.GitHubAPIURL
+				if err := config.RejectIdentitySet(prospective); err != nil {
+					logger.Error("REFUSING hub GitHub API URL: it does not match this hive's app_id and would half-apply an identity — api_url left unchanged",
+						"error", err,
+						"pushed_api_url", pc.GitHubAPIURL,
+						"current_api_url", cfg.GitHub.APIURL,
+						"current_app_id", cfg.GitHub.AppID,
+						"remedy", "correct github_api_url/github_app_id for this cluster on the hub",
+					)
+				} else {
+					logger.Info("adopting GitHub API URL from hub heartbeat",
+						"was", cfg.GitHub.APIURL, "now", pc.GitHubAPIURL)
+					cfg.GitHub.APIURL = pc.GitHubAPIURL
+				}
 			}
 			level := pc.ACMMLevel
 			cfg.ACMMLevel = &level
