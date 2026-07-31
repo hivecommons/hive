@@ -13473,10 +13473,63 @@ const dashboardHTML = `<!DOCTYPE html>
       var summary = bits.length
         ? '<div style="display:flex;flex-direction:column;align-items:flex-start;text-align:left;gap:1px;max-width:220px;overflow:hidden">' + bits.join('') + '</div>'
         : '<span style="color:var(--muted);font-size:0.72rem">—</span>';
+      var open = !!(_contactExpandedUsers && _contactExpandedUsers[u.github_username]);
       var btn = '<button type="button" data-contact-toggle="' + escAttr(u.github_username) + '"' +
-        ' style="margin-top:2px;padding:1px 7px;background:none;border:1px solid var(--border);border-radius:4px;' +
-        'color:var(--muted);cursor:pointer;font-size:0.65rem">Edit</button>';
+        ' id="' + contactToggleId(u.github_username) + '"' +
+        ' aria-controls="' + contactPanelId(u.github_username) + '"' +
+        ' aria-expanded="' + (open ? 'true' : 'false') + '"' +
+        ' aria-label="' + escAttr(contactToggleAriaLabel(u.github_username, open)) + '"' +
+        ' style="' + contactToggleStyle(open) + '">' + contactToggleLabel(open) + '</button>';
       return summary + btn;
+    }
+
+    /* --- The Edit/Save toggle ---
+       The button in the CONTACT column is the operator's primary affordance:
+       "Edit" while the panel is shut, "Save" while it is open. Clicking Save
+       commits every pending field and closes the panel.
+
+       Save is styled as the primary action (accent border and text) so the eye
+       lands on it; the × and the Close button inside the panel remain the
+       escape hatches, and Escape still works. Making the row button the commit
+       is what gives an explicit save point WITHOUT fighting the per-field blur
+       saves: blur keeps storing silently as the admin tabs around, and this
+       button is the only thing that closes on success. */
+
+    /* Style is derived from state in one place so the initial markup and the
+       live in-place update below can never drift apart. */
+    function contactToggleStyle(open) {
+      var color = open ? 'var(--accent)' : 'var(--muted)';
+      return 'margin-top:2px;padding:1px 7px;background:none;border:1px solid ' + color +
+        ';border-radius:4px;color:' + color + ';cursor:pointer;font-size:0.65rem' +
+        (open ? ';font-weight:600' : '');
+    }
+
+    function contactToggleLabel(open) { return open ? 'Save' : 'Edit'; }
+
+    /* The accessible name carries the username as well as the verb, because a
+       screen-reader user tabbing a table of ~90 identical "Save" buttons needs
+       to know which row they are on. */
+    function contactToggleAriaLabel(username, open) {
+      return (open ? 'Save contact details for ' : 'Edit contact details for ') + String(username || '');
+    }
+
+    function contactToggleId(username) {
+      return 'contact-toggle-' + String(username || '').replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    /* refreshContactToggleLabel re-derives the button from _contactExpandedUsers
+       and writes label, style, aria-expanded and the accessible name TOGETHER.
+       Updating the visible text without the aria state would leave a screen
+       reader announcing "Edit, collapsed" over an open editor. */
+    function refreshContactToggleLabel(username) {
+      if (!username) return;
+      var btn = document.getElementById(contactToggleId(username));
+      if (!btn) return;
+      var open = !!(_contactExpandedUsers && _contactExpandedUsers[username]);
+      btn.textContent = contactToggleLabel(open);
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.setAttribute('aria-label', contactToggleAriaLabel(username, open));
+      btn.setAttribute('style', contactToggleStyle(open));
     }
 
     // renderContactPanelRow is the expandable editor row that follows each user
@@ -13507,10 +13560,10 @@ const dashboardHTML = `<!DOCTYPE html>
               ' maxlength="' + CONTACT_MAX_NOTES + '" style="' + fld + ';resize:vertical;font-family:inherit">' + esc(u.notes || '') + '</textarea>' +
           '</div>' +
           '<div style="align-self:flex-end;display:flex;align-items:center;gap:10px;padding-bottom:4px">' +
-            '<span style="font-size:0.65rem;color:var(--muted)">Saves on blur &middot; Esc to close</span>' +
+            '<span style="font-size:0.65rem;color:var(--muted)">Save closes &middot; Esc cancels</span>' +
             '<button type="button" data-contact-close="' + user + '"' +
               ' style="padding:4px 12px;background:var(--bg);border:1px solid var(--border);border-radius:4px;' +
-              'color:var(--muted);cursor:pointer;font-size:0.7rem">Close</button>' +
+              'color:var(--muted);cursor:pointer;font-size:0.7rem">Cancel</button>' +
           '</div>' +
         '</div>' +
         /* The × sits top-right of the panel, the conventional place to look for
@@ -13557,9 +13610,7 @@ const dashboardHTML = `<!DOCTYPE html>
         var saved = await commitContactPanelEdits(username);
         if (!saved) return;
       }
-      _contactExpandedUsers[username] = false;
-      var row = document.getElementById(contactPanelId(username));
-      if (row) row.style.display = 'none';
+      setContactPanelOpen(username, false);
     }
 
     /* commitContactPanelEdits flushes every dirty field for one user through
@@ -13573,12 +13624,38 @@ const dashboardHTML = `<!DOCTYPE html>
       var keys = Object.keys(_contactDirty || {}).filter(function(k) {
         return k.indexOf(prefix) === 0;
       });
+      /* Also flush whatever is currently in the panel's inputs. The commit can
+         be triggered by a click on Save while a field still holds focus and has
+         never blurred, so its text may not be in _contactDirty yet. */
+      var panel = document.getElementById(contactPanelId(username));
+      if (panel) {
+        var live = panel.querySelectorAll('[data-contact-field]');
+        Array.prototype.forEach.call(live || [], function(el) {
+          var f = el.getAttribute('data-contact-field');
+          if (!f) return;
+          var k = prefix + f;
+          _contactDirty[k] = el.value;
+          if (keys.indexOf(k) < 0) keys.push(k);
+        });
+      }
+      /* Saves are sequential, not Promise.all: the handler is a read-modify-write
+         over one JSON file per user, so three concurrent PUTs for the same user
+         can interleave and lose a field. */
       var allOK = true;
       for (var i = 0; i < (keys || []).length; i++) {
         var k = keys[i];
         var field = k.substring(prefix.length);
+        /* Not silent: this IS the explicit commit, so a failure here is exactly
+           what the admin needs to see. */
         var ok = await saveContactField(username, field, _contactDirty[k]);
         if (ok) { delete _contactDirty[k]; } else { allOK = false; }
+      }
+      /* A field can be clean here yet still have failed earlier during a silent
+         blur-save. Surface that recorded reason rather than closing on what
+         would look like a no-op success. */
+      if (allOK && _contactLastError[username]) {
+        hiveToast('Could not save ' + username + ': ' + _contactLastError[username], 'error');
+        return false;
       }
       return allOK;
     }
@@ -13662,26 +13739,62 @@ const dashboardHTML = `<!DOCTYPE html>
         el.addEventListener('focus', markContactEditing);
         // Save on blur so an admin can tab between fields and type freely
         // without a request per keystroke.
+        //
+        // Blur-saves are SILENT: no toast on success, and on failure the value
+        // stays dirty so the field keeps the typed text and the Save button
+        // keeps reading "Save". Blur fires constantly (tabbing between the
+        // three fields, clicking the Save button itself), so a toast per blur
+        // would be noise, and a blur-triggered error would fire while the
+        // admin is mid-sentence in the next field. The Save button is the
+        // explicit commit point where failures are reported — see
+        // commitContactPanelEdits.
         el.addEventListener('blur', function() {
           markContactEditing();
-          // Clear dirty only after handing the value to the save path, so
-          // there is no window where the value is neither dirty nor saved.
+          // Clear dirty only once the save has actually landed, so there is no
+          // window where the value is neither dirty nor stored. A rejected
+          // blur-save therefore leaves the panel dirty and Save still armed.
           var pending = el.value;
-          saveContactField(user, field, pending);
-          delete _contactDirty[key];
+          saveContactField(user, field, pending, {silent: true}).then(function(ok) {
+            if (ok && _contactDirty[key] === pending) delete _contactDirty[key];
+            refreshContactToggleLabel(user);
+          });
         });
       });
     }
 
-    /* The Edit button toggles. Closing goes through closeContactPanel so the
-       unsaved-changes warning applies however the panel is dismissed; opening
-       stays a plain display flip, which is what keeps focus and caret intact. */
-    function toggleContactPanel(username) {
+    /* The row button is stateful: "Edit" when shut, "Save" when open.
+
+       Shut  -> open the panel (a plain display flip, which is what keeps focus
+                and caret intact) and relabel to Save.
+       Open  -> this IS the Save action: commit every pending field, and close
+                only if the commit succeeded. A failure keeps the panel open,
+                keeps the label on Save, and lets the error toast stand — with
+                a visible Save button, a false success is the worst outcome, so
+                nothing here closes on an unverified save.
+
+       Note this deliberately does NOT go through closeContactPanel: that path
+       is for the escape hatches (×, Close, Escape), where the right question is
+       "you have unsaved changes, save them?". Pressing Save has already
+       answered that question. */
+    async function toggleContactPanel(username) {
       if (!username) return;
-      if (_contactExpandedUsers[username]) { closeContactPanel(username); return; }
-      _contactExpandedUsers[username] = true;
+      if (_contactExpandedUsers[username]) {
+        var saved = await commitContactPanelEdits(username);
+        if (!saved) return;
+        setContactPanelOpen(username, false);
+        return;
+      }
+      setContactPanelOpen(username, true);
+    }
+
+    /* setContactPanelOpen is the ONLY place panel visibility changes, so the
+       row/panel display and the button's label + aria state can never fall out
+       of step with _contactExpandedUsers. */
+    function setContactPanelOpen(username, open) {
+      _contactExpandedUsers[username] = !!open;
       var row = document.getElementById(contactPanelId(username));
-      if (row) row.style.display = '';
+      if (row) row.style.display = open ? '' : 'none';
+      refreshContactToggleLabel(username);
     }
 
     // Last value saved per user+field, so a blur that changed nothing (tabbing
@@ -13690,7 +13803,9 @@ const dashboardHTML = `<!DOCTYPE html>
 
     // Always returns a Promise<boolean> so callers can sequence on the outcome;
     // a no-op resolves true because "nothing to do" is not a failure.
-    function saveContactField(username, field, value) {
+    // opts.silent suppresses the failure toast, for blur-saves where the Save
+    // button is the reporting point. The boolean result is unaffected.
+    function saveContactField(username, field, value, opts) {
       if (!username || !field) return Promise.resolve(true);
       var key = username + '::' + field;
       var current = _allUsers ? (_allUsers.find(function(x) { return x.github_username === username; }) || {}) : {};
@@ -13707,7 +13822,7 @@ const dashboardHTML = `<!DOCTYPE html>
       // Without this the cache claims the value was stored, so the
       // next-equals-previous short-circuit above would skip the retry of the very
       // same value — the edit could never be saved again without a reload.
-      return updateUser(username, payload).then(function(ok) {
+      return updateUser(username, payload, opts).then(function(ok) {
         if (!ok) {
           _contactLastSaved[key] = previous;
           if (current) current[field] = previous;
@@ -13846,7 +13961,21 @@ const dashboardHTML = `<!DOCTYPE html>
        a real proxy/server message, short enough not to fill the screen. */
     var ERROR_TEXT_MAX_CHARS = 200;
 
-    async function updateUser(username, updates) {
+    /* Reason for the most recent failed save, per user. A silent blur-save
+       records the cause here instead of toasting it, so the Save button can
+       report the REAL reason rather than a generic "failed" when the admin
+       finally commits. Cleared on any success for that user. */
+    var _contactLastError = {};
+
+    /* opts.silent suppresses the toast (blur-saves); the failure is still
+       recorded in _contactLastError and still returns false. */
+    async function updateUser(username, updates, opts) {
+      var silent = !!(opts && opts.silent);
+      function fail(reason) {
+        _contactLastError[username] = reason;
+        if (!silent) hiveToast('Could not save ' + username + ': ' + reason, 'error');
+        return false;
+      }
       try {
         var resp = await fetch('/api/saas/admin/users/' + encodeURIComponent(username), {
           method: 'PUT',
@@ -13854,15 +13983,13 @@ const dashboardHTML = `<!DOCTYPE html>
           body: JSON.stringify(updates)
         });
         if (!resp.ok) {
-          hiveToast('Could not save ' + username + ': ' +
-            await readErrorMessage(resp, 'update failed'), 'error');
-          return false;
+          return fail(await readErrorMessage(resp, 'update failed'));
         }
+        delete _contactLastError[username];
         loadAdminUsers();
         return true;
       } catch(e) {
-        hiveToast('Could not save ' + username + ': ' + e.message, 'error');
-        return false;
+        return fail(e.message);
       }
     }
 

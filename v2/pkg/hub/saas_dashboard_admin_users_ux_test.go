@@ -152,6 +152,144 @@ func TestDashboardContactEditorCloseAffordances(t *testing.T) {
 	}
 }
 
+// TestDashboardContactToggleIsStateful asserts the row button reads "Edit" when
+// the panel is shut and "Save" when it is open. Before this it always read
+// "Edit", so an open editor offered no visible commit affordance at all.
+func TestDashboardContactToggleIsStateful(t *testing.T) {
+	html := dashScript(t)
+
+	for _, want := range []string{
+		"function contactToggleLabel(",
+		"function contactToggleStyle(",
+		"function contactToggleAriaLabel(",
+		"function contactToggleId(",
+		"function refreshContactToggleLabel(",
+		"function setContactPanelOpen(",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the stateful Edit/Save toggle is missing: %s", want)
+		}
+	}
+
+	// The label is derived from state in ONE place, so the initial markup and
+	// the live in-place update cannot drift into showing different verbs.
+	if !strings.Contains(html, `return open ? 'Save' : 'Edit';`) {
+		t.Error("the toggle must read Save when open and Edit when collapsed")
+	}
+}
+
+// TestDashboardContactToggleUpdatesAriaWithLabel is the accessibility half: a
+// screen reader must get the state change too, not just sighted users. Updating
+// the visible text alone would leave it announcing "Edit, collapsed" over an
+// open editor.
+func TestDashboardContactToggleUpdatesAriaWithLabel(t *testing.T) {
+	html := dashScript(t)
+
+	idx := strings.Index(html, "function refreshContactToggleLabel(")
+	if idx < 0 {
+		t.Fatal("refreshContactToggleLabel is missing")
+	}
+	end := strings.Index(html[idx:], "\n    }")
+	if end < 0 {
+		t.Fatal("could not delimit refreshContactToggleLabel")
+	}
+	body := html[idx : idx+end]
+
+	for _, want := range []string{
+		"btn.textContent = contactToggleLabel(open);",
+		`btn.setAttribute('aria-expanded'`,
+		`btn.setAttribute('aria-label', contactToggleAriaLabel(username, open));`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the toggle must update label and aria state together; missing: %s", want)
+		}
+	}
+
+	// The initial markup must carry the same attributes, or the very first
+	// render is inaccessible until something happens to refresh it.
+	for _, want := range []string{
+		`' aria-controls="' + contactPanelId(u.github_username) + '"'`,
+		`' aria-expanded="' + (open ? 'true' : 'false') + '"'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the toggle's initial markup is missing aria wiring: %s", want)
+		}
+	}
+
+	// The accessible name carries the username: a screen-reader user tabbing a
+	// table of ~90 identical "Save" buttons needs to know which row they are on.
+	if !strings.Contains(html, "'Save contact details for '") {
+		t.Error("the accessible name must identify which user the button acts on")
+	}
+}
+
+// TestDashboardContactSaveCommitsAndCloses asserts pressing Save commits and
+// closes, and — critically — does NOT close when the save failed. With a visible
+// Save button a false success is the worst outcome, especially now that
+// handleAdminUpdateUser can legitimately fail on a PVC write.
+func TestDashboardContactSaveCommitsAndCloses(t *testing.T) {
+	html := dashScript(t)
+
+	idx := strings.Index(html, "async function toggleContactPanel(")
+	if idx < 0 {
+		t.Fatal("toggleContactPanel is missing")
+	}
+	end := strings.Index(html[idx:], "\n    }")
+	if end < 0 {
+		t.Fatal("could not delimit toggleContactPanel")
+	}
+	body := html[idx : idx+end]
+
+	if !strings.Contains(body, "commitContactPanelEdits(username)") {
+		t.Error("pressing Save must commit the pending fields")
+	}
+	// The guard clause is the whole point: a failed commit returns before the
+	// panel is closed, so the typed text and the error stay on screen.
+	if !strings.Contains(body, "if (!saved) return;") {
+		t.Error("a failed save must not close the panel or revert the label")
+	}
+	if !strings.Contains(body, "setContactPanelOpen(username, false);") {
+		t.Error("a successful save must close the panel")
+	}
+}
+
+// TestDashboardBlurSavesAreSilent reconciles per-field blur saves with the
+// explicit Save button: blur must keep storing quietly while Save is the thing
+// that reports failures and closes. A toast per blur would fire while the admin
+// is mid-sentence in the next field.
+func TestDashboardBlurSavesAreSilent(t *testing.T) {
+	html := dashScript(t)
+
+	if !strings.Contains(html, "saveContactField(user, field, pending, {silent: true})") {
+		t.Error("blur-saves must be silent; the Save button is the reporting point")
+	}
+
+	// A silent failure must still be RECORDED, or pressing Save afterwards would
+	// close on what looks like a no-op success and lose the real reason.
+	if !strings.Contains(html, "_contactLastError[username] = reason;") {
+		t.Error("a silent save failure must still record its cause")
+	}
+	cIdx := strings.Index(html, "async function commitContactPanelEdits(")
+	if cIdx < 0 {
+		t.Fatal("commitContactPanelEdits is missing")
+	}
+	cEnd := strings.Index(html[cIdx:], "\n    }")
+	cBody := html[cIdx : cIdx+cEnd]
+	if !strings.Contains(cBody, "_contactLastError[username]") {
+		t.Error("Save must surface a reason recorded by an earlier silent blur-save")
+	}
+	// Clicking Save while a field still holds focus means its text may never
+	// have blurred, so the commit must read the live inputs too.
+	if !strings.Contains(cBody, "[data-contact-field]") {
+		t.Error("the commit must flush the panel's live input values")
+	}
+	// Per-user saves are a read-modify-write over one JSON file; concurrent PUTs
+	// for the same user can interleave and lose a field.
+	if !strings.Contains(cBody, "await saveContactField(") {
+		t.Error("field saves must be sequential, not concurrent")
+	}
+}
+
 // TestDashboardContactEditorWarnsBeforeDiscarding asserts closing with typed but
 // unsaved text prompts rather than dropping it. The fields save on blur, so
 // unblurred text exists ONLY in the DOM node the close is about to hide.
