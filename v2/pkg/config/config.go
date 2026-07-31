@@ -2717,27 +2717,58 @@ func (c *Config) saveLocked() error {
 		}
 	}
 
-	// Write a rolling backup to the PVC. This is NOT the primary config —
-	// it exists for disaster recovery (e.g. ConfigMap deleted in K8s, or
-	// Watchtower wiping a bind mount in Docker). The entrypoint determines
-	// which source is authoritative based on the runtime environment.
-	backupPath := "/data/hive.yaml.bak"
-	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
-		// Common cause: init container created .bak as root, runtime user can't overwrite.
-		// Remove and retry so runtime state is not silently lost.
-		os.Remove(backupPath)
-		if retryErr := os.WriteFile(backupPath, data, 0o644); retryErr != nil {
-			log.Printf("[config] warning: failed to write PVC backup to %s (even after remove): %v", backupPath, retryErr)
+	// Persist the runtime config to the PVC. In K8s this is a recovery copy
+	// (the ConfigMap seed plus the overlay is authoritative); in Docker/LXC
+	// it IS the boot-time source of truth, since there is no ConfigMap and
+	// no overlay there. The entrypoint decides which applies.
+	//
+	// Always written under the new name. The legacy file is never written,
+	// renamed or removed here — see RuntimeConfigFileLegacy.
+	runtimePath := RuntimeConfigFile
+	if err := os.WriteFile(runtimePath, data, 0o644); err != nil {
+		// Common cause: init container created the file as root, runtime user
+		// can't overwrite. Remove and retry so runtime state is not silently lost.
+		os.Remove(runtimePath)
+		if retryErr := os.WriteFile(runtimePath, data, 0o644); retryErr != nil {
+			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
 		} else {
-			log.Printf("[config] PVC backup written to %s (recovered from permission error)", backupPath)
+			log.Printf("[config] PVC runtime config written to %s (recovered from permission error)", runtimePath)
 		}
 	} else {
-		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupPath)
+		log.Printf("[config] PVC runtime config written to %s", runtimePath)
 	}
 
 	c.saveDashboardOverlay()
 	return nil
 }
+
+// RuntimeConfigFile is where Save() persists the full runtime config on the
+// PVC. Its role differs by environment, which is exactly why the old
+// hive.yaml.bak name was misleading enough to cost debugging time:
+//
+//   - Kubernetes: a post-merge SNAPSHOT. The entrypoint writes it after
+//     merging the dashboard overlay over the ConfigMap seed, and reads it
+//     back only in the disaster fallback (ConfigMap missing or empty).
+//   - Docker/LXC: a live boot INPUT and the source of truth. There is no
+//     ConfigMap and no overlay, so the entrypoint restores this file over
+//     the config path on every boot. It is the only reason a dashboard save
+//     survives a container recreation — see saveDashboardOverlay, which
+//     early-returns outside Kubernetes for that reason.
+//
+// ".runtime" is accurate for both; ".bak" implied "the restorable backup",
+// which is true only of the Kubernetes half.
+const RuntimeConfigFile = "/data/hive.yaml.runtime"
+
+// RuntimeConfigFileLegacy is the pre-rename name of RuntimeConfigFile.
+//
+// It is READ as a fallback and never written, renamed or removed: ~51 live
+// hives carry only this file, and on Docker/LXC it is the single copy of
+// their live configuration. Mutating it at boot could lose owner
+// customisations with no warning, so the migration is copy-forward only —
+// readers prefer RuntimeConfigFile and fall back to this one.
+//
+// Removable one release after every live hive has written the new name.
+const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 
 // DashboardOverlayFile is where Save() persists a secret-free copy of the
 // dashboard-edited config on the PVC in Kubernetes mode. The copy-config
@@ -2782,7 +2813,7 @@ func IsKubernetesPod() bool {
 // this atomic write prevents.
 func (c *Config) saveDashboardOverlay() {
 	if !IsKubernetesPod() {
-		// Docker/LXC mode: /data/hive.yaml.bak is already the boot-time
+		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
 		return

@@ -91,16 +91,41 @@ rational response to having one road, not duplicated effort.
 > and only ever *adds*, so a deleted agent reappears on the next config reload.
 > Tracked in #2361.
 
-## `hive.yaml.bak` is a backup, not an input
+## `hive.yaml.runtime` — a snapshot on Kubernetes, an input on Docker/LXC
 
-Despite the name suggesting otherwise, and despite what some code comments and
-the DR runbook currently say, `/data/hive.yaml.bak` is **written** by the
-entrypoint after the merge (`entrypoint.sh:150`) and is **read only** when the
-ConfigMap is missing or empty (`entrypoint.sh:152-161`), or in Docker mode.
+This file was called `hive.yaml.bak` until the rename. The old name implied
+"the restorable backup", which is true of only half its behaviour, and the
+ambiguity cost real debugging time.
 
-Three older hives run a `copy-config` init container variant that *does*
-restore from `.bak` first. That variant is not what new hives get. The DR
-documentation is being corrected separately.
+**On Kubernetes it is a snapshot.** The entrypoint *writes* it after the merge
+and *reads* it only when the ConfigMap is missing or empty — the disaster
+fallback. A minority of older hives run a `copy-config` init container variant
+that does restore from it first; that variant is not what new hives get.
+
+**On Docker/LXC it is a live boot input, and the source of truth.** There is no
+ConfigMap and no overlay in that mode, so the entrypoint restores this file over
+the config path on every boot (or points `HIVE_CONFIG` straight at it when the
+config path is read-only). It is also the only reason a dashboard save survives
+a container recreation: `Config.saveDashboardOverlay` deliberately early-returns
+outside Kubernetes because this file already plays that role.
+
+> An earlier version of this section was headed "`hive.yaml.bak` is a backup,
+> not an input" and mentioned Docker only in passing. That was wrong for every
+> Docker/LXC hive, where the file is precisely an input.
+
+### Migration
+
+The rename is **copy-forward, never destructive**. Writers emit
+`/data/hive.yaml.runtime`; readers prefer it and fall back to
+`/data/hive.yaml.bak` when it is absent. Nothing renames or deletes the legacy
+file on a PVC — on Docker/LXC it is the single copy of the live config, so
+mutating it at boot could lose owner customisations with no warning.
+
+A hive booting new code with only the legacy file present therefore boots
+normally from that file, and gains the new name on the next config save (on
+Docker/LXC, the entrypoint also copies it forward immediately). Backups capture
+both names for the same reason. The legacy fallback can be removed one release
+after every live hive has written the new name.
 
 ## Reading the provenance report
 

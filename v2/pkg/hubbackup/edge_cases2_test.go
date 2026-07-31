@@ -21,7 +21,7 @@ func TestRunWithSpokesAndSecretsPopulatesArchive(t *testing.T) {
 	fakeKubectl(t, map[string]string{
 		"get secret": secretJSON,
 		"get pods":   "spoke-pod-1",
-		"exec":       spokeStream(map[string]string{"hive.yaml.bak": "project: acme"}),
+		"exec":       spokeStream(map[string]string{"hive.yaml.runtime": "project: acme"}),
 	})
 
 	out := filepath.Join(t.TempDir(), "b.enc")
@@ -45,7 +45,7 @@ func TestRunWithSpokesAndSecretsPopulatesArchive(t *testing.T) {
 	if _, err := Extract(decodeTestKey(t), sealed, dest); err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dest, "spokes", "hosted-x", "hive.yaml.bak"))
+	got, err := os.ReadFile(filepath.Join(dest, "spokes", "hosted-x", "hive.yaml.runtime"))
 	if err != nil {
 		t.Fatalf("spoke config not in archive: %v", err)
 	}

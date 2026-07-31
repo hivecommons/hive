@@ -164,7 +164,7 @@ func TestReadCappedAllowsFileAtExactCap(t *testing.T) {
 // backup missing the very thing this package exists to capture.
 func TestBuildRecordsUnreadableBeadsDir(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "live: config\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: config\n")
 	// No beads dir at all.
 	t.Setenv(EnvDataDir, dir)
 
@@ -189,7 +189,7 @@ func TestBuildRecordsUnreadableBeadsDir(t *testing.T) {
 // ignored rather than treated as one.
 func TestBuildIgnoresNonDirEntriesInBeads(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "live: config\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: config\n")
 	mustWrite(t, filepath.Join(dir, beadsSubdir, "stray.txt"), "not an agent dir")
 	mustWrite(t, filepath.Join(dir, beadsSubdir, "scanner", "b1.json"), `{"id":1}`)
 	t.Setenv(EnvDataDir, dir)
@@ -207,7 +207,7 @@ func TestBuildIgnoresNonDirEntriesInBeads(t *testing.T) {
 // beyond the original five must still get a complete ledger.
 func TestBuildDiscoversArbitraryAgentDirs(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "live: config\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: config\n")
 	agents := []string{"scanner", "reviewer", "feature", "outreach", "custom-7", "zz-extra"}
 	for _, a := range agents {
 		mustWrite(t, filepath.Join(dir, beadsSubdir, a, "b.json"), `{"a":1}`)
@@ -241,7 +241,7 @@ func TestBuildDiscoversArbitraryAgentDirs(t *testing.T) {
 // deterministic order.
 func TestBuildCapturesAllAppKeysDeterministically(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "live: config\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: config\n")
 	mustWrite(t, filepath.Join(dir, "gh-app-key-2.pem"), "KEY2")
 	mustWrite(t, filepath.Join(dir, "gh-app-key-1.pem"), "KEY1")
 	t.Setenv(EnvDataDir, dir)
@@ -272,7 +272,7 @@ func TestBuildCapturesAllAppKeysDeterministically(t *testing.T) {
 // carrying App private keys may ever be produced.
 func TestBuildRefusesNilKey(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "x")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "x")
 	t.Setenv(EnvDataDir, dir)
 
 	_, err := Build(nil, "hive-x", testLogger())
@@ -297,7 +297,7 @@ func TestBuildRefusesNilKey(t *testing.T) {
 // them apart.
 func TestBuildManifestIdentifiesHive(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "live: config\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: config\n")
 	t.Setenv(EnvDataDir, dir)
 
 	res, err := Build(testKey(), "hosted-xyz", testLogger())
@@ -357,12 +357,12 @@ func TestBuildArchiveExtractsThroughSharedPath(t *testing.T) {
 	// the variant-A/B hives. The fixture gives them a shared marker plus a
 	// distinguishing line, so this asserts the owner's config came back AND
 	// that the two files were not conflated.
-	gotBak, err := os.ReadFile(filepath.Join(dest, spokePrefix, configBackupFile))
+	gotBak, err := os.ReadFile(filepath.Join(dest, spokePrefix, configRuntimeFile))
 	if err != nil {
 		t.Fatalf("post-merge snapshot missing from the restore: %v", err)
 	}
 	if !strings.Contains(string(gotBak), "owner-customised") {
-		t.Fatalf("restored the WRONG config for %s: %q", configBackupFile, gotBak)
+		t.Fatalf("restored the WRONG config for %s: %q", configRuntimeFile, gotBak)
 	}
 	gotOverlay, err := os.ReadFile(filepath.Join(dest, spokePrefix, configOverlayFile))
 	if err != nil {
@@ -381,7 +381,7 @@ func TestBuildArchiveExtractsThroughSharedPath(t *testing.T) {
 // backup — the owner still wants the rest of their hive.
 func TestBuildRecordsUnreadableAppKey(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "live: config\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: config\n")
 	keyPath := filepath.Join(dir, "gh-app-key-1.pem")
 	mustWrite(t, keyPath, "SECRET")
 	if err := os.Chmod(keyPath, 0o000); err != nil {
@@ -436,7 +436,7 @@ func TestArchiveSizeCapIsEnforcedByTheSharedBuilder(t *testing.T) {
 // the cap and confirming a large spoke is refused.
 func TestBuildAppliesTheArchiveCap(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, configBackupFile), "live: config\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: config\n")
 	// Highly incompressible content so the sealed archive really exceeds a
 	// small cap rather than gzipping down below it.
 	big := make([]byte, 2<<20)

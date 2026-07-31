@@ -368,7 +368,7 @@ flowchart TB
 | Store | Path | Role |
 |-------|------|------|
 | Beads ledger | `/data/beads/<agent>/beads.json` | Per-agent work items (source of truth for tasks) |
-| Running config | `/data/hive.yaml.dashboard` (overlay) + `/data/hive.yaml.bak`; seed `/etc/hive/hive.yaml` | Authoritative runtime config lives on the PVC |
+| Running config | `/data/hive.yaml.dashboard` (overlay) + `/data/hive.yaml.runtime`; seed `/etc/hive/hive.yaml` | Authoritative runtime config lives on the PVC |
 | Pipeline outputs | `/var/run/hive-metrics/{actionable,merge-eligible,pipeline-run}.json` | Deterministic pre-kick artifacts |
 | Knowledge graph | `/data/graph/knowledge.db` + `/data/vaults/` | Facts, primers, inception scaffolds |
 | Secrets | `/secrets/gh-app-key.pem`, `/data/gh-user-token`, `/data/proxy-ca.pem` | GitHub App key, user token, MITM CA |

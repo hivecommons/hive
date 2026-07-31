@@ -15,7 +15,7 @@ import (
 // between the two.
 
 // TestOverlayIsCaptured is the regression. Before this change, spokeFiles and
-// includedRootFiles listed only hive.yaml.bak.
+// includedRootFiles listed only the runtime config (then named hive.yaml.bak).
 func TestOverlayIsCaptured(t *testing.T) {
 	files, _, _ := buildTestBackup(t)
 
@@ -35,13 +35,13 @@ func TestOverlayIsCaptured(t *testing.T) {
 func TestBakStillCapturedAlongsideOverlay(t *testing.T) {
 	files, _, _ := buildTestBackup(t)
 
-	bak, ok := files["spoke/hive.yaml.bak"]
+	bak, ok := files["spoke/"+configRuntimeFile]
 	if !ok {
-		t.Fatal("hive.yaml.bak missing from archive — it is the disaster-fallback " +
-			"source and the boot source on variant-A/B hives")
+		t.Fatalf("%s missing from archive — it is the disaster-fallback source, "+
+			"and the boot source on Docker/LXC and variant-A/B hives", configRuntimeFile)
 	}
 	if !strings.Contains(bak, "post-merge-snapshot") {
-		t.Errorf(".bak content wrong: %q", bak)
+		t.Errorf("%s content wrong: %q", configRuntimeFile, bak)
 	}
 }
 
@@ -53,7 +53,7 @@ func TestOverlayAndBakAreBothCapturedWhenTheyDiffer(t *testing.T) {
 	files, _, _ := buildTestBackup(t)
 
 	overlay, okOverlay := files["spoke/hive.yaml.dashboard"]
-	bak, okBak := files["spoke/hive.yaml.bak"]
+	bak, okBak := files["spoke/"+configRuntimeFile]
 	if !okOverlay || !okBak {
 		t.Fatalf("both config files must be captured; overlay=%v bak=%v", okOverlay, okBak)
 	}

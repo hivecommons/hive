@@ -610,15 +610,24 @@ func main() {
 	cfg.HiveID = loadOrGenerateHiveID(logger)
 	os.Setenv("HIVE_ID", cfg.HiveID)
 
-	// Surface config provenance: when the dashboard-save backup exists, init
+	// Surface config provenance: when the persisted runtime config exists, init
 	// containers restore it over the ConfigMap seed on restart, so edits made
-	// only to the seed (or only to the live file) silently lose to the backup.
-	bakPath := *configPath + ".bak"
-	if _, statErr := os.Stat(bakPath); statErr == nil {
-		logger.Info("config backup present — restored over the seed on pod restart; fixes must land in the live config so the next save refreshes it",
-			"path", bakPath,
-			"github_installation_id", cfg.GitHub.InstallationID,
-		)
+	// only to the seed (or only to the live file) silently lose to it.
+	//
+	// Checks the legacy name too: during the migration a hive may still carry
+	// only /data/hive.yaml.bak, and the whole point of this log line is to warn
+	// that such a file is shadowing the seed. Note this path was previously
+	// built as *configPath + ".bak", which only ever resolved to the real
+	// location when HIVE_CONFIG happened to live under /data — a literal grep
+	// for "hive.yaml.bak" could not find it either.
+	for _, runtimePath := range []string{config.RuntimeConfigFile, config.RuntimeConfigFileLegacy} {
+		if _, statErr := os.Stat(runtimePath); statErr == nil {
+			logger.Info("persisted runtime config present — restored over the seed on pod restart; fixes must land in the live config so the next save refreshes it",
+				"path", runtimePath,
+				"github_installation_id", cfg.GitHub.InstallationID,
+			)
+			break
+		}
 	}
 
 	logger.Info("hive starting",

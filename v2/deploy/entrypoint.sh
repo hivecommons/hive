@@ -14,10 +14,42 @@ export HIVE_STATIC_DIR="${HIVE_STATIC_DIR:-/opt/hive/proxy/public}"
 # recreations, so we keep a rolling backup there.
 #
 # In Kubernetes, the ConfigMap is the source of truth — admins update it to
-# change settings like acmm_level, is_public, etc. The PVC backup is only
+# change settings like acmm_level, is_public, etc. The PVC copy is only
 # used for disaster recovery if the ConfigMap volume is missing or empty.
+#
+# In Docker/LXC there is no ConfigMap and no overlay: the PVC copy IS the
+# boot-time source of truth, restored over the config path (or read directly
+# when that path is read-only) on every boot. See the Docker branch below.
+#
+# ── Naming: hive.yaml.runtime, formerly hive.yaml.bak ─────────────────
+# The old .bak name implied "the restorable backup", which is only half
+# true and cost real debugging time: on K8s it is a post-merge SNAPSHOT
+# written after the merge, while on Docker/LXC it is a live boot INPUT.
+# ".runtime" is honest for both — it is the runtime config as this hive
+# last had it.
+#
+# MIGRATION (one release): ~51 live hives have only the old-named file on
+# their PVC. We WRITE the new name and READ the old one when the new is
+# absent. We deliberately do NOT rename on the PVC: on Docker/LXC that
+# file is the only copy of the live config, and mutating it at boot risks
+# losing owner customisations with no warning. The old name is picked up
+# read-only until the first save writes the new one, after which both
+# exist and the new one wins.
 HIVE_CONFIG_PATH="${HIVE_CONFIG:-/etc/hive/hive.yaml}"
-HIVE_CONFIG_BACKUP="/data/hive.yaml.bak"
+HIVE_CONFIG_RUNTIME="/data/hive.yaml.runtime"
+HIVE_CONFIG_RUNTIME_LEGACY="/data/hive.yaml.bak"
+
+# hive_runtime_config_read echoes the path to read the persisted runtime
+# config from: the new name when it is present and non-empty, else the
+# legacy name when that is, else empty. Read-only — it never creates,
+# renames or removes anything on the PVC.
+hive_runtime_config_read() {
+  if [ -f "$HIVE_CONFIG_RUNTIME" ] && [ -s "$HIVE_CONFIG_RUNTIME" ]; then
+    echo "$HIVE_CONFIG_RUNTIME"
+  elif [ -f "$HIVE_CONFIG_RUNTIME_LEGACY" ] && [ -s "$HIVE_CONFIG_RUNTIME_LEGACY" ]; then
+    echo "$HIVE_CONFIG_RUNTIME_LEGACY"
+  fi
+}
 
 # Detect Kubernetes vs Docker environment
 IS_KUBERNETES=false
@@ -145,46 +177,70 @@ PYEOF
         echo "[entrypoint] K8s mode — dashboard overlay invalid, using ConfigMap seed as-is"
       fi
     fi
-    # Write the (merged) config as the disaster-recovery backup.
-    cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP" 2>/dev/null || true
-    echo "[entrypoint] K8s mode — ConfigMap is the seed, backup written to $HIVE_CONFIG_BACKUP"
-  elif [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
-    # ConfigMap is missing or empty but a PVC backup exists — recover
-    if cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH" 2>/dev/null; then
-      echo "[entrypoint] K8s mode — ConfigMap missing/empty, RECOVERED from PVC backup"
-    else
-      export HIVE_CONFIG="$HIVE_CONFIG_BACKUP"
-      echo "[entrypoint] K8s mode — ConfigMap missing/empty and read-only, using PVC backup directly"
-    fi
+    # Write the (merged) config as the disaster-recovery snapshot. Always
+    # under the new name; the legacy file is left untouched on the PVC.
+    cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" 2>/dev/null || true
+    echo "[entrypoint] K8s mode — ConfigMap is the seed, runtime config written to $HIVE_CONFIG_RUNTIME"
   else
-    echo "[entrypoint] ERROR: No ConfigMap at $HIVE_CONFIG_PATH and no PVC backup at $HIVE_CONFIG_BACKUP."
-    echo "[entrypoint] Ensure the hive ConfigMap is created before deploying."
-    exit 1
+    # ConfigMap is missing or empty. Fall back to the persisted runtime
+    # config, preferring the new name and accepting the legacy one so a
+    # hive that has not yet written the new file still recovers.
+    HIVE_CONFIG_RECOVER="$(hive_runtime_config_read)"
+    if [ -n "$HIVE_CONFIG_RECOVER" ]; then
+      if cp "$HIVE_CONFIG_RECOVER" "$HIVE_CONFIG_PATH" 2>/dev/null; then
+        echo "[entrypoint] K8s mode — ConfigMap missing/empty, RECOVERED from $HIVE_CONFIG_RECOVER"
+      else
+        export HIVE_CONFIG="$HIVE_CONFIG_RECOVER"
+        echo "[entrypoint] K8s mode — ConfigMap missing/empty and read-only, using $HIVE_CONFIG_RECOVER directly"
+      fi
+    else
+      echo "[entrypoint] ERROR: No ConfigMap at $HIVE_CONFIG_PATH and no PVC runtime config at $HIVE_CONFIG_RUNTIME (or legacy $HIVE_CONFIG_RUNTIME_LEGACY)."
+      echo "[entrypoint] Ensure the hive ConfigMap is created before deploying."
+      exit 1
+    fi
   fi
 else
-  # ── Docker mode: PVC backup is the source of truth ─────────────────
-  if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ ! -f "$HIVE_CONFIG_BACKUP" ]; then
-    # First boot: config exists but no PVC backup yet — seed the backup
-    cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_BACKUP"
-    echo "[entrypoint] First boot — config seeded to PVC: $HIVE_CONFIG_BACKUP"
-  elif [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
-    # PVC backup is the source of truth (updated by Save()).
+  # ── Docker mode: the PVC runtime config is the source of truth ─────
+  # Unlike K8s there is no ConfigMap and no overlay here, so this file is a
+  # boot INPUT, not a snapshot: it is restored over the config path (or read
+  # directly when that path is read-only) on every boot, and it is the only
+  # thing that makes a dashboard save survive a container recreation.
+  #
+  # During the migration a hive may still have only the legacy name. We read
+  # whichever exists (new preferred) and always WRITE the new one, so the
+  # first boot on new code seeds hive.yaml.runtime from the legacy content
+  # without touching the legacy file itself.
+  HIVE_CONFIG_SOURCE="$(hive_runtime_config_read)"
+  if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -z "$HIVE_CONFIG_SOURCE" ]; then
+    # First boot: config exists but no PVC runtime config yet — seed it
+    cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME"
+    echo "[entrypoint] First boot — config seeded to PVC: $HIVE_CONFIG_RUNTIME"
+  elif [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ] && [ -n "$HIVE_CONFIG_SOURCE" ]; then
+    # The PVC runtime config is the source of truth (updated by Save()).
     # Try to copy it over the config path; if read-only (Docker bind mount),
-    # override HIVE_CONFIG so the Go binary reads from the backup directly.
-    if cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH" 2>/dev/null; then
-      echo "[entrypoint] PVC backup restored to config path"
+    # override HIVE_CONFIG so the Go binary reads from the PVC directly.
+    if cp "$HIVE_CONFIG_SOURCE" "$HIVE_CONFIG_PATH" 2>/dev/null; then
+      echo "[entrypoint] PVC runtime config restored to config path (from $HIVE_CONFIG_SOURCE)"
     else
-      export HIVE_CONFIG="$HIVE_CONFIG_BACKUP"
-      echo "[entrypoint] Config path is read-only — using PVC backup directly"
+      export HIVE_CONFIG="$HIVE_CONFIG_SOURCE"
+      echo "[entrypoint] Config path is read-only — using $HIVE_CONFIG_SOURCE directly"
     fi
-  elif [ -f "$HIVE_CONFIG_PATH" ] && [ ! -s "$HIVE_CONFIG_PATH" ] && [ -f "$HIVE_CONFIG_BACKUP" ] && [ -s "$HIVE_CONFIG_BACKUP" ]; then
-    # Config was wiped to 0 bytes (Watchtower recreation) but backup exists — restore
-    cp "$HIVE_CONFIG_BACKUP" "$HIVE_CONFIG_PATH"
-    echo "[entrypoint] RECOVERED: $HIVE_CONFIG_PATH was empty (0 bytes), restored from $HIVE_CONFIG_BACKUP"
+    # Migration: if we booted from the legacy name, also seed the new name so
+    # the next boot finds it. Copy, never rename — the legacy file stays put
+    # as the untouched fallback until Save() takes over writing the new one.
+    if [ "$HIVE_CONFIG_SOURCE" = "$HIVE_CONFIG_RUNTIME_LEGACY" ]; then
+      if cp "$HIVE_CONFIG_RUNTIME_LEGACY" "$HIVE_CONFIG_RUNTIME" 2>/dev/null; then
+        echo "[entrypoint] Migration — seeded $HIVE_CONFIG_RUNTIME from legacy $HIVE_CONFIG_RUNTIME_LEGACY (legacy left in place)"
+      fi
+    fi
+  elif [ -f "$HIVE_CONFIG_PATH" ] && [ ! -s "$HIVE_CONFIG_PATH" ] && [ -n "$HIVE_CONFIG_SOURCE" ]; then
+    # Config was wiped to 0 bytes (Watchtower recreation) but the PVC copy exists — restore
+    cp "$HIVE_CONFIG_SOURCE" "$HIVE_CONFIG_PATH"
+    echo "[entrypoint] RECOVERED: $HIVE_CONFIG_PATH was empty (0 bytes), restored from $HIVE_CONFIG_SOURCE"
   elif [ -f "$HIVE_CONFIG_PATH" ] && [ ! -s "$HIVE_CONFIG_PATH" ]; then
-    # Config is empty and no backup exists — fatal, cannot recover
+    # Config is empty and no PVC copy exists — fatal, cannot recover
     echo "[entrypoint] ERROR: $HIVE_CONFIG_PATH exists but is empty (0 bytes)."
-    echo "[entrypoint] No backup found at $HIVE_CONFIG_BACKUP."
+    echo "[entrypoint] No runtime config found at $HIVE_CONFIG_RUNTIME (or legacy $HIVE_CONFIG_RUNTIME_LEGACY)."
     echo "[entrypoint] This usually happens after 'docker compose down -v' wipes the data volume."
     echo "[entrypoint] Restore your hive.yaml from backup or version control and restart."
     exit 1

@@ -34,12 +34,12 @@ func seedSpoke(t *testing.T) string {
 
 	// The three config files deliberately DIFFER, as they do on a live spoke:
 	// hive.yaml is regenerated each boot, the overlay wins the boot merge and
-	// is written secret-free, and .bak is the post-merge snapshot that retains
-	// env-derived secrets. Distinct content is what proves which file the
-	// archive captured.
+	// is written secret-free, and hive.yaml.runtime is the post-merge snapshot
+	// that retains env-derived secrets. Distinct content is what proves which
+	// file the archive captured.
 	mustWrite(t, filepath.Join(dir, "hive.yaml"), "stale: configmap-seed\n")
 	mustWrite(t, filepath.Join(dir, "hive.yaml.dashboard"), "live: owner-customised\noverlay: wins-the-merge\n")
-	mustWrite(t, filepath.Join(dir, "hive.yaml.bak"), "live: owner-customised\nbak: post-merge-snapshot\n")
+	mustWrite(t, filepath.Join(dir, configRuntimeFile), "live: owner-customised\nbak: post-merge-snapshot\n")
 	mustWrite(t, filepath.Join(dir, "hive-id"), "hive-abc123")
 	mustWrite(t, filepath.Join(dir, "hive-state.json"), `{"agents":[]}`)
 	mustWrite(t, filepath.Join(dir, "gh-app-key.pem"), "-----BEGIN PRIVATE KEY-----\nAAA\n")
@@ -101,20 +101,61 @@ func buildTestBackup(t *testing.T) (map[string]string, *hubbackup.Manifest, *Res
 }
 
 // TestBackupCapturesAuthoritativeConfig locks in that the backup takes
-// hive.yaml.bak and NOT hive.yaml. Getting this wrong silently backs up a
+// hive.yaml.runtime and NOT hive.yaml. Getting this wrong silently backs up a
 // stale ConfigMap seed instead of the owner's real configuration.
 func TestBackupCapturesAuthoritativeConfig(t *testing.T) {
 	files, _, _ := buildTestBackup(t)
 
-	got, ok := files["spoke/hive.yaml.bak"]
+	got, ok := files["spoke/"+configRuntimeFile]
 	if !ok {
-		t.Fatal("hive.yaml.bak missing from archive")
+		t.Fatalf("%s missing from archive", configRuntimeFile)
 	}
 	if !strings.Contains(got, "owner-customised") {
-		t.Errorf("hive.yaml.bak content wrong: %q", got)
+		t.Errorf("%s content wrong: %q", configRuntimeFile, got)
 	}
 	if _, ok := files["spoke/hive.yaml"]; ok {
 		t.Error("archive must NOT contain the stale hive.yaml")
+	}
+}
+
+// TestBackupCapturesLegacyRuntimeConfig covers the migration case: a hive that
+// has not saved since the hive.yaml.runtime rename carries ONLY the legacy
+// hive.yaml.bak. Dropping it from the archive would silently lose that hive's
+// configuration — and, since the overlay is written secret-free, the only copy
+// of its env-derived secrets.
+func TestBackupCapturesLegacyRuntimeConfig(t *testing.T) {
+	dir := t.TempDir()
+	// Legacy name only, exactly as a not-yet-migrated PVC looks.
+	mustWrite(t, filepath.Join(dir, configRuntimeFileLegacy), "live: owner-customised\nlegacy: pre-rename\n")
+	mustWrite(t, filepath.Join(dir, "hive-id"), "hive-legacy")
+	t.Setenv(EnvDataDir, dir)
+
+	res, err := Build(testKey(), "hive-legacy", testLogger())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	dest := t.TempDir()
+	if _, err := hubbackup.Extract(testKey(), res.Sealed, dest); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	files := map[string]string{}
+	filepath.WalkDir(dest, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(dest, p)
+		b, _ := os.ReadFile(p)
+		files[filepath.ToSlash(rel)] = string(b)
+		return nil
+	})
+
+	got, ok := files["spoke/"+configRuntimeFileLegacy]
+	if !ok {
+		t.Fatalf("%s missing from archive — a hive that has not saved since the "+
+			"rename would lose its config on restore", configRuntimeFileLegacy)
+	}
+	if !strings.Contains(got, "owner-customised") {
+		t.Errorf("%s content wrong: %q", configRuntimeFileLegacy, got)
 	}
 }
 
@@ -249,8 +290,11 @@ func TestMissingFilesAreRecordedNotSilent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build should tolerate a sparse spoke: %v", err)
 	}
-	if _, ok := res.Skipped["hive.yaml.bak"]; !ok {
-		t.Error("missing hive.yaml.bak should be recorded in Skipped")
+	if _, ok := res.Skipped[configRuntimeFile]; !ok {
+		t.Errorf("missing %s should be recorded in Skipped", configRuntimeFile)
+	}
+	if _, ok := res.Skipped[configRuntimeFileLegacy]; !ok {
+		t.Errorf("missing %s should be recorded in Skipped", configRuntimeFileLegacy)
 	}
 	if len(res.Manifest.SpokeErrors) == 0 {
 		t.Error("gaps should surface in the manifest")

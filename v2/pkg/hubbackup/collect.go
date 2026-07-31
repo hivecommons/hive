@@ -44,37 +44,59 @@ const (
 // top-level blocks (policies, data, knowledge, notifications, hive_id). This
 // is the file that actually carries a hive's configuration.
 //
-// hive.yaml.bak is a POST-MERGE SNAPSHOT written by the entrypoint after the
-// merge (deploy/entrypoint.sh:150) — not an input on most hives. It is read in
-// two cases: the disaster fallback when the ConfigMap is missing or empty
-// (entrypoint.sh:152-161), and on every boot by the minority of spokes running
-// the older ".bak wins" copy-config variant.
+// hive.yaml.runtime (formerly hive.yaml.bak) is a POST-MERGE SNAPSHOT on
+// Kubernetes, written by the entrypoint after the merge — not an input there.
+// On Kubernetes it is read in two cases: the disaster fallback when the
+// ConfigMap is missing or empty, and on every boot by the minority of spokes
+// running the older "runtime config wins" copy-config variant.
+//
+// On Docker/LXC it is neither a snapshot nor optional: there is no ConfigMap
+// and no overlay, so the entrypoint restores it over the config path on every
+// boot and it IS the source of truth. That dual role is why the old ".bak"
+// name — which implied "the restorable backup" — was renamed.
 //
 // A PREVIOUS VERSION OF THIS COMMENT ASSERTED that copy-config always restores
-// from .bak and falls back to the seed. That is true on only 3 of 51 live
-// hives. The variant new hives get merely REPORTS whether .bak exists:
+// from it and falls back to the seed. That is true on only 3 of 51 live K8s
+// hives. The variant new hives get merely REPORTS whether it exists:
 //
 //	cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied
-//	if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi
+//	if [ -f /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; fi
 //
-// Capturing only .bak was therefore capturing the snapshot while omitting the
-// file that wins the merge — a restore would produce a differently-configured
-// spoke with no error at backup time and no symptom until the owner noticed
-// their settings had reverted.
+// Capturing only the runtime config was therefore capturing the snapshot while
+// omitting the file that wins the merge — a restore would produce a
+// differently-configured spoke with no error at backup time and no symptom
+// until the owner noticed their settings had reverted.
 //
 // The two files are near-copies but NOT interchangeable: the overlay is
 // written secret-free on purpose (config.dashboardOverlayBytes collapses
 // HIVE_GITHUB_TOKEN back to ${HIVE_GITHUB_TOKEN} and blanks a pod-env-derived
-// dashboard.auth_token), while .bak retains those values. Observed live on one
-// spoke: .bak 14609 B with a real auth_token, overlay 14547 B with "".
+// dashboard.auth_token), while the runtime config retains those values.
+// Observed live on one spoke: 14609 B with a real auth_token, overlay 14547 B
+// with "".
 //
 // The plain /data/hive.yaml is NOT authoritative — it is regenerated from seed
 // + overlay on every boot — and is deliberately excluded.
+// Both the new and legacy runtime-config names are captured: the rename to
+// hive.yaml.runtime is copy-forward, so a spoke that has not yet saved since
+// upgrading still carries only hive.yaml.bak, and a backup that skipped it
+// would silently lose that spoke's config.
 var spokeFiles = []string{
 	"hive.yaml.dashboard",
-	"hive.yaml.bak",
+	spokeRuntimeConfigFile,
+	spokeRuntimeConfigFileLegacy,
 	"hive-id",
 }
+
+const (
+	// spokeRuntimeConfigFile is the PVC runtime config, basename only (these
+	// are read from /data on the spoke). Formerly hive.yaml.bak — see
+	// config.RuntimeConfigFile for why the name changed.
+	spokeRuntimeConfigFile = "hive.yaml.runtime"
+
+	// spokeRuntimeConfigFileLegacy is its pre-rename name, still present on
+	// hives that have not saved since the upgrade.
+	spokeRuntimeConfigFileLegacy = "hive.yaml.bak"
+)
 
 // spokeKeyGlob matches the per-spoke GitHub App private keys, whose exact
 // filenames vary by cluster (gh-app-key.pem, gh-app-key-<appid>.pem).
@@ -306,18 +328,23 @@ func (k KubectlSpokeCollector) collectOne(target ClusterTarget, id string, logge
 // its config files, or "" if it can.
 //
 // EITHER config file is sufficient. The overlay carries the configuration that
-// wins the boot merge; .bak is a post-merge snapshot of the same config that
-// additionally serves the disaster fallback. Missing both means the spoke
-// cannot be faithfully rebuilt.
+// wins the boot merge; the runtime config is a post-merge snapshot of the same
+// config that additionally serves the disaster fallback. Missing both means the
+// spoke cannot be faithfully rebuilt.
+//
+// The runtime config counts under either its new or legacy name: a spoke that
+// has not saved since the hive.yaml.runtime rename still carries only
+// hive.yaml.bak, and flagging it would be a false alarm.
 //
 // This deliberately does not require the overlay specifically: a spoke that has
 // never had a dashboard save legitimately has no overlay yet, and failing its
 // backup would be a false alarm.
 func spokeConfigUnrecoverable(files map[string][]byte) string {
 	_, haveOverlay := files["hive.yaml.dashboard"]
-	_, haveBak := files["hive.yaml.bak"]
-	if !haveOverlay && !haveBak {
-		return "hive.yaml.dashboard and hive.yaml.bak both absent — spoke config not recoverable from this backup"
+	_, haveRuntime := files[spokeRuntimeConfigFile]
+	_, haveLegacy := files[spokeRuntimeConfigFileLegacy]
+	if !haveOverlay && !haveRuntime && !haveLegacy {
+		return "hive.yaml.dashboard, " + spokeRuntimeConfigFile + " and " + spokeRuntimeConfigFileLegacy + " all absent — spoke config not recoverable from this backup"
 	}
 	return ""
 }

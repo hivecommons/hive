@@ -1797,7 +1797,12 @@ spec:
       - name: copy-config
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
-        command: ["sh", "-c", "cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi"]
+        # Seed-wins variant: the ConfigMap is copied over the config path and
+        # the PVC runtime config is only REPORTED, never restored here. The
+        # entrypoint does the real overlay merge. Both the new and legacy
+        # names are probed so the diagnostic stays truthful while hives that
+        # predate the hive.yaml.runtime rename still carry only the old file.
+        command: ["sh", "-c", "cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -f /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; fi"]
         volumeMounts:
         - name: config
           mountPath: /etc/hive-seed

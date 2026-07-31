@@ -132,7 +132,7 @@ func TestParseSpokeStreamIgnoresUnmarkedOutput(t *testing.T) {
 // so a parser that stops after the first file silently loses the rest.
 func TestParseSpokeStreamRecoversEveryFile(t *testing.T) {
 	stream := spokeStream(map[string]string{
-		"hive.yaml.bak": "config-a",
+		"hive.yaml.runtime": "config-a",
 		"agents.json":   "config-b",
 		"app-key.pem":   "config-c",
 	})
@@ -143,8 +143,8 @@ func TestParseSpokeStreamRecoversEveryFile(t *testing.T) {
 	if len(files) != 3 {
 		t.Fatalf("want 3 files, got %d: %v", len(files), keysOfBytes(files))
 	}
-	if string(files["hive.yaml.bak"]) != "config-a" {
-		t.Errorf("hive.yaml.bak = %q", files["hive.yaml.bak"])
+	if string(files["hive.yaml.runtime"]) != "config-a" {
+		t.Errorf("hive.yaml.runtime = %q", files["hive.yaml.runtime"])
 	}
 	if string(files["app-key.pem"]) != "config-c" {
 		t.Errorf("app-key.pem = %q", files["app-key.pem"])
@@ -153,13 +153,13 @@ func TestParseSpokeStreamRecoversEveryFile(t *testing.T) {
 
 // ---- buildSpokeReadScript ----
 
-// The script must read hive.yaml.bak (authoritative) — a live spoke has both
-// hive.yaml and hive.yaml.bak with DIFFERENT content, so reading the wrong one
+// The script must read hive.yaml.runtime (authoritative) — a live spoke has both
+// hive.yaml and hive.yaml.runtime with DIFFERENT content, so reading the wrong one
 // silently backs up stale config.
 func TestSpokeReadScriptPrefersAuthoritativeConfig(t *testing.T) {
 	script := buildSpokeReadScript()
-	if !strings.Contains(script, "/data/hive.yaml.bak") {
-		t.Fatal("the read script must capture /data/hive.yaml.bak")
+	if !strings.Contains(script, "/data/hive.yaml.runtime") {
+		t.Fatal("the read script must capture /data/hive.yaml.runtime")
 	}
 	// It must also glob App keys, whose filenames vary per cluster.
 	if !strings.Contains(script, spokeKeyGlob) {

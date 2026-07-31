@@ -252,7 +252,7 @@ func TestExportedBuilderProducesVerifiableArchive(t *testing.T) {
 	key := decodeTestKey(t)
 	b := NewBuilder()
 
-	if err := b.AddBytes("spoke/hive.yaml.bak", 0o600, []byte("project: acme")); err != nil {
+	if err := b.AddBytes("spoke/hive.yaml.runtime", 0o600, []byte("project: acme")); err != nil {
 		t.Fatalf("AddBytes: %v", err)
 	}
 
@@ -283,7 +283,7 @@ func TestExportedBuilderProducesVerifiableArchive(t *testing.T) {
 	if _, err := Extract(key, sealed, dest); err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
-	if got, _ := os.ReadFile(filepath.Join(dest, "spoke", "hive.yaml.bak")); string(got) != "project: acme" {
+	if got, _ := os.ReadFile(filepath.Join(dest, "spoke", "hive.yaml.runtime")); string(got) != "project: acme" {
 		t.Fatalf("content corrupted: %q", got)
 	}
 	if got, _ := os.ReadFile(filepath.Join(dest, "spoke", "tree", "keep", "a.json")); string(got) != `{"a":1}` {

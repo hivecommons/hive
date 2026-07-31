@@ -31,7 +31,7 @@ func TestCollectEvictedSpokeIsRecordedNotDropped(t *testing.T) {
 		// No Running pod: the field-selector query returns empty stdout.
 		"get pods -n " + spokeNamespacePrefix + "alpha": "",
 		"get pods -n " + spokeNamespacePrefix + "beta":  "beta-pod-1",
-		"exec -n " + spokeNamespacePrefix + "beta":      spokeStream(map[string]string{"hive.yaml.bak": "beta: config"}),
+		"exec -n " + spokeNamespacePrefix + "beta":      spokeStream(map[string]string{"hive.yaml.runtime": "beta: config"}),
 	})
 
 	k := KubectlSpokeCollector{
@@ -65,8 +65,8 @@ func TestCollectEvictedSpokeIsRecordedNotDropped(t *testing.T) {
 	if beta.Err != "" {
 		t.Fatalf("healthy spoke should have no Err, got %q", beta.Err)
 	}
-	if string(beta.Files["hive.yaml.bak"]) != "beta: config" {
-		t.Errorf("healthy spoke content wrong: %q", beta.Files["hive.yaml.bak"])
+	if string(beta.Files["hive.yaml.runtime"]) != "beta: config" {
+		t.Errorf("healthy spoke content wrong: %q", beta.Files["hive.yaml.runtime"])
 	}
 }
 
@@ -118,7 +118,7 @@ func TestCollectUnknownClusterIsRecordedNotDropped(t *testing.T) {
 	}
 }
 
-// A spoke that returns hive.yaml but NOT hive.yaml.bak must be flagged: the
+// A spoke that returns hive.yaml but NOT hive.yaml.runtime must be flagged: the
 // .bak file is the authoritative config, and a live spoke carries both with
 // DIFFERENT contents, so accepting hive.yaml backs up stale config.
 func TestCollectRejectsSpokeMissingAuthoritativeConfig(t *testing.T) {
@@ -132,10 +132,10 @@ func TestCollectRejectsSpokeMissingAuthoritativeConfig(t *testing.T) {
 	}
 	got, _ := k.Collect(quietLogger())
 	if got[0].Err == "" {
-		t.Fatal("a spoke without hive.yaml.bak must be flagged, not accepted silently")
+		t.Fatal("a spoke without hive.yaml.runtime must be flagged, not accepted silently")
 	}
-	if !strings.Contains(got[0].Err, "hive.yaml.bak") {
-		t.Errorf("error should name hive.yaml.bak, got %q", got[0].Err)
+	if !strings.Contains(got[0].Err, "hive.yaml.runtime") {
+		t.Errorf("error should name hive.yaml.runtime, got %q", got[0].Err)
 	}
 }
 
@@ -162,7 +162,7 @@ func TestCollectExecFailureRecordedPerSpoke(t *testing.T) {
 func TestCollectParseFailureRecorded(t *testing.T) {
 	fakeKubectl(t, map[string]string{
 		"get pods": "pod-1",
-		"exec":     spokeStreamPrefix + "hive.yaml.bak" + spokeStreamDelim + "\n!!!not-base64!!!\n",
+		"exec":     spokeStreamPrefix + "hive.yaml.runtime" + spokeStreamDelim + "\n!!!not-base64!!!\n",
 	})
 	k := KubectlSpokeCollector{
 		Clusters: map[string]ClusterTarget{"c1": {ID: "c1", InCluster: true}},

@@ -40,7 +40,7 @@ func TestDRRoundTripSealVerifyOpenExtract(t *testing.T) {
 
 	spokes := fixedSpokeCollector{spokes: []SpokeConfig{
 		{ID: "hosted-x", Cluster: "hive-oke", Files: map[string][]byte{
-			"hive.yaml.bak": []byte("project:\n  org: acme\n"),
+			"hive.yaml.runtime": []byte("project:\n  org: acme\n"),
 			"agents.json":   []byte(`{"scanner":{"enabled":true}}`),
 		}},
 	}}
@@ -89,7 +89,7 @@ func TestDRRoundTripSealVerifyOpenExtract(t *testing.T) {
 	}
 
 	// The spoke's authoritative config must survive too.
-	gotSpoke, err := os.ReadFile(filepath.Join(dest, "spokes", "hosted-x", "hive.yaml.bak"))
+	gotSpoke, err := os.ReadFile(filepath.Join(dest, "spokes", "hosted-x", "hive.yaml.runtime"))
 	if err != nil {
 		t.Fatalf("spoke config missing from restore: %v", err)
 	}
@@ -323,9 +323,9 @@ func TestBuildRecordsSpokeErrorsWithoutLosingHealthySpokes(t *testing.T) {
 	key := decodeTestKey(t)
 
 	spokes := fixedSpokeCollector{spokes: []SpokeConfig{
-		{ID: "healthy-1", Files: map[string][]byte{"hive.yaml.bak": []byte("a")}},
+		{ID: "healthy-1", Files: map[string][]byte{"hive.yaml.runtime": []byte("a")}},
 		{ID: "evicted-1", Err: "no running pod in hive-hosted-evicted-1"},
-		{ID: "healthy-2", Files: map[string][]byte{"hive.yaml.bak": []byte("b")}},
+		{ID: "healthy-2", Files: map[string][]byte{"hive.yaml.runtime": []byte("b")}},
 	}}
 
 	_, man, err := Build(key, spokes, nil, quietLogger())

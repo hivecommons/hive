@@ -64,24 +64,34 @@ const (
 	// notifications, hive_id).
 	configOverlayFile = "hive.yaml.dashboard"
 
-	// configBackupFile is the POST-MERGE SNAPSHOT, written by the entrypoint
-	// after the merge (deploy/entrypoint.sh:150).
+	// configRuntimeFile is the persisted runtime config, formerly
+	// hive.yaml.bak. On Kubernetes it is the POST-MERGE SNAPSHOT written by
+	// the entrypoint after the merge; on Docker/LXC, where there is no
+	// ConfigMap and no overlay, it is the boot-time source of truth restored
+	// over the config path on every boot. The old ".bak" name described only
+	// the first role, which is why it was renamed.
 	//
-	// An earlier comment here stated that copy-config restores from .bak and
-	// falls back to the seed only when .bak is absent. That is true on only 3
-	// of 51 live hives; the variant new hives get merely reports whether .bak
-	// exists and never restores from it. So .bak is not, in general, "what
-	// comes back after a restart" — the overlay is.
+	// An earlier comment here stated that copy-config restores from it and
+	// falls back to the seed only when it is absent. That is true on only 3
+	// of 51 live K8s hives; the variant new hives get merely reports whether
+	// it exists and never restores from it. So on Kubernetes it is not, in
+	// general, "what comes back after a restart" — the overlay is.
 	//
 	// It is still captured, for two reasons: it is what the disaster fallback
-	// reads when the ConfigMap is missing or empty (entrypoint.sh:152-161),
-	// and it is the only copy retaining env-derived secrets, since the overlay
-	// is written secret-free on purpose (config.dashboardOverlayBytes).
+	// reads when the ConfigMap is missing or empty, and it is the only copy
+	// retaining env-derived secrets, since the overlay is written secret-free
+	// on purpose (config.dashboardOverlayBytes).
 	//
 	// hive.yaml itself remains excluded: it is regenerated from seed + overlay
 	// on every boot, and on a sampled production spoke was a stale root-owned
 	// copy days older than the live config.
-	configBackupFile = "hive.yaml.bak"
+	configRuntimeFile = "hive.yaml.runtime"
+
+	// configRuntimeFileLegacy is the pre-rename name. Still captured because
+	// the rename is copy-forward: a hive that has not saved since upgrading
+	// carries only this file, and omitting it would silently drop that hive's
+	// config — and its env-derived secrets — from the archive.
+	configRuntimeFileLegacy = "hive.yaml.bak"
 
 	// hiveIDFile identifies this hive to the hub.
 	hiveIDFile = "hive-id"
@@ -147,10 +157,14 @@ const BuildTimeout = 2 * time.Minute
 //     purpose: these are credentials with no restore value, and restoring
 //     them would resurrect sessions that should have expired.
 //   - hive.yaml  regenerated from seed + overlay on every boot; see
-//     configOverlayFile and configBackupFile.
+//     configOverlayFile and configRuntimeFile.
+//
+// Both runtime-config names are listed: missing files are recorded in Skipped
+// rather than failing, so a hive carries whichever it has.
 var includedRootFiles = []string{
 	configOverlayFile,
-	configBackupFile,
+	configRuntimeFile,
+	configRuntimeFileLegacy,
 	hiveIDFile,
 	stateFile,
 }
