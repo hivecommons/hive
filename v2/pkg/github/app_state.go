@@ -55,6 +55,20 @@ const (
 	// classic symptom of a public github.com key on a GitHub Enterprise hive).
 	// OPERATOR-ACTIONABLE: the hub must push the correct key.
 	AppStateKeyInvalid
+
+	// AppStateNoAppAssigned means the hive is still running
+	// config.PlaceholderAppID — it was provisioned as a placeholder and never
+	// assigned a real GitHub App ID. OPERATOR-ACTIONABLE: only the hub can
+	// supply the App ID.
+	//
+	// This is deliberately NOT AppStateNotInstalled. Both leave the hive without
+	// working App auth, but they point at opposite fixes, and reporting this one
+	// as "not installed" actively misleads: it tells the owner to install the App
+	// and set an installation_id, when their installation_id is already correct
+	// and no value they can enter will help — the app_id names no App, so the
+	// JWT fails before the installation is ever consulted. That misdiagnosis is
+	// what cost the owner of the first hive to hit this real debugging time.
+	AppStateNoAppAssigned
 )
 
 // String returns the stable wire token for a state. These tokens cross the
@@ -74,6 +88,8 @@ func (s AppAuthState) String() string {
 		return "key-missing"
 	case AppStateKeyInvalid:
 		return "key-invalid"
+	case AppStateNoAppAssigned:
+		return "no-app-assigned"
 	default:
 		return "unknown"
 	}
@@ -84,7 +100,7 @@ func (s AppAuthState) String() string {
 // not instruct the user to install anything or edit config, and the journey
 // nudges must never escalate against them.
 func (s AppAuthState) OperatorActionable() bool {
-	return s == AppStateKeyMissing || s == AppStateKeyInvalid
+	return s == AppStateKeyMissing || s == AppStateKeyInvalid || s == AppStateNoAppAssigned
 }
 
 // UserActionable reports whether the hive's owner (or their org owner) can fix
@@ -115,6 +131,8 @@ func ParseAppAuthState(s string) AppAuthState {
 		return AppStateKeyMissing
 	case "key-invalid":
 		return AppStateKeyInvalid
+	case "no-app-assigned":
+		return AppStateNoAppAssigned
 	default:
 		return AppStateUnknown
 	}
@@ -337,6 +355,13 @@ func (d AppAuthDiagnosis) Message() string {
 			"the private key it holds does not match the App it authenticates as, so GitHub rejects its signed token. " +
 			"This key is distributed by the hub operator and cannot be supplied or corrected by you — " +
 			"your App installation and installation ID are not at fault. Please contact your hub administrator to have the correct key pushed to this hive."
+
+	case AppStateNoAppAssigned:
+		return "This hive was never assigned a GitHub App ID. It was provisioned as a placeholder and still carries the " +
+			"placeholder app_id, which does not name a real GitHub App — so it cannot authenticate no matter which " +
+			"installation ID is set here. Your App installation and installation ID are NOT at fault, and setting an " +
+			"installation ID will not resolve this. Only the hub operator can assign the real App ID. " +
+			"Please contact your hub administrator."
 
 	case AppStateNotInstalled:
 		return fmt.Sprintf("The KubeStellar Hive GitHub App is not installed on %s. "+

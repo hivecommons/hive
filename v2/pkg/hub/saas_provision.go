@@ -424,21 +424,46 @@ func effectiveGitHubAPIURL(h *SaaSHive, cluster *ClusterConfig) string {
 // cannot mint installation tokens against a github.ibm.com repo.
 //
 // Rule:
-//   - GHE hive (effectiveGitHubBaseURL != "") → the cluster's GitHubAppID (the
-//     GHE App registered on that enterprise), when the cluster names one. This
-//     overrides a public app_id that a placeholder was seeded with — the exact
-//     bug where GHE hives carried app_id 3568013 and could never write.
-//   - Otherwise (public hive, or a GHE cluster with no GHE App configured) →
-//     the request's app_id verbatim, so public hives and explicit overrides are
-//     unchanged.
+//   - The hive is explicitly pinned to PUBLIC github.com on a cluster whose App
+//     is a GitHub Enterprise one → keep the request's app_id. The cluster's App
+//     belongs to the wrong host for this hive; forcing it would break exactly
+//     the case the public pin exists to protect.
+//   - Otherwise the cluster names a GitHubAppID → use it. This now covers a
+//     public-github.com CLUSTER as well as a GHE one: the App ID is a
+//     per-GitHub-HOST constant, not per-hive state, and this field is the one
+//     place the fleet records it.
+//   - Otherwise → the request's app_id verbatim, so explicit overrides and
+//     clusters with no hub-managed App identity are unchanged.
+//
+// The public-github.com case was previously excluded (the rule required
+// effectiveGitHubBaseURL != ""), which is why every hive on the public cluster
+// provisioned with the config.PlaceholderAppID sentinel and NOTHING ever
+// replaced it: there was no configured App ID to look up, and assignment does
+// not mint one. Such a hive builds a JWT for a nonexistent App, so App auth can
+// never succeed no matter which installation_id the owner enters.
+//
+// Widening the rule rather than adding a github.com-specific branch is what
+// generalizes: a third forge (gitlab/gitea) needs only its own cluster entry
+// with a github_app_id, not another special case here.
+//
+// This does NOT hardcode an App ID. A cluster that names none still falls
+// through to the request value exactly as before.
 //
 // Returns a string (the template field is a string); sanitize() is applied to
 // any request-sourced value exactly as before.
 func resolveProvisionAppID(reqAppID string, h *SaaSHive, cluster *ClusterConfig) string {
-	if cluster != nil && cluster.GitHubAppID != 0 && effectiveGitHubBaseURL(h, cluster) != "" {
-		return strconv.FormatInt(cluster.GitHubAppID, 10)
+	if cluster == nil || cluster.GitHubAppID == 0 {
+		return sanitize(reqAppID)
 	}
-	return sanitize(reqAppID)
+	// A hive pinned to public github.com on a cluster whose own App is a GHE
+	// App: the cluster App is registered on the wrong host for this hive, so the
+	// request's public app_id stands. Detected as "the hive resolves to no GHE
+	// base URL while the cluster has one" — the same public-pin semantics
+	// effectiveGitHubBaseURL already implements.
+	if cluster.GitHubBaseURL != "" && effectiveGitHubBaseURL(h, cluster) == "" {
+		return sanitize(reqAppID)
+	}
+	return strconv.FormatInt(cluster.GitHubAppID, 10)
 }
 
 // backfillGitHubHostFromCluster returns the GitHub host a hive should inherit

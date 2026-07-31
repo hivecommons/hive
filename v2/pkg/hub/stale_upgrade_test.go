@@ -177,3 +177,79 @@ func TestOrphanedUpgradeThresholdDerivesFromStaleUpgradeTimeout(t *testing.T) {
 			orphanedUpgradeClearAfter, want)
 	}
 }
+
+// TestSweepEscalatesAfterRepeatedFailures asserts the bounded-retry behaviour
+// that complements #2327. A hive that is structurally unable to advance — the
+// floating-tag case, where the pod re-pulls its mutable tag and lands on a
+// build that is neither the old SHA nor the target — must eventually be
+// reported as a fault instead of being cleared and re-armed forever.
+func TestSweepEscalatesAfterRepeatedFailures(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:            "never-lands",
+		GitHash:       "c11643a",
+		UpgradeTarget: "fc32ae4",
+	}}
+
+	// Each cycle re-latches the flag exactly as a re-armed upgrade would, so
+	// the hive presents to the sweep as orphaned again every time.
+	for i := 1; i <= maxOrphanedUpgradeSweeps; i++ {
+		h := &s.registry.Hives[0]
+		h.Upgrading = true
+		h.UpgradeStartedAt = time.Now().Add(-68 * time.Minute)
+		h.LastHeartbeat = rfc3339(time.Now().Add(-30 * time.Second))
+		s.sweepOrphanedUpgrades()
+
+		if got := s.registry.Hives[0].OrphanedUpgradeSweeps; got != i {
+			t.Fatalf("after cycle %d, OrphanedUpgradeSweeps = %d, want %d", i, got, i)
+		}
+	}
+
+	h := s.registry.Hives[0]
+	if !h.UpgradeFailed {
+		t.Errorf("after %d sweeps the hive must be marked UpgradeFailed", maxOrphanedUpgradeSweeps)
+	}
+	if h.UpgradeError == "" {
+		t.Error("an exhausted upgrade must carry a human-readable cause")
+	}
+	if h.UpgradeFailedAt.IsZero() {
+		t.Error("an exhausted upgrade must record when it was abandoned")
+	}
+	if _, armed := s.heartbeatUpgrade["never-lands"]; armed {
+		t.Error("an exhausted upgrade must NOT stay armed for delivery")
+	}
+	if h.Upgrading {
+		t.Error("an exhausted upgrade must not still claim to be in flight")
+	}
+}
+
+// TestSweepBelowBudgetStillReArms guards that escalation does not fire early:
+// under the budget the #2327 behaviour (clear AND re-arm) must be preserved
+// unchanged, with no failure recorded.
+func TestSweepBelowBudgetStillReArms(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:               "first-orphan",
+		Upgrading:        true,
+		UpgradeStartedAt: time.Now().Add(-68 * time.Minute),
+		GitHash:          "c11643a",
+		UpgradeTarget:    "fc32ae4",
+		LastHeartbeat:    rfc3339(time.Now().Add(-30 * time.Second)),
+	}}
+
+	s.sweepOrphanedUpgrades()
+
+	h := s.registry.Hives[0]
+	if h.UpgradeFailed {
+		t.Error("a single orphan sweep must not mark the hive failed")
+	}
+	if got := s.heartbeatUpgrade["first-orphan"]; got != "fc32ae4" {
+		t.Errorf("below the budget the upgrade must still be re-armed, got %q", got)
+	}
+}

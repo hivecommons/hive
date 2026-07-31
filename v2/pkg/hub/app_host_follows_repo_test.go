@@ -1,6 +1,10 @@
 package hub
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
+)
 
 // The App ID provisioned for a hive must follow the hive's GitHub HOST:
 // a GHE hive gets the cluster's GitHub Enterprise App, never the public
@@ -24,6 +28,15 @@ func TestResolveProvisionAppID_GHEUsesClusterApp(t *testing.T) {
 	if got := resolveProvisionAppID("3568013", publicOnGHECluster, gheCluster); got != "3568013" {
 		t.Errorf("public-override hive on GHE cluster app_id = %q, want request value 3568013", got)
 	}
+
+	// A PUBLIC github.com cluster that names its own App ID must hand it to its
+	// hives. This is the placeholder-sentinel fix: the public cluster carried no
+	// github_app_id, so every hive it provisioned kept config.PlaceholderAppID
+	// and could never authenticate. The rule is per-HOST, not GHE-only.
+	publicCluster := &ClusterConfig{GitHubAppID: 3568013}
+	if got := resolveProvisionAppID("", &SaaSHive{}, publicCluster); got != "3568013" {
+		t.Errorf("public cluster app_id = %q, want the cluster's configured App 3568013", got)
+	}
 }
 
 // Public-GitHub hives (and clusters with no GHE App) keep the request's app_id
@@ -39,5 +52,46 @@ func TestResolveProvisionAppID_PublicUnchanged(t *testing.T) {
 	gheClusterNoApp := &ClusterConfig{GitHubBaseURL: "https://github.ibm.com", GitHubAPIURL: "https://github.ibm.com/api/v3"}
 	if got := resolveProvisionAppID("3568013", &SaaSHive{}, gheClusterNoApp); got != "3568013" {
 		t.Errorf("GHE cluster w/o App app_id = %q, want request value 3568013 (no cluster App to use)", got)
+	}
+}
+
+// TestDecideAppKeySync_RepairsPlaceholderSentinel locks the fleet-repair half of
+// the placeholder-app_id fix.
+//
+// A spoke provisioned as a placeholder carries config.PlaceholderAppID plus its
+// own per-hive key. Before this, the per-hive key acted as an override and the
+// reconcile refused to touch it (appKeyReasonPerHiveOverride), so the sentinel
+// survived every heartbeat forever — the hive could never authenticate no matter
+// what its owner did. The sentinel is never a deliberate pin, so it must be
+// repaired even against a per-hive key, and even when that key's fingerprint
+// happens to match (a correct key cannot rescue a nonexistent app_id).
+func TestDecideAppKeySync_RepairsPlaceholderSentinel(t *testing.T) {
+	cluster := &clusterAppIdentity{AppID: 3568013, Fingerprint: "cluster-fp"}
+
+	for _, tc := range []struct {
+		name        string
+		fingerprint string
+		hasPerHive  bool
+	}{
+		{"per-hive key, different fingerprint", "other-fp", true},
+		{"per-hive key, matching fingerprint", "cluster-fp", true},
+		{"no key at all", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := decideAppKeySync(tc.fingerprint, tc.hasPerHive, false, config.PlaceholderAppID, cluster)
+			if !got.Push {
+				t.Errorf("sentinel app_id not repaired (%s): %+v", tc.name, got)
+			}
+			if got.Reason != appKeyReasonPlaceholderAppID {
+				t.Errorf("Reason = %q, want %q", got.Reason, appKeyReasonPlaceholderAppID)
+			}
+		})
+	}
+
+	// A spoke on a genuinely different (real) App is still protected — the
+	// sentinel is the ONLY app_id treated as unconditionally wrong.
+	const someOtherRealApp = 4240368
+	if got := decideAppKeySync("other-fp", true, false, someOtherRealApp, cluster); got.Push {
+		t.Errorf("a real non-matching app_id must stay protected as a deliberate pin: %+v", got)
 	}
 }
