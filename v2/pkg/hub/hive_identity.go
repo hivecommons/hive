@@ -238,16 +238,34 @@ func clusterForgeHost(c *ClusterConfig) string {
 // follow-up; isolating the lookup here means that change lands in one function
 // rather than across every caller.
 func clusterAppForForge(c *ClusterConfig, forge string) (clusterAppIdentity, bool) {
-	if c == nil || c.GitHubAppID == 0 {
+	if c == nil {
 		return clusterAppIdentity{}, false
 	}
-	if !sameGitHubHost(clusterForgeHost(c), forge) {
-		return clusterAppIdentity{}, false
+	// forgesForCluster merges the legacy flat github_app_id/github_app_slug
+	// fields (the cluster's own default forge) with the explicit per-forge
+	// `forges` map, so ONE lookup covers both an old single-forge entry and a
+	// dual-forge one.
+	//
+	// Reading only the flat fields is what left this unable to answer for a
+	// hive that elected a forge its cluster does not default to: on vllm-d — a
+	// GHE-default cluster hosting hives that elected github.com — it returned
+	// "no App", so the resolver produced app_id 0 and 26 hives stayed broken
+	// even with a public App named in `forges`.
+	for host, id := range forgesForCluster(c) {
+		if !sameGitHubHost(host, forge) {
+			continue
+		}
+		if id.AppID == 0 {
+			// A named forge with no App is not an answer — same as absent.
+			// Returning it would hand the caller a half-identity.
+			return clusterAppIdentity{}, false
+		}
+		return clusterAppIdentity{
+			AppID:   id.AppID,
+			AppSlug: strings.TrimSpace(id.AppSlug),
+		}, true
 	}
-	return clusterAppIdentity{
-		AppID:   c.GitHubAppID,
-		AppSlug: strings.TrimSpace(c.GitHubAppSlug),
-	}, true
+	return clusterAppIdentity{}, false
 }
 
 // forgeHostLabel normalises any spelling of a forge — bare host, web URL, or
