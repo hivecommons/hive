@@ -83,6 +83,12 @@ func (s *HubServer) runAuthAudit(ctx context.Context, client *http.Client) {
 
 	var open []string
 	probed, unreachable := 0, 0
+	// Per-cluster tallies so a whole cluster going dark (vllm-d has been
+	// intermittently unreachable from the hub) is reported as ONE outage rather
+	// than as N individually broken hives.
+	clusterProbed := map[string]int{}
+	clusterFailed := map[string]int{}
+	known := map[string]bool{}
 	for _, h := range hives {
 		// Only probe hives that report a real dashboard URL (heartbeating spokes).
 		base := strings.TrimRight(h.DashboardURL, "/")
@@ -90,7 +96,20 @@ func (s *HubServer) runAuthAudit(ctx context.Context, client *http.Client) {
 			continue
 		}
 		probed++
-		wideOpen, reachable := probeWideOpen(ctx, client, base)
+		known[h.ID] = true
+		clusterProbed[h.ClusterID]++
+		status, wideOpen, reachable := probeWideOpen(ctx, client, base)
+		// Reachability is a STRICTER test than the auth audit's "reachable": a
+		// 503 from an ingress with no backend is a completed HTTP transaction,
+		// so reachable is true, yet the user still gets an error page. Record
+		// the status-based verdict, not the transport one.
+		healthy := reachable && urlHealthyStatus(status)
+		if s.urlHealth != nil {
+			s.urlHealth.observe(h.ID, urlProbeResult{Status: status, Healthy: healthy})
+		}
+		if !healthy {
+			clusterFailed[h.ClusterID]++
+		}
 		if !reachable {
 			unreachable++
 			continue
@@ -99,6 +118,11 @@ func (s *HubServer) runAuthAudit(ctx context.Context, client *http.Client) {
 			open = append(open, h.ID)
 		}
 	}
+	// Drop recycled pool slots so the failure counters cannot grow unbounded.
+	if s.urlHealth != nil {
+		s.urlHealth.forget(known)
+	}
+	s.reportURLHealth(hives, clusterProbed, clusterFailed)
 
 	if len(open) == 0 {
 		s.logger.Info("auth audit: no wide-open spokes", "probed", probed, "unreachable", unreachable)
@@ -112,23 +136,47 @@ func (s *HubServer) runAuthAudit(ctx context.Context, client *http.Client) {
 	s.pushAuthAuditAlert(msg)
 }
 
-// probeWideOpen fetches base+authAuditPath with NO auth. Returns (wideOpen,
-// reachable). wideOpen is true only on a 200 (dashboard served to anyone).
-// A 30x/401/403 means protected. A transport error means unreachable (e.g. a
-// firewalled vllm-d spoke the hub can't reach), never counted as open.
-func probeWideOpen(ctx context.Context, client *http.Client, base string) (wideOpen, reachable bool) {
+// probeWideOpen fetches base+authAuditPath with NO auth. Returns the observed
+// HTTP status (0 when the request never completed), wideOpen and reachable.
+// wideOpen is true only on a 200 (dashboard served to anyone). A 30x/401/403
+// means protected. A transport error means unreachable (e.g. a firewalled
+// vllm-d spoke the hub can't reach), never counted as open.
+//
+// The status is returned so callers can distinguish a SERVING spoke from one
+// whose ingress answered with an error: reachable only says the HTTP exchange
+// completed, which is true of a 503 from a routed hostname with no backend.
+func probeWideOpen(ctx context.Context, client *http.Client, base string) (status int, wideOpen, reachable bool) {
 	reqCtx, cancel := context.WithTimeout(ctx, authAuditProbeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, base+authAuditPath, nil)
 	if err != nil {
-		return false, false
+		return 0, false, false
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, false
+		return 0, false, false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK, true
+	return resp.StatusCode, resp.StatusCode == http.StatusOK, true
+}
+
+// reportURLHealth logs the outcome of the reachability side of the audit,
+// rolling whole-cluster failures up into a single line. The per-hive alerts
+// themselves are built later by urlUnreachableAlerts, from the same state, so
+// the log and the alert panel can never disagree about which hives are broken.
+func (s *HubServer) reportURLHealth(hives []RegistryEntry, clusterProbed, clusterFailed map[string]int) {
+	for clusterID, failed := range clusterFailed {
+		if failed == 0 {
+			continue
+		}
+		if clusterOutage(failed, clusterProbed[clusterID]) {
+			s.logger.Warn("url reachability: cluster-wide failure, suppressing per-hive alerts",
+				"cluster", clusterID, "failed", failed, "probed", clusterProbed[clusterID])
+			continue
+		}
+		s.logger.Warn("url reachability: hives whose public URL did not serve",
+			"cluster", clusterID, "failed", failed, "probed", clusterProbed[clusterID])
+	}
 }
 
 // pushAuthAuditAlert sends a high-priority ntfy notification when a wide-open

@@ -1190,6 +1190,11 @@ func TestHandleAssignHiveWithFilesystem(t *testing.T) {
 	}
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
+	// Assign only adopts a vanity URL once the host is actually SERVABLE, and
+	// kubectl does not exist under test, so stub the seam to report success.
+	// Without this the assign correctly declines to adopt an unservable host —
+	// that is the fix for the vllm-d 503s, not a regression.
+	srv.vanityHostServable = func(string, string, *ClusterConfig) error { return nil }
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/saas/hives/{id}/assign", srv.handleAssignHive)
 

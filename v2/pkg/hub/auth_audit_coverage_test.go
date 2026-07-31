@@ -28,7 +28,7 @@ func TestProbeWideOpen(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer open.Close()
-	wideOpen, reachable := probeWideOpen(context.Background(), newAuditClient(), open.URL)
+	_, wideOpen, reachable := probeWideOpen(context.Background(), newAuditClient(), open.URL)
 	if !wideOpen || !reachable {
 		t.Errorf("200 should be wideOpen+reachable, got %v %v", wideOpen, reachable)
 	}
@@ -38,19 +38,19 @@ func TestProbeWideOpen(t *testing.T) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 	}))
 	defer prot.Close()
-	wideOpen, reachable = probeWideOpen(context.Background(), newAuditClient(), prot.URL)
+	_, wideOpen, reachable = probeWideOpen(context.Background(), newAuditClient(), prot.URL)
 	if wideOpen || !reachable {
 		t.Errorf("302 should be protected+reachable, got %v %v", wideOpen, reachable)
 	}
 
 	// Unreachable (closed port).
-	wideOpen, reachable = probeWideOpen(context.Background(), newAuditClient(), "http://127.0.0.1:1")
+	_, wideOpen, reachable = probeWideOpen(context.Background(), newAuditClient(), "http://127.0.0.1:1")
 	if wideOpen || reachable {
 		t.Errorf("closed port should be unreachable, got %v %v", wideOpen, reachable)
 	}
 
 	// Bad URL -> request build error.
-	wideOpen, reachable = probeWideOpen(context.Background(), newAuditClient(), "http://\x7f\x00")
+	_, wideOpen, reachable = probeWideOpen(context.Background(), newAuditClient(), "http://\x7f\x00")
 	if wideOpen || reachable {
 		t.Errorf("bad URL should be unreachable, got %v %v", wideOpen, reachable)
 	}

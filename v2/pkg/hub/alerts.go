@@ -94,6 +94,13 @@ const (
 	// so the panel, the facet and the row pill can never disagree about which
 	// hives are affected.
 	AlertTypeAdvisoryStale = "advisory-stale"
+	// AlertTypeURLUnreachable — the PUBLIC dashboard URL the hub links users to
+	// did not serve. Distinct from every other alert here in that it is the only
+	// one measured from OUTSIDE the spoke: a hive can be online, heartbeating and
+	// reporting every health check green while its vanity Route/Ingress, DNS or
+	// certificate is broken and the link in the hub table returns 503. Raised by
+	// the auth-audit loop, which already makes this HTTPS request.
+	AlertTypeURLUnreachable = "url-unreachable"
 )
 
 // --- Thresholds. Every one is a named constant with a rationale. ---
@@ -916,7 +923,16 @@ func (s *HubServer) fleetAlerts(entries []MyHiveEntry) AlertSummary {
 	// driftAlerts is nil today. When the config-drift evaluator lands, its
 	// signals are passed here and flow through the same ordering, ack and
 	// counting pipeline — see the file header.
-	return evaluateAlerts(s.alerts, hives, nil, time.Now())
+	//
+	// urlUnreachableAlerts is exactly such a signal: it is measured by the
+	// auth-audit loop from OUTSIDE the spoke, so it cannot be re-derived from
+	// the spoke-reported fields the evaluator sees.
+	now := time.Now()
+	regs := make([]RegistryEntry, 0, len(entries))
+	for _, e := range entries {
+		regs = append(regs, e.RegistryEntry)
+	}
+	return evaluateAlerts(s.alerts, hives, s.urlUnreachableAlerts(regs, now), now)
 }
 
 // saveAlertAcks persists acknowledgements to the PVC so a silenced alert stays
@@ -1030,6 +1046,7 @@ var knownAlertTypes = map[string]bool{
 	AlertTypeTokenBurn:          true,
 	AlertTypeProvisionError:     true,
 	AlertTypeAdvisoryStale:      true,
+	AlertTypeURLUnreachable:     true,
 }
 
 func isKnownAlertType(t string) bool { return knownAlertTypes[t] }

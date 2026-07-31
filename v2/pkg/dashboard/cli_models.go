@@ -319,6 +319,26 @@ func (c *cliModelCache) set(backend string, r cliModelResult) {
 // gemini, goose), running the backend's best-effort discovery probe (cached)
 // and falling back to a current static list on any failure. It never errors
 // and never returns an empty list.
+// modelIDsForBackend returns the known model ids for a backend WITHOUT issuing
+// a discovery probe: it uses only the already-populated cache. Validation runs
+// on the request path, so a cold cache must not block the operator behind a
+// network round-trip — an empty result means "cannot verify", and callers let
+// the value through rather than rejecting something that may be valid.
+//
+// A fallback (static) list is also treated as unverifiable: it is a maintained
+// guess, not the backend's authoritative inventory, and rejecting against it
+// would block legitimately available models.
+func (s *Server) modelIDsForBackend(backend string) []string {
+	if s.cliModels == nil || backend == "" {
+		return nil
+	}
+	r, ok := s.cliModels.get(backend)
+	if !ok || r.fallback {
+		return nil
+	}
+	return append([]string(nil), (r.models)...)
+}
+
 func (s *Server) queryCLIModels(backend string) cliModelResult {
 	if s.cliModels != nil {
 		if r, ok := s.cliModels.get(backend); ok {
