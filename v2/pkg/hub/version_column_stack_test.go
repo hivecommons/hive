@@ -84,14 +84,14 @@ func TestAutoUpgradeSelectIsIconOnlyButStillLabelled(t *testing.T) {
 	html := dashboardHTML
 
 	// Icon-only labels, with the short values the product owner specified.
-	for _, want := range []string{"'⦸ off'", "'⚡ instant'", "'🕔 5p'"} {
+	for _, want := range []string{"'⦸ off'", "'⚡ instant'", "'🕐 1p'"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("auto-upgrade option label %s is missing; the control is not icon-only", want)
 		}
 	}
 	// The verbose inline label must be gone from the OPTIONS. Its words now live
 	// in the tooltip and the accessible name instead.
-	for _, gone := range []string{"'Auto: off'", "'Auto: instant'", "'Auto: daily 5pm ET'"} {
+	for _, gone := range []string{"'Auto: off'", "'Auto: instant'", "'Auto: daily 1pm ET'"} {
 		if strings.Contains(html, gone) {
 			t.Errorf("auto-upgrade option still carries the verbose label %s; that string "+
 				"was the widest single element in the Version column", gone)
@@ -101,7 +101,7 @@ func TestAutoUpgradeSelectIsIconOnlyButStillLabelled(t *testing.T) {
 	for _, want := range []string{
 		"ariaLabel: 'Auto-upgrade: off'",
 		"ariaLabel: 'Auto-upgrade: instantly when a new version lands'",
-		"ariaLabel: 'Auto-upgrade: daily at 5pm ET'",
+		"ariaLabel: 'Auto-upgrade: daily at 1pm ET'",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("an auto-upgrade option has no full-meaning label (%s); icon-only "+
