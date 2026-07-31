@@ -33,6 +33,12 @@ type repairRefJournalEntry struct {
 	TombstoneRef       string    `json:"tombstone_ref,omitempty"`
 }
 
+type brokenRepairRefError struct{ ref string }
+
+func (e *brokenRepairRefError) Error() string {
+	return "repair ref " + e.ref + " has a broken loose value"
+}
+
 var repairRefTombstonePattern = regexp.MustCompile(`^refs/hive/repair-ref-tombstones/[a-f0-9]{24}/[a-f0-9]{32}$`)
 
 func (s *Store) recordRepairRefIntent(ctx context.Context, worktree, repository, kind, ref, commit, binding string) error {
@@ -310,6 +316,9 @@ func readRepairRef(ctx context.Context, worktree, ref string) (string, error) {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(output.String()) == "" {
 			return "", nil
+		}
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(output.String()) == "warning: ignoring broken ref "+ref {
+			return "", &brokenRepairRefError{ref: ref}
 		}
 		return "", fmt.Errorf("read repair ref %s: %w: %s", ref, err, safeExcerpt(output.String()))
 	}

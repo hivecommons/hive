@@ -2,7 +2,9 @@ package repair
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -198,6 +200,11 @@ func (s *Store) retireJournaledUninstallRef(ctx context.Context, attempt Attempt
 	if !sawCurrentIntent && !originalConsumed {
 		return fmt.Errorf("repair ref is not bound to a journaled intent in the current repository identity")
 	}
+	if sawCurrentIntent && !originalConsumed {
+		if err := removeJournaledBrokenRepairRef(ctx, repositoryDir, commonDir, guard.ref); err != nil {
+			return err
+		}
+	}
 	for _, entry := range entries {
 		if !matching(entry) || entry.Phase != "tombstone_intent" || tombstoneConsumed[entry.TombstoneRef] {
 			continue
@@ -215,6 +222,72 @@ func (s *Store) retireJournaledUninstallRef(ctx context.Context, attempt Attempt
 		return nil
 	}
 	return retireRepairRef(ctx, repositoryDir, attempt.Repository, s, guard.kind, guard.ref, guard.commit, guard.binding)
+}
+
+// removeJournaledBrokenRepairRef recovers only a zero-byte loose Hive ref after
+// the exact journal and repository identity have already been verified. Git's
+// ordinary ref lock excludes concurrent Git writers; the file is revalidated
+// after the lock is held. A crash after removal is safe because the existing
+// journaled-intent recovery treats an absent original and tombstone as already
+// consumed and records the durable completion on retry.
+func removeJournaledBrokenRepairRef(ctx context.Context, repositoryDir, commonDir, ref string) error {
+	if _, err := readRepairRef(ctx, repositoryDir, ref); err == nil {
+		return nil
+	} else {
+		var broken *brokenRepairRefError
+		if !errors.As(err, &broken) || broken.ref != ref {
+			return err
+		}
+	}
+	refPath := filepath.Join(commonDir, filepath.FromSlash(ref))
+	relative, err := filepath.Rel(commonDir, refPath)
+	if err != nil || filepath.IsAbs(relative) || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("broken journaled repair ref path escapes the verified repository")
+	}
+	lockPath := refPath + ".lock"
+	lock, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("lock broken journaled repair ref: %w", err)
+	}
+	lockClosed := false
+	defer func() {
+		if !lockClosed {
+			_ = lock.Close()
+		}
+		_ = os.Remove(lockPath)
+		_ = syncParentDirectory(lockPath)
+	}()
+	if err := lock.Sync(); err != nil {
+		return fmt.Errorf("sync broken journaled repair ref lock: %w", err)
+	}
+	if err := lock.Close(); err != nil {
+		return fmt.Errorf("close broken journaled repair ref lock: %w", err)
+	}
+	lockClosed = true
+	info, err := os.Lstat(refPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() != 0 {
+		return fmt.Errorf("broken journaled repair ref is not an ordinary zero-byte loose ref")
+	}
+	file, err := os.Open(refPath)
+	if err != nil {
+		return fmt.Errorf("open broken journaled repair ref: %w", err)
+	}
+	opened, statErr := file.Stat()
+	closeErr := file.Close()
+	after, afterErr := os.Lstat(refPath)
+	if statErr != nil || closeErr != nil || afterErr != nil || !os.SameFile(info, opened) || !os.SameFile(info, after) || after.Size() != 0 || !after.Mode().IsRegular() {
+		return fmt.Errorf("broken journaled repair ref changed while it was inspected")
+	}
+	if err := os.Remove(refPath); err != nil {
+		return fmt.Errorf("remove broken journaled repair ref: %w", err)
+	}
+	if err := syncParentDirectory(refPath); err != nil {
+		return fmt.Errorf("sync broken journaled repair ref removal: %w", err)
+	}
+	return nil
 }
 
 // resolveUninstallRepairRepository normally uses the recorded repair worktree.

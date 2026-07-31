@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -221,6 +222,71 @@ func TestRepairSymbolicRefMissingAcceptsOnlyExactGitMissingRefDiagnostic(t *test
 		t.Run(test.name, func(t *testing.T) {
 			if got := repairSymbolicRefMissing(test.exitCode, test.output, ref); got != test.want {
 				t.Fatalf("repairSymbolicRefMissing()=%t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCancelForUninstallRemovesOnlyJournaledZeroByteBrokenRef(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		refBytes  []byte
+		wantError bool
+	}{
+		{name: "zero-byte disk truncation"},
+		{name: "non-empty invalid foreign value", refBytes: []byte("foreign\n"), wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			repository, _ := seedGitRepository(t)
+			state, err := NewStore(filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "HEAD"))
+			tree := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "HEAD^{tree}"))
+			attempt := Attempt{
+				Repository: "owner/repo", RepositoryFingerprint: "owner/repo:broken-ref", Attempt: 1, AttemptCounted: true,
+				Branch: "main", Worktree: repository, Stage: StageModelComplete, Provider: "test", StartedAt: time.Now().UTC(),
+			}
+			worker := &Worker{State: state}
+			ref, commit, binding, err := worker.createSealedTreeGuard(ctx, attempt, sealedTreeModelBase, tree, head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt.ModelBaseTree, attempt.ModelBaseParent = tree, head
+			attempt.ModelBaseGuardRef, attempt.ModelBaseGuardCommit, attempt.ModelBaseGuardBinding, attempt.ModelBaseGuardKind = ref, commit, binding, sealedTreeModelBase
+			if err := state.Put(attempt); err != nil {
+				t.Fatal(err)
+			}
+			commonDir := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "--git-common-dir"))
+			if !filepath.IsAbs(commonDir) {
+				commonDir = filepath.Join(repository, commonDir)
+			}
+			refPath := filepath.Join(commonDir, filepath.FromSlash(ref))
+			if err := os.WriteFile(refPath, test.refBytes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err = state.CancelForUninstall(ctx, attempt.RepositoryFingerprint)
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "not an ordinary zero-byte loose ref") {
+					t.Fatalf("expected fail-closed broken-ref error, got %v", err)
+				}
+				if data, readErr := os.ReadFile(refPath); readErr != nil || string(data) != string(test.refBytes) {
+					t.Fatalf("non-empty broken ref changed: data=%q err=%v", data, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, statErr := os.Lstat(refPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("zero-byte broken ref survived retirement: %v", statErr)
+			}
+			current, exists := state.Get(attempt.RepositoryFingerprint)
+			if !exists || current.Stage != StageCancelled || !UninstallRefsRetired(current) {
+				t.Fatalf("broken-ref recovery did not reach terminal retirement: %+v", current)
 			}
 		})
 	}
