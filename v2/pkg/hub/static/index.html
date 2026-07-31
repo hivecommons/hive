@@ -1328,12 +1328,19 @@
       ];
       function fmt(n) { return n.toLocaleString('en-US'); }
       function apply(data) {
+        // The hub tells us whether enough of the fleet reported for these
+        // totals to mean anything. When it says no, show NOTHING rather than a
+        // number assembled from a handful of hives — a precise-looking total
+        // built from 2 of 50 spokes is the exact failure this guards against.
+        // Treat a response without the field (older hub) as trustworthy so an
+        // upgrade skew never blanks a strip that is actually fine.
+        var trustworthy = !data || typeof data.trustworthy !== 'boolean' ? true : data.trustworthy;
         var anyLive = false;
-        LIVE_STATS.forEach(function(s) {
+        (LIVE_STATS || []).forEach(function(s) {
           var box = document.getElementById(s.box);
           if (!box) return;
           var val = data && typeof data[s.key] === 'number' ? data[s.key] : 0;
-          if (val > 0) {
+          if (trustworthy && val > 0) {
             box.querySelector('[data-stat]').textContent = fmt(val);
             box.hidden = false;
             anyLive = true;
@@ -1343,9 +1350,17 @@
         });
         var note = document.getElementById('hero-proof-note');
         if (!anyLive && note) {
-          // No fleet data yet: don't imply live numbers exist. Swap to a
-          // qualitative line alongside the (always-true) 90% coverage stat.
-          note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Spin up a hive and your fleet\'s merged-PR, rejected-PR, and CVE totals appear here, live. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+          if (!trustworthy && data && data.eligible > 0) {
+            // Data IS degraded and we know it. Say so plainly instead of
+            // letting a blank strip read as "the fleet did nothing".
+            note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet contribution totals are <strong>currently being recollected</strong> (' +
+              fmt(data.reporting || 0) + ' of ' + fmt(data.eligible || 0) +
+              ' hives reporting) and are hidden until enough of the fleet has reported. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+          } else {
+            // No fleet data yet: don't imply live numbers exist. Swap to a
+            // qualitative line alongside the (always-true) 90% coverage stat.
+            note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Spin up a hive and your fleet\'s merged-PR, rejected-PR, and CVE totals appear here, live. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+          }
         }
       }
       function go() {
