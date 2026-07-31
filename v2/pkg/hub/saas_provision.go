@@ -57,6 +57,13 @@ const (
 	// ingressTypeOpenShiftRoute selects OpenShift Route generation.
 	ingressTypeOpenShiftRoute = "openshift-route"
 
+	// routeBaseDashboard and routeBaseTerminal name the Routes that provisioning
+	// creates on an OpenShift spoke. addVanityHostToIngress mirrors each one into
+	// a parallel "<name>-vanity" Route, because a Route carries a single host and
+	// so cannot simply gain the vanity hostname the way an nginx Ingress rule can.
+	routeBaseDashboard = "hive-dashboard"
+	routeBaseTerminal  = "hive-terminal"
+
 	// storageTypeDynamic selects dynamic PVC provisioning (no NFS PV).
 	storageTypeDynamic = "dynamic"
 
@@ -632,6 +639,17 @@ func (s *HubServer) makeVanityHostServable(hiveID, vanityHost string, cluster *C
 // repairVanityURLsForClaimedHives applies the retroactive vanity-URL repair to
 // every hive, returning the number changed. Safe to run repeatedly: each hive is
 // gated by repairVanityURLForHive, which no-ops once a vanity URL exists.
+//
+// DELIBERATELY NOT CALLED IN PRODUCTION, for the same reason as its sibling
+// repairGitHubHostsFromClusters: the repair runs LAZILY, per hive, from the
+// heartbeat path, and a startup sweep would walk the hive directory
+// concurrently with the first heartbeats already writing to it for no benefit —
+// a hive that never beats needs no repair, and one that does gets repaired on
+// its very next beat. It is retained as the fleet-level entry point (and is
+// covered by a test asserting sweep-level idempotency) so an operator-triggered
+// backfill has one correct implementation to call rather than an ad-hoc loop.
+// This is NOT dead code left behind by accident; do not read its absence from
+// the heartbeat path as missing coverage.
 func (s *HubServer) repairVanityURLsForClaimedHives() int {
 	repaired := 0
 	for _, h := range listSaaSHives() {
@@ -1842,7 +1860,15 @@ func (s *HubServer) addVanityHostToIngress(hiveID, vanityHost string, cluster *C
 	placeholderHost := hiveID + "." + cluster.Domain
 
 	if cluster.IngressType == ingressTypeOpenShiftRoute {
-		for _, base := range []string{"hive-dashboard", "hive-terminal"} {
+		// Mirror the nginx branch's accounting: count what was actually applied,
+		// so "every source Route was unreachable" reports failure instead of
+		// success. Without this the loop `continue`s past every missing/
+		// unreachable Route and still returns nil, telling the caller the host is
+		// servable when no Route was created — the retroactive repair then adopts
+		// an unservable vanity host and replaces a working placeholder link with
+		// a 503.
+		applied := 0
+		for _, base := range []string{routeBaseDashboard, routeBaseTerminal} {
 			out, err := kubectlForCluster(cluster, "-n", ns, "get", "route", base,
 				"-o", "jsonpath={.spec.port.targetPort}|{.spec.path}").Output()
 			if err != nil {
@@ -1870,6 +1896,11 @@ spec:
 			if err := cmd.Run(); err != nil {
 				return fmt.Errorf("applying %s-vanity route: %w", base, err)
 			}
+			applied++
+		}
+		if applied == 0 {
+			return fmt.Errorf("no route found in %s to mirror %s onto (cluster unreachable or spoke has no %s/%s route)",
+				ns, vanityHost, routeBaseDashboard, routeBaseTerminal)
 		}
 		return nil
 	}

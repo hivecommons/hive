@@ -258,3 +258,127 @@ func TestRepairedVanityURLReachesSpokeViaHeartbeat(t *testing.T) {
 		t.Errorf("still pushing after the spoke adopted the vanity URL: %+v", pc2)
 	}
 }
+
+// openShiftVanityTestDomain mirrors the live vllm-d apps wildcard domain.
+const openShiftVanityTestDomain = "apps.fmaas-vllm-d.example.com"
+
+// newOpenShiftVanityTestHub builds a hub with one OpenShift-Route cluster whose
+// spokes the hub cannot reach (no kubectl under test), standing in for the
+// firewalled heartbeat-only vllm-d pool.
+func newOpenShiftVanityTestHub() *HubServer {
+	return &HubServer{
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		clusters: map[string]ClusterConfig{
+			defaultClusterID: {
+				ID:          defaultClusterID,
+				Name:        "vllm-d",
+				Domain:      openShiftVanityTestDomain,
+				IngressType: ingressTypeOpenShiftRoute,
+			},
+		},
+	}
+}
+
+// On an OpenShift cluster whose Routes the hub cannot read, addVanityHostToIngress
+// must report FAILURE. It previously `continue`d past every unreachable source
+// Route and still returned nil, so the retroactive repair believed the host was
+// servable, adopted it, and replaced a working placeholder link with a 503 — the
+// live vllm-d regression across 11 claimed hives.
+func TestAddVanityHostToIngressFailsWhenNoRouteCanBeMirrored(t *testing.T) {
+	s := newOpenShiftVanityTestHub()
+	cluster := s.clusters[defaultClusterID]
+
+	err := s.addVanityHostToIngress("hosted-available-vllmd-01", "hosted-x-y-ab12."+openShiftVanityTestDomain, &cluster)
+	if err == nil {
+		t.Fatal("addVanityHostToIngress reported success with no route mirrored — " +
+			"the caller would adopt an unservable vanity host and 503 every hub link")
+	}
+	if !strings.Contains(err.Error(), "no route found") {
+		t.Errorf("error %q does not name the missing-route cause", err)
+	}
+}
+
+// The guard must actually hold end to end: on an unreachable OpenShift cluster the
+// hive keeps its EMPTY VanityURL, so every read path falls back to the working
+// placeholder host rather than an adopted-but-unservable vanity host.
+func TestVanityRepairKeepsPlaceholderOnUnreachableOpenShiftCluster(t *testing.T) {
+	useTempHiveDir(t)
+	s := newOpenShiftVanityTestHub()
+
+	const id = "hosted-available-vllmd-01"
+	if err := saveSaaSHive(&SaaSHive{
+		ID: id, Status: "running", Owner: "someone", Org: "ibm-aiops",
+		Repos: []string{"katamari"}, PrimaryRepo: "katamari", ACMMLevel: 3,
+		ClusterID: defaultClusterID, ClaimDelivered: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if s.repairVanityURLForHive(id) {
+		t.Error("repair adopted a vanity URL on a cluster where it could not create a route")
+	}
+	if got := loadSaaSHive(id).VanityURL; got != "" {
+		t.Errorf("VanityURL = %q, want empty so the working placeholder host stands", got)
+	}
+	if got := claimedVanityURL(loadSaaSHive(id)); got != "" {
+		t.Errorf("claimedVanityURL = %q, want empty (placeholder fallback)", got)
+	}
+}
+
+// A repair that CANNOT succeed must not churn a new random host per heartbeat.
+// generateHiveID mints a fresh 4-char suffix per call, so an unguarded retry
+// produced a different host every beat (observed live: three hosts in four
+// minutes). Repeated failing repairs must leave the record untouched.
+func TestVanityRepairDoesNotChurnHostWhenItCannotSucceed(t *testing.T) {
+	useTempHiveDir(t)
+	s := newOpenShiftVanityTestHub()
+
+	const id = "hosted-available-vllmd-12"
+	if err := saveSaaSHive(&SaaSHive{
+		ID: id, Status: "running", Owner: "someone", Org: "ibm-aiops",
+		Repos: []string{"katamari"}, PrimaryRepo: "katamari", ACMMLevel: 3,
+		ClusterID: defaultClusterID, ClaimDelivered: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate several heartbeats against a cluster that stays unreachable.
+	for beat := range 5 {
+		if s.repairVanityURLForHive(id) {
+			t.Fatalf("beat %d: repair reported a change it could not make servable", beat)
+		}
+		if got := loadSaaSHive(id).VanityURL; got != "" {
+			t.Fatalf("beat %d: adopted %q despite an unservable host", beat, got)
+		}
+	}
+}
+
+// The nginx path must be unaffected by the OpenShift accounting fix: a reachable
+// nginx cluster still adopts its vanity host exactly once and keeps it stable.
+func TestVanityRepairNginxBehaviorUnchanged(t *testing.T) {
+	useTempHiveDir(t)
+	s := newVanityRepairTestHub()
+
+	const id = "hosted-available-oke-42-placeholder-zz01"
+	if err := saveSaaSHive(&SaaSHive{
+		ID: id, Status: "running", Owner: "someone", Org: "kubestellar",
+		Repos: []string{"console"}, PrimaryRepo: "console", ACMMLevel: 3,
+		ClusterID: defaultClusterID, ClaimDelivered: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !s.repairVanityURLForHive(id) {
+		t.Fatal("nginx repair reported no change — existing behavior regressed")
+	}
+	first := loadSaaSHive(id).VanityURL
+	if first == "" {
+		t.Fatal("nginx repair left the vanity URL empty")
+	}
+	if s.repairVanityURLForHive(id) {
+		t.Error("nginx repair was not idempotent")
+	}
+	if second := loadSaaSHive(id).VanityURL; second != first {
+		t.Errorf("nginx vanity host churned: %q then %q", first, second)
+	}
+}
