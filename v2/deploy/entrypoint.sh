@@ -321,11 +321,15 @@ if [ "$(id -u)" = "0" ]; then
   # Shared CLI auth/cache lives in /data/home (persistent volume).
   # Make it group-writable so all agent UIDs (node group) can use it.
   # The manager sets HOME=/data/home for agent tmux sessions.
-  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/config/github-copilot /home/dev/.config
+  mkdir -p /data/home/.config /data/home/.copilot /data/home/.claude/session-env /data/home/.codex /data/home/.bob/settings /data/config/github-copilot /home/dev/.config
   # These parents are created after the mounted-volume ownership check above.
   # On a fresh volume whose root was pre-seeded as dev, mkdir would otherwise
   # recreate them as root while DATA_OWNER=1001 skips the recursive repair.
   # Normalize the shared parents unconditionally before any agent can start.
+  # $HOME itself must be group-writable, not just its children. bob calls
+  # mkdirSync('$HOME/.bob') on first run, which needs write on /data/home — a
+  # 0755 root-owned $HOME makes that EACCES even though every child dir below
+  # is perfectly writable. 2775 = rwxrwxr-x + setgid (new entries inherit node).
   chown dev:node /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
   chmod 2775 /data/home /data/home/.config /data/config /data/config/github-copilot 2>/dev/null || true
   chmod 2770 /data/home/.copilot 2>/dev/null || true
@@ -343,23 +347,35 @@ if [ "$(id -u)" = "0" ]; then
   # the explicit bounded home instead of symlinking credential directories or
   # copying auth.json into the image account.
   export CODEX_HOME="${CODEX_HOME:-/data/home/.codex}"
+  # bob writes installation_id, settings.json, trustedFolders.json and tmp/ under
+  # $HOME/.bob, plus custom modes under $HOME/.bob/settings. Pre-create both
+  # group-writable + setgid so the FIRST agent to launch (a 2001+ UID in group
+  # node) never has to mkdir them itself — that mkdir is what failed with EACCES
+  # in #2284/#2253. Pre-creating also removes the ordering dependency on which
+  # process touches .bob first. 2770: no world access, these hold auth settings.
+  chmod 2770 /data/home/.bob /data/home/.bob/settings 2>/dev/null || true
+  chown -R dev:node /data/home/.bob 2>/dev/null || true
   ln -sfn /data/config/github-copilot /home/dev/.config/github-copilot
   ln -sfn /data/config/github-copilot /data/home/.config/github-copilot
   ln -sfn /data/home/.copilot /home/dev/.copilot
   # Set group-write + setgid on shared dirs — skip if already done (saves 100s+ on NFS).
   # The polling perm guard handles ongoing config.json fixes regardless.
+  # The sampled set MUST include every dir the repair below is relied on to fix.
+  # It previously sampled only .copilot and .claude, so a hive whose those two
+  # were already correct skipped the whole-tree repair forever — leaving
+  # /data/home itself at its original root-owned 0755 and making bob's
+  # mkdir('$HOME/.bob') fail with EACCES (#2284). /data/home and .bob are sampled
+  # too so that gap cannot reopen.
   NEED_PERM_FIX=false
   if [ -d "/data/home/.copilot" ] && [ -d "/data/home/.claude" ]; then
-    COPILOT_PERMS=$(stat -c '%a' "/data/home/.copilot" 2>/dev/null || echo "755")
-    CLAUDE_PERMS=$(stat -c '%a' "/data/home/.claude" 2>/dev/null || echo "755")
-    case "$COPILOT_PERMS" in
-      27[0-9][0-9]|37[0-9][0-9]) ;; # already has group-write + setgid
-      *) NEED_PERM_FIX=true ;;
-    esac
-    case "$CLAUDE_PERMS" in
-      27[0-9][0-9]|37[0-9][0-9]) ;; # already has group-write + setgid
-      *) NEED_PERM_FIX=true ;;
-    esac
+    for perm_dir in /data/home /data/home/.copilot /data/home/.claude /data/home/.bob; do
+      # Missing dir → repair. Default 755 → repair (no group-write/setgid).
+      DIR_PERMS=$(stat -c '%a' "$perm_dir" 2>/dev/null || echo "755")
+      case "$DIR_PERMS" in
+        27[0-9][0-9]|37[0-9][0-9]) ;; # already has group-write + setgid
+        *) NEED_PERM_FIX=true ;;
+      esac
+    done
   else
     NEED_PERM_FIX=true
   fi
@@ -414,8 +430,8 @@ if [ "$(id -u)" = "0" ]; then
       # Slow cycle: fix entire /data/home tree every 5 min (new dirs from agents)
       CYCLE=$((CYCLE + 1))
       if [ "$CYCLE" -ge 60 ]; then
-        chmod -R g+rwX /data/home/.cache /data/home/.copilot /data/home/.claude /data/home/.codex 2>/dev/null
-        find /data/home/.cache /data/home/.claude /data/home/.codex -type d -exec chmod g+s {} + 2>/dev/null
+        chmod -R g+rwX /data/home/.cache /data/home/.copilot /data/home/.claude /data/home/.codex /data/home/.bob 2>/dev/null
+        find /data/home/.cache /data/home/.claude /data/home/.codex /data/home/.bob -type d -exec chmod g+s {} + 2>/dev/null
         CYCLE=0
       fi
       sleep 5

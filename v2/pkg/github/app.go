@@ -120,20 +120,32 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 		return a.cachedToken, nil
 	}
 
-	jwtToken, err := a.generateJWT()
+	// We are inside the tokenRefreshBuffer window (or have no token yet): try to
+	// PROACTIVELY mint a fresh token. A GitHub installation token is minted with
+	// a live network call to CreateInstallationToken, and on GHE-adjacent /
+	// firewalled clusters that call intermittently fails (transient 5xx, TLS
+	// blip, network hiccup). Crucially, a proactive-refresh failure is NOT an
+	// auth failure while the currently-cached token is still valid: the buffer
+	// only exists to refresh EARLY, so a blip here must fall back to the good
+	// cached token rather than surface an error. Erroring here is exactly what
+	// made the dashboard's github_auth health check flap red↔green on a hive
+	// whose App is genuinely working. We only hard-fail once no usable token
+	// remains — i.e. the cache is empty or the cached token has truly expired.
+	newToken, expiry, err := a.mintInstallationToken(ctx)
 	if err != nil {
-		return "", fmt.Errorf("generating JWT: %w", err)
+		if a.cachedToken != "" && time.Now().Before(a.tokenExpiry) {
+			a.logger.Warn("github app token proactive refresh failed; serving still-valid cached token",
+				"expires_at", a.tokenExpiry.Format(time.RFC3339),
+				"installation_id", a.installationID,
+				"error", err,
+			)
+			return a.cachedToken, nil
+		}
+		return "", err
 	}
 
-	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
-	setBaseURL(jwtClient, a.apiURL)
-	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, nil)
-	if err != nil {
-		return "", fmt.Errorf("creating installation token: %w", err)
-	}
-
-	a.cachedToken = installToken.GetToken()
-	a.tokenExpiry = installToken.GetExpiresAt().Time
+	a.cachedToken = newToken
+	a.tokenExpiry = expiry
 	a.logger.Info("github app token refreshed",
 		"expires_at", a.tokenExpiry.Format(time.RFC3339),
 		"installation_id", a.installationID,
@@ -147,6 +159,27 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	}
 
 	return a.cachedToken, nil
+}
+
+// mintInstallationToken performs the live GitHub call that exchanges an
+// App JWT for an installation token. It is the network step shared by the
+// cache-refresh path in Token(); it does NOT touch the cache or take the
+// mutex (callers already hold a.mu). It is the only failure-prone step in
+// Token(), so isolating it lets Token() distinguish "mint blipped" (fall back
+// to a still-valid cached token) from a genuine expiry.
+func (a *AppAuth) mintInstallationToken(ctx context.Context) (token string, expiry time.Time, err error) {
+	jwtToken, err := a.generateJWT()
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("generating JWT: %w", err)
+	}
+
+	jwtClient := gh.NewClient(nil).WithAuthToken(jwtToken)
+	setBaseURL(jwtClient, a.apiURL)
+	installToken, _, err := jwtClient.Apps.CreateInstallationToken(ctx, a.installationID, nil)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("creating installation token: %w", err)
+	}
+	return installToken.GetToken(), installToken.GetExpiresAt().Time, nil
 }
 
 // ScopedToken creates a short-lived installation token with permissions

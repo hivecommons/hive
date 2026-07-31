@@ -90,6 +90,12 @@ type WSMessage struct {
 	Summary           string          `json:"summary,omitempty"`
 	TmuxOutput        []string        `json:"tmux_output,omitempty"`
 	AcceptedModels    []string        `json:"accepted_models,omitempty"`
+	// Permanent marks a task_failed the relay will not retry: it exhausted its
+	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
+	// bin/contributor-relay.sh). Reassigning the same work item to the same
+	// contributor will be rejected outright, so the hub should prefer a
+	// different contributor. See kubestellar/hive#2203.
+	Permanent bool `json:"permanent,omitempty"`
 }
 
 type WSTaskAssign struct {
@@ -687,6 +693,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
 						"reason", msg.Reason,
+						"permanent", msg.Permanent,
 					)
 					contributor.mu.Lock()
 					contributor.profile.TasksFailed++

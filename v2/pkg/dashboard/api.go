@@ -608,10 +608,13 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	if primaryRepo != "" && cfg.Project.Org != "" && !strings.Contains(primaryRepo, "/") {
 		primaryRepo = cfg.Project.Org + "/" + primaryRepo
 	}
-	githubBaseURL := cfg.GitHub.BaseURL
-	if githubBaseURL == "" {
-		githubBaseURL = "https://github.com"
-	}
+	// ResolvedBaseURL (not the raw BaseURL) so pooled/placeholder GHE hives —
+	// which legitimately carry base_url: "" but api_url: https://github.ibm.com/api/v3
+	// — report github.ibm.com, not github.com. Reading BaseURL alone made the
+	// Repos config show bare org/repo with no GHE hint, so operators mistook a
+	// github.ibm.com hive for github.com. ResolvedBaseURL falls back to the api_url
+	// host in exactly that case (mirrors HostLabel).
+	githubBaseURL := cfg.GitHub.ResolvedBaseURL()
 	jsonResponse(w, map[string]interface{}{
 		"org":       cfg.Project.Org,
 		"repos":     cfg.Project.Repos,
@@ -3726,38 +3729,64 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGovernorBudget(w http.ResponseWriter, r *http.Request) {
+	// Pointer fields distinguish "field absent from the JSON" (nil) from
+	// "field explicitly set to 0". The dashboard sends only the inputs the
+	// user actually touched, so editing Total Tokens alone POSTs
+	// {"totalTokens":N} with no periodDays/criticalPct. With plain ints
+	// those absent fields decoded to 0 and were rejected by validation as
+	// out-of-range. Nil now means "leave the stored value alone", while an
+	// explicit 0 is still honored (totalTokens: 0 disables budget tracking).
 	var body struct {
-		TotalTokens int64 `json:"totalTokens"`
-		PeriodDays  int   `json:"periodDays"`
-		CriticalPct int   `json:"criticalPct"`
+		TotalTokens *int64 `json:"totalTokens"`
+		PeriodDays  *int   `json:"periodDays"`
+		CriticalPct *int   `json:"criticalPct"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 
-	if err := validateGovernorBudget(body.TotalTokens, body.PeriodDays, body.CriticalPct); err != nil {
+	// Validate against the effective post-update values: supplied fields use
+	// the incoming value, omitted fields keep what is already stored. This
+	// keeps a partial update from being judged against a phantom zero.
+	current := s.deps.Config.Governor.Budget
+	totalTokens, periodDays, criticalPct := current.TotalTokens, current.PeriodDays, current.CriticalPct
+	if body.TotalTokens != nil {
+		totalTokens = *body.TotalTokens
+	}
+	if body.PeriodDays != nil {
+		periodDays = *body.PeriodDays
+	}
+	if body.CriticalPct != nil {
+		criticalPct = *body.CriticalPct
+	}
+
+	if err := validateGovernorBudget(totalTokens, periodDays, criticalPct); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
+	// Persist through the config coordinator (dd) rather than mutating
+	// s.deps.Config in place. The values applied are the effective ones
+	// computed above: a nil pointer means "leave the stored value alone",
+	// so only fields the client actually sent are written.
 	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if body.TotalTokens > 0 {
-			candidate.Governor.Budget.TotalTokens = body.TotalTokens
+		if body.TotalTokens != nil {
+			candidate.Governor.Budget.TotalTokens = totalTokens
 		}
-		if body.PeriodDays > 0 {
-			candidate.Governor.Budget.PeriodDays = body.PeriodDays
+		if body.PeriodDays != nil {
+			candidate.Governor.Budget.PeriodDays = periodDays
 		}
-		if body.CriticalPct > 0 {
-			candidate.Governor.Budget.CriticalPct = body.CriticalPct
+		if body.CriticalPct != nil {
+			candidate.Governor.Budget.CriticalPct = criticalPct
 		}
 		return nil
 	}); err != nil {
 		jsonError(w, "failed to persist governor budget: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if body.TotalTokens > 0 {
-		s.deps.Governor.SetBudgetLimit(body.TotalTokens)
+	if body.TotalTokens != nil {
+		s.deps.Governor.SetBudgetLimit(totalTokens)
 	}
 	s.auditFromRequest(r, "config_governor_budget", auditDetail("section", "budget"), "")
 	s.refreshAndPersist()
