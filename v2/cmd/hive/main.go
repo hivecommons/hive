@@ -737,21 +737,29 @@ func main() {
 				// GitHub returns 403 for rate limiting too — a transient
 				// condition that must not raise the "App Not Installed"
 				// banner (matches the guard on the repo-change path).
-				if strings.Contains(err.Error(), "rate limit") {
+				if isGitHubRateLimitText(err) {
 					logger.Warn("GitHub API rate limit hit during advisory issue ensure", "repo", primaryRepo)
-				} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-					githubAppRequired = true
-					// Classify WHY before the banner renders. A bare 401/403
-					// here used to become "GitHub App Not Installed", which is
-					// wrong — and actively misleading — when the real cause is
-					// a key the operator has not delivered. Classification is
-					// on the live API response, and a missing key file
-					// short-circuits without any API call.
-					githubAppDiag, githubAppState = diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
-					logger.Warn("GitHub App authentication failed at startup",
-						"state", githubAppState.String(),
-						"operator_actionable", githubAppState.OperatorActionable(),
-						"error", err)
+				} else {
+					// Do NOT decide from the error string. This call site used
+					// to raise the banner on a substring match for "403"/"401"
+					// and set githubAppRequired=true BEFORE classifying, then
+					// never lower it again when classification came back OK or
+					// inconclusive — which is why the banner showed on boot and
+					// vanished on the first Re-check with nothing fixed.
+					// classifyGitHubAppFailure is the same verdict Re-check
+					// uses, and it declines to raise on AppStateUnknown.
+					raise, diag, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
+					if raise {
+						githubAppRequired = true
+						githubAppDiag, githubAppState = diag, state
+						logger.Warn("GitHub App authentication failed at startup",
+							"state", state.String(),
+							"operator_actionable", state.OperatorActionable(),
+							"error", err)
+					} else {
+						logger.Warn("advisory issue ensure failed but GitHub App auth verified healthy — not raising the App banner",
+							"repo", primaryRepo, "state", state.String(), "error", err)
+					}
 				}
 			} else {
 				advisoryIssues[primaryRepo] = num
@@ -1493,10 +1501,25 @@ func main() {
 				num, err := ghClient.EnsureAdvisoryIssue(ctx, newPrimaryRepo)
 				if err != nil {
 					logger.Error("failed to create advisory issue on new primary repo", "repo", newPrimaryRepo, "error", err)
-					if strings.Contains(err.Error(), "rate limit") {
+					if isGitHubRateLimitText(err) {
 						logger.Warn("GitHub API rate limit hit during advisory issue creation", "repo", newPrimaryRepo)
-					} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-						dashSrv.SetGitHubAppRequired(true)
+					} else {
+						// #2224 replaced error-string classification everywhere
+						// else but missed this site, which raised the banner on
+						// a bare "403"/"401" substring and recorded no state at
+						// all — so the UI fell back to "App Not Installed" even
+						// for an operator-side key fault. Classify properly.
+						raise, diag, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
+						if raise {
+							dashSrv.SetGitHubAppRequired(true)
+							dashSrv.SetGitHubAppState(state.String())
+							if diag != "" {
+								dashSrv.SetGitHubAppPermIssue(diag)
+							}
+							logger.Warn("GitHub App authentication failed creating advisory issue",
+								"repo", newPrimaryRepo, "state", state.String(),
+								"operator_actionable", state.OperatorActionable())
+						}
 					}
 				} else {
 					advisoryIssues[newPrimaryRepo] = num
@@ -1586,7 +1609,12 @@ func main() {
 				// this is the exact case rediscovery exists for. Cached by TTL,
 				// so a repeated re-check does not re-hit the API.
 				healGitHubAppInstallation(ctx, ghClient.AppAuth(), cfg, logger)
-				if diag, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org); diag != "" {
+				// Shared verdict with the boot and advisory-digest paths. Re-check
+				// previously branched on `diag != ""` while boot branched on the
+				// error string, which is how the two came to disagree about the
+				// same hive; routing both through classifyGitHubAppFailure means
+				// they cannot drift again.
+				if raise, diag, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger); raise {
 					dashSrv.SetGitHubAppPermIssue(diag)
 					dashSrv.SetGitHubAppState(state.String())
 					logger.Warn("github app recheck: app detected but write not verified",
@@ -2973,6 +3001,87 @@ func diagnoseGitHubAppWrite(ctx context.Context, appAuth *github.AppAuth, expect
 	return msg
 }
 
+// githubRateLimitErrText is the substring GitHub's client surfaces on a rate or
+// abuse limit. Matching text is acceptable ONLY here: a rate limit is a reason
+// to skip classification entirely, never a reason to accuse anyone of anything,
+// so a false negative costs one extra (correct) classification round-trip.
+const githubRateLimitErrText = "rate limit"
+
+// isGitHubRateLimitText reports whether an error looks like a GitHub rate limit.
+func isGitHubRateLimitText(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), githubRateLimitErrText)
+}
+
+// githubAppBannerAttempts is how many times classifyGitHubAppFailure probes
+// before accepting an unclassifiable (AppStateUnknown) verdict. A cold start
+// races the cluster's DNS/egress-proxy readiness, so the FIRST App call a pod
+// makes is the one most likely to fail for reasons that have nothing to do
+// with the App. One retry converts that transient into a correct verdict.
+const githubAppBannerAttempts = 2
+
+// githubAppBannerRetryDelay spaces those attempts. Short enough not to stall
+// boot, long enough for an egress proxy or DNS cache to come up.
+const githubAppBannerRetryDelay = 3 * time.Second
+
+// classifyGitHubAppFailure is the SINGLE decision point for "should the GitHub
+// App banner be raised?" — used by the boot path, the advisory-digest path and
+// the manual Re-check button alike, so those three can never again disagree
+// about the same hive.
+//
+// It exists because they DID disagree. The boot path used to raise the banner
+// on a substring match for "403"/"401" in a formatted error string (the exact
+// pattern #2224 replaced), set githubAppRequired=true UNCONDITIONALLY, and
+// then classify — never lowering the flag again when classification came back
+// healthy or inconclusive. Re-check ran the very same diagnoseGitHubApp probe
+// but treated an empty diagnosis as success and cleared the banner. Same
+// evidence, opposite conclusion: the banner appeared on every cold start whose
+// first advisory-issue call blipped, and vanished the moment the user clicked
+// Re-check without anything having been fixed.
+//
+// Two rules make the verdict trustworthy:
+//
+//  1. Only a state that is genuinely actionable raises the banner. AppStateOK
+//     obviously does not, and neither does AppStateUnknown — #2224 defines it
+//     as "we could not reach a conclusion", and escalating on it is precisely
+//     the false accusation that design was meant to prevent.
+//  2. An unknown verdict is retried before it is accepted, so a transient
+//     startup network failure is not mistaken for a definitive one.
+//
+// Returns raise=false with an empty message when the App is fine or when we
+// simply cannot tell.
+func classifyGitHubAppFailure(ctx context.Context, appAuth *github.AppAuth, expectedOwner string, logger *slog.Logger) (raise bool, msg string, state github.AppAuthState) {
+	for attempt := 1; attempt <= githubAppBannerAttempts; attempt++ {
+		msg, state = diagnoseGitHubApp(ctx, appAuth, expectedOwner)
+		if state != github.AppStateUnknown {
+			break
+		}
+		if attempt < githubAppBannerAttempts {
+			logger.Debug("github app classification inconclusive — retrying before accepting a verdict",
+				"attempt", attempt, "owner", expectedOwner)
+			select {
+			case <-ctx.Done():
+				return false, "", github.AppStateUnknown
+			case <-time.After(githubAppBannerRetryDelay):
+			}
+		}
+	}
+
+	// AppStateUnknown must never raise the banner: we did not get an answer
+	// from GitHub, and a hive whose App is perfectly healthy would otherwise
+	// be told to reinstall it because of a momentary network fault. The
+	// self-heal loop and the next eval cycle both re-probe, so deferring the
+	// verdict costs nothing but a delay on a hive that IS genuinely broken.
+	if state == github.AppStateUnknown {
+		logger.Warn("github app state could not be determined — leaving the banner down rather than guessing",
+			"owner", expectedOwner)
+		return false, "", github.AppStateUnknown
+	}
+	if state == github.AppStateOK {
+		return false, "", github.AppStateOK
+	}
+	return true, msg, state
+}
+
 func runEvalCycle(
 	ctx context.Context,
 	cfg *config.Config,
@@ -3298,21 +3407,23 @@ func runEvalCycle(
 							logger.Warn("GitHub App write failed — cannot write issue comments",
 								"repo", primaryRepo, "state", state.String(),
 								"operator_actionable", state.OperatorActionable(), "detail", msg)
-						} else if strings.Contains(err.Error(), "rate limit") {
+						} else if isGitHubRateLimitText(err) {
 							logger.Warn("GitHub API rate limit hit, skipping advisory digest post", "repo", primaryRepo)
-						} else if strings.Contains(err.Error(), "403") || strings.Contains(err.Error(), "401") {
-							// Same reasoning as the startup path: classify
-							// before raising a banner, so an operator-side key
-							// failure is never rendered as "not installed".
-							msg, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
-							dashSrv.SetGitHubAppRequired(true)
-							if msg != "" {
-								dashSrv.SetGitHubAppPermIssue(msg)
+						} else {
+							// Same verdict function as boot and Re-check, so a
+							// healthy or unclassifiable probe cannot raise the
+							// banner here either.
+							raise, msg, state := classifyGitHubAppFailure(ctx, ghClient.AppAuth(), cfg.Project.Org, logger)
+							if raise {
+								dashSrv.SetGitHubAppRequired(true)
+								if msg != "" {
+									dashSrv.SetGitHubAppPermIssue(msg)
+								}
+								dashSrv.SetGitHubAppState(state.String())
+								logger.Warn("GitHub App authentication failed posting advisory digest",
+									"repo", primaryRepo, "state", state.String(),
+									"operator_actionable", state.OperatorActionable())
 							}
-							dashSrv.SetGitHubAppState(state.String())
-							logger.Warn("GitHub App authentication failed posting advisory digest",
-								"repo", primaryRepo, "state", state.String(),
-								"operator_actionable", state.OperatorActionable())
 						}
 					} else {
 						logger.Info("posted advisory digest", "repo", primaryRepo, "issue", issueNum, "findings", digest.TotalCount, "via", "app")
