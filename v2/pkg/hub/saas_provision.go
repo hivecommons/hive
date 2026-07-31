@@ -311,14 +311,42 @@ type SaaSHive struct {
 	// project); after that the spoke's dashboard becomes the source of truth and
 	// the hub ADOPTS operator edits instead of pushing. (ACMM is operator-owned
 	// from the start and always adopted, independent of this flag.)
-	ClaimDelivered  bool                   `json:"claim_delivered,omitempty"`
-	Error           string                 `json:"error,omitempty"`
-	AutoUpgrade     bool                   `json:"auto_upgrade"`
-	IsPublic        bool                   `json:"is_public"`
-	PendingRequests []PendingAccessRequest `json:"pending_requests,omitempty"`
-	OCIFileSystemID string                 `json:"oci_file_system_id,omitempty"`
-	OCIExportID     string                 `json:"oci_export_id,omitempty"`
-	ClusterID       string                 `json:"cluster_id,omitempty"`
+	ClaimDelivered bool `json:"claim_delivered,omitempty"`
+	// ACMMDelivered flips true once the spoke has reported back the ACMM level
+	// the hub assigned it. It is the level's OWN half of the claim handshake,
+	// deliberately separate from ClaimDelivered.
+	//
+	// WHY IT CANNOT REUSE ClaimDelivered
+	//
+	// #2333 put ACMM on the ClaimDelivered handshake, which is right for hives
+	// claimed from then on. But ClaimDelivered is PERSISTED STATE, and every
+	// hive claimed before that change already had it set to true under the old
+	// rule, which required only org/repos to match. For those hives both halves
+	// of the fix are permanently disabled on the first beat after upgrade: the
+	// push is gated on !ClaimDelivered (already false, so never pushes) and the
+	// adopt is gated on ClaimDelivered (already true, so the stale spoke report
+	// is adopted). The requested level was overwritten in meta long ago, so hub
+	// and spoke now agree on the wrong number and no drift is even detectable.
+	// That is exactly the live hosted-available-oke-11-placeholder-r05x state:
+	// an approved acmm_level 3 request running, and displaying, as L2.
+	//
+	// A separate flag defaults to false on every existing hive, so the level
+	// delivery re-arms once for hives that never got it — without re-opening the
+	// org/repos claim, and without a migration.
+	ACMMDelivered bool `json:"acmm_delivered,omitempty"`
+	// RequestedACMMLevel is the level the approved provision request asked for,
+	// recorded at assign time so it survives the spoke overwriting ACMMLevel in
+	// meta. It is the level the hub delivers; ACMMLevel is the level currently
+	// in effect. Zero means "nothing was explicitly requested" — the ordinary
+	// case for admin-created and pre-existing hives — and delivers nothing.
+	RequestedACMMLevel int                    `json:"requested_acmm_level,omitempty"`
+	Error              string                 `json:"error,omitempty"`
+	AutoUpgrade        bool                   `json:"auto_upgrade"`
+	IsPublic           bool                   `json:"is_public"`
+	PendingRequests    []PendingAccessRequest `json:"pending_requests,omitempty"`
+	OCIFileSystemID    string                 `json:"oci_file_system_id,omitempty"`
+	OCIExportID        string                 `json:"oci_export_id,omitempty"`
+	ClusterID          string                 `json:"cluster_id,omitempty"`
 
 	// AutoUpgradeMode gates WHEN an enabled auto-upgrade may fire:
 	// AutoUpgradeModeInstant (or empty) upgrades as soon as the hive is seen

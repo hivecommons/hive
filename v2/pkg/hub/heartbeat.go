@@ -161,8 +161,14 @@ type HeartbeatNodeMetric struct {
 	MemTotalMB    int64  `json:"mem_total_mb"`
 	MemUsedMB     int64  `json:"mem_used_mb"`
 	MemPercent    int    `json:"mem_percent"`
-	Pods          int    `json:"pods"`
-	PodCapacity   int    `json:"pod_capacity"`
+	// Disk fields are pointers so a spoke that could not read kubelet stats
+	// (or an older spoke build that does not report them at all) leaves them
+	// absent, and the hub renders unknown rather than a misleading 0%.
+	DiskTotalMB *int64 `json:"disk_total_mb,omitempty"`
+	DiskUsedMB  *int64 `json:"disk_used_mb,omitempty"`
+	DiskPercent *int   `json:"disk_percent,omitempty"`
+	Pods        int    `json:"pods"`
+	PodCapacity int    `json:"pod_capacity"`
 	// HiveCount is the number of distinct hive-hosted-* namespaces with a
 	// running pod on this node (namespaces, not pods, so a hive briefly
 	// running two pods during a rollout is counted once).
@@ -182,7 +188,11 @@ type HeartbeatClusterSummary struct {
 	TotalCPUPct   int `json:"total_cpu_percent"`
 	TotalMemGB    int `json:"total_mem_gb"`
 	TotalMemPct   int `json:"total_mem_percent"`
-	TotalPods     int `json:"total_pods"`
+	// Disk totals cover only the nodes that reported live usage; nil when no
+	// node did, so the hub omits disk instead of showing a false 0%.
+	TotalDiskGB  *int `json:"total_disk_gb,omitempty"`
+	TotalDiskPct *int `json:"total_disk_percent,omitempty"`
+	TotalPods    int  `json:"total_pods"`
 	// HiveCapacityRemaining estimates how many MORE hives the cluster can
 	// hold (see hive_capacity.go). Pointer so old spokes that do not report
 	// it are distinguishable from a genuinely full cluster (nil vs 0).

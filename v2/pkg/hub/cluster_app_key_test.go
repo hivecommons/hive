@@ -206,11 +206,14 @@ func TestDecideAppKeySync(t *testing.T) {
 			description: "the exception needs a fingerprint that provably differs, not an absent one",
 		},
 		{
-			name:        "cluster app_id unset cannot make a positive match",
-			spokeFP:     wrongFP,
-			perHive:     true,
-			spokeAppID:  5686,
-			cluster:     &clusterAppIdentity{AppID: 0, Fingerprint: clusterFP},
+			name:       "cluster app_id unset cannot make a positive match",
+			spokeFP:    wrongFP,
+			perHive:    true,
+			spokeAppID: 5686,
+			// Carries real key material (as any cluster with a stored PEM does)
+			// so the case under test is the missing app_id alone, not a
+			// keyless identity — those are now distinct states.
+			cluster:     &clusterAppIdentity{AppID: 0, PrivateKey: identity.PrivateKey, Fingerprint: clusterFP},
 			wantPush:    false,
 			wantReason:  appKeyReasonDifferentApp,
 			wantFromFP:  wrongFP,
@@ -429,11 +432,21 @@ func TestAppIdentityForCluster(t *testing.T) {
 		wantNil   bool
 		wantAppID int64
 		wantSlug  string
+		// wantNoKey asserts the identity names an App but carries NO key
+		// material, so HasKey() is false and no key-pushing decision may fire.
+		wantNoKey bool
 		reason    string
 	}{
 		{name: "app id and key present", clusterID: "vllm-d", wantAppID: 5686, wantSlug: "ibm-hive"},
 		{name: "key but no app id", clusterID: "keyonly", wantNil: true, reason: "an app_id-less cluster has no identity to enforce"},
-		{name: "app id but no key", clusterID: "hive-oke", wantNil: true, reason: "nothing to push without key material"},
+		// A configured app_id with no stored key IS an identity. Returning nil
+		// here is the bug that made #2333's sentinel repair unreachable in
+		// production: hive-oke had github_app_id set but no PEM, so every
+		// reconcile short-circuited before the repair was consulted. The app_id
+		// alone still corrects a sentinel spoke; HasKey() is what gates the
+		// separate question of whether key material may be pushed.
+		{name: "app id but no key still yields an identity", clusterID: "hive-oke", wantAppID: 12345, wantNoKey: true,
+			reason: "app_id alone is authoritative enough to repair a placeholder sentinel"},
 		{name: "unknown cluster", clusterID: "nope", wantNil: true, reason: "never invent an identity for an unknown cluster"},
 		{name: "empty cluster id", clusterID: "", wantNil: true},
 	}
@@ -452,11 +465,22 @@ func TestAppIdentityForCluster(t *testing.T) {
 			if got.AppID != tc.wantAppID {
 				t.Errorf("AppID = %d, want %d", got.AppID, tc.wantAppID)
 			}
+			if got.HasKey() == tc.wantNoKey {
+				t.Errorf("HasKey() = %v, want %v (%s)", got.HasKey(), !tc.wantNoKey, tc.reason)
+			}
 			if got.AppSlug != tc.wantSlug {
 				t.Errorf("AppSlug = %q, want %q", got.AppSlug, tc.wantSlug)
 			}
-			if got.Fingerprint == "" {
-				t.Error("identity has no fingerprint")
+			// A key-bearing identity must always carry a fingerprint — that pair is
+			// what every key-push comparison depends on. A keyless identity
+			// legitimately has neither, and asserting one there would re-impose
+			// the very "both or nothing" rule that made the sentinel repair
+			// unreachable.
+			if !tc.wantNoKey && got.Fingerprint == "" {
+				t.Error("identity has key material but no fingerprint")
+			}
+			if tc.wantNoKey && (got.Fingerprint != "" || got.PrivateKey != "") {
+				t.Errorf("keyless identity carries key material: fp=%q key_len=%d", got.Fingerprint, len(got.PrivateKey))
 			}
 		})
 	}

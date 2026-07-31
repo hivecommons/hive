@@ -732,6 +732,27 @@ const clusterHealthMemWarnPct = 60
 // clusterHealthMemDangerPct is the memory usage percentage threshold for danger state.
 const clusterHealthMemDangerPct = 80
 
+// Disk thresholds are anchored to kubelet's own behaviour rather than to
+// round numbers, so a coloured bar means something concrete is about to
+// happen on the node:
+//
+//	evictionHard: nodefs.available<10%  -> kubelet starts evicting pods at
+//	                                       90% used, so that is the danger line.
+//	imageGCHighThresholdPercent: 85     -> kubelet begins garbage-collecting
+//	                                       images at 85% used. That is the
+//	                                       first automatic reaction to disk
+//	                                       filling up, which makes it the
+//	                                       right moment to warn an operator
+//	                                       while there is still headroom.
+//
+// clusterHealthDiskWarnPct is the disk usage percentage at which kubelet's
+// image garbage collection kicks in (imageGCHighThresholdPercent).
+const clusterHealthDiskWarnPct = 85
+
+// clusterHealthDiskDangerPct is the disk usage percentage at which kubelet's
+// hard eviction threshold fires (nodefs.available<10%).
+const clusterHealthDiskDangerPct = 90
+
 // kubectlTopTimeoutSec is the timeout for kubectl top nodes commands.
 const kubectlTopTimeoutSec = 10
 
@@ -768,8 +789,16 @@ type ClusterHealthNode struct {
 	MemUsedMB     int64  `json:"mem_used_mb"`
 	MemPercent    int    `json:"mem_percent"`
 	DiskPressure  bool   `json:"disk_pressure"`
-	Pods          int    `json:"pods"`
-	PodCapacity   int    `json:"pod_capacity"`
+	// Disk fields describe the node filesystem (nodefs) that kubelet applies
+	// its eviction thresholds to. They are pointers because live disk usage
+	// comes from the kubelet stats/summary endpoint, which a hub may not be
+	// able to reach; nil means "unknown" and must render as dashes rather
+	// than as 0 (which would read as healthy).
+	DiskTotalMB *int64 `json:"disk_total_mb,omitempty"`
+	DiskUsedMB  *int64 `json:"disk_used_mb,omitempty"`
+	DiskPercent *int   `json:"disk_percent,omitempty"`
+	Pods        int    `json:"pods"`
+	PodCapacity int    `json:"pod_capacity"`
 	// HiveCount is the number of distinct hive-hosted-* namespaces with a
 	// running pod on this node (namespaces, not pods, so a hive briefly
 	// running two pods during a rollout is counted once).
@@ -787,7 +816,12 @@ type ClusterHealthSummary struct {
 	TotalCPUPct   int `json:"total_cpu_percent"`
 	TotalMemGB    int `json:"total_mem_gb"`
 	TotalMemPct   int `json:"total_mem_percent"`
-	HiveCount     int `json:"hive_count"`
+	// Disk totals cover only the nodes that reported live disk usage. They
+	// are pointers so a cluster with no reachable kubelet stats endpoint
+	// omits them entirely instead of reporting a misleading 0%.
+	TotalDiskGB  *int `json:"total_disk_gb,omitempty"`
+	TotalDiskPct *int `json:"total_disk_percent,omitempty"`
+	HiveCount    int  `json:"hive_count"`
 	// HiveCapacityRemaining estimates how many MORE hives the cluster can
 	// hold: per Ready, schedulable node, the per-hive request footprint
 	// (see hive_capacity.go) bin-packed into allocatable-minus-requested
@@ -1037,6 +1071,12 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 		return perCluster[i].ID < perCluster[j].ID
 	})
 
+	// Every collection path above appends its nodes to allNodes, so the fleet
+	// disk total is derived from them directly. Nodes with no disk data are
+	// skipped, so an unreachable cluster lowers coverage without skewing the
+	// percentage; if no node anywhere reported, disk is omitted entirely.
+	aggDiskGB, aggDiskPct := summarizeDisk(allNodes)
+
 	return &ClusterHealthResponse{
 		Nodes: allNodes,
 		Summary: ClusterHealthSummary{
@@ -1045,6 +1085,8 @@ func buildClusterHealth(s *HubServer) (*ClusterHealthResponse, error) {
 			TotalCPUPct:   aggCPUPct,
 			TotalMemGB:    aggMemGB,
 			TotalMemPct:   aggMemPct,
+			TotalDiskGB:   aggDiskGB,
+			TotalDiskPct:  aggDiskPct,
 			HiveCount:     totalHiveCount,
 		},
 		Clusters: perCluster,
@@ -1194,6 +1236,26 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 		})
 	}
 
+	// Collect LIVE node filesystem usage from each kubelet's stats/summary
+	// endpoint. This is best-effort per node: a node whose kubelet proxy is
+	// unreachable simply keeps nil disk fields and renders as unknown, which
+	// must never degrade the rest of this cluster's health data.
+	for i := range nodes {
+		rawStats, statsErr := kubectlForClusterContext(ctx, cluster,
+			"--request-timeout", timeout.String(),
+			"get", "--raw", nodeStatsSummaryPath(nodes[i].Name)).Output()
+		if statsErr != nil {
+			if logger != nil {
+				logger.Debug("cluster health: node disk stats unavailable",
+					"cluster", cluster.ID, "node", nodes[i].Name, "error", statsErr)
+			}
+			continue
+		}
+		if usage, ok := parseNodeStatsSummaryDisk(rawStats); ok {
+			applyNodeDiskUsage(&nodes[i], usage)
+		}
+	}
+
 	// Count running pods per node and sum their container resource REQUESTS
 	// (requests, not usage — that is what the scheduler bin-packs against).
 	// Listing only Running pods slightly undercounts requests (Pending pods
@@ -1284,6 +1346,7 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 		totalMemPct = int(totalMemUsed * percentMultiplier / totalMemAlloc)
 	}
 	totalMemGB := int(totalMemAlloc / giToBytes)
+	totalDiskGB, totalDiskPct := summarizeDisk(nodes)
 
 	result := PerClusterHealth{
 		Nodes: nodes,
@@ -1293,6 +1356,8 @@ func buildSingleClusterHealth(cluster *ClusterConfig, hiveCount int, logger *slo
 			TotalCPUPct:           totalCPUPct,
 			TotalMemGB:            totalMemGB,
 			TotalMemPct:           totalMemPct,
+			TotalDiskGB:           totalDiskGB,
+			TotalDiskPct:          totalDiskPct,
 			HiveCount:             hiveCount,
 			HiveCapacityRemaining: hiveCapacityRemaining,
 		},
@@ -1340,6 +1405,9 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 			MemUsedMB:     n.MemUsedMB,
 			MemPercent:    n.MemPercent,
 			DiskPressure:  n.DiskPressure,
+			DiskTotalMB:   n.DiskTotalMB,
+			DiskUsedMB:    n.DiskUsedMB,
+			DiskPercent:   n.DiskPercent,
 			Pods:          n.Pods,
 			PodCapacity:   n.PodCapacity,
 			HiveCount:     n.HiveCount,
@@ -1357,7 +1425,10 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 			TotalCPUPct:   report.Summary.TotalCPUPct,
 			TotalMemGB:    report.Summary.TotalMemGB,
 			TotalMemPct:   report.Summary.TotalMemPct,
-			HiveCount:     hiveCount,
+			// nil for spokes that could not read kubelet disk stats.
+			TotalDiskGB:  report.Summary.TotalDiskGB,
+			TotalDiskPct: report.Summary.TotalDiskPct,
+			HiveCount:    hiveCount,
 			// nil for spokes running older builds that do not report it.
 			HiveCapacityRemaining: report.Summary.HiveCapacityRemaining,
 		},
@@ -1383,6 +1454,75 @@ func convertHeartbeatToPerClusterHealth(clusterID, clusterName string, entry *He
 	}
 
 	return pch
+}
+
+// nodeDiskUsage holds live node filesystem usage for one node.
+type nodeDiskUsage struct {
+	usedBytes     int64
+	capacityBytes int64
+}
+
+// nodeStatsSummaryPath builds the kubelet stats/summary proxy path for a node.
+// This endpoint is the only source of LIVE disk usage: the node object's
+// capacity/allocatable["ephemeral-storage"] reports the declared size only and
+// says nothing about how full the filesystem actually is.
+func nodeStatsSummaryPath(nodeName string) string {
+	return "/api/v1/nodes/" + nodeName + "/proxy/stats/summary"
+}
+
+// parseNodeStatsSummaryDisk extracts node filesystem usage from a kubelet
+// stats/summary response. node.fs is the nodefs that kubelet's
+// evictionHard nodefs.available threshold applies to.
+func parseNodeStatsSummaryDisk(raw []byte) (nodeDiskUsage, bool) {
+	var summary struct {
+		Node struct {
+			FS struct {
+				UsedBytes     *int64 `json:"usedBytes"`
+				CapacityBytes *int64 `json:"capacityBytes"`
+			} `json:"fs"`
+		} `json:"node"`
+	}
+	if err := json.Unmarshal(raw, &summary); err != nil {
+		return nodeDiskUsage{}, false
+	}
+	fs := summary.Node.FS
+	// Both values are required: without capacity there is no percentage, and
+	// a missing usedBytes must not be treated as zero usage.
+	if fs.UsedBytes == nil || fs.CapacityBytes == nil || *fs.CapacityBytes <= 0 {
+		return nodeDiskUsage{}, false
+	}
+	return nodeDiskUsage{usedBytes: *fs.UsedBytes, capacityBytes: *fs.CapacityBytes}, true
+}
+
+// applyNodeDiskUsage fills the disk fields on a health node from live usage.
+// Nodes with no usable stats keep nil disk fields and render as unknown.
+func applyNodeDiskUsage(n *ClusterHealthNode, d nodeDiskUsage) {
+	totalMB := d.capacityBytes / bytesPerMB
+	usedMB := d.usedBytes / bytesPerMB
+	pct := int(d.usedBytes * percentMultiplier / d.capacityBytes)
+	n.DiskTotalMB = &totalMB
+	n.DiskUsedMB = &usedMB
+	n.DiskPercent = &pct
+}
+
+// summarizeDisk aggregates per-node disk usage into cluster totals, counting
+// only nodes that actually reported usage. Returns nil,nil when no node did,
+// so the UI omits disk for that cluster rather than showing a false 0%.
+func summarizeDisk(nodes []ClusterHealthNode) (*int, *int) {
+	var totalBytes, usedBytes int64
+	for _, n := range nodes {
+		if n.DiskTotalMB == nil || n.DiskUsedMB == nil {
+			continue
+		}
+		totalBytes += *n.DiskTotalMB * bytesPerMB
+		usedBytes += *n.DiskUsedMB * bytesPerMB
+	}
+	if totalBytes <= 0 {
+		return nil, nil
+	}
+	totalGB := int(totalBytes / giToBytes)
+	pct := int(usedBytes * percentMultiplier / totalBytes)
+	return &totalGB, &pct
 }
 
 // parseK8sCPU parses Kubernetes CPU resource strings (e.g. "4", "4000m", "5866711668n").
@@ -5164,6 +5304,16 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	h.Repos = repos
 	h.PrimaryRepo = primaryRepo
 	h.ACMMLevel = acmm
+	// Record the level as REQUESTED, not merely as current. ACMMLevel is
+	// overwritten the moment the spoke reports the level it was minted at, so it
+	// cannot be the source of truth for "what did the owner ask for". Keeping the
+	// requested value in its own field is what lets the delivery reconcile below
+	// remain correct — and idempotent — across any number of heartbeats.
+	h.RequestedACMMLevel = acmm
+	// Re-arm the level handshake for this claim. A placeholder is reused across
+	// assignments, so a flag left true by a previous tenancy would suppress
+	// delivery for the new owner.
+	h.ACMMDelivered = false
 	h.Status = ""
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
@@ -5411,23 +5561,66 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 	changed := false
 	prevLevel := h.ACMMLevel
 
-	// ACMM follows the SAME ClaimDelivered handshake as org/repos below.
+	// ACMM runs its OWN delivery handshake (ACMMDelivered), not the org/repos
+	// one (ClaimDelivered).
 	//
-	// #2061 made ACMM "operator-owned from the start — always adopt", which
-	// fixed the spyre revert (a dashboard level change bouncing back every
-	// beat) but left a gap on the ASSIGN path: a freshly-claimed placeholder
-	// has not yet been told its level, so it keeps reporting the level it was
-	// MINTED at (defaultAssignACMMLevel). Adopting that pre-delivery report
-	// overwrote the level the requester actually asked for — an approved L3
-	// request silently became L2 in meta.json, and the spoke stayed L2 forever
-	// because the hub then had no higher level left to push.
+	// #2061 made ACMM "operator-owned from the start — always adopt", which fixed
+	// the spyre revert but left a gap on the ASSIGN path: a freshly-claimed
+	// placeholder keeps reporting the level it was MINTED at, and adopting that
+	// pre-delivery report overwrote the level the requester asked for. #2333
+	// closed that by gating on ClaimDelivered — correct for hives claimed after
+	// it shipped, but a no-op for every hive claimed BEFORE, whose
+	// ClaimDelivered was already true from the old org/repos-only rule. Those
+	// hives adopt the stale report on the very first beat after upgrade and the
+	// push stays disabled, which is why the live oke-11 hive is still L2 against
+	// an approved L3 request.
 	//
-	// Gating on ClaimDelivered keeps BOTH behaviours: before delivery the claim
-	// (including its level) is authoritative and a stale spoke report is
-	// ignored; after delivery the spoke's dashboard owns the level and operator
-	// edits are adopted exactly as #2061 intended.
-	if level > 0 && level != h.ACMMLevel && h.ClaimDelivered {
+	// The dedicated flag defaults to false on those hives, so the level is
+	// delivered exactly once, then ownership passes to the spoke as #2061
+	// intended.
+
+	// Backfill the requested level for hives assigned before the field existed.
+	// Without this the reconcile has no target on exactly the hives that need
+	// it. ACMMLevel is the best available record of the assignment at this
+	// point, and using it is safe: if the spoke already agrees, the delivery is
+	// a no-op that simply marks itself done.
+	if h.RequestedACMMLevel == 0 && h.ACMMLevel > 0 {
+		h.RequestedACMMLevel = h.ACMMLevel
+		changed = true
+	}
+
+	// Delivery is complete once the spoke reports the level the hub asked for.
+	// A level-0 report means "too old / mid-boot to say", never a mismatch.
+	if !h.ACMMDelivered && h.RequestedACMMLevel > 0 && level == h.RequestedACMMLevel {
+		h.ACMMDelivered = true
+		changed = true
+		s.logger.Info("acmm level delivered to spoke",
+			"hive_id", hiveID, "acmm_level", level)
+	}
+
+	switch {
+	case level <= 0:
+		// Nothing reported — say nothing, change nothing.
+	case !h.ACMMDelivered && h.RequestedACMMLevel > 0:
+		// Pre-delivery the REQUESTED level is authoritative. Hold meta at it so
+		// the stale spoke report cannot overwrite the target the push below is
+		// still working toward — the exact loop that lost the L3.
+		if h.ACMMLevel != h.RequestedACMMLevel {
+			h.ACMMLevel = h.RequestedACMMLevel
+			changed = true
+		}
+		if level != h.RequestedACMMLevel {
+			s.logger.Info("acmm level not yet applied on spoke; holding requested level",
+				"hive_id", hiveID,
+				"spoke_reports", level,
+				"requested", h.RequestedACMMLevel)
+		}
+	case level != h.ACMMLevel:
+		// Post-delivery the spoke's dashboard owns the level: adopt operator
+		// edits, and keep the requested level in step so a later re-delivery
+		// never reverts the operator's choice.
 		h.ACMMLevel = level
+		h.RequestedACMMLevel = level
 		changed = true
 	}
 
@@ -5439,15 +5632,15 @@ func (s *HubServer) adoptSpokeProjectConfig(hiveID, org string, repos []string, 
 	orgMatches := org != "" && strings.EqualFold(org, h.Org)
 	reposMatch := len(repos) > 0 && sameStringSliceFold(repos, h.Repos)
 	primaryMatches := primary == "" || strings.EqualFold(primary, h.PrimaryRepo)
-	// The ACMM level is part of the claim payload, so delivery is not complete
-	// until the spoke reports THAT back too. Flipping the flag on org/repos
-	// alone declared the claim delivered while the spoke was still running the
-	// level it was minted at — which both stopped the push and handed level
-	// ownership to the spoke, permanently pinning the hive to the wrong level.
-	// A level-0 report means "too old / mid-boot to say", not a mismatch.
-	acmmMatches := level == 0 || level == h.ACMMLevel
+	// ACMM is NO LONGER part of this condition. #2333 added it here so the claim
+	// could not be declared delivered while the level was outstanding, but that
+	// coupled two independent deliveries: a hive whose level lagged would also
+	// have its org/repos pushed forever, and — worse — the level had no way to
+	// re-arm on a hive whose ClaimDelivered was already true. ACMMDelivered
+	// above now tracks the level on its own, so this returns to being purely
+	// about the project payload.
 	if !h.ClaimDelivered {
-		if orgMatches && reposMatch && primaryMatches && acmmMatches {
+		if orgMatches && reposMatch && primaryMatches {
 			h.ClaimDelivered = true
 			changed = true
 		}
@@ -5564,23 +5757,28 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	//     spoke first reports the assigned project). After delivery the spoke's
 	//     dashboard owns them and the caller adopts operator edits instead.
 	//   - vanity URL: pushed until the spoke first reports it back.
-	//   - ACMM level: pushed ONLY until the claim is delivered, on exactly the
-	//     same handshake as org/repos. After delivery it is never pushed again —
-	//     the spoke's dashboard owns it and the caller adopts operator edits.
+	//   - ACMM level: pushed on its OWN handshake (ACMMDelivered), until the
+	//     spoke reports the requested level back. After that it is never pushed
+	//     again — the spoke's dashboard owns it and the caller adopts operator
+	//     edits, exactly as #2061 intended.
 	//
 	//     #2061 removed the ACMM push entirely because pushing it FOREVER
-	//     reverted every dashboard level change (the spyre bug). But dropping it
+	//     reverted every dashboard level change (the spyre bug). Dropping it
 	//     altogether meant a freshly-assigned placeholder was never told the
-	//     level its owner requested: it kept running the level it was minted at
-	//     (defaultAssignACMMLevel), reported that back, and the hub adopted the
-	//     stale report — so an approved L3 request ran, and displayed, as L2.
-	//     Bounding the push by ClaimDelivered delivers the requested level once
-	//     without ever reverting a later operator edit.
+	//     level its owner requested. #2333 bounded the push by ClaimDelivered,
+	//     which is right in principle but dead in practice for every hive
+	//     claimed before it shipped: their ClaimDelivered was already true, so
+	//     the push never fires. Bounding by the level's own flag is what makes
+	//     the delivery reachable for those hives — and it is self-limiting, so
+	//     re-running it is harmless.
 	needClaimPush := !h.ClaimDelivered &&
 		!(strings.EqualFold(curOrg, h.Org) &&
 			sameStringSliceFold(curRepos, h.Repos) &&
-			strings.EqualFold(curPrimary, primary) &&
-			curACMM == h.ACMMLevel)
+			strings.EqualFold(curPrimary, primary))
+	// Independent of the project claim: deliver the requested level until the
+	// spoke confirms it. curACMM == 0 means the spoke did not report a level, so
+	// there is nothing to correct yet.
+	needACMMPush := !h.ACMMDelivered && h.RequestedACMMLevel > 0 && curACMM != h.RequestedACMMLevel
 	needURLPush := h.VanityURL != "" && curURL != h.VanityURL
 	// A spoke reporting a repo that fails isValidRepoRef is wedged: the hub 400s
 	// its every heartbeat ("invalid repo name"), /api/livez then fails on the
@@ -5608,7 +5806,7 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// would re-send on every beat with no read-back to ever stop it.
 	wantAPIURL := gheAPIURLForHost(h.GitHubHost)
 	needGHEAPIPush := wantAPIURL != "" && curAPIURL != "" && curAPIURL != wantAPIURL
-	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush {
+	if !needClaimPush && !needURLPush && !needRepoRepair && !needGHEAPIPush && !needACMMPush {
 		return nil // nothing left to push
 	}
 	// Sanitize before pushing. A repo pasted as a URL
@@ -5632,11 +5830,20 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 		pushPrimary = primary
 	}
 
+	// Pre-delivery the REQUESTED level is what goes down the wire. The adopt path
+	// also holds h.ACMMLevel at that value, so the two normally agree — but
+	// stating it here means a push cannot deliver a stale level if this function
+	// ever runs against a record the adopt path has not touched yet.
+	pushACMM := h.ACMMLevel
+	if !h.ACMMDelivered && h.RequestedACMMLevel > 0 {
+		pushACMM = h.RequestedACMMLevel
+	}
+
 	return &HeartbeatProjectConfig{
 		Org:          h.Org,
 		Repos:        pushRepos,
 		PrimaryRepo:  pushPrimary,
-		ACMMLevel:    h.ACMMLevel,
+		ACMMLevel:    pushACMM,
 		DashboardURL: h.VanityURL,
 		// Point a GHE hive at its enterprise API. jjs-world
 		// (hosted-open-source-osscar) is the working reference: a bare
@@ -5850,6 +6057,11 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		h.ProjectName = body.ProjectName
 	}
 	h.ACMMLevel = acmm
+	// Same as the approve-provision path: the admin-assigned level is what the
+	// hub must deliver, and it needs its own field because the spoke will
+	// overwrite ACMMLevel with whatever it is currently running.
+	h.RequestedACMMLevel = acmm
+	h.ACMMDelivered = false
 	h.IsPublic = body.IsPublic
 	h.Status = ""
 	h.Error = ""
@@ -7624,6 +7836,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'app-missing':     'GitHub App not installed',
       'app-perm-issue':  'GitHub App permissions',
       'app-creds-operator': 'GitHub App key (operator)',
+      'app-id-placeholder': 'Placeholder App ID (operator)',
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
       'acmm-unset':      'ACMM level unset',
@@ -12408,6 +12621,15 @@ const dashboardHTML = `<!DOCTYPE html>
     var CLUSTER_CPU_DANGER_PCT = 80;
     var CLUSTER_MEM_WARN_PCT = 60;
     var CLUSTER_MEM_DANGER_PCT = 80;
+    // Disk thresholds mirror kubelet's own behaviour on these nodes rather
+    // than round numbers: image garbage collection starts at
+    // imageGCHighThresholdPercent (85% used) and hard eviction fires at
+    // evictionHard nodefs.available<10% (90% used). Amber therefore means
+    // "kubelet is already reclaiming disk", red means "pods are being evicted".
+    var CLUSTER_DISK_WARN_PCT = 85;
+    var CLUSTER_DISK_DANGER_PCT = 90;
+    // MiB per GiB, for rendering disk_*_mb values as GiB.
+    var MB_PER_GB = 1024;
     var _clusterHealthCollapsed = localStorage.getItem('hive-cluster-health-collapsed') !== 'false';
 
     function toggleClusterHealth() {
@@ -12463,6 +12685,29 @@ const dashboardHTML = `<!DOCTYPE html>
         '</span></div>';
     }
 
+    // Renders a metric row whose value could not be collected. Deliberately
+    // dashed rather than 0%, so an unreachable node never reads as healthy.
+    function renderHealthMetricUnknown(label, reason) {
+      return '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px" title="' + esc(reason || 'No data') + '">' +
+        '<span style="font-size:0.7rem;color:var(--muted)">' + label + '</span>' +
+        '<span style="display:flex;align-items:center;gap:6px">' +
+        '<span style="font-family:monospace;font-size:0.75rem;color:var(--muted)">— / — GiB</span>' +
+        '<span style="font-size:0.7rem;min-width:28px;text-align:right;color:var(--muted)">—</span>' +
+        '</span></div>';
+    }
+
+    // Disk usage is optional: the collector omits it when the kubelet
+    // stats endpoint was unreachable, so absent means unknown, not zero.
+    function renderNodeDiskMetric(n, nk) {
+      if (n.disk_percent == null || n.disk_total_mb == null || n.disk_used_mb == null) {
+        return renderHealthMetricUnknown('DISK', 'Disk usage unavailable for this node');
+      }
+      var diskUsedGB = (n.disk_used_mb / MB_PER_GB).toFixed(1);
+      var diskTotalGB = Math.round(n.disk_total_mb / MB_PER_GB);
+      return renderHealthMetric('DISK', diskUsedGB, diskTotalGB, 'GiB', n.disk_percent,
+        CLUSTER_DISK_WARN_PCT, CLUSTER_DISK_DANGER_PCT, nk, 'disk');
+    }
+
     function renderNodeCard(n) {
       var nk = n.name;
       var readyBadge = (n.conditions || []).indexOf('Ready') >= 0
@@ -12485,6 +12730,7 @@ const dashboardHTML = `<!DOCTYPE html>
         '</span></div>' +
         renderHealthMetric('CPU', cpuUsed, n.cpu_cores, 'cores', n.cpu_percent, CLUSTER_CPU_WARN_PCT, CLUSTER_CPU_DANGER_PCT, nk, 'cpu') +
         renderHealthMetric('MEM', memUsedGB, memTotalGB, 'GB', n.mem_percent, CLUSTER_MEM_WARN_PCT, CLUSTER_MEM_DANGER_PCT, nk, 'mem') +
+        renderNodeDiskMetric(n, nk) +
         diskWarn +
         '</div>';
     }
@@ -12509,10 +12755,22 @@ const dashboardHTML = `<!DOCTYPE html>
           var cpuColor = healthBarColor(s.total_cpu_percent || 0, CLUSTER_CPU_WARN_PCT, CLUSTER_CPU_DANGER_PCT);
           var memColor = healthBarColor(s.total_mem_percent || 0, CLUSTER_MEM_WARN_PCT, CLUSTER_MEM_DANGER_PCT);
           var clusterCount = (data.clusters || []).length;
+          // Disk is omitted when no node reported usage; showing 0% there
+          // would claim the fleet is healthy on no evidence at all.
+          var diskSegment = '';
+          if (s.total_disk_percent != null) {
+            pushSparkPoint('_cluster', 'disk', s.total_disk_percent);
+            var diskColor = healthBarColor(s.total_disk_percent, CLUSTER_DISK_WARN_PCT, CLUSTER_DISK_DANGER_PCT);
+            diskSegment = renderUnicodeSparkline('_cluster', 'disk', diskColor) +
+              ' <span style="color:' + diskColor + '">' + s.total_disk_percent + '% disk</span> · ';
+          } else {
+            diskSegment = '<span style="color:var(--muted)" title="No node reported live disk usage">— disk</span> · ';
+          }
           summaryBar.innerHTML = clusterCount + ' cluster' + (clusterCount !== 1 ? 's' : '') + ' · ' +
             (s.total_nodes || 0) + ' nodes · ' + (s.total_cpu_cores || 0) + ' vCPU · ' +
             renderUnicodeSparkline('_cluster', 'cpu', cpuColor) + ' <span style="color:' + cpuColor + '">' + (s.total_cpu_percent || 0) + '% cpu</span> · ' +
             renderUnicodeSparkline('_cluster', 'mem', memColor) + ' <span style="color:' + memColor + '">' + (s.total_mem_percent || 0) + '% mem</span> · ' +
+            diskSegment +
             (s.hive_count || 0) + ' hives';
         }
 
@@ -12535,6 +12793,15 @@ const dashboardHTML = `<!DOCTYPE html>
             var cs = c.summary || {};
             var cCpuColor = healthBarColor(cs.total_cpu_percent || 0, CLUSTER_CPU_WARN_PCT, CLUSTER_CPU_DANGER_PCT);
             var cMemColor = healthBarColor(cs.total_mem_percent || 0, CLUSTER_MEM_WARN_PCT, CLUSTER_MEM_DANGER_PCT);
+            // Absent disk data (e.g. an unreachable cluster) renders dashed,
+            // never as 0% — a full disk and an unknown disk must not look alike.
+            var cDiskSegment;
+            if (cs.total_disk_percent != null) {
+              var cDiskColor = healthBarColor(cs.total_disk_percent, CLUSTER_DISK_WARN_PCT, CLUSTER_DISK_DANGER_PCT);
+              cDiskSegment = '<span style="color:' + cDiskColor + '">' + cs.total_disk_percent + '% disk</span> · ';
+            } else {
+              cDiskSegment = '<span style="color:var(--muted)" title="No node in this cluster reported live disk usage">— disk</span> · ';
+            }
             var gpuLine = '';
             if (c.gpu_summary) {
               gpuLine = ' · <span style="color:var(--green)">' + c.gpu_summary.allocatable_gpus + '/' + c.gpu_summary.total_gpus + ' GPUs</span>';
@@ -12554,6 +12821,7 @@ const dashboardHTML = `<!DOCTYPE html>
               (cs.total_nodes || 0) + ' nodes · ' + (cs.total_cpu_cores || 0) + ' vCPU · ' +
               '<span style="color:' + cCpuColor + '">' + (cs.total_cpu_percent || 0) + '% cpu</span> · ' +
               '<span style="color:' + cMemColor + '">' + (cs.total_mem_percent || 0) + '% mem</span> · ' +
+              cDiskSegment +
               (c.hive_count || 0) + ' hives' + capacityLine + gpuLine +
               '</span></div>';
             var nodesHtml = (c.nodes || []).length > 0

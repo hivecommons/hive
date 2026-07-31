@@ -146,14 +146,26 @@ type RegistryEntry struct {
 	// re-armed forever, which looks like progress but never is. Past
 	// maxOrphanedUpgradeSweeps the hub stops retrying and records a failure a
 	// human can see. Reset whenever the hive reaches a target.
-	OrphanedUpgradeSweeps     int          `json:"orphanedUpgradeSweeps,omitempty"`
-	IssueHistory              []SparkPoint `json:"issueHistory,omitempty"`
-	PRHistory                 []SparkPoint `json:"prHistory,omitempty"`
-	GitHubAppRequired         bool         `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue        string       `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState            string       `json:"githubAppState,omitempty"`
-	PendingGitHubAppInstall   bool         `json:"pendingGitHubAppInstall,omitempty"`
-	PendingGitHubAppInstallAt time.Time    `json:"pendingGitHubAppInstallAt,omitempty"`
+	OrphanedUpgradeSweeps int          `json:"orphanedUpgradeSweeps,omitempty"`
+	IssueHistory          []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory             []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired     bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue    string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState        string       `json:"githubAppState,omitempty"`
+	// GitHubAppID is the App ID the spoke reports it is authenticating AS.
+	//
+	// Carried into the registry so the hub can SEE a spoke running the
+	// placeholder sentinel (config.PlaceholderAppID) without waiting for that
+	// spoke to classify and report the fault itself. The spoke's own
+	// classification is the better signal when it arrives, but it depends on the
+	// spoke being new enough to produce it — and the sentinel's whole failure
+	// mode is that nothing said anything for weeks. A raw, hub-observed number
+	// cannot be silenced by a stale spoke.
+	//
+	// Zero means "not reported", never "no App".
+	GitHubAppID               int64     `json:"githubAppId,omitempty"`
+	PendingGitHubAppInstall   bool      `json:"pendingGitHubAppInstall,omitempty"`
+	PendingGitHubAppInstallAt time.Time `json:"pendingGitHubAppInstallAt,omitempty"`
 	// Fleet contribution counts reported by the spoke (nil = not reported /
 	// not yet computed). Aggregated across public, non-stale hives into the
 	// /api/fleet-stats total. Pointers preserve the nil-vs-zero distinction so
@@ -974,6 +986,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppRequired:       payload.GitHubAppRequired,
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
+		GitHubAppID:             payload.GitHubAppID,
 		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {
