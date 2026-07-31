@@ -103,11 +103,19 @@ func (c ClusterTarget) kubectlArgs(args ...string) []string {
 	return append(out, args...)
 }
 
+// execCommandContext is the seam through which this package spawns kubectl.
+// Production always uses exec.CommandContext; tests swap in a helper-process
+// fake so the collectors can be exercised without a real cluster. Backup code
+// only ever READS, but a stray real kubectl in a test still authenticates with
+// the hub pod's ServiceAccount, so the substitution is a safety boundary as
+// much as a testability one.
+var execCommandContext = exec.CommandContext
+
 // run executes kubectl against this cluster and returns stdout.
 func (c ClusterTarget) run(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), kubectlTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "kubectl", c.kubectlArgs(args...)...)
+	cmd := execCommandContext(ctx, "kubectl", c.kubectlArgs(args...)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -241,7 +249,7 @@ func (k KubectlSpokeCollector) collectOne(target ClusterTarget, id string, logge
 	script := buildSpokeReadScript()
 	ctx, cancel := context.WithTimeout(context.Background(), spokeExecTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "kubectl",
+	cmd := execCommandContext(ctx, "kubectl",
 		target.kubectlArgs("exec", "-n", ns, "-c", spokeContainer, pod, "--", "sh", "-c", script)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
