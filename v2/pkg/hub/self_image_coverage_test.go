@@ -1,0 +1,238 @@
+package hub
+
+import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// resetSelfImageCache clears the memoised deployment image so each test starts
+// from a cold cache and restores the previous state afterwards.
+func resetSelfImageCache(t *testing.T) {
+	t.Helper()
+	selfImageMu.Lock()
+	pc, pf, pa := selfImageCached, selfImageFetched, selfImageAttempted
+	selfImageCached, selfImageFetched, selfImageAttempted = "", time.Time{}, false
+	selfImageMu.Unlock()
+	t.Cleanup(func() {
+		selfImageMu.Lock()
+		selfImageCached, selfImageFetched, selfImageAttempted = pc, pf, pa
+		selfImageMu.Unlock()
+	})
+}
+
+// deploymentJSON renders a Deployment carrying one container image.
+func deploymentJSON(image string) string {
+	return fmt.Sprintf(
+		`{"spec":{"template":{"spec":{"containers":[{"name":"hub","image":%q}]}}}}`, image)
+}
+
+// ---- selfDeploymentImage ----
+
+func TestSelfDeploymentImageReadsContainerImage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(deploymentJSON("ghcr.io/kubestellar/hive-hub:abc123")))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	got, err := selfDeploymentImage()
+	if err != nil {
+		t.Fatalf("selfDeploymentImage: %v", err)
+	}
+	if got != "ghcr.io/kubestellar/hive-hub:abc123" {
+		t.Fatalf("image = %q", got)
+	}
+}
+
+// The namespace comes from the mounted ServiceAccount; without it the hub
+// cannot address its own Deployment and must error rather than guess.
+//
+// The mock rejects a request whose path carries an empty namespace segment, so
+// this fails if the blank-namespace guard is removed rather than silently
+// "succeeding" against a permissive stub.
+func TestSelfDeploymentImageRequiresNamespace(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/namespaces//") {
+			http.Error(w, "empty namespace in request path", http.StatusBadRequest)
+			return
+		}
+		w.Write([]byte(deploymentJSON("x")))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	t.Run("missing namespace file", func(t *testing.T) {
+		old := k8sNamespacePath
+		k8sNamespacePath = filepath.Join(t.TempDir(), "absent")
+		t.Cleanup(func() { k8sNamespacePath = old })
+		if _, err := selfDeploymentImage(); err == nil {
+			t.Fatal("a missing namespace file must be an error")
+		}
+	})
+
+	t.Run("empty namespace file", func(t *testing.T) {
+		old := k8sNamespacePath
+		p := filepath.Join(t.TempDir(), "namespace")
+		if err := os.WriteFile(p, []byte("   \n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		k8sNamespacePath = p
+		t.Cleanup(func() { k8sNamespacePath = old })
+		if _, err := selfDeploymentImage(); err == nil {
+			t.Fatal("an empty namespace must be an error, not an empty API path")
+		}
+	})
+}
+
+// A Deployment with no containers must error rather than panic on index 0.
+func TestSelfDeploymentImageRejectsContainerlessDeployment(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[]}}}}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if _, err := selfDeploymentImage(); err == nil {
+		t.Fatal("a Deployment with no containers must be an error")
+	}
+}
+
+func TestSelfDeploymentImageRejectsMalformedJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("{not json"))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if _, err := selfDeploymentImage(); err == nil {
+		t.Fatal("malformed Deployment JSON must be an error")
+	}
+}
+
+func TestSelfDeploymentImagePropagatesAPIFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if _, err := selfDeploymentImage(); err == nil {
+		t.Fatal("an API failure must propagate")
+	}
+}
+
+// ---- SelfDeploymentImage (memoised wrapper) ----
+
+// The result is cached so the hub does not GET its own Deployment on every
+// dashboard poll.
+func TestSelfDeploymentImageIsMemoised(t *testing.T) {
+	resetSelfImageCache(t)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Write([]byte(deploymentJSON("ghcr.io/kubestellar/hive-hub:cached")))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	first := SelfDeploymentImage()
+	second := SelfDeploymentImage()
+	if first != "ghcr.io/kubestellar/hive-hub:cached" || second != first {
+		t.Fatalf("image = %q / %q", first, second)
+	}
+	if calls != 1 {
+		t.Fatalf("want 1 API call thanks to the cache, got %d", calls)
+	}
+}
+
+// A failed lookup must be cached as "" rather than retried on every call —
+// otherwise a broken RBAC grant produces an API request per dashboard poll.
+// It must also never return a stale-but-wrong image.
+func TestSelfDeploymentImageCachesFailureAsEmpty(t *testing.T) {
+	resetSelfImageCache(t)
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if got := SelfDeploymentImage(); got != "" {
+		t.Fatalf("a failed lookup must yield an empty image, got %q", got)
+	}
+	if got := SelfDeploymentImage(); got != "" {
+		t.Fatalf("second call = %q", got)
+	}
+	if calls != 1 {
+		t.Fatalf("a failure must be cached too, got %d API calls", calls)
+	}
+}
+
+// ---- hubRolloutFailureReason ----
+
+// The reason comes from the first waiting container state, so an operator sees
+// "ImagePullBackOff ..." rather than a generic failure.
+func TestHubRolloutFailureReasonReportsWaitingState(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"echo ''\n" +
+		"echo 'ImagePullBackOff Back-off pulling image \"ghcr.io/kubestellar/hive-hub:target1\"'\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := bulkTestHub(t)
+	got := s.hubRolloutFailureReason()
+	if got == "" {
+		t.Fatal("a waiting container state must be reported")
+	}
+	if !strings.Contains(got, "ImagePullBackOff") {
+		t.Fatalf("reason should name the waiting reason, got %q", got)
+	}
+	// Leading blank lines must be skipped, not returned as the reason.
+	if got == " " || got == "" {
+		t.Fatalf("blank lines must be skipped, got %q", got)
+	}
+}
+
+// When kubectl cannot read pod status the reason must say so rather than
+// claiming everything is fine.
+func TestHubRolloutFailureReasonWhenKubectlFails(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho 'error: connection refused' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := bulkTestHub(t)
+	got := s.hubRolloutFailureReason()
+	if !strings.Contains(got, "could not read pod status") {
+		t.Fatalf("want an explicit unknown-reason message, got %q", got)
+	}
+}
+
+// No waiting container at all is still an explicit answer.
+func TestHubRolloutFailureReasonWhenNoWaitingState(t *testing.T) {
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho ''\necho '  '\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "kubectl"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := bulkTestHub(t)
+	got := s.hubRolloutFailureReason()
+	if !strings.Contains(got, "no waiting container state") {
+		t.Fatalf("want the no-waiting-state message, got %q", got)
+	}
+}
