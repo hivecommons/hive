@@ -39,6 +39,9 @@ type provenanceResponse struct {
 	OverlayRejected bool `json:"overlay_rejected"`
 	// OverlayRejectReason names why the overlay was rejected.
 	OverlayRejectReason string `json:"overlay_reject_reason,omitempty"`
+	// LastGoodUsed is true when a rejected overlay was replaced by the rolling
+	// last-good config rather than the bare seed.
+	LastGoodUsed bool `json:"last_good_used"`
 	// GitHubRatchetFired is true when the seed's github block was preserved
 	// because the overlay's looked like a placeholder.
 	GitHubRatchetFired bool `json:"github_ratchet_fired"`
@@ -114,6 +117,7 @@ func (s *Server) handleConfigProvenance(w http.ResponseWriter, r *http.Request) 
 		Layers:              describeLayers(),
 		OverlayRejected:     prov.OverlayRejected,
 		OverlayRejectReason: prov.OverlayRejectReason,
+		LastGoodUsed:        prov.LastGoodUsed,
 		GitHubRatchetFired:  prov.GitHubRatchetFired,
 		SeedPath:            seedPath,
 		OverlayPath:         overlayPath,

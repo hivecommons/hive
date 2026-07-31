@@ -65,6 +65,12 @@ type Provenance struct {
 	OverlayRejected bool `json:"overlay_rejected"`
 	// OverlayRejectReason names why, e.g. "overlay has no agents".
 	OverlayRejectReason string `json:"overlay_reject_reason,omitempty"`
+	// LastGoodUsed is true when a rejected overlay was replaced by the rolling
+	// last-good config (/data/hive.yaml.bak) rather than by the bare ConfigMap
+	// seed. It means the hive recovered rather than degraded, and it must be
+	// visible: the config in effect is then neither the overlay the operator
+	// last wrote nor the seed, and nothing else would say so.
+	LastGoodUsed bool `json:"last_good_used"`
 	// GitHubRatchetFired is true when the seed's github block was kept because
 	// the overlay's looked like a placeholder (ratchet C in layers.go).
 	GitHubRatchetFired bool `json:"github_ratchet_fired"`

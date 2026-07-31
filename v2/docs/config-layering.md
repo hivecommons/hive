@@ -153,7 +153,30 @@ after every live hive has written the new name.
 - **`overlay_rejected`** is the alarming one. It means the overlay failed the
   plausibility guard and was discarded, so the hive is running on the bare
   seed — which, per the table above, can be a small fraction of the real
-  config, including a fraction of the agent roster.
+  config, including a fraction of the agent roster. A rejection is also logged
+  at `ERROR` naming the specific cause.
+- **`last_good_used`** means a rejected overlay was replaced by the rolling
+  last-good config (`/data/hive.yaml.bak`) rather than by the sparse seed. The
+  config in effect is then neither the overlay the operator last wrote nor the
+  seed, so it is reported explicitly.
+
+### What makes an overlay valid
+
+The guard catches a **truncated or corrupt** overlay — not an unusual one.
+
+| Overlay | Verdict |
+|---|---|
+| `project.org` + one or more agents | valid |
+| Zero agents **with** `removed_agents` tombstones | **valid** — a deliberate deletion (#2361) |
+| All agents paused | valid |
+| Missing `policies` / `data` / `knowledge` / `hive_id` | valid — all optional |
+| No `project.org` | rejected — truncated write |
+| Zero agents **and** no tombstones | rejected — truncated write |
+
+The tombstone distinction matters: before it existed, deleting your last agent
+produced a zero-agent overlay that the guard called corrupt, so the hive booted
+from a seed that still listed the deleted agents — silently undoing the
+deletion.
 - **`identity_issues`** names inconsistencies in the GitHub identity set.
 
 ## The GitHub identity set is atomic

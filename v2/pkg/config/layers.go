@@ -79,7 +79,10 @@
 // one road, not duplicated effort.
 package config
 
-import "os"
+import (
+	"log"
+	"os"
+)
 
 // Layer identifies a configuration source. Ordered lowest → highest, so a
 // numerically greater Layer wins under the default rule.
@@ -209,6 +212,15 @@ func mergeLayers(seed, overlay *Config, keys seedKeys) (*Config, *Provenance) {
 		if overlay != nil {
 			prov.OverlayRejected = true
 			prov.OverlayRejectReason = overlayRejectReason(overlay)
+			// A rejection is severe: the hive is about to run on the bare
+			// ConfigMap seed, which omits whole config blocks and can mean a
+			// fraction of the agent roster. Say so at ERROR, naming the cause
+			// and the file, so this is diagnosable from `kubectl logs` alone
+			// rather than by inference from missing agents.
+			log.Printf("ERROR: dashboard overlay REJECTED (%s) — falling back to the "+
+				"ConfigMap seed, which may omit agents, policies, data, knowledge and "+
+				"notifications. Overlay: %s. Inspect with GET /api/config/provenance.",
+				prov.OverlayRejectReason, DashboardOverlayFile)
 		}
 		return seed, prov
 	}
@@ -270,15 +282,59 @@ func OverlayIsPlausible(overlay *Config) bool {
 // overlayRejectReason returns why an overlay is implausible, or "" if it is
 // fine. Returning the reason (rather than a bare bool) is what lets the boot
 // path log ERROR with a cause and lets provenance show it.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// WHAT THIS GUARD IS FOR, AND WHAT IT MUST NOT DO
+// ─────────────────────────────────────────────────────────────────────────
+//
+// The guard exists to catch a TRUNCATED or CORRUPT overlay — a file cut off
+// mid-write when the pod was SIGKILLed, or one that is not a hive config at
+// all. Rejecting such a file is correct.
+//
+// It must NOT reject a structurally sound overlay that merely describes an
+// unusual hive, because the consequence of rejection is severe and silent: the
+// hive boots on the bare ConfigMap seed, which on the live fleet is 4–11% of
+// the running config and omits whole top-level blocks (policies, data,
+// knowledge, notifications, hive_id). A false rejection can bring a hive up
+// with a fraction of its agent roster.
+//
+// The original predicate was "project.org non-empty AND len(agents) > 0". The
+// agent-count half is wrong now, and demonstrably so:
+//
+//	#2361 shipped agent TOMBSTONES (Config.RemovedAgents), which make
+//	deliberate deletion durable. An operator who deletes their last agent
+//	produces a legitimately zero-agent overlay. The old guard classifies that
+//	correct state as corrupt, discards it, and boots from the seed — which
+//	still lists the deleted agents. The deletion silently un-does itself,
+//	which is the exact bug #2361 was written to fix.
+//
+// Verified against the code as merged: an all-tombstoned config is also
+// refused by validateSaveGuard ("no agents configured"), so the deletion
+// cannot even be persisted. See TestZeroAgentOverlayWithTombstonesIsValid.
+//
+// The replacement test is STRUCTURAL AUTHENTICITY, not richness: does this
+// file look like a hive config that was written completely? project.org is
+// kept because Config.Save never writes an overlay without it and it is the
+// cheapest true corruption signal. The agent-count check is replaced by a
+// tombstone-aware one: zero agents is valid when the overlay explains itself
+// with RemovedAgents, and suspicious only when it does not.
 func overlayRejectReason(overlay *Config) string {
 	if overlay == nil {
 		return "overlay absent"
 	}
+	// project.org is the corruption canary. Config.Save() refuses to write an
+	// overlay without it (validateSaveGuard), so an overlay lacking it was
+	// never written by us — it is truncated, hand-edited, or another file.
 	if overlay.Project.Org == "" {
-		return "overlay has no project.org"
+		return "overlay has no project.org — the file is truncated or is not a hive config"
 	}
-	if len(overlay.Agents) == 0 {
-		return "overlay has no agents"
+	// Zero agents is VALID when the overlay records deliberate deletions.
+	// Without that record it is more likely a truncated write than a real
+	// hive, so it is still rejected — but the reason now names the
+	// distinction instead of treating every empty roster as corruption.
+	if len(overlay.Agents) == 0 && len(overlay.RemovedAgents) == 0 {
+		return "overlay has no agents and no removed_agents tombstones — " +
+			"likely a truncated write (a deliberately emptied roster records tombstones)"
 	}
 	return ""
 }

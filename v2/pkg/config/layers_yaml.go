@@ -25,7 +25,11 @@ package config
 // self-defeating. MergeLayersYAML parses the raw seed YAML to recover
 // key-presence and reproduces the heredoc exactly.
 
-import "gopkg.in/yaml.v3"
+import (
+	"log"
+
+	"gopkg.in/yaml.v3"
+)
 
 // MergeLayersYAML merges raw seed and overlay YAML with exact fidelity to the
 // entrypoint heredoc, returning the merged config and its provenance.
@@ -61,6 +65,58 @@ func MergeLayersYAML(seedYAML, overlayYAML []byte) (*Config, *Provenance, error)
 
 	cfg, prov := mergeLayers(&seed, &overlay, keys)
 	return cfg, prov, nil
+}
+
+// MergeLayersWithFallback is MergeLayersYAML plus a last-good fallback: when
+// the overlay is rejected, it prefers lastGoodYAML (normally the rolling
+// backup at /data/hive.yaml.bak) over the bare ConfigMap seed.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// WHY, AND WHY THIS IS OPT-IN
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Falling back to the seed is failing EMPTY, not failing safe. Live seeds are
+// 4–11% of the running config and omit policies, data, knowledge,
+// notifications and hive_id entirely, so a rejected overlay currently costs a
+// hive most of its configuration. The rolling backup is a far closer
+// approximation of what the hive was actually running a moment ago.
+//
+// This CHANGES WHICH CONFIG A HIVE BOOTS WITH in the rejection case, so it is
+// deliberately a separate entry point rather than folded into MergeLayersYAML.
+// Callers opt in explicitly and the change is reviewable on its own. The
+// fallback is used ONLY when the overlay is rejected AND the backup itself
+// passes the guard — a corrupt backup is never preferred to a valid seed.
+//
+// Provenance reports LastGoodUsed so the substitution is never silent.
+func MergeLayersWithFallback(seedYAML, overlayYAML, lastGoodYAML []byte) (*Config, *Provenance, error) {
+	cfg, prov, err := MergeLayersYAML(seedYAML, overlayYAML)
+	if err != nil || prov == nil || !prov.OverlayRejected || len(lastGoodYAML) == 0 {
+		return cfg, prov, err
+	}
+
+	var lastGood Config
+	if err := yaml.Unmarshal([]byte(expandEnvVars(string(lastGoodYAML))), &lastGood); err != nil {
+		// An unparsable backup is no better than the seed; keep the seed.
+		return cfg, prov, nil
+	}
+	if reason := overlayRejectReason(&lastGood); reason != "" {
+		// The backup is itself implausible — do not trade a valid seed for it.
+		return cfg, prov, nil
+	}
+
+	log.Printf("WARNING: dashboard overlay rejected (%s) — recovering from the last-good "+
+		"config instead of the sparse ConfigMap seed", prov.OverlayRejectReason)
+
+	keys := seedKeys{isPublicPresent: seedHasIsPublic(seedYAML)}
+	var seed Config
+	if err := yaml.Unmarshal([]byte(expandEnvVars(string(seedYAML))), &seed); err != nil {
+		return cfg, prov, nil
+	}
+	merged, mergedProv := mergeLayers(&seed, &lastGood, keys)
+	mergedProv.OverlayRejected = true
+	mergedProv.OverlayRejectReason = prov.OverlayRejectReason
+	mergedProv.LastGoodUsed = true
+	return merged, mergedProv, nil
 }
 
 // seedHasIsPublic reports whether the raw seed YAML contains the hub.is_public

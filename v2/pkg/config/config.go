@@ -2840,8 +2840,19 @@ func (c *Config) validateSaveGuard() error {
 		log.Printf("WARNING: config.Save() blocked — project.org is empty, would corrupt hive.yaml")
 		return fmt.Errorf("project.org is empty")
 	}
-	if len(c.Agents) == 0 {
-		log.Printf("WARNING: config.Save() blocked — no agents configured, would corrupt hive.yaml")
+	// Zero agents is a legitimate state when the operator deliberately deleted
+	// them all: #2361's tombstones (RemovedAgents) are the durable record of
+	// that intent. Blocking the save here would make the last deletion
+	// unpersistable — the in-memory roster empties, the write is refused, and
+	// the next reload restores the agents from the seed, silently undoing the
+	// operator's action. That is precisely the "they always come back" bug
+	// #2361 fixed, reintroduced through the save path.
+	//
+	// An empty roster with NO tombstones is still refused: that is the
+	// truncated/uninitialised case this guard exists to catch. The two states
+	// are distinguishable, so distinguish them rather than rejecting both.
+	if len(c.Agents) == 0 && len(c.RemovedAgents) == 0 {
+		log.Printf("WARNING: config.Save() blocked — no agents configured and no tombstones, would corrupt hive.yaml")
 		return fmt.Errorf("no agents configured")
 	}
 	return nil
