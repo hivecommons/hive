@@ -5258,8 +5258,24 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 	//
 	// This does tighten an existing endpoint: a caller that posted no full_name
 	// now gets a 400 where it used to get a 200. That is intended — the whole
-	// point is that the field is reliably present — and the wizard is the only
-	// caller in-tree. Called out in the PR body rather than hidden here.
+	// point is that the field is reliably present.
+	//
+	// The get-started wizard (static/get-started.html) is now the only in-tree
+	// caller, but do not read that as "it always was". When this check landed
+	// (#2369) this comment claimed the wizard was the only caller and it was
+	// simply wrong: the hub dashboard had its own Request-a-Hive modal posting
+	// here, added later than the wizard, reachable by every logged-in user, and
+	// it went un-updated — so the button 400'd with no field on screen that
+	// could satisfy it. The modal has since been removed deliberately (the
+	// wizard is the single supported request path), which is what makes this
+	// sentence true today rather than aspirational.
+	//
+	// The modal was invisible to CI because it was inline JS inside the
+	// dashboardHTML raw string with no test naming any of its symbols. Before
+	// adding another required field here, re-run the caller audit rather than
+	// trusting this comment: TestRequestProvisionInTreeCallersSendRequiredFields
+	// greps the embedded JS and the static wizard for callers of this endpoint
+	// and fails on one that omits a required field.
 	if body.FullName == "" {
 		http.Error(w, `{"error":"your name is required — we use it to know who the request is from"}`, http.StatusBadRequest)
 		return
@@ -7029,7 +7045,6 @@ const dashboardHTML = `<!DOCTYPE html>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn-primary" id="btn-send-banner-top" style="display:none;background:#d97706" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';loadBannerHiveList()">Send Banner</button>
         <button class="btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex'">+ Add Hosted Hive</button>
-        <button class="btn-primary" id="btn-request-hive" style="display:none;background:var(--blue)" onclick="openRequestHiveModal()">Request a Hive</button>
       </div>
     </div>
 
@@ -7297,8 +7312,6 @@ const dashboardHTML = `<!DOCTYPE html>
       if (e.key !== 'Escape') return;
       var createModal = document.getElementById('create-modal');
       if (createModal && createModal.style.display === 'flex') { createModal.style.display = 'none'; return; }
-      var requestModal = document.getElementById('request-modal');
-      if (requestModal && requestModal.style.display === 'flex') { requestModal.style.display = 'none'; return; }
       var accessOverlay = document.querySelector('.hive-confirm-overlay');
       if (accessOverlay) { accessOverlay.remove(); return; }
       var timelineModal = document.getElementById('timeline-modal');
@@ -10483,7 +10496,6 @@ const dashboardHTML = `<!DOCTYPE html>
         renderUserAccessBanner();
         renderProvisionRequestBanner(data.my_provision_request || null);
         renderAdminProvisionRequests(data.provision_requests || []);
-        renderRequestHiveButton(data);
         loadPublicHives(data.hives || []);
         loadUsage();
       } catch(e) {
@@ -12088,12 +12100,6 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) {}
     }
 
-    function renderRequestHiveButton(data) {
-      var btn = document.getElementById('btn-request-hive');
-      if (!btn) return;
-      btn.style.display = '';
-    }
-
     function renderProvisionRequestBanner(req) {
       var el = document.getElementById('provision-request-banner');
       if (!el) return;
@@ -12573,208 +12579,6 @@ const dashboardHTML = `<!DOCTYPE html>
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Deny'; }
     }
 
-    /* REQUEST_FORGE_CUSTOM is the sentinel option value that reveals the
-       free-text forge box. It is not a hostname and is never submitted. */
-    var REQUEST_FORGE_CUSTOM = '__custom__';
-
-    /* normalizeForgeInput mirrors the server's normalizeForgeHost: strip the
-       scheme, drop any pasted path, drop a trailing slash, lowercase. Keeping
-       the two in step means the live preview shows exactly the host the server
-       will store, instead of a spelling that changes on submit. */
-    function normalizeForgeInput(raw) {
-      var h = (raw || '').trim().toLowerCase();
-      h = h.replace(/^https?:\/\//, '');
-      var slash = h.indexOf('/');
-      if (slash >= 0) h = h.slice(0, slash);
-      return h;
-    }
-
-    /* renderRequestForgeOptions fills the Request-a-Hive forge picker from the
-       forges the hub's own clusters actually run on, plus public github.com and
-       an "other" escape hatch.
-
-       Hybrid rather than pure free-text: the listed forges are the ones the hub
-       can actually place a hive on, so the common path is a click that cannot
-       be typo'd, and the list self-documents what is supported. Pure free-text
-       invites "gihub.ibm.com"; a pure select would block a brand-new GHE
-       instance the hub has no cluster for yet, which is a real onboarding case
-       — hence "Other". */
-    function renderRequestForgeOptions() {
-      var sel = document.getElementById('rq-forge');
-      if (!sel) return;
-      var seen = {};
-      var hosts = [];
-      (_clusterList || []).forEach(function(c) {
-        var h = normalizeForgeInput((c && c.github_host) || '');
-        if (!h || seen[h]) return;
-        seen[h] = true;
-        hosts.push(h);
-      });
-      /* Public GitHub is always offered even when no cluster reports it, so the
-         picker is never empty before the cluster list loads. */
-      if (!seen[PUBLIC_GITHUB_HOST]) hosts.unshift(PUBLIC_GITHUB_HOST);
-      hosts.sort();
-      var prev = sel.value;
-      var opts = hosts.map(function(h) {
-        return '<option value="' + esc(h) + '">' + esc(h) + '</option>';
-      });
-      opts.push('<option value="' + esc(REQUEST_FORGE_CUSTOM) + '">Other GitHub Enterprise host&#x2026;</option>');
-      sel.innerHTML = opts.join('');
-      if (prev) sel.value = prev;
-      if (!sel.value) sel.value = PUBLIC_GITHUB_HOST;
-      /* Bind once. renderRequestForgeOptions re-runs whenever the cluster list
-         reloads, and re-adding these listeners each time would fire the
-         preview N times per keystroke. */
-      if (!sel._rqForgeWired) {
-        sel._rqForgeWired = true;
-        sel.addEventListener('change', syncRequestForgePreview);
-        var customEl = document.getElementById('rq-forge-custom');
-        if (customEl) customEl.addEventListener('input', syncRequestForgePreview);
-        var orgEl = document.getElementById('rq-org');
-        if (orgEl) orgEl.addEventListener('input', syncRequestForgePreview);
-      }
-      syncRequestForgePreview();
-    }
-
-    /* requestForgeValue returns the normalized forge host the modal will
-       submit, or '' when "Other" is selected and nothing has been typed. */
-    function requestForgeValue() {
-      var sel = document.getElementById('rq-forge');
-      if (!sel) return '';
-      if (sel.value !== REQUEST_FORGE_CUSTOM) return normalizeForgeInput(sel.value);
-      var custom = document.getElementById('rq-forge-custom');
-      return normalizeForgeInput(custom && custom.value);
-    }
-
-    /* syncRequestForgePreview shows the forge with the org affixed to it —
-       "github.ibm.com/z-innersource" — so the requester sees the exact target
-       they are asking for before they submit, rather than discovering after
-       provisioning that the org was resolved against the wrong GitHub. */
-    function syncRequestForgePreview() {
-      var sel = document.getElementById('rq-forge');
-      var custom = document.getElementById('rq-forge-custom');
-      var out = document.getElementById('rq-target-preview');
-      if (sel && custom) custom.style.display = sel.value === REQUEST_FORGE_CUSTOM ? 'block' : 'none';
-      if (!out) return;
-      var host = requestForgeValue();
-      var orgEl = document.getElementById('rq-org');
-      var org = orgEl ? orgEl.value.trim() : '';
-      /* The org field accepts a pasted URL too; show only its last segment so
-         the preview never renders "github.com/https://github.ibm.com/x". */
-      if (org) {
-        var parts = org.replace(/^https?:\/\//, '').replace(/\/+$/, '').split('/');
-        org = parts[parts.length - 1];
-      }
-      if (!host) {
-        out.textContent = 'Enter the GitHub forge your org lives on.';
-        out.style.color = 'var(--muted)';
-        return;
-      }
-      out.textContent = 'This hive will target ' + host + '/' + (org || '<org>') +
-        (host !== PUBLIC_GITHUB_HOST ? ' — the GitHub App must be installed on that org on ' + host + '.' : '');
-      out.style.color = host !== PUBLIC_GITHUB_HOST ? 'var(--accent, #58a6ff)' : 'var(--muted)';
-    }
-
-    /* REQUEST_DEFAULT_ACMM_LEVEL is where a new hive starts. L3 Measured is the
-       first level that produces useful output (hold-gated PRs that raise test
-       coverage) while still requiring a human on every merge, which is the
-       right default for someone who has not run a hive before. */
-    var REQUEST_DEFAULT_ACMM_LEVEL = 3;
-    /* ACMM levels offered on the request form, lowest to highest. Capped at L3
-       Measured, matching maxRequestACMMLevel on POST /api/saas/request-provision
-       and the get-started wizard: a hive is never REQUESTED above L3. L4-L6 are
-       real levels, reached after provisioning from the hive's own dashboard
-       once coverage and CI history have earned them. This form posts to the
-       same clamped endpoint as the wizard, so offering L4-L6 here would not
-       grant them — it would silently record L1 instead. */
-    var REQUEST_ACMM_LEVELS = [1, 2, 3];
-    /* Restated under the picker so the cap reads as "later", not "denied". */
-    var REQUEST_LEVELS_LATER_NOTE = 'L4 Adaptive, L5 Semi-Automated and L6 Autonomous become available after provisioning, from your hive dashboard.';
-
-    /* renderRequestLevelOptions builds the level picker from ACMM_LABELS and
-       ACMM_TIPS. Rendering rather than hardcoding is the point: the previous
-       hardcoded <option> list had drifted to names that appear nowhere else in
-       the product and described the wrong behaviour. */
-    function renderRequestLevelOptions() {
-      var sel = document.getElementById('rq-level');
-      if (!sel) return;
-      var prev = sel.value;
-      sel.innerHTML = (REQUEST_ACMM_LEVELS || []).map(function(l) {
-        var label = ACMM_LABELS[l] || ('L' + l);
-        var detail = acmmTipDetail(l);
-        /* Label and one-line description live in the option text itself: a
-           <select> shows only the selected option when closed, so a requester
-           browsing the list needs the description inline to compare levels. */
-        return '<option value="' + l + '">' + esc(label) + (detail ? ' &#x2014; ' + esc(detail) : '') + '</option>';
-      }).join('');
-      sel.value = prev || String(REQUEST_DEFAULT_ACMM_LEVEL);
-      if (!sel.value) sel.value = String(REQUEST_DEFAULT_ACMM_LEVEL);
-      if (!sel._rqLevelWired) {
-        sel._rqLevelWired = true;
-        sel.addEventListener('change', syncRequestLevelDesc);
-      }
-      syncRequestLevelDesc();
-    }
-
-    /* syncRequestLevelDesc restates the selected level's description under the
-       picker, so it stays readable once the dropdown is closed. */
-    function syncRequestLevelDesc() {
-      var sel = document.getElementById('rq-level');
-      var out = document.getElementById('rq-level-desc');
-      if (!sel || !out) return;
-      var lvl = parseInt(sel.value, 10) || REQUEST_DEFAULT_ACMM_LEVEL;
-      var tip = ACMM_TIPS[lvl] || '';
-      out.textContent = tip ? (tip + ' ' + REQUEST_LEVELS_LATER_NOTE) : REQUEST_LEVELS_LATER_NOTE;
-    }
-
-    /* openRequestHiveModal shows the modal with a freshly populated forge
-       picker, so a cluster list that loaded after page render is reflected. */
-    function openRequestHiveModal() {
-      renderRequestForgeOptions();
-      syncRequestForgePreview();
-      renderRequestLevelOptions();
-      document.getElementById('request-modal').style.display = 'flex';
-    }
-
-    var _requestInProgress = false;
-    async function submitProvisionRequest() {
-      if (_requestInProgress) return;
-      _requestInProgress = true;
-      var btn = document.getElementById('btn-request-go');
-      btn.disabled = true;
-      btn.textContent = 'Submitting...';
-      var org = document.getElementById('rq-org').value.trim();
-      var repos = document.getElementById('rq-repos').value.trim();
-      var primary = document.getElementById('rq-primary').value.trim();
-      var level = parseInt(document.getElementById('rq-level').value) || 1;
-      var forge = requestForgeValue();
-
-      function abort(msg) {
-        hiveToast(msg, 'error');
-        _requestInProgress = false;
-        btn.disabled = false;
-        btn.textContent = 'Submit Request';
-      }
-
-      if (!org || !repos) { abort('Org and repos are required'); return; }
-      /* The forge is required client-side for a fast, in-context error; the
-         server enforces it independently — this check is UX, not security. */
-      if (!forge) { abort('A GitHub forge is required — pick one or enter the host your org lives on'); return; }
-
-      try {
-        var resp = await fetch('/api/saas/request-provision', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({org: org, github_host: forge, repos: repos, primary_repo: primary || repos.split(',')[0].trim(), acmm_level: level})
-        });
-        var data = await resp.json();
-        if (!resp.ok) { hiveToast(data.error || 'Request failed', 'error'); return; }
-        document.getElementById('request-modal').style.display = 'none';
-        hiveToast('Provision request submitted — awaiting admin approval', 'success');
-        loadHives();
-      } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
-      finally { _requestInProgress = false; btn.disabled = false; btn.textContent = 'Submit Request'; }
-    }
 
     // --- Cluster Health Panel ---
     var CLUSTER_HEALTH_POLL_MS = 30000;
@@ -13012,10 +12816,6 @@ const dashboardHTML = `<!DOCTYPE html>
         if (!resp.ok) return;
         var clusters = await resp.json();
         _clusterList = clusters || [];
-        /* Refresh the Request-a-Hive forge picker: the cluster list usually
-           lands after first render, and the picker's whole value is listing the
-           forges the hub can actually place a hive on. */
-        renderRequestForgeOptions();
         var sel = document.getElementById('f-cluster');
         if (!sel || !clusters || !clusters.length) return;
         sel.innerHTML = clusters.map(function(c) {
@@ -14824,45 +14624,6 @@ const dashboardHTML = `<!DOCTYPE html>
     </div>
   </div>
 
-  <div id="request-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:540px;width:90%;max-height:90vh;display:flex;flex-direction:column">
-      <h2 style="font-size:1.3rem;padding:32px 32px 16px;margin:0;color:var(--accent);flex-shrink:0">Request a Hive</h2>
-      <div style="flex:1;overflow-y:auto;padding:0 32px">
-        <p style="font-size:0.8rem;color:var(--muted);margin-bottom:16px">Submit a request for a hosted hive. An admin will review and approve it.</p>
-        <div style="margin-bottom:12px">
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">GitHub Forge *</label>
-          <select id="rq-forge" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"></select>
-          <input id="rq-forge-custom" type="text" placeholder="github.example.com" style="width:100%;margin-top:6px;display:none;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-          <div style="font-size:0.72rem;color:var(--muted);margin-top:4px">Which GitHub your org lives on. Required &#x2014; a bare org name does not say whether it is on github.com or a GitHub Enterprise instance.</div>
-        </div>
-        <div style="margin-bottom:12px">
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">GitHub Organization *</label>
-          <input id="rq-org" type="text" placeholder="my-org" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-          <div id="rq-target-preview" style="font-size:0.75rem;color:var(--muted);margin-top:6px"></div>
-        </div>
-        <div style="margin-bottom:12px">
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Repositories * <span style="font-size:0.7rem">(comma-separated)</span></label>
-          <input id="rq-repos" type="text" placeholder="repo1, repo2" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-        </div>
-        <div style="margin-bottom:12px">
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">Primary Repository</label>
-          <input id="rq-primary" type="text" placeholder="defaults to first repo" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-        </div>
-        <div style="margin-bottom:12px">
-          <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">ACMM Level</label>
-          <!-- Options are rendered by renderRequestLevelOptions() from
-               ACMM_LABELS/ACMM_TIPS so this picker can never drift from the
-               names the rest of the hub shows. Do not hardcode them here. -->
-          <select id="rq-level" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem"></select>
-          <div id="rq-level-desc" style="font-size:0.72rem;color:var(--muted);margin-top:6px"></div>
-        </div>
-      </div>
-      <div style="display:flex;gap:12px;justify-content:flex-end;padding:16px 32px;border-top:1px solid var(--border);flex-shrink:0">
-        <button onclick="document.getElementById('request-modal').style.display='none'" style="padding:8px 20px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer">Cancel</button>
-        <button id="btn-request-go" onclick="submitProvisionRequest()" class="btn-primary" style="background:var(--blue)">Submit Request</button>
-      </div>
-    </div>
-  </div>
 
   <script>
     var _accessHiveId = '';
