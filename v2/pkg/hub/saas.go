@@ -7713,7 +7713,12 @@ const dashboardHTML = `<!DOCTYPE html>
     var _clusterList = [];
     var _commitMessages = {};
     var _allDashHives = [];
-    var _dashSortKey = '', _dashSortAsc = true;
+    /* Seeded to the A-Z default rather than '' (registry/arrival order) so the
+       very first paint — including paintCachedHives, which runs before any
+       network call — is already alphabetical. loadHiveSortPrefs overwrites both
+       from localStorage when the operator has a stored choice; see
+       HIVE_SORT_DEFAULT_KEY for why a stored choice wins over this default. */
+    var _dashSortKey = 'name', _dashSortAsc = true;
     var _hivesLoading = false;
     var _lastHivesJSON = '';
     var _lastUsersJSON = '';
@@ -7934,6 +7939,35 @@ const dashboardHTML = `<!DOCTYPE html>
     var LS_HIVE_GROUP_COLLAPSED = 'hive-group-collapsed';
     var LS_HIVE_SAVED_VIEWS = 'hive-saved-views';
     var LS_HIVE_DEFAULT_VIEW = 'hive-default-view';
+    var LS_HIVE_SORT = 'hive-sort';
+    var LS_HIVE_SCROLL = 'hive-scroll';
+
+    /* HIVE_SORT_DEFAULT_KEY is the sort a FIRST-TIME visitor gets: the Hive
+       column, ascending — i.e. plain A-Z over the label the name cell actually
+       displays (see hiveNameSortValue / hiveLabel). Before this the table
+       rendered in registry order, which is arrival order and looks arbitrary.
+
+       This is a DEFAULT, not an override: loadHiveSortPrefs applies it only
+       when there is no usable stored choice, so an operator who sorted by
+       Tokens still returns to Tokens. */
+    var HIVE_SORT_DEFAULT_KEY = 'name';
+    var HIVE_SORT_DEFAULT_ASC = true;
+
+    /* HIVE_SORT_KEYS is every key a header can sort by — the allowlist that a
+       persisted value is validated against. A stored key that is no longer a
+       column (a renamed field, a hand-edited value, a downgrade) degrades to
+       the A-Z default instead of silently sorting on an absent property, which
+       reads as "sorting is broken" because every row compares equal. */
+    var HIVE_SORT_KEYS = ['name', 'clusterId', 'startedAt', 'acmmLevel', 'aiAuthor',
+      'journey', 'agentCount', 'totalTokens24h', 'governorMode', 'actionableIssues',
+      'actionablePRs', 'activeContributors', 'registeredAt'];
+
+    function isHiveSortKey(key) {
+      for (var i = 0; i < (HIVE_SORT_KEYS || []).length; i++) {
+        if (HIVE_SORT_KEYS[i] === key) return true;
+      }
+      return false;
+    }
 
     /* Cap on stored saved views. localStorage is a small shared budget and an
        unbounded list would let one runaway page fill it for every other
@@ -9294,6 +9328,30 @@ const dashboardHTML = `<!DOCTYPE html>
       bar.innerHTML = '<div class="view-ctls">' + groupCtl + '</div><div class="view-ctls">' + viewCtl + '</div>';
     }
 
+    /* hiveProvisionTime returns when this hive came into existence, as epoch
+       ms, or null when that is genuinely unknown.
+
+       Why registeredAt and NOT the per-hive meta.json created_at: created_at is
+       declared on SaaSHive and written on exactly one provisioning path, so
+       every hive that predates it — or that was created any other way — carries
+       the empty string. On the live fleet at the time of writing, 26 of 50
+       meta.json files have "created_at": "", including long-running assigned
+       hives, while registeredAt was populated on 50 of 50 registry entries.
+       registeredAt is also preserved across heartbeats (server.go copies it
+       from the previous entry rather than restamping it), so it stays the
+       first-seen time instead of drifting to "now" on every beat.
+
+       Returns null — never NaN and never a rendered 'Invalid Date' — for a
+       missing or unparseable value, so the caller can order those rows
+       explicitly instead of comparing against NaN, which is false in both
+       directions and would make the sort non-deterministic. */
+    function hiveProvisionTime(h) {
+      var raw = h && h.registeredAt;
+      if (typeof raw !== 'string' || !raw) return null;
+      var t = Date.parse(raw);
+      return isNaN(t) ? null : t;
+    }
+
     /* sortedDashHives applies the CURRENT sort key/direction to the unfiltered
        cache. Split out of sortDashHives so restoring a saved view (which sets
        the key/direction directly rather than by clicking a header) reproduces
@@ -9310,6 +9368,23 @@ const dashboardHTML = `<!DOCTYPE html>
           var ja = journeySortValue(a && a.journey);
           var jb = journeySortValue(b && b.journey);
           return _dashSortAsc ? ja - jb : jb - ja;
+        }
+        if (key === 'registeredAt') {
+          /* Provision time. Compared as epoch ms, not as text: registeredAt is
+             RFC3339 so it happens to sort lexically today, but a value that
+             ever arrives with an offset ('...+02:00') or without the 'Z' would
+             collate wrong, and a string compare cannot express "unknown last".
+
+             Hives with no parseable timestamp sort LAST in both directions
+             rather than clumping at whichever end '' collates to — they are
+             the least informative rows, so they stay out of the way whether
+             the operator asked for oldest-first or newest-first. */
+          var ra = hiveProvisionTime(a);
+          var rb2 = hiveProvisionTime(b);
+          if (ra === null && rb2 === null) return 0;
+          if (ra === null) return 1;
+          if (rb2 === null) return -1;
+          return _dashSortAsc ? ra - rb2 : rb2 - ra;
         }
         var va = key === 'name' ? hiveNameSortValue(a) : ((a && a[key]) || '');
         var vb = key === 'name' ? hiveNameSortValue(b) : ((b && b[key]) || '');
@@ -9375,7 +9450,118 @@ const dashboardHTML = `<!DOCTYPE html>
 
     function sortDashHives(key) {
       if (_dashSortKey === key) { _dashSortAsc = !_dashSortAsc; } else { _dashSortKey = key; _dashSortAsc = true; }
+      persistHiveSort();
       renderHives(sortedDashHives(), true);
+    }
+
+    /* persistHiveSort records the operator's EXPLICIT sort choice. Written only
+       from sortDashHives (a header click), never from loadHiveSortPrefs, so
+       restoring a preference can't rewrite it and a first visit leaves the key
+       absent rather than storing the default — which is what lets
+       loadHiveSortPrefs tell "never chose" apart from "chose the default". */
+    function persistHiveSort() {
+      lsSetJSON(LS_HIVE_SORT, {key: _dashSortKey, asc: _dashSortAsc});
+    }
+
+    /* ---- Scroll position across refresh --------------------------------
+       "Location on page" is the WINDOW's scroll offset, not a container's:
+       .table-wrap is overflow:visible at desktop widths (it only becomes an
+       overflow-x scroller in the narrow media query, and that axis is
+       horizontal), so the hive list scrolls the document itself.
+
+       Writes are throttled through requestAnimationFrame because scroll fires
+       at input rate and localStorage.setItem is synchronous — persisting on
+       every event would jank the scroll it is trying to record. */
+    var HIVE_SCROLL_MAX_AGE_MS = 30 * 60 * 1000; /* 30 min — see readHiveScroll */
+    var HIVE_SCROLL_RESTORE_FRAMES = 3;          /* see restoreHiveScroll */
+    var _hiveScrollWritePending = false;
+    var _hiveScrollRestored = false;
+
+    function persistHiveScroll() {
+      if (_hiveScrollWritePending) return;
+      _hiveScrollWritePending = true;
+      window.requestAnimationFrame(function() {
+        _hiveScrollWritePending = false;
+        var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+        lsSetJSON(LS_HIVE_SCROLL, {y: y, t: Date.now()});
+      });
+    }
+
+    /* readHiveScroll returns the stored offset, or 0 when there is nothing
+       usable. Stale entries are discarded: coming back to the dashboard after
+       hours, the fleet has changed underneath and the old offset points at
+       unrelated rows, so landing at the top is the honest result. Guards the
+       shape too — a hand-edited or truncated value must not yield NaN, which
+       window.scrollTo would silently treat as 0 anyway but which would also
+       poison the comparison below. */
+    function readHiveScroll() {
+      var s = lsGetJSON(LS_HIVE_SCROLL, null);
+      if (!s || typeof s !== 'object') return 0;
+      var y = Number(s.y), t = Number(s.t);
+      if (!isFinite(y) || y <= 0) return 0;
+      if (!isFinite(t) || (Date.now() - t) > HIVE_SCROLL_MAX_AGE_MS) return 0;
+      return y;
+    }
+
+    /* restoreHiveScroll re-applies the saved offset ONCE per page load.
+
+       Why not a single scrollTo at init: the rows are painted asynchronously
+       (paintCachedHives, then loadHives' await, then renderHives), and the
+       document is only as tall as what has been painted so far. Scrolling to
+       y before the table exists clamps to the current maximum — silently
+       landing at the top, which is exactly the bug this is meant to fix.
+
+       So it retries across a few animation frames and stops as soon as the
+       document is actually tall enough for the offset to survive, which is the
+       observable definition of "the rows have rendered". The frame budget is
+       small and bounded so a genuinely shorter list (hives removed since) costs
+       three frames and then gives up rather than fighting the user forever. */
+    function restoreHiveScroll() {
+      if (_hiveScrollRestored) return;
+      var y = readHiveScroll();
+      if (!y) { _hiveScrollRestored = true; return; }
+      var attempts = 0;
+      var tryScroll = function() {
+        var maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        if (maxY >= y) {
+          window.scrollTo(0, y);
+          _hiveScrollRestored = true;
+          return;
+        }
+        if (++attempts >= HIVE_SCROLL_RESTORE_FRAMES) {
+          /* Never tall enough — go as far as the page allows so the operator
+             at least lands near where they were. */
+          window.scrollTo(0, maxY);
+          _hiveScrollRestored = true;
+          return;
+        }
+        window.requestAnimationFrame(tryScroll);
+      };
+      window.requestAnimationFrame(tryScroll);
+    }
+
+    /* loadHiveSortPrefs resolves the stored sort against the A-Z default.
+
+       Precedence: a PERSISTED choice wins, the default applies only when there
+       is nothing usable stored — first visit, cleared storage, or a value that
+       no longer validates. Applying A-Z unconditionally would undo the operator's
+       choice on every refresh, which is the exact complaint this fixes.
+
+       Every failure mode degrades to the default rather than throwing: lsGetJSON
+       already swallows disabled storage and malformed JSON, and isHiveSortKey
+       rejects a stale key so a removed column cannot leave the table sorting on
+       a property no row has. */
+    function loadHiveSortPrefs() {
+      var stored = lsGetJSON(LS_HIVE_SORT, null);
+      if (stored && typeof stored === 'object' && isHiveSortKey(stored.key)) {
+        _dashSortKey = stored.key;
+        /* Only an explicit false flips direction — a stored object missing
+           'asc' still means ascending. */
+        _dashSortAsc = stored.asc !== false;
+        return;
+      }
+      _dashSortKey = HIVE_SORT_DEFAULT_KEY;
+      _dashSortAsc = HIVE_SORT_DEFAULT_ASC;
     }
 
     /* ---- Usage attribution panel ----------------------------------------
@@ -10339,11 +10525,11 @@ const dashboardHTML = `<!DOCTYPE html>
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
         // 16 = the 13 original columns, plus Uptime, plus Drift, plus the
-        // bulk-select column, plus Journey, MINUS Public — visibility now
-        // stacks under Location instead of owning a column. Counted against
-        // the <th> cells in the header and the <td> cells emitted below
-        // (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 17;
+        // bulk-select column, plus Journey, plus Provisioned, MINUS Public —
+        // visibility now stacks under Location instead of owning a column.
+        // Counted against the <th> cells in the header and the <td> cells
+        // emitted below (bulkCheckboxCell contributes one).
+        var TOTAL_COLUMNS = 18;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -10461,6 +10647,13 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + sparkline(h.issueHistory, '#f59e0b', 50, 14) + (h.actionableIssues || 0) + '</td>' +
           '<td>' + sparkline(h.prHistory, '#3b82f6', 50, 14) + (h.actionablePRs || 0) + '</td>' +
           '<td>' + (h.activeContributors || 0) + '</td>' +
+          /* Provisioned. hiveProvisionTime is the single source of truth for
+             "is this timestamp usable" — reusing it here keeps the cell and the
+             comparator from ever disagreeing (a row showing a date but sorting
+             as unknown, or the reverse). An em dash, never 'Invalid Date', for
+             a hive whose registeredAt is missing or unparseable. */
+          '<td style="font-size:0.75rem;color:var(--muted);white-space:nowrap">' +
+            (hiveProvisionTime(h) === null ? '—' : esc(fmtUserTS(h.registeredAt))) + '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
@@ -10468,9 +10661,10 @@ const dashboardHTML = `<!DOCTYPE html>
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
          and the table visibly ragged. 15 with the Drift column, plus the
-         bulk-select column, plus the Journey column, minus Public (visibility
-         is stacked under Location). Must stay equal to TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 17;
+         bulk-select column, plus the Journey column, plus the Provisioned
+         column, minus Public (visibility is stacked under Location). Must stay
+         equal to TOTAL_COLUMNS. */
+      var TOTAL_COLUMNS_HEADER = 18;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -10605,7 +10799,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th><th onclick="sortDashHives(\'registeredAt\')" style="cursor:pointer" title="When this hive was first provisioned — the hub&apos;s first-seen time, preserved across restarts and heartbeats">Provisioned ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
@@ -12278,15 +12472,29 @@ const dashboardHTML = `<!DOCTYPE html>
          already reflects the operator's view rather than flashing the ungrouped
          list and then rearranging. */
       loadDashViewPrefs();
+      /* Sort is resolved AFTER loadDashViewPrefs because applying a default
+         saved view sets a key/direction of its own: the operator's explicitly
+         stored sort is the more specific signal and must have the last word.
+         Both run before the first paint so no render happens in the wrong
+         order. */
+      loadHiveSortPrefs();
       /* Progressive paint: put the last known fleet on screen immediately so a
          returning operator sees their hives instead of a spinner. The network
          path below still runs unconditionally and reconciles the list; this
          only changes what fills the gap while it is in flight. Must come after
          loadDashViewPrefs() so the cached rows honour the active view. */
       paintCachedHives();
+      /* Record the offset from here on. Attached before the awaits below so a
+         scroll during a slow load is still captured. */
+      window.addEventListener('scroll', persistHiveScroll, {passive: true});
       await loadUser();
       await autoRequestAccessFromUrl();
       await loadHives();
+      /* Restore AFTER the real rows are in the DOM — loadHives' renderHives is
+         what gives the document its full height, and restoreHiveScroll still
+         waits for that height before it commits (see its frame loop). Calling
+         it any earlier clamps the offset to a short page and lands at the top. */
+      restoreHiveScroll();
       await loadAdminUsers();
       if (!_adminLoaded) setTimeout(loadAdminUsers, 2000);
       loadClusterHealth();
