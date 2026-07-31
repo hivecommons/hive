@@ -199,12 +199,23 @@ func electedForgeForHive(h *SaaSHive, cluster *ClusterConfig) string {
 	if h == nil {
 		return ""
 	}
+	// GitHubHost IS the forge of this hive's repos. It is captured at request
+	// time from the org URL the user pastes, and every repo is validated to be
+	// on that same host ("single-host-per-spoke"), so it is the one input from
+	// which app_id, app_slug, api_url, base_url and the key file all derive.
 	if host := strings.TrimSpace(h.GitHubHost); host != "" {
 		return forgeHostLabel(host)
 	}
-	// No recorded host, but an explicit per-hive base URL still expresses
-	// intent — notably the "public" sentinel, which exists precisely to force
-	// public github.com on a cluster whose default is GHE.
+	// LEGACY ONLY. Hives assigned before github_host was recorded express the
+	// same fact through GitHubBaseURL — including the "public" sentinel, which
+	// exists solely because an empty base URL could not distinguish "public" from
+	// "unset". Reading it here keeps those hives resolving while they carry no
+	// host; normalizeHiveForge writes the derived host back so a hive passes
+	// through this branch at most once.
+	//
+	// Nothing new should ever set GitHubBaseURL on a hive. Two fields encoding
+	// one fact is what let a hive's own recorded forge disagree with the URLs
+	// validated against it, which refused the identity push for 26 hives.
 	if raw := strings.TrimSpace(h.GitHubBaseURL); raw != "" {
 		if effectiveGitHubBaseURL(h, cluster) == "" {
 			return publicForgeHost
@@ -212,6 +223,60 @@ func electedForgeForHive(h *SaaSHive, cluster *ClusterConfig) string {
 		return forgeHostLabel(raw)
 	}
 	return ""
+}
+
+// normalizeHiveForge collapses a hive's forge onto GitHubHost, the single
+// stored input, and reports whether it changed anything.
+//
+// A hive may arrive expressing its forge three ways: GitHubHost (current),
+// GitHubBaseURL holding a real URL (older), or GitHubBaseURL holding the
+// "public" sentinel (older still, meaning "force public on a GHE-default
+// cluster"). All three say the same thing, and any two of them can drift apart
+// — which is exactly what happened on 2026-07-31.
+//
+// After this runs, GitHubHost carries the answer and the per-hive URL fields
+// carry nothing, so there is no second copy left to disagree with.
+func normalizeHiveForge(h *SaaSHive, cluster *ClusterConfig) bool {
+	if h == nil {
+		return false
+	}
+	elected := electedForgeForHive(h, cluster)
+	// Store the elected host VERBATIM when the field does not already hold it.
+	//
+	// Deliberately NOT `!sameGitHubHost(h.GitHubHost, elected)`: that helper
+	// treats "" as equivalent to github.com, so for a public hive it reports
+	// "already correct" and the write is skipped — leaving GitHubHost empty
+	// while the URL fields below are cleared, which destroys the only record of
+	// the forge and drops the hive onto its cluster's default. That is the exact
+	// failure this change exists to remove, reintroduced by the normalizer.
+	changed := false
+	if elected != "" && h.GitHubHost != elected {
+		h.GitHubHost = elected
+		changed = true
+	}
+	// Only now drop the per-hive URL overrides: the host is holding the fact, so
+	// removing the second copy cannot lose it.
+	//
+	// The `elected != ""` gate is DEFENSIVE, not load-bearing, and a mutation
+	// test proved it: electedForgeForHive returns non-empty for any non-empty
+	// GitHubBaseURL, so whenever there is a URL to clear, elected is already
+	// set. Removing the gate breaks no test today. It stays because it states
+	// the invariant that matters — never erase a hive's only record of its
+	// forge, which would drop it onto the cluster default and turn a public
+	// hive on vllm-d into a GHE one — and because a future change to
+	// electedForgeForHive could make it reachable. Flagged rather than left
+	// looking verified.
+	if elected != "" {
+		if h.GitHubBaseURL != "" {
+			h.GitHubBaseURL = ""
+			changed = true
+		}
+		if h.GitHubAPIURL != "" {
+			h.GitHubAPIURL = ""
+			changed = true
+		}
+	}
+	return changed
 }
 
 // clusterForgeHost is the forge a cluster defaults to: the host named by its

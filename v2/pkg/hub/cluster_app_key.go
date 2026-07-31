@@ -181,8 +181,23 @@ func clusterAppKeyFingerprint(clusterID string) string {
 // authenticating as. Assembled from the cluster config (app_id, non-secret) and
 // the key store (the key itself, never in any config file).
 type clusterAppIdentity struct {
-	AppID       int64
-	AppSlug     string
+	AppID   int64
+	AppSlug string
+	// APIURL, BaseURL and Forge describe the forge THIS HIVE resolved to, which
+	// is not necessarily its cluster's default.
+	//
+	// They are carried here because dropping them is what made the hub refuse
+	// its own repair: the guard below re-read the URLs from the CLUSTER record,
+	// so a hive that elected github.com had its public app_id validated against
+	// the cluster's GHE api_url/base_url. That pair IS inconsistent, so
+	// RejectIdentitySet correctly refused it — and the push those hives needed
+	// was dropped every ~30s with the right answer already computed.
+	//
+	// Forge distinguishes "public, whose URLs are legitimately empty" from "no
+	// forge resolved"; the URLs alone cannot.
+	APIURL      string
+	BaseURL     string
+	Forge       string
 	PrivateKey  string
 	Fingerprint string
 }
@@ -252,6 +267,9 @@ func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAp
 	identity := &clusterAppIdentity{
 		AppID:   resolved.AppID,
 		AppSlug: resolved.AppSlug,
+		APIURL:  resolved.APIURL,
+		BaseURL: resolved.BaseURL,
+		Forge:   resolved.Forge,
 	}
 	// The KEY must follow the APP, not the cluster. A hive that elected a forge
 	// its cluster does not default to needs that App's key; the cluster's key
@@ -849,8 +867,20 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 	// same class of outage this guard exists to prevent, in the other direction.
 	// Silence is never evidence. When the cluster does declare a forge, the full
 	// set is checked.
-	clusterAPIURL := clusterAPIURLForIdentity(s, clusterID)
-	clusterBaseURL := clusterBaseURLForIdentity(s, clusterID)
+	// Validate against the forge THIS HIVE resolved to. The App and the URLs
+	// must come from the SAME resolution or the check compares two forges and
+	// refuses a set that is actually correct.
+	//
+	// Fall back to the cluster record only when the resolver named no forge at
+	// all. A public election legitimately resolves to EMPTY urls — that is how
+	// every healthy public spoke runs — so empty is not itself a reason to fall
+	// back; only an unresolved forge is.
+	clusterAPIURL := identity.APIURL
+	clusterBaseURL := identity.BaseURL
+	if identity.Forge == "" {
+		clusterAPIURL = clusterAPIURLForIdentity(s, clusterID)
+		clusterBaseURL = clusterBaseURLForIdentity(s, clusterID)
+	}
 	clusterDeclaresForge := clusterAPIURL != "" || clusterBaseURL != ""
 
 	if err := config.RejectIdentitySet(config.GitHubConfig{
