@@ -22,9 +22,19 @@ jobs:
       run:
         working-directory: v2
     steps:
+      # On `schedule`/`workflow_dispatch` there is no PR ref, so pin to v2 —
+      # that is the branch whose floor this gate reports on hourly.
+      #
+      # On `pull_request` we must NOT pin to v2: `ref: v2` makes the runner do
+      # `git checkout --force -B v2 refs/remotes/origin/v2` and measure the
+      # BASE branch, so the gate reports v2's numbers no matter what the PR
+      # changes. That made the gate simultaneously useless and misleading — a
+      # PR that fixed coverage still failed, and a PR that broke it would still
+      # have passed. Leaving `ref` empty checks out the PR merge commit, which
+      # is the code that is actually about to land.
       - uses: actions/checkout@v4
         with:
-          ref: v2
+          ref: ${{ github.event_name == 'pull_request' && github.ref || 'v2' }}
 
       - uses: actions/setup-go@v5
         with:
