@@ -177,9 +177,120 @@ type ClusterConfig struct {
 	//
 	// Zero means "this cluster has no hub-managed App identity" — the hub then
 	// changes nothing about its spokes' credentials.
-	GitHubAppID                 int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
-	OAuthClientID               string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+	GitHubAppID   int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+	// Forges carries App identity for EVERY forge this cluster can serve, keyed
+	// by bare forge host ("github.com", "github.ibm.com").
+	//
+	// WHY THIS FIELD EXISTS. The flat github_app_id/github_app_slug/github_*_url
+	// fields above give a cluster exactly ONE identity slot, which made a
+	// cluster's forge a PIN rather than a DEFAULT. On 2026-07-31 that cost seven
+	// hives their identity: adding github_app_slug: kubestellar-hive-ghe to the
+	// vllm-d entry handed a GHE App to every public-GitHub hive on the cluster,
+	// because there was nowhere else for a public identity to live. Those hives
+	// had already ELECTED github.com in their meta.json github_host — the hub
+	// knew the right answer and had no field in which to act on it.
+	//
+	// Per the platform owner: "vllm-d is used for GHE, but gh can be elected."
+	// A cluster's forge is a DEFAULT with per-hive election. This map is what
+	// makes a public election on a GHE-default cluster RESOLVABLE instead of
+	// 409-ing as "incomplete".
+	//
+	// BACKWARD COMPATIBILITY: an entry that omits this map still works. The flat
+	// fields are read as the DEFAULT forge's identity (see forgesForCluster), so
+	// today's single-identity clusters.json parses and behaves unchanged. This
+	// field is purely additive.
+	Forges map[string]ClusterForgeIdentity `json:"forges,omitempty" yaml:"forges,omitempty"`
+	// DefaultForge names which forge a hive on this cluster gets when it has not
+	// elected one, as a bare host. Empty means "infer from the flat fields" —
+	// github_base_url/github_api_url if set, else public github.com — which is
+	// exactly today's behaviour.
+	DefaultForge                string `json:"default_forge,omitempty" yaml:"default_forge,omitempty"`
 	ClusterHealthTimeoutSeconds int    `json:"cluster_health_timeout_seconds,omitempty" yaml:"cluster_health_timeout_seconds,omitempty"`
+}
+
+// ClusterForgeIdentity is one forge's App registration on one cluster. It is
+// the non-secret half only: as with the flat GitHubAppID field, the matching
+// PRIVATE KEY lives in its own 0600 file keyed by cluster ID, never here.
+//
+// AppID and AppSlug are BOTH required for an identity to count as complete —
+// see forgeIdentityForTarget, which refuses a switch rather than let an empty
+// slug fall back to the public default and build an install link that 404s on
+// GHE.
+type ClusterForgeIdentity struct {
+	AppID   int64  `json:"app_id,omitempty" yaml:"app_id,omitempty"`
+	AppSlug string `json:"app_slug,omitempty" yaml:"app_slug,omitempty"`
+	// APIURL and BaseURL are optional. For a forge in config.forgeIdentities
+	// they are derivable from the host, so a cluster entry need only name the
+	// App. They exist for a third GHE instance the derivation table does not
+	// know, where the URLs cannot be inferred.
+	APIURL  string `json:"api_url,omitempty" yaml:"api_url,omitempty"`
+	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
+}
+
+// forgeHostKey reduces any spelling of a forge — bare host, web URL, or API
+// URL — to the canonical bare-host key used by ClusterConfig.Forges.
+//
+// githubHostLabel alone is NOT sufficient: it strips the scheme but keeps the
+// path, so an api_url of https://github.ibm.com/api/v3 yields
+// "github.ibm.com/api/v3", which matches no map key and no target host. Every
+// lookup into the forges map must go through this.
+func forgeHostKey(s string) string {
+	h := strings.ToLower(githubHostLabel(s))
+	h = strings.TrimSuffix(strings.TrimRight(h, "/"), "/api/v3")
+	h = strings.SplitN(h, "/", 2)[0]
+	if h == "" || h == "api.github.com" {
+		return publicForgeHost
+	}
+	return h
+}
+
+// forgesForCluster returns the cluster's per-forge identity map, synthesising
+// the legacy single-identity shape when `forges` is absent.
+//
+// This is the compatibility seam. A cluster entry written before this change
+// has its flat github_app_id/github_app_slug read as the identity of the forge
+// its github_base_url/github_api_url name — which is precisely what those
+// fields have always meant. An entry that carries an explicit `forges` map wins
+// outright, and a map entry for a given host overrides the synthesised one.
+func forgesForCluster(c *ClusterConfig) map[string]ClusterForgeIdentity {
+	out := map[string]ClusterForgeIdentity{}
+	if c == nil {
+		return out
+	}
+	// Legacy flat fields -> the identity of the cluster's own (default) forge.
+	if c.GitHubAppID != 0 || strings.TrimSpace(c.GitHubAppSlug) != "" {
+		out[clusterDefaultForge(c)] = ClusterForgeIdentity{
+			AppID:   c.GitHubAppID,
+			AppSlug: strings.TrimSpace(c.GitHubAppSlug),
+			APIURL:  c.GitHubAPIURL,
+			BaseURL: c.GitHubBaseURL,
+		}
+	}
+	// Explicit per-forge entries override the synthesised one.
+	for host, id := range c.Forges {
+		out[forgeHostKey(host)] = id
+	}
+	return out
+}
+
+// clusterDefaultForge returns the forge a hive on this cluster gets when it has
+// elected nothing: explicit default_forge, else the host named by the flat URL
+// fields, else public github.com.
+func clusterDefaultForge(c *ClusterConfig) string {
+	if c == nil {
+		return publicForgeHost
+	}
+	if f := strings.TrimSpace(c.DefaultForge); f != "" {
+		return forgeHostKey(f)
+	}
+	if c.GitHubBaseURL != "" {
+		return forgeHostKey(c.GitHubBaseURL)
+	}
+	if c.GitHubAPIURL != "" {
+		return forgeHostKey(c.GitHubAPIURL)
+	}
+	return publicForgeHost
 }
 
 // kubectlForCluster builds an exec.Cmd that targets a specific cluster.

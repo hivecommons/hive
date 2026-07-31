@@ -1255,6 +1255,21 @@ type GitHubConfig struct {
 	KeyFile            string `yaml:"key_file"`
 	Token              string `yaml:"token"`
 	OAuthClientID      string `yaml:"oauth_client_id"`
+	// Forge_ names the GitHub instance this hive's App and repos live on, as a
+	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
+	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
+	// all derivable from it (see Forge, ResolvedAppID, forgeIdentities).
+	//
+	// Read it through the Forge() method, never directly: Forge() applies the
+	// dual-read fallback that keeps a not-yet-backfilled spoke resolving exactly
+	// as it does today. The trailing underscore exists solely because the method
+	// owns the good name; the YAML key is a clean `forge`.
+	//
+	// Empty is valid during the migration window and means "infer from the URL
+	// fields". Once the fleet is backfilled it becomes mandatory — per the
+	// owner: explicitly defined on every spoke on every cluster, no empties, no
+	// inheritance. The implicit empty is what disguised the 2026-07-31 damage.
+	Forge_ string `yaml:"forge,omitempty"`
 	// AppSlug is the GitHub App URL slug for the install link.
 	// For public GitHub: "kubestellar-hive". For GHE: your app's slug.
 	AppSlug string `yaml:"app_slug"`
@@ -1314,6 +1329,191 @@ const (
 	// still sign in with a github.com identity. No secret; safe to hardcode.
 	DefaultOAuthClientID = "Ov23ligE2p0gjXg6xAUf"
 )
+
+// ─────────────────────────────────────────────────────────────────────────
+// FORGE IDENTITY CONSTANTS
+//
+// A "forge" is the GitHub instance a hive's App and repos live on. Every
+// identity value below is derived from the forge — never written independently
+// — so the mixed states that broke seven hives on 2026-07-31 (a GHE app_id
+// beside an empty, therefore-public api_url) cannot be constructed.
+//
+// These are the SPOKE-side well-known defaults. The hub carries the
+// authoritative per-cluster registration in clusters.json, which may name a
+// different App on either forge; these values are what a spoke falls back to
+// when the hub has pushed nothing.
+// ─────────────────────────────────────────────────────────────────────────
+const (
+	// ForgePublic is the canonical host label for public github.com. It is a
+	// HOSTNAME, not a URL and not a sentinel word — unlike the hub's legacy
+	// "public" request sentinel, it is directly comparable to HostLabel().
+	ForgePublic = "github.com"
+
+	// ForgeGHEIBM is the IBM GitHub Enterprise host. It is the only GHE forge
+	// the fleet currently runs on; naming it as a constant keeps the derivation
+	// table literal-free and makes a second GHE forge a one-line addition.
+	ForgeGHEIBM = "github.ibm.com"
+)
+
+// forgeIdentity is the complete, indivisible identity set for one forge. The
+// four fields move together or not at all — that atomicity is the entire point
+// of deriving them from a single `forge` value.
+type forgeIdentity struct {
+	AppID   int64
+	AppSlug string
+	APIURL  string
+	BaseURL string
+}
+
+// Forge identity values.
+//
+// PublicGitHubAppID/PublicGitHubAppSlug and the Enterprise* set are declared
+// once, in provenance.go, alongside the rules that validate them — a second
+// declaration of the same literal is exactly the drift those rules exist to
+// catch. The GHEIBM* names below are aliases so the derivation table reads in
+// forge terms without duplicating any value.
+const (
+	// GHEIBMAppID is the github.ibm.com Hive App's numeric ID.
+	GHEIBMAppID = EnterpriseGitHubAppID
+	// GHEIBMAppSlug is the github.ibm.com Hive App's URL slug. A GHE instance
+	// hosts its own App registration and it is NOT named "kubestellar-hive";
+	// falling back to the public slug builds an install link that 404s.
+	GHEIBMAppSlug = EnterpriseGitHubAppSlug
+	// GHEIBMBaseURL is the github.ibm.com web base URL.
+	GHEIBMBaseURL = EnterpriseGitHubBaseURL
+	// GHEIBMAPIURL is the github.ibm.com REST API root. GHE serves its API
+	// under /api/v3 rather than on a separate api.* hostname.
+	GHEIBMAPIURL = EnterpriseGitHubAPIURL
+)
+
+// forgeIdentities is the derivation table: forge host -> its complete identity
+// set. This is the single source of truth that replaces four independently
+// writable fields. Adding a forge means adding a row here; there is no way to
+// express a half-identity.
+var forgeIdentities = map[string]forgeIdentity{
+	ForgePublic: {
+		AppID:   PublicGitHubAppID,
+		AppSlug: PublicGitHubAppSlug,
+		// Empty, not DefaultGitHubAPIURL/DefaultGitHubBaseURL: the public forge's
+		// canonical on-disk representation has ALWAYS been the empty string, and
+		// ResolvedAPIURL/ResolvedBaseURL already map empty -> the public default.
+		// Storing the URLs literally here would make the migration a visible
+		// rewrite of every healthy public spoke's config rather than a no-op.
+		APIURL:  "",
+		BaseURL: "",
+	},
+	ForgeGHEIBM: {
+		AppID:   GHEIBMAppID,
+		AppSlug: GHEIBMAppSlug,
+		APIURL:  GHEIBMAPIURL,
+		BaseURL: GHEIBMBaseURL,
+	},
+}
+
+// KnownForge reports whether host names a forge with a known identity set.
+// An unknown forge is not an error — a hive may legitimately run against a
+// third GHE instance the table does not name — but its identity cannot be
+// DERIVED, so explicit fields remain load-bearing there.
+func KnownForge(host string) bool {
+	_, ok := forgeIdentities[normalizeForgeHost(host)]
+	return ok
+}
+
+// normalizeForgeHost reduces any spelling of a forge — bare host, web URL, API
+// URL, mixed case, trailing slash — to its canonical bare-host label.
+func normalizeForgeHost(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimSuffix(strings.Trim(s, "/"), "/api/v3")
+	host := strings.SplitN(s, "/", 2)[0]
+	if host == "" || host == "api.github.com" {
+		return ForgePublic
+	}
+	return host
+}
+
+// Forge returns the forge this hive's App and repos live on, as a bare host
+// label ("github.com", "github.ibm.com").
+//
+// PRECEDENCE — and this is the whole design in three lines:
+//
+//  1. An explicit `forge:` wins. It is the single authoritative field.
+//  2. Otherwise infer from the legacy URL fields via HostLabel()/IsGHE().
+//  3. Empty everything means public github.com, as it always has.
+//
+// Step 2 is the DUAL-READ WINDOW. Until every spoke carries `forge:`, a spoke
+// that has not been backfilled must resolve exactly as it does today — so this
+// never returns anything a pre-migration hive would not already have resolved.
+func (g GitHubConfig) Forge() string {
+	if f := strings.TrimSpace(g.Forge_); f != "" {
+		return normalizeForgeHost(f)
+	}
+	return normalizeForgeHost(g.HostLabel())
+}
+
+// ResolvedAppID returns the GitHub App ID for this hive, completing the
+// resolver set alongside ResolvedAPIURL/ResolvedBaseURL/ResolvedAppSlug.
+//
+// An explicitly configured app_id wins — including the placeholder sentinel,
+// which callers detect with IsPlaceholderApp() and must keep seeing. Only when
+// app_id is unset is it derived from the forge, which is what lets a hive be
+// described by `forge:` alone.
+func (g GitHubConfig) ResolvedAppID() int64 {
+	if g.AppID != 0 {
+		return g.AppID
+	}
+	if id, ok := forgeIdentities[g.Forge()]; ok {
+		return id.AppID
+	}
+	return 0
+}
+
+// ForgeIdentityMismatches reports every identity field that CONTRADICTS this
+// hive's forge. Empty means the identity set is coherent.
+//
+// This is the check that would have caught the 2026-07-31 incident at the
+// write boundary. It differs from IdentitySetIssues in the way that matters:
+// IdentitySetIssues compares the four fields against EACH OTHER, so it is blind
+// whenever the pushed value is the only GHE-looking field present (a GHE app_id
+// beside a public slug and empty URLs produces no disagreement at all — verified).
+// This compares each field against the DECLARED forge, which is an external
+// anchor the pusher does not control.
+//
+// A field that is empty is not a mismatch: empty means "derive me".
+func (g GitHubConfig) ForgeIdentityMismatches() []string {
+	forge := g.Forge()
+	want, known := forgeIdentities[forge]
+	if !known {
+		// A forge outside the table has no derivable identity to compare
+		// against. Reporting mismatches here would flag every legitimate
+		// third-forge hive; saying nothing keeps explicit fields authoritative
+		// exactly where they still need to be.
+		return nil
+	}
+	var out []string
+	// app_id is compared only when a REAL App is configured. The placeholder
+	// sentinel means "no App yet" and legitimately appears on both forges.
+	if g.AppID != 0 && !g.IsPlaceholderApp() && g.AppID != want.AppID {
+		out = append(out, fmt.Sprintf(
+			"app_id %d does not belong to forge %s (expected %d) — an App ID from another forge returns 404 Integration not found on token creation",
+			g.AppID, forge, want.AppID))
+	}
+	if s := strings.TrimSpace(g.AppSlug); s != "" && !strings.EqualFold(s, want.AppSlug) {
+		out = append(out, fmt.Sprintf(
+			"app_slug %q does not belong to forge %s (expected %q) — the App install link would 404",
+			s, forge, want.AppSlug))
+	}
+	if u := strings.TrimSpace(g.APIURL); u != "" && normalizeForgeHost(u) != forge {
+		out = append(out, fmt.Sprintf(
+			"api_url %q names forge %s, not %s", u, normalizeForgeHost(u), forge))
+	}
+	if u := strings.TrimSpace(g.BaseURL); u != "" && normalizeForgeHost(u) != forge {
+		out = append(out, fmt.Sprintf(
+			"base_url %q names forge %s, not %s", u, normalizeForgeHost(u), forge))
+	}
+	return out
+}
 
 // IsPlaceholderApp reports whether app_id is the "no real App yet" sentinel.
 func (g GitHubConfig) IsPlaceholderApp() bool {
@@ -1446,10 +1646,19 @@ func (g GitHubConfig) OAuthClientIDResolved() string {
 	return DefaultOAuthClientID
 }
 
-// ResolvedAppSlug returns the configured app slug or the default public Hive app slug.
+// ResolvedAppSlug returns the app slug for this hive: the configured value,
+// else the slug DERIVED from the forge, else the public default.
+//
+// The forge step is what stops a GHE hive that names only `forge:` from falling
+// back to "kubestellar-hive" — a slug that names no App on GHE and builds an
+// install link that 404s. That 404 is the failure this whole design exists to
+// make unrepresentable, so the derivation belongs here rather than at call sites.
 func (g GitHubConfig) ResolvedAppSlug() string {
 	if g.AppSlug != "" {
 		return g.AppSlug
+	}
+	if id, ok := forgeIdentities[g.Forge()]; ok && id.AppSlug != "" {
+		return id.AppSlug
 	}
 	return DefaultGitHubAppSlug
 }
@@ -1508,7 +1717,7 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 //
 // It returns "" for a GitHub Enterprise host whose App slug is not configured.
 //
-// WHY EMPTY RATHER THAN A BEST-EFFORT URL
+// # WHY EMPTY RATHER THAN A BEST-EFFORT URL
 //
 // DefaultGitHubAppSlug ("kubestellar-hive") names the App registered on PUBLIC
 // github.com. GitHub Enterprise hosts a SEPARATE App registry, and an enterprise
@@ -2452,8 +2661,20 @@ func (c *Config) validate() error {
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
 	// into dashboard-only mode. Everywhere else, use HasApp().
-	if c.GitHub.Token == "" && c.GitHub.AppID == 0 {
-		return fmt.Errorf("github.token or github.app_id is required")
+	// A hive described by `forge:` alone satisfies this too: ResolvedAppID()
+	// derives a real App ID from a known forge, so the identity is present even
+	// though app_id is not written down. Without this, the end state of this
+	// design — one field naming the forge, the rest derived — fails validation
+	// and the spoke will not boot.
+	// An EXPLICIT `forge:` satisfies this too: ResolvedAppID() derives a real
+	// App ID from a known forge, so the identity is present even though app_id
+	// is not written down. Deliberately keyed on Forge_ (the raw field) and not
+	// Forge() — Forge() INFERS public for a blank config, which would make an
+	// empty github block validate and silently boot a hive with no credentials
+	// at all. Only a forge the operator actually wrote counts.
+	if c.GitHub.Token == "" && c.GitHub.AppID == 0 &&
+		!(strings.TrimSpace(c.GitHub.Forge_) != "" && c.GitHub.ResolvedAppID() != 0) {
+		return fmt.Errorf("github.token, github.app_id or github.forge is required")
 	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
