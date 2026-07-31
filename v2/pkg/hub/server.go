@@ -55,6 +55,32 @@ const (
 type Registry struct {
 	Hives     []RegistryEntry `json:"hives"`
 	UpdatedAt string          `json:"updatedAt"`
+	// FleetStatsLKG is the last fleet-stats aggregate that met the coverage
+	// bar, persisted with the registry so it survives a hub restart. It is what
+	// the landing page falls back to when coverage dips: a figure that is
+	// honestly labelled stale beats a blank strip, because "no number" reads to
+	// a visitor as "this fleet did nothing" rather than "we are recollecting".
+	// Nil until the fleet has ever reported well enough to produce one — that
+	// genuine first-boot state is the only case where the page shows no total.
+	FleetStatsLKG *FleetStatsSnapshot `json:"fleetStatsLastKnownGood,omitempty"`
+}
+
+// FleetStatsSnapshot is a point-in-time fleet aggregate retained as the
+// last-known-good figure. It stores the counts together with the coverage they
+// were computed from, so the UI can say not just "as of 14:20" but "based on
+// 12 of 18 hives" — staleness that describes itself rather than a bare number
+// the viewer has to trust blindly.
+type FleetStatsSnapshot struct {
+	ReposManaged int `json:"repos_managed"`
+	PRsMerged    int `json:"prs_merged"`
+	PRsRejected  int `json:"prs_rejected"`
+	CVEsClosed   int `json:"cves_closed"`
+	Hives        int `json:"hives"`
+	Reporting    int `json:"reporting"`
+	Eligible     int `json:"eligible"`
+	// CollectedAt is when this aggregate was computed, i.e. what "as of" means
+	// on the public page.
+	CollectedAt time.Time `json:"collected_at"`
 }
 
 type RegistryEntry struct {
@@ -1640,6 +1666,16 @@ type FleetStats struct {
 	// totals to stand as a fleet-wide figure. The landing page shows a
 	// "collecting" state instead of the numbers when this is false.
 	Trustworthy bool `json:"trustworthy"`
+	// Stale is true when the counts above did NOT come from the current
+	// collection but from the persisted last-known-good aggregate. The page
+	// still shows the numbers — hiding them entirely is what made a
+	// recollecting fleet look like a dead one — but it must label them, so
+	// this flag and AsOf travel with the payload. Stale-and-says-so is the
+	// goal; wrong-and-silent is the thing to avoid.
+	StaleData bool `json:"stale_data,omitempty"`
+	// AsOf is the RFC3339 time the returned counts were actually collected.
+	// Equal to UpdatedAt for a fresh aggregate; older when StaleData is true.
+	AsOf string `json:"as_of,omitempty"`
 }
 
 // fleetStatsMaxAge is how old a spoke's last successful collect may be and
@@ -1732,6 +1768,40 @@ func (fs FleetStats) FleetStatsTrustworthy() bool {
 	return float64(fs.Reporting)/float64(fs.Eligible) >= fleetStatsMinReportingFraction
 }
 
+// fleetStatsLKG returns a copy of the persisted last-known-good aggregate, or
+// nil if the fleet has never produced one. A copy (not the pointer) so callers
+// cannot mutate registry state they do not hold the write lock for.
+func (s *HubServer) fleetStatsLKG() *FleetStatsSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.registry.FleetStatsLKG == nil {
+		return nil
+	}
+	snapshot := *s.registry.FleetStatsLKG
+	return &snapshot
+}
+
+// recordFleetStatsLKG stores fs as the new last-known-good aggregate and asks
+// for a registry flush, so the figure survives a hub restart. Only ever called
+// with an aggregate that already cleared the coverage bar — a degraded total
+// must never become the fallback, or the cache would launder exactly the
+// unbacked number the coverage gate exists to suppress.
+func (s *HubServer) recordFleetStatsLKG(fs FleetStats, collectedAt time.Time) {
+	s.mu.Lock()
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		ReposManaged: fs.ReposManaged,
+		PRsMerged:    fs.PRsMerged,
+		PRsRejected:  fs.PRsRejected,
+		CVEsClosed:   fs.CVEsClosed,
+		Hives:        fs.Hives,
+		Reporting:    fs.Reporting,
+		Eligible:     fs.Eligible,
+		CollectedAt:  collectedAt.UTC(),
+	}
+	s.mu.Unlock()
+	s.requestSave()
+}
+
 func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	offlineEvents := s.markStaleHives()
@@ -1741,8 +1811,35 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	fs := s.computeFleetStats()
 	s.mu.RUnlock()
-	fs.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
+	fs.UpdatedAt = now.Format(time.RFC3339)
 	fs.Trustworthy = fs.FleetStatsTrustworthy()
+
+	// Last-known-good handling. A fleet total does not have to be current to be
+	// useful, but it does have to say how current it is. When this collection
+	// clears the coverage bar we record it as the new LKG; when it does not, we
+	// serve the stored LKG and mark it stale so the page can label it. Only a
+	// fleet that has never once reported well enough shows no number at all.
+	if fs.Trustworthy {
+		fs.AsOf = fs.UpdatedAt
+		s.recordFleetStatsLKG(fs, now)
+	} else if lkg := s.fleetStatsLKG(); lkg != nil {
+		// Keep the LIVE coverage figures (Reporting/Eligible/Stale) so the page
+		// can still show recollection progress, but serve the cached counts.
+		fs.ReposManaged = lkg.ReposManaged
+		fs.PRsMerged = lkg.PRsMerged
+		fs.PRsRejected = lkg.PRsRejected
+		fs.CVEsClosed = lkg.CVEsClosed
+		fs.StaleData = true
+		fs.AsOf = lkg.CollectedAt.UTC().Format(time.RFC3339)
+		s.logger.Warn("fleet stats: serving last-known-good totals; live coverage is below the publish threshold",
+			"reporting", fs.Reporting,
+			"eligible", fs.Eligible,
+			"lkg_collected_at", fs.AsOf,
+			"lkg_based_on_reporting", lkg.Reporting,
+			"lkg_based_on_eligible", lkg.Eligible,
+		)
+	}
 
 	// Make the degraded case loud on the server too. The landing page hides the
 	// numbers, but a silent hide is how this regressed unnoticed before: with

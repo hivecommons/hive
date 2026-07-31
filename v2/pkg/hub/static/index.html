@@ -1327,20 +1327,40 @@
         { key: 'cves_closed', box: 'proof-cves' }
       ];
       function fmt(n) { return n.toLocaleString('en-US'); }
+      // Render "as of" for a stale figure. Same-day collections show a clock
+      // time (the common case — a fleet recollecting for an hour or two);
+      // anything older shows a date, since "as of 14:20" is actively
+      // misleading when 14:20 was last week.
+      function asOfLabel(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        var sameDay = d.toDateString() === new Date().toDateString();
+        return sameDay
+          ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+          : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
       function apply(data) {
         // The hub tells us whether enough of the fleet reported for these
-        // totals to mean anything. When it says no, show NOTHING rather than a
-        // number assembled from a handful of hives — a precise-looking total
-        // built from 2 of 50 spokes is the exact failure this guards against.
+        // totals to be presented as CURRENT. When it says no, it now also
+        // serves the last-known-good figure (stale_data + as_of) instead of
+        // nothing: a total that is honestly labelled stale is far more useful
+        // to a visitor than a blank strip, which reads as "this fleet did
+        // nothing" rather than "we are recollecting". What we must never do is
+        // present stale numbers AS current — hence the caveat line below.
         // Treat a response without the field (older hub) as trustworthy so an
         // upgrade skew never blanks a strip that is actually fine.
         var trustworthy = !data || typeof data.trustworthy !== 'boolean' ? true : data.trustworthy;
+        var stale = !!(data && data.stale_data);
+        // Show the numbers when the live aggregate is trustworthy OR when the
+        // hub handed us a labelled last-known-good one.
+        var showValues = trustworthy || stale;
         var anyLive = false;
         (LIVE_STATS || []).forEach(function(s) {
           var box = document.getElementById(s.box);
           if (!box) return;
           var val = data && typeof data[s.key] === 'number' ? data[s.key] : 0;
-          if (trustworthy && val > 0) {
+          if (showValues && val > 0) {
             box.querySelector('[data-stat]').textContent = fmt(val);
             box.hidden = false;
             anyLive = true;
@@ -1348,14 +1368,29 @@
             box.hidden = true;
           }
         });
+        // Staleness has to be visible in the UI, not just in a server log.
+        // When values came from the cache, caption the strip so the reader
+        // knows these are last-known-good rather than live.
+        if (anyLive && stale) {
+          var when = asOfLabel(data && data.as_of);
+          var note2 = document.getElementById('hero-proof-note');
+          if (note2) {
+            note2.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet totals above are <strong>last known good</strong>' +
+              (when ? ' (as of ' + esc(when) + ')' : '') +
+              ' while the fleet recollects &mdash; ' + fmt((data && data.reporting) || 0) + ' of ' +
+              fmt((data && data.eligible) || 0) + ' hives reporting right now. ' +
+              '<a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+          }
+        }
         var note = document.getElementById('hero-proof-note');
         if (!anyLive && note) {
           if (!trustworthy && data && data.eligible > 0) {
-            // Data IS degraded and we know it. Say so plainly instead of
-            // letting a blank strip read as "the fleet did nothing".
-            note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet contribution totals are <strong>currently being recollected</strong> (' +
+            // Degraded AND no last-known-good figure to fall back on (a true
+            // first-boot fleet). Say so plainly instead of letting a blank
+            // strip read as "the fleet did nothing".
+            note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet contribution totals are <strong>currently being collected</strong> (' +
               fmt(data.reporting || 0) + ' of ' + fmt(data.eligible || 0) +
-              ' hives reporting) and are hidden until enough of the fleet has reported. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+              ' hives reporting) and appear once the fleet has reported. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
           } else {
             // No fleet data yet: don't imply live numbers exist. Swap to a
             // qualitative line alongside the (always-true) 90% coverage stat.

@@ -1137,7 +1137,16 @@ func main() {
 	// the agents open PRs as, so it is the correct author to count. Never fall
 	// back to an org-wide search with no author filter — that would sweep in
 	// human PRs and overstate what the fleet's agents actually did.
-	fleetStatsAuthor := cfg.Project.AIAuthor
+	//
+	// Use EffectiveAIAuthor(), not the raw Project.AIAuthor field. App-authored
+	// hives deliberately leave ai_author EMPTY and derive their identity from
+	// the installed App ("<slug>[bot]") — that is what keeps App-bot mode
+	// durable across restarts. Reading the raw field saw "" for every one of
+	// them and disabled the collector fleet-wide, while the PAT fallback below
+	// could not rescue it either: those hives authenticate as a GitHub App and
+	// have github.token empty, so there was no token to identify. The result
+	// was a fleet where essentially no spoke ever attempted a collect.
+	fleetStatsAuthor := cfg.EffectiveAIAuthor()
 	fleetStatsToken := cfg.GitHub.Token
 	if fleetStatsToken == "" {
 		fleetStatsToken = os.Getenv("HIVE_GITHUB_TOKEN")
