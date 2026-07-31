@@ -822,6 +822,122 @@ func TestUninstallPreparationRejectsExistingUnpublishedFailedRepairBranch(t *tes
 	}
 }
 
+func TestUninstallPreparationAuthorizesAbsentInterruptedModelRepairBranch(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	fingerprint := strings.Repeat("9", 64)
+	finding := visualhive.FindingLifecycle{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Fingerprint: fingerprint,
+		Status:      visualhive.StatusDetected,
+		FirstSeenAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}
+	writeUninstallLifecycle(t, fixture.stateDir, map[string]*visualhive.FindingLifecycle{fingerprint: &finding}, nil)
+	repairStore, err := repair.NewStore(filepath.Join(fixture.stateDir, "repair"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repairStore.Put(repair.Attempt{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Attempt: 1,
+		Branch: "hive/repair-proof-a1", Worktree: "managed-worktree",
+		Stage: repair.StageModelRunning, Provider: "test", ModelInvocationID: "invocation-proof",
+		StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err != nil || !result.FinalizationPending {
+		t.Fatalf("absent interrupted model repair uninstall result=%+v err=%v", result, err)
+	}
+	repairStore, err = repair.NewStore(filepath.Join(fixture.stateDir, "repair"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedAttempt, exists := repairStore.Get(fingerprint)
+	if !exists || storedAttempt.Stage != repair.StageCancelled {
+		t.Fatalf("drained repair=%+v exists=%t", storedAttempt, exists)
+	}
+	audit, err := os.ReadFile(filepath.Join(fixture.stateDir, "integrated", "audit.jsonl"))
+	if err != nil || !strings.Contains(string(audit), "authorize_uninstall_absent_repair_branch") {
+		t.Fatalf("absent interrupted repair audit missing: err=%v\n%s", err, audit)
+	}
+}
+
+func TestUninstallPreparationRejectsExistingInterruptedModelRepairBranch(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	fingerprint := strings.Repeat("8", 64)
+	fixture.mu.Lock()
+	fixture.repairBranchExists = true
+	fixture.repairHead = fixture.baseSHA
+	fixture.mu.Unlock()
+	runIntegratedGit(t, fixture.remote, "update-ref", "refs/heads/hive/repair-proof-a1", fixture.baseSHA)
+	finding := visualhive.FindingLifecycle{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Fingerprint: fingerprint,
+		Status:      visualhive.StatusDetected,
+		FirstSeenAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}
+	writeUninstallLifecycle(t, fixture.stateDir, map[string]*visualhive.FindingLifecycle{fingerprint: &finding}, nil)
+	repairStore, err := repair.NewStore(filepath.Join(fixture.stateDir, "repair"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repairStore.Put(repair.Attempt{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Attempt: 1,
+		Branch: "hive/repair-proof-a1", Worktree: "managed-worktree",
+		Stage: repair.StageModelRunning, Provider: "test", ModelInvocationID: "invocation-proof",
+		StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "incomplete repair branch binding") {
+		t.Fatalf("existing interrupted repair result=%+v err=%v", result, err)
+	}
+	fixture.mu.Lock()
+	branchExists := fixture.repairBranchExists
+	fixture.mu.Unlock()
+	if !branchExists {
+		t.Fatal("unbound remote repair branch was mutated")
+	}
+}
+
+func TestUninstallPreparationRejectsCountedInterruptedModelRepair(t *testing.T) {
+	fixture := newUninstallFixture(t)
+	defer fixture.server.Close()
+	fingerprint := strings.Repeat("7", 64)
+	finding := visualhive.FindingLifecycle{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Fingerprint: fingerprint,
+		Status:      visualhive.StatusDetected,
+		FirstSeenAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}
+	writeUninstallLifecycle(t, fixture.stateDir, map[string]*visualhive.FindingLifecycle{fingerprint: &finding}, nil)
+	repairStore, err := repair.NewStore(filepath.Join(fixture.stateDir, "repair"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repairStore.Put(repair.Attempt{
+		Repository: "owner/repo", RepositoryFingerprint: fingerprint, Attempt: 1, AttemptCounted: true,
+		Branch: "hive/repair-proof-a1", Worktree: "managed-worktree",
+		Stage: repair.StageModelRunning, Provider: "test", ModelInvocationID: "invocation-proof",
+		StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := RunManagement(context.Background(), ManagementOptions{
+		Operation: OperationUninstall, StateDir: fixture.stateDir, DeleteState: true, GitHub: fixture.client,
+	})
+	if err == nil || !strings.Contains(err.Error(), "incomplete repair branch binding") {
+		t.Fatalf("counted interrupted repair result=%+v err=%v", result, err)
+	}
+}
+
 func TestUninstallPreparationClosesNormalHiveLifecycleBead(t *testing.T) {
 	fixture := newUninstallFixture(t)
 	defer fixture.server.Close()

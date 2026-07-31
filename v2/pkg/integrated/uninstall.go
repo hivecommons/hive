@@ -923,7 +923,12 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			absentUnpublishedFailure := attempt.Stage == repair.StageFailed &&
 				attempt.ResumeStage == repair.StagePrepared &&
 				!attempt.AttemptCounted
-			if (attempt.Stage != repair.StageNoChange && !absentUnpublishedFailure) || attempt.PRNumber != 0 {
+			// Management holds the serialized lifecycle lock and automation is
+			// already paused here. An uncounted model invocation with no published
+			// ref therefore has no external repair resource left to retire.
+			absentInterruptedModel := attempt.Stage == repair.StageModelRunning &&
+				!attempt.AttemptCounted
+			if (attempt.Stage != repair.StageNoChange && !absentUnpublishedFailure && !absentInterruptedModel) || attempt.PRNumber != 0 {
 				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 			}
 			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, attempt.Branch)
