@@ -3059,7 +3059,8 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 	// is delivered via the heartbeat response.
 	// Daily mode deliberately does NOT kick an upgrade here: the whole point of
 	// choosing it is that turning auto-upgrade on should not immediately
-	// restart a working hive. It will roll at the next 17:00 ET window. The
+	// restart a working hive. It will roll at the next daily ET window
+	// (autoUpgradeDailyHour, currently 13:00 / 1pm ET). The
 	// operator who wants it now still has the explicit Upgrade button, which
 	// goes through handleUpgradeHive and is never gated by mode.
 	if body.AutoUpgrade && normalizeAutoUpgradeMode(body.Mode) == AutoUpgradeModeInstant {
@@ -9951,7 +9952,7 @@ const dashboardHTML = `<!DOCTYPE html>
         '<button type="button" onclick="runBulkAction(\'restart\')" style="' + btn + '">Restart</button>' +
         '<button type="button" onclick="runBulkAction(\'upgrade\')" style="' + btn + '">Upgrade to latest</button>' +
         '<button type="button" onclick="runBulkAction(\'enable-auto-upgrade\')" style="' + btn + '">Auto: instant</button>' +
-        '<button type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, after hours — keeps a stable hive from being restarted mid-work">Auto: daily 5pm ET</button>' +
+        '<button type="button" onclick="runBulkAction(\'daily-auto-upgrade\')" style="' + btn + '" title="Upgrade at most once a day, midday — keeps a stable hive from being restarted mid-work, and puts a bad roll in staffed hours">Auto: daily 1pm ET</button>' +
         '<button type="button" onclick="runBulkAction(\'disable-auto-upgrade\')" style="' + btn + '">Auto-upgrade off</button>' +
         branchPicker +
         '<button type="button" onclick="clearBulkSelection()" style="' + btn + ';color:var(--muted)">Clear</button>' +
@@ -9971,7 +9972,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'restart': 'Restart',
       'upgrade': 'Upgrade to latest',
       'enable-auto-upgrade': 'Enable instant auto-upgrade on',
-      'daily-auto-upgrade': 'Enable daily 5pm ET auto-upgrade on',
+      'daily-auto-upgrade': 'Enable daily 1pm ET auto-upgrade on',
       'disable-auto-upgrade': 'Disable auto-upgrade on',
       'switch-branch': 'Switch branch for'
     };
@@ -10250,9 +10251,9 @@ const dashboardHTML = `<!DOCTYPE html>
                keep the click-to-upgrade-now escape hatch, which is the manual
                path and is never gated by the schedule. */
             var queuedDaily = h.autoUpgradeMode === AUTO_UPGRADE_DAILY;
-            var queuedLabel = queuedDaily ? 'queued · 5pm ET' : 'queued';
+            var queuedLabel = queuedDaily ? 'queued · 1pm ET' : 'queued';
             var queuedTitle = queuedDaily
-              ? 'Auto-upgrade will apply ' + esc(branchLatest) + ' at the next 5pm ET window — click to upgrade now' + esc(buildingHint)
+              ? 'Auto-upgrade will apply ' + esc(branchLatest) + ' at the next 1pm ET window — click to upgrade now' + esc(buildingHint)
               : 'Auto-upgrade will apply ' + esc(branchLatest) + ' shortly — click to upgrade now' + esc(buildingHint);
             /* escAttr, not esc, for the title: esc() leaves quotes intact and a
                branch name or commit subject carrying one would break out of the
@@ -10310,7 +10311,7 @@ const dashboardHTML = `<!DOCTYPE html>
              its widest LINE, so as long as no two controls share a line the
              width collapses to the widest single element — which, now that the
              select is icon-only, is the 56px select rather than the ~150px
-             "[queued · 5pm ET] [Auto: daily 5pm ET]" pair that used to set it.
+             "[queued · 1pm ET] [Auto: daily 1pm ET]" pair that used to set it.
                1. the branch pill, which the owner can CHANGE (it is a switcher,
                   so it owns a line and stays a full tap target);
                2. the SHA and its current/behind glyph — two views of the same
@@ -10669,7 +10670,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var AUTO_UPGRADE_OPTIONS = [
       {value: AUTO_UPGRADE_OFF, label: '⦸ off', ariaLabel: 'Auto-upgrade: off'},
       {value: AUTO_UPGRADE_INSTANT, label: '⚡ instant', ariaLabel: 'Auto-upgrade: instantly when a new version lands'},
-      {value: AUTO_UPGRADE_DAILY, label: '🕔 5p', ariaLabel: 'Auto-upgrade: daily at 5pm ET'}
+      {value: AUTO_UPGRADE_DAILY, label: '🕐 1p', ariaLabel: 'Auto-upgrade: daily at 1pm ET'}
     ];
     /* Accessible name for the select itself, resolved from the CURRENT mode so
        the control announces what it is set to rather than only what it does. */
@@ -10708,7 +10709,7 @@ const dashboardHTML = `<!DOCTYPE html>
         });
         if (!resp.ok) { hiveToast('Failed to update auto-upgrade', 'error'); loadHives(); return; }
         var label = !enabled ? 'off'
-          : (mode === AUTO_UPGRADE_DAILY ? 'daily at 5pm ET' : 'instant');
+          : (mode === AUTO_UPGRADE_DAILY ? 'daily at 1pm ET' : 'instant');
         hiveToast(id + ' auto-upgrade: ' + label, 'success');
         loadHives();
       } catch(e) {
@@ -10905,8 +10906,8 @@ const dashboardHTML = `<!DOCTYPE html>
        control height, which is taller.
 
        What actually sets the width now is the LONGEST upgrade label,
-       "queued · 5pm ET" at 90.4px — not the select, which measures 77px. The
-       old width was set by that label and the "Auto: daily 5pm ET" select
+       "queued · 1pm ET" at 90.4px — not the select, which measures 77px. The
+       old width was set by that label and the "Auto: daily 1pm ET" select
        sitting on ONE line together.
 
        Non-owner rows are UNCHANGED: they still get at most two lines (28.9px),
@@ -10937,7 +10938,7 @@ const dashboardHTML = `<!DOCTYPE html>
        to a glyph: 20px tall and at least 56px wide keeps it a comfortable
        pointer and touch target (the row is 63.8px tall, so 20px is roughly a
        third of it — visibly a control, not a decoration) while still being far
-       narrower than the "Auto: daily 5pm ET" string it replaces. Widening it
+       narrower than the "Auto: daily 1pm ET" string it replaces. Widening it
        would give back the column width this change exists to reclaim; making it
        smaller would make it fiddly to hit. */
     var AUTO_SELECT_H_PX = 20;
