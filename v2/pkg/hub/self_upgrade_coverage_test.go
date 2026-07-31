@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -197,5 +198,110 @@ func TestSwitchImageSelfNoNamespace(t *testing.T) {
 	defer func() { k8sNamespacePath = oldNS }()
 	if err := SwitchImageSelf(slog.Default(), "img"); err == nil {
 		t.Error("expected error when namespace file missing")
+	}
+}
+
+// TestUpgradeSelfMutableTagForcesRollout is the regression test for the
+// floating-tag no-op. A deployment on v2-latest used to take a bare rollout
+// restart, which re-pulls the tag and lands on whatever CI last published —
+// verified on the live fleet as fb37afe while the hub targeted 07ccca1. The
+// upgrade must instead patch the pod template with the target SHA, so the
+// rollout is forced AND the requested target is recorded on the deployment.
+func TestUpgradeSelfMutableTagForcesRollout(t *testing.T) {
+	const (
+		currentImage = "ghcr.io/kubestellar/hive:v2-latest"
+		targetSHA    = "07ccca1"
+	)
+	var patchBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			b, _ := io.ReadAll(r.Body)
+			patchBody = string(b)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"` + currentImage + `"}]}}}}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	needsRestart, err := UpgradeSelfToSHA(slog.Default(), targetSHA)
+	if err != nil {
+		t.Fatalf("UpgradeSelfToSHA on a mutable tag: %v", err)
+	}
+	// The annotation patch rolls the deployment by itself; a bare restart on
+	// top would be the very no-op this fix removes.
+	if needsRestart {
+		t.Error("a mutable-tag upgrade must roll via the template patch, not a bare restart")
+	}
+	if patchBody == "" {
+		t.Fatal("expected the deployment to be patched, but no PATCH was issued")
+	}
+	if !strings.Contains(patchBody, selfUpgradeTargetAnnotation) {
+		t.Errorf("patch must carry the target annotation %q, got: %s", selfUpgradeTargetAnnotation, patchBody)
+	}
+	if !strings.Contains(patchBody, targetSHA) {
+		t.Errorf("patch must record the target SHA %q, got: %s", targetSHA, patchBody)
+	}
+	// The template, not the Deployment, must be annotated — only template
+	// changes roll pods.
+	if !strings.Contains(patchBody, `"template"`) {
+		t.Errorf("annotation must land on the POD TEMPLATE, got: %s", patchBody)
+	}
+	// The floating tag must survive: pinning the image would defeat the
+	// platform's deliberate preference for mutable tags.
+	if strings.Contains(patchBody, `"image"`) {
+		t.Errorf("a mutable-tag upgrade must NOT rewrite the image, got: %s", patchBody)
+	}
+}
+
+// TestUpgradeSelfMutableTagPatchFailureIsReported guards that a failed patch
+// surfaces as an error. Swallowing it would return needsRestart and reproduce
+// the original silent no-op.
+func TestUpgradeSelfMutableTagPatchFailureIsReported(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:v2-latest"}]}}}}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	if _, err := UpgradeSelfToSHA(slog.Default(), "07ccca1"); err == nil {
+		t.Fatal("a rejected patch must be reported as an error, not swallowed")
+	}
+}
+
+// TestUpgradeSelfPinnedStillPatchesImage guards that the pinned path (#2308) is
+// unchanged by the mutable-tag fix: a SHA-pinned deployment must still have its
+// image rewritten, since no annotation can move it onto new code.
+func TestUpgradeSelfPinnedStillPatchesImage(t *testing.T) {
+	var patchBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch {
+			b, _ := io.ReadAll(r.Body)
+			patchBody = string(b)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"ghcr.io/kubestellar/hive:c11643a"}]}}}}`))
+	}))
+	defer srv.Close()
+	withFakeK8sAPI(t, srv)
+
+	needsRestart, err := UpgradeSelfToSHA(slog.Default(), "07ccca1")
+	if err != nil {
+		t.Fatalf("UpgradeSelfToSHA on a pinned tag: %v", err)
+	}
+	if needsRestart {
+		t.Error("a pinned upgrade rolls via the image patch")
+	}
+	if !strings.Contains(patchBody, "ghcr.io/kubestellar/hive:07ccca1") {
+		t.Errorf("pinned upgrade must rewrite the image to the target, got: %s", patchBody)
 	}
 }

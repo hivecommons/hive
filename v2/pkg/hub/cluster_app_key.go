@@ -431,6 +431,14 @@ const (
 	// is pinned to an App other than the cluster's, so its key is presumed
 	// correct for that App and the cluster key would break it.
 	appKeyReasonDifferentApp = "hive is deliberately pinned to a different app_id"
+	// appKeyReasonPlaceholderAppID repairs a spoke still running the
+	// config.PlaceholderAppID sentinel. The sentinel is NOT a real App and is
+	// never a deliberate pin — it is what provisioning writes when no App ID was
+	// known yet — so the per-hive-override protection must not shield it. Such a
+	// spoke signs a JWT for a nonexistent App and can never authenticate, no
+	// matter what installation_id its owner enters, so pushing the cluster's real
+	// App identity is the only thing that can fix it.
+	appKeyReasonPlaceholderAppID = "spoke still carries the placeholder app_id sentinel"
 	// appKeyReasonPublicHiveOnGHECluster is the class fix for a github.com hive
 	// parked on a GitHub-Enterprise-default cluster (vllm-d). The hive's meta
 	// pins it to public github.com (github_base_url:"public" / "https://github.com")
@@ -454,7 +462,7 @@ const (
 // for the operator to make it stick. The cluster key is a FLOOR for hives nobody
 // has spoken for, not a ceiling over hives somebody has.
 //
-// THE ONE EXCEPTION — A WRONG PER-HIVE KEY IS NOT A CHOICE
+// # THE ONE EXCEPTION — A WRONG PER-HIVE KEY IS NOT A CHOICE
 //
 // That precedence protects a DECISION. It must not protect a FAULT, and the two
 // are distinguishable without heuristics. A GitHub App JWT is signed by the
@@ -519,6 +527,26 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 		}
 	}
 	fp := strings.TrimSpace(spokeFingerprint)
+	// A spoke still running the placeholder sentinel is broken regardless of
+	// which key it holds: app_id 999999999 names no App, so every JWT it signs
+	// is for a nonexistent App and auth fails no matter how correct its
+	// installation_id and key are. Decided BEFORE the per-hive branch because a
+	// sentinel hive typically holds a provisioned per-hive key and would
+	// otherwise be shielded by appKeyReasonPerHiveOverride and never repaired —
+	// and before the fingerprint-match test, since holding the right key does
+	// not make a nonexistent app_id work.
+	//
+	// This is the ONLY app_id the reconcile treats as unconditionally wrong. A
+	// spoke on any other non-matching app_id is still respected as a deliberate
+	// pin (appKeyReasonDifferentApp).
+	if spokeAppID == config.PlaceholderAppID {
+		return appKeySyncDecision{
+			Push:            true,
+			Reason:          appKeyReasonPlaceholderAppID,
+			FromFingerprint: fp,
+			ToFingerprint:   cluster.Fingerprint,
+		}
+	}
 	if hasPerHiveKey {
 		// Idempotence first: if the per-hive key already IS the cluster key
 		// there is nothing to decide and nothing to send. Checking this ahead of

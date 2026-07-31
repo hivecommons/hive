@@ -148,6 +148,13 @@ func imageTagIsMutable(image string) bool {
 //
 // So: patch the image when pinned, restart when mutable. Returns needsRestart
 // false when the image patch itself rolls the deployment.
+//
+// The mutable case is NOT simply "restart and hope". A restart re-pulls the
+// tag and therefore lands on whatever digest CI last published under it —
+// which is only the requested target by coincidence. Verified on the live
+// fleet: v2-latest resolved to fb37afe while the hub was targeting 07ccca1, so
+// every restart delivered the wrong build, the spoke reported fb37afe, and the
+// hub re-instructed the same upgrade forever. See upgradeSelfMutableToSHA.
 func UpgradeSelfToSHA(logger *slog.Logger, targetSHA string) (needsRestart bool, err error) {
 	current, err := selfDeploymentImage()
 	if err != nil {
@@ -159,7 +166,7 @@ func UpgradeSelfToSHA(logger *slog.Logger, targetSHA string) (needsRestart bool,
 		return true, nil
 	}
 	if imageTagIsMutable(current) {
-		return true, nil
+		return upgradeSelfMutableToSHA(logger, current, targetSHA)
 	}
 	// Pinned. Rewrite the tag in place so the registry/repo (which may be a
 	// mirror or a private registry) is preserved — only the tag changes.
@@ -178,6 +185,92 @@ func UpgradeSelfToSHA(logger *slog.Logger, targetSHA string) (needsRestart bool,
 	}
 	// SwitchImageSelf's patch changes the pod template, which rolls the
 	// deployment on its own — a restart on top would be redundant.
+	return false, nil
+}
+
+// selfUpgradeTargetAnnotation records, on the pod template, which SHA the hub
+// asked this deployment to run. It exists to make the pod template DIFFER
+// between two upgrades that both leave the image string untouched — a mutable
+// tag never changes, so without this the strategic-merge patch is a semantic
+// no-op, Kubernetes sees no change to the template, and no rollout happens at
+// all. Carrying the target (rather than a timestamp) also makes the intent
+// readable with `kubectl get deploy -o yaml` when diagnosing a stuck upgrade.
+const selfUpgradeTargetAnnotation = "hive.kubestellar.io/upgrade-target-sha"
+
+// upgradeSelfMutableToSHA advances a deployment that tracks a MUTABLE tag
+// (v2-latest and friends) onto targetSHA.
+//
+// The naive action here — a plain rollout restart — is wrong, and was the
+// systemic bug this function exists to fix. Restarting re-pulls the tag, so the
+// pod lands on the tag's CURRENT digest. That is the hub's target only if CI
+// happens not to have published since the target was chosen. When it has, the
+// spoke comes back reporting a SHA that is neither the old one nor the
+// requested one, the hub's completion check (which compares the reported
+// gitHash against upgradeTarget) never matches, and the hive sits "Upgrading"
+// forever while the hub re-instructs on every heartbeat.
+//
+// The fix keeps the floating tag — the platform's deliberate preference, which
+// came out of a self-upgrade CrashLoop incident — and makes the rollout
+// deterministic anyway, by writing the target SHA into a pod-template
+// annotation. That changes the template even though the image string does not,
+// which is what actually forces Kubernetes to roll. Combined with the
+// fleet-wide imagePullPolicy: Always, the new pod re-pulls the tag.
+//
+// This narrows but does not eliminate the race: if CI republishes the tag
+// between the hub choosing a target and the kubelet pulling, the pod still
+// lands on the newer build. That is benign and self-correcting — the hub
+// accepts "at target OR at registry-latest" as success (server.go), so an
+// overshoot completes the upgrade rather than wedging it. What it must never do
+// again is silently land on the WRONG build with no record of what was asked
+// for; the annotation is that record.
+func upgradeSelfMutableToSHA(logger *slog.Logger, current, targetSHA string) (needsRestart bool, err error) {
+	if targetSHA == "" {
+		// No target to record. Fall back to the historical behaviour rather
+		// than writing an empty annotation that would defeat the diff.
+		return true, nil
+	}
+	ns, err := os.ReadFile(k8sNamespacePath)
+	if err != nil {
+		// Not in-cluster, or the SA projection is missing. A plain restart is
+		// the safe fallback: it is what this path did before, and the caller
+		// already handles a failed restart loudly.
+		logger.Warn("could not read namespace for mutable-tag upgrade, falling back to rollout restart",
+			"error", err)
+		return true, nil
+	}
+	namespace := strings.TrimSpace(string(ns))
+	if namespace == "" {
+		logger.Warn("empty namespace for mutable-tag upgrade, falling back to rollout restart",
+			"path", k8sNamespacePath)
+		return true, nil
+	}
+
+	// Annotate the POD TEMPLATE (not the Deployment) — only template changes
+	// roll the pods. restart-at is set alongside the target so two consecutive
+	// upgrades to the SAME target still produce distinct templates; without it
+	// a retry of an identical target would itself be a no-op.
+	patch := fmt.Sprintf(
+		`{"spec":{"template":{"metadata":{"annotations":{%q:%q,"hive.kubestellar.io/restart-at":%q}}}}}`,
+		selfUpgradeTargetAnnotation, targetSHA,
+		time.Now().UTC().Format(time.RFC3339),
+	)
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s", namespace, selfUpgradeDeployName)
+	if err := k8sAPIPatch(path, []byte(patch)); err != nil {
+		// Report the failure rather than swallowing it: the caller turns a
+		// non-nil error into a recorded, hub-visible upgrade failure instead of
+		// a permanent spinner.
+		return false, fmt.Errorf("annotating mutable-tag deployment for rollout to %s: %w", targetSHA, err)
+	}
+
+	logger.Info("upgrading a mutable-tag deployment by pod-template annotation, not a bare restart",
+		"image", current,
+		"target", targetSHA,
+		"annotation", selfUpgradeTargetAnnotation,
+		"namespace", namespace,
+		"deployment", selfUpgradeDeployName,
+	)
+	// The annotation patch changes the pod template, which rolls the deployment
+	// on its own — a restart on top would be redundant.
 	return false, nil
 }
 

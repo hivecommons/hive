@@ -25,6 +25,25 @@ const orphanedUpgradeGrace = staleUpgradeTimeout
 // after which an upgrade with no live attempt behind it is considered orphaned.
 const orphanedUpgradeClearAfter = staleUpgradeTimeout + orphanedUpgradeGrace
 
+// maxOrphanedUpgradeSweeps bounds how many times the sweep will clear and
+// re-arm the same hive's upgrade before treating it as a genuine fault instead
+// of a transient orphan.
+//
+// #2327's sweep assumes the attempt merely went missing, so re-arming lets the
+// next heartbeat carry it again. That is right for a departed pod, but it is
+// an infinite loop for a hive that is structurally unable to advance — the
+// floating-tag case being the motivating example: the spoke restarts, re-pulls
+// its mutable tag, lands on a build that is neither its old SHA nor the target,
+// and reports in. The sweep sees "alive, not at target", clears, re-arms, and
+// the cycle repeats indefinitely with nothing ever surfacing to a human.
+//
+// Three is deliberately small. Each sweep costs at least
+// orphanedUpgradeClearAfter, so this is ~1 hour of real elapsed time at the
+// default staleUpgradeTimeout before the hub gives up — long enough to absorb a
+// genuinely slow or twice-unlucky rollout, short enough that a broken upgrade
+// path is reported the same working day rather than never.
+const maxOrphanedUpgradeSweeps = 3
+
 // upgradeAttemptEvidence describes whether a still-latched upgrade has an
 // attempt actually behind it, and if not, why we concluded that.
 type upgradeAttemptEvidence struct {
@@ -124,6 +143,10 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 		from, to string
 		elapsed  time.Duration
 		reason   string
+		// exhausted marks a hive that has been swept too many times to keep
+		// retrying — reported as a fault rather than re-armed.
+		exhausted bool
+		sweeps    int
 	}
 	var swept []cleared
 
@@ -134,14 +157,35 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 		if !ev.orphaned {
 			continue
 		}
+		h.OrphanedUpgradeSweeps++
+		exhausted := h.OrphanedUpgradeSweeps >= maxOrphanedUpgradeSweeps
 		swept = append(swept, cleared{
-			id:      h.ID,
-			from:    h.GitHash,
-			to:      h.UpgradeTarget,
-			elapsed: ev.elapsed,
-			reason:  ev.reason,
+			id:        h.ID,
+			from:      h.GitHash,
+			to:        h.UpgradeTarget,
+			elapsed:   ev.elapsed,
+			reason:    ev.reason,
+			exhausted: exhausted,
+			sweeps:    h.OrphanedUpgradeSweeps,
 		})
 		h.Upgrading = false
+
+		if exhausted {
+			// Stop retrying. Re-arming again would just reproduce the same
+			// no-op on the next cycle; record a terminal, human-visible failure
+			// instead, which the existing UpgradeFailed surfaces in the UI and
+			// which AlertTypeStuckUpgrade already alerts on.
+			h.UpgradeFailed = true
+			h.UpgradeError = "upgrade to " + orDash(h.UpgradeTarget) +
+				" never landed after " + itoa(h.OrphanedUpgradeSweeps) +
+				" attempts — hive is still on " + orDash(h.GitHash) +
+				". If its Deployment tracks a floating tag, the pod may be " +
+				"re-pulling that tag and landing on a build other than the target."
+			h.UpgradeFailedAt = now
+			// Drop any armed instruction so no path keeps re-delivering it.
+			delete(s.heartbeatUpgrade, h.ID)
+			continue
+		}
 
 		// Re-arm delivery rather than dropping it. Clearing the flag alone is
 		// NOT enough to make the hive upgrade again: heartbeatUpgrade is an
@@ -163,8 +207,25 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 	s.mu.Unlock()
 
 	for _, c := range swept {
+		if c.exhausted {
+			s.logger.Error("upgrade repeatedly failed to land — giving up and reporting a fault",
+				"hive_id", c.id,
+				"attempts", c.sweeps,
+				"elapsed", roundedDuration(c.elapsed),
+				"from", orDash(c.from),
+				"to", orDash(c.to),
+				"reason", c.reason,
+				"hint", "check whether the spoke Deployment tracks a floating tag whose digest differs from the target SHA",
+			)
+			s.recordTimeline(c.id, TimelineUpgradeStale,
+				"upgrade to "+orDash(c.to)+" abandoned after "+itoa(c.sweeps)+
+					" attempts — hive is still on "+orDash(c.from)+
+					" and is no longer being retried", "stale-upgrade-sweep")
+			continue
+		}
 		s.logger.Warn("cleared orphaned upgrade flag — no attempt in flight",
 			"hive_id", c.id,
+			"attempt", c.sweeps,
 			"elapsed", roundedDuration(c.elapsed),
 			"from", orDash(c.from),
 			"to", orDash(c.to),

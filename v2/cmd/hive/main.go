@@ -424,10 +424,17 @@ func initGitHubAuth(ctx context.Context, cfg *config.Config, logger *slog.Logger
 		// Real App, unusable key. Already logged; leave Client nil so nothing
 		// tries to act on GitHub with credentials that do not work.
 	case cfg.GitHub.IsPlaceholderApp():
-		// User-actionable: this hive was provisioned ahead of its App, and
-		// installing the App is exactly what resolves it.
-		out.Failure = "This hive carries a placeholder github.app_id and is not yet linked to a GitHub App. Install the GitHub App on your org to enable agents."
-		out.State = github.AppStateNotInstalled
+		// OPERATOR-actionable, not user-actionable. This hive was provisioned as
+		// a placeholder and never assigned a real app_id, so the JWT it signs
+		// names no App and fails before any installation is consulted. Nothing
+		// the owner enters in the installation-ID box can fix it — reporting this
+		// as AppStateNotInstalled sent owners to re-install an App that was
+		// already installed and to re-enter an installation_id that was already
+		// correct.
+		out.Failure = "This hive was never assigned a GitHub App ID: it still carries the placeholder github.app_id, " +
+			"which does not name a real GitHub App. Setting an installation ID cannot resolve this — " +
+			"the hub operator must assign the real App ID."
+		out.State = github.AppStateNoAppAssigned
 		logger.Warn("placeholder github.app_id — hive starting in dashboard-only mode",
 			"placeholder_app_id", config.PlaceholderAppID,
 			"installation_id", cfg.GitHub.InstallationID,

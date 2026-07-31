@@ -225,8 +225,11 @@ func TestHandleClusterHealth(t *testing.T) {
 }
 
 // TestAdoptSpokeProjectConfig verifies the hub's adopt path:
-//   - ACMM level is operator-owned from the start and always adopted (the Joe
-//     Runde / spyre revert bug);
+//   - ACMM level follows the SAME ClaimDelivered handshake as org/repos: before
+//     delivery the assigned level is authoritative and a stale spoke report is
+//     ignored (an approved L3 request was silently downgraded to the level the
+//     placeholder was minted at); after delivery a dashboard level change is
+//     adopted and never reverted (the Joe Runde / spyre revert bug);
 //   - org/repos/primary follow the ClaimDelivered handshake: before the spoke
 //     first reports the claimed project, hub-pushed values are authoritative and
 //     spoke reports do NOT adopt (a stale placeholder must not win); the first
@@ -240,20 +243,30 @@ func TestAdoptSpokeProjectConfig(t *testing.T) {
 
 	s := &HubServer{logger: slog.Default()}
 
-	// Freshly-claimed hive (ClaimDelivered=false). ACMM is adopted immediately,
-	// but org/repos edits reported before delivery are IGNORED (could be a stale
-	// placeholder still reporting old values). A report that MATCHES the claim
-	// flips ClaimDelivered.
-	saveSaaSHive(&SaaSHive{ID: "claimed", Status: "running", Org: "o", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 2})
+	// Freshly-claimed hive (ClaimDelivered=false), assigned L3. Nothing reported
+	// before delivery is adopted — including the level. A report that matches the
+	// claim IN FULL (org/repos AND level) flips ClaimDelivered.
+	saveSaaSHive(&SaaSHive{ID: "claimed", Status: "running", Org: "o", Repos: []string{"r"}, PrimaryRepo: "r", ACMMLevel: 3})
 
-	// Pre-delivery: spoke reports a DIFFERENT org/repos (stale) but a new level.
-	// -> adopt the level (3) only; org/repos stay as the claim; not yet delivered.
-	s.adoptSpokeProjectConfig("claimed", "stale", []string{"old"}, "old", 3)
+	// Pre-delivery: the spoke is still running its placeholder project at the
+	// level it was MINTED at (2), not the assigned 3. This is the production
+	// bug: adopting that report rewrote meta from the requested L3 down to L2,
+	// and since the hub then had nothing higher to push, the hive stayed L2
+	// forever. The assigned level must survive.
+	s.adoptSpokeProjectConfig("claimed", "stale", []string{"old"}, "old", 2)
 	if h := loadSaaSHive("claimed"); h == nil || h.ACMMLevel != 3 || h.Org != "o" || len(h.Repos) != 1 || h.ClaimDelivered {
-		t.Errorf("pre-delivery stale report: meta = %+v, want acmm=3 org=o repos=[r] ClaimDelivered=false", h)
+		t.Errorf("pre-delivery stale report: meta = %+v, want acmm=3 (assigned level held) org=o repos=[r] ClaimDelivered=false", h)
 	}
 
-	// Spoke now reports the actual claimed project -> flips ClaimDelivered.
+	// A report matching org/repos but still carrying the OLD level is not a
+	// complete delivery: the claim includes the level, so the flag must stay
+	// down and the hub must keep pushing until the level lands too.
+	s.adoptSpokeProjectConfig("claimed", "o", []string{"r"}, "r", 2)
+	if h := loadSaaSHive("claimed"); h == nil || h.ClaimDelivered || h.ACMMLevel != 3 {
+		t.Errorf("partial delivery (level not yet applied) must not flip ClaimDelivered: %+v", h)
+	}
+
+	// Spoke now reports the claim IN FULL, level included -> flips ClaimDelivered.
 	s.adoptSpokeProjectConfig("claimed", "o", []string{"r"}, "r", 3)
 	if h := loadSaaSHive("claimed"); h == nil || !h.ClaimDelivered {
 		t.Errorf("matching report should mark ClaimDelivered: %+v", h)
@@ -280,4 +293,42 @@ func TestAdoptSpokeProjectConfig(t *testing.T) {
 
 	// No record -> no panic, no-op.
 	s.adoptSpokeProjectConfig("missing", "o", []string{"r"}, "r", 4)
+}
+
+// TestProjectConfigForHiveID_PushesAssignedACMMUntilDelivered locks the push
+// half of the assigned-ACMM fix.
+//
+// #2061 removed the ACMM push entirely to stop a dashboard level change being
+// reverted every beat. That fixed the revert but meant a freshly-assigned
+// placeholder was never TOLD the level its owner requested: it kept running the
+// level it was minted at and reported it back. Bounding the push by
+// ClaimDelivered delivers the requested level exactly once, then stops forever.
+func TestProjectConfigForHiveID_PushesAssignedACMMUntilDelivered(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+
+	// Assigned at L3; the spoke still reports the minted L2 with matching
+	// org/repos. Before the fix every non-ACMM field matched, so the reconcile
+	// returned "nothing left to push" and the level never travelled.
+	saveSaaSHive(&SaaSHive{
+		ID: "h", Status: "running", Org: "o", Repos: []string{"r"},
+		PrimaryRepo: "r", ACMMLevel: 3, ClaimDelivered: false,
+	})
+	got := projectConfigForHiveID("h", "o", []string{"r"}, "r", 2, "", "")
+	if got == nil {
+		t.Fatal("no push for an undelivered claim whose level has not landed; the hive stays at the wrong level forever")
+	}
+	if got.ACMMLevel != 3 {
+		t.Errorf("pushed ACMMLevel = %d, want the assigned 3", got.ACMMLevel)
+	}
+
+	// Once delivered, ACMM is the spoke's to own: a dashboard change to L5 must
+	// NOT be pushed back down (the spyre revert #2061 fixed).
+	saveSaaSHive(&SaaSHive{
+		ID: "d", Status: "running", Org: "o", Repos: []string{"r"},
+		PrimaryRepo: "r", ACMMLevel: 3, ClaimDelivered: true,
+	})
+	if got := projectConfigForHiveID("d", "o", []string{"r"}, "r", 5, "", ""); got != nil {
+		t.Errorf("delivered claim must never push ACMM back to the spoke, got %+v", got)
+	}
 }

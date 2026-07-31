@@ -62,6 +62,9 @@ func isolateAppKeyLookup(t *testing.T) string {
 // the new pod could never go Ready.
 //
 // Booting is the assertion. Nine more hives were carrying this exact config.
+//
+// It also locks the CLASSIFICATION: a sentinel hive is operator-actionable
+// (AppStateNoAppAssigned), never AppStateNotInstalled.
 func TestInitGitHubAuthPlaceholderAppIDBoots(t *testing.T) {
 	dir := isolateAppKeyLookup(t)
 
@@ -91,15 +94,25 @@ func TestInitGitHubAuthPlaceholderAppIDBoots(t *testing.T) {
 	if !strings.Contains(got.Failure, "placeholder") {
 		t.Errorf("failure reason does not identify the placeholder as the cause: %q", got.Failure)
 	}
-	// A placeholder hive genuinely has no App installed, and installing one is
-	// what the owner must do — so this must classify as user-actionable, not as
-	// an operator-side key fault.
-	if got.State != github.AppStateNotInstalled {
-		t.Errorf("State = %v, want AppStateNotInstalled", got.State)
+	// A placeholder hive is OPERATOR-actionable, not user-actionable.
+	//
+	// This assertion was inverted until the placeholder-assignment fix. The
+	// premise "the owner can fix this by installing the App" is false: the
+	// sentinel app_id names no GitHub App, so the JWT fails before any
+	// installation is consulted. The App is typically already installed and the
+	// installation_id already correct (the reporting owner's was the very same
+	// installation another working hive uses) — only the hub can supply the real
+	// app_id. Classifying it as "not installed" pointed the owner at the
+	// install link and the Set-ID box, i.e. at the one field already right.
+	if got.State != github.AppStateNoAppAssigned {
+		t.Errorf("State = %v, want AppStateNoAppAssigned", got.State)
 	}
-	if !got.State.UserActionable() {
-		t.Error("a placeholder hive's owner can fix this by installing the App; " +
-			"the state must be user-actionable or the banner will not tell them to")
+	if got.State.UserActionable() {
+		t.Error("placeholder app_id is not user-actionable: no installation_id the owner " +
+			"enters can make a nonexistent app_id authenticate")
+	}
+	if !got.State.OperatorActionable() {
+		t.Error("only the hub operator can assign a real app_id; the banner must say so")
 	}
 }
 
