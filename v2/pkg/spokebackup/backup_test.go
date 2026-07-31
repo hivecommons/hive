@@ -216,11 +216,21 @@ func TestManifestVerifies(t *testing.T) {
 
 // TestBuildRefusesWithoutKey — no key must mean no archive, never a plaintext
 // one containing GitHub App private keys.
+// The assertion is on the MESSAGE, not merely that an error occurred: an empty
+// key also fails later inside Seal (AES rejects a zero-length key), so a test
+// accepting any error still passes with the explicit guard removed. The
+// distinct refusal is what proves Build never even attempts to assemble an
+// unencrypted archive carrying GitHub App private keys.
 func TestBuildRefusesWithoutKey(t *testing.T) {
 	dir := seedSpoke(t)
 	t.Setenv(EnvDataDir, dir)
-	if _, err := Build(nil, "hive-abc123", testLogger()); err == nil {
+	_, err := Build(nil, "hive-abc123", testLogger())
+	if err == nil {
 		t.Fatal("Build produced an archive with no key")
+	}
+	if !strings.Contains(err.Error(), "refusing to build an unencrypted spoke backup") {
+		t.Fatalf("a missing key must be refused up front, not incidentally by the "+
+			"cipher; got %v", err)
 	}
 }
 

@@ -105,6 +105,11 @@ const (
 	MaxFileBytes = 64 << 20 // 64 MiB
 )
 
+// archiveCapBytes is the cap Build applies, indirected through a variable so a
+// test can shrink it and prove Build really enforces a cap. Production always
+// uses MaxArchiveBytes; nothing outside tests assigns this.
+var archiveCapBytes = MaxArchiveBytes
+
 // BuildTimeout bounds a single backup so a wedged filesystem read cannot hold
 // a dashboard request open indefinitely.
 const BuildTimeout = 2 * time.Minute
@@ -267,7 +272,7 @@ func Build(key []byte, hiveID string, logger *slog.Logger) (*Result, error) {
 		man.SpokeErrors[k] = v
 	}
 
-	sealed, err := b.Finish(key, man, MaxArchiveBytes)
+	sealed, err := b.Finish(key, man, archiveCapBytes)
 	if err != nil {
 		return nil, err
 	}
