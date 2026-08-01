@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -555,6 +556,15 @@ type HubServer struct {
 	vanityHostServable func(hiveID, vanityHost string, cluster *ClusterConfig) error
 	heartbeatHealth    map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
 	heartbeatHealthMu  sync.RWMutex
+
+	// liveHiveUsers maps a GitHub username → the last time any hive reported it as
+	// having a live dashboard session. It powers the "logged into their hive right
+	// now" avatar treatment (a green dashed border). In-memory only and rebuilt
+	// from heartbeats — a hub restart simply re-learns it within a beat or two.
+	// Freshness-gated on read (liveHiveUsernames), so a user whose hive stopped
+	// beating drops out on its own rather than staying "live" forever.
+	liveHiveUsers   map[string]time.Time
+	liveHiveUsersMu sync.RWMutex
 
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to
@@ -1277,6 +1287,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	s.requestSave()
 
+	// Credit per-user "time in hive" from the spoke's active-session report.
+	// Deliberately AFTER s.mu.Unlock() (like the timeline/token-trend work above):
+	// it does per-user load-modify-write file I/O and must not serialize behind
+	// the registry write lock. hadPrev==false (a brand-new hive) credits nothing —
+	// there is no prior sample point to measure an interval against.
+	s.creditActiveSessionTime(&prevEntry, hadPrev, payload.ActiveSessionUsers)
+
 	// Store heartbeat-reported cluster health so the hub can use it as a
 	// fallback when it cannot reach the cluster directly via kubectl.
 	if payload.ClusterHealth != nil && entry.ClusterID != "" {
@@ -1512,6 +1529,128 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	data, _ := json.Marshal(resp)
 	w.Write(data)
+}
+
+const (
+	// expectedHeartbeatSecs mirrors cmd/hive's heartbeatSendInterval (2 min). It
+	// is redeclared here because that constant lives in package main and cannot be
+	// imported; the value is the sampling cadence for session-time accounting.
+	expectedHeartbeatSecs = 120.0
+	// maxSessionCreditSecs caps how much time a single beat may credit a user, so
+	// a hub or spoke outage (a long gap between two beats) never back-credits hours
+	// of "time in hive" that nobody was actually logged in for. Two beats' worth is
+	// generous enough to absorb ordinary jitter while bounding the fault.
+	maxSessionCreditSecs = 2 * expectedHeartbeatSecs
+	// maxActiveSessionUsers bounds the per-beat work from a spoke that reports an
+	// implausibly large active-session list (defensive; a real hive has a handful).
+	maxActiveSessionUsers = 200
+)
+
+// creditActiveSessionTime accumulates per-user "time in hive" from one heartbeat's
+// active-session report. Each distinct, valid username that had a live session on
+// this beat is credited the elapsed time since this hive's PREVIOUS beat — the
+// sampling interval — clamped so an outage gap is never back-credited.
+//
+// Correctness:
+//   - hadPrev==false (first-ever beat) → no prior sample point → credit nothing.
+//   - the interval is (now - prevEntry.LastHeartbeat); keyed off the PERSISTED
+//     registry LastHeartbeat, so a hub restart resumes from the last stored beat
+//     and the next beat credits only the (clamped) gap — never a giant catch-up.
+//   - unknown users (no SaaSUser record) are skipped, never auto-created.
+//   - load-modify-write per user so a concurrent contact/quota edit is not clobbered.
+//
+// It runs post-unlock and does its own file I/O; callers must NOT hold s.mu.
+func (s *HubServer) creditActiveSessionTime(prevEntry *RegistryEntry, hadPrev bool, activeUsers []string) {
+	// Mark everyone reported active as live NOW, independent of the time-credit
+	// path below: the "logged in right now" avatar treatment must light up on the
+	// FIRST beat that sees a session (there is no prior sample yet), and must not
+	// depend on a valid prevEntry. Freshness is applied on read.
+	s.markUsersLive(activeUsers)
+	if !hadPrev || prevEntry == nil || prevEntry.LastHeartbeat == "" || len(activeUsers) == 0 {
+		return
+	}
+	prev, err := time.Parse(time.RFC3339, prevEntry.LastHeartbeat)
+	if err != nil {
+		return
+	}
+	elapsed := time.Since(prev).Seconds()
+	if elapsed <= 0 {
+		return // clock skew or a duplicate beat at the same instant — credit nothing.
+	}
+	if elapsed > maxSessionCreditSecs {
+		elapsed = maxSessionCreditSecs
+	}
+	creditSecs := int64(elapsed)
+	if creditSecs <= 0 {
+		return
+	}
+	// Dedupe + validate the reported usernames with the same gate the leaderboard
+	// path uses, and bound the work.
+	seen := make(map[string]struct{}, len(activeUsers))
+	for _, name := range activeUsers {
+		if len(seen) >= maxActiveSessionUsers {
+			break
+		}
+		if name == "" || !isValidName(name) {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		u := loadSaaSUser(name)
+		if u == nil {
+			continue // an active session for a user the hub has no record of — skip.
+		}
+		u.SessionSeconds += creditSecs
+		if err := saveSaaSUser(u); err != nil {
+			s.logger.Warn("creditActiveSessionTime: save failed", "user", name, "error", err)
+		}
+	}
+}
+
+// liveHiveUserStaleness is how long after a hive's last active-session report a
+// user is still considered "logged into their hive". Two beats absorbs one missed
+// heartbeat before the avatar treatment drops.
+const liveHiveUserStaleness = time.Duration(maxSessionCreditSecs) * time.Second
+
+// markUsersLive stamps each reported active user as live as of now. Cheap map
+// write under its own mutex; validation/freshness are applied on read.
+func (s *HubServer) markUsersLive(activeUsers []string) {
+	if len(activeUsers) == 0 {
+		return
+	}
+	now := time.Now()
+	s.liveHiveUsersMu.Lock()
+	if s.liveHiveUsers == nil {
+		s.liveHiveUsers = make(map[string]time.Time)
+	}
+	for _, name := range activeUsers {
+		if name == "" || !isValidName(name) {
+			continue
+		}
+		s.liveHiveUsers[name] = now
+	}
+	s.liveHiveUsersMu.Unlock()
+}
+
+// liveHiveUsernames returns the usernames with a live hive session seen within
+// the staleness window, and opportunistically prunes stale entries so the map
+// cannot grow without bound. Admin-facing (presence data) — the caller gates it.
+func (s *HubServer) liveHiveUsernames() []string {
+	cutoff := time.Now().Add(-liveHiveUserStaleness)
+	s.liveHiveUsersMu.Lock()
+	defer s.liveHiveUsersMu.Unlock()
+	out := make([]string, 0, len(s.liveHiveUsers))
+	for name, seen := range s.liveHiveUsers {
+		if seen.Before(cutoff) {
+			delete(s.liveHiveUsers, name)
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *HubServer) storePendingGitHubAppConfig(hiveID string, cfg *HeartbeatGitHubAppConfig) {

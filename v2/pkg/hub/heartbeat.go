@@ -303,6 +303,14 @@ type HeartbeatPayload struct {
 	Tokens24h    int64              `json:"tokens_24h"`
 	Contributors ContributorSummary `json:"contributors"`
 	Leaderboard  []LeaderboardEntry `json:"leaderboard"`
+	// ActiveSessionUsers is the DISTINCT set of GitHub usernames with a live
+	// dashboard session on this hive at heartbeat time (spoke:
+	// ActiveSessionUsernames). The hub credits each one the inter-beat interval so
+	// per-user "time in hive" accumulates without needing a session-end event.
+	// Non-secret: bare usernames only (no session ids/tokens/roles). omitempty so a
+	// spoke too old to report it, or one with no live sessions, sends nothing —
+	// which the hub reads as "credit no one this beat", never as an error.
+	ActiveSessionUsers []string `json:"active_session_users,omitempty"`
 	// StartedAt is the spoke process start time (RFC3339). The hub renders it
 	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
 	// but restarted 35 times — is visible in My Hives instead of looking

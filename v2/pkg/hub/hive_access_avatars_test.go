@@ -81,8 +81,10 @@ func TestInlineAccessAvatarEscaping(t *testing.T) {
 		// Quoted attribute values.
 		{"anchor href uses escAttr", `'<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" '`},
 		{"anchor title and aria-label use escAttr", `'title="' + escAttr(label || uname) + '" aria-label="' + escAttr(label || uname) + '" '`},
-		// The inline face still carries the role in its tooltip, via the helper.
-		{"inline face labels username and role", `return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, uname + (role ? ' — ' + role : ''),`},
+		// The inline face still carries the role in its tooltip, now built by the
+		// shared accessAvatarTitle helper (username — role, plus contact metadata).
+		{"inline face labels username and role via title helper", `return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),`},
+		{"access title helper carries username and role", `var lines = [uname + (role ? ' — ' + role : '')];`},
 		{"overflow chip title uses escAttr", `'<span title="' + escAttr(hiddenNames.join(', ')) + '" '`},
 		{"aria-label uses escAttr", `'<span class="hive-access-faces" aria-label="' + escAttr(label) + '" '`},
 	}

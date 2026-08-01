@@ -2436,6 +2436,10 @@ func main() {
 					}
 					return out
 				}(),
+				// Report who has a live dashboard session so the hub can accumulate
+				// per-user "time in hive". Bare usernames only — never session
+				// ids/tokens (ActiveSessionUsernames guarantees this).
+				ActiveSessionUsers: dashSrv.ActiveSessionUsernames(),
 				Owner: func() string {
 					if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
 						tok := strings.TrimSpace(string(td))

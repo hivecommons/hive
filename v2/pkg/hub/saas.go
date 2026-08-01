@@ -68,6 +68,21 @@ type SaaSUser struct {
 	FullName string `json:"full_name,omitempty"`
 	SlackID  string `json:"slack_id,omitempty"`
 	Notes    string `json:"notes,omitempty"`
+
+	// Engagement stats, admin-only (they ride /api/saas/admin/users, which is
+	// requireAdmin). Both omitempty ints so existing records round-trip
+	// byte-identical until the user first logs in / opens a hive after this ships.
+	//
+	// LoginCount is the number of completed hub OAuth logins. Incremented in
+	// exactly one place — handleOAuthCallback — never in ensureSaaSUser, whose
+	// other callers (my-hives poll, admin provisioning) would inflate it.
+	LoginCount int `json:"login_count,omitempty"`
+	// SessionSeconds is the cumulative time this user has had at least one live
+	// session on a hive dashboard, accumulated by the hub from the spoke's
+	// per-heartbeat active-session report (see handleHeartbeat). It is a sampled
+	// sum of inter-beat intervals, so it is accurate to roughly the beat interval,
+	// not to the second.
+	SessionSeconds int64 `json:"session_seconds,omitempty"`
 }
 
 // Length caps for the admin-editable contact fields. These are free text
@@ -1984,11 +1999,21 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// old to report one. Done here, over the assembled set, so no entry
 		// construction site can be missed.
 		resolveGitHubHost(&result[i])
+		// The leaderboard carries per-USER task counts (who did what on this hive).
+		// The admin Users engagement card cross-references it by github_username, so
+		// it must reach the admin browser — but it is other people's activity, so a
+		// non-admin owner must NOT receive it. Scrub it for everyone but admin.
+		// (RegistryEntry.Leaderboard has no omitempty, so it would otherwise ship to
+		// every my-hives consumer.)
+		if !isAdmin {
+			result[i].Leaderboard = nil
+		}
 		// Who-has-access is shown only to owners (and admin), matching
 		// handleAccessList's rule. A read/read-write member is deliberately not
 		// told who else shares the hive.
 		if h.Role == "owner" || isAdmin {
-			result[i].Access = accessForHive(h.ID, allSaaSUsers)
+			// Notes is admin-only CRM text; a non-admin owner gets name+Slack only.
+			result[i].Access = accessForHive(h.ID, allSaaSUsers, isAdmin)
 			// Recent activity for the status hover, same owner/admin rule as
 			// the access list and as handleHiveTimeline itself. s.timeline is
 			// nil in tests that construct a bare HubServer, and recent() is a
@@ -2112,6 +2137,10 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// memberships and roles, so it must stay inside this branch. A non-admin
 		// caller never receives provision_requests at all.
 		resp["provision_requests"] = enrichProvisionRequests(listProvisionRequests())
+		// Who is logged into their hive RIGHT NOW, for the green-dashed avatar
+		// treatment. Presence data about other users → admin-only, same as the
+		// engagement stats it complements.
+		resp["live_hive_users"] = s.liveHiveUsernames()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -4488,6 +4517,16 @@ func authorizedUsersForHiveID(hiveID string) []string {
 type HiveAccessEntry struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	// Contact metadata copied from the user's record so the My Hives avatar hover
+	// can show WHO someone is, not just their GitHub handle. FullName and SlackID
+	// ride for every owner/admin-visible access row. Notes is admin-maintained CRM
+	// scratch text (see the SaaSUser doc) and is therefore delivered ONLY to a hub
+	// admin — accessForHive's includeNotes gate — so an owner never sees the
+	// admin's private commentary about a co-member. All omitempty: a user with no
+	// contact fields set renders exactly as before (handle — role).
+	FullName string `json:"full_name,omitempty"`
+	SlackID  string `json:"slack_id,omitempty"`
+	Notes    string `json:"notes,omitempty"`
 }
 
 // accessForHive returns who can sign in to a hive, newest-role-agnostic and
@@ -4495,11 +4534,23 @@ type HiveAccessEntry struct {
 // than reading h.Owner: a user's Hives map is the authoritative grant (see
 // handleApproveProvision / handleAssignHive, which write it), and an owner who
 // is missing from it genuinely cannot sign in.
-func accessForHive(hiveID string, users []SaaSUser) []HiveAccessEntry {
+// includeNotes controls whether the admin-maintained Notes field is copied onto
+// each entry: pass true ONLY for a hub admin. FullName/SlackID always ride (they
+// identify the person to a co-owner); Notes is private admin CRM text.
+func accessForHive(hiveID string, users []SaaSUser, includeNotes bool) []HiveAccessEntry {
 	access := make([]HiveAccessEntry, 0)
 	for _, u := range users {
 		if role, ok := u.Hives[hiveID]; ok {
-			access = append(access, HiveAccessEntry{Username: u.GitHubUsername, Role: role})
+			entry := HiveAccessEntry{
+				Username: u.GitHubUsername,
+				Role:     role,
+				FullName: u.FullName,
+				SlackID:  u.SlackID,
+			}
+			if includeNotes {
+				entry.Notes = u.Notes
+			}
+			access = append(access, entry)
 		}
 	}
 	sort.Slice(access, func(i, j int) bool {
@@ -4525,7 +4576,9 @@ func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"only the owner can view access"}`, http.StatusForbidden)
 		return
 	}
-	access := accessForHive(hiveID, listAllSaaSUsers())
+	// Notes is admin-only; a non-admin owner viewing their hive's access gets
+	// name+Slack but not the admin's private CRM notes.
+	access := accessForHive(hiveID, listAllSaaSUsers(), username == hubAdminUsername)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"access": access})
 }
@@ -7283,11 +7336,28 @@ const dashboardHTML = `<!DOCTYPE html>
        a broken icon would read as a dead control. extraStyle appends to the
        inline style (borders, flex sizing) and defaults to nothing. */
     var AVATAR_HIDPI_SCALE = 2;
+    /* A user LOGGED INTO THEIR HIVE right now gets a thick green dashed ring, so
+       "who is active this moment" reads at a glance wherever a face appears. The
+       border is drawn on a wrapper (a border on the round <img> itself would clip
+       against border-radius and fight any per-call-site border in extraStyle). The
+       live set is admin-only, so non-admin views never ring anyone. */
+    function isUserLive(username) {
+      try { return _liveHiveUsers && _liveHiveUsers.has(String(username || '').toLowerCase()); }
+      catch (e) { return false; }
+    }
     function avatarImg(username, px, extraStyle) {
-      return '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
+      var img = '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
         'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' +
         (extraStyle || '') + '" ' +
         'onerror="this.style.visibility=\'hidden\'">';
+      if (isUserLive(username)) {
+        // 3px green dashed ring hugging the circle. inline-flex wrapper keeps the
+        // face's vertical-align and sizing identical to the un-ringed case.
+        return '<span title="Logged into their hive now" ' +
+          'style="display:inline-flex;border-radius:50%;padding:1px;border:3px dashed var(--green);vertical-align:middle;line-height:0">' +
+          img + '</span>';
+      }
+      return img;
     }
 
     /* The common case: a linked, round avatar for a github.com login. */
@@ -7550,11 +7620,28 @@ const dashboardHTML = `<!DOCTYPE html>
        tooltip, not a panel.
 
        The role stays in the tooltip so the face still answers "who and at what
-       permission" on hover, exactly as before it became a link. */
+       permission" on hover, exactly as before it became a link. The title is
+       enriched with the person's contact metadata (full name, Slack handle, and
+       — for a hub admin only — notes) when the access entry carries it, so the
+       face answers "who IS this" and not just "which handle". Each field is a
+       separate line: title attributes render "\n" as a line break, and this stays
+       a native tooltip (never a custom panel) to preserve the single-hover-panel
+       invariant. The server only populates these fields for owner/admin-visible
+       rows and withholds notes from non-admins, so nothing here needs to re-gate
+       them — a field that is absent simply produces no line. */
+    function accessAvatarTitle(a) {
+      var uname = String(a.username || '');
+      var role = String(a.role || '');
+      var lines = [uname + (role ? ' — ' + role : '')];
+      if (a.full_name) lines.push(String(a.full_name));
+      if (a.slack_id) lines.push('Slack: ' + String(a.slack_id));
+      if (a.notes) lines.push('Notes: ' + String(a.notes));
+      return lines.join('\n');
+    }
     function inlineAccessAvatar(a) {
       var uname = String(a.username || '');
       var role = String(a.role || '');
-      return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, uname + (role ? ' — ' + role : ''),
+      return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),
         'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto');
     }
 
@@ -7999,7 +8086,7 @@ const dashboardHTML = `<!DOCTYPE html>
            tooltip-free. */
         return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">' +
           linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,
-            String(a.username || '') + (a.role ? ' — ' + a.role : ''), 'flex:0 0 auto') +
+            accessAvatarTitle(a), 'flex:0 0 auto') +
           '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.username) + '</span>' +
           '<span style="color:' + rc + ';font-size:0.62rem;font-weight:600;white-space:nowrap">' + esc(a.role) + '</span>' +
           '</div>';
@@ -10463,6 +10550,10 @@ const dashboardHTML = `<!DOCTYPE html>
         _userUsed = data.saas_used || 0;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
+        /* Who is logged into their hive right now (admin-only in the payload) →
+           the green-dashed avatar border. A Set of lowercased usernames so the
+           avatar lookup is case-insensitive, matching GitHub handle semantics. */
+        _liveHiveUsers = new Set((data.live_hive_users || []).map(function(n) { return String(n).toLowerCase(); }));
         /* Alerts ride along on the same payload — see handleMyHives. Normalise
            to the empty summary so every consumer can iterate without guarding. */
         _fleetAlerts = data.alerts || EMPTY_ALERT_SUMMARY;
@@ -13153,6 +13244,9 @@ const dashboardHTML = `<!DOCTYPE html>
     var _adminLoaded = false;
     var _adminExpandedUsers = {};
     var _hiveRegistry = [];
+    /* Lowercased usernames with a live hive session right now (admin payload).
+       Drives the green-dashed avatar border via avatarImg. Empty for non-admins. */
+    var _liveHiveUsers = new Set();
     var _userSortKey = 'created_at', _userSortAsc = false;
 
     /* --- Collapsible "Hub Admin — Users" section ---
@@ -13823,6 +13917,143 @@ const dashboardHTML = `<!DOCTYPE html>
       }, CONTACT_DEFER_RECHECK_MS);
     }
 
+    /* ── User engagement / lifecycle card ────────────────────────────────
+       Shown on hover of a user's name in the admin Users table. It exists to
+       answer one operator question — "what should I DO with this person?" — from
+       real signals rather than a single last-login date:
+         • ELEVATE   — logging in, real time in their hive, tasks landing, and a
+                       hive resting at its ACMM level (ready to graduate).
+         • NEEDS HELP— logs in but stuck on an early journey stage or barely any
+                       activity; a journey nudge is the lever.
+         • AT RISK   — assigned a hive yet ~no logins, ~no hive time, no tasks, or
+                       a hive already at deprovision-warning; pressure / reclaim.
+       The verdict is ADVISORY: it classifies and points at existing levers (ACMM,
+       journey snooze/nudge, de-provision) — it changes no state. All inputs are
+       admin-only (this table is requireAdmin, and leaderboard is scrubbed for
+       non-admins server-side). */
+    var USERSTAT_ACTIVE_LOGIN_MIN = 3;        // logins that count as "engaged"
+    var USERSTAT_ACTIVE_HOURS_MIN = 1;        // hive-hours that count as "engaged"
+    var USERSTAT_SECS_PER_HOUR = 3600;
+
+    /* userTaskActivity sums this user's per-hive leaderboard entries across every
+       hive in _hiveRegistry, matching on github_username. leaderboard is present
+       only for an admin (scrubbed otherwise), so a non-admin simply gets zeros. */
+    function userTaskActivity(username) {
+      var done = 0, failed = 0, activeNow = false;
+      (_hiveRegistry || []).forEach(function(h) {
+        (h.leaderboard || []).forEach(function(e) {
+          if (e && e.github_username === username) {
+            done += (e.tasksCompleted || e.TasksCompleted || 0);
+            failed += (e.tasksFailed || e.TasksFailed || 0);
+            if (e.active || e.Active) activeNow = true;
+          }
+        });
+      });
+      return {done: done, failed: failed, activeNow: activeNow};
+    }
+
+    /* userHiveJourneys returns [{name, role, journey, acmm, worstSeverity}] for the
+       user's known hives, reusing _hiveRegistry (which carries journey + acmmLevel
+       per hive). Used both to render per-hive badges and to derive the verdict. */
+    function userHiveJourneys(u) {
+      var hivesObj = u.hives || {};
+      var out = [];
+      Object.keys(hivesObj).forEach(function(hid) {
+        var reg = (_hiveRegistry || []).find(function(h) { return h.id === hid; });
+        if (!reg) return;
+        out.push({
+          id: hid,
+          name: reg.name || hid,
+          role: hivesObj[hid],
+          journey: reg.journey || null,
+          acmm: reg.acmmLevel || reg.acmm_level || 0
+        });
+      });
+      return out;
+    }
+
+    /* userVerdict derives the lifecycle recommendation from the engagement signals
+       and the user's hives' journey stages. Returns {key, label, color, tip}. */
+    function userVerdict(u, act, hives) {
+      var logins = u.login_count || 0;
+      var hours = (u.session_seconds || 0) / USERSTAT_SECS_PER_HOUR;
+      var anyDeprovision = hives.some(function(h) { return h.journey && h.journey.severity === 'deprovision-warning'; });
+      var anyEarlyStage = hives.some(function(h) { return h.journey && (h.journey.stage === 'github-app' || h.journey.stage === 'method-model'); });
+      var anyRestingACMM = hives.some(function(h) { return h.journey && h.journey.stage === 'acmm-level'; });
+      var engaged = logins >= USERSTAT_ACTIVE_LOGIN_MIN && hours >= USERSTAT_ACTIVE_HOURS_MIN;
+      var dormant = hives.length > 0 && logins <= 1 && hours < 0.25 && act.done === 0;
+
+      if (dormant || anyDeprovision) {
+        return {key: 'at-risk', label: 'At risk — pressure or de-provision', color: 'var(--red)',
+          tip: 'Assigned a hive but little/no engagement (or already at a de-provision warning). Consider a firm nudge or reclaiming the spoke.'};
+      }
+      if (engaged && act.done > 0 && anyRestingACMM) {
+        return {key: 'elevate', label: 'Elevate — ready to graduate', color: 'var(--green)',
+          tip: 'Active, spending real time in their hive, and tasks are landing while a hive rests at its ACMM level. Good candidate to raise autonomy / quota.'};
+      }
+      if (anyEarlyStage || act.done === 0) {
+        return {key: 'needs-help', label: 'Needs help — nudge the journey', color: 'var(--accent)',
+          tip: 'Signed in but stuck early on the adoption path or barely any activity. A journey nudge (not auto-sent) is the lever.'};
+      }
+      return {key: 'on-track', label: 'On track', color: 'var(--muted)',
+        tip: 'Engaged and progressing; nothing to do.'};
+    }
+
+    function fmtHours(secs) {
+      var h = (secs || 0) / USERSTAT_SECS_PER_HOUR;
+      if (h <= 0) return '—';
+      if (h < 1) return (Math.round(h * 10) / 10) + ' h';
+      return (Math.round(h * 10) / 10).toString().replace(/\.0$/, '') + ' h';
+    }
+
+    function renderUserStatsCard(u, hasPendingReq) {
+      var act = userTaskActivity(u.github_username);
+      var hives = userHiveJourneys(u);
+      var verdict = userVerdict(u, act, hives);
+      var row = function(k, v) {
+        return '<div style="display:flex;justify-content:space-between;gap:12px;padding:1px 0">' +
+          '<span style="color:var(--muted)">' + esc(k) + '</span>' +
+          '<span style="color:var(--text);text-align:right">' + v + '</span></div>';
+      };
+      var liveDot = act.activeNow
+        ? '<span title="active on a task now" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-left:6px;vertical-align:middle"></span>'
+        : '';
+      var stats =
+        row('Hub logins', esc(String(u.login_count || 0)) + (u.last_login ? ' <span style="color:var(--muted)">(last ' + esc(fmtUserTS(u.last_login)) + ')</span>' : '')) +
+        row('Time in hive', esc(fmtHours(u.session_seconds))) +
+        row('Joined', esc(fmtUserTS(u.created_at))) +
+        row('Tasks', esc(String(act.done)) + ' done / ' + esc(String(act.failed)) + ' failed' + liveDot);
+
+      var hiveLines = hives.length
+        ? hives.map(function(h) {
+            return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">' +
+              '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(h.name) + '</span>' +
+              '<span style="color:var(--muted);font-size:0.62rem">' + esc(h.role) + '</span>' +
+              journeyBadge(h.journey) + '</div>';
+          }).join('')
+        : '<div style="color:var(--muted)">No hives assigned</div>';
+
+      var verdictBlock = '<div style="margin:6px 0 2px;padding:4px 6px;border-radius:6px;border:1px solid ' + verdict.color + ';color:' + verdict.color + ';font-weight:700" title="' + escAttr(verdict.tip) + '">' + esc(verdict.label) + '</div>';
+
+      // Assign flow relocated here as an explicit button — the click that used to
+      // live on the (now inert) name. Approve-vs-assign copy mirrors the old title.
+      var assignBtn = '<button onclick="openAssignForUser(\'' + escAttr(u.github_username) + '\');return false" ' +
+        'style="margin-top:6px;width:100%;padding:5px 8px;border:1px solid var(--accent);background:transparent;color:var(--accent);border-radius:6px;cursor:pointer;font-size:0.72rem;font-weight:600">' +
+        (hasPendingReq ? 'Approve request &amp; assign a hive' : 'Assign an available hive') + '</button>';
+
+      return '<span class="hive-access-pop" style="display:none;position:absolute;left:0;top:calc(100% + 6px);z-index:60;' +
+        'min-width:240px;max-width:320px;padding:9px 11px;border-radius:8px;border:1px solid var(--border);' +
+        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;white-space:normal">' +
+        '<div style="font-weight:700;margin-bottom:4px">' + esc(u.github_username) + '</div>' +
+        verdictBlock +
+        stats +
+        '<span style="display:block;border-top:1px solid var(--border);margin:6px 0 4px"></span>' +
+        '<span style="display:block;color:var(--muted);font-size:0.62rem;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px">Hives &amp; journey</span>' +
+        hiveLines +
+        assignBtn +
+        '</span>';
+    }
+
     function renderUsers(users, force) {
       var sig = JSON.stringify(users);
       if (!force && sig === _lastUsersJSON) return;
@@ -13866,20 +14097,21 @@ const dashboardHTML = `<!DOCTYPE html>
           hiveRows += '</tbody></table></div></td></tr>';
         }
 
-        /* Clicking the name opens the assign flow for this user (admin-only, and
-           the underlying endpoints re-check that server-side). The GitHub
-           profile is reachable via the avatar, so one click is not overloaded
-           with two destinations. The separate ↗ glyph that used to sit between
-           them is gone: it went to the same profile the face now links to, and
-           a 0.65rem arrow was a far smaller click target than the picture. A
-           pending provision request is called out because the click then
-           approves it rather than assigning a bare placeholder. */
+        /* The name no longer NAVIGATES. Hovering it opens an engagement/lifecycle
+           card (renderUserStatsCard) so an admin can read who is active enough to
+           elevate, who is stuck and needs a nudge, and who is dormant and at risk
+           of de-provision — WITHOUT a click that jumps somewhere. The old assign
+           flow moves INTO the card as an explicit button, so it is still one hover
+           away but never fires by accident. The GitHub profile stays on the avatar.
+           The wrapper reuses the hive-access-wrap/pop hover panel and carries NO
+           title= (TestUserStatsCardNoTitle / the single-hover-panel invariant). */
         var hasPendingReq = !!_provisionRequestsByUser[u.github_username];
         var nameCell = avatar +
-          '<a href="#" onclick="openAssignForUser(\'' + esc(u.github_username) + '\');return false" ' +
-          'title="' + (hasPendingReq ? 'Approve this user&#39;s pending request and assign a hive' : 'Assign an available hive to this user') + '" ' +
-          'style="color:var(--blue);cursor:pointer">' + esc(u.github_username) + '</a>' +
-          (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem" title="Has a pending provision request">&#9679; request</span>' : '');
+          '<span class="hive-access-wrap" style="position:relative;display:inline-flex;align-items:center;gap:4px;cursor:help">' +
+            '<span style="color:var(--text);font-weight:600">' + esc(u.github_username) + '</span>' +
+            (hasPendingReq ? ' <span style="color:var(--accent);font-size:0.65rem">&#9679; request</span>' : '') +
+            renderUserStatsCard(u, hasPendingReq) +
+          '</span>';
         return '<tr>' +
           '<td>' + nameCell + (isAdmin ? ' <span style="color:var(--accent);font-size:0.7rem">admin</span>' : '') + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
