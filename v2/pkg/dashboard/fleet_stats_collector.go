@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
@@ -64,6 +66,21 @@ type FleetStatsCollector struct {
 	// collect that has since started failing, and surface the difference rather
 	// than presenting stale numbers as current.
 	collectedAt time.Time
+
+	// persistPath is where the last successful collect is mirrored on the spoke
+	// PVC so a restart resumes from the last-known counts instead of nil. Empty
+	// disables persistence (the collector is purely in-memory). See #2329.
+	persistPath string
+}
+
+// persistedFleetStats is the on-disk shape written to persistPath. It carries
+// the raw counts plus the REAL collect time — never re-stamped to now — so the
+// hub's fleetStatsMaxAge aging still applies to counts restored after a
+// restart. A spoke that has been down long enough for its last collect to age
+// out is aged out on the hub exactly as if it had never re-collected.
+type persistedFleetStats struct {
+	Counts      ghpkg.FleetContribCounts `json:"counts"`
+	CollectedAt time.Time                `json:"collected_at"`
 }
 
 // NewFleetStatsCollector builds a collector for the given AI author and org.
@@ -76,6 +93,88 @@ func NewFleetStatsCollector(ghClient *ghpkg.Client, author, org string, logger *
 		author:   author,
 		org:      org,
 		logger:   logger,
+	}
+}
+
+// EnablePersistence makes the collected fleet-stat counts survive a process
+// restart by mirroring each successful collect to path on the spoke PVC, and by
+// loading whatever is already there NOW so the first heartbeat after a restart
+// reports the last-known counts (with their real collectedAt) instead of nil.
+// Without this the counts live only in memory: a mass restart clears them and
+// the public fleet total collapses until every spoke re-collects (#2329). The
+// hub already keeps + ages the last value it saw (#2328); this stops the spoke
+// from forgetting in the first place. Call once at startup before Start.
+//
+// A missing file is a clean no-op (first boot). A corrupt file is logged and
+// ignored — a restart that resumes from nothing is no worse than today.
+func (fc *FleetStatsCollector) EnablePersistence(path string) {
+	if fc == nil {
+		return
+	}
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	fc.persistPath = path
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) && fc.logger != nil {
+			fc.logger.Warn("fleet stats store unreadable — starting with no restored counts",
+				"path", path, "error", err)
+		}
+		return
+	}
+	var stored persistedFleetStats
+	if err := json.Unmarshal(data, &stored); err != nil {
+		if fc.logger != nil {
+			fc.logger.Warn("fleet stats store corrupt — starting with no restored counts",
+				"path", path, "error", err)
+		}
+		return
+	}
+	// A zero collectedAt means the file never held a real collect; treat it as
+	// absent rather than reporting counts the hub would immediately age out
+	// against a zero timestamp.
+	if stored.CollectedAt.IsZero() {
+		return
+	}
+	fc.counts = stored.Counts
+	fc.collectedAt = stored.CollectedAt
+	fc.ready = true
+	if fc.logger != nil {
+		fc.logger.Info("restored fleet stats from PVC",
+			"prs_merged", stored.Counts.PRsMerged,
+			"prs_rejected", stored.Counts.PRsRejected,
+			"cves_closed", stored.Counts.CVEsClosed,
+			"collected_at", stored.CollectedAt.Format(time.RFC3339),
+			"path", path)
+	}
+}
+
+// persistLocked mirrors the current counts + collectedAt to persistPath, if
+// persistence is enabled. Callers must hold mu. The file is a single tiny
+// record, so a full atomic rewrite (tmp + rename, mirroring the session store)
+// per collect is cheaper than anything incremental. 0600: the counts are not
+// secret, but this keeps every PVC-persisted dashboard file in one trust domain.
+func (fc *FleetStatsCollector) persistLocked() {
+	if fc.persistPath == "" {
+		return
+	}
+	data, err := json.Marshal(persistedFleetStats{
+		Counts:      fc.counts,
+		CollectedAt: fc.collectedAt,
+	})
+	if err != nil {
+		return
+	}
+	tmp := fc.persistPath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		if fc.logger != nil {
+			fc.logger.Warn("failed to write fleet stats store", "path", fc.persistPath, "error", err)
+		}
+		return
+	}
+	if err := os.Rename(tmp, fc.persistPath); err != nil && fc.logger != nil {
+		fc.logger.Warn("failed to replace fleet stats store", "path", fc.persistPath, "error", err)
 	}
 }
 
@@ -136,6 +235,9 @@ func (fc *FleetStatsCollector) collect(ctx context.Context) {
 			fc.counts = counts
 			fc.ready = true
 			fc.collectedAt = time.Now()
+			// Mirror to the PVC while holding mu so a restart resumes from this
+			// exact collect (with its real timestamp) instead of nil (#2329).
+			fc.persistLocked()
 			fc.mu.Unlock()
 			if fc.logger != nil {
 				fc.logger.Info("fleet stats collected",

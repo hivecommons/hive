@@ -219,6 +219,11 @@ func resetSHACaches(t *testing.T) {
 	for k := range headSHAByBranch {
 		delete(headSHAByBranch, k)
 	}
+	// The hub-image cache is a separate map from latestSHAByBranch; leaving it
+	// populated leaks state into tests that assert on latest_hub_shas.
+	for k := range latestHubSHAByBranch {
+		delete(latestHubSHAByBranch, k)
+	}
 	for k := range commitMsgBySHA {
 		delete(commitMsgBySHA, k)
 	}

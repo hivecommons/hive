@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // Config-drift detection.
@@ -68,10 +70,28 @@ const (
 	// app-missing/app-perm-issue so operator work is never filed as an
 	// owner-facing adoption problem.
 	DriftKindAppCredsOperator = "app-creds-operator"
-	DriftKindHealthDegraded   = "health-degraded"
-	DriftKindUpgradeStuck     = "upgrade-stuck"
-	DriftKindACMMUnset        = "acmm-unset"
-	DriftKindNoAgents         = "no-agents"
+	// DriftKindAppIDPlaceholder marks a hive still authenticating as the
+	// placeholder App sentinel (config.PlaceholderAppID). Distinct from
+	// app-creds-operator because the fault is the app_id itself, not the key:
+	// the App does not exist, so no key and no installation_id can ever make it
+	// work, and telling an operator to check credentials would repeat exactly
+	// the misdiagnosis this signal exists to end.
+	DriftKindAppIDPlaceholder = "app-id-placeholder"
+	// DriftKindIdentitySplit marks a hive whose GitHub identity components
+	// disagree with each other — most importantly a GHE app_id/app_slug with an
+	// api_url that is empty or public, which authenticates as nothing and fails
+	// every token request with "404 Integration not found".
+	//
+	// It is operator-side and critical: the hive was working, a push moved one
+	// component of the identity without the others, and no owner action can fix
+	// it. Distinct from app-missing (no App installed) and app-id-placeholder
+	// (the App does not exist) because here the App is real and the credentials
+	// are right — they are simply pointed at the wrong forge.
+	DriftKindIdentitySplit  = "identity-split"
+	DriftKindHealthDegraded = "health-degraded"
+	DriftKindUpgradeStuck   = "upgrade-stuck"
+	DriftKindACMMUnset      = "acmm-unset"
+	DriftKindNoAgents       = "no-agents"
 )
 
 // DriftSignal is one detected deviation. Reason is a complete, human-readable
@@ -457,6 +477,24 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 
 	// --- Claimed-hive-only signals ---------------------------------------
 	//
+	// Placeholder app_id sentinel. Raised for CLAIMED hives only — an unassigned
+	// slot carrying the sentinel is the pool working as designed, and flagging
+	// all of them would bury the one hive an operator must actually fix (five of
+	// the six live sentinel hives are unassigned).
+	//
+	// Deliberately NOT gated on GitHubAppRequired: that flag is the spoke's own
+	// verdict, and a spoke too old — or too wedged — to classify its failure
+	// never sets it. The app_id is a raw number the spoke reports regardless, so
+	// this fires on hub-observed fact rather than on the spoke agreeing that it
+	// is broken. That is the difference between the fault being visible and the
+	// weeks of silence that made this bug expensive.
+	if !placeholder && h.GitHubAppID == config.PlaceholderAppID {
+		add(DriftKindAppIDPlaceholder, DriftCritical,
+			"This hive is authenticating as the placeholder App ID, which is not a real GitHub App — "+
+				"no installation ID or private key can make it work. The hub must assign the cluster's real "+
+				"github_app_id; the hive owner cannot fix this and should not be asked to")
+	}
+
 	// A placeholder legitimately has no App, no agents and ACMM 0. Flagging it
 	// for those would make the pool dominate the exceptions summary and hide
 	// the hives a human can actually fix.
@@ -479,10 +517,29 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 			} else if h.GitHubAppPermIssue != "" {
 				add(DriftKindAppPermIssue, DriftCritical,
 					fmt.Sprintf("GitHub App is installed but its permissions are insufficient: %s", h.GitHubAppPermIssue))
-			} else {
+			} else if h.GitHubAppID != config.PlaceholderAppID {
 				add(DriftKindAppMissing, DriftCritical,
 					"GitHub App is required by this hive but is not installed — agents cannot act on the repo")
 			}
+			// When the app_id IS the sentinel, "App not installed" is the exact
+			// misdiagnosis that sent the owner to correct an installation ID that
+			// was already right. app-id-placeholder above already says the true
+			// cause, so this row is suppressed rather than duplicated.
+		}
+		// A split GitHub identity: the components disagree about which forge
+		// they name. Raised on the spoke's OWN report of the whole set, which
+		// is only possible now that app_slug/api_url/base_url are reported
+		// back — with app_id alone, a half-applied identity was
+		// indistinguishable from a healthy one.
+		for _, issue := range IdentitySetIssues(IdentitySet{
+			AppID:          h.GitHubAppID,
+			AppSlug:        h.GitHubAppSlug,
+			InstallationID: h.GitHubInstallationID,
+			APIURL:         h.GitHubAPIURL,
+			BaseURL:        h.GitHubBaseURL,
+		}) {
+			add(DriftKindIdentitySplit, DriftCritical,
+				"GitHub identity is half-applied and only an operator can fix it: "+issue)
 		}
 		if h.ACMMLevel <= driftACMMUnsetLevel {
 			add(DriftKindACMMUnset, DriftWarn,

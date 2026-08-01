@@ -380,10 +380,48 @@
         <h2>Choose autonomy level</h2>
         <p>How much should the agents do on their own? Start low and increase as you build confidence. This only controls the mundane work &mdash; security patches, dependency updates, issue triage, test fixes &mdash; so your team can focus on what matters: innovation, outreach, and strategy.</p>
         <div class="acmm-options" id="acmm-options"></div>
+
+        <!-- Who is asking. These live on step 3 rather than step 2 because
+             step 2 is "Your repository" — it asks about the project, and its
+             one input is parsed as a repo URL. These describe the PERSON, and
+             they sit directly above the summary and the submit button, which
+             is where a requester expects to identify themselves before sending.
+             Both map onto the SaaSUser contact fields of the same name; they
+             are not new keys. -->
+        <div style="margin-top:1.4rem">
+          <label for="req-full-name" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Your name <span style="color:var(--red)">*</span>
+          </label>
+          <input type="text" id="req-full-name" placeholder="Ada Lovelace" maxlength="128"
+            oninput="clearContactError();updateSummary()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+          <p style="font-size:0.8rem;margin-top:6px;margin-bottom:0">
+            First and last name, so we know who the request is from &mdash; a GitHub username on its own
+            often does not say who a person is.
+          </p>
+        </div>
+
+        <div style="margin-top:1rem">
+          <label for="req-slack-id" style="display:block;font-size:0.86rem;color:var(--muted);margin-bottom:6px">
+            Slack ID <span style="color:var(--muted);font-weight:400">(optional)</span>
+          </label>
+          <input type="text" id="req-slack-id" placeholder="U01ABCDEF23 or @ada" maxlength="64"
+            oninput="clearContactError();updateSummary()"
+            style="width:100%;padding:9px 12px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.88rem">
+          <p style="font-size:0.8rem;margin-top:6px;margin-bottom:0">
+            Your Slack member ID or handle, if you have one. We use it to reach you about your hive
+            &mdash; leave it blank and we will use GitHub instead.
+          </p>
+        </div>
+        <div id="contact-err" style="display:none;margin-top:8px;font-size:0.8rem;color:var(--red)"></div>
+
         <div id="request-summary" style="margin:20px 0;padding:16px;background:#080b0f85;border:1px solid var(--line);border-radius:.7rem;font-size:0.85rem">
           <div style="margin-bottom:8px"><strong>Summary</strong></div>
           <div style="color:var(--muted)">Repo: <span id="summary-repos" style="color:var(--text)">none added</span></div>
+          <div style="color:var(--muted)">GitHub: <span id="summary-forge" style="color:var(--text)">github.com</span></div>
           <div style="color:var(--muted)">ACMM Level: <span id="summary-acmm" style="color:var(--text)"></span></div>
+          <div style="color:var(--muted)">Name: <span id="summary-name" style="color:var(--text)">&mdash;</span></div>
+          <div style="color:var(--muted)">Slack ID: <span id="summary-slack" style="color:var(--text)">&mdash;</span></div>
         </div>
         <!-- The wizard no longer asks anyone to install the GitHub App. This
              note is the handoff to where that now happens: after provisioning,
@@ -566,6 +604,25 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       document.getElementById('summary-repos').textContent = names.length ? names.join(', ') : 'none added';
       var entry = acmmEntry(_selectedAcmm);
       document.getElementById('summary-acmm').textContent = entry ? entry.label : ('L' + _selectedAcmm);
+      /* textContent, not innerHTML: these are the only free-text values in the
+         wizard, so a name containing an apostrophe or a <script> tag renders as
+         the literal characters the user typed and nothing is parsed as markup. */
+      var em = '—';
+      var nm = contactValue('req-full-name', CONTACT_MAX_NAME);
+      var sl = contactValue('req-slack-id', CONTACT_MAX_SLACK);
+      document.getElementById('summary-name').textContent = nm || em;
+      document.getElementById('summary-slack').textContent = sl || em;
+      // Surface the forge so the choice is explicit before the user submits — a
+      // GHE host (from a pasted enterprise repo URL) reads "github.ibm.com", a
+      // plain github.com request reads "github.com". Never blank/ambiguous.
+      var forgeEl = document.getElementById('summary-forge');
+      if (forgeEl) {
+        var fl = forgeLabel();
+        forgeEl.textContent = fl;
+        forgeEl.title = fl === 'github.com'
+          ? 'This hive will run against public github.com'
+          : 'This hive will run against your GitHub Enterprise instance (' + fl + ')';
+      }
     }
 
     /* parseRepoRef turns whatever a user pastes into {host, org, name}.
@@ -654,6 +711,39 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
     /* Shown when the field holds something that is not a repository reference. */
     var REPO_UNPARSEABLE_MSG = 'Enter a repository URL — for example github.com/my-org/my-repo or https://github.ibm.com/my-org/my-repo';
 
+    /* Contact-field caps, mirroring maxContactNameLen / maxContactSlackIDLen in
+       pkg/hub/saas.go. They are also the maxlength on the two inputs; the
+       server truncates to the same bounds, so these only stop a user typing
+       past a limit that would be silently applied anyway. */
+    var CONTACT_MAX_NAME = 128;
+    var CONTACT_MAX_SLACK = 64;
+    /* Shown when Request is pressed with no name. The server rejects the same
+       case, so refusing here reports it where it can be fixed rather than
+       after a round trip. */
+    var NAME_REQUIRED_MSG = 'Enter your name so we know who the request is from.';
+
+    function clearContactError() {
+      var err = document.getElementById('contact-err');
+      if (err) err.style.display = 'none';
+    }
+
+    function showContactError(msg) {
+      var err = document.getElementById('contact-err');
+      if (!err) return;
+      err.textContent = msg;
+      err.style.display = 'block';
+    }
+
+    /* Read a contact input, trimmed and clipped to its cap. Clipping with
+       .slice() counts UTF-16 code units where the server counts runes, so an
+       astral-plane name could still be trimmed further server-side — the cap is
+       generous enough that this is not a case a real name reaches, and the
+       server truncates rather than rejecting. */
+    function contactValue(id, cap) {
+      var el = document.getElementById(id);
+      return ((el && el.value) || '').trim().slice(0, cap);
+    }
+
     function clearRepoError() {
       var err = document.getElementById('repo-manual-err');
       if (err) err.style.display = 'none';
@@ -714,8 +804,41 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
       goToStep(WIZARD_STEP_LEVEL);
     }
 
+    // selectedForgeHost returns the GitHub forge the request targets, derived
+    // authoritatively from the selected repos: the enterprise host if any repo
+    // carries one (single-host-per-spoke is validated server-side, so at most one
+    // distinct host is possible), otherwise the explicit literal "github.com".
+    // It is never blank — a blank github_host fails the server's required-forge
+    // check (normalizeForgeHost) AND, if it slipped through, would let the hub's
+    // cluster placement rather than the user decide the forge. An explicit
+    // "github.com" passes the forge gate, resolves to public everywhere
+    // (gheAPIURLForHost/sameGitHubHost treat it as github.com), and is recorded
+    // non-blank so the cluster backfill cannot silently re-GHE it.
+    function selectedForgeHost() {
+      var withHost = _selectedRepos.find(function(r) { return r.github_host; });
+      return (withHost && withHost.github_host) || 'github.com';
+    }
+
+    // forgeLabel renders the chosen forge for the review step so the user SEES
+    // which GitHub instance the hive will run against before submitting — the
+    // choice is explicit, not silent.
+    function forgeLabel() {
+      return selectedForgeHost();
+    }
+
     async function submitRequest() {
       var btn = document.getElementById('submit-request');
+      /* Check the required name BEFORE disabling the button: bailing out after
+         btn.disabled = true would leave the user staring at a dead control. */
+      clearContactError();
+      var fullName = contactValue('req-full-name', CONTACT_MAX_NAME);
+      var slackID = contactValue('req-slack-id', CONTACT_MAX_SLACK);
+      if (!fullName) {
+        showContactError(NAME_REQUIRED_MSG);
+        var nameEl = document.getElementById('req-full-name');
+        if (nameEl) nameEl.focus();
+        return;
+      }
       btn.disabled = true;
       btn.textContent = 'Submitting...';
       try {
@@ -740,13 +863,17 @@ hive-contribute connect https://hive.kubestellar.io/hive/HIVE_ID</code></pre>
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             org: reqOrg,
-            // Carry the GHE host when a pasted URL supplied one, so the admin
-            // sees which instance the request targets and the spoke can later
-            // be pointed at the right API.
-            github_host: (_selectedRepos.find(function(r) { return r.github_host; }) || {}).github_host || '',
+            // Explicit forge, never blank: the GHE host if a repo carries one,
+            // else literal "github.com". See selectedForgeHost().
+            github_host: selectedForgeHost(),
             repos: reqRepos,
             primary_repo: reqRepos.split(',')[0],
-            acmm_level: _selectedAcmm
+            acmm_level: _selectedAcmm,
+            // Reuses the SaaSUser contact fields of the same names. On approval
+            // the hub copies these onto the user record, which is what the
+            // admin users panel and the Slack sender read.
+            full_name: fullName,
+            slack_id: slackID
           })
         });
         var data = await resp.json();

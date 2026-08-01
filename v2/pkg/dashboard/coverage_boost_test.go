@@ -1533,15 +1533,24 @@ func TestHandleGHUserAuthPoll_NoFlowInProgress(t *testing.T) {
 
 // --- handleGHUserAuthStart ---
 
-func TestHandleGHUserAuthStart_NoClientID(t *testing.T) {
+// Blank oauth_client_id must fall back to the public github.com client and run
+// the device flow, not 400. See OAuthClientIDResolved.
+func TestHandleGHUserAuthStart_BlankClientIDUsesPublicDefault(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.GitHub.OAuthClientID = ""
+	mock := deviceFlowMock(t, "complete", "octocat")
+	srv.deps.Config.GitHub.OAuthBaseURLOverride = mock.URL
+	srv.deps.Config.GitHub.OAuthAPIURLOverride = mock.URL
+
 	req := httptest.NewRequest("POST", "/api/gh-user-auth/start", nil)
 	w := httptest.NewRecorder()
 	srv.handleGHUserAuthStart(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("code = %d, want 400", w.Code)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200 (body=%s)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "ABCD-1234") {
+		t.Errorf("device flow did not run, body=%s", w.Body.String())
 	}
 }
 

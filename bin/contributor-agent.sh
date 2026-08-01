@@ -38,6 +38,25 @@ export HIVE_CONTRIBUTOR_CLI="$AGENT_BACKEND"
 # Username is extracted from contributor.env (set during registration)
 export HIVE_CONTRIBUTOR_USERNAME="${CONTRIBUTOR_USERNAME:-unknown}"
 
+# Extension seam for downstream images (kubestellar/hive#2393 item 4). A derived
+# image (e.g. projectbluefin/donate-clanker) can drop *.sh into
+# /etc/hive/entrypoint.d/ and/or set HIVE_PRE_AGENT_HOOK to run setup here —
+# after the full contributor env is exported, before backend detection and the
+# tmux launch — WITHOUT forking this entrypoint and re-implementing the tmux
+# wait/attach logic. Sourced (not exec'd) so hooks can export env the agent sees.
+if [[ -d /etc/hive/entrypoint.d ]]; then
+  for _hook in /etc/hive/entrypoint.d/*.sh; do
+    [[ -r "$_hook" ]] || continue
+    echo "Running entrypoint hook: $_hook"
+    # shellcheck source=/dev/null
+    source "$_hook"
+  done
+fi
+if [[ -n "${HIVE_PRE_AGENT_HOOK:-}" ]]; then
+  echo "Running HIVE_PRE_AGENT_HOOK"
+  eval "$HIVE_PRE_AGENT_HOOK"
+fi
+
 # Source backends.conf for binary detection
 BACKENDS_CONF="${SCRIPT_DIR}/../config/backends.conf"
 if [[ -f "$BACKENDS_CONF" ]]; then
@@ -223,14 +242,28 @@ case "$AGENT_BACKEND" in
     ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
     ;;
   goose)
+    # Goose reads AGENTS.md and .goosehints; .goose-instructions.md / CLAUDE.md
+    # are NOT names it looks for (unless CONTEXT_FILE_NAMES is overridden), so
+    # without these two the knowledge export downloaded above never reached the
+    # model. Keep the old names for backward-compat, but add the ones Goose
+    # actually reads. (kubestellar/hive#2393 item 1.)
+    ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"
+    ln -sf "$AGENT_MD" "${HOME}/.goosehints"
     ln -sf "$AGENT_MD" "${HOME}/.goose-instructions.md"
     ln -sf "$AGENT_MD" "${HOME}/CLAUDE.md"
     mkdir -p "${HOME}/.config/goose"
-    cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
+    # Write the config only if the contributor/derived image hasn't provided one,
+    # so a downstream can add Goose extensions (MCP servers) or other settings
+    # without it being clobbered on every start. (kubestellar/hive#2393 item 3.)
+    if [ ! -f "${HOME}/.config/goose/config.yaml" ]; then
+      cat > "${HOME}/.config/goose/config.yaml" <<GOOSECFG
 GOOSE_PROVIDER: ${GOOSE_PROVIDER:-ollama}
 GOOSE_MODEL: ${GOOSE_MODEL:-phi4}
 GOOSECFG
-    echo "Goose config: provider=${GOOSE_PROVIDER:-ollama} model=${GOOSE_MODEL:-phi4}"
+      echo "Goose config: provider=${GOOSE_PROVIDER:-ollama} model=${GOOSE_MODEL:-phi4}"
+    else
+      echo "Goose config: keeping existing ${HOME}/.config/goose/config.yaml"
+    fi
     ;;
   codex)
     ln -sf "$AGENT_MD" "${HOME}/AGENTS.md"

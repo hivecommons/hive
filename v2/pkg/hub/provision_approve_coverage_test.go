@@ -80,6 +80,53 @@ func TestHandleApproveProvision(t *testing.T) {
 	}
 }
 
+// TestHandleApproveProvisionRearmClaimDelivered guards #2372: a RECYCLED
+// placeholder (one previously claimed, then returned to the pool) still carries
+// the prior tenant's ClaimDelivered=true. Approving it for a new owner must
+// re-arm the org/repos claim handshake — resetting ClaimDelivered to false —
+// exactly as it re-arms ACMMDelivered. Leaving it true would suppress the
+// org/repos PUSH to the spoke and make the heartbeat adopt the spoke's stale
+// self-report, so hub and spoke silently keep the previous tenant's project.
+func TestHandleApproveProvisionRearmClaimDelivered(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	mkUser(t, hubAdminUsername)
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, saveCh: make(chan struct{}, 1), clusters: map[string]ClusterConfig{"hive-oke": *dynamicCluster()}}
+
+	saveProvisionRequest(&ProvisionRequest{
+		Username: "carol", Org: "acme", Repos: "repo", PrimaryRepo: "repo", ACMMLevel: 2,
+		AuthMethod: "public", RequestedAt: time.Now().UTC().Format(time.RFC3339), Status: provisionStatusPending,
+	})
+
+	// A recycled placeholder: available again but with BOTH delivery latches
+	// left true by the previous tenancy.
+	saveSaaSHive(&SaaSHive{
+		ID: "recycled1", Owner: hubAdminUsername, Status: statusAvailable, ClusterID: "hive-oke",
+		ClaimDelivered: true, ACMMDelivered: true,
+	})
+
+	rec := httptest.NewRecorder()
+	req := setPathValue(reqWithUser(http.MethodPost, "/approve-prov", `{"hive_id":"recycled1"}`, hubAdminUsername), "username", "carol")
+	s.handleApproveProvision(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("approve status = %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	got := loadSaaSHive("recycled1")
+	if got == nil {
+		t.Fatal("expected saved hive after approve")
+	}
+	if got.ClaimDelivered {
+		t.Errorf("ClaimDelivered = true after (re)assignment; want false so the next heartbeat re-delivers the org/repos claim (#2372)")
+	}
+	if got.ACMMDelivered {
+		t.Errorf("ACMMDelivered = true after (re)assignment; want false")
+	}
+	if got.Owner != "carol" {
+		t.Errorf("Owner = %q, want carol (placeholder should be claimed)", got.Owner)
+	}
+}
+
 func TestHandleToggleAutoUpgradeHeartbeatOnly(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()

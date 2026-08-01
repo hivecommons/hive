@@ -114,25 +114,29 @@ hub:
 > container that prefers the PVC backup over the ConfigMap:
 >
 > ```sh
-> if [ -f /data/hive.yaml.bak ]; then cp /data/hive.yaml.bak /etc/hive/hive.yaml; ...
+> if [ -f /data/hive.yaml.runtime ]; then cp /data/hive.yaml.runtime /etc/hive/hive.yaml; ...
 > ```
 >
-> If the migrated `/data` volume carries a stale `hive.yaml.bak`, **every
+> If the migrated `/data` volume carries a stale runtime config, **every
 > ConfigMap edit is silently overridden on restart**. Symptom: keys present
 > in the ConfigMap but empty (or missing) in the pod's
 > `/etc/hive/hive.yaml`. Fix during migration:
 >
-> 1. Move the stale backup aside:
+> 1. Move the stale file aside. Check **both** names — a hive that has not
+>    saved since the `hive.yaml.bak` → `hive.yaml.runtime` rename carries only
+>    the legacy one, and leaving it behind reintroduces the same override:
 >
 >    ```sh
->    mv /data/hive.yaml.bak /data/hive.yaml.bak.stale-<ts>
+>    for f in /data/hive.yaml.runtime /data/hive.yaml.bak; do
+>      [ -f "$f" ] && mv "$f" "$f.stale-$(date +%s)"
+>    done
 >    ```
 >
 > 2. Patch the init container to the current template's command, where the
 >    ConfigMap always wins:
 >
 >    ```sh
->    cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi
+>    cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -f /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; fi
 >    ```
 >
 > Checking the `copy-config` command should be a **standard migration step**

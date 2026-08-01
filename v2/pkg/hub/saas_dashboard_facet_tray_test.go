@@ -297,6 +297,15 @@ func TestFacetTrayLayersBelowRowHoverPanels(t *testing.T) {
 // every row must emit the same number of cells, and the colspan constants that
 // span the table must match that number. A past bug moved a <th> without moving
 // its <td>, which silently shifted every column right of it.
+// buildRowReturnAnchor locates the start of buildRow's return expression.
+//
+// Deliberately stops before the '>' of the <tr>: the row now carries an id
+// attribute (the anchor the "Attention needed" panel scrolls to), and matching
+// the bare "return '<tr>' +" broke the moment that attribute was added. These
+// tests are about which CELLS the row emits, so they must not be coupled to the
+// <tr>'s attributes.
+const buildRowReturnAnchor = "return '<tr"
+
 func TestHiveTableColumnCountsAgree(t *testing.T) {
 	html := dashScript(t)
 
@@ -320,7 +329,7 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 	if bStart < 0 {
 		t.Fatal("could not find buildRow")
 	}
-	retIdx := strings.Index(html[bStart:], "return '<tr>' +")
+	retIdx := strings.Index(html[bStart:], buildRowReturnAnchor)
 	if retIdx < 0 {
 		t.Fatal("could not find buildRow's return")
 	}
@@ -340,20 +349,21 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 		t.Errorf("header emits %d <th> cells but a row emits %d cells — "+
 			"every column right of the mismatch is shifted", thCount, tdCount)
 	}
-	// 18: the Public column was folded into Location (visibility stacks beneath
-	// the location badge) leaving 16 — see the Location cell in buildRow — the
-	// AI Author column was then added alongside ACMM to show the GitHub
-	// identity a hive's agents open PRs as, and Provisioned was added at the
-	// end so the fleet can be ordered by when each hive was first seen.
-	const wantColumns = 18
+	// 17: the Public column folded into Location (visibility stacks beneath the
+	// location badge) and the AI Author column folded into the Repos cell (its
+	// "as:" line, freeing a column). Provisioned keeps a thin sort-only header
+	// ("Prov ⇅") but its date moved into the status hover panel — so it stays a
+	// column (empty placeholder cell) for the sort trigger while giving back the
+	// wide date. Provision-date ordering still works via that header.
+	const wantColumns = 17
 	if thCount != wantColumns {
 		t.Errorf("hive table has %d columns, want %d", thCount, wantColumns)
 	}
 	// The colspan constants span the whole table; a stale value leaves the
 	// section separators and the pending-requests row visibly short.
 	for _, decl := range []string{
-		"var TOTAL_COLUMNS = 18;",
-		"var TOTAL_COLUMNS_HEADER = 18;",
+		"var TOTAL_COLUMNS = 17;",
+		"var TOTAL_COLUMNS_HEADER = 17;",
 	} {
 		if !strings.Contains(html, decl) {
 			t.Errorf("missing or stale colspan constant: %s", decl)
@@ -392,7 +402,7 @@ func TestDriftColumnSitsRightOfJourney(t *testing.T) {
 
 	// --- body order, over the same expression the row is built from.
 	bStart := strings.Index(html, "var buildRow = function(h, i, section) {")
-	retIdx := strings.Index(html[bStart:], "return '<tr>' +")
+	retIdx := strings.Index(html[bStart:], buildRowReturnAnchor)
 	rStart := bStart + retIdx
 	rEnd := strings.Index(html[rStart:], "'</tr>' + pendingExpandRow;")
 	if bStart < 0 || retIdx < 0 || rEnd < 0 {
