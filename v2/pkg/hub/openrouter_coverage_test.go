@@ -34,8 +34,8 @@ func TestPendingGatewayLifecycle(t *testing.T) {
 	if s.hasPendingGateway("h1") {
 		t.Error("no gateway should be pending initially")
 	}
-	if got := s.takePendingGateway("h1"); got != nil {
-		t.Error("take on empty should be nil")
+	if got := s.pendingGatewayFor("h1", nil); got != nil {
+		t.Error("fetch on empty should be nil")
 	}
 
 	gw := &HeartbeatGatewayConfig{Name: "openrouter", Key: "k"}
@@ -43,12 +43,22 @@ func TestPendingGatewayLifecycle(t *testing.T) {
 	if !s.hasPendingGateway("h1") {
 		t.Error("gateway should be pending after queue")
 	}
-	got := s.takePendingGateway("h1")
+	got := s.pendingGatewayFor("h1", nil)
 	if got == nil || got.Key != "k" {
-		t.Errorf("take = %+v, want key=k", got)
+		t.Errorf("fetch = %+v, want key=k", got)
+	}
+	// This assertion is INVERTED from what it used to be. It previously required
+	// the record to be gone after a single fetch, which is what made a funded
+	// gateway at-most-once: one lost beat and the user's money bought nothing.
+	// It must now survive until the spoke reports the gateway back.
+	if !s.hasPendingGateway("h1") {
+		t.Error("gateway was drained on send; it must persist until the spoke confirms it")
+	}
+	if got := s.pendingGatewayFor("h1", []string{"openrouter"}); got != nil {
+		t.Error("still offered after the spoke confirmed it")
 	}
 	if s.hasPendingGateway("h1") {
-		t.Error("gateway should be drained after take")
+		t.Error("gateway should be cleared once confirmed")
 	}
 }
 

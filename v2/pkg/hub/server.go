@@ -1379,9 +1379,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Deliver a funded OpenRouter gateway to a firewalled/heartbeat-only spoke.
-	// Drained on delivery (carries a secret key value, so it is sent once, not
-	// re-sent every beat). The key value is not logged.
-	if gw := s.takePendingGateway(payload.HiveID); gw != nil {
+	// Re-offered until the spoke REPORTS the gateway back, then cleared. The key
+	// value is never logged. Draining on send instead made this at-most-once for
+	// something already paid for — see pendingGatewayFor.
+	if gw := s.pendingGatewayFor(payload.HiveID, payload.GatewayNames); gw != nil {
 		resp.PendingGateway = gw
 		s.logger.Info("heartbeat: delivering funded gateway to spoke",
 			"hive_id", payload.HiveID, "gateway", gw.Name, "default_model", gw.DefaultModel)

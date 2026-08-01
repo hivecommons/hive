@@ -401,6 +401,17 @@ type HeartbeatPayload struct {
 	// nudge", NOT as a genuine zero. Never threaten a hive over a signal that
 	// was never sent.
 	AgentsWithModel *int `json:"agents_with_model,omitempty"`
+	// GatewayNames lists the model gateways this spoke currently has configured.
+	//
+	// It is the READ-BACK for a hub-funded gateway. Without it the hub drained
+	// its pending record the moment it put the gateway on the wire, so a
+	// delivery lost to a dropped beat, a hub restart, or a spoke-side
+	// ApplyDeliveredGateway error was gone for good — the user paid and the
+	// gateway never arrived, with nothing left to retry from.
+	//
+	// nil/empty means the spoke is too old to report (UNKNOWN, never "has
+	// none"), so an absent list must not be read as a failed delivery.
+	GatewayNames []string `json:"gateway_names,omitempty"`
 	// GitHubAppKeyFingerprint is a NON-SECRET identifier for the GitHub App
 	// private key this spoke currently holds — "sha256:<hex>" over the DER
 	// public key derived from it (config.AppKeyFingerprint). It exists so the

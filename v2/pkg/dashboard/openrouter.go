@@ -325,3 +325,30 @@ func (s *Server) resolveOpenRouterKey() string {
 func (s *Server) redirectOpenRouter(w http.ResponseWriter, r *http.Request, flag string) {
 	http.Redirect(w, r, "/"+flag, http.StatusFound)
 }
+
+// ConfiguredGatewayNames returns the names of the model gateways this spoke
+// currently has, for the heartbeat read-back.
+//
+// It is what lets the hub stop re-offering a funded gateway: the hub clears its
+// pending record only when the spoke reports that gateway back, so a delivery
+// lost in flight — or one that failed inside ApplyDeliveredGateway — is offered
+// again on the next beat instead of vanishing.
+//
+// Names only. A gateway carries a secret key and an endpoint; neither belongs
+// in a heartbeat payload, and the name alone is sufficient to confirm arrival.
+func (s *Server) ConfiguredGatewayNames() []string {
+	if s == nil || s.deps.Config == nil {
+		return nil
+	}
+	gws := s.deps.Config.Governor.ResolvedGateways()
+	if len(gws) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(gws))
+	for _, gw := range gws {
+		if n := strings.TrimSpace(gw.Name); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}

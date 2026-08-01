@@ -116,13 +116,37 @@ func TestHandleHeartbeatDeliversPending(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	// The pending gateway should be drained on delivery.
-	if s.hasPendingGateway(hiveID) {
-		t.Error("expected pending gateway drained after heartbeat delivery")
-	}
-	// The response body should carry the funded gateway.
+	// The response body must carry the funded gateway.
 	if !strings.Contains(rec.Body.String(), "openrouter") {
 		t.Errorf("expected pending gateway in response, got %s", rec.Body.String())
+	}
+	// It must NOT be drained yet. This assertion is inverted from what it used to
+	// be: draining on send made a paid-for gateway at-most-once, so a response
+	// lost in flight — or one the spoke failed to apply — dropped it with nothing
+	// left to retry from. The spoke's payload above reports no gateways, which is
+	// UNKNOWN (an older spoke cannot report), never a confirmation.
+	if !s.hasPendingGateway(hiveID) {
+		t.Error("gateway was drained on send; it must survive until the spoke reports it back")
+	}
+
+	// Once the spoke reports the gateway, the hub stops offering it.
+	confirmBody := `{
+		"hive_id":"kellyaa",
+		"org":"testorg",
+		"primary_repo":"repo",
+		"repos":["repo"],
+		"dashboard_url":"https://kellyaa.hive.kubestellar.io",
+		"git_hash":"deadbeef1234",
+		"is_public":true,
+		"tokens_24h":42,
+		"gateway_names":["openrouter"]
+	}`
+	rec2 := postHeartbeat(t, s, confirmBody)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("confirm status = %d body=%s", rec2.Code, rec2.Body.String())
+	}
+	if s.hasPendingGateway(hiveID) {
+		t.Error("gateway still pending after the spoke reported it back")
 	}
 }
 

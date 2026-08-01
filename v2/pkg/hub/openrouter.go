@@ -220,16 +220,37 @@ func (s *HubServer) queuePendingGateway(hiveID string, gw *HeartbeatGatewayConfi
 	s.pendingGateways[hiveID] = gw
 }
 
-// takePendingGateway returns and REMOVES the pending gateway for hiveID (drained
-// on delivery so a secret key is sent once, not re-sent every beat), or nil.
-func (s *HubServer) takePendingGateway(hiveID string) *HeartbeatGatewayConfig {
+// pendingGatewayFor returns the gateway queued for hiveID, clearing it only once
+// the spoke has REPORTED that gateway back.
+//
+// It used to delete on send. That made delivery at-most-once for a value the
+// user has already paid for: a beat lost in flight, a hub restart before the
+// next beat, or a spoke-side ApplyDeliveredGateway error all dropped the
+// gateway permanently, with nothing left to retry from and only a spoke log
+// line to say so.
+//
+// Draining on CONFIRMATION instead makes it at-least-once-then-stop, the same
+// contract the GitHub identity record uses. Re-sending until confirmed is safe:
+// ApplyDeliveredGateway replaces a gateway of the same name, so a duplicate
+// delivery is a no-op rather than a second charge.
+//
+// reported is what the spoke says it currently has. An EMPTY list means the
+// spoke is too old to report — UNKNOWN, not "does not have it" — so it never
+// counts as confirmation and never as failure; the delivery simply stays queued
+// and keeps being offered.
+func (s *HubServer) pendingGatewayFor(hiveID string, reported []string) *HeartbeatGatewayConfig {
 	s.pendingGatewaysMu.Lock()
 	defer s.pendingGatewaysMu.Unlock()
 	gw, ok := s.pendingGateways[hiveID]
 	if !ok {
 		return nil
 	}
-	delete(s.pendingGateways, hiveID)
+	for _, name := range reported {
+		if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(gw.Name)) {
+			delete(s.pendingGateways, hiveID)
+			return nil
+		}
+	}
 	return gw
 }
 

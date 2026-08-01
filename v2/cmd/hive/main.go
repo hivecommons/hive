@@ -2366,7 +2366,12 @@ func main() {
 			// "genuinely zero agents configured" from "old spoke, unknown".
 			agentsWithModel := agentMgr.CountAgentsWithModel()
 			return &hub.HeartbeatPayload{
-				AgentsWithModel:   &agentsWithModel,
+				AgentsWithModel: &agentsWithModel,
+				// Read-back for hub-funded gateways: the hub clears its pending
+				// record only when it sees the gateway named here, so a lost
+				// delivery is re-offered rather than dropped. Names only — the
+				// key never leaves the spoke.
+				GatewayNames:      dashSrv.ConfiguredGatewayNames(),
 				HiveID:            cfg.HiveID,
 				Org:               cfg.Project.Org,
 				AIAuthor:          cfg.Project.AIAuthor,
