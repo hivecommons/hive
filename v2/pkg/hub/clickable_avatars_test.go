@@ -65,7 +65,10 @@ func TestAvatarAnchorSafety(t *testing.T) {
 		{"opens in a new tab", `target="_blank"`},
 		{"blocks opener and referrer", `rel="noopener noreferrer"`},
 		{"names the link for assistive tech", `aria-label="' + escAttr(label || uname) + '"`},
-		{"native tooltip names the user too", `title="' + escAttr(label || uname) + '"`},
+		// The native tooltip is escAttr'd via a `title` var that starts from the
+		// label (and folds in a "logged in now" line for a live user).
+		{"native tooltip is escaped", `title="' + escAttr(title) + '"`},
+		{"native tooltip starts from the user label", `var title = label || uname;`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
