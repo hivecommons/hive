@@ -162,6 +162,10 @@ type Service struct {
 	options Options
 	mu      sync.Mutex
 	trigger chan triggerRequest
+
+	triggerMu     sync.Mutex
+	triggerQueued bool
+	cycleActive   bool
 }
 
 type triggerRequest struct {
@@ -196,7 +200,7 @@ func New(options Options) (*Service, error) {
 	if err := os.MkdirAll(filepath.Join(root, "normal-service"), 0o700); err != nil {
 		return nil, err
 	}
-	return &Service{options: options, trigger: make(chan triggerRequest)}, nil
+	return &Service{options: options, trigger: make(chan triggerRequest, 1)}, nil
 }
 
 // Trigger requests one immediate cycle from the already-running normal
@@ -210,16 +214,23 @@ func (service *Service) Trigger(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	request := triggerRequest{context: ctx, result: make(chan error, 1)}
-	select {
-	case service.trigger <- request:
-	case <-ctx.Done():
-		return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
 	}
+	request := triggerRequest{context: ctx, result: make(chan error, 1)}
+	service.triggerMu.Lock()
+	if service.cycleActive || service.triggerQueued {
+		service.triggerMu.Unlock()
+		return integrated.ErrRunInProgress
+	}
+	service.triggerQueued = true
+	service.trigger <- request
+	service.triggerMu.Unlock()
 	select {
 	case err := <-request.result:
 		return err
 	case <-ctx.Done():
+		service.dropQueuedTrigger()
 		return ctx.Err()
 	}
 }
@@ -307,6 +318,14 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 
 	var requested *triggerRequest
 	for {
+		requested = service.beginLeaseCycle(requested)
+		if requested != nil && requested.context.Err() != nil {
+			service.finishLeaseCycle()
+			requested.result <- requested.context.Err()
+			close(requested.result)
+			requested = nil
+			continue
+		}
 		startedAt := time.Now().UTC()
 		deadline := startedAt.Add(service.options.MaxCycleDuration)
 		cycleCtx, cancelCycle := context.WithDeadline(epochCtx, deadline)
@@ -321,6 +340,7 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 			stopRequestedContext()
 		}
 		cancelCycle()
+		service.finishLeaseCycle()
 		service.reportCycle(err)
 		if requested != nil {
 			requested.result <- err
@@ -357,6 +377,7 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 		case request := <-service.trigger:
 			stopTimer(timer)
 			if request.context.Err() != nil {
+				service.clearQueuedTrigger()
 				request.result <- request.context.Err()
 				close(request.result)
 				continue
@@ -364,6 +385,49 @@ func (service *Service) runLeaseEpoch(ctx context.Context, release func()) {
 			requested = &request
 		case <-timer.C:
 		}
+	}
+}
+
+// beginLeaseCycle closes the race between an automatic cadence cycle and an
+// operator trigger. A trigger queued before the cycle begins is satisfied by
+// that cycle; a trigger arriving after this point is rejected as already in
+// progress instead of silently scheduling a second expensive run.
+func (service *Service) beginLeaseCycle(requested *triggerRequest) *triggerRequest {
+	service.triggerMu.Lock()
+	defer service.triggerMu.Unlock()
+	if requested == nil && service.triggerQueued {
+		request := <-service.trigger
+		requested = &request
+	}
+	service.triggerQueued = false
+	service.cycleActive = true
+	return requested
+}
+
+func (service *Service) finishLeaseCycle() {
+	service.triggerMu.Lock()
+	service.cycleActive = false
+	service.triggerMu.Unlock()
+}
+
+func (service *Service) clearQueuedTrigger() {
+	service.triggerMu.Lock()
+	service.triggerQueued = false
+	service.triggerMu.Unlock()
+}
+
+func (service *Service) dropQueuedTrigger() {
+	service.triggerMu.Lock()
+	defer service.triggerMu.Unlock()
+	if !service.triggerQueued {
+		return
+	}
+	select {
+	case <-service.trigger:
+		service.triggerQueued = false
+	default:
+		// The service received the request and will clear the queued marker
+		// while atomically marking its cycle active.
 	}
 }
 

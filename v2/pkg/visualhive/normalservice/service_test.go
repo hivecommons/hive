@@ -563,6 +563,74 @@ func TestNormalServiceTriggerRunsImmediateCycleThroughExistingLeaseEpoch(t *test
 	}
 }
 
+func TestNormalServiceTriggerDoesNotQueueBehindActiveCycle(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.intake.dispatch = nil
+	started := make(chan struct{})
+	release := make(chan struct{})
+	completed := make(chan struct{}, 1)
+	source := &observedBlockingArtifactSource{inner: fixture.source, started: started, release: release}
+	service, err := New(Options{
+		StateDir: t.TempDir(), PollInterval: time.Hour,
+		AcquireLease:  func() (func(), error) { return func() {}, nil },
+		ShouldQuiesce: func() (bool, error) { return false, nil },
+		Source:        source, Intake: fixture.intake, Repairer: fixture.repairer, Verdict: fixture.verifier, PullRequestState: fixture.verifier,
+		OnCycle: func(error) {
+			select {
+			case completed <- struct{}{}:
+			default:
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		service.Run(runCtx)
+		close(done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("normal service did not enter its active cycle")
+	}
+
+	triggerCtx, triggerCancel := context.WithTimeout(context.Background(), time.Second)
+	defer triggerCancel()
+	if err := service.Trigger(triggerCtx); !errors.Is(err, integrated.ErrRunInProgress) {
+		cancel()
+		t.Fatalf("trigger queued behind an active cycle: %v", err)
+	}
+	if calls := source.callCount(); calls != 1 {
+		cancel()
+		t.Fatalf("active-cycle trigger started another fetch: calls=%d", calls)
+	}
+	close(release)
+	select {
+	case <-completed:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("active cycle did not finish after release")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if calls := source.callCount(); calls != 1 {
+		cancel()
+		t.Fatalf("rejected active-cycle trigger ran after the first cycle: calls=%d", calls)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("normal service did not stop after active-cycle trigger test")
+	}
+	if calls := source.callCount(); calls != 1 {
+		t.Fatalf("active-cycle trigger was replayed after cancellation: calls=%d", calls)
+	}
+}
+
 func TestNormalServiceTriggerDoesNotBypassQuiescence(t *testing.T) {
 	fixture := newServiceFixture(t)
 	service, err := New(Options{
@@ -585,6 +653,12 @@ func TestNormalServiceTriggerDoesNotBypassQuiescence(t *testing.T) {
 	if err := service.Trigger(triggerCtx); !errors.Is(err, context.DeadlineExceeded) {
 		cancel()
 		t.Fatalf("quiesced trigger result = %v", err)
+	}
+	secondCtx, secondCancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer secondCancel()
+	if err := service.Trigger(secondCtx); !errors.Is(err, context.DeadlineExceeded) {
+		cancel()
+		t.Fatalf("timed-out quiesced trigger left a stale queued request: %v", err)
 	}
 	if fixture.source.fetches != 0 {
 		cancel()
@@ -1238,6 +1312,39 @@ func (blockingArtifactSource) Fetch(ctx context.Context) (integrated.NormalVisua
 
 func (blockingArtifactSource) Consume(integrated.WorkflowRunEvidence, bool) error {
 	return nil
+}
+
+type observedBlockingArtifactSource struct {
+	mu      sync.Mutex
+	calls   int
+	inner   *fakeArtifactSource
+	started chan<- struct{}
+	release <-chan struct{}
+}
+
+func (source *observedBlockingArtifactSource) Fetch(ctx context.Context) (integrated.NormalVisualWork, error) {
+	source.mu.Lock()
+	source.calls++
+	if source.calls == 1 {
+		close(source.started)
+	}
+	source.mu.Unlock()
+	select {
+	case <-source.release:
+		return source.inner.Fetch(ctx)
+	case <-ctx.Done():
+		return integrated.NormalVisualWork{}, ctx.Err()
+	}
+}
+
+func (source *observedBlockingArtifactSource) Consume(workflow integrated.WorkflowRunEvidence, allow bool) error {
+	return source.inner.Consume(workflow, allow)
+}
+
+func (source *observedBlockingArtifactSource) callCount() int {
+	source.mu.Lock()
+	defer source.mu.Unlock()
+	return source.calls
 }
 
 type setupBaselineQuiescenceSource struct {
