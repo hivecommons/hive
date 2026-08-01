@@ -82,7 +82,7 @@
     .header-right { display: flex; align-items: center; gap: .8rem; justify-self: end; }
 
     /* ── Utility ── */
-    .section-pad { padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 4vw, 4.5rem); }
+    .section-pad { padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 4vw, 4.5rem); scroll-margin-top: 5.5rem; }
     .section-label {
       color: var(--amber);
       letter-spacing: .12em;
@@ -483,7 +483,10 @@
     }
 
     /* ── Hive table ── */
-    .section { max-width: 1200px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 4.5rem) 3rem; }
+    /* scroll-margin-top clears the sticky .site-header (~4.5rem tall) so an
+       in-page jump (Contributors/Public-hives tiles, leaderboard link) lands
+       with the section's own heading visible, not scrolled up under the nav. */
+    .section { max-width: 1200px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 4.5rem) 3rem; scroll-margin-top: 5.5rem; }
     .section > h2 {
       font-size: 1.4rem;
       font-weight: 800;
@@ -692,12 +695,15 @@
         <div class="metric-grid">
           <div><span>Agents running</span><strong id="stat-agents">—</strong></div>
           <div><span>Managed repos</span><strong id="stat-repos">—</strong></div>
-          <!-- The Contributors tile links to the "Contribute compute to a hive"
-               card (#contribute-compute), which explains how contributing works:
-               you lend your AI CLI to run agents for a public hive via ClankeR
-               and climb the leaderboard. Same stat-jump affordance/keyboard
-               access as the Public hives tile. -->
-          <a href="#contribute-compute" class="stat-jump" title="Learn how to contribute compute"><span>Contributors</span><strong id="stat-contributors">—</strong></a>
+          <!-- The Contributors tile jumps to the public-hive table (#hives),
+               where the "Want to help?" blurb explains that clicking a hive's
+               Contribute button lends your AI CLI to run its agents via ClankeR.
+               Sending the click straight to the actionable list (rather than the
+               explainer card lower down) is why this points at #hives; the
+               "click to help a hive" CTA names the action, mirroring the
+               "click to request one" Available-hives tile. Same stat-jump
+               affordance/keyboard access as the Public hives tile. -->
+          <a href="#hives" class="stat-jump" title="Help a public hive — lend your CLI to its agents"><span>Contributors</span><strong id="stat-contributors">—</strong><span class="stat-cta">click to help a hive</span></a>
           <!-- The Public hives tile jumps to the public-hive table below (#hives),
                since that table IS the list of public hives this count describes.
                An <a> (not a JS scroll handler) keeps it keyboard-focusable and
@@ -993,7 +999,7 @@
       </div>
       <!-- Contribute blurb: the Contributors tile and the "Contribute compute"
            card both point here, so name the action next to the list it refers to. -->
-      <p style="color:var(--muted);font-size:.85rem;margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and lend your AI CLI to run its agents through ClankeR &mdash; <a href="/get-started#contribute" style="color:var(--blue)">start contributing</a>. Your work shows up as tasks completed under your GitHub username on that hive and on the leaderboard.</p>
+      <p style="color:var(--muted);font-size:.85rem;margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and click its <strong style="color:var(--text)">Contribute</strong> button to run its agents through ClankeR and contribute fixes to a hive of your choice. Your work shows up as tasks completed under your GitHub username, on that hive and on the <a href="#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
       <div id="hive-table-container"><div class="loading">Loading hives...</div></div>
     </section>
 
