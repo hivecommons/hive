@@ -12,10 +12,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 var saasHivesDir = "/data/saas/hives"
@@ -176,9 +179,120 @@ type ClusterConfig struct {
 	//
 	// Zero means "this cluster has no hub-managed App identity" — the hub then
 	// changes nothing about its spokes' credentials.
-	GitHubAppID                 int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
-	OAuthClientID               string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+	GitHubAppID   int64  `json:"github_app_id,omitempty" yaml:"github_app_id,omitempty"`
+	OAuthClientID string `json:"oauth_client_id,omitempty" yaml:"oauth_client_id,omitempty"`
+	// Forges carries App identity for EVERY forge this cluster can serve, keyed
+	// by bare forge host ("github.com", "github.ibm.com").
+	//
+	// WHY THIS FIELD EXISTS. The flat github_app_id/github_app_slug/github_*_url
+	// fields above give a cluster exactly ONE identity slot, which made a
+	// cluster's forge a PIN rather than a DEFAULT. On 2026-07-31 that cost seven
+	// hives their identity: adding github_app_slug: kubestellar-hive-ghe to the
+	// vllm-d entry handed a GHE App to every public-GitHub hive on the cluster,
+	// because there was nowhere else for a public identity to live. Those hives
+	// had already ELECTED github.com in their meta.json github_host — the hub
+	// knew the right answer and had no field in which to act on it.
+	//
+	// Per the platform owner: "vllm-d is used for GHE, but gh can be elected."
+	// A cluster's forge is a DEFAULT with per-hive election. This map is what
+	// makes a public election on a GHE-default cluster RESOLVABLE instead of
+	// 409-ing as "incomplete".
+	//
+	// BACKWARD COMPATIBILITY: an entry that omits this map still works. The flat
+	// fields are read as the DEFAULT forge's identity (see forgesForCluster), so
+	// today's single-identity clusters.json parses and behaves unchanged. This
+	// field is purely additive.
+	Forges map[string]ClusterForgeIdentity `json:"forges,omitempty" yaml:"forges,omitempty"`
+	// DefaultForge names which forge a hive on this cluster gets when it has not
+	// elected one, as a bare host. Empty means "infer from the flat fields" —
+	// github_base_url/github_api_url if set, else public github.com — which is
+	// exactly today's behaviour.
+	DefaultForge                string `json:"default_forge,omitempty" yaml:"default_forge,omitempty"`
 	ClusterHealthTimeoutSeconds int    `json:"cluster_health_timeout_seconds,omitempty" yaml:"cluster_health_timeout_seconds,omitempty"`
+}
+
+// ClusterForgeIdentity is one forge's App registration on one cluster. It is
+// the non-secret half only: as with the flat GitHubAppID field, the matching
+// PRIVATE KEY lives in its own 0600 file keyed by cluster ID, never here.
+//
+// AppID and AppSlug are BOTH required for an identity to count as complete —
+// see forgeIdentityForTarget, which refuses a switch rather than let an empty
+// slug fall back to the public default and build an install link that 404s on
+// GHE.
+type ClusterForgeIdentity struct {
+	AppID   int64  `json:"app_id,omitempty" yaml:"app_id,omitempty"`
+	AppSlug string `json:"app_slug,omitempty" yaml:"app_slug,omitempty"`
+	// APIURL and BaseURL are optional. For a forge in config.forgeIdentities
+	// they are derivable from the host, so a cluster entry need only name the
+	// App. They exist for a third GHE instance the derivation table does not
+	// know, where the URLs cannot be inferred.
+	APIURL  string `json:"api_url,omitempty" yaml:"api_url,omitempty"`
+	BaseURL string `json:"base_url,omitempty" yaml:"base_url,omitempty"`
+}
+
+// forgeHostKey reduces any spelling of a forge — bare host, web URL, or API
+// URL — to the canonical bare-host key used by ClusterConfig.Forges.
+//
+// githubHostLabel alone is NOT sufficient: it strips the scheme but keeps the
+// path, so an api_url of https://github.ibm.com/api/v3 yields
+// "github.ibm.com/api/v3", which matches no map key and no target host. Every
+// lookup into the forges map must go through this.
+func forgeHostKey(s string) string {
+	h := strings.ToLower(githubHostLabel(s))
+	h = strings.TrimSuffix(strings.TrimRight(h, "/"), "/api/v3")
+	h = strings.SplitN(h, "/", 2)[0]
+	if h == "" || h == "api.github.com" {
+		return publicForgeHost
+	}
+	return h
+}
+
+// forgesForCluster returns the cluster's per-forge identity map, synthesising
+// the legacy single-identity shape when `forges` is absent.
+//
+// This is the compatibility seam. A cluster entry written before this change
+// has its flat github_app_id/github_app_slug read as the identity of the forge
+// its github_base_url/github_api_url name — which is precisely what those
+// fields have always meant. An entry that carries an explicit `forges` map wins
+// outright, and a map entry for a given host overrides the synthesised one.
+func forgesForCluster(c *ClusterConfig) map[string]ClusterForgeIdentity {
+	out := map[string]ClusterForgeIdentity{}
+	if c == nil {
+		return out
+	}
+	// Legacy flat fields -> the identity of the cluster's own (default) forge.
+	if c.GitHubAppID != 0 || strings.TrimSpace(c.GitHubAppSlug) != "" {
+		out[clusterDefaultForge(c)] = ClusterForgeIdentity{
+			AppID:   c.GitHubAppID,
+			AppSlug: strings.TrimSpace(c.GitHubAppSlug),
+			APIURL:  c.GitHubAPIURL,
+			BaseURL: c.GitHubBaseURL,
+		}
+	}
+	// Explicit per-forge entries override the synthesised one.
+	for host, id := range c.Forges {
+		out[forgeHostKey(host)] = id
+	}
+	return out
+}
+
+// clusterDefaultForge returns the forge a hive on this cluster gets when it has
+// elected nothing: explicit default_forge, else the host named by the flat URL
+// fields, else public github.com.
+func clusterDefaultForge(c *ClusterConfig) string {
+	if c == nil {
+		return publicForgeHost
+	}
+	if f := strings.TrimSpace(c.DefaultForge); f != "" {
+		return forgeHostKey(f)
+	}
+	if c.GitHubBaseURL != "" {
+		return forgeHostKey(c.GitHubBaseURL)
+	}
+	if c.GitHubAPIURL != "" {
+		return forgeHostKey(c.GitHubAPIURL)
+	}
+	return publicForgeHost
 }
 
 // kubectlForCluster builds an exec.Cmd that targets a specific cluster.
@@ -311,7 +425,86 @@ type SaaSHive struct {
 	// project); after that the spoke's dashboard becomes the source of truth and
 	// the hub ADOPTS operator edits instead of pushing. (ACMM is operator-owned
 	// from the start and always adopted, independent of this flag.)
-	ClaimDelivered  bool                   `json:"claim_delivered,omitempty"`
+	ClaimDelivered bool `json:"claim_delivered,omitempty"`
+	// ACMMDelivered flips true once the spoke has reported back the ACMM level
+	// the hub assigned it. It is the level's OWN half of the claim handshake,
+	// deliberately separate from ClaimDelivered.
+	//
+	// WHY IT CANNOT REUSE ClaimDelivered
+	//
+	// #2333 put ACMM on the ClaimDelivered handshake, which is right for hives
+	// claimed from then on. But ClaimDelivered is PERSISTED STATE, and every
+	// hive claimed before that change already had it set to true under the old
+	// rule, which required only org/repos to match. For those hives both halves
+	// of the fix are permanently disabled on the first beat after upgrade: the
+	// push is gated on !ClaimDelivered (already false, so never pushes) and the
+	// adopt is gated on ClaimDelivered (already true, so the stale spoke report
+	// is adopted). The requested level was overwritten in meta long ago, so hub
+	// and spoke now agree on the wrong number and no drift is even detectable.
+	// That is exactly the live hosted-available-oke-11-placeholder-r05x state:
+	// an approved acmm_level 3 request running, and displaying, as L2.
+	//
+	// A separate flag defaults to false on every existing hive, so the level
+	// delivery re-arms once for hives that never got it — without re-opening the
+	// org/repos claim, and without a migration.
+	ACMMDelivered bool `json:"acmm_delivered,omitempty"`
+	// RequestedACMMLevel is the level the approved provision request asked for,
+	// recorded at assign time so it survives the spoke overwriting ACMMLevel in
+	// meta. It is the level the hub delivers; ACMMLevel is the level currently
+	// in effect. Zero means "nothing was explicitly requested" — the ordinary
+	// case for admin-created and pre-existing hives — and delivers nothing.
+	RequestedACMMLevel int `json:"requested_acmm_level,omitempty"`
+
+	// RequestedGitHubHost / ForgeDelivered are the FORGE half of the same
+	// delivery handshake, added for the operator-facing forge switch
+	// (handleSwitchForge). They exist for exactly the reason ACMMDelivered
+	// does, and the reason is worth stating because it was verified the hard
+	// way on the live fleet.
+	//
+	// WHY A HUB-SIDE EDIT OF GitHubHost DOES NOT STICK
+	//
+	// github_host was edited to "github.ibm.com" in a live hive's meta.json and
+	// the hub restarted. Within one beat the registry was back to "github.com".
+	// handleHeartbeat records RegistryEntry.GitHubHost from the SPOKE's
+	// HeartbeatPayload.GitHubHost every beat, and the spoke derives that from
+	// its own config via GitHubConfig.HostLabel(). The hub's edit changed
+	// nothing the spoke reports, so the spoke simply re-reported the unchanged
+	// truth and the hub adopted it. This is the same adopt-stale-value class as
+	// the ACMM revert fixed in #2354.
+	//
+	// RequestedGitHubHost records what the operator asked for, so it survives
+	// the spoke reporting the old host, and ForgeDelivered latches true the
+	// moment the spoke reports the requested host back — after which the push
+	// stops for good and the spoke owns the value again. Both default to their
+	// zero values on every existing hive, so nothing is delivered to a hive
+	// nobody switched: the push is gated on a NON-EMPTY RequestedGitHubHost.
+	RequestedGitHubHost string `json:"requested_github_host,omitempty"`
+	// ForgeDelivered flips true once the spoke reports the requested forge host.
+	ForgeDelivered bool `json:"forge_delivered,omitempty"`
+
+	// PendingAppConfig is a GitHub App identity queued for delivery to the
+	// spoke over the heartbeat.
+	//
+	// WHY IT IS PERSISTED HERE RATHER THAN HELD IN MEMORY
+	//
+	// This delivery used to live only in HubServer.pendingGitHubAppConfigs, an
+	// in-memory map drained with delete() on the first beat that carried it. It
+	// had two failure modes with no diagnosis path:
+	//
+	//   - a hub restart between arming and the next beat lost the push
+	//     silently, and nothing anywhere recorded that an identity change had
+	//     been requested; and
+	//   - being one-shot, a spoke that missed or failed to apply that single
+	//     beat never got another.
+	//
+	// Persisting it to meta.json makes an outstanding identity change durable
+	// and inspectable — the same reason RequestedACMMLevel and
+	// RequestedGitHubHost live here rather than in memory.
+	//
+	// nil means nothing is queued. It is CLEARED on confirmation, not on
+	// delivery (see AppIdentityDelivered), so a lost beat is retried.
+	PendingAppConfig *PendingAppIdentity `json:"pending_app_config,omitempty"`
+
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`
@@ -455,15 +648,23 @@ func resolveProvisionAppID(reqAppID string, h *SaaSHive, cluster *ClusterConfig)
 	if cluster == nil || cluster.GitHubAppID == 0 {
 		return sanitize(reqAppID)
 	}
-	// A hive pinned to public github.com on a cluster whose own App is a GHE
-	// App: the cluster App is registered on the wrong host for this hive, so the
-	// request's public app_id stands. Detected as "the hive resolves to no GHE
-	// base URL while the cluster has one" — the same public-pin semantics
-	// effectiveGitHubBaseURL already implements.
-	if cluster.GitHubBaseURL != "" && effectiveGitHubBaseURL(h, cluster) == "" {
+	// Routed through the ONE resolver so provisioning, the heartbeat answer and
+	// the key lookup cannot drift apart again. The rule below is the one this
+	// function already implemented — a hive pinned to public github.com on a
+	// GHE-default cluster keeps its public app_id, because the cluster's App is
+	// registered on the wrong host for it — now generalised to both directions
+	// and shared with every other caller.
+	identity := ResolveHiveIdentity(h, cluster)
+	if identity.FromHiveIntent {
+		// The hive elected a forge its cluster does not serve. If the hub can
+		// name an App there, use it; otherwise the REQUEST's app_id stands,
+		// exactly as before — the cluster's App would be the wrong forge's.
+		if identity.AppID != 0 && identity.AppID != cluster.GitHubAppID {
+			return strconv.FormatInt(identity.AppID, 10)
+		}
 		return sanitize(reqAppID)
 	}
-	return strconv.FormatInt(cluster.GitHubAppID, 10)
+	return strconv.FormatInt(identity.AppID, 10)
 }
 
 // backfillGitHubHostFromCluster returns the GitHub host a hive should inherit
@@ -573,6 +774,98 @@ func (s *HubServer) repairGitHubHostForHive(hiveID string) bool {
 		"github_host_before", "",
 		"github_host_after", host,
 		"github_api_url_after", gheAPIURLForHost(host),
+		"note", gitHubAppStillRequiredNote)
+	return true
+}
+
+// reconcileGitHubHostFromSpoke repairs a persisted github_host that is not merely
+// BLANK but WRONG, using the forge the spoke actually reports it is running
+// against. It reports whether it changed anything.
+//
+// Why, on top of the blank-fill: repairGitHubHostForHive only ever fills a BLANK
+// host from cluster defaults; it
+// refuses to touch an already-set value. But a hive can carry a persisted host
+// that is set AND wrong: assigned from a pasted github.com URL, or seeded with a
+// stale record, while the repo actually lives on GitHub Enterprise (vllmd-06 is
+// the live example — meta said github.com but the spoke ran api_url
+// github.ibm.com). Nothing repaired those; each needed a hand-edit.
+//
+// The spoke's OWN reported forge is authoritative: it is what the running hive is
+// actually configured against. Read it base-or-api across the two reported fields
+// (GitHubHost from base_url, GitHubAPIURL from api_url) so a GHE spoke with a
+// blank base_url — the common state — is still recognised as GHE.
+//
+// CONSERVATIVE, ONE DIRECTION ONLY. It repairs public→GHE: a persisted github.com
+// host that the spoke reports as a GHE host is corrected to that GHE host. It does
+// NOT demote GHE→public, because a hive legitimately pinned to public github.com
+// on a GHE cluster (the appKeyReasonPublicHiveOnGHECluster case) reports
+// github.com by design, and overwriting a GHE record from a transient public read
+// could fight that pin. A blank/unknown spoke report changes nothing (silence is
+// not a mismatch — the same rule the heartbeat fields already follow). Every
+// change is logged with before/after.
+func (s *HubServer) reconcileGitHubHostFromSpoke(payload *HeartbeatPayload) bool {
+	if s == nil || payload == nil {
+		return false
+	}
+	// The spoke's observed forge, base-or-api. GitHubHost is the bare base_url
+	// host; GitHubAPIURL is the resolved api_url. HostLabel() prefers base, falls
+	// back to api — exactly the authority the rest of this package now uses.
+	observed := config.GitHubConfig{
+		BaseURL: strings.TrimSpace(payload.GitHubHost),
+		APIURL:  strings.TrimSpace(payload.GitHubAPIURL),
+	}.HostLabel()
+	// A spoke that reported neither field resolves to the github.com default; that
+	// is "unknown", not a real mismatch. Only a spoke that positively reports a
+	// GHE host can trip this reconcile.
+	if observed == "" || observed == config.DefaultGitHubBaseURL[len("https://"):] {
+		return false
+	}
+	h := loadSaaSHive(payload.HiveID)
+	if h == nil {
+		return false
+	}
+	if h.Status == statusAvailable {
+		return false // unclaimed placeholder — assign owns its host
+	}
+	// An operator-requested forge SWITCH is in flight — RequestedGitHubHost is set
+	// and adoptSpokeForge is driving the spoke from its old forge to the new one
+	// (see forge.go). During that handshake the spoke transiently reports EITHER
+	// host, so an unsolicited repair here would race the switch and could latch a
+	// stale value. The switch path owns the host until it completes (it clears
+	// RequestedGitHubHost when ForgeDelivered flips), so stand down entirely while
+	// it is pending. This is the ONLY writer coordination this reconcile needs; a
+	// hive with no switch requested is exactly the drift case it exists to fix.
+	if h.RequestedGitHubHost != "" {
+		return false
+	}
+	// An explicit public pin is a DECISION, not a fault: leave it alone even if the
+	// spoke momentarily reports a GHE host (its cluster default leaking through).
+	if h.GitHubBaseURL == githubHostPublic || h.GitHubBaseURL == "https://github.com" {
+		return false
+	}
+	current := githubHostLabel(h.GitHubHost) // normalize for a like-for-like compare
+	if current == observed {
+		return false // already correct — nothing to do
+	}
+	// Only repair public→GHE. If the persisted host is already some other GHE host,
+	// do not overwrite it from a single beat — that is an operator concern, not a
+	// safe automatic flip.
+	if h.GitHubHost != "" && current != config.DefaultGitHubBaseURL[len("https://"):] {
+		return false
+	}
+	before := h.GitHubHost
+	h.GitHubHost = observed
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("github host reconcile: failed to save hive",
+			"hive", payload.HiveID, "error", err)
+		return false
+	}
+	s.logger.Info("github host reconcile: corrected wrong github_host from spoke-reported forge",
+		"hive", payload.HiveID,
+		"org", h.Org,
+		"github_host_before", before,
+		"github_host_after", observed,
+		"github_api_url_reported", strings.TrimSpace(payload.GitHubAPIURL),
 		"note", gitHubAppStillRequiredNote)
 	return true
 }
@@ -904,7 +1197,68 @@ func authorizedUsersForHive(h *SaaSHive) string {
 	return strings.Join(entries, ",")
 }
 
-func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, logger *slog.Logger) error {
+// provisionAppKey is one additional App key rendered into the provisioning
+// Secret: the app_id that names its file and the PEM body, pre-indented for the
+// YAML block scalar it is written into.
+type provisionAppKey struct {
+	AppID int64
+	PEM   string
+}
+
+// provisionAdditionalAppKeys turns the fleet's key set into the ADDITIONAL keys a
+// newly provisioned spoke should hold — every fleet key except the primary the
+// spoke is already getting as gh-app-key.pem.
+//
+// This is the provisioning-time twin of attachMissingAppKeys: the heartbeat gets
+// a spoke to the both-keys state eventually, this gets it there at birth, so a
+// forge switch never has to wait a beat for the target forge's key to arrive.
+//
+// Excluding primaryAppID is what keeps key selection identity-safe. A hive's
+// GitHub identity is the atomic set (app_id, app_slug, api_url, base_url); the
+// key it signs with must match the app_id it claims. Writing the primary only
+// under its canonical gh-app-key.pem name — never also as a per-app-id file —
+// means there is exactly one copy of it and no chance of two diverging.
+//
+// Results are sorted by app_id so the rendered manifest is deterministic: an
+// unstable order would make every reconcile look like a change.
+func provisionAdditionalAppKeys(fleetKeys map[int64]fleetAppKey, primaryAppID string) []provisionAppKey {
+	if len(fleetKeys) == 0 {
+		return nil
+	}
+	var primary int64
+	if v, err := strconv.ParseInt(strings.TrimSpace(primaryAppID), 10, 64); err == nil {
+		primary = v
+	}
+	ids := make([]int64, 0, len(fleetKeys))
+	for id := range fleetKeys {
+		if id == primary {
+			continue // already delivered as gh-app-key.pem
+		}
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	out := make([]provisionAppKey, 0, len(ids))
+	for _, id := range ids {
+		pem := strings.TrimSpace(fleetKeys[id].PrivateKey)
+		if !strings.HasPrefix(pem, "-----BEGIN") {
+			// Never render a truncated or garbage key: it would shadow a good one.
+			continue
+		}
+		lines := strings.Split(pem, "\n")
+		for i := range lines {
+			lines[i] = "    " + strings.TrimSpace(lines[i])
+		}
+		out = append(out, provisionAppKey{AppID: id, PEM: strings.Join(lines, "\n")})
+	}
+	return out
+}
+
+// fleetKeys carries every GitHub App private key the fleet knows, keyed by
+// app_id, so a freshly provisioned spoke starts life holding ALL of them rather
+// than waiting for the heartbeat's additional-key delivery to catch up. Pass nil
+// to provision with only the primary key (the pre-existing behaviour).
+func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, fleetKeys map[int64]fleetAppKey, logger *slog.Logger) error {
 	dir := filepath.Join(saasHivesDir, h.ID, "manifests")
 	os.MkdirAll(dir, 0o755)
 
@@ -971,6 +1325,17 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 			}
 			return strings.Join(lines, "\n")
 		}(),
+		// AdditionalAppKeys delivers the fleet's OTHER App keys at provision time,
+		// each in its own per-app-id Secret entry. Naming is by APP ID, not by
+		// cluster: a key's identity is the App it belongs to, and the spoke selects
+		// by matching its configured app_id (resolveAppKeyFile). Per-cluster naming
+		// would be a lie here — the same PEM is valid on every cluster whose hives
+		// authenticate as that App, and a spoke has no way to know which cluster a
+		// file named for one was meant to serve. The primary key is excluded: it is
+		// already written as gh-app-key.pem above, and duplicating it would let the
+		// two copies drift.
+		"AdditionalAppKeys": provisionAdditionalAppKeys(
+			fleetKeys, resolveProvisionAppID(req.AppID, h, cluster)),
 		"CPURequest":            cpuRequest,
 		"CPULimit":              cpuLimit,
 		"MemRequest":            memRequest,
@@ -1251,7 +1616,7 @@ func (s *HubServer) migrateHive(h *SaaSHive, fromCluster, toCluster *ClusterConf
 
 	// Step 2: Provision on target cluster.
 	logger.Info("migration: provisioning on target cluster")
-	if provErr := provisionHive(h, req, toCluster, logger); provErr != nil {
+	if provErr := provisionHive(h, req, toCluster, s.appKeysByAppID(), logger); provErr != nil {
 		logger.Error("migration: provisioning on target failed", "error", provErr)
 		h.MigrationStatus = "failed"
 		h.Error = fmt.Sprintf("migration failed during provisioning on %s: %s", toCluster.ID, provErr.Error())
@@ -1583,6 +1948,10 @@ stringData:
 {{- else if not .UseApp}}
   github-token: {{.Token}}
 {{- end}}
+{{- range .AdditionalAppKeys}}
+  gh-app-key-{{.AppID}}.pem: |
+{{.PEM}}
+{{- end}}
 ---
 {{- if .IsNFSStorage}}
 apiVersion: v1
@@ -1664,7 +2033,20 @@ spec:
       - name: copy-config
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
-        command: ["sh", "-c", "cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi"]
+        # SEED-ONLY variant (phase 3 of the layer collapse). The ConfigMap is
+        # copied ONLY when the PVC carries no runtime config — i.e. first boot.
+        #
+        # It used to copy unconditionally on every boot, which meant the frozen
+        # seed overwrote the config path before the entrypoint had a say. Phase
+        # 2 made the entrypoint prefer the runtime config, so that copy became
+        # redundant work that still had to be undone one line later; skipping it
+        # is what actually makes the ConfigMap a seed rather than a per-boot
+        # input.
+        #
+        # Both runtime names are probed: ~16 of 50 live spokes still carry only
+        # the legacy hive.yaml.bak, so keying on the new name alone would treat
+        # them as first-boot and re-seed a hive that has real config on its PVC.
+        command: ["sh", "-c", "if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
         volumeMounts:
         - name: config
           mountPath: /etc/hive-seed

@@ -40,6 +40,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/version", s.handleVersion)
 	s.mux.HandleFunc("GET /api/config", s.handleConfig)
 	s.mux.HandleFunc("GET /api/config/download", s.handleConfigDownload)
+	s.mux.HandleFunc("GET /api/config/provenance", s.handleConfigProvenance)
 	s.mux.HandleFunc("GET /api/config/variables", s.handleVariablesList)
 	s.mux.HandleFunc("GET /api/config/authorized-users", s.handleAuthorizedUsersList)
 	s.mux.HandleFunc("PUT /api/config/variables/{name}", s.handleVariableUpsert)
@@ -4698,19 +4699,16 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		Model:   body.Model,
 		Enabled: true,
 	}
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[body.Name]; exists {
-			return fmt.Errorf("agent %q already exists", body.Name)
-		}
-		if candidate.Agents == nil {
-			candidate.Agents = make(map[string]config.AgentConfig)
-		}
-		candidate.Agents[body.Name] = agentCfg
-		return nil
-	}); err != nil {
-		s.logger.Error("failed to persist agent config", "agent", body.Name, "error", err)
-		jsonError(w, "failed to add agent: "+err.Error(), http.StatusInternalServerError)
-		return
+	// An explicit re-add is the operator changing their mind, and it is the
+	// only signal that lifts a deletion tombstone. Without this the agent
+	// would be added now and pruned again by the next config reload.
+	if s.deps.Config.ClearAgentRemoved(body.Name) {
+		s.logger.Info("agent deletion tombstone lifted by explicit re-add", "agent", body.Name)
+	}
+	s.deps.Config.Agents[body.Name] = agentCfg
+	s.deps.AgentMgr.AddAgent(body.Name, agentCfg)
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config", "error", err)
 	}
 
 	s.auditFromRequest(r, "add_agent", auditDetail("backend", body.Backend, "model", body.Model), body.Name)
@@ -4725,20 +4723,87 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, ok := candidate.Agents[name]; !ok {
-			return fmt.Errorf("agent %q not found", name)
-		}
-		delete(candidate.Agents, name)
-		return nil
-	}); err != nil {
-		s.logger.Error("failed to persist config after agent removal", "agent", name, "error", err)
-		jsonError(w, "failed to remove agent: "+err.Error(), http.StatusInternalServerError)
-		return
+	delete(s.deps.Config.Agents, name)
+	s.deps.AgentMgr.RemoveAgent(name)
+
+	// Tombstone the name BEFORE saving. Deleting from the in-memory map and
+	// re-saving the overlay was all this handler used to do, and it did not
+	// stick for two independent reasons:
+	//
+	//  1. /data/agent-configs/<name>.yaml was left on disk, and Load()'s
+	//     MergeAgentOverrides UNIONS that directory over the config — so the
+	//     next config reload (fsnotify; measured at ~36s after the delete on a
+	//     live hive) re-materialized the agent. That is the reported
+	//     "readded themselves a minute or so later".
+	//  2. Even with the file gone, ApplyPack — which runs on every restart —
+	//     re-created any pack agent missing from the roster.
+	//
+	// The tombstone closes both: MergeAgentOverrides skips and prunes it, and
+	// ApplyPack refuses to re-create it.
+	s.deps.Config.MarkAgentRemoved(name)
+	s.removeAgentOverlayFile(name)
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after agent removal", "error", err)
 	}
 	s.auditFromRequest(r, "remove_agent", "", name)
 	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "removed", "agent": name})
+	s.logger.Info("agent removed and tombstoned", "agent", name,
+		"note", "will not be re-created by an ACMM pack apply until explicitly re-added")
+	jsonResponse(w, agentDeletionResponse("removed", name, packLevelsDefining(name)))
+}
+
+// removeAgentOverlayFile deletes /data/agent-configs/<name>.yaml. A leftover
+// overlay file is re-merged by every config load, which is one of the two ways
+// a deleted agent used to come back.
+func (s *Server) removeAgentOverlayFile(name string) {
+	agentsDir := s.deps.Config.Data.AgentsDir
+	if agentsDir == "" {
+		return
+	}
+	if err := config.RemoveAgentFile(agentsDir, name); err != nil {
+		// Not fatal: the tombstone already prevents the merge from
+		// resurrecting the agent. Log it so a stale file is still visible.
+		s.logger.Error("failed to remove agent overlay file after delete (tombstone still applies)",
+			"agent", name, "error", err)
+	}
+}
+
+// packLevelsDefining returns the ACMM levels whose pack defines this agent, so
+// the delete response can tell the operator up front that the level's pack
+// would otherwise have re-added it. Legibility is the point: silently undoing
+// the operator's action a minute later is what turned this into a bug report
+// instead of a question.
+func packLevelsDefining(name string) []int {
+	var levels []int
+	for _, pack := range config.ACMMPacks() {
+		for _, pa := range pack.Agents {
+			if pa.Name == name {
+				levels = append(levels, pack.Level)
+				break
+			}
+		}
+	}
+	return levels
+}
+
+// agentDeletionResponse builds the delete response, including an explicit
+// human-readable note when the agent is part of an ACMM pack.
+func agentDeletionResponse(status, name string, packLevels []int) map[string]any {
+	resp := map[string]any{"ok": true, "status": status, "agent": name, "tombstoned": true}
+	if len(packLevels) == 0 {
+		resp["note"] = "This agent is not part of any ACMM pack; it will stay deleted."
+		return resp
+	}
+	parts := make([]string, 0, len(packLevels))
+	for _, level := range packLevels {
+		parts = append(parts, strconv.Itoa(level))
+	}
+	resp["packLevels"] = packLevels
+	resp["note"] = fmt.Sprintf(
+		"%s is defined by the ACMM pack for level %s. It has been recorded as deliberately deleted, so no restart or level change will bring it back. Re-add it from the Governor grid if you change your mind.",
+		name, strings.Join(parts, ", "))
+	return resp
 }
 
 func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {

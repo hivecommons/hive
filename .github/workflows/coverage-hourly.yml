@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: '0 * * * *'
   workflow_dispatch:
+  # The floor is only meaningful if it runs BEFORE code lands. Without this the
+  # gate was hourly-only, so a PR could drop a package below its floor and merge
+  # green — which is exactly what happened in #2350.
+  pull_request:
+    branches: [v2]
+    paths: ['v2/**']
 
 permissions:
   contents: read
@@ -16,23 +22,44 @@ jobs:
       run:
         working-directory: v2
     steps:
+      # On `schedule`/`workflow_dispatch` there is no PR ref, so pin to v2 —
+      # that is the branch whose floor this gate reports on hourly.
+      #
+      # On `pull_request` we must NOT pin to v2: `ref: v2` makes the runner do
+      # `git checkout --force -B v2 refs/remotes/origin/v2` and measure the
+      # BASE branch, so the gate reports v2's numbers no matter what the PR
+      # changes. That made the gate simultaneously useless and misleading — a
+      # PR that fixed coverage still failed, and a PR that broke it would still
+      # have passed. Leaving `ref` empty checks out the PR merge commit, which
+      # is the code that is actually about to land.
       - uses: actions/checkout@v4
         with:
-          ref: v2
+          ref: ${{ github.event_name == 'pull_request' && github.ref || 'v2' }}
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25.12'
           cache-dependency-path: v2/go.sum
 
+      # The coverage run must NOT abort this job on a test failure: the
+      # per-package check below is what turns a failure into a readable report.
+      # Previously a failing package exited non-zero here and the check step was
+      # `skipped` entirely, so the gate never actually ran (see the comment on
+      # the parsing loop).
       - name: Test with coverage
-        run: go test ./pkg/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s
+        id: cover
+        continue-on-error: true
+        run: |
+          go test ./pkg/... -short -race -coverprofile=coverage.out -count=1 -timeout 600s \
+            2>&1 | tee race-run.log
+          exit "${PIPESTATUS[0]}"
 
       - name: Check per-package coverage
         id: coverage
         run: |
           THRESHOLD=90
           FAILED=""
+          BROKEN=""
           REPORT=""
 
           # Per-package threshold overrides. A handful of packages are heavily
@@ -45,36 +72,90 @@ jobs:
           # as seams are added; do not add new entries without justification here.
           declare -A PKG_THRESHOLD=(
             [dashboard]=78   # ~20% is inception tmux watcher + copilot/claude device-flow + /data file I/O + k8s
+            [hub]=89         # kubectl-shelling + live-GitHub paths; see #2355. Raise to 90 once seams land.
+            [agent]=89       # pre-existing shortfall inherited from #2350, NOT a new regression. See #2355.
           )
 
+          # Capture the full `go test -cover` output ONCE, then classify every
+          # line. The previous version piped through `grep '^ok'`, which silently
+          # dropped two categories that matter most:
+          #
+          #   FAIL  <pkg>                    -> a broken package scored nothing
+          #   ?     <pkg> [no test files]    -> an untested package scored nothing
+          #
+          # Both were therefore incapable of failing the gate, so adding a
+          # package with zero tests was the one guaranteed way to stay green.
+          # They are now hard failures in their own right.
+          go test -cover ./pkg/... -short -count=1 -timeout 600s 2>&1 | tee cover-run.log || true
+
           while IFS= read -r line; do
-            pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
-            pct=$(echo "$line" | grep -o '[0-9]*\.[0-9]*%' | tr -d '%')
-            if [ -z "$pct" ]; then continue; fi
-            int_pct=$(echo "$pct" | cut -d. -f1)
-            pkg_threshold=${PKG_THRESHOLD[$pkg]:-$THRESHOLD}
-            if [ "$int_pct" -lt "$pkg_threshold" ]; then
-              FAILED="${FAILED}${pkg}: ${pct}% (floor ${pkg_threshold}%)\n"
-            fi
-            REPORT="${REPORT}${pkg}: ${pct}%\n"
-          done < <(go test -cover ./pkg/... -short -count=1 -timeout 600s 2>&1 | grep '^ok')
+            case "$line" in
+              ok*)
+                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
+                pct=$(echo "$line" | grep -o '[0-9]*\.[0-9]*%' | tr -d '%')
+                if [ -z "$pct" ]; then continue; fi
+                int_pct=$(echo "$pct" | cut -d. -f1)
+                pkg_threshold=${PKG_THRESHOLD[$pkg]:-$THRESHOLD}
+                if [ "$int_pct" -lt "$pkg_threshold" ]; then
+                  FAILED="${FAILED}${pkg}: ${pct}% (floor ${pkg_threshold}%)\n"
+                fi
+                REPORT="${REPORT}${pkg}: ${pct}%\n"
+                ;;
+              FAIL*)
+                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
+                # Ignore the bare trailing "FAIL" summary line, which has no pkg.
+                if [ -n "$pkg" ] && [ "$pkg" != "FAIL" ]; then
+                  BROKEN="${BROKEN}${pkg}: TESTS FAILING\n"
+                  REPORT="${REPORT}${pkg}: FAIL\n"
+                fi
+                ;;
+              \?*)
+                pkg=$(echo "$line" | awk '{print $2}' | sed 's/.*\///')
+                BROKEN="${BROKEN}${pkg}: NO TEST FILES\n"
+                REPORT="${REPORT}${pkg}: no tests\n"
+                ;;
+            esac
+          done < cover-run.log
 
-          TOTAL=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $3}')
-          echo "Total coverage: ${TOTAL}"
-          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          TOTAL=$(go tool cover -func=coverage.out 2>/dev/null | grep '^total:' | awk '{print $3}')
+          echo "Total coverage: ${TOTAL:-unavailable}"
+          echo "total=${TOTAL:-unavailable}" >> "$GITHUB_OUTPUT"
 
-          if [ -n "$FAILED" ]; then
+          {
+            echo "## Per-package coverage"
+            echo ""
+            echo -e "${REPORT}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -n "$BROKEN" ] || [ -n "$FAILED" ]; then
             echo "below_threshold=true" >> "$GITHUB_OUTPUT"
-            echo -e "Packages below ${THRESHOLD}%:\n${FAILED}" >> "$GITHUB_STEP_SUMMARY"
-            echo -e "failed_packages<<EOF\n${FAILED}EOF" >> "$GITHUB_OUTPUT"
+            {
+              [ -n "$BROKEN" ] && echo -e "### Packages that cannot be scored\n${BROKEN}"
+              [ -n "$FAILED" ] && echo -e "### Packages below their floor\n${FAILED}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo -e "failed_packages<<EOF\n${BROKEN}${FAILED}EOF" >> "$GITHUB_OUTPUT"
             echo -e "full_report<<EOF\n${REPORT}EOF" >> "$GITHUB_OUTPUT"
-          else
-            echo "below_threshold=false" >> "$GITHUB_OUTPUT"
-            echo "All packages above ${THRESHOLD}% coverage" >> "$GITHUB_STEP_SUMMARY"
+            echo ""
+            echo "COVERAGE GATE FAILED:"
+            [ -n "$BROKEN" ] && echo -e "${BROKEN}"
+            [ -n "$FAILED" ] && echo -e "${FAILED}"
+            # Exit non-zero so the gate actually BLOCKS. The previous version
+            # computed this report and then exited 0 regardless, so even a
+            # correctly-detected shortfall never failed anything.
+            exit 1
           fi
 
+          echo "below_threshold=false" >> "$GITHUB_OUTPUT"
+          echo "All packages meet their coverage floor" >> "$GITHUB_STEP_SUMMARY"
+
   create-issue-on-coverage-drop:
-    if: failure() || (needs.coverage.outputs.below_threshold == 'true' && github.event_name == 'schedule')
+    # Scheduled runs only. The bare `failure()` here previously fired on ANY
+    # job failure regardless of cause, which is why issue #2191 accumulated 41
+    # comments titled "packages below 90% threshold" when the real cause was a
+    # test failure aborting the run. Now that the gate also runs on
+    # pull_request, an unscoped condition would additionally file an issue for
+    # every contributor's red PR.
+    if: always() && github.event_name == 'schedule' && needs.coverage.result != 'success'
     runs-on: ubuntu-latest
     needs: coverage
     permissions:

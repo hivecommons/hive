@@ -99,6 +99,13 @@ var rules = []ProxyRule{
 	// Must come before the generic pulls PATCH/PUT rules.
 	{regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/merge$`), "PUT", agent.ModeIssuesPRsMerge},
 
+	// Updating a PR branch from its base is part of landing a PR: an
+	// auto-merging agent hits it whenever the base has moved on. Without a rule
+	// it matches nothing and AllowedByMode falls through to its deny-by-default,
+	// so it was refused even at ISSUES_PRS_MERGE. It is gated at the same level
+	// as the merge itself — it writes to the PR's head branch, nothing more.
+	{regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls/\d+/update-branch$`), "PUT", agent.ModeIssuesPRsMerge},
+
 	// ── PR operations — ISSUES_AND_PRS and above ──
 	// NOTE: direct PR creation (POST /pulls) is NOT here — it is a HARD DENY for
 	// every mode, handled by denyRules below, so agents route through hive-open-pr

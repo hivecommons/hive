@@ -1,10 +1,17 @@
 {
+  "_comment": [
+    "Read/write split for contributor agents (fixes #2356; addresses #2393 item 6).",
+    "READ-ONLY GitHub lookups are ALLOWED so an agent can check whether a PR",
+    "already exists for its assigned issue BEFORE starting work — this is what",
+    "prevents duplicate PRs. The wrapper (bin/gh-wrapper.sh) is the authoritative",
+    "gate: it permits `gh pr list`/`gh issue list`/`gh search`/read-only view/diff",
+    "commands and GET-only `gh api repos/*/{issues,pulls}` reads, while still",
+    "blocking every mutating `gh api` (-X/--method POST|PATCH|PUT|DELETE).",
+    "WRITE/DESTRUCTIVE operations below stay denied for contributor agents.",
+    "gh pr create is EXEMPT here (contributors fork+PR under their own identity)."
+  ],
   "rules": [
-    { "pattern": "gh api *", "reason": "Direct API calls disabled for contributors", "enabled": true },
     { "pattern": "gh auth *", "reason": "Auth management disabled for contributors", "enabled": true },
-    { "pattern": "gh issue list*", "reason": "Use assigned tasks from the hive hub", "enabled": true },
-    { "pattern": "gh pr list*", "reason": "Use assigned tasks from the hive hub", "enabled": true },
-    { "pattern": "gh search *", "reason": "Enumeration disabled for contributors", "enabled": true },
     { "pattern": "gh repo delete*", "reason": "Destructive operations disabled for contributors", "enabled": true },
     { "pattern": "gh repo edit*", "reason": "Repo settings changes disabled for contributors", "enabled": true }
   ]

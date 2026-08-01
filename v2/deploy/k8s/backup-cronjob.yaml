@@ -1,7 +1,7 @@
 # Hive hub disaster-recovery backup.
 #
 # Captures hub state, the four out-of-PVC Kubernetes Secrets, and every spoke's
-# authoritative config (hive.yaml.bak, gh-app-key*.pem, hive-id), encrypts the
+# authoritative config (hive.yaml.runtime, gh-app-key*.pem, hive-id), encrypts the
 # result with AES-256-GCM and uploads it to OCI Object Storage.
 #
 # See docs/HUB_DISASTER_RECOVERY.md before deploying. In particular:

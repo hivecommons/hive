@@ -185,3 +185,36 @@ func TestCovB_SessionPersistence_CorruptFile(t *testing.T) {
 		t.Fatalf("corrupt store restored %d sessions, want 0", len(s.userSessions))
 	}
 }
+
+// TestActiveSessionUsernames: the heartbeat-reported active set is distinct,
+// excludes expired sessions, and contains only bare usernames (no ids/tokens).
+func TestActiveSessionUsernames(t *testing.T) {
+	s := NewServer(0, covBLogger())
+
+	// No sessions → empty.
+	if got := s.ActiveSessionUsernames(); len(got) != 0 {
+		t.Fatalf("no sessions must yield empty, got %v", got)
+	}
+
+	// alice has two live sessions (two devices) → reported once.
+	s.createUserSession("alice", "owner")
+	s.createUserSession("alice", "owner")
+	s.createUserSession("bob", "read")
+
+	// An expired session for carol must be excluded.
+	s.sessionMu.Lock()
+	s.userSessions["expired-id"] = &userSession{Username: "carol", Role: "owner", ExpiresAt: time.Now().Add(-time.Hour)}
+	s.sessionMu.Unlock()
+
+	got := s.ActiveSessionUsernames()
+	if len(got) != 2 || got[0] != "alice" || got[1] != "bob" {
+		t.Fatalf("active = %v, want [alice bob] (distinct, sorted, no expired carol)", got)
+	}
+
+	// Non-secret: the returned strings are usernames, never the opaque ids.
+	for _, u := range got {
+		if _, isID := s.userSessions[u]; isID {
+			t.Errorf("returned value %q collides with a session id — must be a username", u)
+		}
+	}
+}

@@ -101,6 +101,11 @@ const (
 	// certificate is broken and the link in the hub table returns 503. Raised by
 	// the auth-audit loop, which already makes this HTTPS request.
 	AlertTypeURLUnreachable = "url-unreachable"
+	// AlertTypeAgentsInactive — one or more agents are RUNNING but not doing
+	// any work: their tmux session has gone, they are sitting on a login
+	// prompt, or they have produced nothing while work is queued. Deliberately
+	// paused agents are excluded by the rule itself, never reported here.
+	AlertTypeAgentsInactive = "agents-inactive"
 )
 
 // --- Thresholds. Every one is a named constant with a rationale. ---
@@ -461,6 +466,14 @@ type alertHive struct {
 	// exactly how the panel and the row pill would start disagreeing.
 	AdvisoryStale       bool
 	AdvisoryStaleReason string
+
+	// InactiveAgents / InactiveAgentsReason are carried through verbatim from
+	// the entry rather than recomputed, exactly as the advisory pair above is:
+	// evaluateInactiveAgents owns the thresholds and the paused/on-demand
+	// gating, and duplicating either here is how the facet and the row pill
+	// would start disagreeing about which hives are affected.
+	InactiveAgents       int
+	InactiveAgentsReason string
 }
 
 // alertHiveFromEntry projects a MyHiveEntry into the evaluator's view.
@@ -485,6 +498,9 @@ func alertHiveFromEntry(h MyHiveEntry) alertHive {
 
 		AdvisoryStale:       h.AdvisoryStale,
 		AdvisoryStaleReason: h.AdvisoryStaleReason,
+
+		InactiveAgents:       h.InactiveAgents,
+		InactiveAgentsReason: h.InactiveAgentsReason,
 	}
 }
 
@@ -772,6 +788,26 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 			add(h.ID, h.Name, AlertTypeAdvisoryStale, AlertSeverityWarning, reason)
 		}
 
+		// --- Rule: agents are running but not working. ---
+		// The condition is NOT re-derived here: it is precomputed by
+		// evaluateInactiveAgents(), which already excludes paused and
+		// on-demand agents, already requires queued work before calling an
+		// agent idle, and already treats unknown timestamps as unknown. There
+		// is nothing to re-check beyond the placeholder guard every
+		// claimed-hive rule applies — an unclaimed pool slot has no agents.
+		//
+		// Warning, not critical: the hive is up and its other agents may be
+		// working, but capacity the operator believes they have is doing
+		// nothing.
+		if !h.IsPlaceholder && h.InactiveAgents > 0 {
+			reason := h.InactiveAgentsReason
+			if reason == "" {
+				// Only reached if the count arrives without a sentence.
+				reason = "Agents are running but not working"
+			}
+			add(h.ID, h.Name, AlertTypeAgentsInactive, AlertSeverityWarning, reason)
+		}
+
 		// --- Rule: token burn anomaly. Claimed hives only — an unassigned
 		// placeholder has no agents and therefore legitimately spends nothing. ---
 		if !h.IsPlaceholder {
@@ -997,20 +1033,26 @@ type alertAckRequest struct {
 // handleAlertAck acknowledges (or clears) one alert for one hive. Admin-only:
 // silencing a fleet-wide signal is an operator action, not something a hive
 // owner should be able to do to the admin's view.
+//
+// Failures go through writeJSONError, not http.Error. http.Error forces
+// Content-Type: text/plain even when the body is JSON, so the dashboard's
+// `await resp.json()` threw, its .catch() swallowed the reason, and the
+// operator got a generic "Failed to update alert" that never said why. The
+// reason is the whole point of the message when an ack silently does nothing.
 func (s *HubServer) handleAlertAck(w http.ResponseWriter, r *http.Request) {
 	var req alertAckRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPayloadBytes)).Decode(&req); err != nil {
-		http.Error(w, `{"error":"invalid request body"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.HiveID = strings.TrimSpace(req.HiveID)
 	req.Type = strings.TrimSpace(req.Type)
 	if req.HiveID == "" || req.Type == "" {
-		http.Error(w, `{"error":"hiveId and type are required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "hiveId and type are required")
 		return
 	}
 	if !isKnownAlertType(req.Type) {
-		http.Error(w, `{"error":"unknown alert type"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "unknown alert type: "+req.Type)
 		return
 	}
 
@@ -1024,7 +1066,7 @@ func (s *HubServer) handleAlertAck(w http.ResponseWriter, r *http.Request) {
 	// Acknowledging requires a LIVE condition. Refusing otherwise prevents a
 	// client from pre-silencing an alert that has not fired yet.
 	if !s.alerts.setAck(req.HiveID, req.Type, s.getAuthUser(r), time.Now()) {
-		http.Error(w, `{"error":"no active alert of that type for this hive"}`, http.StatusConflict)
+		writeJSONError(w, http.StatusConflict, "no active alert of that type for this hive")
 		return
 	}
 	s.saveAlertAcks()
@@ -1039,13 +1081,20 @@ func writeAlertAckOK(w http.ResponseWriter, acked bool) {
 // knownAlertTypes is the closed set of types the ack endpoint accepts, so a
 // client cannot wedge arbitrary keys into the persisted ack map.
 var knownAlertTypes = map[string]bool{
-	AlertTypeCrashLoop:          true,
-	AlertTypeOffline:            true,
-	AlertTypeStuckUpgrade:       true,
+	AlertTypeCrashLoop:    true,
+	AlertTypeOffline:      true,
+	AlertTypeStuckUpgrade: true,
+	// AlertTypeFailedUpgrade was omitted when the type was introduced (#2308),
+	// so acking a genuinely failed upgrade returned 400 and the row stayed in
+	// the panel. Every AlertType* constant MUST appear here — see
+	// TestKnownAlertTypesCoversEveryAlertType, which fails if one is added
+	// without being registered.
+	AlertTypeFailedUpgrade:      true,
 	AlertTypeHealthCheckFailing: true,
 	AlertTypeTokenBurn:          true,
 	AlertTypeProvisionError:     true,
 	AlertTypeAdvisoryStale:      true,
+	AlertTypeAgentsInactive:     true,
 	AlertTypeURLUnreachable:     true,
 }
 

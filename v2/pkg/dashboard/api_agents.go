@@ -103,17 +103,13 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[body.Name]; exists {
-			return fmt.Errorf("agent %s already exists", body.Name)
-		}
-		candidate.Agents[body.Name] = body.Agent
-		candidate.ApplyAgentDefaults(body.Name)
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to publish agent: "+err.Error(), http.StatusInternalServerError)
-		return
+	// Creating an agent under a previously-deleted name is an explicit
+	// re-add — lift the tombstone, or the next config reload prunes it again.
+	if s.deps.Config.ClearAgentRemoved(body.Name) {
+		s.logger.Info("agent deletion tombstone lifted by explicit create", "agent", body.Name)
 	}
+	s.deps.Config.Agents[body.Name] = body.Agent
+	s.deps.Config.ApplyAgentDefaults(body.Name)
 
 	finalCfg := s.configSnapshot().Agents[body.Name]
 
@@ -162,11 +158,21 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Record the deletion durably. Removing the overlay file above is not
+	// enough on its own: ApplyPack runs on every restart and re-creates any
+	// pack agent missing from the roster, so a pack agent deleted here came
+	// straight back. See handleGovernorRemoveAgent for the full chain.
+	s.deps.Config.MarkAgentRemoved(name)
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist agent tombstone", "agent", name, "error", err)
+	}
+
 	s.reInitSubsystems()
 	s.refreshAndPersist()
 
-	s.logger.Info("agent deleted via API", "name", name)
-	okResponse(w, map[string]string{"status": "deleted", "agent": name})
+	s.logger.Info("agent deleted via API and tombstoned", "name", name,
+		"note", "will not be re-created by an ACMM pack apply until explicitly re-added")
+	jsonResponse(w, agentDeletionResponse("deleted", name, packLevelsDefining(name)))
 }
 
 // agentDefinition is the portable YAML format for importing/exporting agents.
@@ -366,17 +372,16 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if _, exists := candidate.Agents[name]; exists {
-			return fmt.Errorf("agent %s already exists", name)
-		}
-		candidate.Agents[name] = agentCfg
-		candidate.ApplyAgentDefaults(name)
-		return nil
-	}); err != nil {
-		jsonError(w, "failed to publish imported agent: "+err.Error(), http.StatusInternalServerError)
-		return
+	// Importing an agent under a previously-deleted name is an explicit
+	// re-add — lift the tombstone so the import is not pruned on reload.
+	if s.deps.Config.ClearAgentRemoved(name) {
+		s.logger.Info("agent deletion tombstone lifted by import", "agent", name)
 	}
+	s.deps.Config.Agents[name] = agentCfg
+	s.deps.Config.ApplyAgentDefaults(name)
+
+	finalCfg := s.deps.Config.Agents[name]
+	s.deps.AgentMgr.AddAgent(name, finalCfg)
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()

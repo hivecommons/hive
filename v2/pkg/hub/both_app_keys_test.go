@@ -41,7 +41,7 @@ func twoClusterHub(t *testing.T) (*HubServer, map[int64]string) {
 		logger: appKeyTestLogger(),
 		clusters: map[string]ClusterConfig{
 			"hive-oke": {ID: "hive-oke", GitHubAppID: testGitHubComAppID, GitHubAppSlug: "kubestellar-hive"},
-			"vllm-d":   {ID: "vllm-d", GitHubAppID: testGHEAppID, GitHubAppSlug: "ibm-hive"},
+			"vllm-d":   {ID: "vllm-d", GitHubAppID: testGHEAppID, GitHubAppSlug: "kubestellar-hive-ghe"},
 		},
 	}
 	return s, map[int64]string{testGitHubComAppID: publicFP, testGHEAppID: gheFP}

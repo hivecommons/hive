@@ -65,10 +65,34 @@ func decodeTestKey(t *testing.T) []byte {
 }
 
 // TestLoadKeyRejectsUnset is the guard against silently writing plaintext.
+//
+// The assertion is deliberately on the MESSAGE, not merely on "an error
+// happened": an unset key also trips the hex/length checks further down, so a
+// test that accepts any error still passes when the explicit unset branch is
+// removed. The distinct message is what tells an operator their backup would
+// otherwise have been written unencrypted.
 func TestLoadKeyRejectsUnset(t *testing.T) {
 	t.Setenv(EnvBackupKey, "")
-	if _, err := LoadKey(); err == nil {
+	_, err := LoadKey()
+	if err == nil {
 		t.Fatal("expected error when HIVE_BACKUP_KEY is unset, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to write an unencrypted backup") {
+		t.Fatalf("an unset key must be refused explicitly, not incidentally via a "+
+			"decode failure; got %v", err)
+	}
+}
+
+// Whitespace-only is the same hazard as unset: a Secret mounted with just a
+// newline must not be treated as a usable key.
+func TestLoadKeyRejectsWhitespaceOnly(t *testing.T) {
+	t.Setenv(EnvBackupKey, "   \n\t ")
+	_, err := LoadKey()
+	if err == nil {
+		t.Fatal("a whitespace-only key must be refused")
+	}
+	if !strings.Contains(err.Error(), "refusing to write an unencrypted backup") {
+		t.Fatalf("want the explicit unset refusal, got %v", err)
 	}
 }
 
@@ -235,7 +259,7 @@ func TestBuildIncludesSpokesAndSecrets(t *testing.T) {
 
 	spokes := fakeSpokes{spokes: []SpokeConfig{
 		{ID: "hosted-x", Files: map[string][]byte{
-			"hive.yaml.bak":       []byte("project:\n  org: acme\n"),
+			"hive.yaml.runtime":       []byte("project:\n  org: acme\n"),
 			"hive-id":             []byte("hosted-x"),
 			"gh-app-key-5686.pem": []byte("-----BEGIN RSA PRIVATE KEY-----\n"),
 		}},
@@ -267,7 +291,7 @@ func TestBuildIncludesSpokesAndSecrets(t *testing.T) {
 		paths[f.Path] = true
 	}
 	for _, want := range []string{
-		"spokes/hosted-x/hive.yaml.bak",
+		"spokes/hosted-x/hive.yaml.runtime",
 		"spokes/hosted-x/hive-id",
 		"spokes/hosted-x/gh-app-key-5686.pem",
 		"secrets/hive-hub-secrets.json",
@@ -292,7 +316,7 @@ func TestExtractRestoresContent(t *testing.T) {
 	spokeYAML := []byte("project:\n  org: acme\n  repos:\n  - thing\n")
 	spokes := fakeSpokes{spokes: []SpokeConfig{
 		{ID: "hosted-x", Files: map[string][]byte{
-			"hive.yaml.bak": spokeYAML,
+			"hive.yaml.runtime": spokeYAML,
 			"hive-id":       []byte("hosted-x"),
 		}},
 	}}
@@ -317,12 +341,12 @@ func TestExtractRestoresContent(t *testing.T) {
 	}
 
 	// The authoritative spoke config must round-trip exactly.
-	gotYAML, err := os.ReadFile(filepath.Join(dest, "spokes", "hosted-x", "hive.yaml.bak"))
+	gotYAML, err := os.ReadFile(filepath.Join(dest, "spokes", "hosted-x", "hive.yaml.runtime"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(gotYAML) != string(spokeYAML) {
-		t.Fatalf("hive.yaml.bak corrupted: %q", gotYAML)
+		t.Fatalf("hive.yaml.runtime corrupted: %q", gotYAML)
 	}
 }
 
@@ -348,13 +372,13 @@ func TestParseSpokeStream(t *testing.T) {
 }
 
 // TestSpokeReadScriptTargetsAuthoritativeConfig locks in the single most
-// dangerous detail: the backup must read hive.yaml.bak, not hive.yaml.
+// dangerous detail: the backup must read hive.yaml.runtime, not hive.yaml.
 // Reading the wrong file makes restore silently fall back to the stale
 // ConfigMap seed with no error.
 func TestSpokeReadScriptTargetsAuthoritativeConfig(t *testing.T) {
 	script := buildSpokeReadScript()
-	if !strings.Contains(script, "/data/hive.yaml.bak") {
-		t.Fatal("spoke read script must capture /data/hive.yaml.bak")
+	if !strings.Contains(script, "/data/hive.yaml.runtime") {
+		t.Fatal("spoke read script must capture /data/hive.yaml.runtime")
 	}
 	if !strings.Contains(script, "gh-app-key*.pem") {
 		t.Fatal("spoke read script must capture GitHub App keys")
