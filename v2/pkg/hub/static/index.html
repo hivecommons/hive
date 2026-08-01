@@ -356,6 +356,21 @@
     }
     .metric-grid span { color: var(--muted); font-size: .86rem; }
     .metric-grid strong { color: var(--green); font-size: 1.4rem; }
+    /* The Public hives tile is an <a> so it can jump to the hive table; give it
+       the same box as the sibling <div> tiles, plus a clickable affordance. */
+    .metric-grid a.stat-jump {
+      border: 1px solid var(--line);
+      background: #080b0f85;
+      border-radius: .7rem;
+      gap: .35rem;
+      min-height: 5.5rem;
+      padding: 1rem;
+      display: grid;
+      text-decoration: none;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .metric-grid a.stat-jump:hover { border-color: var(--green); background: #0b1016; }
 
     /* ── Loop rail ── */
     .loop { background: linear-gradient(#0c121900, #121922bf 30%, #12192200); }
@@ -676,7 +691,12 @@
           <div><span>Agents running</span><strong id="stat-agents">—</strong></div>
           <div><span>Managed repos</span><strong id="stat-repos">—</strong></div>
           <div><span>Contributors</span><strong id="stat-contributors">—</strong></div>
-          <div><span>Public hives</span><strong id="stat-total">—</strong></div>
+          <!-- The Public hives tile jumps to the public-hive table below (#hives),
+               since that table IS the list of public hives this count describes.
+               An <a> (not a JS scroll handler) keeps it keyboard-focusable and
+               right-click-openable; the href drives a native smooth scroll via
+               the page's scroll-behavior. -->
+          <a href="#hives" class="stat-jump" title="Jump to the public hives"><span>Public hives</span><strong id="stat-total">—</strong></a>
         </div>
       </div>
     </section>
@@ -1111,15 +1131,23 @@
     function renderStats(hives) {
       var agents = 0, contributors = 0, online = 0, repos = 0;
       hives.forEach(function(h) { agents += h.agentCount || 0; contributors += h.activeContributors || 0; repos += (h.repos || []).length; if (h.online) online++; });
+      // "Hives online" is online-out-of-TOTAL-FLEET: the denominator is the
+      // fleet-wide hive count (_fleetWide.hives, which covers every spoke, ~50),
+      // NOT the public-list length (~18) — showing 18/18 read as "all hives up"
+      // when two-thirds of the fleet is simply not public. The numerator stays
+      // the online count from the public list the page can actually see; fall
+      // back to the public length until the fleet-stats poll lands so it never
+      // shows online/undefined.
+      var f = _fleetWide;
+      var fleetTotal = (f && typeof f.hives === 'number' && f.hives >= hives.length) ? f.hives : hives.length;
+      document.getElementById('stat-online').textContent = online + '/' + fleetTotal;
       // "Public hives" is deliberately the length of the PUBLIC list — it
       // labels exactly what the table below shows, and is the one counter here
       // that should not be fleet-wide.
-      document.getElementById('stat-online').textContent = online + '/' + hives.length;
       document.getElementById('stat-total').textContent = hives.length;
       // The rest are fleet-wide when the hub has told us, falling back to the
       // public-list sums so an older hub (or a failed poll) still renders a
-      // number rather than an em dash.
-      var f = _fleetWide;
+      // number rather than an em dash. (f = _fleetWide, resolved above.)
       document.getElementById('stat-agents').textContent =
         f && typeof f.agents_running === 'number' ? f.agents_running : agents;
       document.getElementById('stat-repos').textContent =
