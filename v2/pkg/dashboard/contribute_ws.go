@@ -803,11 +803,18 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					)
 					contributor.mu.Lock()
 					contributor.profile.TasksCompleted++
+					if msg.PRURL != "" {
+						contributor.profile.TasksWithPR++
+					}
 					contributor.profile.LastActive = time.Now().UTC().Format(time.RFC3339)
 					if completedTask != nil {
 						contributor.profile.LastCompletedTask = completedTask
 					}
-					if contributor.profile.TrustTier == "newcomer" && contributor.profile.TasksCompleted >= contributorAutoPromoteAt {
+					// Promote on completions that actually produced a pull
+					// request. Completion is self-reported, so counting bare
+					// task_complete messages would hand out contents:write and
+					// pulls:write for work that was never shown to exist.
+					if contributor.profile.TrustTier == "newcomer" && contributor.profile.TasksWithPR >= contributorAutoPromoteAt {
 						contributor.profile.TrustTier = "contributor"
 						h.logger.Info("[contribute-ws] auto-promoted", "username", contributor.profile.GitHubUsername)
 					}
