@@ -5980,7 +5980,9 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// spoke confirms it. curACMM == 0 means the spoke did not report a level, so
 	// there is nothing to correct yet.
 	needACMMPush := !h.ACMMDelivered && h.RequestedACMMLevel > 0 && curACMM != h.RequestedACMMLevel
-	needURLPush := h.VanityURL != "" && curURL != h.VanityURL
+	// Vanity URL: the spoke always reports its dashboard URL, so observed is
+	// known and an empty one is a real "I have none" rather than silence.
+	needURLPush := needsPush(h.VanityURL, curURL, true)
 	// A spoke reporting a repo that fails isValidRepoRef is wedged: the hub 400s
 	// its every heartbeat ("invalid repo name"), /api/livez then fails on the
 	// stale heartbeat and the kubelet crash-loops the pod. Push a corrected
@@ -6006,7 +6008,11 @@ func projectConfigForHiveID(hiveID, curOrg string, curRepos []string, curPrimary
 	// to report its API URL, which is UNKNOWN, not a mismatch — pushing on it
 	// would re-send on every beat with no read-back to ever stop it.
 	wantAPIURL := gheAPIURLForHost(h.GitHubHost)
-	needGHEAPIPush := wantAPIURL != "" && curAPIURL != "" && curAPIURL != wantAPIURL
+	// The api_url is the field where unknown-vs-mismatch actually bites: a spoke
+	// too old to report it sends "", which is NOT "I am on api.github.com". The
+	// observedKnown argument carries that distinction explicitly instead of
+	// hiding it in a curAPIURL != "" conjunct that a later edit could drop.
+	needGHEAPIPush := needsPush(wantAPIURL, curAPIURL, curAPIURL != "")
 	// A pending FORGE SWITCH pushes on its own handshake. It cannot ride
 	// needGHEAPIPush: that gate is deliberately conservative about an empty
 	// curAPIURL (unknown, not a mismatch) and — more importantly — it can never
