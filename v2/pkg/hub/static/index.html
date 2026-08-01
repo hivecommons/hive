@@ -371,6 +371,8 @@
       transition: border-color .15s ease, background .15s ease;
     }
     .metric-grid a.stat-jump:hover { border-color: var(--green); background: #0b1016; }
+    /* Muted call-to-action subtext inside a stat tile (e.g. "click to request one"). */
+    .metric-grid a.stat-jump .stat-cta { color: var(--muted); font-size: .7rem; }
 
     /* ── Loop rail ── */
     .loop { background: linear-gradient(#0c121900, #121922bf 30%, #12192200); }
@@ -690,7 +692,12 @@
         <div class="metric-grid">
           <div><span>Agents running</span><strong id="stat-agents">—</strong></div>
           <div><span>Managed repos</span><strong id="stat-repos">—</strong></div>
-          <div><span>Contributors</span><strong id="stat-contributors">—</strong></div>
+          <!-- The Contributors tile links to the "Contribute compute to a hive"
+               card (#contribute-compute), which explains how contributing works:
+               you lend your AI CLI to run agents for a public hive via ClankeR
+               and climb the leaderboard. Same stat-jump affordance/keyboard
+               access as the Public hives tile. -->
+          <a href="#contribute-compute" class="stat-jump" title="Learn how to contribute compute"><span>Contributors</span><strong id="stat-contributors">—</strong></a>
           <!-- The Public hives tile jumps to the public-hive table below (#hives),
                since that table IS the list of public hives this count describes.
                An <a> (not a JS scroll handler) keeps it keyboard-focusable and
@@ -701,7 +708,7 @@
                tile links to the Request-a-Hive wizard (/get-started), so seeing
                "N available" and acting on it is one click. Anchor for the same
                keyboard/right-click reasons as the Public hives tile. -->
-          <a href="/get-started" class="stat-jump" title="Request one of the available hives"><span>Available hives</span><strong id="stat-available">—</strong></a>
+          <a href="/get-started" class="stat-jump" title="Request one of the available hives"><span>Available hives</span><strong id="stat-available">—</strong><span class="stat-cta">click to request one</span></a>
         </div>
       </div>
     </section>
@@ -881,10 +888,10 @@
           <div style="margin-top:1rem"><a class="button primary" href="/get-started">Request a Hive</a></div>
           <p style="font-size:.8rem;margin-top:.8rem"><a href="/get-started#self-host" style="color:var(--blue)">Prefer to self-host? →</a></p>
         </div>
-        <div class="proof-card">
+        <div class="proof-card" id="contribute-compute">
           <div class="tag">Community</div>
           <h3>Contribute compute to a hive</h3>
-          <p>Lend your AI CLI to run agents for a public project. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
+          <p>Lend your AI CLI to run agents for a public project via ClankeR, the contributor relay. Pick a public hive from the table below, run the contribute command, and ClankeR hands your CLI tasks to work &mdash; your GitHub username shows up as a live contributor on that hive with the PRs you land, not as a new hive. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
           <div style="margin-top:1rem"><a class="button secondary" href="/get-started#contribute">Start contributing</a></div>
         </div>
         <div class="proof-card">
@@ -984,6 +991,9 @@
         <h2>Active Hives</h2>
         <input type="text" id="hive-search" placeholder="Search hives..." oninput="filterHiveTable()" style="padding:8px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.85rem;width:250px">
       </div>
+      <!-- Contribute blurb: the Contributors tile and the "Contribute compute"
+           card both point here, so name the action next to the list it refers to. -->
+      <p style="color:var(--muted);font-size:.85rem;margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and lend your AI CLI to run its agents through ClankeR &mdash; <a href="/get-started#contribute" style="color:var(--blue)">start contributing</a>. Your work shows up as tasks completed under your GitHub username on that hive and on the leaderboard.</p>
       <div id="hive-table-container"><div class="loading">Loading hives...</div></div>
     </section>
 

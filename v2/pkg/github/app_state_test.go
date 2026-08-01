@@ -249,6 +249,7 @@ func TestAppAuthState_WireRoundTrip(t *testing.T) {
 	all := []AppAuthState{
 		AppStateUnknown, AppStateOK, AppStateNotInstalled, AppStateWrongInstallation,
 		AppStateInsufficientPerms, AppStateKeyMissing, AppStateKeyInvalid,
+		AppStateNoAppAssigned, AppStateWriteForbidden,
 	}
 	for _, s := range all {
 		if got := ParseAppAuthState(s.String()); got != s {
@@ -269,6 +270,7 @@ func TestAppAuthState_ActionabilityIsExclusive(t *testing.T) {
 	all := []AppAuthState{
 		AppStateUnknown, AppStateOK, AppStateNotInstalled, AppStateWrongInstallation,
 		AppStateInsufficientPerms, AppStateKeyMissing, AppStateKeyInvalid,
+		AppStateNoAppAssigned, AppStateWriteForbidden,
 	}
 	for _, s := range all {
 		if s.OperatorActionable() && s.UserActionable() {
@@ -280,6 +282,39 @@ func TestAppAuthState_ActionabilityIsExclusive(t *testing.T) {
 	}
 	if AppStateUnknown.OperatorActionable() || AppStateUnknown.UserActionable() {
 		t.Error("the unknown state must not be actionable by anyone")
+	}
+}
+
+// TestAppStateWriteForbidden_MessageIsAccurate (#2353) locks in the honest copy
+// for a write-403 on a healthy installation: it must NOT claim the App lacks
+// Issues: Read & Write (the permission IS granted), must name the repo, and must
+// point at the real likely cause — the repo not being in the installation's
+// selected repositories. It is user-actionable (an org owner adds the repo),
+// never operator-side.
+func TestAppStateWriteForbidden_MessageIsAccurate(t *testing.T) {
+	d := AppAuthDiagnosis{
+		State:           AppStateWriteForbidden,
+		ExpectedAccount: "open-horizon-services",
+		Repo:            "Getting-Started",
+	}
+	msg := d.Message()
+	if msg == "" {
+		t.Fatal("write-forbidden must carry banner copy")
+	}
+	if strings.Contains(msg, "lacks Issues") || strings.Contains(msg, "granted Issues: none") {
+		t.Errorf("must not claim a permission gap; got %q", msg)
+	}
+	if !strings.Contains(msg, "Getting-Started") {
+		t.Errorf("message must name the repo; got %q", msg)
+	}
+	if !strings.Contains(msg, "selected repositories") {
+		t.Errorf("message must point at repo-scope as the likely cause; got %q", msg)
+	}
+	if AppStateWriteForbidden.OperatorActionable() {
+		t.Error("write-forbidden is fixed by an org owner, not the operator")
+	}
+	if !AppStateWriteForbidden.UserActionable() {
+		t.Error("write-forbidden must be user-actionable (add the repo to the installation)")
 	}
 }
 

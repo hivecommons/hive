@@ -96,18 +96,83 @@ func TestComputeFleetStats(t *testing.T) {
 			want: FleetStats{ReposManaged: 1, PRsMerged: 2, Hives: 1, TotalHives: 1, Reporting: 1, Eligible: 1},
 		},
 		{
-			// Unassigned placeholders (Org == "") are counted as AVAILABLE and
-			// excluded from the assigned totals — "hives up / total" is about the
-			// working fleet, not idle inventory. Here: 2 assigned (1 up), 3 available.
-			name: "unassigned placeholders count as available, not assigned",
+			// Unassigned placeholders are counted as AVAILABLE and excluded from
+			// the assigned totals — "hives up / total" is about the working fleet,
+			// not idle inventory. Availability mirrors the dashboard EXACTLY:
+			// ProvStatus=="available" OR an "available-" org prefix. The immutable
+			// "hosted-available-" ID prefix is deliberately NOT a signal (a claimed
+			// placeholder keeps that ID forever). Here: h1 (up) + h2 (down) are
+			// assigned; the "available-pool" org rows are available; the ID-only row
+			// with a cleared org is a CLAIMED placeholder → assigned, offline.
+			name: "placeholders count as available via provStatus/org, not the ID prefix",
 			hives: []RegistryEntry{
-				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(3)},
-				{IsPublic: false, Online: false, Org: "b", Repos: []string{"r2"}, PRsMerged90d: ptrInt(1)},
-				{Online: true, Org: ""},  // available placeholder, online
-				{Online: false, Org: ""}, // available placeholder, offline
-				{Online: true, Org: ""},  // available placeholder, online
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(3)},
+				{ID: "h2", IsPublic: false, Online: false, Org: "b", Repos: []string{"r2"}, PRsMerged90d: ptrInt(1)},
+				{ID: "hosted-available-oke-01-placeholder-aa01", Online: true, Org: "available-pool"}, // org marker → available
+				{ID: "hosted-available-oke-02-placeholder-aa02", Online: false, Org: ""},              // claimed: ID prefix alone is NOT available → assigned, down
+				{ID: "regular-id", Online: true, Org: "available-pool"},                               // org marker → available
 			},
-			want: FleetStats{ReposManaged: 1, PRsMerged: 3, Hives: 1, TotalHives: 2, AvailableHives: 3, Reporting: 1, Eligible: 1},
+			// Assigned total = h1 + h2 + the ID-only row (3); assigned & up = h1 (1);
+			// available = the two "available-pool" rows (2).
+			want: FleetStats{ReposManaged: 1, PRsMerged: 3, Hives: 1, TotalHives: 3, AvailableHives: 2, Reporting: 1, Eligible: 1},
+		},
+		{
+			// A CLAIMED placeholder whose org was rewritten off the pool prefix
+			// (live example id="hosted-available-oke-01-placeholder-bb95",
+			// org="TradingAsBuddies") is ASSIGNED — its status is not "available"
+			// and its org has no "available-" prefix. The "hosted-available-" ID it
+			// still carries must NOT resurrect it as available. This is the exact
+			// over-count that showed 38 available when only 17 are unclaimed.
+			name: "claimed placeholder with rewritten org is assigned, not available via ID prefix",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(9)},
+				{ID: "hosted-available-oke-01-placeholder-bb95", Online: true, Org: "TradingAsBuddies", Repos: []string{"leftover/repo"}, PRsMerged90d: ptrInt(4)},
+			},
+			// Both assigned & up; the placeholder's rewritten org means 0 available.
+			want: FleetStats{ReposManaged: 2, PRsMerged: 13, Hives: 2, TotalHives: 2, AvailableHives: 0, Reporting: 2, Eligible: 2},
+		},
+		{
+			// THE OVER-COUNT BUG, now via the explicit statusAssigned the claim
+			// paths set: a CLAIMED placeholder KEEPS its "hosted-available-" ID and
+			// a leftover "available-pool" org, but its provStatus is "assigned".
+			// Availability keys off provStatus=="available" (false) and the org
+			// prefix — and here the claim rewrote neither the ID nor the org, so
+			// this case pins that provStatus alone must win: assigned, NOT available.
+			name: "claimed placeholder keeps hosted-available ID/org but statusAssigned makes it assigned",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(4), ProvStatus: statusAssigned},
+				{ID: "hosted-available-oke-01-placeholder-cc11", Online: true, Org: "claimed-org",
+					Repos: []string{"real/repo"}, PRsMerged90d: ptrInt(6), ProvStatus: statusAssigned},
+			},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 10, Hives: 2, TotalHives: 2, AvailableHives: 0, Reporting: 2, Eligible: 2},
+		},
+		{
+			// ProvStatus=="available" is authoritative even for a hive whose ID does
+			// NOT carry the "hosted-available-" prefix and whose org is not a pool
+			// prefix — a placeholder whose ID/org markers alone would miss it. It
+			// still counts as AVAILABLE, matching the dashboard's Unassigned section.
+			name: "provStatus available is authoritative regardless of ID",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(5)},
+				{ID: "regular-looking-id", Online: true, Org: "some-org", ProvStatus: statusAvailable},
+			},
+			want: FleetStats{ReposManaged: 1, PRsMerged: 5, Hives: 1, TotalHives: 1, AvailableHives: 1, Reporting: 1, Eligible: 1},
+		},
+		{
+			// Reconciliation shape mirroring the live fleet the bug was found on:
+			// 2 hosted-available-* IDs, one still unclaimed (ProvStatus available →
+			// AVAILABLE) and one claimed (statusAssigned + org rewritten off the pool
+			// prefix → ASSIGNED). The claimed one must NOT be double-counted as
+			// available even though its ID prefix matches. Available=1, assigned
+			// total=2 (the plain hive + the claimed placeholder).
+			name: "mixed hosted-available pool splits by provStatus",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(2)},
+				{ID: "hosted-available-oke-01-placeholder-dd01", Online: true, Org: "available-pool", ProvStatus: statusAvailable},
+				{ID: "hosted-available-oke-02-placeholder-dd02", Online: true, Org: "claimed-org",
+					Repos: []string{"claimed/repo"}, PRsMerged90d: ptrInt(3), ProvStatus: statusAssigned},
+			},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 5, Hives: 2, TotalHives: 2, AvailableHives: 1, Reporting: 2, Eligible: 2},
 		},
 		{
 			name:  "no hives yields empty",
@@ -398,6 +463,46 @@ func TestHandleFleetStats_LiveDataWinsOverLKG(t *testing.T) {
 	// on a fleet that never cleared the bar.
 	if lkg := s.fleetStatsLKG(); lkg == nil || lkg.PRsMerged != 2 {
 		t.Errorf("LKG was not refreshed from the live aggregate: %+v", lkg)
+	}
+}
+
+// When NOTHING is reporting but eligible hives exist AND a last-known-good
+// aggregate was stored, the handler serves the cached counts and labels them
+// stale — the strip keeps a real (older) number rather than going blank on a
+// fleet that has merely gone quiet. This exercises the LKG-serving branch that
+// only fires at zero live coverage.
+func TestHandleFleetStats_ZeroReportingServesStaleLKG(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	collectedAt := time.Now().Add(-3 * time.Hour).UTC().Truncate(time.Second)
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		ReposManaged: 42, PRsMerged: 26, PRsRejected: 3, CVEsClosed: 1,
+		Hives: 5, Reporting: 5, Eligible: 5, CollectedAt: collectedAt,
+	}
+	// Eligible (online, has repos) but NOT reporting (no counts at all), so
+	// Reporting==0 while Eligible>0 — the exact state the LKG fallback covers.
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r1"}},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r2"}},
+	}
+
+	fs := decodeFleetStats(t, s)
+	if fs.Trustworthy {
+		t.Fatal("Trustworthy = true, want false when nothing is reporting")
+	}
+	if !fs.StaleData {
+		t.Error("StaleData = false, want true when serving the cached aggregate")
+	}
+	// The served counts come from the cache, not the (empty) live aggregate.
+	if fs.PRsMerged != 26 || fs.ReposManaged != 42 {
+		t.Errorf("served PRsMerged/ReposManaged = %d/%d, want cached 26/42", fs.PRsMerged, fs.ReposManaged)
+	}
+	// AsOf reflects the cache's collection time, not now.
+	if fs.AsOf != collectedAt.Format(time.RFC3339) {
+		t.Errorf("AsOf = %q, want the cached collection time %q", fs.AsOf, collectedAt.Format(time.RFC3339))
+	}
+	// Live coverage figures are kept so the page can show recollection progress.
+	if fs.Reporting != 0 || fs.Eligible != 2 {
+		t.Errorf("Reporting/Eligible = %d/%d, want live 0/2", fs.Reporting, fs.Eligible)
 	}
 }
 

@@ -69,6 +69,24 @@ const (
 	// JWT fails before the installation is ever consulted. That misdiagnosis is
 	// what cost the owner of the first hive to hit this real debugging time.
 	AppStateNoAppAssigned
+
+	// AppStateWriteForbidden (#2353) means the App authenticated, the
+	// installation resolved on the RIGHT account, and DiagnoseAppAuth reports
+	// the installation grants issues:write — yet a real WRITE attempt returned
+	// 403 "Resource not accessible by integration". DiagnoseAppAuth only
+	// inspects installation-level PERMISSIONS; it never checks whether the
+	// target repo is in the installation's `selected` repositories. So an
+	// authentication-and-permission check passes while the write is still
+	// forbidden.
+	//
+	// The most likely cause is exactly that gap: the repo is not included in the
+	// App installation's selected repositories, so no granted permission applies
+	// to it. It is DISTINCT from AppStateInsufficientPerms — the permission IS
+	// granted here, so labelling this "lacks Issues: Read & Write" is a false
+	// accusation. USER-ACTIONABLE (by an org owner): add the repo to the App
+	// installation (or, if using "all repositories", approve any pending
+	// permission update).
+	AppStateWriteForbidden
 )
 
 // String returns the stable wire token for a state. These tokens cross the
@@ -90,6 +108,8 @@ func (s AppAuthState) String() string {
 		return "key-invalid"
 	case AppStateNoAppAssigned:
 		return "no-app-assigned"
+	case AppStateWriteForbidden:
+		return "write-forbidden"
 	default:
 		return "unknown"
 	}
@@ -107,7 +127,7 @@ func (s AppAuthState) OperatorActionable() bool {
 // this state themselves. Only these states justify a "do something" banner.
 func (s AppAuthState) UserActionable() bool {
 	switch s {
-	case AppStateNotInstalled, AppStateWrongInstallation, AppStateInsufficientPerms:
+	case AppStateNotInstalled, AppStateWrongInstallation, AppStateInsufficientPerms, AppStateWriteForbidden:
 		return true
 	default:
 		return false
@@ -133,6 +153,8 @@ func ParseAppAuthState(s string) AppAuthState {
 		return AppStateKeyInvalid
 	case "no-app-assigned":
 		return AppStateNoAppAssigned
+	case "write-forbidden":
+		return AppStateWriteForbidden
 	default:
 		return AppStateUnknown
 	}
@@ -236,6 +258,10 @@ type AppAuthDiagnosis struct {
 	// IssuesPerm is the granted issues permission, when the installation
 	// resolved.
 	IssuesPerm string
+	// Repo, when set, is the repository whose write attempt was forbidden.
+	// Only AppStateWriteForbidden (#2353) populates it, so the banner can name
+	// the exact repo the operator must add to the App installation.
+	Repo string
 	// Err is the underlying error, for logs. Never rendered to a user
 	// verbatim, because it can carry raw API text.
 	Err error
@@ -386,6 +412,20 @@ func (d AppAuthDiagnosis) Message() string {
 		}
 		return fmt.Sprintf("The GitHub App is installed for '%s' but granted Issues: %s (Issues: Read & Write required). "+
 			"The org owner must approve the updated permissions at the app installation settings page.", acct, granted)
+
+	case AppStateWriteForbidden:
+		// #2353: authentication and installation-level permissions both check
+		// out, but a real write returned 403. Do NOT claim a missing
+		// permission — the permission IS granted. The likeliest gap is repo
+		// scope: this repo is not in the App installation's selected repos.
+		repo := strings.TrimSpace(d.Repo)
+		if repo == "" {
+			repo = "this repository"
+		}
+		return fmt.Sprintf("The GitHub App is installed and authenticated for '%s' and holds Issues: Read & Write, "+
+			"but a write to %s returned 403 (Resource not accessible by integration). The most likely cause is that "+
+			"%s is not included in the App installation's selected repositories — add it to the installation "+
+			"(or, if a permission update is pending, approve it) at the app installation settings page.", owner, repo, repo)
 
 	default:
 		return "Could not verify this hive's GitHub App credentials. This is usually transient — " +
