@@ -5572,8 +5572,18 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		// own api.github.com default — and so the cluster backfill below, which
 		// only ever fills a blank, does not silently re-GHE it.
 		if strings.EqualFold(host, githubHostPublic) {
-			h.GitHubHost = ""
-			h.GitHubBaseURL = githubHostPublic
+			// Record public github.com EXPLICITLY. This used to store a blank
+			// host plus the "public" sentinel, because a blank was the only way
+			// to stop backfillGitHubHostFromCluster re-GHE-ing the hive on the
+			// next line. Storing the real host achieves the same thing — that
+			// backfill only ever fills a value that is EMPTY — without leaving
+			// an absent field that means "public" by implication.
+			//
+			// An absent field is what hid the 2026-07-31 incident and what left
+			// 25 of 50 hub records with no github_host at all. github_host is
+			// the single stored input for a hive's identity (#2386); it should
+			// never be the one field we deliberately leave blank.
+			h.GitHubHost = publicForgeHost
 		} else {
 			h.GitHubHost = host
 		}
@@ -5584,8 +5594,11 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		// github.com request must be pinned public — NOT stored as the literal host
 		// "public", and NOT left blank for the cluster backfill below to re-GHE.
 		if strings.EqualFold(pr.GitHubHost, githubHostPublic) {
-			h.GitHubHost = ""
-			h.GitHubBaseURL = githubHostPublic
+			// Same as the admin-override branch above: store the real host, not
+			// a blank plus the sentinel. The literal string "public" must never
+			// be stored as a host — it is a request-time marker, not a hostname,
+			// and a hive naming it resolves to no forge at all.
+			h.GitHubHost = publicForgeHost
 		} else {
 			h.GitHubHost = pr.GitHubHost
 		}
@@ -6310,8 +6323,11 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// re-GHE the hive. Without the sentinel a blank host would simply be
 	// refilled from the cluster on the very next line.
 	if strings.EqualFold(body.GitHubHost, githubHostPublic) {
-		h.GitHubHost = ""
-		h.GitHubBaseURL = githubHostPublic
+		// Explicit public github.com, stored as the real host rather than a
+		// blank + sentinel. The cluster backfill below only fills an EMPTY
+		// host, so a stated value blocks it just as the blank did — and does
+		// not leave a field whose absence has to be interpreted.
+		h.GitHubHost = publicForgeHost
 	} else if body.GitHubHost != "" {
 		h.GitHubHost = body.GitHubHost
 	}
