@@ -1789,19 +1789,25 @@ type HubConfig struct {
 	// filter regardless of mode (names kept for backward compatibility with
 	// existing on-disk config; the mode decides allow vs deny). ContributeAllowLabels
 	// is retained only for one-time migration into DenyLabels+LabelsMode.
-	ContributeTitlesMode          string              `yaml:"contribute_titles_mode,omitempty"`
-	ContributeAuthorsMode         string              `yaml:"contribute_authors_mode,omitempty"`
-	ContributeLabelsMode          string              `yaml:"contribute_labels_mode,omitempty"`
-	ContributeAllowLabels         []string            `yaml:"contribute_allow_labels"`
-	ContributeDenyLabels          []string            `yaml:"contribute_deny_labels"`
-	ContributeDenyTitles          []string            `yaml:"contribute_deny_titles"`
-	ContributeDenyAuthors         []string            `yaml:"contribute_deny_authors"`
-	ContributeAllowModels         []string            `yaml:"contribute_allow_models"`
-	ContributeRejectUnknownModels bool                `yaml:"contribute_reject_unknown_models"`
-	DisabledRepos                 []string            `yaml:"disabled_repos"`
-	DisabledTiers                 []string            `yaml:"disabled_tiers"`
-	TierLimits                    map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin           int                 `yaml:"snapshot_interval_min"`
+	ContributeTitlesMode          string   `yaml:"contribute_titles_mode,omitempty"`
+	ContributeAuthorsMode         string   `yaml:"contribute_authors_mode,omitempty"`
+	ContributeLabelsMode          string   `yaml:"contribute_labels_mode,omitempty"`
+	ContributeAllowLabels         []string `yaml:"contribute_allow_labels"`
+	ContributeDenyLabels          []string `yaml:"contribute_deny_labels"`
+	ContributeDenyTitles          []string `yaml:"contribute_deny_titles"`
+	ContributeDenyAuthors         []string `yaml:"contribute_deny_authors"`
+	ContributeAllowModels         []string `yaml:"contribute_allow_models"`
+	ContributeRejectUnknownModels bool     `yaml:"contribute_reject_unknown_models"`
+	// ContributeSkipAssignedToOthers, when true, makes the /contribute queue
+	// skip any issue that is already assigned to someone OTHER than the
+	// contributor requesting work. An issue assigned to the contributor
+	// themselves (or unassigned) is still eligible. Default false preserves the
+	// prior behavior of handing out issues regardless of assignment (#2357).
+	ContributeSkipAssignedToOthers bool                `yaml:"contribute_skip_assigned_to_others"`
+	DisabledRepos                  []string            `yaml:"disabled_repos"`
+	DisabledTiers                  []string            `yaml:"disabled_tiers"`
+	TierLimits                     map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin            int                 `yaml:"snapshot_interval_min"`
 }
 
 type TierRate struct {

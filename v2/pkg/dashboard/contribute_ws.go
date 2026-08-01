@@ -867,6 +867,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 			url, _ := issue["url"].(string)
 			author, _ := issue["author"].(string)
 			labels := stringSliceFromAny(issue["labels"])
+			assignees := stringSliceFromAny(issue["assignees"])
 
 			// Apply the title / author / label contribute filters. Each is a
 			// single list plus a mode (allow = only matching pass; deny = matching
@@ -876,6 +877,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				if !config.FilterPasses(title, hub.ContributeDenyTitles, hub.ContributeTitlesMode) ||
 					!config.FilterPasses(author, hub.ContributeDenyAuthors, hub.ContributeAuthorsMode) ||
 					!config.LabelsFilterPasses(labels, hub.ContributeDenyLabels, hub.ContributeLabelsMode) {
+					continue
+				}
+				// #2357: optionally skip issues already assigned to someone else.
+				// An issue assigned to the contributor themselves (or unassigned)
+				// stays eligible; only issues assigned solely to OTHER users are
+				// skipped when the toggle is on.
+				if hub.ContributeSkipAssignedToOthers &&
+					assignedToOthers(assignees, c.profile.GitHubUsername) {
 					continue
 				}
 			}
@@ -938,6 +947,23 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	}
 
 	return nil
+}
+
+// assignedToOthers reports whether an issue is assigned to at least one user
+// AND none of its assignees is the given contributor. An unassigned issue
+// (empty list) returns false, and an issue assigned to the contributor
+// themselves returns false, so both remain eligible for pickup (#2357). The
+// username comparison is case-insensitive to match GitHub login semantics.
+func assignedToOthers(assignees []string, username string) bool {
+	if len(assignees) == 0 {
+		return false
+	}
+	for _, a := range assignees {
+		if strings.EqualFold(a, username) {
+			return false
+		}
+	}
+	return true
 }
 
 // stringSliceFromAny coerces a JSON-decoded value (from an issue map marshaled
