@@ -378,6 +378,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 		InstallationID: installID,
 		AppSlug:        identity.AppSlug,
 		APIURL:         target.APIURL,
+		BaseURL:        target.BaseURL,
 		ArmedAt:        time.Now().UTC().Format(time.RFC3339),
 		Reason:         "forge switch to " + target.Host,
 		// PrivateKey is deliberately absent, and this record never stores key

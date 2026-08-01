@@ -89,6 +89,14 @@ type PendingAppIdentity struct {
 	// GitHub. Recorded so the consistency of the queued SET can be checked
 	// before it is armed, even though it travels on a different payload.
 	APIURL string `json:"api_url,omitempty"`
+	// BaseURL completes the forge half of the identity set.
+	//
+	// APIURL alone is not enough: app_id, app_slug, api_url and base_url are ONE
+	// value. A request carrying three of the four leaves the spoke to pair the
+	// new App with whichever base_url it already had — the half-identity this
+	// record exists to prevent, reintroduced one field down. Empty means public
+	// github.com, matching APIURL.
+	BaseURL string `json:"base_url,omitempty"`
 	// ArmedAt is when this identity was queued, so an outstanding delivery that
 	// never confirms is visible rather than merely absent.
 	ArmedAt string `json:"armed_at,omitempty"`
@@ -232,6 +240,12 @@ func (s *HubServer) pendingAppIdentityForHeartbeat(p *HeartbeatPayload) *Heartbe
 		AppID:          pend.AppID,
 		InstallationID: pend.InstallationID,
 		AppSlug:        pend.AppSlug,
+		// The forge urls travel WITH the App. They were stored on the pending
+		// record and never sent, so a forge switch delivered a new app_id while
+		// the spoke kept its previous api_url/base_url — the half-identity that
+		// returns "404 Integration not found". Empty still means "unchanged".
+		APIURL:  pend.APIURL,
+		BaseURL: pend.BaseURL,
 		// PrivateKey deliberately empty: key material is owned by the
 		// per-cluster reconcile, which gates every push on HasKey(). An empty
 		// key already means "leave the spoke's key alone", so this can never
