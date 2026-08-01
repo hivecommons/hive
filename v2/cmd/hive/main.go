@@ -142,6 +142,25 @@ func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *hub.HeartbeatGitH
 		next.AppSlug = ghCfg.AppSlug
 		touched = true
 	}
+	// The forge URLs are part of the SAME set as the App above, so they are
+	// adopted here and validated with it rather than arriving separately on the
+	// project-config channel. An App ID presented to the wrong forge returns
+	// "404 Integration not found", so applying one half without the other is the
+	// live failure this function exists to prevent.
+	//
+	// Empty means "unchanged", matching AppSlug. It cannot mean "make me
+	// public": empty URLs are also the correct steady state for a public hive
+	// (~41 of 50 spokes), so silence here is indistinguishable from "no opinion"
+	// and must never blank a working GHE URL. A hive moving TO public gets that
+	// from its app_id, which the resolver derives from its forge.
+	if ghCfg.APIURL != "" && ghCfg.APIURL != cur.APIURL {
+		next.APIURL = ghCfg.APIURL
+		touched = true
+	}
+	if ghCfg.BaseURL != "" && ghCfg.BaseURL != cur.BaseURL {
+		next.BaseURL = ghCfg.BaseURL
+		touched = true
+	}
 	if !touched {
 		return nil
 	}
@@ -2844,6 +2863,24 @@ func main() {
 				logger.Info("adopting github app slug from hub",
 					"was", cfg.GitHub.AppSlug, "now", ghCfg.AppSlug)
 				cfg.GitHub.AppSlug = ghCfg.AppSlug
+			}
+			// Adopt the forge URLs from the SAME delivery as the App above.
+			// prospectiveGitHubIdentity already validated all four fields
+			// together, so reaching here means the complete set is coherent —
+			// applying the App without its URLs would undo that check by leaving
+			// the spoke pointed at the previous forge.
+			//
+			// Same "empty means unchanged" contract: empty is the correct steady
+			// state for a public hive, so it can never be read as "blank this".
+			if ghCfg.APIURL != "" && cfg.GitHub.APIURL != ghCfg.APIURL {
+				logger.Info("adopting github api url from hub",
+					"was", cfg.GitHub.APIURL, "now", ghCfg.APIURL)
+				cfg.GitHub.APIURL = ghCfg.APIURL
+			}
+			if ghCfg.BaseURL != "" && cfg.GitHub.BaseURL != ghCfg.BaseURL {
+				logger.Info("adopting github base url from hub",
+					"was", cfg.GitHub.BaseURL, "now", ghCfg.BaseURL)
+				cfg.GitHub.BaseURL = ghCfg.BaseURL
 			}
 
 			// Persist the adopted App IDENTITY to the PVC overlay, exactly as the

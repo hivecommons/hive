@@ -776,6 +776,30 @@ type HeartbeatGitHubAppConfig struct {
 	// Empty means "leave the spoke's slug unchanged" — never a way to blank a
 	// working value.
 	AppSlug string `json:"app_slug,omitempty"`
+	// APIURL and BaseURL complete the identity SET.
+	//
+	// WHY THEY ARE HERE AND NOT ON ProjectConfig
+	//
+	// app_id, app_slug, api_url and base_url are ONE value: an App ID presented
+	// to the wrong forge returns "404 Integration not found". Until now the App
+	// half travelled on this channel and api_url travelled on
+	// HeartbeatProjectConfig, dispatched independently to a different callback.
+	// Nothing composed them, so nothing could validate them together — and a
+	// forge switch (saas.go, pendingForgeAPIURL) deliberately sends api_url
+	// ALONE, which is precisely the operation that changes identity. Between
+	// those beats the spoke holds a half-identity: exactly the 404 shape that
+	// took 26 hives down on 2026-07-31.
+	//
+	// Carrying them here lets the whole set be built and validated in one place,
+	// and lets the spoke adopt it atomically instead of in two unordered halves.
+	//
+	// Empty means "leave the spoke's value unchanged", the same contract as
+	// AppSlug — never a way to blank a working URL. Note that empty is ALSO the
+	// correct steady state for a public-GitHub hive (~41 of 50 spokes run that
+	// way), which is why the spoke must not infer "public" from silence here;
+	// the App ID is the field that names the forge.
+	APIURL  string `json:"api_url,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
 	// AdditionalKeys carries EVERY OTHER GitHub App private key the fleet knows,
 	// keyed by its own app_id, so a spoke can hold both the github.com App key
 	// AND its cluster's GitHub Enterprise App key at once — and pick whichever

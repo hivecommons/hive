@@ -902,11 +902,22 @@ func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFing
 		return nil
 	}
 
+	// Emit the COMPLETE set. The guard above validated app_id/app_slug against
+	// the forge URLs this hive resolved to; sending the App without those URLs
+	// would ship a set the spoke cannot reassemble, and leave it to be completed
+	// — or contradicted — by a ProjectConfig push on a different channel.
+	//
+	// The URLs are the RESOLVED ones (identity.APIURL/BaseURL), so what the
+	// spoke receives is byte-identical to what was just validated. A public
+	// election resolves to empty URLs, which the spoke reads as "unchanged" —
+	// correct, because empty is also how every healthy public spoke is stored.
 	return &HeartbeatGitHubAppConfig{
 		AppID:          identity.AppID,
 		InstallationID: installationID,
 		PrivateKey:     privateKey,
 		AppSlug:        identity.AppSlug,
+		APIURL:         identity.APIURL,
+		BaseURL:        identity.BaseURL,
 	}
 }
 
