@@ -33,7 +33,7 @@ func TestProvisionHiveNFSWithOCI(t *testing.T) {
 	// NFS storage triggers the OCI create branch.
 	cluster := &ClusterConfig{ID: "hive-oke", InCluster: true, StorageType: storageTypeNFS, Domain: "hive.kubestellar.io"}
 
-	if err := provisionHive(h, req, cluster, slog.Default()); err != nil {
+	if err := provisionHive(h, req, cluster, nil, slog.Default()); err != nil {
 		t.Fatalf("provisionHive NFS+OCI: %v", err)
 	}
 	if h.OCIFileSystemID == "" || h.OCIExportID == "" {

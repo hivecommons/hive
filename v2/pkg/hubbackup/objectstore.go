@@ -80,6 +80,13 @@ const (
 // defaultOCIRegion is the region hosting the hub's tenancy. Non-secret.
 const defaultOCIRegion = "us-ashburn-1"
 
+// envOCIEndpoint redirects Object Storage requests away from the real regional
+// host. TEST SEAM ONLY — it is never set in production, and TestMain's
+// non-loopback dial guard means a test that forgets it cannot reach OCI either.
+// It exists so Run and VerifyLatest, which construct their own ObjectStore
+// internally, can be exercised end to end.
+const envOCIEndpoint = "HIVE_BACKUP_OCI_ENDPOINT"
+
 // ObjectStore uploads and lists encrypted archives in OCI Object Storage.
 type ObjectStore struct {
 	tenancy     string
@@ -90,6 +97,9 @@ type ObjectStore struct {
 	namespace   string
 	bucket      string
 	client      *http.Client
+	// endpointOverride redirects requests away from the real OCI host. Test
+	// seam only — see baseURL().
+	endpointOverride string
 }
 
 // NewObjectStore builds a client from environment credentials.
@@ -133,7 +143,8 @@ func NewObjectStore(bucket string) (*ObjectStore, error) {
 	os_ := &ObjectStore{
 		tenancy: tenancy, user: user, fingerprint: fingerprint,
 		privateKey: key, region: region, bucket: bucket,
-		client: &http.Client{Timeout: ociHTTPTimeout},
+		client:           &http.Client{Timeout: ociHTTPTimeout},
+		endpointOverride: strings.TrimSpace(os.Getenv(envOCIEndpoint)),
 	}
 	ns, err := os_.resolveNamespace()
 	if err != nil {
@@ -145,6 +156,18 @@ func NewObjectStore(bucket string) (*ObjectStore, error) {
 
 func (o *ObjectStore) host() string {
 	return fmt.Sprintf(ociObjectStorageHost, o.region)
+}
+
+// baseURL returns the scheme+host requests are sent to. endpointOverride is a
+// TEST SEAM ONLY: it is never set in production, where every request goes to
+// the real regional Object Storage host. Tests point it at an httptest server
+// so Put/Get/List/Delete/Prune and the signing path can be exercised end to
+// end without OCI credentials or network access.
+func (o *ObjectStore) baseURL() string {
+	if o.endpointOverride != "" {
+		return o.endpointOverride
+	}
+	return "https://" + o.host()
 }
 
 // sign applies the OCI HTTP Signature to a request.
@@ -187,7 +210,7 @@ func (o *ObjectStore) sign(req *http.Request, body []byte) error {
 
 // do signs and executes a request, returning the response body.
 func (o *ObjectStore) do(method, path string, body []byte) ([]byte, error) {
-	url := "https://" + o.host() + path
+	url := o.baseURL() + path
 	var rdr io.Reader
 	if body != nil {
 		rdr = bytes.NewReader(body)

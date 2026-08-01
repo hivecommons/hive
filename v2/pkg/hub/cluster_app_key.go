@@ -181,17 +181,78 @@ func clusterAppKeyFingerprint(clusterID string) string {
 // authenticating as. Assembled from the cluster config (app_id, non-secret) and
 // the key store (the key itself, never in any config file).
 type clusterAppIdentity struct {
-	AppID       int64
-	AppSlug     string
+	AppID   int64
+	AppSlug string
+	// APIURL, BaseURL and Forge describe the forge THIS HIVE resolved to, which
+	// is not necessarily its cluster's default.
+	//
+	// They are carried here because dropping them is what made the hub refuse
+	// its own repair: the guard below re-read the URLs from the CLUSTER record,
+	// so a hive that elected github.com had its public app_id validated against
+	// the cluster's GHE api_url/base_url. That pair IS inconsistent, so
+	// RejectIdentitySet correctly refused it — and the push those hives needed
+	// was dropped every ~30s with the right answer already computed.
+	//
+	// Forge distinguishes "public, whose URLs are legitimately empty" from "no
+	// forge resolved"; the URLs alone cannot.
+	APIURL      string
+	BaseURL     string
+	Forge       string
 	PrivateKey  string
 	Fingerprint string
 }
 
+// HasKey reports whether this identity carries actual key material, as opposed
+// to naming an App whose key the hub has never been given.
+//
+// Every decision that would REPLACE a spoke's key must gate on this: an
+// identity with no key can still authoritatively correct an app_id, but pushing
+// its empty PrivateKey would blank a spoke's working key file. The heartbeat
+// contract treats an empty private_key as "leave the key alone", so the two
+// concerns stay cleanly separable.
+func (i *clusterAppIdentity) HasKey() bool {
+	return i != nil && i.PrivateKey != "" && i.Fingerprint != ""
+}
+
 // appIdentityForCluster resolves the App identity the hub should enforce on a
-// cluster. It returns nil when the cluster is unknown, has no configured app_id,
-// or has no stored key — all of which mean "this hub has nothing authoritative
-// to say about this cluster's App credentials, so change nothing".
+// cluster. It returns nil when the cluster is unknown or has no configured
+// app_id — both of which mean "this hub has nothing authoritative to say about
+// this cluster's App credentials, so change nothing".
+//
+// A CONFIGURED app_id WITH NO STORED KEY IS STILL AN IDENTITY
+//
+// The key store and the cluster config are populated independently: app_id is
+// non-secret and lives in clusters.json, the key is secret and lives in the
+// per-cluster PEM store. Requiring BOTH before the hub would say anything meant
+// a cluster that named its App but whose key had never been uploaded produced
+// nil — and every downstream reconcile silently became a no-op.
+//
+// That is exactly how the placeholder-sentinel repair shipped in #2333 was
+// prevented from ever running on the hive-oke cluster: the operator added
+// "github_app_id" to clusters.json as instructed, but hive-oke has no
+// <clusterID>.pem (only vllm-d does), so appIdentityForCluster returned nil and
+// appKeyConfigForHeartbeat bailed before decideAppKeySync's sentinel branch was
+// ever consulted. The repair was unreachable in production for the one cluster
+// it was written for.
+//
+// The two facts are independently useful. Correcting a spoke's app_id needs
+// only the non-secret app_id; replacing its KEY needs the PEM. Returning the
+// identity with an empty PrivateKey/Fingerprint lets the app_id-only repair
+// proceed, while every key-pushing decision still gates on HasKey() so a hub
+// holding no key can never blank a spoke's working one.
 func (s *HubServer) appIdentityForCluster(clusterID string) *clusterAppIdentity {
+	// No hive in hand: the cluster's own default identity. Callers that DO have
+	// a hive must use appIdentityForHive so the hive's election is honoured.
+	return s.appIdentityForHive(nil, clusterID)
+}
+
+// appIdentityForHive resolves the App identity the hub should answer with for a
+// specific hive, routing through ResolveHiveIdentity so this path cannot give a
+// different answer from provisioning or the forge endpoint.
+//
+// A nil hive means "no election known" and yields the cluster default, which is
+// exactly the previous behaviour of appIdentityForCluster.
+func (s *HubServer) appIdentityForHive(h *SaaSHive, clusterID string) *clusterAppIdentity {
 	if s == nil || s.clusters == nil {
 		return nil
 	}
@@ -199,23 +260,43 @@ func (s *HubServer) appIdentityForCluster(clusterID string) *clusterAppIdentity 
 	if !ok {
 		return nil
 	}
-	if c.GitHubAppID == 0 {
+	resolved := ResolveHiveIdentityInFleet(h, &c, s.forgeAppsAcrossFleet())
+	if resolved.AppID == 0 {
 		return nil
+	}
+	identity := &clusterAppIdentity{
+		AppID:   resolved.AppID,
+		AppSlug: resolved.AppSlug,
+		APIURL:  resolved.APIURL,
+		BaseURL: resolved.BaseURL,
+		Forge:   resolved.Forge,
+	}
+	// The KEY must follow the APP, not the cluster. A hive that elected a forge
+	// its cluster does not default to needs that App's key; the cluster's key
+	// belongs to a different App and would fail auth even with a correct app_id.
+	if resolved.FromHiveIntent && resolved.AppID != c.GitHubAppID {
+		if k, found := s.appKeysByAppID()[resolved.AppID]; found && k.PrivateKey != "" {
+			identity.PrivateKey = k.PrivateKey
+			identity.Fingerprint = k.Fingerprint
+			if identity.AppSlug == "" {
+				identity.AppSlug = k.AppSlug
+			}
+		}
+		return identity
 	}
 	pem := loadClusterAppKey(clusterID)
 	if pem == "" {
-		return nil
+		// No key uploaded for this cluster. The app_id alone is still
+		// authoritative and still repairs a sentinel spoke.
+		return identity
 	}
 	fp, err := config.AppKeyFingerprint(pem)
 	if err != nil {
-		return nil
+		return identity
 	}
-	return &clusterAppIdentity{
-		AppID:       c.GitHubAppID,
-		AppSlug:     c.GitHubAppSlug,
-		PrivateKey:  pem,
-		Fingerprint: fp,
-	}
+	identity.PrivateKey = pem
+	identity.Fingerprint = fp
+	return identity
 }
 
 // fleetAppKey is one App identity the fleet knows, indexed by its own app_id.
@@ -404,8 +485,18 @@ func (s *HubServer) attachMissingAppKeys(resp *HeartbeatResponse, payload *Heart
 // against its cluster's authoritative one. Returned rather than acted on inline
 // so the decision is table-testable without a filesystem or an HTTP server.
 type appKeySyncDecision struct {
-	// Push is true when the hub should deliver the cluster key to this spoke.
+	// Push is true when the hub should send this spoke a GitHub App config at
+	// all — which may be an app_id correction, a key delivery, or both.
 	Push bool
+	// PushKey is true when that config should carry KEY MATERIAL.
+	//
+	// It is deliberately separate from Push. The placeholder-sentinel repair is
+	// an app_id correction that is valid even when the hub holds no key for the
+	// cluster, and the heartbeat contract reads an empty private_key as "leave
+	// the spoke's key alone". Collapsing the two would either block the repair
+	// on a key the hub may not have, or send an empty key that blanks a working
+	// one. Every decision that replaces a key sets both.
+	PushKey bool
 	// Reason is a short, log-safe explanation. Never contains key material.
 	Reason string
 	// FromFingerprint is what the spoke reported ("" = spoke reported none).
@@ -450,6 +541,29 @@ const (
 	// key on disk. This mirrors resolveProvisionAppID, which likewise honours the
 	// public pin instead of forcing the cluster GHE app_id.
 	appKeyReasonPublicHiveOnGHECluster = "hive is pinned to public github.com on a GHE-default cluster"
+	// appKeyReasonWrongForgeApp repairs a spoke carrying an App registered on a
+	// DIFFERENT GitHub host than the one the hive actually talks to.
+	//
+	// appKeyReasonDifferentApp protects a deliberate pin, and that protection is
+	// right whenever both Apps live on the same forge — an operator may genuinely
+	// want a hive on its own App. But an App ID is only meaningful ON the host that
+	// issued it: GitHub Enterprise and github.com maintain entirely separate App
+	// registries, so a github.com app_id names NOTHING on github.ibm.com. Such a
+	// pairing is not a configuration choice, it is provably broken in the same way
+	// the placeholder sentinel is — every JWT is signed for an App the host has
+	// never heard of, and no installation_id the owner enters can rescue it.
+	//
+	// It is also the state a forge migration leaves behind: moving a hive's host
+	// without swapping its App identity strands the old forge's app_id on the new
+	// host. That is exactly how a live GHE hive ended up emitting an install link
+	// for the github.com App slug and 404ing on GitHub Enterprise.
+	//
+	// The discriminator is narrow and evidence-based: the hive is NOT public-pinned
+	// (that case is already handled above and must keep its github.com App), its
+	// cluster declares a GHE base URL, and the spoke's app_id differs from the
+	// cluster's. Under those three conditions the spoke's App cannot be the
+	// cluster's forge's App, so the cluster identity is the only workable one.
+	appKeyReasonWrongForgeApp = "hive carries an app_id registered on a different github host"
 )
 
 // decideAppKeySync decides whether the hub should push its cluster App key to a
@@ -512,7 +626,14 @@ const (
 // key rides only as an ADDITIONAL key (attachMissingAppKeys). This is the app-KEY
 // reconcile finally honouring the same public pin that resolveProvisionAppID and
 // effectiveGitHubBaseURL already honour on the provisioning path.
-func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
+//
+// WRONG-FORGE APP — clusterIsGHE carries the one fact this function cannot see
+// for itself: whether the cluster's App lives on a GitHub Enterprise host rather
+// than public github.com. Combined with a non-public-pinned hive whose app_id
+// differs from the cluster's, that proves the spoke's App was issued by a
+// different forge and therefore names nothing on the host this hive uses. See
+// appKeyReasonWrongForgeApp.
+func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned, clusterIsGHE bool, spokeAppID int64, cluster *clusterAppIdentity) appKeySyncDecision {
 	if cluster == nil {
 		return appKeySyncDecision{Reason: appKeyReasonNoClusterKey, FromFingerprint: spokeFingerprint}
 	}
@@ -539,12 +660,54 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 	// This is the ONLY app_id the reconcile treats as unconditionally wrong. A
 	// spoke on any other non-matching app_id is still respected as a deliberate
 	// pin (appKeyReasonDifferentApp).
+	// The sentinel repair deliberately does NOT require the hub to hold this
+	// cluster's key. Correcting app_id 999999999 to the cluster's real App is a
+	// non-secret change, and it is the whole fix for a spoke that already holds
+	// a valid per-hive key provisioned for that App. Gating the repair on key
+	// material — as the original identity lookup did — is precisely what made
+	// this branch dead code on a cluster that had configured its app_id but
+	// never uploaded a PEM. The key rides along only when the hub actually has
+	// one; otherwise this is an app_id-only push.
 	if spokeAppID == config.PlaceholderAppID {
 		return appKeySyncDecision{
 			Push:            true,
+			PushKey:         cluster.HasKey(),
 			Reason:          appKeyReasonPlaceholderAppID,
 			FromFingerprint: fp,
 			ToFingerprint:   cluster.Fingerprint,
+		}
+	}
+	// A spoke holding an App from ANOTHER forge is broken for the same reason the
+	// sentinel is: the app_id names no App on the host this hive actually uses.
+	// Decided here — after the sentinel and the public pin, but BEFORE the
+	// per-hive-key shield — because a stranded hive typically does hold a per-hive
+	// key (for the other forge's App) and would otherwise be protected as
+	// appKeyReasonDifferentApp and never repaired.
+	//
+	// Requires a POSITIVE, non-zero app_id disagreement: zero means "too old to
+	// report", and silence is never evidence of a fault (same contract as the
+	// per-hive exception above).
+	//
+	// Like the sentinel repair this does NOT require the hub to hold the cluster's
+	// key — correcting a cross-forge app_id/app_slug is a non-secret change and is
+	// the whole fix for a hive whose owner has yet to install the App at all.
+	if clusterIsGHE && spokeAppID != 0 && spokeAppID != cluster.AppID {
+		return appKeySyncDecision{
+			Push:            true,
+			PushKey:         cluster.HasKey(),
+			Reason:          appKeyReasonWrongForgeApp,
+			FromFingerprint: fp,
+			ToFingerprint:   cluster.Fingerprint,
+		}
+	}
+	// Beyond the sentinel repair every remaining decision is about REPLACING the
+	// spoke's key, which the hub cannot do without holding one. Stopping here
+	// keeps a keyless cluster from reporting a "mismatch" against an empty
+	// fingerprint and pushing a blank key over a working one.
+	if !cluster.HasKey() {
+		return appKeySyncDecision{
+			Reason:          appKeyReasonNoClusterKey,
+			FromFingerprint: fp,
 		}
 	}
 	if hasPerHiveKey {
@@ -565,6 +728,7 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 		if spokeAppID != 0 && spokeAppID == cluster.AppID && fp != "" && fp != cluster.Fingerprint {
 			return appKeySyncDecision{
 				Push:            true,
+				PushKey:         true,
 				Reason:          appKeyReasonPerHiveUnusable,
 				FromFingerprint: fp,
 				ToFingerprint:   cluster.Fingerprint,
@@ -583,6 +747,7 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 	if fp == "" {
 		return appKeySyncDecision{
 			Push:          true,
+			PushKey:       true,
 			Reason:        appKeyReasonSpokeHasNoKey,
 			ToFingerprint: cluster.Fingerprint,
 		}
@@ -590,6 +755,7 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 	if fp != cluster.Fingerprint {
 		return appKeySyncDecision{
 			Push:            true,
+			PushKey:         true,
 			Reason:          appKeyReasonMismatch,
 			FromFingerprint: fp,
 			ToFingerprint:   cluster.Fingerprint,
@@ -611,32 +777,169 @@ func decideAppKeySync(spokeFingerprint string, hasPerHiveKey, hivePublicPinned b
 // installation_id. Zero is passed through as zero — the spoke's callback only
 // rebuilds its client once app_id, installation_id and key file are all present,
 // so a key delivered ahead of an installation ID lands on disk and waits.
-func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, installationID int64, logger *slog.Logger) *HeartbeatGitHubAppConfig {
-	identity := s.appIdentityForCluster(clusterID)
-	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, spokeAppID, identity)
+func (s *HubServer) appKeyConfigForHeartbeat(hiveID, clusterID string, spokeFingerprint string, hasPerHiveKey, hivePublicPinned bool, spokeAppID int64, installationID int64, logger *slog.Logger, hiveOpt ...*SaaSHive) *HeartbeatGitHubAppConfig {
+	// hiveOpt carries the hub's record for this hive, whose github_host is the
+	// hive's OWN elected forge. Without it this path answered from the cluster
+	// alone and overwrote correctly-repaired spokes on the next beat.
+	//
+	// Variadic so the existing callers/tests with no hive record keep compiling
+	// and keep their exact previous behaviour (no election -> cluster default).
+	var hive *SaaSHive
+	if len(hiveOpt) > 0 {
+		hive = hiveOpt[0]
+	}
+	identity := s.appIdentityForHive(hive, clusterID)
+	// Does this cluster's App live on a GitHub Enterprise host? Read from cluster
+	// config, never inferred from the App ID — an App ID is an opaque number and
+	// carries no forge information. Empty github_base_url means public github.com.
+	clusterIsGHE := false
+	if c, ok := s.clusters[clusterID]; ok {
+		clusterIsGHE = strings.TrimSpace(c.GitHubBaseURL) != ""
+	}
+	decision := decideAppKeySync(spokeFingerprint, hasPerHiveKey, hivePublicPinned, clusterIsGHE, spokeAppID, identity)
+	// A spoke carrying the sentinel is broken and must be legible even when the
+	// hub can do nothing about it — that silence is what made this bug cost days
+	// of debugging while the dashboard blamed the installation ID. Logged BEFORE
+	// the no-push return so the unrepairable case (cluster names no app_id at
+	// all) is exactly the case that gets said out loud.
+	if spokeAppID == config.PlaceholderAppID && logger != nil {
+		if identity == nil {
+			logger.Warn("heartbeat: spoke carries the placeholder app_id sentinel and its cluster names no github app — cannot repair",
+				"hive_id", hiveID,
+				"cluster_id", clusterID,
+				"spoke_app_id", spokeAppID,
+				"remedy", "set github_app_id on this cluster in clusters.json",
+			)
+		} else {
+			logger.Info("heartbeat: repairing placeholder app_id sentinel on spoke",
+				"hive_id", hiveID,
+				"cluster_id", clusterID,
+				"spoke_app_id", spokeAppID,
+				"to_app_id", identity.AppID,
+				"cluster_has_key", identity.HasKey(),
+			)
+		}
+	}
 	if !decision.Push || identity == nil {
 		return nil
 	}
+	// An identity with no key still repairs an app_id. Sending its empty
+	// PrivateKey is safe and intended — the spoke callback reads an empty
+	// private_key as "leave the key file alone" — but PushKey is honoured
+	// explicitly so the intent is in the code rather than in that coincidence.
+	privateKey := ""
+	if decision.PushKey {
+		privateKey = identity.PrivateKey
+	}
 	if logger != nil {
 		// Fingerprints only. The key itself is never logged, at any level.
-		logger.Info("heartbeat: pushing cluster github app key to spoke",
+		logger.Info("heartbeat: pushing cluster github app config to spoke",
 			"hive_id", hiveID,
 			"cluster_id", clusterID,
 			"app_id", identity.AppID,
 			"spoke_app_id", spokeAppID,
 			"per_hive_key", hasPerHiveKey,
 			"public_pinned", hivePublicPinned,
+			"push_key", decision.PushKey,
 			"reason", decision.Reason,
 			"from_fingerprint", decision.FromFingerprint,
 			"to_fingerprint", decision.ToFingerprint,
 		)
 	}
+	// WRITE-PATH GUARD, hub side. This struct is the exact channel that carried
+	// the 2026-07-31 breakage: it delivers app_id and app_slug and has no field
+	// for api_url, so a cluster whose github_app_id names one forge while its
+	// URLs name another pushes a half identity the spoke cannot reassemble.
+	// Refuse to construct it.
+	//
+	// Validated against the identity the CLUSTER declares — app_id and app_slug
+	// from the App identity, api_url and base_url from the cluster record — so a
+	// clusters.json entry naming a GHE App beside public-GitHub URLs is caught
+	// at the source. The spoke re-validates against its own current values,
+	// which is the half this side cannot see.
+	//
+	// GATED ON THE CLUSTER DECLARING A FORGE AT ALL. A cluster record with both
+	// URLs empty is UNDER-SPECIFIED, not public: several real records carry only
+	// github_app_id and github_app_slug, and clusterIsGHE above already treats
+	// empty github_base_url as "no forge information". Reading that silence as
+	// "public github.com" here would refuse every GHE cluster that has not
+	// backfilled its URLs and stop the key/app_id repair path fleet-wide — the
+	// same class of outage this guard exists to prevent, in the other direction.
+	// Silence is never evidence. When the cluster does declare a forge, the full
+	// set is checked.
+	// Validate against the forge THIS HIVE resolved to. The App and the URLs
+	// must come from the SAME resolution or the check compares two forges and
+	// refuses a set that is actually correct.
+	//
+	// Fall back to the cluster record only when the resolver named no forge at
+	// all. A public election legitimately resolves to EMPTY urls — that is how
+	// every healthy public spoke runs — so empty is not itself a reason to fall
+	// back; only an unresolved forge is.
+	clusterAPIURL := identity.APIURL
+	clusterBaseURL := identity.BaseURL
+	if identity.Forge == "" {
+		clusterAPIURL = clusterAPIURLForIdentity(s, clusterID)
+		clusterBaseURL = clusterBaseURLForIdentity(s, clusterID)
+	}
+	clusterDeclaresForge := clusterAPIURL != "" || clusterBaseURL != ""
+
+	if err := config.RejectIdentitySet(config.GitHubConfig{
+		AppID:   identity.AppID,
+		AppSlug: identity.AppSlug,
+		APIURL:  clusterAPIURL,
+		BaseURL: clusterBaseURL,
+	}); err != nil && clusterDeclaresForge {
+		if logger != nil {
+			logger.Error("REFUSING to push cluster github app config: the cluster's identity set is inconsistent and would half-apply on the spoke — nothing was sent",
+				"error", err,
+				"hive_id", hiveID,
+				"cluster_id", clusterID,
+				"app_id", identity.AppID,
+				"app_slug", identity.AppSlug,
+				"remedy", "correct github_app_id/github_app_slug/github_api_url/github_base_url for this cluster in clusters.json",
+			)
+		}
+		return nil
+	}
+
+	// Emit the COMPLETE set. The guard above validated app_id/app_slug against
+	// the forge URLs this hive resolved to; sending the App without those URLs
+	// would ship a set the spoke cannot reassemble, and leave it to be completed
+	// — or contradicted — by a ProjectConfig push on a different channel.
+	//
+	// The URLs are the RESOLVED ones (identity.APIURL/BaseURL), so what the
+	// spoke receives is byte-identical to what was just validated. A public
+	// election resolves to empty URLs, which the spoke reads as "unchanged" —
+	// correct, because empty is also how every healthy public spoke is stored.
 	return &HeartbeatGitHubAppConfig{
 		AppID:          identity.AppID,
 		InstallationID: installationID,
-		PrivateKey:     identity.PrivateKey,
+		PrivateKey:     privateKey,
 		AppSlug:        identity.AppSlug,
+		APIURL:         identity.APIURL,
+		BaseURL:        identity.BaseURL,
 	}
+}
+
+// clusterAPIURLForIdentity and clusterBaseURLForIdentity read the cluster's
+// declared forge URLs so the hub-side guard validates the FULL identity set the
+// cluster declares, not just the two fields the heartbeat channel can carry.
+//
+// An unknown cluster, or one that declares neither URL, yields empty strings.
+// The caller reads that as "no forge declared" and skips the check entirely
+// rather than assuming public github.com — see clusterDeclaresForge.
+func clusterAPIURLForIdentity(s *HubServer, clusterID string) string {
+	if c, ok := s.clusters[clusterID]; ok {
+		return strings.TrimSpace(c.GitHubAPIURL)
+	}
+	return ""
+}
+
+func clusterBaseURLForIdentity(s *HubServer, clusterID string) string {
+	if c, ok := s.clusters[clusterID]; ok {
+		return strings.TrimSpace(c.GitHubBaseURL)
+	}
+	return ""
 }
 
 // --- Operator API ---
@@ -860,5 +1163,6 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		payload.GitHubAppID,
 		installationIDUnchanged,
 		s.logger,
+		sh,
 	)
 }

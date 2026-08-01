@@ -80,18 +80,66 @@ type PullRequest struct {
 	Draft     bool      `json:"draft"`
 	CreatedAt time.Time `json:"created_at"`
 	URL       string    `json:"url"`
-	Mergeable bool      `json:"mergeable"`
+	// Mergeable is a tri-state: MergeableYes, MergeableNo, or MergeableUnknown.
+	// It is intentionally NOT a bool: a bool zero-values to false, which is
+	// indistinguishable from "GitHub says this PR cannot be merged" and would
+	// silently gate every PR shut whenever the value was never populated.
+	// The zero value is MergeableUnknown ("") so an unfilled field reads as
+	// "we do not know" rather than a false negative.
+	Mergeable Mergeable `json:"mergeable"`
 	CIStatus  string    `json:"ci_status"`
 	HeadSHA   string    `json:"head_sha,omitempty"`
 }
 
+// Mergeable is a tri-state mergeability verdict for a pull request.
+type Mergeable string
+
+const (
+	// MergeableUnknown is the zero value: mergeability has not been determined.
+	// Consumers gating a merge MUST treat this as "do not know", never as "no".
+	MergeableUnknown Mergeable = ""
+	// MergeableYes means GitHub reports the PR can be merged.
+	MergeableYes Mergeable = "yes"
+	// MergeableNo means GitHub reports the PR cannot be merged (conflicts, etc).
+	MergeableNo Mergeable = "no"
+)
+
+// mergeableFromState maps a GitHub mergeable_state to a tri-state verdict.
+//
+// mergeable_state is used in preference to the raw "mergeable" bool because
+// this project's standing policy ignores non-required checks (Playwright,
+// tide). GitHub reports "unstable" when the PR is cleanly mergeable but some
+// non-required check is pending or failing — that still counts as mergeable.
+//
+// Reference: "clean" and "has_hooks" are fully green; "unstable" is mergeable
+// with non-required checks outstanding; "blocked" means a required review or
+// status is missing; "dirty" means conflicts; "unknown" means GitHub is still
+// computing the merge commit in the background.
+func mergeableFromState(state string, mergeable *bool) Mergeable {
+	switch state {
+	case "clean", "has_hooks", "unstable":
+		return MergeableYes
+	case "dirty", "blocked", "behind", "draft":
+		return MergeableNo
+	}
+	// "unknown" (or an unrecognised state): GitHub is still computing.
+	// Fall back to the raw bool only when it was actually present.
+	if mergeable != nil {
+		if *mergeable {
+			return MergeableYes
+		}
+		return MergeableNo
+	}
+	return MergeableUnknown
+}
+
 type ActionableResult struct {
-	GeneratedAt   time.Time          `json:"generated_at"`
-	Issues        IssueResult        `json:"issues"`
-	PRs           PRResult           `json:"prs"`
-	Hold          HoldResult         `json:"hold"`
-	Clusters      []IssueCluster     `json:"clusters,omitempty"`
-	TotalByRepo   map[string]RepoCounts `json:"total_by_repo,omitempty"`
+	GeneratedAt time.Time             `json:"generated_at"`
+	Issues      IssueResult           `json:"issues"`
+	PRs         PRResult              `json:"prs"`
+	Hold        HoldResult            `json:"hold"`
+	Clusters    []IssueCluster        `json:"clusters,omitempty"`
+	TotalByRepo map[string]RepoCounts `json:"total_by_repo,omitempty"`
 }
 
 type RepoCounts struct {
@@ -111,10 +159,10 @@ type PRResult struct {
 }
 
 type HoldResult struct {
-	Issues int         `json:"issues"`
-	PRs    int         `json:"prs"`
-	Total  int         `json:"total"`
-	Items  []HoldItem  `json:"items"`
+	Issues int        `json:"issues"`
+	PRs    int        `json:"prs"`
+	Total  int        `json:"total"`
+	Items  []HoldItem `json:"items"`
 }
 
 type HoldItem struct {
@@ -420,8 +468,12 @@ func (c *Client) fetchPRs(ctx context.Context, repo string) (actionable []PullRe
 			Draft:     pr.GetDraft(),
 			CreatedAt: pr.GetCreatedAt().Time,
 			URL:       pr.GetHTMLURL(),
-			Mergeable: pr.GetMergeable(),
-			HeadSHA:   headSHA,
+			// Mergeable is deliberately NOT set here. The PullRequests.List
+			// endpoint never populates "mergeable" — GitHub computes it
+			// per-PR and returns it only from the single-PR GET. Reading it
+			// here would yield false for every PR. EnrichCIStatus fills it in
+			// from a per-PR fetch; until then it stays MergeableUnknown.
+			HeadSHA: headSHA,
 		})
 	}
 
@@ -445,6 +497,18 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			continue
 		}
 		owner, repoName := c.splitRepo(prs[i].Repo)
+
+		// Fetch the PR individually to learn its mergeability. The list
+		// endpoint that produced these PullRequests never populates
+		// "mergeable"/"mergeable_state" — GitHub computes them per-PR and
+		// returns them only from this single-PR GET. On error we leave the
+		// field as MergeableUnknown rather than guessing.
+		if full, _, err := c.client.PullRequests.Get(ctx, owner, repoName, prs[i].Number); err != nil {
+			c.logger.Warn("failed to fetch PR mergeability", "repo", prs[i].Repo, "pr", prs[i].Number, "error", err)
+		} else {
+			prs[i].Mergeable = mergeableFromState(full.GetMergeableState(), full.Mergeable)
+		}
+
 		checkRuns, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, repoName, prs[i].HeadSHA, &gh.ListCheckRunsOptions{
 			ListOptions: gh.ListOptions{PerPage: 100},
 		})

@@ -57,17 +57,41 @@ const (
 	// agent roster rather than being a fixed set of five.
 	beadsSubdir = "beads"
 
-	// configBackupFile is the AUTHORITATIVE spoke config.
+	// configOverlayFile is the PVC overlay — the layer that wins the boot-time
+	// merge over the ConfigMap seed, and therefore the file that actually
+	// carries a hive's configuration. Sampled seeds are 4–11% of the running
+	// config and omit whole top-level blocks (policies, data, knowledge,
+	// notifications, hive_id).
+	configOverlayFile = "hive.yaml.dashboard"
+
+	// configRuntimeFile is the persisted runtime config, formerly
+	// hive.yaml.bak. On Kubernetes it is the POST-MERGE SNAPSHOT written by
+	// the entrypoint after the merge; on Docker/LXC, where there is no
+	// ConfigMap and no overlay, it is the boot-time source of truth restored
+	// over the config path on every boot. The old ".bak" name described only
+	// the first role, which is why it was renamed.
 	//
-	// It is hive.yaml.bak, NOT hive.yaml. The copy-config init container
-	// restores from .bak and falls back to the ConfigMap seed only when .bak is
-	// absent, so .bak is what actually comes back after a restart. On a sampled
-	// production spoke the two files had DIFFERENT content and different
-	// timestamps — hive.yaml was a stale root-owned copy while hive.yaml.bak
-	// carried the live user customizations. Backing up hive.yaml instead would
-	// silently capture the wrong config with no error at backup time and no
-	// symptom until a restore quietly reverted the owner's settings.
-	configBackupFile = "hive.yaml.bak"
+	// An earlier comment here stated that copy-config restores from it and
+	// falls back to the seed only when it is absent. That is true on only 3
+	// of 51 live K8s hives; the variant new hives get merely reports whether
+	// it exists and never restores from it. So on Kubernetes it is not, in
+	// general, "what comes back after a restart" — the overlay is.
+	//
+	// It is still captured, for two reasons: it is what the disaster fallback
+	// reads when the ConfigMap is missing or empty, and it is the only copy
+	// retaining env-derived secrets, since the overlay is written secret-free
+	// on purpose (config.dashboardOverlayBytes).
+	//
+	// hive.yaml itself remains excluded: it is regenerated from seed + overlay
+	// on every boot, and on a sampled production spoke was a stale root-owned
+	// copy days older than the live config.
+	configRuntimeFile = "hive.yaml.runtime"
+
+	// configRuntimeFileLegacy is the pre-rename name. Still captured because
+	// the rename is copy-forward: a hive that has not saved since upgrading
+	// carries only this file, and omitting it would silently drop that hive's
+	// config — and its env-derived secrets — from the archive.
+	configRuntimeFileLegacy = "hive.yaml.bak"
 
 	// hiveIDFile identifies this hive to the hub.
 	hiveIDFile = "hive-id"
@@ -105,6 +129,11 @@ const (
 	MaxFileBytes = 64 << 20 // 64 MiB
 )
 
+// archiveCapBytes is the cap Build applies, indirected through a variable so a
+// test can shrink it and prove Build really enforces a cap. Production always
+// uses MaxArchiveBytes; nothing outside tests assigns this.
+var archiveCapBytes = MaxArchiveBytes
+
 // BuildTimeout bounds a single backup so a wedged filesystem read cannot hold
 // a dashboard request open indefinitely.
 const BuildTimeout = 2 * time.Minute
@@ -127,9 +156,15 @@ const BuildTimeout = 2 * time.Minute
 //   - dashboard-sessions.json  live browser session tokens. Excluded on
 //     purpose: these are credentials with no restore value, and restoring
 //     them would resurrect sessions that should have expired.
-//   - hive.yaml  the stale ConfigMap-seeded copy; see configBackupFile.
+//   - hive.yaml  regenerated from seed + overlay on every boot; see
+//     configOverlayFile and configRuntimeFile.
+//
+// Both runtime-config names are listed: missing files are recorded in Skipped
+// rather than failing, so a hive carries whichever it has.
 var includedRootFiles = []string{
-	configBackupFile,
+	configOverlayFile,
+	configRuntimeFile,
+	configRuntimeFileLegacy,
 	hiveIDFile,
 	stateFile,
 }
@@ -267,7 +302,7 @@ func Build(key []byte, hiveID string, logger *slog.Logger) (*Result, error) {
 		man.SpokeErrors[k] = v
 	}
 
-	sealed, err := b.Finish(key, man, MaxArchiveBytes)
+	sealed, err := b.Finish(key, man, archiveCapBytes)
 	if err != nil {
 		return nil, err
 	}

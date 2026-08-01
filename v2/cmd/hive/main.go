@@ -77,6 +77,13 @@ var (
 	// already holds spokeAppKeyPath, so both survive restarts. A var so tests can
 	// redirect it; production never reassigns it.
 	spokeAppKeyDir = "/data"
+	// spokeProvisionedAppKeyDir is the read-only projected-Secret mount where
+	// PROVISIONING places per-app-id keys (gh-app-key-<appid>.pem), mirroring
+	// spokeAppKeyDir on the PVC. A hive provisioned with the fleet's full key set
+	// holds them here from its very first boot — before any heartbeat has run — so
+	// a forge switch never has to wait a beat for the target forge's key. The
+	// mount is readOnly, so nothing ever writes here; it is a lookup source only.
+	spokeProvisionedAppKeyDir = "/secrets"
 )
 
 // spokeAppKeyFileMode is rw------- : signing material must never be readable by
@@ -91,11 +98,109 @@ const spokeAppKeyFileMode = 0o600
 // Returns "" for a non-positive app_id (0 = unknown/unset, the placeholder
 // sentinel, or a hand-corrupted value): there is no meaningful per-app file for
 // those, and the caller falls back to the existing single-file behaviour.
+// agentActivityFor gathers the per-agent liveness evidence the hub needs to
+// tell a deliberately-paused agent from one that is running but unable to
+// work. Shared by both heartbeat build sites so the ordinary beat and the
+// upgrade beat can never report different pictures of the same agent.
+func agentActivityFor(mgr *agent.Manager, name string, proc *agent.AgentProcess) hub.AgentActivity {
+	act := hub.AgentActivity{
+		Paused:         proc.Paused,
+		NeedsLogin:     proc.NeedsLogin,
+		LastActivityAt: proc.LastPaneChange,
+		// A missing tmux session is only meaningful for an agent the manager
+		// believes is running; SessionMissing enforces that itself.
+		SessionMissing: mgr.SessionMissing(name),
+	}
+	if proc.StartedAt != nil {
+		act.StartedAt = *proc.StartedAt
+	}
+	return act
+}
+
+// prospectiveGitHubIdentity returns the GitHub identity the spoke WOULD hold
+// after adopting ghCfg, or nil when the push speaks to no identity field and
+// there is nothing to validate.
+//
+// It mirrors the adoption rules in the GitHubAppConfigCallback exactly — a
+// zero app_id and an empty app_slug both mean "not speaking to this field", and
+// the placeholder sentinel is never adopted over a real App. Mirroring rather
+// than validating ghCfg alone is what makes the check correct: the damaging
+// state is a combination of PUSHED and EXISTING fields (a GHE app_id landing
+// beside the spoke's own empty api_url), and validating the push in isolation
+// cannot see it.
+func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *hub.HeartbeatGitHubAppConfig) *config.GitHubConfig {
+	if ghCfg == nil {
+		return nil
+	}
+	touched := false
+	next := cur
+	if ghCfg.AppID != 0 && ghCfg.AppID != config.PlaceholderAppID {
+		next.AppID = ghCfg.AppID
+		touched = true
+	}
+	if ghCfg.AppSlug != "" && ghCfg.AppSlug != cur.AppSlug {
+		next.AppSlug = ghCfg.AppSlug
+		touched = true
+	}
+	// The forge URLs are part of the SAME set as the App above, so they are
+	// adopted here and validated with it rather than arriving separately on the
+	// project-config channel. An App ID presented to the wrong forge returns
+	// "404 Integration not found", so applying one half without the other is the
+	// live failure this function exists to prevent.
+	//
+	// Empty means "unchanged", matching AppSlug. It cannot mean "make me
+	// public": empty URLs are also the correct steady state for a public hive
+	// (~41 of 50 spokes), so silence here is indistinguishable from "no opinion"
+	// and must never blank a working GHE URL. A hive moving TO public gets that
+	// from its app_id, which the resolver derives from its forge.
+	if ghCfg.APIURL != "" && ghCfg.APIURL != cur.APIURL {
+		next.APIURL = ghCfg.APIURL
+		touched = true
+	}
+	if ghCfg.BaseURL != "" && ghCfg.BaseURL != cur.BaseURL {
+		next.BaseURL = ghCfg.BaseURL
+		touched = true
+	}
+	if !touched {
+		return nil
+	}
+	return &next
+}
+
 func perAppIDKeyPath(appID int64) string {
 	if appID <= 0 {
 		return ""
 	}
 	return filepath.Join(spokeAppKeyDir, fmt.Sprintf("gh-app-key-%d.pem", appID))
+}
+
+// deliveredKeyPath is where a hub-delivered private key for appID is stored.
+//
+// The filename NAMES the App, so a key can only ever be found under the App it
+// was delivered for. The generic /data/gh-app-key.pem carries no such evidence:
+// a key written there for one App silently becomes "the key" for whatever
+// app_id the config later claims, which is how all 33 vllm-d spokes ended up
+// signing as the public App with the GHE key and getting
+// 404 Integration not found.
+//
+// Falls back to the generic path only when the delivery names no App, so a key
+// is never dropped on the floor.
+func deliveredKeyPath(appID int64) string {
+	if p := perAppIDKeyPath(appID); p != "" {
+		return p
+	}
+	return spokeAppKeyPath
+}
+
+// perAppIDProvisionedKeyPath is perAppIDKeyPath's read-only twin: the same
+// per-app-id filename under the provisioning Secret mount. It is consulted only
+// when the PVC has no usable key for the app_id, so a heartbeat-delivered key
+// (which can be rotated) always wins over the one baked in at provision time.
+func perAppIDProvisionedKeyPath(appID int64) string {
+	if appID <= 0 {
+		return ""
+	}
+	return filepath.Join(spokeProvisionedAppKeyDir, fmt.Sprintf("gh-app-key-%d.pem", appID))
 }
 
 // perAppIDKeyFilePrefix / Suffix bracket the per-app-id key filename so a scan
@@ -279,6 +384,28 @@ func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 		return v
 	}
 	if v := strings.TrimSpace(configured); v != "" {
+		// MIGRATION. A configured key_file that is the GENERIC path is not an
+		// operator's choice — it is a value older builds wrote automatically on
+		// every key delivery, and it does not name the App it holds. When we can
+		// see a per-app-id key for the app_id we actually claim, that key is
+		// correct by construction and the generic pin is stale, so ignore it.
+		//
+		// Without this, the ~33 spokes already carrying
+		// key_file: /data/gh-app-key.pem keep signing with whichever App's key
+		// happens to sit there — the live 404 Integration not found — because an
+		// explicit value short-circuits the per-app-id lookup below.
+		//
+		// Deliberately narrow: only the exact generic path is overridden, and
+		// only when a usable per-app-id key exists. Any other path is a genuine
+		// operator override (a hive on a third App with a bespoke key location)
+		// and still wins outright.
+		if v == spokeAppKeyPath {
+			if p := perAppIDKeyPath(appID); p != "" {
+				if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
+					return p
+				}
+			}
+		}
 		return v
 	}
 	// Nothing explicitly configured. Prefer a per-app-id key matching the App we
@@ -287,6 +414,16 @@ func resolveAppKeyFile(configured, envOverride string, appID int64) string {
 	// existence) keeps an empty or truncated per-app file from shadowing a good
 	// generic key.
 	if p := perAppIDKeyPath(appID); p != "" {
+		if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
+			return p
+		}
+	}
+	// Same idea, but from the read-only provisioning mount: a hive provisioned
+	// with the fleet's full key set can sign as its configured App on its very
+	// first boot, before any heartbeat has delivered anything to the PVC. Ranked
+	// BELOW the PVC copy so a rotated key delivered by heartbeat always wins over
+	// the one frozen into the Secret at provision time.
+	if p := perAppIDProvisionedKeyPath(appID); p != "" {
 		if fp, err := config.AppKeyFingerprintFromFile(p); err == nil && fp != "" {
 			return p
 		}
@@ -312,6 +449,8 @@ func describeAppKeyFailure(configured, envOverride, resolved string, err error) 
 	order := []string{
 		fmt.Sprintf("$GH_APP_KEY_FILE=%s", describeKeySource(envOverride)),
 		fmt.Sprintf("github.key_file=%s", describeKeySource(configured)),
+		fmt.Sprintf("per-app-id PVC key %s/gh-app-key-<app_id>.pem", spokeAppKeyDir),
+		fmt.Sprintf("per-app-id provisioning key %s/gh-app-key-<app_id>.pem", spokeProvisionedAppKeyDir),
 		fmt.Sprintf("PVC fallback %s", spokeAppKeyPath),
 		fmt.Sprintf("provisioning mount %s", spokeProvisionedAppKeyPath),
 	}
@@ -561,15 +700,24 @@ func main() {
 	cfg.HiveID = loadOrGenerateHiveID(logger)
 	os.Setenv("HIVE_ID", cfg.HiveID)
 
-	// Surface config provenance: when the dashboard-save backup exists, init
+	// Surface config provenance: when the persisted runtime config exists, init
 	// containers restore it over the ConfigMap seed on restart, so edits made
-	// only to the seed (or only to the live file) silently lose to the backup.
-	bakPath := *configPath + ".bak"
-	if _, statErr := os.Stat(bakPath); statErr == nil {
-		logger.Info("config backup present — restored over the seed on pod restart; fixes must land in the live config so the next save refreshes it",
-			"path", bakPath,
-			"github_installation_id", cfg.GitHub.InstallationID,
-		)
+	// only to the seed (or only to the live file) silently lose to it.
+	//
+	// Checks the legacy name too: during the migration a hive may still carry
+	// only /data/hive.yaml.bak, and the whole point of this log line is to warn
+	// that such a file is shadowing the seed. Note this path was previously
+	// built as *configPath + ".bak", which only ever resolved to the real
+	// location when HIVE_CONFIG happened to live under /data — a literal grep
+	// for "hive.yaml.bak" could not find it either.
+	for _, runtimePath := range []string{config.RuntimeConfigFile, config.RuntimeConfigFileLegacy} {
+		if _, statErr := os.Stat(runtimePath); statErr == nil {
+			logger.Info("persisted runtime config present — restored over the seed on pod restart; fixes must land in the live config so the next save refreshes it",
+				"path", runtimePath,
+				"github_installation_id", cfg.GitHub.InstallationID,
+			)
+			break
+		}
 	}
 
 	logger.Info("hive starting",
@@ -1137,7 +1285,16 @@ func main() {
 	// the agents open PRs as, so it is the correct author to count. Never fall
 	// back to an org-wide search with no author filter — that would sweep in
 	// human PRs and overstate what the fleet's agents actually did.
-	fleetStatsAuthor := cfg.Project.AIAuthor
+	//
+	// Use EffectiveAIAuthor(), not the raw Project.AIAuthor field. App-authored
+	// hives deliberately leave ai_author EMPTY and derive their identity from
+	// the installed App ("<slug>[bot]") — that is what keeps App-bot mode
+	// durable across restarts. Reading the raw field saw "" for every one of
+	// them and disabled the collector fleet-wide, while the PAT fallback below
+	// could not rescue it either: those hives authenticate as a GitHub App and
+	// have github.token empty, so there was no token to identify. The result
+	// was a fleet where essentially no spoke ever attempted a collect.
+	fleetStatsAuthor := cfg.EffectiveAIAuthor()
 	fleetStatsToken := cfg.GitHub.Token
 	if fleetStatsToken == "" {
 		fleetStatsToken = os.Getenv("HIVE_GITHUB_TOKEN")
@@ -1159,6 +1316,12 @@ func main() {
 			"author", fleetStatsAuthor, "org", cfg.Project.Org)
 	}
 	fleetStatsCollector := dashboard.NewFleetStatsCollector(ghClient, fleetStatsAuthor, cfg.Project.Org, logger)
+	// Persist the collected counts on the /data PVC (same store as sessions and
+	// cost/fact history) so a restart resumes from the last-known counts instead
+	// of nil. Without this, a fleet-wide upgrade clears every spoke's in-memory
+	// counts and the public landing-page total collapses until all spokes
+	// re-collect (#2329, building on the hub-side #2328 defensive aging fix).
+	fleetStatsCollector.EnablePersistence("/data/fleet-stats.json")
 	go fleetStatsCollector.Start(ctx)
 
 	var lastActionable atomic.Pointer[github.ActionableResult]
@@ -2185,11 +2348,12 @@ func main() {
 			govState := gov.GetState()
 			agents := make([]hub.AgentSummary, 0, len(statuses))
 			for name, proc := range statuses {
-				as := hub.AgentSummary{Name: name, State: string(proc.State)}
+				mode := ""
 				if ac, ok := cfg.Agents[name]; (ok && ac.OnDemand) || onDemandFromPack[name] {
-					as.Mode = "on_demand"
+					mode = "on_demand"
 				}
-				agents = append(agents, as)
+				agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
+					agentActivityFor(agentMgr, name, proc)))
 			}
 			acmmLvl := 0
 			if cfg.ACMMLevel != nil {
@@ -2217,7 +2381,12 @@ func main() {
 			// "genuinely zero agents configured" from "old spoke, unknown".
 			agentsWithModel := agentMgr.CountAgentsWithModel()
 			return &hub.HeartbeatPayload{
-				AgentsWithModel:   &agentsWithModel,
+				AgentsWithModel: &agentsWithModel,
+				// Read-back for hub-funded gateways: the hub clears its pending
+				// record only when it sees the gateway named here, so a lost
+				// delivery is re-offered rather than dropped. Names only — the
+				// key never leaves the spoke.
+				GatewayNames:      dashSrv.ConfiguredGatewayNames(),
 				HiveID:            cfg.HiveID,
 				Org:               cfg.Project.Org,
 				AIAuthor:          cfg.Project.AIAuthor,
@@ -2282,6 +2451,10 @@ func main() {
 					}
 					return out
 				}(),
+				// Report who has a live dashboard session so the hub can accumulate
+				// per-user "time in hive". Bare usernames only — never session
+				// ids/tokens (ActiveSessionUsernames guarantees this).
+				ActiveSessionUsers: dashSrv.ActiveSessionUsernames(),
 				Owner: func() string {
 					if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
 						tok := strings.TrimSpace(string(td))
@@ -2358,6 +2531,14 @@ func main() {
 				// pairs it with the fingerprint above to tell a per-hive key that
 				// is WRONG for this App from one that is deliberately for another.
 				GitHubAppID: cfg.GitHub.AppID,
+				// Report the REST of the identity set too. app_id alone cannot
+				// distinguish a correctly-delivered identity from a
+				// half-applied one: a GHE app_id with an empty api_url looks
+				// identical to the hub, and 404s on every token request. All
+				// four together let the hub see the whole set.
+				GitHubAppSlug:        cfg.GitHub.AppSlug,
+				GitHubInstallationID: cfg.GitHub.InstallationID,
+				GitHubBaseURL:        cfg.GitHub.BaseURL,
 				// Report the fingerprint of every ADDITIONAL per-app-id key already
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
@@ -2479,11 +2660,12 @@ func main() {
 				statuses := agentMgr.AllStatuses()
 				agents := make([]hub.AgentSummary, 0, len(statuses))
 				for name, proc := range statuses {
-					as := hub.AgentSummary{Name: name, State: string(proc.State)}
+					mode := ""
 					if ac, ok := cfg.Agents[name]; (ok && ac.OnDemand) || onDemandFromPack[name] {
-						as.Mode = "on_demand"
+						mode = "on_demand"
 					}
-					agents = append(agents, as)
+					agents = append(agents, hub.NewAgentSummary(name, string(proc.State), mode,
+						agentActivityFor(agentMgr, name, proc)))
 				}
 				acmmLvl := 0
 				if cfg.ACMMLevel != nil {
@@ -2551,7 +2733,54 @@ func main() {
 				"has_key", ghCfg.PrivateKey != "",
 			)
 
-			keyPath := spokeAppKeyPath
+			// WRITE-PATH GUARD. Compute the identity this push WOULD produce and
+			// refuse the whole delivery if it is internally inconsistent.
+			//
+			// This is the guard the 2026-07-31 incident needed. That push carried
+			// the GHE app_id and slug with no api_url; the adoption below applies
+			// each field independently under an "empty means unchanged" contract,
+			// so seven public-GitHub hives took the GHE App ID, kept api_url: "",
+			// and every token request 404'd. Refusing the whole delivery leaves
+			// those hives on their previous, working identity instead of a half of
+			// two identities.
+			//
+			// Rejection is loud and repeats on every beat: the hub keeps pushing
+			// until the spoke reports back, so a silent skip would be an invisible
+			// permanent stall. There is no auto-repair here — the fix is on the
+			// hub, in clusters.json.
+			if prospective := prospectiveGitHubIdentity(cfg.GitHub, ghCfg); prospective != nil {
+				if err := config.RejectIdentitySet(*prospective); err != nil {
+					logger.Error("REFUSING hub github app config: the pushed identity set is inconsistent and would half-apply — nothing was changed",
+						"error", err,
+						"pushed_app_id", ghCfg.AppID,
+						"pushed_app_slug", ghCfg.AppSlug,
+						"current_app_id", cfg.GitHub.AppID,
+						"current_api_url", cfg.GitHub.APIURL,
+						"current_base_url", cfg.GitHub.BaseURL,
+						"remedy", "correct github_app_id/github_app_slug/github_api_url/github_base_url for this cluster on the hub",
+					)
+					return
+				}
+			}
+
+			// Write the delivered key to the path that NAMES the App it belongs
+			// to, not to a generic filename.
+			//
+			// /data/gh-app-key.pem carries no evidence of which App signed it, so
+			// a key delivered for one App silently becomes "the key" for whatever
+			// app_id the config later claims. On 2026-07-31 that is exactly what
+			// happened: all 33 vllm-d spokes had key_file pinned to the generic
+			// path holding the GHE key, so correcting app_id to the public App
+			// still produced 404 Integration not found — the right key was
+			// already on disk at gh-app-key-3568013.pem and unreachable, because
+			// an explicit key_file short-circuits resolveAppKeyFile before the
+			// per-app-id lookup runs.
+			//
+			// Deriving the filename from the app_id makes that mismatch
+			// unrepresentable: a key can only be found under the App it was
+			// delivered for. Falls back to the generic path when the delivery
+			// names no App, so a key is never dropped on the floor.
+			keyPath := deliveredKeyPath(ghCfg.AppID)
 			// keyChanged gates dropping the cached installation token below: a
 			// token minted under the previous key is invalid the moment the key
 			// is replaced, but a redelivery of the SAME key must not throw away a
@@ -2645,15 +2874,64 @@ func main() {
 			if ghCfg.InstallationID != 0 {
 				cfg.GitHub.InstallationID = ghCfg.InstallationID
 			}
-			if ghCfg.PrivateKey != "" {
-				cfg.GitHub.KeyFile = keyPath
-			}
+			// Deliberately NOT `cfg.GitHub.KeyFile = keyPath`.
+			//
+			// key_file is DERIVABLE from app_id (resolveAppKeyFile prefers
+			// /data/gh-app-key-<app_id>.pem, the only key correct by
+			// construction). Persisting the path turns a derived value into a
+			// stored one that outlives the App it was derived for: once written,
+			// it short-circuits resolveAppKeyFile on every later boot, so a
+			// corrected app_id keeps signing with the previous App's key. That is
+			// what left all 33 vllm-d spokes pinned to the GHE key.
+			//
+			// Leaving it empty lets derivation run every time, so the key always
+			// tracks the App actually in effect. An operator-set key_file still
+			// wins — that override is intentional, for a hive whose App this
+			// build does not know (e.g. a hive on a third App ID with a key at a
+			// bespoke path).
 			// Same "empty means unchanged" contract as installation_id: adopting
 			// an empty slug would blank a working install link.
 			if ghCfg.AppSlug != "" && cfg.GitHub.AppSlug != ghCfg.AppSlug {
 				logger.Info("adopting github app slug from hub",
 					"was", cfg.GitHub.AppSlug, "now", ghCfg.AppSlug)
 				cfg.GitHub.AppSlug = ghCfg.AppSlug
+			}
+			// Adopt the forge URLs from the SAME delivery as the App above.
+			// prospectiveGitHubIdentity already validated all four fields
+			// together, so reaching here means the complete set is coherent —
+			// applying the App without its URLs would undo that check by leaving
+			// the spoke pointed at the previous forge.
+			//
+			// Same "empty means unchanged" contract: empty is the correct steady
+			// state for a public hive, so it can never be read as "blank this".
+			if ghCfg.APIURL != "" && cfg.GitHub.APIURL != ghCfg.APIURL {
+				logger.Info("adopting github api url from hub",
+					"was", cfg.GitHub.APIURL, "now", ghCfg.APIURL)
+				cfg.GitHub.APIURL = ghCfg.APIURL
+			}
+			if ghCfg.BaseURL != "" && cfg.GitHub.BaseURL != ghCfg.BaseURL {
+				logger.Info("adopting github base url from hub",
+					"was", cfg.GitHub.BaseURL, "now", ghCfg.BaseURL)
+				cfg.GitHub.BaseURL = ghCfg.BaseURL
+			}
+
+			// Persist the adopted App IDENTITY to the PVC overlay, exactly as the
+			// claimed-project-config callback persists what it adopts.
+			//
+			// Without this the adoption lived only in memory. The key files are
+			// written to /data (durable), but app_id/app_slug/installation_id were
+			// not, so on every pod restart the entrypoint re-merged the ConfigMap
+			// seed and the spoke reverted to whatever App it was provisioned with —
+			// silently undoing a completed repair and making the hub's push look
+			// like it had never happened. That is how a GHE hive kept re-appearing
+			// with the github.com app_id and an empty slug across restarts.
+			//
+			// Saved even when the App is not yet usable (installation_id still 0):
+			// the corrected app_id and slug are precisely what the owner needs on
+			// disk so the dashboard renders a working install link BEFORE they have
+			// installed anything.
+			if err := cfg.Save(); err != nil {
+				logger.Error("failed to persist github app config from heartbeat", "error", err)
 			}
 
 			// Resolve the key file the same way startup does, so a hive whose
@@ -2668,10 +2946,12 @@ func main() {
 					logger.Error("github app auth init via heartbeat failed", "error", err)
 					return
 				}
-				// Record the key file actually in effect so subsequent config
-				// reads and heartbeat fingerprint reports reflect the resolved
-				// per-app-id key rather than an empty configured value.
-				cfg.GitHub.KeyFile = rebuildKeyFile
+				// Deliberately NOT persisted. rebuildKeyFile is the RESOLVED
+				// path, and writing a resolved value back into config is what
+				// converts a derivation into a pin: the next boot reads it as an
+				// explicit key_file, short-circuits resolveAppKeyFile, and keeps
+				// using this App's key even after app_id changes. Re-resolving on
+				// every use costs a stat and cannot go stale.
 				// Hub-delivered creds can carry a wrong installation_id just as
 				// easily as a hand-edited config; correct (and persist) it
 				// before building a client that would 403 on every write.
@@ -2798,9 +3078,26 @@ func main() {
 			// means "leave mine alone" — the spoke's own default is already
 			// api.github.com, so this never clobbers a working config.
 			if pc.GitHubAPIURL != "" && cfg.GitHub.APIURL != pc.GitHubAPIURL {
-				logger.Info("adopting GitHub API URL from hub heartbeat",
-					"was", cfg.GitHub.APIURL, "now", pc.GitHubAPIURL)
-				cfg.GitHub.APIURL = pc.GitHubAPIURL
+				// WRITE-PATH GUARD, mirroring the App-config callback: an api_url
+				// that names a different forge than our app_id is the same
+				// half-applied identity arriving from the other direction. Skip
+				// only this field — the org/repos/ACMM adoption around it is
+				// unrelated and must still land.
+				prospective := cfg.GitHub
+				prospective.APIURL = pc.GitHubAPIURL
+				if err := config.RejectIdentitySet(prospective); err != nil {
+					logger.Error("REFUSING hub GitHub API URL: it does not match this hive's app_id and would half-apply an identity — api_url left unchanged",
+						"error", err,
+						"pushed_api_url", pc.GitHubAPIURL,
+						"current_api_url", cfg.GitHub.APIURL,
+						"current_app_id", cfg.GitHub.AppID,
+						"remedy", "correct github_api_url/github_app_id for this cluster on the hub",
+					)
+				} else {
+					logger.Info("adopting GitHub API URL from hub heartbeat",
+						"was", cfg.GitHub.APIURL, "now", pc.GitHubAPIURL)
+					cfg.GitHub.APIURL = pc.GitHubAPIURL
+				}
 			}
 			level := pc.ACMMLevel
 			cfg.ACMMLevel = &level
@@ -3981,6 +4278,22 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
+// mergeableJSONUnknown is the explicit wire value for "mergeability was never
+// determined". It is spelled out rather than left as "" so a consumer reading
+// merge-eligible.json cannot mistake an unpopulated field for a definitive
+// "no" — the failure mode that made every PR read as unmergeable.
+const mergeableJSONUnknown = "unknown"
+
+// mergeableJSON renders a tri-state mergeability verdict for the
+// merge-eligible.json marker, mapping the unknown zero value to an explicit
+// "unknown" rather than an empty string.
+func mergeableJSON(m github.Mergeable) string {
+	if m == github.MergeableUnknown {
+		return mergeableJSONUnknown
+	}
+	return string(m)
+}
+
 // claimLedger holds the duplicate-PR guard's persisted issue→PR claim mapping
 // across eval cycles. It is loaded lazily on first use (and retried on a load
 // failure) rather than at startup, so a missing or corrupt /data ledger can
@@ -4037,13 +4350,16 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 	}
 
 	type eligiblePR struct {
-		Number    int      `json:"number"`
-		Repo      string   `json:"repo"`
-		Title     string   `json:"title"`
-		Author    string   `json:"author"`
-		Labels    []string `json:"labels,omitempty"`
-		Mergeable bool     `json:"mergeable"`
-		DCO       string   `json:"dco"`
+		Number int      `json:"number"`
+		Repo   string   `json:"repo"`
+		Title  string   `json:"title"`
+		Author string   `json:"author"`
+		Labels []string `json:"labels,omitempty"`
+		// Mergeable is a tri-state string ("yes"/"no"/"unknown"), not a bool.
+		// A bool here defaulted to false for every PR, because the value was
+		// read from a list endpoint that never returns it.
+		Mergeable string `json:"mergeable"`
+		DCO       string `json:"dco"`
 	}
 
 	type failingPR struct {
@@ -4094,7 +4410,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			Title:     pr.Title,
 			Author:    pr.Author,
 			Labels:    pr.Labels,
-			Mergeable: pr.Mergeable,
+			Mergeable: mergeableJSON(pr.Mergeable),
 			DCO:       dco,
 		})
 	}

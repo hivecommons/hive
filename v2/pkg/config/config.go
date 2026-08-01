@@ -42,6 +42,30 @@ type Config struct {
 	ACMMLevel     *int                   `yaml:"acmm_level,omitempty" json:"acmm_level"`
 	Variables     VariablesConfig        `yaml:"variables,omitempty"`
 
+	// RemovedAgents are agent names an operator deliberately deleted. It is a
+	// TOMBSTONE list, and it exists because deletion had no durable record
+	// anywhere: the delete handlers dropped the agent from the in-memory map
+	// and re-saved the overlay, but an agent lives in THREE places — the
+	// ConfigMap seed, /data/agent-configs/<name>.yaml, and the dashboard
+	// overlay — and Load() UNIONS all three via MergeAgentOverrides, which
+	// only ever adds. So the next config reload (fsnotify, observed ~36s after
+	// the delete on a live hive) re-materialized the agent, and even after
+	// that the next ApplyPack re-created it from the ACMM pack. That is the
+	// reported "I deleted brainstorm and guide and they always come back".
+	//
+	// A tombstone is scoped to the agent NAME and persists indefinitely,
+	// including across ACMM level changes. The alternative — clearing
+	// tombstones on a level change so a higher pack can reintroduce the agent
+	// — was rejected: an operator who deletes `guide` is expressing "I do not
+	// want this agent", not "I do not want it at this level", and silently
+	// resurrecting it during an unrelated level bump is the same class of
+	// silent revert as the bug itself. Re-adding the agent explicitly (the
+	// Governor grid's add, the agent CRUD create, or an import) clears the
+	// tombstone, which is the one unambiguous signal that the operator changed
+	// their mind. A genuinely NEW pack agent — one never deleted here — is
+	// unaffected and is still added on a level increase.
+	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
+
 	SourcePath string `yaml:"-" json:"-"`
 }
 
@@ -1231,6 +1255,21 @@ type GitHubConfig struct {
 	KeyFile            string `yaml:"key_file"`
 	Token              string `yaml:"token"`
 	OAuthClientID      string `yaml:"oauth_client_id"`
+	// Forge_ names the GitHub instance this hive's App and repos live on, as a
+	// bare host: "github.com" or "github.ibm.com". It is the SINGLE
+	// AUTHORITATIVE identity field — app_id, app_slug, api_url and base_url are
+	// all derivable from it (see Forge, ResolvedAppID, forgeIdentities).
+	//
+	// Read it through the Forge() method, never directly: Forge() applies the
+	// dual-read fallback that keeps a not-yet-backfilled spoke resolving exactly
+	// as it does today. The trailing underscore exists solely because the method
+	// owns the good name; the YAML key is a clean `forge`.
+	//
+	// Empty is valid during the migration window and means "infer from the URL
+	// fields". Once the fleet is backfilled it becomes mandatory — per the
+	// owner: explicitly defined on every spoke on every cluster, no empties, no
+	// inheritance. The implicit empty is what disguised the 2026-07-31 damage.
+	Forge_ string `yaml:"forge,omitempty"`
 	// AppSlug is the GitHub App URL slug for the install link.
 	// For public GitHub: "kubestellar-hive". For GHE: your app's slug.
 	AppSlug string `yaml:"app_slug"`
@@ -1251,6 +1290,13 @@ type GitHubConfig struct {
 	// injected solely for agents whose tier CanPush() and only when a real App is
 	// installed (m.appAuth != nil), so an App-less or advisory hive is unaffected.
 	AppAuthoredPRs *bool `yaml:"app_authored_prs,omitempty"`
+	// OAuthBaseURLOverride and OAuthAPIURLOverride redirect the DEVICE-FLOW LOGIN
+	// endpoints away from public github.com. They are a TEST SEAM ONLY — see the
+	// comment on OAuthBaseURL(). They carry the `-` yaml tag so they can never be
+	// set from a hive.yaml, on the hub, or over the config API: only Go code in a
+	// test can assign them.
+	OAuthBaseURLOverride string `yaml:"-"`
+	OAuthAPIURLOverride  string `yaml:"-"`
 }
 
 // PlaceholderAppID is the sentinel `github.app_id` written into a hive's config
@@ -1283,6 +1329,191 @@ const (
 	// still sign in with a github.com identity. No secret; safe to hardcode.
 	DefaultOAuthClientID = "Ov23ligE2p0gjXg6xAUf"
 )
+
+// ─────────────────────────────────────────────────────────────────────────
+// FORGE IDENTITY CONSTANTS
+//
+// A "forge" is the GitHub instance a hive's App and repos live on. Every
+// identity value below is derived from the forge — never written independently
+// — so the mixed states that broke seven hives on 2026-07-31 (a GHE app_id
+// beside an empty, therefore-public api_url) cannot be constructed.
+//
+// These are the SPOKE-side well-known defaults. The hub carries the
+// authoritative per-cluster registration in clusters.json, which may name a
+// different App on either forge; these values are what a spoke falls back to
+// when the hub has pushed nothing.
+// ─────────────────────────────────────────────────────────────────────────
+const (
+	// ForgePublic is the canonical host label for public github.com. It is a
+	// HOSTNAME, not a URL and not a sentinel word — unlike the hub's legacy
+	// "public" request sentinel, it is directly comparable to HostLabel().
+	ForgePublic = "github.com"
+
+	// ForgeGHEIBM is the IBM GitHub Enterprise host. It is the only GHE forge
+	// the fleet currently runs on; naming it as a constant keeps the derivation
+	// table literal-free and makes a second GHE forge a one-line addition.
+	ForgeGHEIBM = "github.ibm.com"
+)
+
+// forgeIdentity is the complete, indivisible identity set for one forge. The
+// four fields move together or not at all — that atomicity is the entire point
+// of deriving them from a single `forge` value.
+type forgeIdentity struct {
+	AppID   int64
+	AppSlug string
+	APIURL  string
+	BaseURL string
+}
+
+// Forge identity values.
+//
+// PublicGitHubAppID/PublicGitHubAppSlug and the Enterprise* set are declared
+// once, in provenance.go, alongside the rules that validate them — a second
+// declaration of the same literal is exactly the drift those rules exist to
+// catch. The GHEIBM* names below are aliases so the derivation table reads in
+// forge terms without duplicating any value.
+const (
+	// GHEIBMAppID is the github.ibm.com Hive App's numeric ID.
+	GHEIBMAppID = EnterpriseGitHubAppID
+	// GHEIBMAppSlug is the github.ibm.com Hive App's URL slug. A GHE instance
+	// hosts its own App registration and it is NOT named "kubestellar-hive";
+	// falling back to the public slug builds an install link that 404s.
+	GHEIBMAppSlug = EnterpriseGitHubAppSlug
+	// GHEIBMBaseURL is the github.ibm.com web base URL.
+	GHEIBMBaseURL = EnterpriseGitHubBaseURL
+	// GHEIBMAPIURL is the github.ibm.com REST API root. GHE serves its API
+	// under /api/v3 rather than on a separate api.* hostname.
+	GHEIBMAPIURL = EnterpriseGitHubAPIURL
+)
+
+// forgeIdentities is the derivation table: forge host -> its complete identity
+// set. This is the single source of truth that replaces four independently
+// writable fields. Adding a forge means adding a row here; there is no way to
+// express a half-identity.
+var forgeIdentities = map[string]forgeIdentity{
+	ForgePublic: {
+		AppID:   PublicGitHubAppID,
+		AppSlug: PublicGitHubAppSlug,
+		// Empty, not DefaultGitHubAPIURL/DefaultGitHubBaseURL: the public forge's
+		// canonical on-disk representation has ALWAYS been the empty string, and
+		// ResolvedAPIURL/ResolvedBaseURL already map empty -> the public default.
+		// Storing the URLs literally here would make the migration a visible
+		// rewrite of every healthy public spoke's config rather than a no-op.
+		APIURL:  "",
+		BaseURL: "",
+	},
+	ForgeGHEIBM: {
+		AppID:   GHEIBMAppID,
+		AppSlug: GHEIBMAppSlug,
+		APIURL:  GHEIBMAPIURL,
+		BaseURL: GHEIBMBaseURL,
+	},
+}
+
+// KnownForge reports whether host names a forge with a known identity set.
+// An unknown forge is not an error — a hive may legitimately run against a
+// third GHE instance the table does not name — but its identity cannot be
+// DERIVED, so explicit fields remain load-bearing there.
+func KnownForge(host string) bool {
+	_, ok := forgeIdentities[normalizeForgeHost(host)]
+	return ok
+}
+
+// normalizeForgeHost reduces any spelling of a forge — bare host, web URL, API
+// URL, mixed case, trailing slash — to its canonical bare-host label.
+func normalizeForgeHost(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.TrimSuffix(strings.Trim(s, "/"), "/api/v3")
+	host := strings.SplitN(s, "/", 2)[0]
+	if host == "" || host == "api.github.com" {
+		return ForgePublic
+	}
+	return host
+}
+
+// Forge returns the forge this hive's App and repos live on, as a bare host
+// label ("github.com", "github.ibm.com").
+//
+// PRECEDENCE — and this is the whole design in three lines:
+//
+//  1. An explicit `forge:` wins. It is the single authoritative field.
+//  2. Otherwise infer from the legacy URL fields via HostLabel()/IsGHE().
+//  3. Empty everything means public github.com, as it always has.
+//
+// Step 2 is the DUAL-READ WINDOW. Until every spoke carries `forge:`, a spoke
+// that has not been backfilled must resolve exactly as it does today — so this
+// never returns anything a pre-migration hive would not already have resolved.
+func (g GitHubConfig) Forge() string {
+	if f := strings.TrimSpace(g.Forge_); f != "" {
+		return normalizeForgeHost(f)
+	}
+	return normalizeForgeHost(g.HostLabel())
+}
+
+// ResolvedAppID returns the GitHub App ID for this hive, completing the
+// resolver set alongside ResolvedAPIURL/ResolvedBaseURL/ResolvedAppSlug.
+//
+// An explicitly configured app_id wins — including the placeholder sentinel,
+// which callers detect with IsPlaceholderApp() and must keep seeing. Only when
+// app_id is unset is it derived from the forge, which is what lets a hive be
+// described by `forge:` alone.
+func (g GitHubConfig) ResolvedAppID() int64 {
+	if g.AppID != 0 {
+		return g.AppID
+	}
+	if id, ok := forgeIdentities[g.Forge()]; ok {
+		return id.AppID
+	}
+	return 0
+}
+
+// ForgeIdentityMismatches reports every identity field that CONTRADICTS this
+// hive's forge. Empty means the identity set is coherent.
+//
+// This is the check that would have caught the 2026-07-31 incident at the
+// write boundary. It differs from IdentitySetIssues in the way that matters:
+// IdentitySetIssues compares the four fields against EACH OTHER, so it is blind
+// whenever the pushed value is the only GHE-looking field present (a GHE app_id
+// beside a public slug and empty URLs produces no disagreement at all — verified).
+// This compares each field against the DECLARED forge, which is an external
+// anchor the pusher does not control.
+//
+// A field that is empty is not a mismatch: empty means "derive me".
+func (g GitHubConfig) ForgeIdentityMismatches() []string {
+	forge := g.Forge()
+	want, known := forgeIdentities[forge]
+	if !known {
+		// A forge outside the table has no derivable identity to compare
+		// against. Reporting mismatches here would flag every legitimate
+		// third-forge hive; saying nothing keeps explicit fields authoritative
+		// exactly where they still need to be.
+		return nil
+	}
+	var out []string
+	// app_id is compared only when a REAL App is configured. The placeholder
+	// sentinel means "no App yet" and legitimately appears on both forges.
+	if g.AppID != 0 && !g.IsPlaceholderApp() && g.AppID != want.AppID {
+		out = append(out, fmt.Sprintf(
+			"app_id %d does not belong to forge %s (expected %d) — an App ID from another forge returns 404 Integration not found on token creation",
+			g.AppID, forge, want.AppID))
+	}
+	if s := strings.TrimSpace(g.AppSlug); s != "" && !strings.EqualFold(s, want.AppSlug) {
+		out = append(out, fmt.Sprintf(
+			"app_slug %q does not belong to forge %s (expected %q) — the App install link would 404",
+			s, forge, want.AppSlug))
+	}
+	if u := strings.TrimSpace(g.APIURL); u != "" && normalizeForgeHost(u) != forge {
+		out = append(out, fmt.Sprintf(
+			"api_url %q names forge %s, not %s", u, normalizeForgeHost(u), forge))
+	}
+	if u := strings.TrimSpace(g.BaseURL); u != "" && normalizeForgeHost(u) != forge {
+		out = append(out, fmt.Sprintf(
+			"base_url %q names forge %s, not %s", u, normalizeForgeHost(u), forge))
+	}
+	return out
+}
 
 // IsPlaceholderApp reports whether app_id is the "no real App yet" sentinel.
 func (g GitHubConfig) IsPlaceholderApp() bool {
@@ -1381,8 +1612,26 @@ func (g GitHubConfig) HostLabel() string {
 // a GHE hive) makes GitHub return "Not Found" and the dashboard shows "could not
 // verify GitHub identity". Login must therefore use these fixed public hosts;
 // only the App-token / repo-API paths follow the per-hive (possibly GHE) host.
-func (g GitHubConfig) OAuthBaseURL() string { return DefaultGitHubBaseURL }
-func (g GitHubConfig) OAuthAPIURL() string  { return DefaultGitHubAPIURL }
+// The oauth_*_url_override fields exist ONLY as a test seam. They are
+// deliberately absent from every production config: a hive that sets them would
+// send its users' device-flow login to a non-github.com host, which is exactly
+// the misconfiguration the split above prevents. Tests point them at an
+// httptest server so the login path can be exercised without touching the real
+// github.com endpoints — see TestMain in pkg/dashboard, which additionally
+// hard-fails any test that leaves them unset and would otherwise dial out.
+func (g GitHubConfig) OAuthBaseURL() string {
+	if g.OAuthBaseURLOverride != "" {
+		return g.OAuthBaseURLOverride
+	}
+	return DefaultGitHubBaseURL
+}
+
+func (g GitHubConfig) OAuthAPIURL() string {
+	if g.OAuthAPIURLOverride != "" {
+		return g.OAuthAPIURLOverride
+	}
+	return DefaultGitHubAPIURL
+}
 
 // OAuthClientIDResolved returns the client ID for device-flow login: the
 // configured oauth_client_id, or the public github.com default. Because login
@@ -1397,10 +1646,19 @@ func (g GitHubConfig) OAuthClientIDResolved() string {
 	return DefaultOAuthClientID
 }
 
-// ResolvedAppSlug returns the configured app slug or the default public Hive app slug.
+// ResolvedAppSlug returns the app slug for this hive: the configured value,
+// else the slug DERIVED from the forge, else the public default.
+//
+// The forge step is what stops a GHE hive that names only `forge:` from falling
+// back to "kubestellar-hive" — a slug that names no App on GHE and builds an
+// install link that 404s. That 404 is the failure this whole design exists to
+// make unrepresentable, so the derivation belongs here rather than at call sites.
 func (g GitHubConfig) ResolvedAppSlug() string {
 	if g.AppSlug != "" {
 		return g.AppSlug
+	}
+	if id, ok := forgeIdentities[g.Forge()]; ok && id.AppSlug != "" {
+		return id.AppSlug
 	}
 	return DefaultGitHubAppSlug
 }
@@ -1456,13 +1714,35 @@ func (g GitHubConfig) AppAuthoredPRsEnabled() bool {
 // AppInstallURL returns the full URL to install the GitHub App.
 // For GHE: {base_url}/github-apps/{slug}/installations/new
 // For github.com: https://github.com/apps/{slug}/installations/new
+//
+// It returns "" for a GitHub Enterprise host whose App slug is not configured.
+//
+// # WHY EMPTY RATHER THAN A BEST-EFFORT URL
+//
+// DefaultGitHubAppSlug ("kubestellar-hive") names the App registered on PUBLIC
+// github.com. GitHub Enterprise hosts a SEPARATE App registry, and an enterprise
+// registration is rarely given the same slug — so falling back to the default on
+// a GHE host emits a link to an App that provably does not exist there, and the
+// user lands on a GitHub 404. That is strictly worse than no link: a dead link
+// reads as "this product is broken", and it sent a real user to
+// github.ibm.com/github-apps/kubestellar-hive/installations/new.
+//
+// The empty string is the honest answer — "this host's App slug was never
+// recorded" — and callers render it as a legible message naming the missing
+// config instead of a button that 404s. Public github.com keeps the default,
+// where it is correct by construction.
 func (g GitHubConfig) AppInstallURL() string {
 	base := strings.TrimRight(g.ResolvedBaseURL(), "/")
-	slug := g.ResolvedAppSlug()
 	if g.IsGHE() {
+		// No default is admissible here: only an explicitly configured slug can
+		// name an App on this enterprise host.
+		slug := strings.TrimSpace(g.AppSlug)
+		if slug == "" {
+			return ""
+		}
 		return base + "/github-apps/" + slug + "/installations/new"
 	}
-	return base + "/apps/" + slug + "/installations/new"
+	return base + "/apps/" + g.ResolvedAppSlug() + "/installations/new"
 }
 
 type NotificationsConfig struct {
@@ -1509,19 +1789,25 @@ type HubConfig struct {
 	// filter regardless of mode (names kept for backward compatibility with
 	// existing on-disk config; the mode decides allow vs deny). ContributeAllowLabels
 	// is retained only for one-time migration into DenyLabels+LabelsMode.
-	ContributeTitlesMode          string              `yaml:"contribute_titles_mode,omitempty"`
-	ContributeAuthorsMode         string              `yaml:"contribute_authors_mode,omitempty"`
-	ContributeLabelsMode          string              `yaml:"contribute_labels_mode,omitempty"`
-	ContributeAllowLabels         []string            `yaml:"contribute_allow_labels"`
-	ContributeDenyLabels          []string            `yaml:"contribute_deny_labels"`
-	ContributeDenyTitles          []string            `yaml:"contribute_deny_titles"`
-	ContributeDenyAuthors         []string            `yaml:"contribute_deny_authors"`
-	ContributeAllowModels         []string            `yaml:"contribute_allow_models"`
-	ContributeRejectUnknownModels bool                `yaml:"contribute_reject_unknown_models"`
-	DisabledRepos                 []string            `yaml:"disabled_repos"`
-	DisabledTiers                 []string            `yaml:"disabled_tiers"`
-	TierLimits                    map[string]TierRate `yaml:"tier_limits"`
-	SnapshotIntervalMin           int                 `yaml:"snapshot_interval_min"`
+	ContributeTitlesMode          string   `yaml:"contribute_titles_mode,omitempty"`
+	ContributeAuthorsMode         string   `yaml:"contribute_authors_mode,omitempty"`
+	ContributeLabelsMode          string   `yaml:"contribute_labels_mode,omitempty"`
+	ContributeAllowLabels         []string `yaml:"contribute_allow_labels"`
+	ContributeDenyLabels          []string `yaml:"contribute_deny_labels"`
+	ContributeDenyTitles          []string `yaml:"contribute_deny_titles"`
+	ContributeDenyAuthors         []string `yaml:"contribute_deny_authors"`
+	ContributeAllowModels         []string `yaml:"contribute_allow_models"`
+	ContributeRejectUnknownModels bool     `yaml:"contribute_reject_unknown_models"`
+	// ContributeSkipAssignedToOthers, when true, makes the /contribute queue
+	// skip any issue that is already assigned to someone OTHER than the
+	// contributor requesting work. An issue assigned to the contributor
+	// themselves (or unassigned) is still eligible. Default false preserves the
+	// prior behavior of handing out issues regardless of assignment (#2357).
+	ContributeSkipAssignedToOthers bool                `yaml:"contribute_skip_assigned_to_others"`
+	DisabledRepos                  []string            `yaml:"disabled_repos"`
+	DisabledTiers                  []string            `yaml:"disabled_tiers"`
+	TierLimits                     map[string]TierRate `yaml:"tier_limits"`
+	SnapshotIntervalMin            int                 `yaml:"snapshot_interval_min"`
 }
 
 type TierRate struct {
@@ -1741,6 +2027,10 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	if overlay.Project.Org == "" || len(overlay.Agents) == 0 {
 		return cfg, nil
 	}
+	// Tombstones live in the dashboard overlay because that is the only agent
+	// source the dashboard can write. Adopt them BEFORE merging so a deleted
+	// agent is neither re-merged from the overlay nor left behind by the seed.
+	cfg.RemovedAgents = overlay.RemovedAgents
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
 	cfg.MergeAgentOverrides(overlay.Agents)
 	for name := range overlay.Agents {
@@ -2377,8 +2667,20 @@ func (c *Config) validate() error {
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
 	// into dashboard-only mode. Everywhere else, use HasApp().
-	if c.GitHub.Token == "" && c.GitHub.AppID == 0 {
-		return fmt.Errorf("github.token or github.app_id is required")
+	// A hive described by `forge:` alone satisfies this too: ResolvedAppID()
+	// derives a real App ID from a known forge, so the identity is present even
+	// though app_id is not written down. Without this, the end state of this
+	// design — one field naming the forge, the rest derived — fails validation
+	// and the spoke will not boot.
+	// An EXPLICIT `forge:` satisfies this too: ResolvedAppID() derives a real
+	// App ID from a known forge, so the identity is present even though app_id
+	// is not written down. Deliberately keyed on Forge_ (the raw field) and not
+	// Forge() — Forge() INFERS public for a blank config, which would make an
+	// empty github block validate and silently boot a hive with no credentials
+	// at all. Only a forge the operator actually wrote counts.
+	if c.GitHub.Token == "" && c.GitHub.AppID == 0 &&
+		!(strings.TrimSpace(c.GitHub.Forge_) != "" && c.GitHub.ResolvedAppID() != 0) {
+		return fmt.Errorf("github.token, github.app_id or github.forge is required")
 	}
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
@@ -2544,8 +2846,19 @@ func (c *Config) validateSaveGuard() error {
 		log.Printf("WARNING: config.Save() blocked — project.org is empty, would corrupt hive.yaml")
 		return fmt.Errorf("project.org is empty")
 	}
-	if len(c.Agents) == 0 {
-		log.Printf("WARNING: config.Save() blocked — no agents configured, would corrupt hive.yaml")
+	// Zero agents is a legitimate state when the operator deliberately deleted
+	// them all: #2361's tombstones (RemovedAgents) are the durable record of
+	// that intent. Blocking the save here would make the last deletion
+	// unpersistable — the in-memory roster empties, the write is refused, and
+	// the next reload restores the agents from the seed, silently undoing the
+	// operator's action. That is precisely the "they always come back" bug
+	// #2361 fixed, reintroduced through the save path.
+	//
+	// An empty roster with NO tombstones is still refused: that is the
+	// truncated/uninitialised case this guard exists to catch. The two states
+	// are distinguishable, so distinguish them rather than rejecting both.
+	if len(c.Agents) == 0 && len(c.RemovedAgents) == 0 {
+		log.Printf("WARNING: config.Save() blocked — no agents configured and no tombstones, would corrupt hive.yaml")
 		return fmt.Errorf("no agents configured")
 	}
 	return nil
@@ -2642,27 +2955,58 @@ func (c *Config) saveLocked() error {
 		}
 	}
 
-	// Write a rolling backup to the PVC. This is NOT the primary config —
-	// it exists for disaster recovery (e.g. ConfigMap deleted in K8s, or
-	// Watchtower wiping a bind mount in Docker). The entrypoint determines
-	// which source is authoritative based on the runtime environment.
-	backupPath := "/data/hive.yaml.bak"
-	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
-		// Common cause: init container created .bak as root, runtime user can't overwrite.
-		// Remove and retry so runtime state is not silently lost.
-		os.Remove(backupPath)
-		if retryErr := os.WriteFile(backupPath, data, 0o644); retryErr != nil {
-			log.Printf("[config] warning: failed to write PVC backup to %s (even after remove): %v", backupPath, retryErr)
+	// Persist the runtime config to the PVC. In K8s this is a recovery copy
+	// (the ConfigMap seed plus the overlay is authoritative); in Docker/LXC
+	// it IS the boot-time source of truth, since there is no ConfigMap and
+	// no overlay there. The entrypoint decides which applies.
+	//
+	// Always written under the new name. The legacy file is never written,
+	// renamed or removed here — see RuntimeConfigFileLegacy.
+	runtimePath := RuntimeConfigFile
+	if err := os.WriteFile(runtimePath, data, 0o644); err != nil {
+		// Common cause: init container created the file as root, runtime user
+		// can't overwrite. Remove and retry so runtime state is not silently lost.
+		os.Remove(runtimePath)
+		if retryErr := os.WriteFile(runtimePath, data, 0o644); retryErr != nil {
+			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
 		} else {
-			log.Printf("[config] PVC backup written to %s (recovered from permission error)", backupPath)
+			log.Printf("[config] PVC runtime config written to %s (recovered from permission error)", runtimePath)
 		}
 	} else {
-		log.Printf("[config] PVC backup written to %s (recovery copy, not primary config)", backupPath)
+		log.Printf("[config] PVC runtime config written to %s", runtimePath)
 	}
 
 	c.saveDashboardOverlay()
 	return nil
 }
+
+// RuntimeConfigFile is where Save() persists the full runtime config on the
+// PVC. Its role differs by environment, which is exactly why the old
+// hive.yaml.bak name was misleading enough to cost debugging time:
+//
+//   - Kubernetes: a post-merge SNAPSHOT. The entrypoint writes it after
+//     merging the dashboard overlay over the ConfigMap seed, and reads it
+//     back only in the disaster fallback (ConfigMap missing or empty).
+//   - Docker/LXC: a live boot INPUT and the source of truth. There is no
+//     ConfigMap and no overlay, so the entrypoint restores this file over
+//     the config path on every boot. It is the only reason a dashboard save
+//     survives a container recreation — see saveDashboardOverlay, which
+//     early-returns outside Kubernetes for that reason.
+//
+// ".runtime" is accurate for both; ".bak" implied "the restorable backup",
+// which is true only of the Kubernetes half.
+const RuntimeConfigFile = "/data/hive.yaml.runtime"
+
+// RuntimeConfigFileLegacy is the pre-rename name of RuntimeConfigFile.
+//
+// It is READ as a fallback and never written, renamed or removed: ~51 live
+// hives carry only this file, and on Docker/LXC it is the single copy of
+// their live configuration. Mutating it at boot could lose owner
+// customisations with no warning, so the migration is copy-forward only —
+// readers prefer RuntimeConfigFile and fall back to this one.
+//
+// Removable one release after every live hive has written the new name.
+const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 
 // DashboardOverlayFile is where Save() persists a secret-free copy of the
 // dashboard-edited config on the PVC in Kubernetes mode. The copy-config
@@ -2707,7 +3051,7 @@ func IsKubernetesPod() bool {
 // this atomic write prevents.
 func (c *Config) saveDashboardOverlay() {
 	if !IsKubernetesPod() {
-		// Docker/LXC mode: /data/hive.yaml.bak is already the boot-time
+		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
 		// overlay.
 		return

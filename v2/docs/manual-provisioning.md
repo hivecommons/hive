@@ -407,7 +407,7 @@ spec:
       initContainers:
       - name: copy-config
         image: ${IMAGE}
-        command: ["sh","-c","cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.bak ]; then echo backup-exists-for-recovery; fi"]
+        command: ["sh","-c","cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -f /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; fi"]
         volumeMounts:
         - { name: config,          mountPath: /etc/hive-seed, readOnly: true }
         - { name: config-writable, mountPath: /etc/hive }
@@ -581,7 +581,7 @@ At runtime the effective config is **not** the ConfigMap. The entrypoint:
 
 1. seeds `/etc/hive/hive.yaml` from the `hive-config` ConfigMap on boot, then
 2. merges the PVC dashboard overlay `/data/hive.yaml.dashboard` **over** it, and
-3. writes `/data/hive.yaml.bak`.
+3. writes `/data/hive.yaml.runtime`.
 
 The dashboard's `Config.Save()` writes the overlay. Therefore:
 
@@ -589,7 +589,8 @@ The dashboard's `Config.Save()` writes the overlay. Therefore:
   the PVC overlay wins.
 - To change a running hive's config, edit `/data/hive.yaml.dashboard` on the PVC
   (while scaled to 0, or the running process re-saves from memory), **or** clear
-  `/data/hive.yaml.dashboard` + `/data/hive.yaml.bak` to let it reseed.
+  `/data/hive.yaml.dashboard` + `/data/hive.yaml.runtime` (and the legacy
+  `/data/hive.yaml.bak`, if the hive predates the rename) to let it reseed.
 - Verify effective config by `grep`-ing `/etc/hive/hive.yaml` in the running pod,
   **never** the ConfigMap.
 

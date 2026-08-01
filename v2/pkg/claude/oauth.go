@@ -41,6 +41,20 @@ const (
 	TokenExchangeTimeout = 120 * time.Second
 )
 
+// tokenEndpointOverride redirects the token exchange away from the real Claude
+// endpoint. TEST SEAM ONLY: it is never set in production, where every exchange
+// goes to TokenURL. It exists so ExchangeCode's response handling — error
+// payloads, empty tokens, scope defaulting — can be exercised without a live
+// OAuth round trip.
+var tokenEndpointOverride string
+
+func tokenEndpoint() string {
+	if tokenEndpointOverride != "" {
+		return tokenEndpointOverride
+	}
+	return TokenURL
+}
+
 // OAuthState holds the server-side state for an in-progress PKCE authorization flow.
 type OAuthState struct {
 	CodeVerifier string    `json:"-"`
@@ -102,12 +116,12 @@ func BuildAuthorizeURL(codeChallenge, redirectURI, state string) string {
 	v := url.Values{
 		"code":                  {"true"},
 		"client_id":             {ClientID},
-		"response_type":        {"code"},
-		"redirect_uri":         {redirectURI},
-		"scope":                {DefaultScopes},
-		"code_challenge":       {codeChallenge},
+		"response_type":         {"code"},
+		"redirect_uri":          {redirectURI},
+		"scope":                 {DefaultScopes},
+		"code_challenge":        {codeChallenge},
 		"code_challenge_method": {"S256"},
-		"state":                {state},
+		"state":                 {state},
 	}
 	return AuthorizeURL + "?" + v.Encode()
 }
@@ -131,7 +145,7 @@ func ExchangeCode(code, codeVerifier, redirectURI string) (*OAuthTokens, error) 
 	}
 
 	client := &http.Client{Timeout: TokenExchangeTimeout}
-	resp, err := client.PostForm(TokenURL, data)
+	resp, err := client.PostForm(tokenEndpoint(), data)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request: %w", err)
 	}
