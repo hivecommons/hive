@@ -80,7 +80,9 @@ func TestInlineAccessAvatarEscaping(t *testing.T) {
 		{"avatar url built from the encoded profile url", `'<img src="' + escAttr(ghProfileURL(username)) + '.png?size='`},
 		// Quoted attribute values.
 		{"anchor href uses escAttr", `'<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" '`},
-		{"anchor title and aria-label use escAttr", `'title="' + escAttr(label || uname) + '" aria-label="' + escAttr(label || uname) + '" '`},
+		// title now folds in a live line via a `title` var; both title and
+		// aria-label still go through escAttr.
+		{"anchor title uses escAttr", `'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" '`},
 		// The inline face still carries the role in its tooltip, now built by the
 		// shared accessAvatarTitle helper (username — role, plus contact metadata).
 		{"inline face labels username and role via title helper", `return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),`},

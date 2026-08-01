@@ -4533,6 +4533,14 @@ type HiveAccessEntry struct {
 	FullName string `json:"full_name,omitempty"`
 	SlackID  string `json:"slack_id,omitempty"`
 	Notes    string `json:"notes,omitempty"`
+	// Engagement stats copied from the user's record so a co-member's My-Hives
+	// avatar hover can show the same logins / time-in-hive the admin Users card
+	// shows. Like Notes these are stats ABOUT a person, so they ride ONLY for a
+	// hub admin (accessForHive's includeAdminOnly gate) — a non-admin owner sees
+	// name/Slack but not another member's engagement numbers. omitempty so a user
+	// with no stats round-trips as today's handle — role tooltip.
+	LoginCount     int   `json:"login_count,omitempty"`
+	SessionSeconds int64 `json:"session_seconds,omitempty"`
 }
 
 // accessForHive returns who can sign in to a hive, newest-role-agnostic and
@@ -4540,10 +4548,11 @@ type HiveAccessEntry struct {
 // than reading h.Owner: a user's Hives map is the authoritative grant (see
 // handleApproveProvision / handleAssignHive, which write it), and an owner who
 // is missing from it genuinely cannot sign in.
-// includeNotes controls whether the admin-maintained Notes field is copied onto
-// each entry: pass true ONLY for a hub admin. FullName/SlackID always ride (they
-// identify the person to a co-owner); Notes is private admin CRM text.
-func accessForHive(hiveID string, users []SaaSUser, includeNotes bool) []HiveAccessEntry {
+// includeAdminOnly controls whether the admin-only fields — the CRM Notes and
+// the engagement stats (LoginCount/SessionSeconds) — are copied onto each entry:
+// pass true ONLY for a hub admin. FullName/SlackID always ride (they identify the
+// person to a co-owner); Notes and the stats are private to admins.
+func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []HiveAccessEntry {
 	access := make([]HiveAccessEntry, 0)
 	for _, u := range users {
 		if role, ok := u.Hives[hiveID]; ok {
@@ -4553,8 +4562,10 @@ func accessForHive(hiveID string, users []SaaSUser, includeNotes bool) []HiveAcc
 				FullName: u.FullName,
 				SlackID:  u.SlackID,
 			}
-			if includeNotes {
+			if includeAdminOnly {
 				entry.Notes = u.Notes
+				entry.LoginCount = u.LoginCount
+				entry.SessionSeconds = u.SessionSeconds
 			}
 			access = append(access, entry)
 		}
@@ -7362,8 +7373,14 @@ const dashboardHTML = `<!DOCTYPE html>
     function avatarProfileLink(username, label, avatarHTML) {
       var uname = String(username || '');
       if (!uname) return avatarHTML;
+      // Fold "logged into their hive now" into the anchor's OWN tooltip for every
+      // avatar surface, so a live user's face reads identity (+ stats) AND the
+      // live state in one tooltip. The green ring wrapper deliberately carries no
+      // title of its own — a wrapper title would sit on top of this and hide it.
+      var title = label || uname;
+      if (isUserLive(uname)) title = title + '\n● Logged into their hive now';
       return '<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" ' +
-        'title="' + escAttr(label || uname) + '" aria-label="' + escAttr(label || uname) + '" ' +
+        'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" ' +
         'style="display:inline-block;line-height:0;text-decoration:none">' + avatarHTML + '</a>';
     }
 
@@ -7389,11 +7406,17 @@ const dashboardHTML = `<!DOCTYPE html>
         (extraStyle || '') + '" ' +
         'onerror="this.style.visibility=\'hidden\'">';
       if (isUserLive(username)) {
-        // 3px green dashed ring hugging the circle. inline-flex wrapper keeps the
-        // face's vertical-align and sizing identical to the un-ringed case.
-        return '<span title="Logged into their hive now" ' +
-          'style="display:inline-flex;border-radius:50%;padding:1px;border:3px dashed var(--green);vertical-align:middle;line-height:0">' +
-          img + '</span>';
+        // Concentric green dashed ring. The wrapper is a fixed square exactly the
+        // face's size plus the ring gap+width on every side (px + 2*(gap+border)),
+        // with box-sizing:border-box and the ring drawn as its border, so the
+        // round border-radius stays perfectly centered on the round face — the
+        // earlier padding:1px inline-flex version drifted off-center. No title on
+        // the wrapper: the "logged in now" line lives in the face's OWN tooltip
+        // (accessAvatarTitle) so a wrapper title can't shadow the identity+stats.
+        var RING_GAP = 2, RING_W = 3, box = px + 2 * (RING_GAP + RING_W);
+        return '<span style="display:inline-block;box-sizing:border-box;width:' + box + 'px;height:' + box + 'px;' +
+          'padding:' + RING_GAP + 'px;border:' + RING_W + 'px dashed var(--green);border-radius:50%;' +
+          'vertical-align:middle;line-height:0">' + img + '</span>';
       }
       return img;
     }
@@ -7667,13 +7690,39 @@ const dashboardHTML = `<!DOCTYPE html>
        invariant. The server only populates these fields for owner/admin-visible
        rows and withholds notes from non-admins, so nothing here needs to re-gate
        them — a field that is absent simply produces no line. */
+    /* accessAvatarTitle builds the NATIVE multi-line tooltip for a co-member face.
+       It deliberately stays a title attribute (never a hive-access-pop custom
+       panel — see TestInlineAvatarsCarryNoCustomPanel; the status dot owns the
+       row's one panel). It carries the same engagement info the admin Users card
+       shows — identity, logins, time-in-hive, task activity, and the verdict — so
+       who-to-elevate/help reads on hover anywhere a face appears. The stat lines
+       are admin-only (accessForHive only fills login_count/session_seconds for an
+       admin) and each line is conditional, so a stat-less user degrades to today's
+       "handle — role". Newlines render as line breaks in a native title. */
     function accessAvatarTitle(a) {
       var uname = String(a.username || '');
       var role = String(a.role || '');
       var lines = [uname + (role ? ' — ' + role : '')];
+      // ("Logged into their hive now" is appended generically in avatarProfileLink
+      // for EVERY avatar surface, so it is not added here — doing both would
+      // double the line.)
       if (a.full_name) lines.push(String(a.full_name));
       if (a.slack_id) lines.push('Slack: ' + String(a.slack_id));
       if (a.notes) lines.push('Notes: ' + String(a.notes));
+      // Engagement stats (admin-only; absent → these lines are simply skipped).
+      if (a.login_count) lines.push('Logins: ' + a.login_count);
+      if (a.session_seconds) lines.push('Time in hive: ' + fmtHours(a.session_seconds));
+      var act = userTaskActivity(uname);
+      if (act.done || act.failed) lines.push('Tasks: ' + act.done + ' done / ' + act.failed + ' failed');
+      // The lifecycle verdict, from the same helper the admin card uses. It reads
+      // logins/time/tasks; a co-member's hive-journey list isn't on the access
+      // entry so pass empty — the verdict still classifies from engagement, only
+      // the ACMM-graduation refinement is unavailable here. Shown only when there
+      // is some signal to classify (any stat present), so a bare face stays bare.
+      if (a.login_count || a.session_seconds || act.done) {
+        var verdict = userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0}, act, []);
+        if (verdict && verdict.label) lines.push(verdict.label);
+      }
       return lines.join('\n');
     }
     function inlineAccessAvatar(a) {
