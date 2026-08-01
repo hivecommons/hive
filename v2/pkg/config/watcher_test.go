@@ -199,7 +199,8 @@ func TestWatcherProgrammaticSaveUsesSecretFreePersistenceDigest(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hive.yaml")
 	origBackup := backupFile
-	backupFile = filepath.Join(dir, "hive.yaml.bak")
+	RuntimeConfigFile = filepath.Join(dir, "hive.yaml.runtime")
+	backupFile = RuntimeConfigFile
 	t.Cleanup(func() { backupFile = origBackup })
 	origOverlay := DashboardOverlayFile
 	DashboardOverlayFile = filepath.Join(dir, "hive.yaml.dashboard")

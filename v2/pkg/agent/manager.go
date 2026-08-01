@@ -50,40 +50,40 @@ const (
 )
 
 type AgentProcess struct {
-	Name            string
-	ID              string
-	Config          config.AgentConfig
-	State           ProcessState
-	PID             int
-	UID             int
-	StartedAt       *time.Time
-	LastKick        *time.Time
-	Paused          bool
-	PausedAt        time.Time
-	PausedReason    string
-	PausedTrigger   string
-	PinnedCLI       string
-	PinnedModel     string
-	ModelOverride   string
-	BackendOverride string
-	RestartCount    int
-	OutputBuffer    *RingBuffer
-	lastPaneCapture []string
-	paneMu          sync.RWMutex
-	KickHistory     []KickRecord
-	LastKickMessage    string
-	KickRefused        bool
-	KickRefusalReason  string
-	LaunchedMode       AgentMode
-	HasLaunched     bool
-	tmuxSession     string
-	tmuxSocket      string
-	cancel context.CancelFunc
-	forceRelaunch       bool
-	BootstrapOverride   string // when set, replaces buildBootstrapPrompt output
-	LastError           string // captured from bare copilot diagnostic launch
-	lastTokenRestart    time.Time // cooldown for auto-restart after token detection
-	NeedsLogin          bool   // true when pane shows a login prompt
+	Name              string
+	ID                string
+	Config            config.AgentConfig
+	State             ProcessState
+	PID               int
+	UID               int
+	StartedAt         *time.Time
+	LastKick          *time.Time
+	Paused            bool
+	PausedAt          time.Time
+	PausedReason      string
+	PausedTrigger     string
+	PinnedCLI         string
+	PinnedModel       string
+	ModelOverride     string
+	BackendOverride   string
+	RestartCount      int
+	OutputBuffer      *RingBuffer
+	lastPaneCapture   []string
+	paneMu            sync.RWMutex
+	KickHistory       []KickRecord
+	LastKickMessage   string
+	KickRefused       bool
+	KickRefusalReason string
+	LaunchedMode      AgentMode
+	HasLaunched       bool
+	tmuxSession       string
+	tmuxSocket        string
+	cancel            context.CancelFunc
+	forceRelaunch     bool
+	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
+	LastError         string    // captured from bare copilot diagnostic launch
+	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
+	NeedsLogin        bool      // true when pane shows a login prompt
 	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
 	// observed by the 3s pane poller. It is the spoke's only evidence of an
 	// agent actually doing something: State says what the manager intends,
@@ -92,17 +92,17 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange      time.Time
-	consentSeenAt       time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss  time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt     time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane   string    // stall watchdog: hash of the visible pane just after kick delivery
-	stallNudgeSent      bool      // stall watchdog: at most one nudge per kick
-	StallNudges         int       // total post-kick stall nudges sent (surfaced to the dashboard)
-	launchGen           int       // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks  int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
-	actionNudgeSent     bool      // no-action watchdog: at most one action nudge per kick
-	ActionNudges        int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+	LastPaneChange     time.Time
+	consentSeenAt      time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt    time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane  string    // stall watchdog: hash of the visible pane just after kick delivery
+	stallNudgeSent     bool      // stall watchdog: at most one nudge per kick
+	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	launchGen          int       // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	actionNudgeSent    bool      // no-action watchdog: at most one action nudge per kick
+	ActionNudges       int       // total prose-only-response action nudges sent (surfaced to the dashboard)
 
 	// awaitingBobKey marks an agent that launchInTmux parked in StateFailed
 	// for the single, fully-recoverable reason "bob backend with no API key".
@@ -112,6 +112,13 @@ type AgentProcess struct {
 	// save would restart agents whose problem the key does not fix.
 	// Set only on the missing-key branch, cleared on every launch attempt.
 	awaitingBobKey bool
+	// specialistReady / specialistProviderSHA256 are dd-branch fields, restored
+	// after a v2 sync took v2's version of this struct wholesale and dropped
+	// them — leaving ~10 call sites in this file referring to a field that no
+	// longer existed. They are additive: v2 has no equivalent and no behaviour
+	// here changes for it.
+	specialistReady          bool
+	specialistProviderSHA256 string
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -2070,7 +2077,6 @@ func findOverlap(prev, curr []string) int {
 	}
 	return -1
 }
-
 
 // paneShowsInputPrompt reports whether the pane content shows a CLI input
 // prompt that is ready to accept a kick.
@@ -4138,11 +4144,11 @@ const bobBackend = "bob"
 //     by `["debug",...,"auth-method"].forEach(c=>t.hide(c))`. Verified by
 //     running the real 1.0.6 bundle: `--help` is 67 lines with 0 matches for
 //     auth-method, yet the parser distinguishes it from a typo —
-//       $ bob --definitely-not-a-flag x -p hi
-//       Unknown arguments: definitely-not-a-flag, definitelyNotAFlag
-//       $ bob --auth-method bogus-value -p hi
-//       Invalid values: Argument: auth-method, Given: "bogus-value",
-//                       Choices: "sso", "api-key"
+//     $ bob --definitely-not-a-flag x -p hi
+//     Unknown arguments: definitely-not-a-flag, definitelyNotAFlag
+//     $ bob --auth-method bogus-value -p hi
+//     Invalid values: Argument: auth-method, Given: "bogus-value",
+//     Choices: "sso", "api-key"
 //     while `--auth-method api-key` is accepted silently. An unknown flag under
 //     yargs .strict() would have errored, so the option is live.
 //

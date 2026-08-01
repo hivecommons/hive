@@ -3288,7 +3288,10 @@ func (c *Config) savePersistenceBytes(data []byte) error {
 //
 // ".runtime" is accurate for both; ".bak" implied "the restorable backup",
 // which is true only of the Kubernetes half.
-const RuntimeConfigFile = "/data/hive.yaml.runtime"
+// A var, not a const, so tests can redirect it at a temp dir and verify the
+// exact bytes Save() writes — the same hook DashboardOverlayFile uses.
+// Production never reassigns it.
+var RuntimeConfigFile = "/data/hive.yaml.runtime"
 
 // RuntimeConfigFileLegacy is the pre-rename name of RuntimeConfigFile.
 //
@@ -3314,10 +3317,10 @@ const RuntimeConfigFileLegacy = "/data/hive.yaml.bak"
 // never changes at runtime in production.
 var DashboardOverlayFile = "/data/hive.yaml.dashboard"
 
-// backupFile is a package variable so tests can verify the exact bytes written
-// to the recovery copy without touching the process-wide /data directory.
-// Production code never changes it.
-var backupFile = "/data/hive.yaml.bak"
+// backupFile was the pre-rename hook for the recovery copy. Save() now writes
+// RuntimeConfigFile, so this is retained ONLY as an alias for dd-branch tests
+// that redirect it; production code reads it nowhere.
+var backupFile = RuntimeConfigFile
 
 // IsKubernetesPod reports whether the process is running inside a
 // Kubernetes pod (mirrors the entrypoint's IS_KUBERNETES detection).
