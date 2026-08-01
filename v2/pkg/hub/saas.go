@@ -5547,6 +5547,17 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	// assignments, so a flag left true by a previous tenancy would suppress
 	// delivery for the new owner.
 	h.ACMMDelivered = false
+	// Re-arm the org/repos claim handshake too (#2372). ClaimDelivered gates
+	// both halves of adoptSpokeProjectConfig: the org/repos PUSH fires only
+	// while !ClaimDelivered, and the spoke's report is ADOPTED only once it is
+	// true. A RECYCLED placeholder (previously claimed, returned to the pool)
+	// carries the prior tenant's ClaimDelivered=true, so without this reset the
+	// hub never pushes the new owner's org/repos AND adopts the spoke's stale
+	// self-report — hub and spoke silently agree on the PREVIOUS tenant's
+	// project. The heartbeat is the only hub->spoke write channel, so the claim
+	// must re-arm on (re)assignment for exactly the same reason ACMMDelivered
+	// does above. (The assign path — handleAssignHive — already does this.)
+	h.ClaimDelivered = false
 	h.Status = ""
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
