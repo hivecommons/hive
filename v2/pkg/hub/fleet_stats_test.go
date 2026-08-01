@@ -98,31 +98,75 @@ func TestComputeFleetStats(t *testing.T) {
 		{
 			// Unassigned placeholders are counted as AVAILABLE and excluded from
 			// the assigned totals — "hives up / total" is about the working fleet,
-			// not idle inventory. A placeholder is detected by its "hosted-available-"
-			// ID prefix OR "available-" org prefix, NOT by an empty Org (an unclaimed
-			// slot keeps a leftover pool org). Here: 2 assigned (1 up), 3 available.
+			// not idle inventory. The AUTHORITATIVE signal is ProvStatus=="available";
+			// the "hosted-available-" ID prefix / "available-" org prefix are only a
+			// FALLBACK for entries with no ProvStatus yet. Here: 2 assigned (1 up),
+			// 3 available (all via the prefix fallback, ProvStatus empty).
 			name: "placeholders count as available, not assigned",
 			hives: []RegistryEntry{
 				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(3)},
 				{ID: "h2", IsPublic: false, Online: false, Org: "b", Repos: []string{"r2"}, PRsMerged90d: ptrInt(1)},
-				{ID: "hosted-available-oke-01-placeholder-aa01", Online: true, Org: "available-pool"}, // both markers, online
+				{ID: "hosted-available-oke-01-placeholder-aa01", Online: true, Org: "available-pool"}, // both markers, online, ProvStatus empty
 				{ID: "hosted-available-oke-02-placeholder-aa02", Online: false, Org: ""},              // ID marker only, offline
 				{ID: "regular-id", Online: true, Org: "available-pool"},                               // org marker only, online
 			},
 			want: FleetStats{ReposManaged: 1, PRsMerged: 3, Hives: 1, TotalHives: 2, AvailableHives: 3, Reporting: 1, Eligible: 1},
 		},
 		{
-			// THE BUG: an unclaimed slot keeps a leftover REAL pool org (live
+			// A leftover REAL pool org is still available WHEN unclaimed (live
 			// example id="hosted-available-oke-01-placeholder-bb95",
-			// org="TradingAsBuddies"). The old Org=="" check missed it entirely —
-			// counting it as assigned and inflating hives-up/total. The
-			// "hosted-available-" ID prefix still marks it available.
-			name: "placeholder with leftover real org is still available",
+			// org="TradingAsBuddies"): here ProvStatus is empty, so the
+			// "hosted-available-" ID prefix marks it available.
+			name: "placeholder with leftover real org is available via ID fallback",
 			hives: []RegistryEntry{
 				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(9)},
 				{ID: "hosted-available-oke-01-placeholder-bb95", Online: true, Org: "TradingAsBuddies", Repos: []string{"leftover/repo"}},
 			},
 			want: FleetStats{ReposManaged: 1, PRsMerged: 9, Hives: 1, TotalHives: 1, AvailableHives: 1, Reporting: 1, Eligible: 1},
+		},
+		{
+			// THE OVER-COUNT BUG: a CLAIMED placeholder KEEPS its "hosted-available-"
+			// ID (minted at pool creation, never rewritten on claim) and its leftover
+			// pool org. Gating on the prefix alone counted this as AVAILABLE — the
+			// exact reason the landing page showed 38 available when only 17 are
+			// unclaimed and 33 are assigned. ProvStatus is authoritative: a claimed
+			// status ("claimed") makes it ASSIGNED regardless of the ID/org prefix.
+			// Here: both hives assigned (2 total, 2 up), 0 available.
+			name: "claimed placeholder keeps hosted-available ID but counts as assigned",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(4), ProvStatus: "claimed"},
+				{ID: "hosted-available-oke-01-placeholder-cc11", Online: true, Org: "available-pool",
+					Repos: []string{"real/repo"}, PRsMerged90d: ptrInt(6), ProvStatus: "claimed"},
+			},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 10, Hives: 2, TotalHives: 2, AvailableHives: 0, Reporting: 2, Eligible: 2},
+		},
+		{
+			// ProvStatus=="available" is authoritative even for a hive whose ID does
+			// NOT carry the "hosted-available-" prefix and whose org is not a pool
+			// prefix — a placeholder whose ID/org markers alone would miss it. It
+			// still counts as AVAILABLE, matching the dashboard's Unassigned section.
+			name: "provStatus available is authoritative regardless of ID",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(5)},
+				{ID: "regular-looking-id", Online: true, Org: "some-org", ProvStatus: statusAvailable},
+			},
+			want: FleetStats{ReposManaged: 1, PRsMerged: 5, Hives: 1, TotalHives: 1, AvailableHives: 1, Reporting: 1, Eligible: 1},
+		},
+		{
+			// Reconciliation shape mirroring the live fleet the bug was found on:
+			// 2 hosted-available-* IDs, one still unclaimed (ProvStatus available →
+			// AVAILABLE) and one claimed (ProvStatus claimed → ASSIGNED). The claimed
+			// one must NOT be double-counted as available even though its ID prefix
+			// matches. Available=1, assigned total=2 (the plain hive + the claimed
+			// placeholder).
+			name: "mixed hosted-available pool splits by provStatus",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(2)},
+				{ID: "hosted-available-oke-01-placeholder-dd01", Online: true, Org: "available-pool", ProvStatus: statusAvailable},
+				{ID: "hosted-available-oke-02-placeholder-dd02", Online: true, Org: "available-pool",
+					Repos: []string{"claimed/repo"}, PRsMerged90d: ptrInt(3), ProvStatus: "claimed"},
+			},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 5, Hives: 2, TotalHives: 2, AvailableHives: 1, Reporting: 2, Eligible: 2},
 		},
 		{
 			name:  "no hives yields empty",

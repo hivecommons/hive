@@ -111,29 +111,42 @@ type RegistryEntry struct {
 	// AdvisoryError is the log-safe error from the spoke's most recent failed
 	// advisory-post attempt ("" on success). When set on an app-can-write hive
 	// it trips the stale pill directly, carrying the specific cause.
-	AdvisoryError      string         `json:"advisoryError,omitempty"`
-	PrimaryRepo        string         `json:"primaryRepo"`
-	DashboardURL       string         `json:"dashboardUrl"`
-	SnapshotURL        string         `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int            `json:"acmmLevel"`
-	AgentCount         int            `json:"agentCount"`
-	GovernorMode       string         `json:"governorMode"`
-	TotalTokens24h     int64          `json:"totalTokens24h"`
-	ActionableIssues   int            `json:"actionableIssues"`
-	ActionablePRs      int            `json:"actionablePRs"`
-	ContributorCount   int            `json:"contributorCount"`
-	ActiveContributors int            `json:"activeContributors"`
-	Owner              string         `json:"owner,omitempty"`
-	ClusterID          string         `json:"clusterId,omitempty"`
-	ClusterName        string         `json:"clusterName,omitempty"`
-	HiveType           string         `json:"hiveType,omitempty"`
-	IsPublic           bool           `json:"isPublic"`
-	RegisteredAt       string         `json:"registeredAt"`
-	LastHeartbeat      string         `json:"lastHeartbeat"`
-	Health             map[string]any `json:"health"`
-	Version            string         `json:"version"`
-	GitHash            string         `json:"gitHash,omitempty"`
-	GitBranch          string         `json:"gitBranch,omitempty"`
+	AdvisoryError      string `json:"advisoryError,omitempty"`
+	PrimaryRepo        string `json:"primaryRepo"`
+	DashboardURL       string `json:"dashboardUrl"`
+	SnapshotURL        string `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int    `json:"acmmLevel"`
+	AgentCount         int    `json:"agentCount"`
+	GovernorMode       string `json:"governorMode"`
+	TotalTokens24h     int64  `json:"totalTokens24h"`
+	ActionableIssues   int    `json:"actionableIssues"`
+	ActionablePRs      int    `json:"actionablePRs"`
+	ContributorCount   int    `json:"contributorCount"`
+	ActiveContributors int    `json:"activeContributors"`
+	Owner              string `json:"owner,omitempty"`
+	ClusterID          string `json:"clusterId,omitempty"`
+	ClusterName        string `json:"clusterName,omitempty"`
+	HiveType           string `json:"hiveType,omitempty"`
+	// ProvStatus is the authoritative provisioning status copied from the hive's
+	// SaaSHive record (sh.Status) on the heartbeat path — statusAvailable
+	// ("available") for a genuinely-unclaimed pool placeholder, else a claimed
+	// status ("claimed", "assigned", …) or "" for a hive with no SaaSHive record.
+	//
+	// It exists because a CLAIMED placeholder KEEPS its "hosted-available-" ID and
+	// leftover pool org after assignment (the ID is minted at pool creation and
+	// never changes on claim), so the ID/org prefix alone OVER-counts available
+	// hives. computeFleetStats and isPlaceholderEntry both treat this field as
+	// authoritative, with the prefix used only as a fallback when it is empty, so
+	// the landing-page count and the dashboard's Assigned/Unassigned sections
+	// agree on what "available" means. A scalar status — no PII.
+	ProvStatus    string         `json:"provStatus,omitempty"`
+	IsPublic      bool           `json:"isPublic"`
+	RegisteredAt  string         `json:"registeredAt"`
+	LastHeartbeat string         `json:"lastHeartbeat"`
+	Health        map[string]any `json:"health"`
+	Version       string         `json:"version"`
+	GitHash       string         `json:"gitHash,omitempty"`
+	GitBranch     string         `json:"gitBranch,omitempty"`
 	// ImageRef is the container image this spoke's own Deployment runs, as
 	// read in-cluster by the spoke and reported over the heartbeat. The hub
 	// cannot see it any other way for firewalled/heartbeat-only spokes, and
@@ -1071,10 +1084,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AgentsWithModel: clampFleetCount(payload.AgentsWithModel),
 	}
 
-	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
+	// Populate ClusterID and the authoritative ProvStatus from the SaaS hive
+	// record (a single load reused for both). ProvStatus is what lets
+	// computeFleetStats tell a genuinely-unclaimed placeholder (statusAvailable)
+	// from a CLAIMED one that still carries the "hosted-available-" ID — the ID
+	// prefix alone over-counts available hives because it never changes on claim.
 	clusterID := ""
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		clusterID = sh.ClusterID
+		entry.ProvStatus = sh.Status
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
@@ -1875,6 +1893,21 @@ type FleetStats struct {
 // rather than freezing a stale figure on the public page forever.
 const fleetStatsMaxAge = 6 * time.Hour
 
+// isAvailableRegistryEntry reports whether a registry entry is a genuinely
+// unclaimed pool placeholder — the "available"/"unassigned" bucket on the
+// landing page and dashboard. It mirrors isPlaceholderEntry (drift.go) exactly:
+// ProvStatus==statusAvailable is AUTHORITATIVE, and the "hosted-available-" ID
+// prefix / "available-" org prefix are only a FALLBACK for entries whose
+// ProvStatus is unknown (empty). A CLAIMED placeholder keeps its
+// "hosted-available-" ID after assignment, so gating on the prefix alone
+// over-counts available hives; gating on ProvStatus first fixes that.
+func isAvailableRegistryEntry(h RegistryEntry) bool {
+	if h.ProvStatus != "" {
+		return h.ProvStatus == statusAvailable
+	}
+	return strings.HasPrefix(h.ID, hostedAvailableIDPrefix) || strings.HasPrefix(h.Org, placeholderOrgPrefix)
+}
+
 // computeFleetStats aggregates fleet-wide contribution counts across public,
 // non-stale hives. A hive that never reported a given count (nil pointer) is
 // skipped for that count — the aggregate reflects only hives with real data,
@@ -1896,13 +1929,22 @@ func (s *HubServer) computeFleetStats() FleetStats {
 		// keeps its "hosted-available-" ID prefix and frequently a leftover pool
 		// org (live example: id="hosted-available-oke-01-placeholder-bb95",
 		// org="TradingAsBuddies"). Testing Org=="" therefore matched zero
-		// placeholders AND counted every one as assigned, inflating total_hives
-		// and hives-up. Detect it the way the rest of the codebase does — see
-		// isPlaceholderEntry in drift.go, which uses ProvStatus=="available"
-		// (authoritative) with the "available-" org prefix as fallback. RegistryEntry
-		// has no ProvStatus, so here we use the two markers it does carry: the
-		// "hosted-available-" ID prefix or the "available-" org prefix.
-		if strings.HasPrefix(h.ID, hostedAvailableIDPrefix) || strings.HasPrefix(h.Org, placeholderOrgPrefix) {
+		// placeholders AND counted every one as assigned.
+		//
+		// The ID/org PREFIX alone over-counts the other way: a CLAIMED placeholder
+		// KEEPS its "hosted-available-" ID and pool org after assignment (the ID is
+		// minted at pool creation and never changes on claim). ~21 of the 38
+		// "hosted-available-" hives are actually claimed, so the prefix reported 38
+		// "available" when the truth is 17 unclaimed / 33 assigned.
+		//
+		// Detect it the way the rest of the codebase does — see isPlaceholderEntry
+		// in drift.go and the dashboard's Assigned/Unassigned sections: the
+		// authoritative signal is ProvStatus==statusAvailable, with the
+		// "hosted-available-" ID prefix / "available-" org prefix used ONLY as a
+		// fallback when ProvStatus is unknown (empty — a hive with no SaaSHive
+		// record or one that predates the field). A claimed placeholder therefore
+		// counts as ASSIGNED, not available.
+		if isAvailableRegistryEntry(h) {
 			fs.AvailableHives++
 			continue
 		}
