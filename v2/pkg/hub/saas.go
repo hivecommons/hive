@@ -7971,6 +7971,15 @@ const dashboardHTML = `<!DOCTYPE html>
           }
         }
       }
+      // Provisioned time. Moved here from a dedicated table column — it is
+      // low-frequency reference metadata (the hub's first-seen time for this
+      // hive, preserved across restarts), so it belongs in the on-demand hover
+      // beside the other temporal lines, not in a permanent column competing
+      // with live metrics. hiveProvisionTime is the single source of truth for
+      // "is registeredAt usable"; an em dash, never 'Invalid Date', when not.
+      if (hiveProvisionTime(h) !== null) {
+        lines.push('— provisioned ' + fmtUserTS(h.registeredAt));
+      }
       var access = h.access || [];
       var dotMarkup = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span>' +
         '<span style="font-size:0.7rem;color:' + c + ';font-weight:600">' + ic + '</span>';
@@ -11292,12 +11301,14 @@ const dashboardHTML = `<!DOCTYPE html>
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write')) {
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
-        // 16 = the 13 original columns, plus Uptime, plus Drift, plus the
-        // bulk-select column, plus Journey, plus Provisioned, MINUS Public —
-        // visibility now stacks under Location instead of owning a column.
-        // Counted against the <th> cells in the header and the <td> cells
-        // emitted below (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 18;
+        // 17 = the 13 original columns, plus Uptime, plus Drift, plus the
+        // bulk-select column, plus Journey, plus the thin Provisioned SORT column
+        // (date moved into the status hover; sortable header + empty placeholder
+        // cell remain), MINUS Public (visibility stacks under Location) and MINUS
+        // AI Author (folded into the Repos cell as its "as:" line). Counted
+        // against the <th> cells in the header and the <td> cells emitted below
+        // (bulkCheckboxCell contributes one).
+        var TOTAL_COLUMNS = 17;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -11390,22 +11401,21 @@ const dashboardHTML = `<!DOCTYPE html>
           /* Repo count over the GitHub-instance pill: the host qualifies WHICH
              GitHub these repos live on, so the two belong together. Stacked
              rather than inline to keep the numeric column narrow. */
+          /* Repos cell. AI Author is stacked as the third line here (it used to own
+             a column): who this hive authors PRs as is naturally repo/identity
+             context, and folding it in reclaims a column. aiAuthorEffective already
+             folds in ai_author (it returns ai_author when set, else the App bot
+             "<slug>[bot]", else empty); a hive with no usable GitHub App renders
+             "—", never a stale personal ai_author it can't act as. Prefixed "as:"
+             so the line reads as the authoring identity, not another repo. */
           '<td title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' +
             '<div style="' + STACKED_CELL_STYLE + '">' +
               '<div style="' + STACKED_LINE_STYLE + '">' + repoCount + '</div>' +
               '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance these repos live on">' + githubHostPill(h.githubHost) + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + ';color:var(--muted)" title="GitHub identity this hive opens PRs/commits as (— = no GitHub App installed yet)">as: ' + esc(h.aiAuthorEffective || '—') + '</div>' +
             '</div>' +
           '</td>' +
           '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
-          /* AI Author: who this hive authors PRs as. aiAuthorEffective is the
-             App bot ("<slug>[bot]") in App-authored mode, else the configured
-             ai_author (falls back to aiAuthor for spokes too old to report the
-             effective value). A "[bot]" value is the informative case. */
-          /* aiAuthorEffective already folds in ai_author (it returns ai_author
-             when set, else the App bot, else empty). Do NOT fall back to a raw
-             ai_author here: a hive with no usable GitHub App has no author and
-             must render "—", not a stale personal ai_author it can't act as. */
-          '<td style="white-space:nowrap;font-size:0.75rem" title="GitHub identity for this hive\'s PRs/commits (— = no GitHub App installed yet)">' + esc(h.aiAuthorEffective || '—') + '</td>' +
           '<td>' + journeyBadge(h.journey) + '</td>' +
           /* Drift sits immediately right of Journey: both answer "how healthy
              is this hive's configuration", so they read as one pair rather
@@ -11418,24 +11428,24 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td>' + sparkline(h.issueHistory, '#f59e0b', 50, 14) + (h.actionableIssues || 0) + '</td>' +
           '<td>' + sparkline(h.prHistory, '#3b82f6', 50, 14) + (h.actionablePRs || 0) + '</td>' +
           '<td>' + (h.activeContributors || 0) + '</td>' +
-          /* Provisioned. hiveProvisionTime is the single source of truth for
-             "is this timestamp usable" — reusing it here keeps the cell and the
-             comparator from ever disagreeing (a row showing a date but sorting
-             as unknown, or the reverse). An em dash, never 'Invalid Date', for
-             a hive whose registeredAt is missing or unparseable. */
-          '<td style="font-size:0.75rem;color:var(--muted);white-space:nowrap">' +
-            (hiveProvisionTime(h) === null ? '—' : esc(fmtUserTS(h.registeredAt))) + '</td>' +
+          /* Provisioned: the DATE moved into the status hover panel (healthBadge) —
+             it is reference metadata, not a live metric. This cell is intentionally
+             empty: the thin "Prov ⇅" header above still sorts the table by
+             registeredAt (a deliberately-kept feature), but the wide per-row date
+             no longer occupies the grid. hiveProvisionTime remains the source of
+             truth for both the hover line and the sort comparator. */
+          '<td></td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
          match the table's muted uppercase heading treatment (see .hive-table th). */
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
-         and the table visibly ragged. 15 with the Drift column, plus the
-         bulk-select column, plus the Journey column, plus the Provisioned
-         column, minus Public (visibility is stacked under Location). Must stay
-         equal to TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 18;
+         and the table visibly ragged. Drift + bulk-select + Journey + a thin
+         Provisioned SORT column, minus Public (visibility stacked under Location)
+         and minus AI Author (folded into the Repos cell). Must stay equal to
+         TOTAL_COLUMNS. */
+      var TOTAL_COLUMNS_HEADER = 17;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -11570,7 +11580,7 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'aiAuthor\')" style="cursor:pointer" title="The GitHub identity this hive\'s agents open PRs as — the configured ai_author, or the App bot (&lt;slug&gt;[bot]) in App-authored mode">AI Author ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th><th onclick="sortDashHives(\'registeredAt\')" style="cursor:pointer" title="When this hive was first provisioned — the hub&apos;s first-seen time, preserved across restarts and heartbeats">Provisioned ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer" title="Active contributors">Contrib ⇅</th><th onclick="sortDashHives(\'registeredAt\')" style="cursor:pointer" title="Sort by when this hive was first provisioned (the hub&apos;s first-seen time). The date itself now lives in the status hover.">Prov ⇅</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */

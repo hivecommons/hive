@@ -178,17 +178,17 @@ func TestHoverPanelReusesSharedRoleColor(t *testing.T) {
 // section-header colspan and the pending-expand colspan all stay correct; a
 // stale count leaves the table visibly ragged.
 //
-// 18 = the 16 columns left after the standalone Public column was folded into
-// Location (visibility stacks beneath the location badge), plus the AI Author
-// column added with App-bot PR authorship, plus the Provisioned column that
-// exposes each hive's first-seen time as a sort option.
+// 17 = the columns left after the standalone Public column folded into Location
+// (visibility stacks beneath the location badge) and the AI Author column folded
+// into the Repos cell (its "as:" line); the Provisioned column survives as a thin
+// sort-only header (its date moved into the status hover panel).
 // TestHiveTableColumnCountsAgree is the authority on this number: it counts the
 // emitted <th> and <td> cells rather than trusting a literal, so update it
 // first and follow it here.
 func TestHiveTableColumnCountUnchanged(t *testing.T) {
 	for _, snippet := range []string{
-		"var TOTAL_COLUMNS = 18;",
-		"var TOTAL_COLUMNS_HEADER = 18;",
+		"var TOTAL_COLUMNS = 17;",
+		"var TOTAL_COLUMNS_HEADER = 17;",
 	} {
 		if !strings.Contains(dashboardHTML, snippet) {
 			t.Errorf("dashboardHTML is missing %q — did the hive table gain or lose a column?", snippet)
