@@ -71,12 +71,56 @@ func TestCovK2_AddActivityCap(t *testing.T) {
 
 func TestCovK2_MarkTaskCompletedAndCooldown(t *testing.T) {
 	hub, _ := covK2Hub(t)
-	hub.markTaskCompleted("org/repo", 42)
+	hub.markTaskCompleted("org/repo", 42, "https://github.com/org/repo/pull/1")
 	if !hub.isTaskInCooldown("org/repo", 42) {
 		t.Fatalf("expected task in cooldown after marking complete")
 	}
 	if hub.isTaskInCooldown("org/repo", 99) {
 		t.Fatalf("unmarked task should not be in cooldown")
+	}
+}
+
+// TestConditionalCooldownByPRURL covers kubestellar/hive#2393 item 7: a
+// completion that reports a PR URL keeps the full week-long cooldown, while a
+// completion with no PR (agent merely went idle) gets only the short no-PR
+// cooldown, so an issue where nothing shipped is not locked out for a week.
+func TestConditionalCooldownByPRURL(t *testing.T) {
+	hub, _ := covK2Hub(t)
+
+	// WITH a PR URL -> full completedTaskCooldownHours (168h).
+	hub.markTaskCompleted("org/withpr", 1, "https://github.com/org/withpr/pull/1")
+	if !hub.isTaskInCooldown("org/withpr", 1) {
+		t.Fatalf("task with PR should be in cooldown immediately after completion")
+	}
+	// Age it just under the short no-PR window: still in cooldown because it
+	// holds the full 168h cooldown, not the short one.
+	hub.completedMu.Lock()
+	hub.completedTasks["org/withpr#1"] = time.Now().Add(-(completedNoPRCooldownHours + 1) * time.Hour)
+	hub.completedMu.Unlock()
+	if !hub.isTaskInCooldown("org/withpr", 1) {
+		t.Fatalf("task with PR should still be in cooldown after %dh (full cooldown is %dh)",
+			completedNoPRCooldownHours+1, completedTaskCooldownHours)
+	}
+	// Aged past the full cooldown -> released.
+	hub.completedMu.Lock()
+	hub.completedTasks["org/withpr#1"] = time.Now().Add(-(completedTaskCooldownHours + 1) * time.Hour)
+	hub.completedMu.Unlock()
+	if hub.isTaskInCooldown("org/withpr", 1) {
+		t.Fatalf("task with PR should be released after the full cooldown elapses")
+	}
+
+	// WITHOUT a PR URL -> short completedNoPRCooldownHours.
+	hub.markTaskCompleted("org/nopr", 2, "")
+	if !hub.isTaskInCooldown("org/nopr", 2) {
+		t.Fatalf("no-PR task should be in a (short) cooldown right after completion")
+	}
+	// Aged just past the short no-PR window -> released, unlike the 168h default.
+	hub.completedMu.Lock()
+	hub.completedTasks["org/nopr#2"] = time.Now().Add(-(completedNoPRCooldownHours + 1) * time.Hour)
+	hub.completedMu.Unlock()
+	if hub.isTaskInCooldown("org/nopr", 2) {
+		t.Fatalf("no-PR task should be released after only %dh, not locked for %dh",
+			completedNoPRCooldownHours, completedTaskCooldownHours)
 	}
 }
 
@@ -131,10 +175,73 @@ func TestCovK2_SelectTask(t *testing.T) {
 
 	// A second select for the same issue while it's the connection's current task
 	// is skipped (activeIssues), and after marking it complete it's in cooldown.
-	hub.markTaskCompleted("myorg/repo1", 7)
+	hub.markTaskCompleted("myorg/repo1", 7, "https://github.com/myorg/repo1/pull/9")
 	conn.currentTask = nil
 	if msg := hub.selectTask(conn); msg != nil {
 		t.Fatalf("expected nil task (cooldown) but got %+v", msg)
+	}
+}
+
+// TestCovK2_SelectTaskPrioritizesOwnWork covers the #2390 ordering default:
+// among the eligible actionable candidates, one authored by the connected
+// contributor is chosen before a fresh item authored by someone else — and when
+// the contributor has no own-authored candidate, selection falls back to the
+// previous first-eligible order.
+func TestCovK2_SelectTaskPrioritizesOwnWork(t *testing.T) {
+	hub, s := covK2Hub(t)
+	conn := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+
+	// A repo whose first (earliest) actionable item is someone else's, and whose
+	// second is the contributor's own. Without prioritization the first-eligible
+	// pick would be #10 (someone else); with #2390 it must be #20 (alice's own).
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{
+			{
+				Name: "repo1",
+				Full: "myorg/repo1",
+				ActionableIssues: []any{
+					map[string]any{
+						"number": float64(10),
+						"title":  "Someone else's fresh issue",
+						"url":    "https://github.com/myorg/repo1/issues/10",
+						"author": "bob",
+					},
+					map[string]any{
+						"number": float64(20),
+						"title":  "Alice's own work",
+						"url":    "https://github.com/myorg/repo1/issues/20",
+						"author": "alice",
+					},
+				},
+			},
+		},
+	}
+	s.statusMu.Unlock()
+
+	msg := hub.selectTask(conn)
+	if msg == nil {
+		t.Fatalf("expected a task assignment")
+	}
+	if msg.Number != 20 {
+		t.Fatalf("expected own work (#20) to be prioritized, got #%d", msg.Number)
+	}
+
+	// Fallback: with no own-authored candidate, selection keeps the previous
+	// first-eligible order (the earliest item, #10).
+	conn2 := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "carol", ContributorID: "c-carol", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+	msg2 := hub.selectTask(conn2)
+	if msg2 == nil {
+		t.Fatalf("expected a task assignment for carol")
+	}
+	if msg2.Number != 10 {
+		t.Fatalf("expected fallback to first-eligible (#10) with no own work, got #%d", msg2.Number)
 	}
 }
 

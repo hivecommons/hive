@@ -1302,7 +1302,7 @@ func TestContributeWSHub_MarkTaskCompleted(t *testing.T) {
 		completedTasks: make(map[string]time.Time),
 		logger:         slog.Default(),
 	}
-	hub.markTaskCompleted("org/repo", 42)
+	hub.markTaskCompleted("org/repo", 42, "https://github.com/org/repo/pull/1")
 
 	if !hub.isTaskInCooldown("org/repo", 42) {
 		t.Error("expected task to be in cooldown after marking complete")

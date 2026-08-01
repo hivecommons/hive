@@ -129,12 +129,18 @@ func TestCovGov_Repos(t *testing.T) {
 	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"bad;rm"}}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("repos invalid: %d", rec.Code)
 	}
-	// Valid plain repo list.
-	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"repoA", "repoB"}}); rec.Code != http.StatusOK {
+	// Valid plain repo list (with a default among them — required now).
+	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"repoA", "repoB"}, "primaryRepo": "repoA"}); rec.Code != http.StatusOK {
 		t.Fatalf("repos ok: %d", rec.Code)
 	}
-	// A full GitHub URL repo (exercises URL-parsing branch, incl GHE host).
-	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"https://github.ibm.com/myorg/repoC"}}); rec.Code != http.StatusOK {
+	// A cross-forge repo (GHE URL on a public-github.com hive) must be REJECTED
+	// by the single-host-per-spoke guard — a hive's repos all live on one host.
+	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"https://github.ibm.com/myorg/repoC"}, "primaryRepo": "repoC"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("cross-forge repo should be rejected: %d", rec.Code)
+	}
+	// A full same-forge (github.com) URL repo still exercises the URL-parsing
+	// branch and is accepted.
+	if rec := doPut(s, "/api/config/governor/repos", map[string]any{"repos": []string{"https://github.com/myorg/repoC"}, "primaryRepo": "repoC"}); rec.Code != http.StatusOK {
 		t.Fatalf("repos url: %d", rec.Code)
 	}
 }

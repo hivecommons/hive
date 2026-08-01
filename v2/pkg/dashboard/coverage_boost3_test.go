@@ -909,7 +909,9 @@ func TestHealthSummary_WithAgents(t *testing.T) {
 
 func TestHandleGovernorRepos_PrimaryRepoURL(t *testing.T) {
 	srv := newFullServer(t)
-	body := `{"primaryRepo":"https://github.com/otherorg/otherrepo"}`
+	// The default must be one of the monitored repos, so send the repo alongside
+	// the pasted primary-repo URL (which the handler strips to a bare name).
+	body := `{"repos":["otherrepo"],"primaryRepo":"https://github.com/otherorg/otherrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

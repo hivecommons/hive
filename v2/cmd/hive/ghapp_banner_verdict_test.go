@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kubestellar/hive/v2/pkg/github"
@@ -182,6 +183,72 @@ func TestClassifyGitHubAppFailure_OperatorFaultIsNotBlamedOnUser(t *testing.T) {
 	}
 	if !state.OperatorActionable() || state.UserActionable() {
 		t.Error("key-invalid is the operator's fault and must never be blamed on the user")
+	}
+}
+
+// TestClassifyGitHubAppWriteForbidden_HealthyInstallSurfacesWriteFailure is the
+// #2353 regression: the App authenticates, the installation resolves on the
+// right account and grants issues:write (so diagnoseGitHubApp returns OK), yet a
+// real write returned 403 "Resource not accessible by integration". Health must
+// NOT stay silent (None) and must NOT be mislabeled "lacks Issues: Read &
+// Write" — it must report the DISTINCT write-forbidden state with accurate copy
+// naming the repo and the repo-scope cause.
+func TestClassifyGitHubAppWriteForbidden_HealthyInstallSurfacesWriteFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// GetInstallation reports a perfectly healthy installation: right owner,
+		// issues:write granted. This is exactly the live case from #2353.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":          verdictTestInstallationID,
+			"account":     map[string]any{"login": "open-horizon-services"},
+			"permissions": map[string]any{"issues": "write"},
+		})
+	}))
+	defer srv.Close()
+
+	msg, state := classifyGitHubAppWriteForbidden(
+		context.Background(),
+		verdictTestAuth(t, srv.URL),
+		"open-horizon-services",
+		"Getting-Started",
+	)
+	if state == github.AppStateOK || state == github.AppStateUnknown {
+		t.Fatalf("a write-403 on a healthy install must not stay silent; state=%s", state)
+	}
+	if state == github.AppStateInsufficientPerms {
+		t.Error("must NOT be mislabeled as an Issues permission gap — the permission is granted")
+	}
+	if state != github.AppStateWriteForbidden {
+		t.Errorf("state = %s, want write-forbidden", state)
+	}
+	if msg == "" {
+		t.Error("write-forbidden must carry an accurate, non-empty message")
+	}
+	if !strings.Contains(msg, "Getting-Started") {
+		t.Errorf("message must name the repo; got %q", msg)
+	}
+	if strings.Contains(msg, "lacks Issues") {
+		t.Errorf("message must not fabricate a permission gap; got %q", msg)
+	}
+}
+
+// TestClassifyGitHubAppWriteForbidden_RealAuthProblemWins — when the write 403
+// coincides with a GENUINE App-auth fault (here: a 401 key-invalid), report that
+// real cause rather than masking it behind the repo-scope story.
+func TestClassifyGitHubAppWriteForbidden_RealAuthProblemWins(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"message": "A JSON web token could not be decoded"})
+	}))
+	defer srv.Close()
+
+	_, state := classifyGitHubAppWriteForbidden(
+		context.Background(),
+		verdictTestAuth(t, srv.URL),
+		"open-horizon-services",
+		"Getting-Started",
+	)
+	if state != github.AppStateKeyInvalid {
+		t.Errorf("state = %s, want key-invalid — the real fault must win", state)
 	}
 }
 

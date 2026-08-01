@@ -100,11 +100,26 @@ const gpuClusterID = "vllm-d"
 
 // Placeholder-hive lifecycle status values. A pre-provisioned placeholder sits
 // at statusAvailable until an admin assigns it to a requesting user, at which
-// point its status is cleared (empty) and it behaves like any owned hive.
+// point its status flips to statusAssigned and it behaves like any owned hive.
 const (
 	// statusAvailable marks a pre-provisioned placeholder hive that is idle and
 	// waiting to be claimed. Only such a hive may be assigned.
 	statusAvailable = "available"
+	// statusAssigned marks a placeholder that has been CLAIMED by a user. It is
+	// the authoritative "no longer available" signal.
+	//
+	// The claim paths (handleApproveProvision, handleAssignHive) previously set
+	// Status = "" here. That empty string is indistinguishable from "unknown",
+	// so every downstream availability check that keys off ProvStatus (the
+	// landing-page fleet tiles, computeFleetStats) fell back to the immutable
+	// "hosted-available-" ID prefix — which a claimed placeholder KEEPS forever
+	// — and mis-counted 22 claimed hives as still available (38 shown vs the
+	// true 17). Setting an explicit assigned status makes ProvStatus the single
+	// authoritative signal: a claimed hive reads provStatus!="available" without
+	// any prefix guessing. A live spoke later overwrites this with its real
+	// lifecycle status ("provisioning"/"running") on the next heartbeat; until
+	// then "assigned" is the correct, honest state.
+	statusAssigned = "assigned"
 )
 
 // ACMM level bounds for a claimed/assigned hive. The maturity model spans
@@ -478,6 +493,31 @@ type SaaSHive struct {
 	// stops for good and the spoke owns the value again. Both default to their
 	// zero values on every existing hive, so nothing is delivered to a hive
 	// nobody switched: the push is gated on a NON-EMPTY RequestedGitHubHost.
+	// RequestedAppReset asks the spoke to CLEAR its installation_id, so the
+	// hive falls back to "App not installed" and prompts the owner to install
+	// it again.
+	//
+	// WHY THIS NEEDS ITS OWN FIELD RATHER THAN JUST PUSHING ZERO
+	//
+	// The wire cannot express a clear. The spoke adopts a pushed installation
+	// only when it is non-zero (cmd/hive: `if ghCfg.InstallationID != 0`),
+	// deliberately — zero means "the hub is not speaking to this field", and
+	// treating it as "blank it" once turned a key-only fault into a total auth
+	// outage. So a reset has to be a distinct instruction, not a value.
+	//
+	// It is a REQUEST, persisted on the hive record, because the operator's
+	// intent has to survive a missed beat and a hub restart. Cleared when the
+	// spoke reports installation_id 0 back — read-back confirmation, the same
+	// contract the forge switch uses.
+	//
+	// The live case: a hive provisioned with its OWN GitHub App kept that App's
+	// installation_id after its identity was later moved to the fleet's public
+	// App. app_id, app_slug and key_file all named the public App while the
+	// installation belonged to another, so every freshly minted token returned
+	// "404 Not Found" while cached ones kept working — 84 failures in three
+	// hours on one hive, with no config field visibly wrong.
+	RequestedAppReset bool `json:"requested_app_reset,omitempty"`
+
 	RequestedGitHubHost string `json:"requested_github_host,omitempty"`
 	// ForgeDelivered flips true once the spoke reports the requested forge host.
 	ForgeDelivered bool `json:"forge_delivered,omitempty"`

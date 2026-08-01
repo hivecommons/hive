@@ -1478,7 +1478,9 @@ func TestHandleGovernorBudget_Success(t *testing.T) {
 
 func TestHandleGovernorRepos_Success(t *testing.T) {
 	s, _ := apiServer(t)
-	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/repo1", "myorg/repo2"}})
+	// Replacing the repo set must name a default among the new repos (the
+	// always-exactly-one-default invariant), so send primaryRepo too.
+	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/repo1", "myorg/repo2"}, "primaryRepo": "repo1"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
@@ -1486,7 +1488,7 @@ func TestHandleGovernorRepos_Success(t *testing.T) {
 
 func TestHandleGovernorRepos_StripOrg(t *testing.T) {
 	s, deps := apiServer(t)
-	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/new-repo"}})
+	rec := doPut(s, "/api/config/governor/repos", map[string]interface{}{"repos": []string{"myorg/new-repo"}, "primaryRepo": "myorg/new-repo"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}

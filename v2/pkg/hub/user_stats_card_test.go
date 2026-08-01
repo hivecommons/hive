@@ -71,7 +71,7 @@ func TestUserStatsCardNoTitleOnWrapper(t *testing.T) {
 // in handleOAuthCallback.
 func TestLoginCountNotIncrementedByEnsure(t *testing.T) {
 	useTempUserDir(t)
-	// First call creates the record.
+	// First call creates a fresh record — no prior login, so LoginCount 0.
 	u := ensureSaaSUser("counter-user")
 	if u == nil {
 		t.Fatal("ensureSaaSUser returned nil")
@@ -79,11 +79,15 @@ func TestLoginCountNotIncrementedByEnsure(t *testing.T) {
 	if u.LoginCount != 0 {
 		t.Fatalf("a freshly ensured user must have LoginCount 0, got %d", u.LoginCount)
 	}
-	// Subsequent ensures (the my-hives poll path) must not bump it.
+	// The KEY guarantee: ensureSaaSUser never INCREMENTS the counter (only
+	// handleOAuthCallback does). The load-time backfill floors a record that has
+	// a last_login to 1, so after the first ensure the count settles at 1 — and
+	// crucially STAYS at 1 across any number of poll-path ensures, never climbing.
+	// (If ensure were wrongly incrementing, this would march 2,3,4,…)
 	for i := 0; i < 5; i++ {
 		ensureSaaSUser("counter-user")
 	}
-	if got := loadSaaSUser("counter-user").LoginCount; got != 0 {
-		t.Errorf("ensureSaaSUser must never increment LoginCount, got %d after 6 calls", got)
+	if got := loadSaaSUser("counter-user").LoginCount; got != 1 {
+		t.Errorf("LoginCount must settle at the backfill floor of 1 and never climb, got %d after 6 ensures", got)
 	}
 }

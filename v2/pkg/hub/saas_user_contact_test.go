@@ -318,8 +318,12 @@ func TestSaaSUserWithoutContactFieldsRoundTrips(t *testing.T) {
 			t.Errorf("re-saved legacy record contains %q; omitempty should have dropped it:\n%s", key, data)
 		}
 	}
-	// The round-tripped record must be byte-identical to the original, modulo
-	// the marshaller's formatting — compare the decoded maps to be precise.
+	// The round-tripped record must be byte-identical to the original EXCEPT for
+	// login_count: loadSaaSUser backfills it to 1 for any record with a last_login
+	// (the pre-counter backfill), so a legacy record that has logged in legitimately
+	// gains that one key on load. That is intended and is NOT a contact-field leak —
+	// drop it before the field-count compare, which exists to guard the contact
+	// fields (full_name/slack_id/notes) don't persist.
 	var before, after map[string]any
 	if err := json.Unmarshal([]byte(legacy), &before); err != nil {
 		t.Fatalf("unmarshal before: %v", err)
@@ -327,6 +331,7 @@ func TestSaaSUserWithoutContactFieldsRoundTrips(t *testing.T) {
 	if err := json.Unmarshal(data, &after); err != nil {
 		t.Fatalf("unmarshal after: %v", err)
 	}
+	delete(after, "login_count")
 	if len(before) != len(after) {
 		t.Errorf("field count changed: before %d keys, after %d keys (%v vs %v)", len(before), len(after), before, after)
 	}
