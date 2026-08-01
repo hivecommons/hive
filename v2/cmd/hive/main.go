@@ -1316,6 +1316,12 @@ func main() {
 			"author", fleetStatsAuthor, "org", cfg.Project.Org)
 	}
 	fleetStatsCollector := dashboard.NewFleetStatsCollector(ghClient, fleetStatsAuthor, cfg.Project.Org, logger)
+	// Persist the collected counts on the /data PVC (same store as sessions and
+	// cost/fact history) so a restart resumes from the last-known counts instead
+	// of nil. Without this, a fleet-wide upgrade clears every spoke's in-memory
+	// counts and the public landing-page total collapses until all spokes
+	// re-collect (#2329, building on the hub-side #2328 defensive aging fix).
+	fleetStatsCollector.EnablePersistence("/data/fleet-stats.json")
 	go fleetStatsCollector.Start(ctx)
 
 	var lastActionable atomic.Pointer[github.ActionableResult]
