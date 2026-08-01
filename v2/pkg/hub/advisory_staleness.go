@@ -33,7 +33,10 @@ func appCanWriteForAdvisory(e RegistryEntry) bool {
 	}
 	switch e.GitHubAppState {
 	case "not-installed", "key-missing", "key-invalid", "no-app-assigned",
-		"wrong-installation", "insufficient-permissions":
+		"wrong-installation", "insufficient-permissions",
+		// #2353: a write returned 403 on an otherwise-healthy install — the App
+		// demonstrably cannot write this repo, so it is NOT writable here.
+		"write-forbidden":
 		return false
 	default:
 		// "ok", "unknown", or empty (spoke too old to classify) — the App is

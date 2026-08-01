@@ -62,7 +62,10 @@ package hub
 // atomicity property (never half-apply) without pretending three transports
 // are one.
 
-import "strings"
+import (
+	"net/http"
+	"strings"
+)
 
 // gheAPIPathMarker identifies a GitHub Enterprise API URL. GHE APIs live under
 // /api/v3; public GitHub uses api.github.com.
@@ -217,6 +220,31 @@ func (s *HubServer) pendingAppIdentityForHeartbeat(p *HeartbeatPayload) *Heartbe
 	}
 
 	h := loadSaaSHive(p.HiveID)
+
+	// An operator-requested App reset outranks everything below: a hive being
+	// reset has no pending identity to deliver, and the point is to get it back
+	// to "App not installed" so the owner reinstalls.
+	//
+	// Cleared on READ-BACK — when the spoke reports installation_id 0 — not on
+	// send. A reset lost to a dropped beat or a hub restart would otherwise be
+	// silently forgotten, leaving the operator's click with no effect and no
+	// signal.
+	if h != nil && h.RequestedAppReset {
+		if p.GitHubInstallationID == 0 {
+			h.RequestedAppReset = false
+			if err := saveSaaSHive(h); err != nil {
+				s.logger.Warn("app reset confirmed but could not be cleared",
+					"hive_id", p.HiveID, "error", err)
+			}
+			s.logger.Info("app reset confirmed by spoke; installation cleared",
+				"hive_id", p.HiveID)
+			return nil
+		}
+		s.logger.Info("delivering app reset to spoke",
+			"hive_id", p.HiveID, "spoke_installation_id", p.GitHubInstallationID)
+		return &HeartbeatGitHubAppConfig{ResetInstallation: true}
+	}
+
 	if h == nil || h.PendingAppConfig == nil {
 		return nil
 	}
@@ -293,4 +321,46 @@ func SpokeIdentityFromPayload(p *HeartbeatPayload) IdentitySet {
 		APIURL:         p.GitHubAPIURL,
 		BaseURL:        p.GitHubBaseURL,
 	}
+}
+
+// handleResetApp arms an App reset for one hive: POST /api/saas/hives/{id}/reset-app
+//
+// The spoke clears its installation_id on the next beat, which makes
+// HasUsableApp() false and raises githubAppRequired — the owner is prompted to
+// install the App again, and the 2-minute self-heal ticker starts, whose
+// RediscoverAndAdopt adopts the correct installation for whichever App they
+// install.
+//
+// WHY AN OPERATOR NEEDS THIS. A hive provisioned with its OWN GitHub App keeps
+// that App's installation_id if its identity is later moved to the fleet's
+// public App. Every field then looks right — app_id, app_slug and key_file all
+// name the public App — while the installation belongs to a different one, so
+// freshly minted tokens return "404 Not Found" and cached ones keep working.
+// Nothing in the config reads as wrong, and no automatic path fixes it: the
+// hub does not track installation IDs, and the spoke's self-heal only runs when
+// the App is already flagged as missing.
+//
+// Deliberately NOT destructive beyond the one field. The App ID, slug and key
+// are untouched, so a reset on a healthy hive costs one re-install rather than
+// an outage.
+func (s *HubServer) handleResetApp(w http.ResponseWriter, r *http.Request) {
+	if s.getAuthUser(r) != hubAdminUsername {
+		http.Error(w, `{"error":"admin access required"}`, http.StatusForbidden)
+		return
+	}
+	hiveID := r.PathValue("id")
+	h := loadSaaSHive(hiveID)
+	if h == nil {
+		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
+		return
+	}
+	h.RequestedAppReset = true
+	if err := saveSaaSHive(h); err != nil {
+		s.logger.Error("failed to arm app reset", "hive_id", hiveID, "error", err)
+		http.Error(w, `{"error":"could not arm the reset"}`, http.StatusInternalServerError)
+		return
+	}
+	s.logger.Info("app reset armed by operator", "hive_id", hiveID)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"armed","detail":"the spoke will clear its installation on the next heartbeat and prompt for a fresh App install"}`))
 }

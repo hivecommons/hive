@@ -109,6 +109,16 @@ type WSMessage struct {
 	Summary        string          `json:"summary,omitempty"`
 	TmuxOutput     []string        `json:"tmux_output,omitempty"`
 	AcceptedModels []string        `json:"accepted_models,omitempty"`
+	// PRURL is the pull request the agent opened for this task, reported on
+	// task_complete. It is best-effort: the relay fills it when it can spot a
+	// PR link in the agent's output, and it is empty when the agent went idle
+	// without shipping anything. The hub uses its presence to decide how long
+	// to keep the underlying issue in cooldown — see markTaskCompleted and
+	// kubestellar/hive#2393 item 7 (an idle-but-no-PR completion must NOT lock
+	// the issue for a full week). A known PR URL per issue also feeds the
+	// #2356 duplicate-detection work. Field naming follows the PRURL
+	// convention in v2/pkg/github/prclaims.go.
+	PRURL string `json:"pr_url,omitempty"`
 	// Permanent marks a task_failed the relay will not retry: it exhausted its
 	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
 	// bin/contributor-relay.sh). Reassigning the same work item to the same
@@ -146,18 +156,45 @@ type ContributeWSHub struct {
 	activity       []ActivityEntry
 	server         *Server
 	completedTasks map[string]time.Time
-	completedMu    sync.Mutex
-	selectMu       sync.Mutex
+	// completedTaskCooldown holds a per-task override for how long, from the
+	// completion time in completedTasks, the issue stays in cooldown. It is
+	// populated by markTaskCompleted based on whether a PR was reported. When a
+	// key is absent (e.g. tasks restored from an older on-disk format, or set
+	// directly by tests) isTaskInCooldown falls back to the full
+	// completedTaskCooldownHours, preserving the original conservative default.
+	completedTaskCooldown map[string]time.Duration
+	// completedTaskPRURL records the PR URL reported for a completed task, kept
+	// for stats/audit and to feed #2356 duplicate detection (a known PR URL per
+	// issue). Empty means the completion reported no PR.
+	completedTaskPRURL map[string]string
+	completedMu        sync.Mutex
+	selectMu           sync.Mutex
 }
 
+// completedTaskCooldownHours is the cooldown applied when a task completes
+// having actually shipped a pull request: real work landed, so we should not
+// re-dispatch the same issue for a week.
 const completedTaskCooldownHours = 168
+
+// completedNoPRCooldownHours is the cooldown applied when a task "completes"
+// only because the agent went idle WITHOUT reporting a PR (the common case the
+// old code could not distinguish — see kubestellar/hive#2393 item 7). Nothing
+// shipped, so locking the issue for a full week wrongly starves it: another
+// contributor should be able to pick it up soon. We keep a short, non-zero
+// cooldown (not zero) so the very next selector pass does not instantly hand
+// the same untouched issue back to the same idle contributor in a tight loop;
+// a few hours is long enough to break that loop while still freeing the issue
+// the same day.
+const completedNoPRCooldownHours = 4
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub := &ContributeWSHub{
-		connections:    make(map[string]*ContributorConnection),
-		completedTasks: make(map[string]time.Time),
-		logger:         logger,
-		server:         server,
+		connections:           make(map[string]*ContributorConnection),
+		completedTasks:        make(map[string]time.Time),
+		completedTaskCooldown: make(map[string]time.Duration),
+		completedTaskPRURL:    make(map[string]string),
+		logger:                logger,
+		server:                server,
 	}
 	hub.loadCompletedTasks()
 	hub.loadActivity()
@@ -239,6 +276,18 @@ func (h *ContributeWSHub) RecentActivity() []ActivityEntry {
 
 const completedTasksFile = "/data/contributors/completed-tasks.json"
 
+// completedTaskRecord is the on-disk shape of one completed-task entry. It
+// carries the completion time plus, since #2393 item 7, the per-task cooldown
+// and the PR URL that decided it, so a hub restart preserves whether an issue
+// got the short no-PR cooldown or the full one. Entries written by older builds
+// were a bare RFC3339 timestamp string; loadCompletedTasks still accepts that
+// legacy form and treats it as a full-cooldown, no-PR entry.
+type completedTaskRecord struct {
+	CompletedAt   time.Time `json:"completed_at"`
+	CooldownHours float64   `json:"cooldown_hours,omitempty"`
+	PRURL         string    `json:"pr_url,omitempty"`
+}
+
 func (h *ContributeWSHub) loadCompletedTasks() {
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
@@ -246,15 +295,42 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 	if err != nil {
 		return
 	}
-	var saved map[string]string
-	if json.Unmarshal(data, &saved) != nil {
-		return
-	}
-	for k, v := range saved {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			if time.Since(t) < completedTaskCooldownHours*time.Hour {
-				h.completedTasks[k] = t
+
+	// Accept both the current object form and the legacy map[string]string
+	// (key -> RFC3339 timestamp) form so an upgrade never drops cooldowns.
+	records := make(map[string]completedTaskRecord)
+	if json.Unmarshal(data, &records) != nil {
+		var legacy map[string]string
+		if json.Unmarshal(data, &legacy) != nil {
+			return
+		}
+		records = make(map[string]completedTaskRecord, len(legacy))
+		for k, v := range legacy {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				records[k] = completedTaskRecord{CompletedAt: t}
 			}
+		}
+	}
+
+	for k, rec := range records {
+		if rec.CompletedAt.IsZero() {
+			continue
+		}
+		cooldown := completedTaskCooldownHours * time.Hour
+		if rec.CooldownHours > 0 {
+			cooldown = time.Duration(rec.CooldownHours * float64(time.Hour))
+		}
+		// Skip anything already past its own cooldown so we don't resurrect
+		// stale locks.
+		if time.Since(rec.CompletedAt) >= cooldown {
+			continue
+		}
+		h.completedTasks[k] = rec.CompletedAt
+		if h.completedTaskCooldown != nil {
+			h.completedTaskCooldown[k] = cooldown
+		}
+		if h.completedTaskPRURL != nil {
+			h.completedTaskPRURL[k] = rec.PRURL
 		}
 	}
 	h.logger.Info("[contribute-ws] loaded completed tasks", "count", len(h.completedTasks))
@@ -262,9 +338,18 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 
 func (h *ContributeWSHub) saveCompletedTasks() {
 	h.completedMu.Lock()
-	saved := make(map[string]string, len(h.completedTasks))
+	saved := make(map[string]completedTaskRecord, len(h.completedTasks))
 	for k, t := range h.completedTasks {
-		saved[k] = t.Format(time.RFC3339)
+		rec := completedTaskRecord{CompletedAt: t}
+		if h.completedTaskCooldown != nil {
+			if d, ok := h.completedTaskCooldown[k]; ok {
+				rec.CooldownHours = d.Hours()
+			}
+		}
+		if h.completedTaskPRURL != nil {
+			rec.PRURL = h.completedTaskPRURL[k]
+		}
+		saved[k] = rec
 	}
 	h.completedMu.Unlock()
 	data, err := json.Marshal(saved)
@@ -283,12 +368,45 @@ func (h *ContributeWSHub) saveCompletedTasks() {
 	}
 }
 
-func (h *ContributeWSHub) markTaskCompleted(repo string, number int) {
+// markTaskCompleted records a completed task and starts its issue cooldown.
+//
+// The cooldown length is conditional on whether the completion actually shipped
+// a pull request (kubestellar/hive#2393 item 7): a completion WITH a prURL gets
+// the full completedTaskCooldownHours (real work landed — don't re-dispatch for
+// a week), while a completion WITHOUT one — the agent merely returned to idle —
+// gets the short completedNoPRCooldownHours so an issue where nothing shipped
+// is not locked out for a week. The chosen expiry is stored per task and honored
+// by isTaskInCooldown; the prURL is retained for stats/audit and #2356
+// duplicate detection.
+func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL string) {
 	key := fmt.Sprintf("%s#%d", repo, number)
+	cooldown := completedNoPRCooldownHours * time.Hour
+	if prURL != "" {
+		cooldown = completedTaskCooldownHours * time.Hour
+	}
 	h.completedMu.Lock()
 	h.completedTasks[key] = time.Now()
+	if h.completedTaskCooldown != nil {
+		h.completedTaskCooldown[key] = cooldown
+	}
+	if h.completedTaskPRURL != nil {
+		h.completedTaskPRURL[key] = prURL
+	}
 	h.completedMu.Unlock()
 	h.saveCompletedTasks()
+}
+
+// cooldownForLocked returns the cooldown duration to apply to key. Callers must
+// already hold completedMu. When no per-task override was recorded (older
+// on-disk entries, or hubs built directly in tests) it falls back to the full
+// completedTaskCooldownHours — the original, conservative default.
+func (h *ContributeWSHub) cooldownForLocked(key string) time.Duration {
+	if h.completedTaskCooldown != nil {
+		if d, ok := h.completedTaskCooldown[key]; ok {
+			return d
+		}
+	}
+	return completedTaskCooldownHours * time.Hour
 }
 
 func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
@@ -299,8 +417,10 @@ func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
 	if !ok {
 		return false
 	}
-	if time.Since(t) > completedTaskCooldownHours*time.Hour {
+	if time.Since(t) > h.cooldownForLocked(key) {
 		delete(h.completedTasks, key)
+		delete(h.completedTaskCooldown, key)
+		delete(h.completedTaskPRURL, key)
 		return false
 	}
 	return true
@@ -670,7 +790,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 				if hasTask {
 					if completedTask != nil {
-						h.markTaskCompleted(completedTask.Repo, completedTask.Number)
+						// #2393 item 7: keep the full week-long cooldown only when a
+						// PR was actually reported; an idle-but-no-PR completion gets
+						// the short cooldown so the issue is not locked for a week.
+						h.markTaskCompleted(completedTask.Repo, completedTask.Number, msg.PRURL)
 					}
 					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
 					h.logger.Info("[contribute-ws] task complete",
@@ -941,6 +1064,54 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		disabledRepos = h.server.deps.Config.Hub.DisabledRepos
 	}
 
+	// --- Collect the eligible candidates, then order them (#2390) ---------------
+	//
+	// #2390 (castrojo): "a great default would be starting with MY PRs that are
+	// blocking someone else or have been reviewed and are waiting for something."
+	// i.e. before we hand a connected contributor a brand-new issue, prefer a work
+	// item that is already THEIRS and needs their attention.
+	//
+	// Priority order applied below:
+	//   1. The contributor's OWN work (candidate author == c.profile.GitHubUsername)
+	//   2. Everything else — today's plain first-eligible ordering
+	//
+	// Honest scope note on the available signal:
+	//   selectTask only iterates ActionableIssues (issues), and the per-candidate
+	//   map carries `author` but NO review state. The richer signal #2390 really
+	//   wants — "my PR has been reviewed / is approved / requested changes / is
+	//   blocking someone else" — is not collected anywhere yet:
+	//     * bin/enumerate-actionable.sh enumerates PRs with only
+	//       title/labels/author/draft/url (no reviewDecision, no requested-changes,
+	//       no "blocking"), and those PRs land in FrontendRepo.OpenPrs, which this
+	//       selector does not read at all.
+	//     * github.PullRequest has no review-decision field.
+	//   So this change implements ONLY the ordering half of #2390, keyed on the one
+	//   own-work signal that actually exists today (issue authorship). When the
+	//   contributor has no own-authored candidate, we fall back to today's exact
+	//   ordering — behaviour is unchanged in that (common) case.
+	//
+	//   TODO(#2390, depends on read-only-gh #2393-#2396): thread review state into
+	//   the candidate data — extend enumerate-actionable.sh to collect the
+	//   contributor's own open PRs together with their reviewDecision
+	//   (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED) and any "blocking" signal,
+	//   surface those as candidates here, and refine ownWorkPriority to rank a
+	//   reviewed/blocking own-PR ahead of a merely-own issue. Guard gracefully when
+	//   that data is absent, exactly as the ownWork fallback does now.
+	ownUsername := ""
+	if c.profile != nil {
+		ownUsername = c.profile.GitHubUsername
+	}
+
+	type candidate struct {
+		repoFull string
+		number   int
+		title    string
+		url      string
+		labels   []string
+		isOwn    bool
+	}
+	var candidates []candidate
+
 	for _, repo := range status.Repos {
 		if len(repo.ActionableIssues) == 0 {
 			continue
@@ -1006,59 +1177,108 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				}
 			}
 
-			ghToken, err := h.mintScopedToken(c.profile.TrustTier)
-			if err != nil {
-				h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
-					"tier", c.profile.TrustTier, "error", err)
-				return nil
-			}
-
-			taskID := fmt.Sprintf("ct-%s-%d-%d", repo.Full, number, time.Now().Unix())
-
-			prompt := fmt.Sprintf(
-				"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
-					"Read the issue, understand what's needed, and take action. "+
-					"You do NOT have push access to the upstream repo. "+
-					"Fork it first with 'gh repo fork %s --clone=false', "+
-					"add the fork as a remote, push your branch there, "+
-					"then open a PR from your fork. "+
-					"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
-				repo.Full, repo.Full, number, title, repo.Full,
-			)
-
-			c.mu.Lock()
-			c.currentTask = &WSTaskAssign{
-				TaskID: taskID,
-				Kind:   "issue",
-				Repo:   repo.Full,
-				Number: number,
-				Title:  title,
-			}
-			c.tokenMintedAt = time.Now()
-			c.mu.Unlock()
-
-			return &WSMessage{
-				Type:           "task_assign",
-				Seq:            h.nextSeq(),
-				TaskID:         taskID,
-				Kind:           "issue",
-				Repo:           repo.Full,
-				Number:         number,
-				Title:          title,
-				URL:            url,
-				GitHubToken:    ghToken,
-				TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
-				Prompt:         prompt,
-				// The issue's own labels — the Labels envelope field was declared but
-				// never populated, so a client reading it got nothing (kubestellar/
+			// #2390: instead of assigning the first eligible issue inline, collect
+			// it as a candidate. The own-work partition below reorders the whole
+			// eligible set before we pick and assign one. The sibling filters
+			// (#2357 skip-assigned, contribute allow/deny) have already run above,
+			// so every appended candidate is genuinely assignable.
+			candidates = append(candidates, candidate{
+				repoFull: repo.Full,
+				number:   number,
+				title:    title,
+				url:      url,
+				// The issue's own labels travel with the candidate so the chosen
+				// task_assign can populate the Labels envelope field (kubestellar/
 				// hive#2393 item 8). They're already computed for filtering above.
-				Labels:        labels,
-				ContribLabels: []string{"contributor/" + c.profile.GitHubUsername},
-			}
+				labels: labels,
+				// "Own work" is the only #2390 signal available today: the
+				// candidate was authored by the connected contributor. When the
+				// username is unknown (empty), nothing is own → we keep today's
+				// ordering untouched.
+				isOwn: ownUsername != "" && strings.EqualFold(author, ownUsername),
+			})
 		}
 	}
 
-	return nil
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Stable partition: own-work candidates first, in their original scan order;
+	// then everything else, also in original scan order. A stable sort keeps the
+	// established per-repo / creation ordering within each bucket, so when the
+	// contributor has no own work this is a no-op and behaviour is identical to
+	// the previous first-eligible pick.
+	ownFirst := make([]candidate, 0, len(candidates))
+	for _, cand := range candidates {
+		if cand.isOwn {
+			ownFirst = append(ownFirst, cand)
+		}
+	}
+	for _, cand := range candidates {
+		if !cand.isOwn {
+			ownFirst = append(ownFirst, cand)
+		}
+	}
+
+	chosen := ownFirst[0]
+	if chosen.isOwn {
+		h.logger.Info("[contribute-ws] prioritizing contributor's own work (#2390)",
+			"username", ownUsername, "repo", chosen.repoFull, "number", chosen.number)
+	}
+
+	// Mint through the shared path so task_assign and the heartbeat token-refresh
+	// advertise tokens minted the same way (#2393 item 2). tokenMintedAt below
+	// arms the refresh ticker for the token we hand out here.
+	ghToken, err := h.mintScopedToken(c.profile.TrustTier)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
+			"tier", c.profile.TrustTier, "error", err)
+		return nil
+	}
+
+	taskID := fmt.Sprintf("ct-%s-%d-%d", chosen.repoFull, chosen.number, time.Now().Unix())
+
+	prompt := fmt.Sprintf(
+		"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
+			"Read the issue, understand what's needed, and take action. "+
+			"You do NOT have push access to the upstream repo. "+
+			"Fork it first with 'gh repo fork %s --clone=false', "+
+			"add the fork as a remote, push your branch there, "+
+			"then open a PR from your fork. "+
+			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
+		chosen.repoFull, chosen.repoFull, chosen.number, chosen.title, chosen.repoFull,
+	)
+
+	c.mu.Lock()
+	c.currentTask = &WSTaskAssign{
+		TaskID: taskID,
+		Kind:   "issue",
+		Repo:   chosen.repoFull,
+		Number: chosen.number,
+		Title:  chosen.title,
+	}
+	c.tokenMintedAt = time.Now()
+	c.mu.Unlock()
+
+	return &WSMessage{
+		Type:           "task_assign",
+		Seq:            h.nextSeq(),
+		TaskID:         taskID,
+		Kind:           "issue",
+		Repo:           chosen.repoFull,
+		Number:         chosen.number,
+		Title:          chosen.title,
+		URL:            chosen.url,
+		GitHubToken:    ghToken,
+		TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
+		Prompt:         prompt,
+		// The chosen issue's own labels — the Labels envelope field was declared
+		// but never populated, so a client reading it got nothing (kubestellar/
+		// hive#2393 item 8). Carried on the candidate from the scan above.
+		Labels:        chosen.labels,
+		ContribLabels: []string{"contributor/" + c.profile.GitHubUsername},
+	}
 }
 
 // assignedToOthers reports whether an issue is assigned to at least one user

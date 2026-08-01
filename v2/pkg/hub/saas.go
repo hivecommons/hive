@@ -212,6 +212,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// requireAuth plus an inner owner-or-admin check, exactly like
 	// switch-branch and auto-upgrade above.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/forge", s.requireAuth(s.handleSwitchForge))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-app", s.requireAuth(s.handleResetApp))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
@@ -439,6 +440,16 @@ func loadSaaSUser(username string) *SaaSUser {
 	}
 	if u.Hives == nil {
 		u.Hives = make(map[string]string)
+	}
+	// Backfill LoginCount for records that predate the login counter (added with
+	// the admin engagement card). Those users have a real LastLogin but a zero
+	// LoginCount, which renders as the contradictory "0 logins (last <date>)" on
+	// the stats card. A user who has logged in at least once is, at minimum, one
+	// login — so a present LastLogin with a zero count normalizes to 1. This is a
+	// read-time floor only; the real counter keeps incrementing from here on the
+	// next OAuth login (handleOAuthCallback), and it never lowers a genuine count.
+	if u.LoginCount == 0 && strings.TrimSpace(u.LastLogin) != "" {
+		u.LoginCount = 1
 	}
 	return &u
 }
@@ -846,6 +857,15 @@ type ClusterHealthNode struct {
 // hiveHostedNamespacePrefix is the namespace prefix used for SaaS-provisioned
 // hives; pods in these namespaces identify hives running on a node.
 const hiveHostedNamespacePrefix = "hive-hosted-"
+
+// hostedAvailableIDPrefix is the ID prefix a pre-provisioned pool slot carries
+// while it is unclaimed inventory (e.g. "hosted-available-oke-01-placeholder-bb95").
+// It is the RegistryEntry-side marker for an available placeholder: unlike
+// MyHiveEntry, RegistryEntry has no ProvStatus field, so the ID prefix (paired
+// with the "available-" org prefix, placeholderOrgPrefix) is the reliable signal
+// that a slot is idle inventory rather than a claimed hive. A claimed hive keeps
+// neither marker.
+const hostedAvailableIDPrefix = "hosted-available-"
 
 type ClusterHealthSummary struct {
 	TotalNodes    int `json:"total_nodes"`
@@ -4533,6 +4553,14 @@ type HiveAccessEntry struct {
 	FullName string `json:"full_name,omitempty"`
 	SlackID  string `json:"slack_id,omitempty"`
 	Notes    string `json:"notes,omitempty"`
+	// Engagement stats copied from the user's record so a co-member's My-Hives
+	// avatar hover can show the same logins / time-in-hive the admin Users card
+	// shows. Like Notes these are stats ABOUT a person, so they ride ONLY for a
+	// hub admin (accessForHive's includeAdminOnly gate) — a non-admin owner sees
+	// name/Slack but not another member's engagement numbers. omitempty so a user
+	// with no stats round-trips as today's handle — role tooltip.
+	LoginCount     int   `json:"login_count,omitempty"`
+	SessionSeconds int64 `json:"session_seconds,omitempty"`
 }
 
 // accessForHive returns who can sign in to a hive, newest-role-agnostic and
@@ -4540,10 +4568,11 @@ type HiveAccessEntry struct {
 // than reading h.Owner: a user's Hives map is the authoritative grant (see
 // handleApproveProvision / handleAssignHive, which write it), and an owner who
 // is missing from it genuinely cannot sign in.
-// includeNotes controls whether the admin-maintained Notes field is copied onto
-// each entry: pass true ONLY for a hub admin. FullName/SlackID always ride (they
-// identify the person to a co-owner); Notes is private admin CRM text.
-func accessForHive(hiveID string, users []SaaSUser, includeNotes bool) []HiveAccessEntry {
+// includeAdminOnly controls whether the admin-only fields — the CRM Notes and
+// the engagement stats (LoginCount/SessionSeconds) — are copied onto each entry:
+// pass true ONLY for a hub admin. FullName/SlackID always ride (they identify the
+// person to a co-owner); Notes and the stats are private to admins.
+func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []HiveAccessEntry {
 	access := make([]HiveAccessEntry, 0)
 	for _, u := range users {
 		if role, ok := u.Hives[hiveID]; ok {
@@ -4553,8 +4582,10 @@ func accessForHive(hiveID string, users []SaaSUser, includeNotes bool) []HiveAcc
 				FullName: u.FullName,
 				SlackID:  u.SlackID,
 			}
-			if includeNotes {
+			if includeAdminOnly {
 				entry.Notes = u.Notes
+				entry.LoginCount = u.LoginCount
+				entry.SessionSeconds = u.SessionSeconds
 			}
 			access = append(access, entry)
 		}
@@ -5530,8 +5561,10 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Rewrite the placeholder's meta.json to the requesting user's real project.
-	// Clearing status makes it show under the new owner in My Hives; the project
-	// config reaches the spoke via the heartbeat channel (projectConfigForHiveID).
+	// Flipping status to statusAssigned makes it show under the new owner in My
+	// Hives AND marks it as no-longer-available for the fleet counters; the
+	// project config reaches the spoke via the heartbeat channel
+	// (projectConfigForHiveID).
 	h.Owner = targetUsername
 	h.Org = pr.Org
 	h.Repos = repos
@@ -5558,7 +5591,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	// must re-arm on (re)assignment for exactly the same reason ACMMDelivered
 	// does above. (The assign path — handleAssignHive — already does this.)
 	h.ClaimDelivered = false
-	h.Status = ""
+	h.Status = statusAssigned
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
 	// resolution below (host backfill uses s.clusterForHive(h), which silently
@@ -6368,7 +6401,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.RequestedACMMLevel = acmm
 	h.ACMMDelivered = false
 	h.IsPublic = body.IsPublic
-	h.Status = ""
+	h.Status = statusAssigned
 	h.Error = ""
 	// A (re)assignment is a new claim payload: reset delivery so the hub pushes
 	// this project to the spoke until it reports the new org/repos back, before
@@ -7373,8 +7406,14 @@ const dashboardHTML = `<!DOCTYPE html>
     function avatarProfileLink(username, label, avatarHTML) {
       var uname = String(username || '');
       if (!uname) return avatarHTML;
+      // Fold "logged into their hive now" into the anchor's OWN tooltip for every
+      // avatar surface, so a live user's face reads identity (+ stats) AND the
+      // live state in one tooltip. The green ring wrapper deliberately carries no
+      // title of its own — a wrapper title would sit on top of this and hide it.
+      var title = label || uname;
+      if (isUserLive(uname)) title = title + '\n● Logged into their hive now';
       return '<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" ' +
-        'title="' + escAttr(label || uname) + '" aria-label="' + escAttr(label || uname) + '" ' +
+        'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" ' +
         'style="display:inline-block;line-height:0;text-decoration:none">' + avatarHTML + '</a>';
     }
 
@@ -7400,11 +7439,17 @@ const dashboardHTML = `<!DOCTYPE html>
         (extraStyle || '') + '" ' +
         'onerror="this.style.visibility=\'hidden\'">';
       if (isUserLive(username)) {
-        // 3px green dashed ring hugging the circle. inline-flex wrapper keeps the
-        // face's vertical-align and sizing identical to the un-ringed case.
-        return '<span title="Logged into their hive now" ' +
-          'style="display:inline-flex;border-radius:50%;padding:1px;border:3px dashed var(--green);vertical-align:middle;line-height:0">' +
-          img + '</span>';
+        // Concentric green dashed ring. The wrapper is a fixed square exactly the
+        // face's size plus the ring gap+width on every side (px + 2*(gap+border)),
+        // with box-sizing:border-box and the ring drawn as its border, so the
+        // round border-radius stays perfectly centered on the round face — the
+        // earlier padding:1px inline-flex version drifted off-center. No title on
+        // the wrapper: the "logged in now" line lives in the face's OWN tooltip
+        // (accessAvatarTitle) so a wrapper title can't shadow the identity+stats.
+        var RING_GAP = 2, RING_W = 3, box = px + 2 * (RING_GAP + RING_W);
+        return '<span style="display:inline-block;box-sizing:border-box;width:' + box + 'px;height:' + box + 'px;' +
+          'padding:' + RING_GAP + 'px;border:' + RING_W + 'px dashed var(--green);border-radius:50%;' +
+          'vertical-align:middle;line-height:0">' + img + '</span>';
       }
       return img;
     }
@@ -7678,13 +7723,39 @@ const dashboardHTML = `<!DOCTYPE html>
        invariant. The server only populates these fields for owner/admin-visible
        rows and withholds notes from non-admins, so nothing here needs to re-gate
        them — a field that is absent simply produces no line. */
+    /* accessAvatarTitle builds the NATIVE multi-line tooltip for a co-member face.
+       It deliberately stays a title attribute (never a hive-access-pop custom
+       panel — see TestInlineAvatarsCarryNoCustomPanel; the status dot owns the
+       row's one panel). It carries the same engagement info the admin Users card
+       shows — identity, logins, time-in-hive, task activity, and the verdict — so
+       who-to-elevate/help reads on hover anywhere a face appears. The stat lines
+       are admin-only (accessForHive only fills login_count/session_seconds for an
+       admin) and each line is conditional, so a stat-less user degrades to today's
+       "handle — role". Newlines render as line breaks in a native title. */
     function accessAvatarTitle(a) {
       var uname = String(a.username || '');
       var role = String(a.role || '');
       var lines = [uname + (role ? ' — ' + role : '')];
+      // ("Logged into their hive now" is appended generically in avatarProfileLink
+      // for EVERY avatar surface, so it is not added here — doing both would
+      // double the line.)
       if (a.full_name) lines.push(String(a.full_name));
       if (a.slack_id) lines.push('Slack: ' + String(a.slack_id));
       if (a.notes) lines.push('Notes: ' + String(a.notes));
+      // Engagement stats (admin-only; absent → these lines are simply skipped).
+      if (a.login_count) lines.push('Logins: ' + a.login_count);
+      if (a.session_seconds) lines.push('Time in hive: ' + fmtHours(a.session_seconds));
+      var act = userTaskActivity(uname);
+      if (act.done || act.failed) lines.push('Tasks: ' + act.done + ' done / ' + act.failed + ' failed');
+      // The lifecycle verdict, from the same helper the admin card uses. It reads
+      // logins/time/tasks; a co-member's hive-journey list isn't on the access
+      // entry so pass empty — the verdict still classifies from engagement, only
+      // the ACMM-graduation refinement is unavailable here. Shown only when there
+      // is some signal to classify (any stat present), so a bare face stays bare.
+      if (a.login_count || a.session_seconds || act.done) {
+        var verdict = userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0}, act, []);
+        if (verdict && verdict.label) lines.push(verdict.label);
+      }
       return lines.join('\n');
     }
     function inlineAccessAvatar(a) {
@@ -11265,6 +11336,13 @@ const dashboardHTML = `<!DOCTYPE html>
         if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Activity Timeline</div>');
         if (h.role === 'owner' || h.role === 'read-write' || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
         if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
+        /* Reset App clears ONLY the spoke's installation_id, which makes
+           HasUsableApp() false and prompts the owner to install the App again.
+           Admin-only and hosted-only, matching the endpoint's own guard. The
+           case it exists for: a hive provisioned with its own GitHub App keeps
+           that App's installation_id after its identity is moved to the fleet
+           App, so every field reads correct while freshly minted tokens 404. */
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Reset App</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
@@ -12138,6 +12216,23 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _switchTimers = {};
+    /* Reset App: clears the spoke's installation_id so the owner is prompted
+       to install the GitHub App again. Confirmed first because it costs the
+       owner a re-install, and the reset is delivered on the spoke's next
+       heartbeat rather than immediately. */
+    async function resetHiveApp(hiveId, hiveName) {
+      if (!confirm('Reset the GitHub App for "' + hiveName + '"?\n\nThe spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again. The App ID, slug and key are left alone.')) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-app', {method: 'POST'});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { alert('Reset failed: ' + (data.error || resp.status)); return; }
+        alert('App reset armed for "' + hiveName + '".\n\nThe spoke clears its installation on the next heartbeat (~30s), then shows the install prompt.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        alert('Reset failed: ' + e);
+      }
+    }
+
     function switchBranch(hiveId, newBranch, el) {
       if (el) el.closest('[id^="branch-menu-"]').style.display = 'none';
       if (_switchTimers[hiveId]) {

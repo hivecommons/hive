@@ -167,6 +167,38 @@ func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *hub.HeartbeatGitH
 	return &next
 }
 
+// nextInstallationID decides what a hive's installation_id becomes after a
+// hub delivery, and reports whether the change is an operator RESET.
+//
+// Three cases, and the difference between the last two is load-bearing:
+//
+//	ResetInstallation  -> 0. The operator clicked "Reset App". Clearing makes
+//	                     HasUsableApp() false, which raises githubAppRequired:
+//	                     the owner is prompted to install the App again and the
+//	                     self-heal ticker starts, whose RediscoverAndAdopt
+//	                     adopts the correct installation for whatever they
+//	                     install.
+//	non-zero pushed    -> adopt it.
+//	zero pushed        -> KEEP the current value. Zero means "the hub is not
+//	                     speaking to this field", not "clear it". The
+//	                     cluster-wide key reconcile sends zero on every beat
+//	                     because it repairs KEYS on hives whose installation the
+//	                     hub does not track; reading that as a clear would blank
+//	                     a working installation fleet-wide and turn a key-only
+//	                     fault into a total auth outage.
+func nextInstallationID(current int64, ghCfg *hub.HeartbeatGitHubAppConfig) (next int64, reset bool) {
+	if ghCfg == nil {
+		return current, false
+	}
+	if ghCfg.ResetInstallation {
+		return 0, current != 0
+	}
+	if ghCfg.InstallationID != 0 {
+		return ghCfg.InstallationID, false
+	}
+	return current, false
+}
+
 func perAppIDKeyPath(appID int64) string {
 	if appID <= 0 {
 		return ""
@@ -1807,6 +1839,31 @@ func main() {
 					dashSrv.AuditLog("system", "github_app_check", "result=installed but write NOT verified: "+diag, "")
 					return false
 				}
+				// #2353: the classifier above only proves the installation
+				// authenticates and grants issues:write — NOT that this repo can
+				// actually be written. Finding the advisory issue is a READ, which
+				// succeeds even when the repo is not in the App installation's
+				// selected repos. Perform a REAL write probe before clearing the
+				// banner, so re-check cannot falsely "verify write" for a repo the
+				// App can only read (the recheck false-positive).
+				if werr := ghClient.ProbeIssueWrite(ctx, recheckRepo, num); werr != nil {
+					if strings.Contains(werr.Error(), "403") && strings.Contains(werr.Error(), "Resource not accessible by integration") {
+						msg, state := classifyGitHubAppWriteForbidden(ctx, ghClient.AppAuth(), cfg.Project.Org, recheckRepo)
+						dashSrv.SetGitHubAppPermIssue(msg)
+						dashSrv.SetGitHubAppState(state.String())
+						logger.Warn("github app recheck: write probe returned 403 — not clearing the banner",
+							"repo", recheckRepo, "state", state.String(), "detail", msg)
+						dashSrv.AuditLog("system", "github_app_check", "result=write probe FORBIDDEN: "+msg, "")
+						return false
+					}
+					// A non-403 probe failure is inconclusive (rate limit,
+					// transient network). Do NOT clear the banner on a write we
+					// could not confirm, but also do NOT accuse anyone.
+					logger.Warn("github app recheck: write probe inconclusive — leaving banner as-is",
+						"repo", recheckRepo, "error", werr)
+					dashSrv.AuditLog("system", "github_app_check", "result=write probe inconclusive", "")
+					return false
+				}
 				logger.Info("github app recheck: app detected, write verified", "repo", recheckRepo, "number", num)
 				dashSrv.AuditLog("system", "github_app_check", "result=OK (installed, write verified)", "")
 				return true
@@ -2871,8 +2928,12 @@ func main() {
 			// KEY on hives whose installation_id is already correct (and which
 			// the hub does not track); assigning zero here would blank a working
 			// value and turn a key-only fault into a total auth outage.
-			if ghCfg.InstallationID != 0 {
-				cfg.GitHub.InstallationID = ghCfg.InstallationID
+			if next, cleared := nextInstallationID(cfg.GitHub.InstallationID, ghCfg); cleared {
+				logger.Info("clearing github app installation_id on operator request",
+					"was", cfg.GitHub.InstallationID)
+				cfg.GitHub.InstallationID = next
+			} else {
+				cfg.GitHub.InstallationID = next
 			}
 			// Deliberately NOT `cfg.GitHub.KeyFile = keyPath`.
 			//
@@ -3477,6 +3538,49 @@ func classifyGitHubAppFailure(ctx context.Context, appAuth *github.AppAuth, expe
 	return true, msg, state
 }
 
+// classifyGitHubAppWriteForbidden (#2353) is the verdict for a REAL write that
+// returned 403 "Resource not accessible by integration". Authentication-only
+// health checks (classifyGitHubAppFailure / diagnoseGitHubApp) inspect the
+// installation's granted PERMISSIONS but never whether the target repo is in
+// the installation's `selected` repositories — so they return AppStateOK for a
+// repo the App cannot write, and the write failure stayed invisible to health
+// (githubAppState=None) or, worse, got hard-overridden into a false "lacks
+// Issues: Read & Write" banner.
+//
+// The rule here keeps attribution honest:
+//
+//   - If diagnoseGitHubApp finds a genuine, classifiable App-auth problem
+//     (wrong installation, missing key, insufficient PERMISSION, etc.), report
+//     THAT — it is the real cause and its copy is already accurate.
+//   - If diagnoseGitHubApp reports the installation is healthy (AppStateOK:
+//     right owner, issues:write granted) OR could not reach a verdict
+//     (AppStateUnknown), the write 403 is still real and must NOT be silently
+//     healthy. Report AppStateWriteForbidden with copy that names the repo and
+//     the likeliest cause (repo not in the installation's selected repos),
+//     WITHOUT inventing a permission gap that the diagnosis just proved absent.
+//
+// It always raises: a write that returned 403 is a genuine, standing failure to
+// surface, distinct from the transient/unknown probe failures
+// classifyGitHubAppFailure guards against.
+func classifyGitHubAppWriteForbidden(ctx context.Context, appAuth *github.AppAuth, expectedOwner, repo string) (msg string, state github.AppAuthState) {
+	diagMsg, diagState := diagnoseGitHubApp(ctx, appAuth, expectedOwner)
+	if diagState != github.AppStateOK && diagState != github.AppStateUnknown {
+		// A real, classifiable App-auth problem — its message is the accurate
+		// one (e.g. wrong-installation, key-missing, or a genuine permission
+		// gap). Use it as-is rather than masking it with the repo-scope story.
+		return diagMsg, diagState
+	}
+	// Installation authenticates and (per the diagnosis) holds issues:write, yet
+	// the write was forbidden. Attribute it to the one thing the permission
+	// check cannot see — repo scope — and name the repo so the fix is concrete.
+	d := github.AppAuthDiagnosis{
+		State:           github.AppStateWriteForbidden,
+		ExpectedAccount: expectedOwner,
+		Repo:            repo,
+	}
+	return d.Message(), github.AppStateWriteForbidden
+}
+
 func runEvalCycle(
 	ctx context.Context,
 	cfg *config.Config,
@@ -3787,15 +3891,20 @@ func runEvalCycle(
 						}
 						logger.Warn("failed to post advisory digest via app", "repo", primaryRepo, "issue", issueNum, "error", err)
 						if strings.Contains(err.Error(), "403") && strings.Contains(err.Error(), "Resource not accessible by integration") {
-							// App is installed (we found the issue) but can't write.
-							// Resolve the actual cause — pending permission approval
-							// vs. an installation_id pointing at the wrong org — so
-							// the banner tells the user what to actually fix.
-							msg, state := diagnoseGitHubApp(ctx, ghClient.AppAuth(), cfg.Project.Org)
-							if msg == "" {
-								msg = "The GitHub App is installed but lacks Issues: Read & Write permission. The org owner must approve updated permissions at the app installation settings page."
-								state = github.AppStateInsufficientPerms
-							}
+							// App is installed (we found the issue) but a real
+							// WRITE was forbidden. #2353: attribute this honestly.
+							// diagnoseGitHubApp only inspects installation-level
+							// PERMISSIONS, so when it comes back healthy (issues:write
+							// granted, right owner) the previous code hard-overrode
+							// that "OK" into a false "lacks Issues: Read & Write"
+							// banner — the exact misattribution #2353 reports. When
+							// the diagnosis is genuinely a permission/installation
+							// problem, use it; otherwise surface a DISTINCT
+							// write-forbidden state naming the likeliest real cause
+							// (the repo is not in the App installation's selected
+							// repos), instead of leaving health at None or faking a
+							// permission gap the diagnosis just disproved.
+							msg, state := classifyGitHubAppWriteForbidden(ctx, ghClient.AppAuth(), cfg.Project.Org, primaryRepo)
 							dashSrv.SetGitHubAppRequired(true)
 							dashSrv.SetGitHubAppPermIssue(msg)
 							dashSrv.SetGitHubAppState(state.String())

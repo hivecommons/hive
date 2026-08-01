@@ -75,7 +75,9 @@ func TestHandleGovernorRepos_InvalidBody_Boost(t *testing.T) {
 
 func TestHandleGovernorRepos_SimpleRepos(t *testing.T) {
 	srv := newFullServer(t)
-	body := `{"repos":["repo1","repo2"]}`
+	// A save that replaces the repo set must also name a default that is one of
+	// the new repos (the always-exactly-one-default invariant), so send both.
+	body := `{"repos":["repo1","repo2"],"primaryRepo":"repo1"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -88,7 +90,7 @@ func TestHandleGovernorRepos_SimpleRepos(t *testing.T) {
 
 func TestHandleGovernorRepos_URLParsing(t *testing.T) {
 	srv := newFullServer(t)
-	body := `{"repos":["https://github.com/myorg/myrepo"]}`
+	body := `{"repos":["https://github.com/myorg/myrepo"],"primaryRepo":"myrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -117,8 +119,10 @@ func TestHandleGovernorRepos_InvalidRepoName(t *testing.T) {
 
 func TestHandleGovernorRepos_PrimaryRepo(t *testing.T) {
 	srv := newFullServer(t)
+	// The chosen default must be one of the monitored repos, so send both the
+	// repo and the primaryRepo that names it (always-exactly-one-default).
 	primary := "newrepo"
-	body := `{"primaryRepo":"newrepo"}`
+	body := `{"repos":["newrepo"],"primaryRepo":"newrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -133,18 +137,22 @@ func TestHandleGovernorRepos_PrimaryRepo(t *testing.T) {
 }
 
 func TestHandleGovernorRepos_GHE_URL(t *testing.T) {
+	// A hive already on github.com (newFullServer's testrepo) must NOT be able to
+	// add a repo on a different forge — that would mix hosts and silently break
+	// App auth for half the repos. The single-host-per-spoke guard rejects it and
+	// leaves the hive's forge untouched.
 	srv := newFullServer(t)
-	body := `{"repos":["https://ghe.example.com/myorg/myrepo"]}`
+	body := `{"repos":["https://ghe.example.com/myorg/myrepo"],"primaryRepo":"myrepo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	srv.handleGovernorRepos(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("code = %d, want 200", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, want 400 (cross-forge repo rejected)", w.Code)
 	}
-	if srv.deps.Config.GitHub.BaseURL != "https://ghe.example.com" {
-		t.Errorf("baseURL = %q", srv.deps.Config.GitHub.BaseURL)
+	if srv.deps.Config.GitHub.BaseURL == "https://ghe.example.com" {
+		t.Errorf("hive forge was switched to a mismatched host: %q", srv.deps.Config.GitHub.BaseURL)
 	}
 }
 
@@ -300,7 +308,7 @@ func TestHandleSnapshotPage_CustomHubURL(t *testing.T) {
 func TestHandleGovernorRepos_StripOrgPrefix(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.Config.Project.Org = "testorg"
-	body := `{"repos":["testorg/repo1"]}`
+	body := `{"repos":["testorg/repo1"],"primaryRepo":"repo1"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

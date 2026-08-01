@@ -1137,8 +1137,12 @@ func TestHandleApproveProvisionWithFilesystem(t *testing.T) {
 	if h.Org != "org" {
 		t.Errorf("org = %q, want org", h.Org)
 	}
-	if h.Status != "" {
-		t.Errorf("status = %q, want empty (cleared)", h.Status)
+	// A claimed placeholder must carry the explicit statusAssigned, NOT an empty
+	// string. Empty was indistinguishable from "unknown" and made every
+	// availability check fall back to the immutable "hosted-available-" ID
+	// prefix, mis-counting claimed hives as available (38 shown vs the true 17).
+	if h.Status != statusAssigned {
+		t.Errorf("status = %q, want %q (claimed, no longer available)", h.Status, statusAssigned)
 	}
 }
 
@@ -1213,7 +1217,10 @@ func TestHandleAssignHiveWithFilesystem(t *testing.T) {
 	if h == nil {
 		t.Fatal("hive missing after assign")
 	}
-	if h.Owner != "newowner" || h.Org != "neworg" || h.PrimaryRepo != "repoa" || h.ACMMLevel != 3 || h.Status != "" {
+	// Status must be the explicit statusAssigned on claim, not empty — empty made
+	// the fleet counters fall back to the immutable ID prefix and over-count
+	// available hives.
+	if h.Owner != "newowner" || h.Org != "neworg" || h.PrimaryRepo != "repoa" || h.ACMMLevel != 3 || h.Status != statusAssigned {
 		t.Errorf("assign wrote wrong meta: %+v", h)
 	}
 
