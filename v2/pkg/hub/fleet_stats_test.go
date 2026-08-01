@@ -416,6 +416,46 @@ func TestHandleFleetStats_LiveDataWinsOverLKG(t *testing.T) {
 	}
 }
 
+// When NOTHING is reporting but eligible hives exist AND a last-known-good
+// aggregate was stored, the handler serves the cached counts and labels them
+// stale — the strip keeps a real (older) number rather than going blank on a
+// fleet that has merely gone quiet. This exercises the LKG-serving branch that
+// only fires at zero live coverage.
+func TestHandleFleetStats_ZeroReportingServesStaleLKG(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	collectedAt := time.Now().Add(-3 * time.Hour).UTC().Truncate(time.Second)
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		ReposManaged: 42, PRsMerged: 26, PRsRejected: 3, CVEsClosed: 1,
+		Hives: 5, Reporting: 5, Eligible: 5, CollectedAt: collectedAt,
+	}
+	// Eligible (online, has repos) but NOT reporting (no counts at all), so
+	// Reporting==0 while Eligible>0 — the exact state the LKG fallback covers.
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r1"}},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r2"}},
+	}
+
+	fs := decodeFleetStats(t, s)
+	if fs.Trustworthy {
+		t.Fatal("Trustworthy = true, want false when nothing is reporting")
+	}
+	if !fs.StaleData {
+		t.Error("StaleData = false, want true when serving the cached aggregate")
+	}
+	// The served counts come from the cache, not the (empty) live aggregate.
+	if fs.PRsMerged != 26 || fs.ReposManaged != 42 {
+		t.Errorf("served PRsMerged/ReposManaged = %d/%d, want cached 26/42", fs.PRsMerged, fs.ReposManaged)
+	}
+	// AsOf reflects the cache's collection time, not now.
+	if fs.AsOf != collectedAt.Format(time.RFC3339) {
+		t.Errorf("AsOf = %q, want the cached collection time %q", fs.AsOf, collectedAt.Format(time.RFC3339))
+	}
+	// Live coverage figures are kept so the page can show recollection progress.
+	if fs.Reporting != 0 || fs.Eligible != 2 {
+		t.Errorf("Reporting/Eligible = %d/%d, want live 0/2", fs.Reporting, fs.Eligible)
+	}
+}
+
 // Genuine first boot — never collected, nothing cached — is the only state
 // that legitimately shows no total.
 func TestHandleFleetStats_NoLKGShowsNothing(t *testing.T) {
