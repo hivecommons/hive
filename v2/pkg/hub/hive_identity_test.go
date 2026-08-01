@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // Live fleet identity values, used so every case below is a REAL shape rather
@@ -128,8 +130,14 @@ func TestResolveHiveIdentityBothMismatchDirections(t *testing.T) {
 			// A resolved identity that names one forge while carrying another's
 			// URLs is the exact half-identity this design exists to prevent.
 			if isPublicForgeHost(got.Forge) {
-				if got.APIURL != "" || got.BaseURL != "" {
-					t.Errorf("a public identity must carry empty URLs (the fleet-wide shape), got api=%q base=%q",
+				// Either empty (inherited from a cluster whose silence must NOT
+				// be read as evidence — see ResolveHiveIdentity) or the explicit
+				// public urls (stated when the HIVE elected public). Both are
+				// coherent; what must never appear is another forge's urls.
+				okEmpty := got.APIURL == "" && got.BaseURL == ""
+				okExplicit := got.APIURL == config.DefaultGitHubAPIURL && got.BaseURL == config.DefaultGitHubBaseURL
+				if !okEmpty && !okExplicit {
+					t.Errorf("a public identity carried non-public urls: api=%q base=%q",
 						got.APIURL, got.BaseURL)
 				}
 			} else {

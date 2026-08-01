@@ -71,9 +71,13 @@ func TestLiveVllmDEntryRepairsElectedHives(t *testing.T) {
 		if got.AppSlug != config.PublicGitHubAppSlug {
 			t.Fatalf("app_slug = %q, want %q", got.AppSlug, config.PublicGitHubAppSlug)
 		}
-		// Empty URLs are correct here: every healthy public spoke runs that way.
-		if got.APIURL != "" || got.BaseURL != "" {
-			t.Fatalf("public hive should carry empty URLs, got api=%q base=%q", got.APIURL, got.BaseURL)
+		// EXPLICIT urls are now correct here. They used to be empty, matching how
+		// every healthy public spoke is stored on disk — but a field that means
+		// something by being absent is what let a GHE app_id sit beside an empty
+		// api_url and read as *unset* rather than *mismatched*. The values are
+		// the same ones the resolver would have derived; they are now stated.
+		if got.APIURL != config.DefaultGitHubAPIURL || got.BaseURL != config.DefaultGitHubBaseURL {
+			t.Fatalf("public hive should carry explicit urls, got api=%q base=%q", got.APIURL, got.BaseURL)
 		}
 		mustPassValidator(t, got)
 	})

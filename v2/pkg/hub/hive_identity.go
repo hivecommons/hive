@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/kubestellar/hive/v2/pkg/config"
 )
 
 // ============================================================================
@@ -66,11 +68,16 @@ type HiveIdentity struct {
 	// built from. An empty slug falls back to the public default and 404s on a
 	// GHE host, so it travels with the ID.
 	AppSlug string
-	// APIURL/BaseURL are the forge endpoints. Empty means public github.com —
-	// the fleet-wide on-disk convention, which ResolvedAPIURL/ResolvedBaseURL
-	// already map to api.github.com/github.com. They are left empty rather than
-	// spelled out so a resolved identity is byte-identical to what every healthy
-	// public spoke already carries.
+	// APIURL/BaseURL are the forge endpoints, always stated EXPLICITLY — public
+	// github.com resolves to https://api.github.com / https://github.com rather
+	// than to empty strings.
+	//
+	// They used to be left empty for public, matching the fleet-wide on-disk
+	// convention that ResolvedAPIURL/ResolvedBaseURL already map to those two
+	// values. But a field that means something by being ABSENT is what hid the
+	// 2026-07-31 incident: a GHE app_id beside an empty api_url read as *unset*
+	// rather than *mismatched*. Explicit values cost nothing and remove the
+	// ambiguity.
 	APIURL  string
 	BaseURL string
 	// Forge is the bare host label this identity belongs to ("github.com",
@@ -117,6 +124,24 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 		BaseURL: cluster.GitHubBaseURL,
 		Forge:   clusterForge,
 	}
+	// DELIBERATELY NOT made explicit here, unlike the elected-forge branch below.
+	//
+	// A cluster that declares no url fields looks public to clusterForgeHost —
+	// but so does a GHE cluster that simply has not backfilled its urls, and
+	// several real records are in exactly that state. Writing public urls on
+	// that silence would stamp api.github.com onto GHE clusters and break the
+	// repair path this whole design exists to serve. SILENCE IS NOT EVIDENCE.
+	//
+	// An ELECTION is different: a hive that records github_host is stating its
+	// forge, so the urls can be stated with it. Explicitness is safe where there
+	// is evidence and dangerous where there is only absence — which is the same
+	// unknown-vs-mismatch rule the push flags follow.
+	//
+	// Filling the slug IS safe: slugOfAppID keys on app_id, which is always
+	// populated, and returns "" for an App this build does not recognise.
+	if id.AppSlug == "" {
+		id.AppSlug = config.SlugOfAppID(id.AppID)
+	}
 
 	elected := electedForgeForHive(h, cluster)
 	if elected == "" || sameGitHubHost(elected, clusterForge) {
@@ -126,8 +151,23 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 	// Rule 1: the hive elected a forge its cluster does not default to.
 	elect := HiveIdentity{Forge: elected, FromHiveIntent: true}
 	if isPublicForgeHost(elected) {
-		// Public github.com: empty URLs, matching every healthy public spoke.
-		elect.APIURL, elect.BaseURL = "", ""
+		// Public github.com: state the URLs EXPLICITLY rather than leaving them
+		// empty for a resolver default to fill in later.
+		//
+		// Empty used to be correct-by-convention here — it matched how every
+		// healthy public spoke was stored, and ResolvedAPIURL/ResolvedBaseURL
+		// turn "" into exactly these two constants. But an empty field means
+		// something by NOT being there, and that is what hid the 2026-07-31
+		// incident: a GitHub Enterprise app_id sitting beside an empty api_url
+		// read as *unset* rather than *mismatched*, so nothing flagged it until
+		// a token call returned 404 Integration not found.
+		//
+		// These are the SAME values the resolver would have produced; the only
+		// change is that the spoke is now told them instead of inferring them.
+		// Measured on the fleet before this: base_url was empty on 48 of 51
+		// spokes, api_url on 41, app_slug on 33 — implicit state was the normal
+		// condition, not a handful of stragglers.
+		elect.APIURL, elect.BaseURL = config.DefaultGitHubAPIURL, config.DefaultGitHubBaseURL
 	} else {
 		elect.BaseURL = "https://" + elected
 		elect.APIURL = "https://" + elected + gheAPIPathSuffix
@@ -136,6 +176,20 @@ func ResolveHiveIdentity(h *SaaSHive, cluster *ClusterConfig) HiveIdentity {
 	// Rule 3: only adopt the election if the hub can actually NAME an App on it.
 	if app, ok := clusterAppForForge(cluster, elected); ok {
 		elect.AppID, elect.AppSlug = app.AppID, strings.TrimSpace(app.AppSlug)
+		// A cluster entry may name an App ID and leave the slug blank. Fill it
+		// from the App ID rather than shipping an empty field for the spoke's
+		// ResolvedAppSlug() to guess at: the slug builds the "Install GitHub
+		// App" link, and an empty one falls back to the public default — which
+		// is how ten GHE hives ended up with an install link pointing at an App
+		// that does not exist on their host.
+		//
+		// slugOfAppID returns "" for an App ID this build does not recognise,
+		// and that stays empty ON PURPOSE. daviddiaz0317-visual-hive runs
+		// app_id 4240368 — a third App with its own key — and inventing a slug
+		// for it would be a confident wrong answer where no answer is correct.
+		if elect.AppSlug == "" {
+			elect.AppSlug = config.SlugOfAppID(elect.AppID)
+		}
 		return elect
 	}
 	// The cluster names no App on the elected forge. Keep the hive's forge —

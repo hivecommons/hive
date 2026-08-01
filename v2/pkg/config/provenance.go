@@ -302,6 +302,11 @@ func forgeOfAppID(appID int64) string {
 // Returns "" for an unrecognised App ID (a third forge, self-hosted, the
 // placeholder sentinel). Unknown must never be treated as a mismatch, or a
 // legitimate deployment is refused — the same contract as forgeOfAppID.
+// SlugOfAppID is the exported form, for callers outside this package that need
+// to fill a blank slug rather than ship an empty field for a resolver default
+// to guess at.
+func SlugOfAppID(appID int64) string { return slugOfAppID(appID) }
+
 func slugOfAppID(appID int64) string {
 	switch appID {
 	case PublicGitHubAppID:
