@@ -187,28 +187,64 @@ func TestComputeFleetStatsZeroCollectedAtIsTrusted(t *testing.T) {
 // total assembled from a small minority of the fleet must NOT be presented as
 // a fleet-wide figure. 2 reporting out of 50 eligible is the live shape of the
 // "statistics are missing again" report.
+// TestFleetStatsTrustworthy pins the contract AFTER the coverage gate was
+// removed: a total is publishable whenever at least one hive reported it.
+//
+// The previous version of this test called "2 of 50" the reported regression
+// and required false — it encoded SUPPRESSION as the fix. That was wrong. These
+// totals are a sum of facts, not a sample: each hive counts its own merged PRs
+// and the hub adds them (repos deduplicated via a set), so 2 of 50 hives
+// reporting 12,819 PRs is exactly what those two did, not a guess at a fleet
+// figure. Hiding it made the page read "this fleet did nothing", the one
+// interpretation that is false.
+//
+// Coverage is now communicated instead of gated: the landing page always states
+// "N of M hives reporting" beside the number.
 func TestFleetStatsTrustworthy(t *testing.T) {
 	tests := []struct {
 		name      string
 		reporting int
 		eligible  int
 		want      bool
+		why       string
 	}{
-		{"the reported regression: 2 of 50", 2, 50, false},
-		{"nothing eligible", 0, 0, false},
-		{"eligible but none reporting", 0, 12, false},
-		{"exactly at the threshold", 5, 10, true},
-		{"just under the threshold", 4, 10, false},
-		{"whole fleet reporting", 50, 50, true},
+		{"2 of 50 is a real count, not a bad estimate", 2, 50, true,
+			"publishing it with its coverage beats a blank strip that implies zero activity"},
+		{"a single reporting hive still has real data", 1, 40, true,
+			"one hive's merged PRs are still merged PRs"},
+		{"nothing eligible", 0, 0, false, "no hives, no total"},
+		{"eligible but none reporting", 0, 12, false,
+			"nothing to publish — this is the ONLY case that hides the strip"},
+		{"whole fleet reporting", 50, 50, true, "complete"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := FleetStats{Reporting: tt.reporting, Eligible: tt.eligible}
 			if got := fs.FleetStatsTrustworthy(); got != tt.want {
-				t.Errorf("Trustworthy(%d/%d) = %v, want %v",
-					tt.reporting, tt.eligible, got, tt.want)
+				t.Errorf("Trustworthy(%d/%d) = %v, want %v — %s",
+					tt.reporting, tt.eligible, got, tt.want, tt.why)
 			}
 		})
+	}
+}
+
+// TestFleetStatsLKGNoLongerNeedsAThresholdToInitialise pins the trap that kept
+// the strip blank for months.
+//
+// The last-known-good aggregate was RECORDED only while Trustworthy was true,
+// and SERVED only while it was false. On a fleet that never once cleared the
+// 50% bar it was therefore never written, so the fallback built for exactly
+// that situation had nothing to serve: the safety net could only be filled by
+// the condition it existed to protect against. Live coverage was 2/18, 7/18 and
+// 10/50 on the day this was found.
+func TestFleetStatsLKGNoLongerNeedsAThresholdToInitialise(t *testing.T) {
+	// The historical coverage levels that could never record an LKG before.
+	for _, c := range []struct{ reporting, eligible int }{{2, 18}, {7, 18}, {10, 50}} {
+		fs := FleetStats{Reporting: c.reporting, Eligible: c.eligible}
+		if !fs.FleetStatsTrustworthy() {
+			t.Errorf("%d of %d still cannot publish or record an LKG; the strip stays blank forever",
+				c.reporting, c.eligible)
+		}
 	}
 }
 
@@ -288,10 +324,16 @@ func TestHandleFleetStats_TrustworthyRecordsLKG(t *testing.T) {
 	}
 }
 
-// The regression this whole change exists for: once coverage collapses, the
-// page must still get NUMBERS (from the cache) plus an honest stale label —
-// not a blank strip.
-func TestHandleFleetStats_DegradedServesLabelledLKG(t *testing.T) {
+// Once the coverage gate was removed, LIVE data always wins: a partial total is
+// a real count of what the reporting hives did, so replacing it with a cached
+// figure would substitute older numbers for current ones.
+//
+// This test previously asserted the opposite — that 1-of-4 coverage should swap
+// the live total for the LKG and label it stale. That was a consequence of the
+// gate, not a goal: it treated a real partial count as unusable. The LKG now
+// covers only the case where NOTHING is reporting and there is nothing live to
+// show.
+func TestHandleFleetStats_LiveDataWinsOverLKG(t *testing.T) {
 	s := fleetStatsLKGTestServer(t)
 	collectedAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
 	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
@@ -308,29 +350,33 @@ func TestHandleFleetStats_DegradedServesLabelledLKG(t *testing.T) {
 	}
 
 	fs := decodeFleetStats(t, s)
-	if fs.Trustworthy {
-		t.Fatal("Trustworthy = true, want false (1 of 4 reporting)")
+	if !fs.Trustworthy {
+		t.Fatal("Trustworthy = false; a real count from 1 of 4 hives is publishable")
 	}
-	if !fs.StaleData {
-		t.Error("StaleData = false, want true when serving the cache")
+	if fs.StaleData {
+		t.Error("StaleData = true; live data was available and must not be replaced by the cache")
 	}
-	// Counts come from the cache, NOT from the 1 live hive (which would be 2).
-	if fs.PRsMerged != 26 {
-		t.Errorf("PRsMerged = %d, want 26 from LKG (not the degraded live 2)", fs.PRsMerged)
+	// Counts come from the LIVE hive, not the cache. The cached 26 is older; a
+	// real count of 2 from the hives reporting right now is the current truth.
+	if fs.PRsMerged != 2 {
+		t.Errorf("PRsMerged = %d, want the live 2 (not the cached 26)", fs.PRsMerged)
 	}
-	if fs.ReposManaged != 42 {
-		t.Errorf("ReposManaged = %d, want 42 from LKG", fs.ReposManaged)
+	if fs.ReposManaged != 4 {
+		t.Errorf("ReposManaged = %d, want the live 4 (not the cached 42)", fs.ReposManaged)
 	}
-	// Coverage figures stay LIVE so the page can show recollection progress.
+	// Coverage is reported alongside so the page can state "1 of 4 reporting".
 	if fs.Reporting != 1 || fs.Eligible != 4 {
 		t.Errorf("Reporting/Eligible = %d/%d, want live 1/4", fs.Reporting, fs.Eligible)
 	}
-	if fs.AsOf != collectedAt.Format(time.RFC3339) {
-		t.Errorf("AsOf = %q, want the LKG collection time %q", fs.AsOf, collectedAt.Format(time.RFC3339))
+	// AsOf is NOW, because these are live numbers, not a cached snapshot.
+	if fs.AsOf == collectedAt.Format(time.RFC3339) {
+		t.Errorf("AsOf = %q, the cached timestamp; live data must carry its own", fs.AsOf)
 	}
-	// A degraded aggregate must never overwrite the cache.
-	if lkg := s.fleetStatsLKG(); lkg == nil || lkg.PRsMerged != 26 {
-		t.Errorf("degraded aggregate overwrote the LKG: %+v", lkg)
+	// And a publishable aggregate now REFRESHES the cache. Under the old gate
+	// this could never happen below 50%, which is why the fallback stayed empty
+	// on a fleet that never cleared the bar.
+	if lkg := s.fleetStatsLKG(); lkg == nil || lkg.PRsMerged != 2 {
+		t.Errorf("LKG was not refreshed from the live aggregate: %+v", lkg)
 	}
 }
 

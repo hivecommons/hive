@@ -1352,8 +1352,20 @@
         // upgrade skew never blanks a strip that is actually fine.
         var trustworthy = !data || typeof data.trustworthy !== 'boolean' ? true : data.trustworthy;
         var stale = !!(data && data.stale_data);
-        // Show the numbers when the live aggregate is trustworthy OR when the
-        // hub handed us a labelled last-known-good one.
+        // Show a real number whenever we have one.
+        //
+        // These totals are a SUM OF FACTS, not a sample: every hive counts its
+        // own merged PRs and the hub adds them up (repos are deduplicated via a
+        // set). A total from 7 of 18 hives is not a guess at a fleet figure, it
+        // is exactly what those 7 did — correct, merely incomplete. So the
+        // honest presentation is the number plus its coverage, which the
+        // caption below always states.
+        //
+        // Hiding it was strictly worse: a blank strip reads as "this fleet did
+        // nothing", the one reading that is actually false. It stayed blank for
+        // months because the old gate needed >=50% coverage AND its
+        // last-known-good fallback was only ever written while ABOVE that bar,
+        // so on a fleet that never cleared it the fallback was never filled.
         var showValues = trustworthy || stale;
         var anyLive = false;
         (LIVE_STATS || []).forEach(function(s) {
@@ -1380,6 +1392,23 @@
               ' while the fleet recollects &mdash; ' + fmt((data && data.reporting) || 0) + ' of ' +
               fmt((data && data.eligible) || 0) + ' hives reporting right now. ' +
               '<a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+          }
+        }
+        // Values shown and LIVE: state the coverage alongside them. This is the
+        // half that makes an ungated total honest — the number is exactly what
+        // the reporting hives did, and saying how many reported is what stops a
+        // partial total being read as a complete one. Without this line,
+        // removing the coverage gate would trade a misleading blank for a
+        // misleadingly confident number.
+        if (anyLive && !stale) {
+          var noteLive = document.getElementById('hero-proof-note');
+          var rep = (data && data.reporting) || 0;
+          var elig = (data && data.eligible) || 0;
+          if (noteLive && elig > 0) {
+            noteLive.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet totals above are the sum from <strong>' +
+              fmt(rep) + ' of ' + fmt(elig) + ' hives</strong> reporting' +
+              (rep < elig ? ' &mdash; the rest are still collecting' : '') +
+              '. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
           }
         }
         var note = document.getElementById('hero-proof-note');

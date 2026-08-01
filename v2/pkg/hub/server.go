@@ -1716,14 +1716,6 @@ type FleetStats struct {
 // rather than freezing a stale figure on the public page forever.
 const fleetStatsMaxAge = 6 * time.Hour
 
-// fleetStatsMinReportingFraction is the share of eligible hives that must
-// report fresh counts before the aggregate is considered trustworthy enough to
-// display as a fleet-wide total. Below this the landing page shows a degraded
-// state instead of a confidently wrong number — the regression this guards
-// against is precisely a total silently assembled from a small minority of the
-// fleet (2 of 50) and rendered as though it were complete.
-const fleetStatsMinReportingFraction = 0.5
-
 // computeFleetStats aggregates fleet-wide contribution counts across public,
 // non-stale hives. A hive that never reported a given count (nil pointer) is
 // skipped for that count — the aggregate reflects only hives with real data,
@@ -1786,15 +1778,34 @@ func (s *HubServer) computeFleetStats() FleetStats {
 	return fs
 }
 
-// FleetStatsTrustworthy reports whether enough of the eligible fleet
-// contributed fresh counts for the totals to be presented as a fleet-wide
-// figure. A total built from a small minority is worse than no total at all:
-// it renders as a confident, precise, badly wrong number.
+// FleetStatsTrustworthy reports whether ANY hive contributed a fresh count.
+//
+// It used to require half the eligible fleet, on the reasoning that "a total
+// built from a small minority is worse than no total at all". That reasoning
+// treats the aggregate as an ESTIMATE — a sample you extrapolate from, where
+// too small a sample gives a confidently wrong answer.
+//
+// It is not an estimate. Every hive counts its OWN merged PRs and the loop
+// above sums them with +=; ReposManaged is len(repoSet), so shared repos are
+// already deduplicated. Seven hives reporting 12,819 PRs is not a guess at a
+// fleet total, it is an exact count of what those seven did. The number is
+// correct; only its COMPLETENESS is partial.
+//
+// So the honest presentation is the number plus its coverage, not silence.
+// Suppressing it was strictly worse: a blank strip reads as "this fleet did
+// nothing", which is the one interpretation that is actually false. The page
+// now always renders the coverage alongside, so a partial total can never be
+// mistaken for a complete one.
+//
+// This also removes a trap. The last-known-good fallback was only RECORDED
+// when this returned true, and served only when it returned false — so on a
+// fleet that had never once cleared the bar it was never written, and the
+// fallback designed for exactly that situation had nothing to serve. The
+// safety net could only be filled by the condition it existed to protect
+// against. Live for months: coverage was 2/18, 7/18 and 10/50 on the day this
+// was found, and the strip had been blank throughout.
 func (fs FleetStats) FleetStatsTrustworthy() bool {
-	if fs.Eligible == 0 || fs.Reporting == 0 {
-		return false
-	}
-	return float64(fs.Reporting)/float64(fs.Eligible) >= fleetStatsMinReportingFraction
+	return fs.Reporting > 0
 }
 
 // fleetStatsLKG returns a copy of the persisted last-known-good aggregate, or
@@ -1875,12 +1886,21 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	// no log line, a fleet-wide collector failure looks identical to a quiet
 	// day. This is the operator-visible signal that the data, not the fleet,
 	// is what shrank.
-	if !fs.Trustworthy {
-		s.logger.Warn("fleet stats degraded: too few hives reporting to publish a fleet total",
+	// The total is always published now, so this is no longer a publish gate —
+	// it is the operator signal that the DATA shrank, not the fleet. Keep it
+	// loud: a silent hide is how the blank strip regressed unnoticed before,
+	// where a fleet-wide collector failure looked identical to a quiet day.
+	if fs.Eligible > 0 && fs.Reporting*2 < fs.Eligible {
+		s.logger.Warn("fleet stats: fewer than half the eligible hives are reporting; the published total is partial",
 			"reporting", fs.Reporting,
 			"eligible", fs.Eligible,
 			"stale", fs.Stale,
-			"min_fraction", fleetStatsMinReportingFraction,
+		)
+	}
+	if fs.Reporting == 0 && fs.Eligible > 0 {
+		s.logger.Warn("fleet stats: NO hive reported a fresh count; the strip will show nothing",
+			"eligible", fs.Eligible,
+			"stale", fs.Stale,
 		)
 	}
 
