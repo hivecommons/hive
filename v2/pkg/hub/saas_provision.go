@@ -2033,12 +2033,20 @@ spec:
       - name: copy-config
         image: ghcr.io/kubestellar/hive:{{.ImageTag}}
         imagePullPolicy: {{.ImagePullPolicy}}
-        # Seed-wins variant: the ConfigMap is copied over the config path and
-        # the PVC runtime config is only REPORTED, never restored here. The
-        # entrypoint does the real overlay merge. Both the new and legacy
-        # names are probed so the diagnostic stays truthful while hives that
-        # predate the hive.yaml.runtime rename still carry only the old file.
-        command: ["sh", "-c", "cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied; if [ -f /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -f /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; fi"]
+        # SEED-ONLY variant (phase 3 of the layer collapse). The ConfigMap is
+        # copied ONLY when the PVC carries no runtime config — i.e. first boot.
+        #
+        # It used to copy unconditionally on every boot, which meant the frozen
+        # seed overwrote the config path before the entrypoint had a say. Phase
+        # 2 made the entrypoint prefer the runtime config, so that copy became
+        # redundant work that still had to be undone one line later; skipping it
+        # is what actually makes the ConfigMap a seed rather than a per-boot
+        # input.
+        #
+        # Both runtime names are probed: ~16 of 50 live spokes still carry only
+        # the legacy hive.yaml.bak, so keying on the new name alone would treat
+        # them as first-boot and re-seed a hive that has real config on its PVC.
+        command: ["sh", "-c", "if [ -s /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery; elif [ -s /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied-first-boot; fi"]
         volumeMounts:
         - name: config
           mountPath: /etc/hive-seed

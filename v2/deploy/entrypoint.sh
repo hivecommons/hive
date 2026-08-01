@@ -90,6 +90,15 @@ if [ "$IS_KUBERNETES" = "true" ]; then
       echo "[entrypoint] K8s mode — config path read-only, using $HIVE_CONFIG_BOOT directly"
     fi
   elif [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ]; then
+    # FIRST BOOT ONLY. The copy-config init container now seeds the config path
+    # solely when the PVC has no runtime config, so reaching here means this
+    # hive has never written one.
+    #
+    # The overlay merge below is kept for one case that is real: a hive
+    # REPROVISIONED onto an existing PVC has a dashboard overlay but no runtime
+    # config, and dropping its overlay would silently discard the owner's agent
+    # roster and level. On a genuinely new hive there is no overlay and the
+    # merge is a no-op.
     # The copy-config init container re-seeded $HIVE_CONFIG_PATH from the
     # ConfigMap on this boot. Config saved via the dashboard (Config.Save
     # writes /etc/hive/hive.yaml, an emptyDir) would be silently lost —
