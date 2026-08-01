@@ -96,18 +96,33 @@ func TestComputeFleetStats(t *testing.T) {
 			want: FleetStats{ReposManaged: 1, PRsMerged: 2, Hives: 1, TotalHives: 1, Reporting: 1, Eligible: 1},
 		},
 		{
-			// Unassigned placeholders (Org == "") are counted as AVAILABLE and
-			// excluded from the assigned totals — "hives up / total" is about the
-			// working fleet, not idle inventory. Here: 2 assigned (1 up), 3 available.
-			name: "unassigned placeholders count as available, not assigned",
+			// Unassigned placeholders are counted as AVAILABLE and excluded from
+			// the assigned totals — "hives up / total" is about the working fleet,
+			// not idle inventory. A placeholder is detected by its "hosted-available-"
+			// ID prefix OR "available-" org prefix, NOT by an empty Org (an unclaimed
+			// slot keeps a leftover pool org). Here: 2 assigned (1 up), 3 available.
+			name: "placeholders count as available, not assigned",
 			hives: []RegistryEntry{
-				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(3)},
-				{IsPublic: false, Online: false, Org: "b", Repos: []string{"r2"}, PRsMerged90d: ptrInt(1)},
-				{Online: true, Org: ""},  // available placeholder, online
-				{Online: false, Org: ""}, // available placeholder, offline
-				{Online: true, Org: ""},  // available placeholder, online
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(3)},
+				{ID: "h2", IsPublic: false, Online: false, Org: "b", Repos: []string{"r2"}, PRsMerged90d: ptrInt(1)},
+				{ID: "hosted-available-oke-01-placeholder-aa01", Online: true, Org: "available-pool"}, // both markers, online
+				{ID: "hosted-available-oke-02-placeholder-aa02", Online: false, Org: ""},              // ID marker only, offline
+				{ID: "regular-id", Online: true, Org: "available-pool"},                               // org marker only, online
 			},
 			want: FleetStats{ReposManaged: 1, PRsMerged: 3, Hives: 1, TotalHives: 2, AvailableHives: 3, Reporting: 1, Eligible: 1},
+		},
+		{
+			// THE BUG: an unclaimed slot keeps a leftover REAL pool org (live
+			// example id="hosted-available-oke-01-placeholder-bb95",
+			// org="TradingAsBuddies"). The old Org=="" check missed it entirely —
+			// counting it as assigned and inflating hives-up/total. The
+			// "hosted-available-" ID prefix still marks it available.
+			name: "placeholder with leftover real org is still available",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(9)},
+				{ID: "hosted-available-oke-01-placeholder-bb95", Online: true, Org: "TradingAsBuddies", Repos: []string{"leftover/repo"}},
+			},
+			want: FleetStats{ReposManaged: 1, PRsMerged: 9, Hives: 1, TotalHives: 1, AvailableHives: 1, Reporting: 1, Eligible: 1},
 		},
 		{
 			name:  "no hives yields empty",

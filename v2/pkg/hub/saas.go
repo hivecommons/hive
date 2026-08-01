@@ -847,6 +847,15 @@ type ClusterHealthNode struct {
 // hives; pods in these namespaces identify hives running on a node.
 const hiveHostedNamespacePrefix = "hive-hosted-"
 
+// hostedAvailableIDPrefix is the ID prefix a pre-provisioned pool slot carries
+// while it is unclaimed inventory (e.g. "hosted-available-oke-01-placeholder-bb95").
+// It is the RegistryEntry-side marker for an available placeholder: unlike
+// MyHiveEntry, RegistryEntry has no ProvStatus field, so the ID prefix (paired
+// with the "available-" org prefix, placeholderOrgPrefix) is the reliable signal
+// that a slot is idle inventory rather than a claimed hive. A claimed hive keeps
+// neither marker.
+const hostedAvailableIDPrefix = "hosted-available-"
+
 type ClusterHealthSummary struct {
 	TotalNodes    int `json:"total_nodes"`
 	TotalCPUCores int `json:"total_cpu_cores"`

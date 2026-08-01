@@ -1888,11 +1888,21 @@ func (s *HubServer) computeFleetStats() FleetStats {
 	repoSet := make(map[string]struct{})
 	for _, h := range s.registry.Hives {
 		// An UNASSIGNED hive is a pre-provisioned placeholder nobody has claimed
-		// yet — it carries no project, so its Org is empty (a claimed hive always
-		// has one). It is counted as AVAILABLE and excluded from the assigned
-		// totals below: "hives up / total" and the contribution sums are about the
+		// yet. It is counted as AVAILABLE and excluded from the assigned totals
+		// below: "hives up / total" and the contribution sums are about the
 		// working fleet, not idle inventory a user could still request.
-		if h.Org == "" {
+		//
+		// A placeholder is NOT detectable by an empty Org: an unclaimed slot
+		// keeps its "hosted-available-" ID prefix and frequently a leftover pool
+		// org (live example: id="hosted-available-oke-01-placeholder-bb95",
+		// org="TradingAsBuddies"). Testing Org=="" therefore matched zero
+		// placeholders AND counted every one as assigned, inflating total_hives
+		// and hives-up. Detect it the way the rest of the codebase does — see
+		// isPlaceholderEntry in drift.go, which uses ProvStatus=="available"
+		// (authoritative) with the "available-" org prefix as fallback. RegistryEntry
+		// has no ProvStatus, so here we use the two markers it does carry: the
+		// "hosted-available-" ID prefix or the "available-" org prefix.
+		if strings.HasPrefix(h.ID, hostedAvailableIDPrefix) || strings.HasPrefix(h.Org, placeholderOrgPrefix) {
 			fs.AvailableHives++
 			continue
 		}
