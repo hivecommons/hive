@@ -21,12 +21,21 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/kubestellar/hive/v2/pkg/config"
+	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
 const (
-	wsHeartbeatInterval  = 30 * time.Second
-	wsHeartbeatTimeout   = 90 * time.Second
-	wsTaskTimeout        = 30 * time.Minute
+	wsHeartbeatInterval = 30 * time.Second
+	wsHeartbeatTimeout  = 90 * time.Second
+	wsTaskTimeout       = 30 * time.Minute
+	// wsTokenTTL is how long a minted scoped GitHub token stays valid. It must
+	// match the token_expires_at we advertise to the relay so both sides agree
+	// on when the token dies.
+	wsTokenTTL = 55 * time.Minute
+	// wsTokenRefreshPeriod is how long after minting we proactively re-mint and
+	// push a fresh token to an active task, before wsTokenTTL expires. The gap
+	// (5 min) absorbs clock skew and in-flight gh commands so a long,
+	// human-steered session never silently loses push access. See #2393 item 2.
 	wsTokenRefreshPeriod = 50 * time.Minute
 	wsAuthTimeout        = 30 * time.Second
 	wsMaxMessageSize     = 64 * 1024
@@ -58,7 +67,12 @@ type ContributorConnection struct {
 	currentTask *WSTaskAssign
 	lastPong    time.Time
 	tmuxOutput  []string
-	mu          sync.Mutex
+	// tokenMintedAt is when the scoped GitHub token for currentTask was last
+	// minted. The heartbeat loop uses it to re-mint and push a token_refresh
+	// once wsTokenRefreshPeriod has elapsed, before the token expires. Zero when
+	// no task is active. See #2393 item 2.
+	tokenMintedAt time.Time
+	mu            sync.Mutex
 }
 
 type WSMessage struct {
@@ -441,6 +455,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			contributor.mu.Lock()
 			abandonedTask := contributor.currentTask
 			contributor.currentTask = nil
+			contributor.tokenMintedAt = time.Time{}
 			contributor.mu.Unlock()
 			if abandonedTask != nil {
 				h.logger.Warn("[contribute-ws] task released on disconnect",
@@ -644,6 +659,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				completedTask := contributor.currentTask
 				contributor.currentTask = nil
+				contributor.tokenMintedAt = time.Time{}
 				contributor.tmuxOutput = msg.TmuxOutput
 				contributor.mu.Unlock()
 
@@ -682,6 +698,7 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				contributor.mu.Lock()
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				contributor.currentTask = nil
+				contributor.tokenMintedAt = time.Time{}
 				contributor.mu.Unlock()
 
 				if hasTask {
@@ -732,12 +749,86 @@ func (h *ContributeWSHub) heartbeatLoop(c *ContributorConnection) {
 			return
 		}
 
+		h.maybeRefreshToken(c)
+
 		if err := sendJSON(c.ws, WSMessage{Type: "ping", Seq: h.nextSeq()}); err != nil {
 			h.logger.Info("[contribute-ws] heartbeat ping failed, closing", "username", c.profile.GitHubUsername)
 			c.ws.Close()
 			return
 		}
 	}
+}
+
+// maybeRefreshToken re-mints a scoped GitHub token and pushes a token_refresh to
+// the relay once wsTokenRefreshPeriod has elapsed since the current task's token
+// was minted, provided a task is still active. This keeps long, human-steered
+// sessions from silently losing push access when the original token expires at
+// wsTokenTTL. The relay's token_refresh handler consumes github_token +
+// token_expires_at (bin/contributor-relay.sh). See #2393 item 2.
+func (h *ContributeWSHub) maybeRefreshToken(c *ContributorConnection) {
+	tier, due := tokenRefreshDue(c, time.Now())
+	if !due {
+		return
+	}
+
+	tok, err := h.mintScopedToken(tier)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] token refresh: mint failed, will retry next heartbeat",
+			"username", c.profile.GitHubUsername, "tier", tier, "error", err)
+		return
+	}
+	if tok == "" {
+		// No new token available (no App auth / no cache): leave the relay's
+		// existing token in place and try again next heartbeat.
+		return
+	}
+
+	if err := h.sendTokenRefresh(c, tok); err != nil {
+		h.logger.Info("[contribute-ws] token refresh: send failed", "username", c.profile.GitHubUsername, "error", err)
+		return
+	}
+
+	h.logger.Info("[contribute-ws] token refreshed for active task",
+		"username", c.profile.GitHubUsername, "tier", tier)
+}
+
+// tokenRefreshDue reports whether the connection has an active task whose scoped
+// token was minted at least wsTokenRefreshPeriod ago, meaning it is time to
+// re-mint before wsTokenTTL. It returns the trust tier to mint for. Pure and
+// clock-injectable so the timing can be tested without a real clock.
+func tokenRefreshDue(c *ContributorConnection, now time.Time) (tier string, due bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.currentTask == nil || c.tokenMintedAt.IsZero() {
+		return "", false
+	}
+	if now.Sub(c.tokenMintedAt) < wsTokenRefreshPeriod {
+		return "", false
+	}
+	if c.profile != nil {
+		tier = c.profile.TrustTier
+	}
+	return tier, true
+}
+
+// sendTokenRefresh writes a token_refresh message carrying the new token and its
+// expiry, then records the new mint time. The field names (github_token,
+// token_expires_at) match exactly what the relay's token_refresh handler
+// consumes in bin/contributor-relay.sh. See #2393 item 2.
+func (h *ContributeWSHub) sendTokenRefresh(c *ContributorConnection, tok string) error {
+	msg := WSMessage{
+		Type:           "token_refresh",
+		Seq:            h.nextSeq(),
+		GitHubToken:    tok,
+		TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
+	}
+	if err := sendJSON(c.ws, msg); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.tokenMintedAt = time.Now()
+	c.mu.Unlock()
+	return nil
 }
 
 func (h *ContributeWSHub) checkModelAllowed(model string) (bool, []string) {
@@ -781,6 +872,27 @@ func (h *ContributeWSHub) cleanupLoop() {
 		}
 		h.mu.Unlock()
 	}
+}
+
+// mintScopedToken produces a scoped GitHub token for the given trust tier via
+// the GitHub App auth path, falling back to the on-disk cache when no App auth
+// is configured (dev/single-token deployments). This is the single mint path
+// shared by task_assign and the heartbeat token-refresh, so both advertise
+// tokens minted the same way. See #2393 item 2.
+func (h *ContributeWSHub) mintScopedToken(tier string) (string, error) {
+	if h.server != nil && h.server.deps != nil && h.server.deps.GHAppAuth != nil {
+		ctx := h.server.deps.Ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return h.server.deps.GHAppAuth.ScopedToken(ctx, tier)
+	}
+	if tokenBytes, err := os.ReadFile(github.TokenCachePath); err == nil {
+		return string(tokenBytes), nil
+	}
+	// No App auth and no cache: mint nothing rather than fail. Callers treat an
+	// empty token as "leave the relay's current token in place".
+	return "", nil
 }
 
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
@@ -880,21 +992,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				}
 			}
 
-			ghToken := ""
-			if h.server.deps != nil && h.server.deps.GHAppAuth != nil {
-				ctx := h.server.deps.Ctx
-				if ctx == nil {
-					ctx = context.Background()
-				}
-				if tok, err := h.server.deps.GHAppAuth.ScopedToken(ctx, c.profile.TrustTier); err == nil {
-					ghToken = tok
-				} else {
-					h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
-						"tier", c.profile.TrustTier, "error", err)
-					return nil
-				}
-			} else if tokenBytes, err := os.ReadFile("/var/run/hive-metrics/gh-app-token.cache"); err == nil {
-				ghToken = string(tokenBytes)
+			ghToken, err := h.mintScopedToken(c.profile.TrustTier)
+			if err != nil {
+				h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
+					"tier", c.profile.TrustTier, "error", err)
+				return nil
 			}
 
 			taskID := fmt.Sprintf("ct-%s-%d-%d", repo.Full, number, time.Now().Unix())
@@ -918,6 +1020,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				Number: number,
 				Title:  title,
 			}
+			c.tokenMintedAt = time.Now()
 			c.mu.Unlock()
 
 			return &WSMessage{
@@ -930,7 +1033,7 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				Title:          title,
 				URL:            url,
 				GitHubToken:    ghToken,
-				TokenExpiresAt: time.Now().Add(55 * time.Minute).UTC().Format(time.RFC3339),
+				TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
 				Prompt:         prompt,
 				ContribLabels:  []string{"contributor/" + c.profile.GitHubUsername},
 			}
