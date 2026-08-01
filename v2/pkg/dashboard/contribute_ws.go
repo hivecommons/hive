@@ -62,34 +62,39 @@ type ContributorConnection struct {
 }
 
 type WSMessage struct {
-	Type              string          `json:"type"`
-	Seq               int             `json:"seq,omitempty"`
-	Nonce             string          `json:"nonce,omitempty"`
-	ContributorID     string          `json:"contributor_id,omitempty"`
-	TrustTier         string          `json:"trust_tier,omitempty"`
-	Permissions       []string        `json:"permissions,omitempty"`
-	Reason            string          `json:"reason,omitempty"`
-	RegistrationToken string          `json:"registration_token,omitempty"`
-	CLIBackend        string          `json:"cli_backend,omitempty"`
-	Model             string          `json:"model,omitempty"`
-	TaskID            string          `json:"task_id,omitempty"`
-	Kind              string          `json:"kind,omitempty"`
-	Repo              string          `json:"repo,omitempty"`
-	Number            int             `json:"number,omitempty"`
-	Title             string          `json:"title,omitempty"`
-	URL               string          `json:"url,omitempty"`
-	Labels            []string        `json:"labels,omitempty"`
-	Prompt            string          `json:"prompt,omitempty"`
-	GitHubToken       string          `json:"github_token,omitempty"`
-	TokenExpiresAt    string          `json:"token_expires_at,omitempty"`
-	Restrictions      json.RawMessage `json:"restrictions,omitempty"`
-	Role              string          `json:"role,omitempty"`
-	ContribLabels     []string        `json:"contributor_labels,omitempty"`
-	Status            string          `json:"status,omitempty"`
-	Result            string          `json:"result,omitempty"`
-	Summary           string          `json:"summary,omitempty"`
-	TmuxOutput        []string        `json:"tmux_output,omitempty"`
-	AcceptedModels    []string        `json:"accepted_models,omitempty"`
+	Type              string   `json:"type"`
+	Seq               int      `json:"seq,omitempty"`
+	Nonce             string   `json:"nonce,omitempty"`
+	ContributorID     string   `json:"contributor_id,omitempty"`
+	TrustTier         string   `json:"trust_tier,omitempty"`
+	Permissions       []string `json:"permissions,omitempty"`
+	Reason            string   `json:"reason,omitempty"`
+	RegistrationToken string   `json:"registration_token,omitempty"`
+	CLIBackend        string   `json:"cli_backend,omitempty"`
+	Model             string   `json:"model,omitempty"`
+	TaskID            string   `json:"task_id,omitempty"`
+	Kind              string   `json:"kind,omitempty"`
+	Repo              string   `json:"repo,omitempty"`
+	Number            int      `json:"number,omitempty"`
+	Title             string   `json:"title,omitempty"`
+	URL               string   `json:"url,omitempty"`
+	Labels            []string `json:"labels,omitempty"`
+	Prompt            string   `json:"prompt,omitempty"`
+	GitHubToken       string   `json:"github_token,omitempty"`
+	TokenExpiresAt    string   `json:"token_expires_at,omitempty"`
+	// Restrictions is RESERVED and intentionally not populated by the server yet:
+	// the contributor command restrictions are enforced server-side (gh-wrapper /
+	// contributor-default.json), so shipping the policy to the client would be
+	// advisory-only and risk drift. Left as omitempty so it never appears on the
+	// wire until a concrete client contract exists. (kubestellar/hive#2393 item 8.)
+	Restrictions   json.RawMessage `json:"restrictions,omitempty"`
+	Role           string          `json:"role,omitempty"`
+	ContribLabels  []string        `json:"contributor_labels,omitempty"`
+	Status         string          `json:"status,omitempty"`
+	Result         string          `json:"result,omitempty"`
+	Summary        string          `json:"summary,omitempty"`
+	TmuxOutput     []string        `json:"tmux_output,omitempty"`
+	AcceptedModels []string        `json:"accepted_models,omitempty"`
 	// Permanent marks a task_failed the relay will not retry: it exhausted its
 	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
 	// bin/contributor-relay.sh). Reassigning the same work item to the same
@@ -932,7 +937,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				GitHubToken:    ghToken,
 				TokenExpiresAt: time.Now().Add(55 * time.Minute).UTC().Format(time.RFC3339),
 				Prompt:         prompt,
-				ContribLabels:  []string{"contributor/" + c.profile.GitHubUsername},
+				// The issue's own labels — the Labels envelope field was declared but
+				// never populated, so a client reading it got nothing (kubestellar/
+				// hive#2393 item 8). They're already computed for filtering above.
+				Labels:        labels,
+				ContribLabels: []string{"contributor/" + c.profile.GitHubUsername},
 			}
 		}
 	}
