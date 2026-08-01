@@ -212,6 +212,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// requireAuth plus an inner owner-or-admin check, exactly like
 	// switch-branch and auto-upgrade above.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/forge", s.requireAuth(s.handleSwitchForge))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-app", s.requireAuth(s.handleResetApp))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
@@ -11333,6 +11334,13 @@ const dashboardHTML = `<!DOCTYPE html>
         if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Activity Timeline</div>');
         if (h.role === 'owner' || h.role === 'read-write' || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">⚡ Fund with OpenRouter</div>');
         if (_isAdmin && isHosted) menuItems.push('<div onclick="openBannerForHive(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Send Banner</div>');
+        /* Reset App clears ONLY the spoke's installation_id, which makes
+           HasUsableApp() false and prompts the owner to install the App again.
+           Admin-only and hosted-only, matching the endpoint's own guard. The
+           case it exists for: a hive provisioned with its own GitHub App keeps
+           that App's installation_id after its identity is moved to the fleet
+           App, so every field reads correct while freshly minted tokens 404. */
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Reset App</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
@@ -12206,6 +12214,23 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     var _switchTimers = {};
+    /* Reset App: clears the spoke's installation_id so the owner is prompted
+       to install the GitHub App again. Confirmed first because it costs the
+       owner a re-install, and the reset is delivered on the spoke's next
+       heartbeat rather than immediately. */
+    async function resetHiveApp(hiveId, hiveName) {
+      if (!confirm('Reset the GitHub App for "' + hiveName + '"?\n\nThe spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again. The App ID, slug and key are left alone.')) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-app', {method: 'POST'});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { alert('Reset failed: ' + (data.error || resp.status)); return; }
+        alert('App reset armed for "' + hiveName + '".\n\nThe spoke clears its installation on the next heartbeat (~30s), then shows the install prompt.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        alert('Reset failed: ' + e);
+      }
+    }
+
     function switchBranch(hiveId, newBranch, el) {
       if (el) el.closest('[id^="branch-menu-"]').style.display = 'none';
       if (_switchTimers[hiveId]) {

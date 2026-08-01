@@ -167,6 +167,38 @@ func prospectiveGitHubIdentity(cur config.GitHubConfig, ghCfg *hub.HeartbeatGitH
 	return &next
 }
 
+// nextInstallationID decides what a hive's installation_id becomes after a
+// hub delivery, and reports whether the change is an operator RESET.
+//
+// Three cases, and the difference between the last two is load-bearing:
+//
+//	ResetInstallation  -> 0. The operator clicked "Reset App". Clearing makes
+//	                     HasUsableApp() false, which raises githubAppRequired:
+//	                     the owner is prompted to install the App again and the
+//	                     self-heal ticker starts, whose RediscoverAndAdopt
+//	                     adopts the correct installation for whatever they
+//	                     install.
+//	non-zero pushed    -> adopt it.
+//	zero pushed        -> KEEP the current value. Zero means "the hub is not
+//	                     speaking to this field", not "clear it". The
+//	                     cluster-wide key reconcile sends zero on every beat
+//	                     because it repairs KEYS on hives whose installation the
+//	                     hub does not track; reading that as a clear would blank
+//	                     a working installation fleet-wide and turn a key-only
+//	                     fault into a total auth outage.
+func nextInstallationID(current int64, ghCfg *hub.HeartbeatGitHubAppConfig) (next int64, reset bool) {
+	if ghCfg == nil {
+		return current, false
+	}
+	if ghCfg.ResetInstallation {
+		return 0, current != 0
+	}
+	if ghCfg.InstallationID != 0 {
+		return ghCfg.InstallationID, false
+	}
+	return current, false
+}
+
 func perAppIDKeyPath(appID int64) string {
 	if appID <= 0 {
 		return ""
@@ -2896,8 +2928,12 @@ func main() {
 			// KEY on hives whose installation_id is already correct (and which
 			// the hub does not track); assigning zero here would blank a working
 			// value and turn a key-only fault into a total auth outage.
-			if ghCfg.InstallationID != 0 {
-				cfg.GitHub.InstallationID = ghCfg.InstallationID
+			if next, cleared := nextInstallationID(cfg.GitHub.InstallationID, ghCfg); cleared {
+				logger.Info("clearing github app installation_id on operator request",
+					"was", cfg.GitHub.InstallationID)
+				cfg.GitHub.InstallationID = next
+			} else {
+				cfg.GitHub.InstallationID = next
 			}
 			// Deliberately NOT `cfg.GitHub.KeyFile = keyPath`.
 			//

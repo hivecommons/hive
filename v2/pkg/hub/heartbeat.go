@@ -838,6 +838,18 @@ type HeartbeatGitHubAppConfig struct {
 	// Empty means "leave the spoke's slug unchanged" — never a way to blank a
 	// working value.
 	AppSlug string `json:"app_slug,omitempty"`
+	// ResetInstallation tells the spoke to CLEAR its installation_id.
+	//
+	// A separate flag because zero cannot carry this meaning: the spoke adopts
+	// an installation only when the pushed value is non-zero, since zero means
+	// "not speaking to this field". Overloading it would make every push that
+	// omits an installation blank a working one.
+	//
+	// The spoke clearing its installation makes HasUsableApp() false, which
+	// raises githubAppRequired — so the owner is prompted to install the App
+	// again AND the 2-minute self-heal ticker starts, whose RediscoverAndAdopt
+	// finds the correct installation for whichever App is installed.
+	ResetInstallation bool `json:"reset_installation,omitempty"`
 	// APIURL and BaseURL complete the identity SET.
 	//
 	// WHY THEY ARE HERE AND NOT ON ProjectConfig

@@ -478,6 +478,31 @@ type SaaSHive struct {
 	// stops for good and the spoke owns the value again. Both default to their
 	// zero values on every existing hive, so nothing is delivered to a hive
 	// nobody switched: the push is gated on a NON-EMPTY RequestedGitHubHost.
+	// RequestedAppReset asks the spoke to CLEAR its installation_id, so the
+	// hive falls back to "App not installed" and prompts the owner to install
+	// it again.
+	//
+	// WHY THIS NEEDS ITS OWN FIELD RATHER THAN JUST PUSHING ZERO
+	//
+	// The wire cannot express a clear. The spoke adopts a pushed installation
+	// only when it is non-zero (cmd/hive: `if ghCfg.InstallationID != 0`),
+	// deliberately — zero means "the hub is not speaking to this field", and
+	// treating it as "blank it" once turned a key-only fault into a total auth
+	// outage. So a reset has to be a distinct instruction, not a value.
+	//
+	// It is a REQUEST, persisted on the hive record, because the operator's
+	// intent has to survive a missed beat and a hub restart. Cleared when the
+	// spoke reports installation_id 0 back — read-back confirmation, the same
+	// contract the forge switch uses.
+	//
+	// The live case: a hive provisioned with its OWN GitHub App kept that App's
+	// installation_id after its identity was later moved to the fleet's public
+	// App. app_id, app_slug and key_file all named the public App while the
+	// installation belonged to another, so every freshly minted token returned
+	// "404 Not Found" while cached ones kept working — 84 failures in three
+	// hours on one hive, with no config field visibly wrong.
+	RequestedAppReset bool `json:"requested_app_reset,omitempty"`
+
 	RequestedGitHubHost string `json:"requested_github_host,omitempty"`
 	// ForgeDelivered flips true once the spoke reports the requested forge host.
 	ForgeDelivered bool `json:"forge_delivered,omitempty"`
