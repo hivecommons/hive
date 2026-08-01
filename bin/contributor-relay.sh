@@ -356,6 +356,34 @@ function captureTmuxLines(n) {
   }
 }
 
+// Best-effort scan of the agent's recent output for a GitHub pull-request URL
+// it opened for this task. Reported on task_complete as pr_url so the hub can
+// tell "work shipped" from "agent merely went idle" and pick the right issue
+// cooldown (kubestellar/hive#2393 item 7). This is intentionally best-effort:
+// when no PR link is visible we return '' and the hub applies its short no-PR
+// cooldown. When `repo` is known (owner/repo) we prefer a URL under that repo
+// so an unrelated PR mentioned in passing does not get attributed to the task.
+function detectPRURL(lines, repo) {
+  if (!Array.isArray(lines) || lines.length === 0) return '';
+  // Matches https://github.com/<owner>/<repo>/pull/<number>, capturing owner/repo.
+  const PR_URL_RE = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/\d+/g;
+  let repoMatch = '';
+  let anyMatch = '';
+  for (const line of lines) {
+    let m;
+    PR_URL_RE.lastIndex = 0;
+    while ((m = PR_URL_RE.exec(line)) !== null) {
+      const url = m[0];
+      if (!anyMatch) anyMatch = url;
+      if (repo && m[1] === repo) { repoMatch = url; break; }
+    }
+    if (repoMatch) break;
+  }
+  // Prefer a URL under the task's own repo; otherwise fall back to the first
+  // PR URL seen (better an approximate audit trail than none).
+  return repoMatch || anyMatch;
+}
+
 // True while a bob CLI process is alive. bob exits at the end of every turn,
 // so "process gone" means the turn finished — see the bob branch of
 // checkTmuxIdle(). Matches the launch command rather than the bare name so a
@@ -624,7 +652,13 @@ function progressTick() {
     console.log(`Task ${currentTask.task_id} completed — agent idle`);
     // Successful completion clears this work item's crash-retry budget.
     cliRestartCounts.delete(taskKey(currentTask));
-    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines });
+    // Best-effort: report the PR the agent opened, if one is visible in its
+    // recent output, so the hub can distinguish "shipped a PR" from "just went
+    // idle" and pick the right issue cooldown (kubestellar/hive#2393 item 7).
+    // Empty when no PR link is found — the hub then applies the short cooldown.
+    const prURL = detectPRURL(tmuxLines, currentTask.repo);
+    if (prURL) console.log(`Detected PR for ${currentTask.task_id}: ${prURL}`);
+    send({ type: 'task_complete', seq: nextSeq(), task_id: currentTask.task_id, result: 'completed', summary: 'Agent returned to idle', tmux_output: tmuxLines, pr_url: prURL });
     // bob exits after each turn, so the pane is now a bare shell. Bring it
     // back up before the next task, or the prompt would be typed into bash
     // ("-bash: <prompt>: command not found") and silently lost.

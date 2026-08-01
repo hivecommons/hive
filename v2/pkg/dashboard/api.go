@@ -147,6 +147,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/config/governor/agents", s.handleGovernorAddAgent)
 	s.mux.HandleFunc("DELETE /api/config/governor/agents/{name}", s.handleGovernorRemoveAgent)
 	s.mux.HandleFunc("PUT /api/config/governor/repos", s.handleGovernorRepos)
+	// Access probe run when the Repos tab adds a new repo: verifies the hive's
+	// GitHub App is installed on the new repo's org before the repo is accepted,
+	// and hands back the correct per-forge install URL when it is not.
+	s.mux.HandleFunc("POST /api/config/governor/repos/check-access", s.handleGovernorRepoCheckAccess)
 	s.mux.HandleFunc("PUT /api/config/github", s.handleConfigGitHub)
 
 	s.mux.HandleFunc("GET /api/agents", s.handleAgentsList)
@@ -4820,16 +4824,38 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "at least one repo is required", http.StatusBadRequest)
 		return
 	}
-	current := s.configSnapshot()
-	org := current.Project.Org
-	nextRepos := current.Project.Repos
-	nextPrimary := current.Project.PrimaryRepo
-	nextBaseURL := current.GitHub.BaseURL
-	nextAPIURL := current.GitHub.APIURL
-	reposChanged := len(body.Repos) > 0
+	org := s.deps.Config.Project.Org
 
-	if reposChanged {
-		nextRepos = make([]string, 0, len(body.Repos))
+	// Single-host-per-spoke (defence in depth; the Repos tab also checks this
+	// client-side so it fails fast). Every repo the user submits must live on
+	// this hive's forge — mixing github.com and a GHE instance silently breaks
+	// App auth for half the repos. Check the raw pasted values BEFORE the loop
+	// below strips the host off each one. hiveForgeHost() is this hive's own
+	// GitHub host (github.com or the GHE hostname), the same value the dashboard
+	// derives from github_base_url.
+	// Snapshot so a validation failure AFTER we mutate the in-memory config can
+	// restore it — the "always exactly one default" guard below runs once the
+	// final repos+primary are known, and a reject must not leave a half-applied
+	// config in memory (which would then be persisted on the next unrelated save).
+	prevRepos := append([]string(nil), s.deps.Config.Project.Repos...)
+	prevPrimary := s.deps.Config.Project.PrimaryRepo
+
+	spokeHost := s.hiveForgeHost()
+	for _, ref := range body.Repos {
+		if h := repoRefHostLabel(ref); h != "" && !sameForgeHost(h, spokeHost) {
+			jsonError(w, fmt.Sprintf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host. Remove the mismatched repo or use a repo on %s.", strings.TrimSpace(ref), h, spokeHost, spokeHost), http.StatusBadRequest)
+			return
+		}
+	}
+	if body.PrimaryRepo != nil {
+		if h := repoRefHostLabel(*body.PrimaryRepo); h != "" && !sameForgeHost(h, spokeHost) {
+			jsonError(w, fmt.Sprintf("default repo %q is on %s but this hive is on %s — the default must live on this hive's forge.", strings.TrimSpace(*body.PrimaryRepo), h, spokeHost), http.StatusBadRequest)
+			return
+		}
+	}
+
+	if len(body.Repos) > 0 {
+		stripped := make([]string, 0, len(body.Repos))
 		for _, repo := range body.Repos {
 			repo = sanitizeString(repo)
 			if repo == "" || strings.Contains(repo, "..") || strings.ContainsAny(repo, "<>\"';&|") {
@@ -4841,19 +4867,24 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 				if len(parts) >= 2 {
 					if parts[0] != "" {
 						org = parts[0]
+						s.deps.Config.Project.Org = org
 					}
 					repo = parts[1]
 					if parsed.Host != "github.com" {
-						nextBaseURL = parsed.Scheme + "://" + parsed.Host
-						nextAPIURL = parsed.Scheme + "://" + parsed.Host + "/api/v3"
+						s.deps.Config.GitHub.BaseURL = parsed.Scheme + "://" + parsed.Host
+						s.deps.Config.GitHub.APIURL = parsed.Scheme + "://" + parsed.Host + "/api/v3"
 					}
 				}
 			}
 			if org != "" && strings.HasPrefix(repo, org+"/") {
-				nextRepos = append(nextRepos, strings.TrimPrefix(repo, org+"/"))
+				stripped = append(stripped, strings.TrimPrefix(repo, org+"/"))
 			} else {
-				nextRepos = append(nextRepos, repo)
+				stripped = append(stripped, repo)
 			}
+		}
+		s.deps.Config.Project.Repos = stripped
+		if s.deps.GHClient != nil {
+			s.deps.GHClient.SetRepos(stripped)
 		}
 	}
 
@@ -4868,29 +4899,43 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 		if org != "" && strings.HasPrefix(newPrimary, org+"/") {
 			newPrimary = strings.TrimPrefix(newPrimary, org+"/")
 		}
-		nextPrimary = newPrimary
+		oldPrimary := s.deps.Config.Project.PrimaryRepo
+		s.deps.Config.Project.PrimaryRepo = newPrimary
+		if newPrimary != oldPrimary {
+			s.logger.Info("primary repo changed", "from", oldPrimary, "to", newPrimary)
+			if s.deps.AdvisoryResetFunc != nil {
+				go s.deps.AdvisoryResetFunc(newPrimary)
+			}
+		}
 	}
 
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		candidate.Project.Org = org
-		candidate.Project.Repos = nextRepos
-		candidate.Project.PrimaryRepo = nextPrimary
-		candidate.GitHub.BaseURL = nextBaseURL
-		candidate.GitHub.APIURL = nextAPIURL
-		return nil
-	}); err != nil {
-		s.logger.Error("failed to persist repository config", "error", err)
-		jsonError(w, "failed to persist repository config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if reposChanged && s.deps.GHClient != nil {
-		s.deps.GHClient.SetRepos(nextRepos)
-	}
-	if nextPrimary != current.Project.PrimaryRepo {
-		s.logger.Info("primary repo changed", "from", current.Project.PrimaryRepo, "to", nextPrimary)
-		if s.deps.AdvisoryResetFunc != nil {
-			go s.deps.AdvisoryResetFunc(nextPrimary)
+	// Always exactly one default: a hive with repos must name a primary_repo that
+	// is one of them — that is the repo the advisory issue is maintained in. The
+	// Repos tab disables Save until a star is chosen, but enforce it server-side
+	// too so no client (or a stale one) can persist repos with no default. Reject
+	// and restore the pre-mutation config so the in-memory state stays coherent.
+	if final := s.deps.Config.Project.Repos; len(final) > 0 {
+		primary := s.deps.Config.Project.PrimaryRepo
+		inList := false
+		for _, r := range final {
+			if r == primary {
+				inList = true
+				break
+			}
 		}
+		if primary == "" || !inList {
+			s.deps.Config.Project.Repos = prevRepos
+			s.deps.Config.Project.PrimaryRepo = prevPrimary
+			if s.deps.GHClient != nil {
+				s.deps.GHClient.SetRepos(prevRepos)
+			}
+			jsonError(w, "set a default repo before saving — one of the monitored repos must be marked as the default (the repo where the advisory issue is maintained)", http.StatusBadRequest)
+			return
+		}
+	}
+
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config", "error", err)
 	}
 	if s.deps.EnumerateFunc != nil {
 		go s.deps.EnumerateFunc()
@@ -4898,6 +4943,152 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "config_governor_repos", auditDetail("section", "repos"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// hiveForgeHost returns the bare GitHub hostname this hive's repos and App live
+// on ("github.com" or a GHE hostname like "github.ibm.com"). It is the single
+// source of truth the single-host-per-spoke guard compares each submitted repo
+// against, and mirrors config.GitHubConfig.HostLabel() (the same value the
+// dashboard reads as github_base_url's host). Falls back to public github.com
+// when no config is loaded (tests/early boot).
+func (s *Server) hiveForgeHost() string {
+	if s.deps != nil && s.deps.Config != nil {
+		return s.deps.Config.GitHub.HostLabel()
+	}
+	return "github.com"
+}
+
+// repoRefHostLabel extracts the GitHub host a repo string was pasted with, or ""
+// when none was given (a bare "repo" or "owner/repo", which by definition belongs
+// to the hive's own forge). Mirrors hub.repoRefHost: a full URL or a leading
+// dotted segment ("github.ibm.com/org/repo") names an explicit host. Returned
+// lowercased for case-insensitive comparison in sameForgeHost.
+func repoRefHostLabel(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	s = strings.Trim(s, "/")
+	if s == "" {
+		return ""
+	}
+	parts := strings.Split(s, "/")
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		return strings.ToLower(parts[0])
+	}
+	return ""
+}
+
+// sameForgeHost reports whether two host labels refer to the same GitHub. Both
+// "" and "github.com" mean public GitHub; a GHE host equals only itself.
+// Case-insensitive. Mirrors hub.sameGitHubHost so the dashboard's single-host
+// rule matches the hub's request/assign validation exactly.
+func sameForgeHost(a, b string) bool {
+	norm := func(h string) string {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" || h == "github.com" {
+			return "github.com"
+		}
+		return h
+	}
+	return norm(a) == norm(b)
+}
+
+// handleGovernorRepoCheckAccess verifies that this hive's GitHub App can access
+// a repo the operator is about to add, and — when it cannot — returns the
+// per-forge App install/authorize URL so the Repos tab can guide the user to
+// grant access before the repo is finally accepted (requirement #3).
+//
+// The check today probes at ORG granularity: DiscoverInstallationID(org) returns
+// ErrNoInstallationForOrg when the App is not installed on the repo's org at all,
+// which is the common "new org the App was never installed on" case and the one
+// that hard-blocks reads and writes. On a positive result we report ok:true.
+//
+// TODO(repo-access-probe): tighten to REPO granularity. An App installed on the
+// org "Only select repositories" may still lack THIS repo (see #2353's
+// write-forbidden case). The deeper probe should mint an installation token and
+// GET /repos/{org}/{repo} (s.deps.GHClient.GetRepo) — a 404/403 there means the
+// installation exists but this repo is not in its selected set, which needs the
+// same "manage installation" URL to add the repo to the selection. That probe is
+// scoped out of this change to keep it focused; the org-level check plus the
+// install workflow already covers the "App not installed on the org" footgun.
+func (s *Server) handleGovernorRepoCheckAccess(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Repo string `json:"repo"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	ref := sanitizeString(body.Repo)
+	if ref == "" {
+		jsonError(w, "repo is required", http.StatusBadRequest)
+		return
+	}
+	// Single-host guard here too: an added repo on a different forge is rejected
+	// before we even probe access, with the same message as the save path.
+	spokeHost := s.hiveForgeHost()
+	if h := repoRefHostLabel(ref); h != "" && !sameForgeHost(h, spokeHost) {
+		jsonError(w, fmt.Sprintf("repo %q is on %s but this hive is on %s — a hive's repos must all be on one GitHub host.", ref, h, spokeHost), http.StatusBadRequest)
+		return
+	}
+	// Resolve the org the repo lives in. The paste may be "org/repo", a bare
+	// "repo" (org is the hive's configured org), or a full URL. Strip any host
+	// and pull the org segment when present.
+	org := s.deps.Config.Project.Org
+	stripped := ref
+	stripped = strings.TrimPrefix(stripped, "https://")
+	stripped = strings.TrimPrefix(stripped, "http://")
+	stripped = strings.Trim(stripped, "/")
+	parts := strings.Split(stripped, "/")
+	// Drop a leading host segment ("github.ibm.com/org/repo" -> "org/repo").
+	if len(parts) > 1 && strings.Contains(parts[0], ".") {
+		parts = parts[1:]
+	}
+	if len(parts) >= 2 && parts[0] != "" {
+		org = parts[0]
+	}
+	if org == "" {
+		jsonError(w, "cannot determine the org for this repo — use org/repo format", http.StatusBadRequest)
+		return
+	}
+
+	// An App-less hive (advisory-only, no private key) cannot and need not probe
+	// installation access: it never writes. Treat it as "no access check needed"
+	// so the add proceeds — the single-host guard above already ran.
+	if s.deps.GHAppAuth == nil || !s.deps.GHAppAuth.HasKey() {
+		okResponse(w, map[string]string{"status": "no-app"})
+		return
+	}
+
+	ctx := s.deps.Ctx
+	if ctx == nil {
+		ctx = r.Context()
+	}
+	if _, err := s.deps.GHAppAuth.DiscoverInstallationID(ctx, org); err != nil {
+		// Not installed on this org (or discovery failed). Surface the correct
+		// per-forge install URL and arm the existing pending-install mechanism so
+		// the banner/recheck plumbing the App-required flow already uses drives
+		// this to completion. AppInstallURL() returns "" for a GHE host whose App
+		// slug was never configured — the UI renders that as a config message
+		// rather than a dead link.
+		installURL := ""
+		if s.deps.Config != nil {
+			installURL = s.deps.Config.GitHub.AppInstallURL()
+		}
+		s.SetPendingGitHubAppInstall()
+		s.logger.Info("repo add blocked: app not installed on org", "org", org, "repo", ref, "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"ok":           false,
+			"needsInstall": true,
+			"org":          org,
+			"installUrl":   installURL,
+			"error":        fmt.Sprintf("the Hive GitHub App is not installed on %q, so it cannot read or write %s. Install/authorize the App for %q, then re-check.", org, ref, org),
+		})
+		return
+	}
+	okResponse(w, map[string]string{"status": "ok", "org": org})
 }
 
 func (s *Server) handleGitHubAppInstallClicked(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,9 @@
 package hub
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestAccessForHive covers the ordering and filtering the My Hives hover relies
 // on: only users granted this hive, owners first, then alphabetical.
@@ -48,9 +51,11 @@ func TestAccessForHiveContactMetadata(t *testing.T) {
 		FullName:       "Jane Doe",
 		SlackID:        "@jane",
 		Notes:          "GPU quota bump; prefers async",
+		LoginCount:     42,
+		SessionSeconds: 7200,
 	}}
 
-	t.Run("admin viewer gets name, slack, AND notes", func(t *testing.T) {
+	t.Run("admin viewer gets name, slack, notes AND engagement stats", func(t *testing.T) {
 		got := accessForHive("h1", users, true)
 		if len(got) != 1 {
 			t.Fatalf("want 1 entry, got %d", len(got))
@@ -62,9 +67,12 @@ func TestAccessForHiveContactMetadata(t *testing.T) {
 		if e.Notes != "GPU quota bump; prefers async" {
 			t.Errorf("admin must see notes, got %q", e.Notes)
 		}
+		if e.LoginCount != 42 || e.SessionSeconds != 7200 {
+			t.Errorf("admin must see stats, got login=%d session=%d", e.LoginCount, e.SessionSeconds)
+		}
 	})
 
-	t.Run("non-admin owner gets name+slack but NEVER notes", func(t *testing.T) {
+	t.Run("non-admin owner gets name+slack but NEVER notes or stats", func(t *testing.T) {
 		got := accessForHive("h1", users, false)
 		if len(got) != 1 {
 			t.Fatalf("want 1 entry, got %d", len(got))
@@ -76,5 +84,33 @@ func TestAccessForHiveContactMetadata(t *testing.T) {
 		if e.Notes != "" {
 			t.Errorf("owner must NOT see admin notes, but got %q", e.Notes)
 		}
+		if e.LoginCount != 0 || e.SessionSeconds != 0 {
+			t.Errorf("owner must NOT see engagement stats, got login=%d session=%d", e.LoginCount, e.SessionSeconds)
+		}
 	})
+}
+
+// TestAccessAvatarTitleCarriesStats pins that the co-member face's NATIVE tooltip
+// (accessAvatarTitle) carries the engagement info — logins, time, task activity,
+// verdict — reusing the admin-card helpers, and stays a native title (no custom
+// panel; TestInlineAvatarsCarryNoCustomPanel remains the panel-invariant guard).
+func TestAccessAvatarTitleCarriesStats(t *testing.T) {
+	for _, snippet := range []string{
+		"if (a.login_count) lines.push('Logins: ' + a.login_count);",
+		"if (a.session_seconds) lines.push('Time in hive: ' + fmtHours(a.session_seconds));",
+		"var act = userTaskActivity(uname);",
+		"userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0}, act, [])",
+		// The "logged in now" line rides in the avatar's own tooltip, not the ring
+		// wrapper, so a live user's identity+stats aren't shadowed.
+		"if (isUserLive(uname)) title = title + '\\n● Logged into their hive now';",
+	} {
+		if !strings.Contains(dashboardHTML, snippet) {
+			t.Errorf("dashboardHTML missing %q", snippet)
+		}
+	}
+	// The green ring wrapper must NOT carry its own title (it would shadow the
+	// enriched tooltip).
+	if strings.Contains(dashboardHTML, `'<span title="Logged into their hive now" '`) {
+		t.Error("the live-ring wrapper still hard-codes a title that shadows the avatar tooltip")
+	}
 }

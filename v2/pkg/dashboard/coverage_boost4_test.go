@@ -406,7 +406,7 @@ func newDeepTestServer(t *testing.T) *Server {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo"},
 		},
-		Data:   config.DataConfig{AgentsDir: agentsDir},
+		Data: config.DataConfig{AgentsDir: agentsDir},
 		Agents: map[string]config.AgentConfig{
 			"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner", Enabled: true},
 		},
@@ -433,12 +433,12 @@ func newDeepTestServer(t *testing.T) *Server {
 
 	srv := NewServer(0, logger)
 	srv.deps = &Dependencies{
-		Config:     cfg,
-		AgentMgr:   mgr,
-		Governor:   gov,
-		BeadStores: map[string]*beads.Store{"scanner": scannerStore},
-		Logger:     logger,
-		Ctx:        context.Background(),
+		Config:         cfg,
+		AgentMgr:       mgr,
+		Governor:       gov,
+		BeadStores:     map[string]*beads.Store{"scanner": scannerStore},
+		Logger:         logger,
+		Ctx:            context.Background(),
 		RefreshFunc:    func() {},
 		PersistFunc:    func() {},
 		SkipReloadFunc: func() {},
@@ -479,7 +479,7 @@ func TestHandleGovernorRepos_WithEnumerateFunc(t *testing.T) {
 	srv := newFullServer(t)
 	srv.deps.EnumerateFunc = func() {}
 
-	body := `{"repos":["repo1","repo2"]}`
+	body := `{"repos":["repo1","repo2"],"primaryRepo":"repo1"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
