@@ -138,6 +138,69 @@ func TestCovK2_SelectTask(t *testing.T) {
 	}
 }
 
+// TestCovK2_SelectTaskPrioritizesOwnWork covers the #2390 ordering default:
+// among the eligible actionable candidates, one authored by the connected
+// contributor is chosen before a fresh item authored by someone else — and when
+// the contributor has no own-authored candidate, selection falls back to the
+// previous first-eligible order.
+func TestCovK2_SelectTaskPrioritizesOwnWork(t *testing.T) {
+	hub, s := covK2Hub(t)
+	conn := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+
+	// A repo whose first (earliest) actionable item is someone else's, and whose
+	// second is the contributor's own. Without prioritization the first-eligible
+	// pick would be #10 (someone else); with #2390 it must be #20 (alice's own).
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{
+			{
+				Name: "repo1",
+				Full: "myorg/repo1",
+				ActionableIssues: []any{
+					map[string]any{
+						"number": float64(10),
+						"title":  "Someone else's fresh issue",
+						"url":    "https://github.com/myorg/repo1/issues/10",
+						"author": "bob",
+					},
+					map[string]any{
+						"number": float64(20),
+						"title":  "Alice's own work",
+						"url":    "https://github.com/myorg/repo1/issues/20",
+						"author": "alice",
+					},
+				},
+			},
+		},
+	}
+	s.statusMu.Unlock()
+
+	msg := hub.selectTask(conn)
+	if msg == nil {
+		t.Fatalf("expected a task assignment")
+	}
+	if msg.Number != 20 {
+		t.Fatalf("expected own work (#20) to be prioritized, got #%d", msg.Number)
+	}
+
+	// Fallback: with no own-authored candidate, selection keeps the previous
+	// first-eligible order (the earliest item, #10).
+	conn2 := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "carol", ContributorID: "c-carol", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+	msg2 := hub.selectTask(conn2)
+	if msg2 == nil {
+		t.Fatalf("expected a task assignment for carol")
+	}
+	if msg2.Number != 10 {
+		t.Fatalf("expected fallback to first-eligible (#10) with no own work, got #%d", msg2.Number)
+	}
+}
+
 // HandleWS on a plain (non-websocket) request fails the upgrade with a 4xx.
 func TestCovK2_HandleWSNonWebsocket(t *testing.T) {
 	hub, _ := covK2Hub(t)

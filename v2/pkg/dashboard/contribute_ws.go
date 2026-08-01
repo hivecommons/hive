@@ -941,6 +941,54 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		disabledRepos = h.server.deps.Config.Hub.DisabledRepos
 	}
 
+	// --- Collect the eligible candidates, then order them (#2390) ---------------
+	//
+	// #2390 (castrojo): "a great default would be starting with MY PRs that are
+	// blocking someone else or have been reviewed and are waiting for something."
+	// i.e. before we hand a connected contributor a brand-new issue, prefer a work
+	// item that is already THEIRS and needs their attention.
+	//
+	// Priority order applied below:
+	//   1. The contributor's OWN work (candidate author == c.profile.GitHubUsername)
+	//   2. Everything else — today's plain first-eligible ordering
+	//
+	// Honest scope note on the available signal:
+	//   selectTask only iterates ActionableIssues (issues), and the per-candidate
+	//   map carries `author` but NO review state. The richer signal #2390 really
+	//   wants — "my PR has been reviewed / is approved / requested changes / is
+	//   blocking someone else" — is not collected anywhere yet:
+	//     * bin/enumerate-actionable.sh enumerates PRs with only
+	//       title/labels/author/draft/url (no reviewDecision, no requested-changes,
+	//       no "blocking"), and those PRs land in FrontendRepo.OpenPrs, which this
+	//       selector does not read at all.
+	//     * github.PullRequest has no review-decision field.
+	//   So this change implements ONLY the ordering half of #2390, keyed on the one
+	//   own-work signal that actually exists today (issue authorship). When the
+	//   contributor has no own-authored candidate, we fall back to today's exact
+	//   ordering — behaviour is unchanged in that (common) case.
+	//
+	//   TODO(#2390, depends on read-only-gh #2393-#2396): thread review state into
+	//   the candidate data — extend enumerate-actionable.sh to collect the
+	//   contributor's own open PRs together with their reviewDecision
+	//   (APPROVED / CHANGES_REQUESTED / REVIEW_REQUIRED) and any "blocking" signal,
+	//   surface those as candidates here, and refine ownWorkPriority to rank a
+	//   reviewed/blocking own-PR ahead of a merely-own issue. Guard gracefully when
+	//   that data is absent, exactly as the ownWork fallback does now.
+	ownUsername := ""
+	if c.profile != nil {
+		ownUsername = c.profile.GitHubUsername
+	}
+
+	type candidate struct {
+		repoFull string
+		number   int
+		title    string
+		url      string
+		labels   []string
+		isOwn    bool
+	}
+	var candidates []candidate
+
 	for _, repo := range status.Repos {
 		if len(repo.ActionableIssues) == 0 {
 			continue
@@ -1006,59 +1054,108 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				}
 			}
 
-			ghToken, err := h.mintScopedToken(c.profile.TrustTier)
-			if err != nil {
-				h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
-					"tier", c.profile.TrustTier, "error", err)
-				return nil
-			}
-
-			taskID := fmt.Sprintf("ct-%s-%d-%d", repo.Full, number, time.Now().Unix())
-
-			prompt := fmt.Sprintf(
-				"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
-					"Read the issue, understand what's needed, and take action. "+
-					"You do NOT have push access to the upstream repo. "+
-					"Fork it first with 'gh repo fork %s --clone=false', "+
-					"add the fork as a remote, push your branch there, "+
-					"then open a PR from your fork. "+
-					"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
-				repo.Full, repo.Full, number, title, repo.Full,
-			)
-
-			c.mu.Lock()
-			c.currentTask = &WSTaskAssign{
-				TaskID: taskID,
-				Kind:   "issue",
-				Repo:   repo.Full,
-				Number: number,
-				Title:  title,
-			}
-			c.tokenMintedAt = time.Now()
-			c.mu.Unlock()
-
-			return &WSMessage{
-				Type:           "task_assign",
-				Seq:            h.nextSeq(),
-				TaskID:         taskID,
-				Kind:           "issue",
-				Repo:           repo.Full,
-				Number:         number,
-				Title:          title,
-				URL:            url,
-				GitHubToken:    ghToken,
-				TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
-				Prompt:         prompt,
-				// The issue's own labels — the Labels envelope field was declared but
-				// never populated, so a client reading it got nothing (kubestellar/
+			// #2390: instead of assigning the first eligible issue inline, collect
+			// it as a candidate. The own-work partition below reorders the whole
+			// eligible set before we pick and assign one. The sibling filters
+			// (#2357 skip-assigned, contribute allow/deny) have already run above,
+			// so every appended candidate is genuinely assignable.
+			candidates = append(candidates, candidate{
+				repoFull: repo.Full,
+				number:   number,
+				title:    title,
+				url:      url,
+				// The issue's own labels travel with the candidate so the chosen
+				// task_assign can populate the Labels envelope field (kubestellar/
 				// hive#2393 item 8). They're already computed for filtering above.
-				Labels:        labels,
-				ContribLabels: []string{"contributor/" + c.profile.GitHubUsername},
-			}
+				labels: labels,
+				// "Own work" is the only #2390 signal available today: the
+				// candidate was authored by the connected contributor. When the
+				// username is unknown (empty), nothing is own → we keep today's
+				// ordering untouched.
+				isOwn: ownUsername != "" && strings.EqualFold(author, ownUsername),
+			})
 		}
 	}
 
-	return nil
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	// Stable partition: own-work candidates first, in their original scan order;
+	// then everything else, also in original scan order. A stable sort keeps the
+	// established per-repo / creation ordering within each bucket, so when the
+	// contributor has no own work this is a no-op and behaviour is identical to
+	// the previous first-eligible pick.
+	ownFirst := make([]candidate, 0, len(candidates))
+	for _, cand := range candidates {
+		if cand.isOwn {
+			ownFirst = append(ownFirst, cand)
+		}
+	}
+	for _, cand := range candidates {
+		if !cand.isOwn {
+			ownFirst = append(ownFirst, cand)
+		}
+	}
+
+	chosen := ownFirst[0]
+	if chosen.isOwn {
+		h.logger.Info("[contribute-ws] prioritizing contributor's own work (#2390)",
+			"username", ownUsername, "repo", chosen.repoFull, "number", chosen.number)
+	}
+
+	// Mint through the shared path so task_assign and the heartbeat token-refresh
+	// advertise tokens minted the same way (#2393 item 2). tokenMintedAt below
+	// arms the refresh ticker for the token we hand out here.
+	ghToken, err := h.mintScopedToken(c.profile.TrustTier)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
+			"tier", c.profile.TrustTier, "error", err)
+		return nil
+	}
+
+	taskID := fmt.Sprintf("ct-%s-%d-%d", chosen.repoFull, chosen.number, time.Now().Unix())
+
+	prompt := fmt.Sprintf(
+		"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
+			"Read the issue, understand what's needed, and take action. "+
+			"You do NOT have push access to the upstream repo. "+
+			"Fork it first with 'gh repo fork %s --clone=false', "+
+			"add the fork as a remote, push your branch there, "+
+			"then open a PR from your fork. "+
+			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
+		chosen.repoFull, chosen.repoFull, chosen.number, chosen.title, chosen.repoFull,
+	)
+
+	c.mu.Lock()
+	c.currentTask = &WSTaskAssign{
+		TaskID: taskID,
+		Kind:   "issue",
+		Repo:   chosen.repoFull,
+		Number: chosen.number,
+		Title:  chosen.title,
+	}
+	c.tokenMintedAt = time.Now()
+	c.mu.Unlock()
+
+	return &WSMessage{
+		Type:           "task_assign",
+		Seq:            h.nextSeq(),
+		TaskID:         taskID,
+		Kind:           "issue",
+		Repo:           chosen.repoFull,
+		Number:         chosen.number,
+		Title:          chosen.title,
+		URL:            chosen.url,
+		GitHubToken:    ghToken,
+		TokenExpiresAt: time.Now().Add(wsTokenTTL).UTC().Format(time.RFC3339),
+		Prompt:         prompt,
+		// The chosen issue's own labels — the Labels envelope field was declared
+		// but never populated, so a client reading it got nothing (kubestellar/
+		// hive#2393 item 8). Carried on the candidate from the scan above.
+		Labels:        chosen.labels,
+		ContribLabels: []string{"contributor/" + c.profile.GitHubUsername},
+	}
 }
 
 // assignedToOthers reports whether an issue is assigned to at least one user
