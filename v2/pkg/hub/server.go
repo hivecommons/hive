@@ -1895,17 +1895,25 @@ const fleetStatsMaxAge = 6 * time.Hour
 
 // isAvailableRegistryEntry reports whether a registry entry is a genuinely
 // unclaimed pool placeholder — the "available"/"unassigned" bucket on the
-// landing page and dashboard. It mirrors isPlaceholderEntry (drift.go) exactly:
-// ProvStatus==statusAvailable is AUTHORITATIVE, and the "hosted-available-" ID
-// prefix / "available-" org prefix are only a FALLBACK for entries whose
-// ProvStatus is unknown (empty). A CLAIMED placeholder keeps its
-// "hosted-available-" ID after assignment, so gating on the prefix alone
-// over-counts available hives; gating on ProvStatus first fixes that.
+// landing page and dashboard. It mirrors the frontend's isPlaceholderHive and
+// drift.go's isPlaceholderEntry EXACTLY:
+//
+//	provStatus == "available"  OR  org has the "available-" prefix
+//
+// The "hosted-available-" ID prefix is deliberately NOT consulted. A claimed
+// placeholder KEEPS that ID forever (it is minted at pool-creation time and
+// never rewritten on assignment), so an ID-prefix fallback counted every
+// claimed placeholder as still available — 38 reported vs the true 17. The
+// claim paths rewrite the org OFF the "available-" prefix and now set an
+// explicit statusAssigned, so both remaining signals flip correctly on claim.
+// Keeping this in lockstep with the JS and drift.go is what lets the landing
+// tiles, the dashboard's Assigned/Unassigned split, and server-side drift never
+// disagree about what is claimed.
 func isAvailableRegistryEntry(h RegistryEntry) bool {
-	if h.ProvStatus != "" {
-		return h.ProvStatus == statusAvailable
+	if h.ProvStatus == statusAvailable {
+		return true
 	}
-	return strings.HasPrefix(h.ID, hostedAvailableIDPrefix) || strings.HasPrefix(h.Org, placeholderOrgPrefix)
+	return strings.HasPrefix(h.Org, placeholderOrgPrefix)
 }
 
 // computeFleetStats aggregates fleet-wide contribution counts across public,

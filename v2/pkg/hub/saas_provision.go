@@ -100,11 +100,26 @@ const gpuClusterID = "vllm-d"
 
 // Placeholder-hive lifecycle status values. A pre-provisioned placeholder sits
 // at statusAvailable until an admin assigns it to a requesting user, at which
-// point its status is cleared (empty) and it behaves like any owned hive.
+// point its status flips to statusAssigned and it behaves like any owned hive.
 const (
 	// statusAvailable marks a pre-provisioned placeholder hive that is idle and
 	// waiting to be claimed. Only such a hive may be assigned.
 	statusAvailable = "available"
+	// statusAssigned marks a placeholder that has been CLAIMED by a user. It is
+	// the authoritative "no longer available" signal.
+	//
+	// The claim paths (handleApproveProvision, handleAssignHive) previously set
+	// Status = "" here. That empty string is indistinguishable from "unknown",
+	// so every downstream availability check that keys off ProvStatus (the
+	// landing-page fleet tiles, computeFleetStats) fell back to the immutable
+	// "hosted-available-" ID prefix — which a claimed placeholder KEEPS forever
+	// — and mis-counted 22 claimed hives as still available (38 shown vs the
+	// true 17). Setting an explicit assigned status makes ProvStatus the single
+	// authoritative signal: a claimed hive reads provStatus!="available" without
+	// any prefix guessing. A live spoke later overwrites this with its real
+	// lifecycle status ("provisioning"/"running") on the next heartbeat; until
+	// then "assigned" is the correct, honest state.
+	statusAssigned = "assigned"
 )
 
 // ACMM level bounds for a claimed/assigned hive. The maturity model spans

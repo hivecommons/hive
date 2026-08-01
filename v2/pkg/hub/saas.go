@@ -5560,8 +5560,10 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Rewrite the placeholder's meta.json to the requesting user's real project.
-	// Clearing status makes it show under the new owner in My Hives; the project
-	// config reaches the spoke via the heartbeat channel (projectConfigForHiveID).
+	// Flipping status to statusAssigned makes it show under the new owner in My
+	// Hives AND marks it as no-longer-available for the fleet counters; the
+	// project config reaches the spoke via the heartbeat channel
+	// (projectConfigForHiveID).
 	h.Owner = targetUsername
 	h.Org = pr.Org
 	h.Repos = repos
@@ -5588,7 +5590,7 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 	// must re-arm on (re)assignment for exactly the same reason ACMMDelivered
 	// does above. (The assign path — handleAssignHive — already does this.)
 	h.ClaimDelivered = false
-	h.Status = ""
+	h.Status = statusAssigned
 	h.Error = ""
 	// Preserve the placeholder's real cluster before ANY cluster-derived
 	// resolution below (host backfill uses s.clusterForHive(h), which silently
@@ -6398,7 +6400,7 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	h.RequestedACMMLevel = acmm
 	h.ACMMDelivered = false
 	h.IsPublic = body.IsPublic
-	h.Status = ""
+	h.Status = statusAssigned
 	h.Error = ""
 	// A (re)assignment is a new claim payload: reset delivery so the hub pushes
 	// this project to the spoke until it reports the new org/repos back, before
