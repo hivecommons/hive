@@ -32,22 +32,22 @@ type ModeChange struct {
 }
 
 type EvalSnapshot struct {
-	Timestamp     int64             `json:"t"`
-	Mode          Mode              `json:"govMode"`
-	QueueIssues   int               `json:"govIssues"`
-	QueuePRs      int               `json:"govPrs"`
-	QueueTotal    int               `json:"govTotal"`
-	QueueHold     int               `json:"govHold"`
-	QueueActive   int               `json:"govActive"`
-	SLAViolations int               `json:"sla_violations,omitempty"`
-	AgentsKicked  []string          `json:"agents_kicked,omitempty"`
-	Actionable    int               `json:"actionableCount"`
-	OpenPRs       int               `json:"openPrCount"`
-	Mergeable     int               `json:"mergeableCount"`
-	BeadsWorkers  int               `json:"beadsWorkers"`
-	BeadsSupervisor int             `json:"beadsSupervisor"`
-	Repos         map[string]RepoSnapshot `json:"repos,omitempty"`
-	AgentStats    map[string]map[string]any `json:"agentStats,omitempty"`
+	Timestamp       int64                     `json:"t"`
+	Mode            Mode                      `json:"govMode"`
+	QueueIssues     int                       `json:"govIssues"`
+	QueuePRs        int                       `json:"govPrs"`
+	QueueTotal      int                       `json:"govTotal"`
+	QueueHold       int                       `json:"govHold"`
+	QueueActive     int                       `json:"govActive"`
+	SLAViolations   int                       `json:"sla_violations,omitempty"`
+	AgentsKicked    []string                  `json:"agents_kicked,omitempty"`
+	Actionable      int                       `json:"actionableCount"`
+	OpenPRs         int                       `json:"openPrCount"`
+	Mergeable       int                       `json:"mergeableCount"`
+	BeadsWorkers    int                       `json:"beadsWorkers"`
+	BeadsSupervisor int                       `json:"beadsSupervisor"`
+	Repos           map[string]RepoSnapshot   `json:"repos,omitempty"`
+	AgentStats      map[string]map[string]any `json:"agentStats,omitempty"`
 }
 
 type RepoSnapshot struct {
@@ -78,16 +78,54 @@ type BudgetInfo struct {
 	WindowBaseline int64 `json:"window_baseline"`
 }
 
-// BudgetWindowDuration is the length of one budget accounting window; the
-// "weekly" limit applies to spend accumulated within it.
-const BudgetWindowDuration = 7 * 24 * time.Hour
+// BudgetWindowDuration is the DEFAULT length of one budget accounting
+// window; the "weekly" limit applies to spend accumulated within it. As of
+// #2323 the effective window is the configured governor.budget.period_days
+// (see budgetWindowDuration); this constant is the fallback used when that
+// setting is unset/zero.
+const BudgetWindowDuration = defaultBudgetWindowDays * 24 * time.Hour
 
-// BudgetWarnPct is the percent of the weekly limit at which the soft
-// budget warning fires.
+// defaultBudgetWindowDays is the fallback budget-window length in days,
+// matching config.defaultBudgetPeriodDays. Used when period_days is unset.
+const defaultBudgetWindowDays = 7
+
+// BudgetWarnPct is the DEFAULT percent of the weekly limit at which the soft
+// budget warning fires. As of #2323 the effective threshold is the
+// configured governor.budget.critical_pct (see budgetWarnPct); this constant
+// is the fallback used when that setting is unset/zero.
 const BudgetWarnPct = 90
 
 // percentDenominator converts a percentage into a fraction of a whole.
 const percentDenominator = 100
+
+// hoursPerDay converts a day count into hours for time.Duration math.
+const hoursPerDay = 24
+
+// budgetWindowDuration returns the effective budget-window length. It reads
+// the configured governor.budget.period_days (#2323 — previously this value
+// was persisted but never read, so the window was silently pinned to 7 days)
+// and falls back to the BudgetWindowDuration default when the setting is
+// unset/zero (a 0-day window would roll every eval and break budgeting).
+// Callers must hold g.mu.
+func (g *Governor) budgetWindowDuration() time.Duration {
+	if days := g.cfg.Budget.PeriodDays; days > 0 {
+		return time.Duration(days) * hoursPerDay * time.Hour
+	}
+	return BudgetWindowDuration
+}
+
+// budgetWarnPct returns the effective soft-warning threshold as an integer
+// percent (0-100). It reads the configured governor.budget.critical_pct
+// (#2323 — previously persisted but never read, so warnings were silently
+// pinned to 90%) and falls back to the BudgetWarnPct default when the
+// setting is unset/zero (a 0% threshold would warn immediately). Callers
+// must hold g.mu.
+func (g *Governor) budgetWarnPct() int {
+	if pct := g.cfg.Budget.CriticalPct; pct > 0 {
+		return pct
+	}
+	return BudgetWarnPct
+}
 
 // BudgetTransitions reports budget threshold state from a single
 // UpdateBudgetFromTotals call. WarnCrossed and ExhaustedCrossed are
@@ -624,7 +662,7 @@ func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]
 		// First run or legacy snapshot without a window: open one now.
 		g.budget.ResetAt = now
 		g.budget.WindowBaseline = totalTokens
-	} else if now.Sub(g.budget.ResetAt) >= BudgetWindowDuration {
+	} else if now.Sub(g.budget.ResetAt) >= g.budgetWindowDuration() {
 		g.budget.ResetAt = now
 		g.budget.WindowBaseline = totalTokens
 		g.budgetWarned = false
@@ -656,7 +694,7 @@ func (g *Governor) UpdateBudgetFromTotals(totalTokens int64, byAgent map[string]
 
 	// WeeklyLimit == 0 disables budgeting entirely: no thresholds, no alerts.
 	if g.budget.WeeklyLimit > 0 {
-		warnThreshold := g.budget.WeeklyLimit * BudgetWarnPct / percentDenominator
+		warnThreshold := g.budget.WeeklyLimit * int64(g.budgetWarnPct()) / percentDenominator
 		trans.WarnActive = g.budget.CurrentSpend >= warnThreshold
 		trans.ExhaustedActive = g.budget.CurrentSpend >= g.budget.WeeklyLimit
 		if trans.WarnActive && !g.budgetWarned {
