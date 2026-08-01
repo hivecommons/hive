@@ -51,11 +51,11 @@ func testDeps(t *testing.T) *Dependencies {
 	_ = &refreshCalled
 	_ = &persistCalled
 	return &Dependencies{
-		Config:   cfg,
-		AgentMgr: mgr,
-		Governor: gov,
-		Logger:   logger,
-		Ctx:      context.Background(),
+		Config:      cfg,
+		AgentMgr:    mgr,
+		Governor:    gov,
+		Logger:      logger,
+		Ctx:         context.Background(),
 		RefreshFunc: func() { refreshCalled.Store(true) },
 		PersistFunc: func() { persistCalled.Store(true) },
 	}
@@ -499,7 +499,7 @@ func TestHandleGovernorRemoveAgent_NotFound(t *testing.T) {
 func TestHandleGovernorRepos(t *testing.T) {
 	s, _ := apiServer(t)
 	rec := doPut(s, "/api/config/governor/repos",
-		map[string]interface{}{"repos": []string{"myorg/repo1", "myorg/repo2"}})
+		map[string]interface{}{"repos": []string{"myorg/repo1", "myorg/repo2"}, "primaryRepo": "repo1"})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}

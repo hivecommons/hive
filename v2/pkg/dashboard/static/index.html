@@ -13399,6 +13399,10 @@ function burnAreaChart() {
           loadGateways();
         }
       }
+      // Keep the Save button's enabled state in lockstep with the repos/default
+      // invariant on every render (requirement #4). Cheap and idempotent — a
+      // no-op on tabs/dialogs without a repos list.
+      if (typeof syncRepoSaveGuard === 'function') syncRepoSaveGuard();
     }
 
     function renderAgentImport() {
@@ -16166,14 +16170,32 @@ function burnAreaChart() {
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
         : ` on <strong>${esc(ghHost)}</strong>`;
+      // The forge is shown as a fixed, non-editable prefix before the input so
+      // the user only types org/repo and the GitHub host can never be
+      // mistaken (requirement #1). The prefix color matches the per-row pill
+      // (indigo for GHE, muted for public github.com). All host machinery is
+      // client-side + CSP-safe (inline styles, no external resources).
+      const prefixColor = isGHE ? 'var(--indigo)' : 'var(--muted)';
+      // needDefault is true when repos exist but none is the current default —
+      // the Save-guard state. renderGovRepos surfaces it inline; syncRepoSaveGuard
+      // (called on every tab render) is what actually disables the Save button.
+      const needDefault = repos.length > 0 && !repos.includes(primary);
+      const defaultWarn = needDefault
+        ? '<div id="cfg-repo-default-warn" style="font-size:0.72rem;color:var(--amber);margin-top:6px">⚠ Set a default repo before saving — click a ☆ star to choose the repo where the advisory issue is maintained.</div>'
+        : '';
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive${hostNote}. Click the star to set the default repo where the advisory issue is maintained.</p>
         <div class="config-list">
           ${list || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">No repos configured</div>'}
-          <div class="config-list-add">
-            <input type="text" id="cfg-repo-input" placeholder="org/repo (on ${esc(ghHost)})" title="GitHub repository in org/repo format (e.g. kubestellar/console). It must live on this hive's forge, ${esc(ghHost)} — the governor rejects repos on other GitHub hosts. It will be monitored for issues, PRs, and CI status.">
+          <div class="config-list-add" style="align-items:stretch">
+            <div style="display:flex;flex:1;min-width:0;align-items:stretch;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+              <span style="display:inline-flex;align-items:center;padding:0 8px;background:color-mix(in srgb, ${prefixColor} 12%, var(--surface));color:${prefixColor};font-size:0.78rem;font-weight:600;white-space:nowrap;border-right:1px solid var(--border)" title="This hive's forge — every repo must live on ${esc(ghHost)}">${esc(ghHost)}/</span>
+              <input type="text" id="cfg-repo-input" style="flex:1;min-width:0;border:none;border-radius:0" placeholder="org/repo" onkeydown="if(event.key==='Enter'){event.preventDefault();addListItem('repos','list','cfg-repo-input');}" title="GitHub repository in org/repo format (e.g. kubestellar/console). It must live on this hive's forge, ${esc(ghHost)} — the governor rejects repos on other GitHub hosts. It will be monitored for issues, PRs, and CI status.">
+            </div>
             <button onclick="addListItem('repos','list','cfg-repo-input')" title="Add this repository to the monitored list">+ Add</button>
           </div>
+          <div id="cfg-repo-add-status" style="font-size:0.72rem;margin-top:6px"></div>
+          ${defaultWarn}
         </div>`;
     }
 
@@ -16604,6 +16626,143 @@ function burnAreaChart() {
       return raw.replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
     }
 
+    // hiveForgeHostLabel returns this hive's bare GitHub host ("github.com" or a
+    // GHE hostname). Mirrors the server's hiveForgeHost() and renderGovRepos so
+    // the single-host rule matches everywhere.
+    function hiveForgeHostLabel() {
+      const ghBase = window._githubBaseUrl || 'https://github.com';
+      return ghBase.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'github.com';
+    }
+
+    // repoRefHostLabel extracts the GitHub host a pasted repo carries, or '' when
+    // it names none (bare "repo"/"owner/repo" belong to the hive's forge).
+    // Mirrors the server's repoRefHostLabel (a leading dotted segment or full URL
+    // is an explicit host).
+    function repoRefHostLabel(s) {
+      s = (s || '').trim().replace(/^https?:\/\//, '').replace(/^\/+|\/+$/g, '');
+      if (!s) return '';
+      const parts = s.split('/');
+      if (parts.length > 1 && parts[0].indexOf('.') !== -1) return parts[0].toLowerCase();
+      return '';
+    }
+
+    function sameForgeHost(a, b) {
+      const norm = h => { h = (h || '').trim().toLowerCase(); return (!h || h === 'github.com') ? 'github.com' : h; };
+      return norm(a) === norm(b);
+    }
+
+    // addRepoWithChecks handles the Repos-tab "+ Add": it enforces the
+    // single-host-per-spoke rule client-side (requirement #2), then asks the
+    // server whether the hive's GitHub App can access the new repo's org and, if
+    // not, guides the user through installing/authorizing the App before the repo
+    // is accepted (requirement #3). Only on a clean check is the repo appended.
+    async function addRepoWithChecks() {
+      const input = document.getElementById('cfg-repo-input');
+      if (!input) return;
+      const raw = input.value.trim();
+      if (!raw) return;
+      const statusEl = document.getElementById('cfg-repo-add-status');
+      const setStatus = (html, color) => { if (statusEl) { statusEl.innerHTML = html; statusEl.style.color = color || 'var(--muted)'; } };
+
+      // Requirement #2: reject a paste on a different forge before any round-trip.
+      const spokeHost = hiveForgeHostLabel();
+      const refHost = repoRefHostLabel(raw);
+      if (refHost && !sameForgeHost(refHost, spokeHost)) {
+        setStatus('✕ ' + esc(raw) + ' is on <strong>' + esc(refHost) + '</strong>, but this hive is on <strong>' + esc(spokeHost) + '</strong>. A hive\'s repos must all live on one GitHub host — remove the host or use a repo on ' + esc(spokeHost) + '.', 'var(--red)');
+        return;
+      }
+
+      const val = normalizeRepoInput(raw);
+      if (!_configState.data.repos) _configState.data.repos = [];
+      if (_configState.data.repos.includes(val)) {
+        setStatus('This repo is already in the list.', 'var(--muted)');
+        return;
+      }
+
+      // Requirement #3: verify the App can access the repo's org.
+      setStatus('Checking GitHub App access…', 'var(--muted)');
+      try {
+        const res = await fetch('/api/config/governor/repos/check-access', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ repo: val })
+        });
+        const d = await res.json().catch(() => ({}));
+        if (res.status === 409 && d && d.needsInstall) {
+          // App not installed on the new org: surface the correct per-forge
+          // install URL wired to the existing pending-install/recheck plumbing.
+          // Clicking Install flags the heartbeat (handleGitHubAppInstallClicked)
+          // exactly like the App-required banner; Re-check re-probes and, on
+          // success, completes the add.
+          const installBtn = (d.installUrl)
+            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" onclick="markGitHubAppInstallClicked()" style="color:var(--accent);font-weight:600">Install/authorize the App for ' + esc(d.org || '') + ' ↗</a>'
+            : '<span style="color:var(--amber)">This hive\'s GitHub Enterprise App slug is not configured, so an install link cannot be built — ask your operator to install the Hive App for ' + esc(d.org || '') + '.</span>';
+          setStatus('⚠ ' + esc(d.error || ('The App needs access to ' + val)) + '<br>' + installBtn + ' &nbsp;·&nbsp; <a href="#" onclick="recheckRepoAccessThenAdd(event)" style="color:var(--accent);font-weight:600">Re-check &amp; add</a>', 'var(--amber)');
+          return;
+        }
+        if (!res.ok) {
+          setStatus('✕ ' + esc((d && d.error) || ('HTTP ' + res.status)), 'var(--red)');
+          return;
+        }
+      } catch (e) {
+        // Network error probing access is non-fatal: the server re-validates the
+        // single-host rule and the default-repo rule on save, so let the add
+        // proceed rather than hard-block on a transient dashboard hiccup.
+        _appendRepoAccepted(val);
+        setStatus('Added (App-access check could not be reached; the server will re-validate on save).', 'var(--muted)');
+        return;
+      }
+      _appendRepoAccepted(val);
+      setStatus('✓ Added — App has access.', 'var(--green)');
+    }
+
+    // _appendRepoAccepted appends a validated repo, seeds the first repo as the
+    // default (a hive must always have one), and re-renders.
+    function _appendRepoAccepted(val) {
+      if (!_configState.data.repos) _configState.data.repos = [];
+      _configState.data.repos.push(val);
+      markDirty('repos', 'repos', _configState.data.repos);
+      // First repo added to an empty list becomes the default automatically, so
+      // there is always exactly one default (requirement #4).
+      if (!_configState.data.primaryRepo || !_configState.data.repos.includes(_configState.data.primaryRepo)) {
+        _configState.data.primaryRepo = val;
+        markDirty('repos', 'primaryRepo', val);
+      }
+      const input = document.getElementById('cfg-repo-input');
+      if (input) input.value = '';
+      renderConfigTab(_configState.tab);
+    }
+
+    // markGitHubAppInstallClicked flags the heartbeat that an install link was
+    // clicked, reusing the existing pending-install endpoint. Fire-and-forget.
+    function markGitHubAppInstallClicked() {
+      fetch('/api/github-app/install-clicked', { method: 'POST', headers: _inceptionAuthHeaders() }).catch(() => {});
+    }
+
+    // recheckRepoAccessThenAdd re-runs the App-access probe after the user
+    // installs/authorizes the App, and completes the add when access is now
+    // confirmed — the same re-check pattern the App-required banner uses.
+    async function recheckRepoAccessThenAdd(ev) {
+      if (ev) ev.preventDefault();
+      await addRepoWithChecks();
+    }
+
+    // syncRepoSaveGuard disables the config dialog Save button while the Repos
+    // tab has repos but no default selected, so a hive can never be saved without
+    // exactly one default (requirement #4). Called after every config tab render.
+    function syncRepoSaveGuard() {
+      const saveBtn = document.querySelector('.config-footer .config-save');
+      if (!saveBtn) return;
+      let block = false;
+      const d = _configState.data || {};
+      if (_configState.type === 'governor' && Array.isArray(d.repos) && d.repos.length > 0) {
+        block = !d.primaryRepo || !d.repos.includes(d.primaryRepo);
+      }
+      saveBtn.disabled = block;
+      saveBtn.style.opacity = block ? '0.5' : '';
+      saveBtn.style.cursor = block ? 'not-allowed' : '';
+      saveBtn.title = block ? 'Set a default repo before saving — click a ☆ star in the Repos tab.' : '';
+    }
+
     function addListItem(section, key, inputId) {
       const input = document.getElementById(inputId);
       let val = input.value.trim();
@@ -16618,10 +16777,11 @@ function burnAreaChart() {
         _configState.data.labels.push(val);
         markDirty('labels', 'labels', _configState.data.labels);
       } else if (section === 'repos') {
-        val = normalizeRepoInput(val);
-        if (!_configState.data.repos) _configState.data.repos = [];
-        _configState.data.repos.push(val);
-        markDirty('repos', 'repos', _configState.data.repos);
+        // Repos go through the async host-check + App-access workflow, which
+        // owns input clearing and re-render on success. Return here so the
+        // synchronous tail below does not double-add or clear prematurely.
+        addRepoWithChecks();
+        return;
       }
       input.value = '';
       renderConfigTab(_configState.tab);
@@ -16729,6 +16889,19 @@ function burnAreaChart() {
 
     async function saveConfig() {
       const dirty = _configState.dirty;
+
+      // Guard: a governor config with repos must always name a default that is
+      // one of them (requirement #4). The Save button is disabled in this state,
+      // but a keyboard/racy click could still reach here — refuse and point the
+      // user at the fix rather than letting the server 400 opaquely.
+      if (_configState.type === 'governor') {
+        const d = _configState.data || {};
+        if (Array.isArray(d.repos) && d.repos.length > 0 && (!d.primaryRepo || !d.repos.includes(d.primaryRepo))) {
+          showToast('Set a default repo before saving — click a ☆ star in the Repos tab.', 'error');
+          renderConfigTab('Repos');
+          return;
+        }
+      }
 
       if (_configState.isCreate) {
         const createData = dirty._create || {};
