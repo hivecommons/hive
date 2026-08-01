@@ -486,7 +486,12 @@
     /* scroll-margin-top clears the sticky .site-header (~4.5rem tall) so an
        in-page jump (Contributors/Public-hives tiles, leaderboard link) lands
        with the section's own heading visible, not scrolled up under the nav. */
-    .section { max-width: 1200px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 4.5rem) 3rem; scroll-margin-top: 5.5rem; }
+    /* Match .section-pad's horizontal geometry (same side padding, no narrower
+       max-width cap) so #hives ("Active Hives") and #leaderboard line up with the
+       full-width sections above them. Previously .section capped at 1200px and
+       centered, so on a wide viewport its left edge sat far right of the
+       edge-to-edge .section-pad sections and the table looked misaligned. */
+    .section { margin: 0 auto; padding: 0 clamp(1rem, 4vw, 4.5rem) 3rem; scroll-margin-top: 5.5rem; }
     .section > h2 {
       font-size: 1.4rem;
       font-weight: 800;
