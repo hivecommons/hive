@@ -109,6 +109,16 @@ type WSMessage struct {
 	Summary        string          `json:"summary,omitempty"`
 	TmuxOutput     []string        `json:"tmux_output,omitempty"`
 	AcceptedModels []string        `json:"accepted_models,omitempty"`
+	// PRURL is the pull request the agent opened for this task, reported on
+	// task_complete. It is best-effort: the relay fills it when it can spot a
+	// PR link in the agent's output, and it is empty when the agent went idle
+	// without shipping anything. The hub uses its presence to decide how long
+	// to keep the underlying issue in cooldown — see markTaskCompleted and
+	// kubestellar/hive#2393 item 7 (an idle-but-no-PR completion must NOT lock
+	// the issue for a full week). A known PR URL per issue also feeds the
+	// #2356 duplicate-detection work. Field naming follows the PRURL
+	// convention in v2/pkg/github/prclaims.go.
+	PRURL string `json:"pr_url,omitempty"`
 	// Permanent marks a task_failed the relay will not retry: it exhausted its
 	// per-task CLI-restart budget and gave up (see MAX_TASK_CLI_RESTARTS in
 	// bin/contributor-relay.sh). Reassigning the same work item to the same
@@ -146,18 +156,45 @@ type ContributeWSHub struct {
 	activity       []ActivityEntry
 	server         *Server
 	completedTasks map[string]time.Time
-	completedMu    sync.Mutex
-	selectMu       sync.Mutex
+	// completedTaskCooldown holds a per-task override for how long, from the
+	// completion time in completedTasks, the issue stays in cooldown. It is
+	// populated by markTaskCompleted based on whether a PR was reported. When a
+	// key is absent (e.g. tasks restored from an older on-disk format, or set
+	// directly by tests) isTaskInCooldown falls back to the full
+	// completedTaskCooldownHours, preserving the original conservative default.
+	completedTaskCooldown map[string]time.Duration
+	// completedTaskPRURL records the PR URL reported for a completed task, kept
+	// for stats/audit and to feed #2356 duplicate detection (a known PR URL per
+	// issue). Empty means the completion reported no PR.
+	completedTaskPRURL map[string]string
+	completedMu        sync.Mutex
+	selectMu           sync.Mutex
 }
 
+// completedTaskCooldownHours is the cooldown applied when a task completes
+// having actually shipped a pull request: real work landed, so we should not
+// re-dispatch the same issue for a week.
 const completedTaskCooldownHours = 168
+
+// completedNoPRCooldownHours is the cooldown applied when a task "completes"
+// only because the agent went idle WITHOUT reporting a PR (the common case the
+// old code could not distinguish — see kubestellar/hive#2393 item 7). Nothing
+// shipped, so locking the issue for a full week wrongly starves it: another
+// contributor should be able to pick it up soon. We keep a short, non-zero
+// cooldown (not zero) so the very next selector pass does not instantly hand
+// the same untouched issue back to the same idle contributor in a tight loop;
+// a few hours is long enough to break that loop while still freeing the issue
+// the same day.
+const completedNoPRCooldownHours = 4
 
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub := &ContributeWSHub{
-		connections:    make(map[string]*ContributorConnection),
-		completedTasks: make(map[string]time.Time),
-		logger:         logger,
-		server:         server,
+		connections:           make(map[string]*ContributorConnection),
+		completedTasks:        make(map[string]time.Time),
+		completedTaskCooldown: make(map[string]time.Duration),
+		completedTaskPRURL:    make(map[string]string),
+		logger:                logger,
+		server:                server,
 	}
 	hub.loadCompletedTasks()
 	hub.loadActivity()
@@ -239,6 +276,18 @@ func (h *ContributeWSHub) RecentActivity() []ActivityEntry {
 
 const completedTasksFile = "/data/contributors/completed-tasks.json"
 
+// completedTaskRecord is the on-disk shape of one completed-task entry. It
+// carries the completion time plus, since #2393 item 7, the per-task cooldown
+// and the PR URL that decided it, so a hub restart preserves whether an issue
+// got the short no-PR cooldown or the full one. Entries written by older builds
+// were a bare RFC3339 timestamp string; loadCompletedTasks still accepts that
+// legacy form and treats it as a full-cooldown, no-PR entry.
+type completedTaskRecord struct {
+	CompletedAt   time.Time `json:"completed_at"`
+	CooldownHours float64   `json:"cooldown_hours,omitempty"`
+	PRURL         string    `json:"pr_url,omitempty"`
+}
+
 func (h *ContributeWSHub) loadCompletedTasks() {
 	h.completedMu.Lock()
 	defer h.completedMu.Unlock()
@@ -246,15 +295,42 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 	if err != nil {
 		return
 	}
-	var saved map[string]string
-	if json.Unmarshal(data, &saved) != nil {
-		return
-	}
-	for k, v := range saved {
-		if t, err := time.Parse(time.RFC3339, v); err == nil {
-			if time.Since(t) < completedTaskCooldownHours*time.Hour {
-				h.completedTasks[k] = t
+
+	// Accept both the current object form and the legacy map[string]string
+	// (key -> RFC3339 timestamp) form so an upgrade never drops cooldowns.
+	records := make(map[string]completedTaskRecord)
+	if json.Unmarshal(data, &records) != nil {
+		var legacy map[string]string
+		if json.Unmarshal(data, &legacy) != nil {
+			return
+		}
+		records = make(map[string]completedTaskRecord, len(legacy))
+		for k, v := range legacy {
+			if t, err := time.Parse(time.RFC3339, v); err == nil {
+				records[k] = completedTaskRecord{CompletedAt: t}
 			}
+		}
+	}
+
+	for k, rec := range records {
+		if rec.CompletedAt.IsZero() {
+			continue
+		}
+		cooldown := completedTaskCooldownHours * time.Hour
+		if rec.CooldownHours > 0 {
+			cooldown = time.Duration(rec.CooldownHours * float64(time.Hour))
+		}
+		// Skip anything already past its own cooldown so we don't resurrect
+		// stale locks.
+		if time.Since(rec.CompletedAt) >= cooldown {
+			continue
+		}
+		h.completedTasks[k] = rec.CompletedAt
+		if h.completedTaskCooldown != nil {
+			h.completedTaskCooldown[k] = cooldown
+		}
+		if h.completedTaskPRURL != nil {
+			h.completedTaskPRURL[k] = rec.PRURL
 		}
 	}
 	h.logger.Info("[contribute-ws] loaded completed tasks", "count", len(h.completedTasks))
@@ -262,9 +338,18 @@ func (h *ContributeWSHub) loadCompletedTasks() {
 
 func (h *ContributeWSHub) saveCompletedTasks() {
 	h.completedMu.Lock()
-	saved := make(map[string]string, len(h.completedTasks))
+	saved := make(map[string]completedTaskRecord, len(h.completedTasks))
 	for k, t := range h.completedTasks {
-		saved[k] = t.Format(time.RFC3339)
+		rec := completedTaskRecord{CompletedAt: t}
+		if h.completedTaskCooldown != nil {
+			if d, ok := h.completedTaskCooldown[k]; ok {
+				rec.CooldownHours = d.Hours()
+			}
+		}
+		if h.completedTaskPRURL != nil {
+			rec.PRURL = h.completedTaskPRURL[k]
+		}
+		saved[k] = rec
 	}
 	h.completedMu.Unlock()
 	data, err := json.Marshal(saved)
@@ -283,12 +368,45 @@ func (h *ContributeWSHub) saveCompletedTasks() {
 	}
 }
 
-func (h *ContributeWSHub) markTaskCompleted(repo string, number int) {
+// markTaskCompleted records a completed task and starts its issue cooldown.
+//
+// The cooldown length is conditional on whether the completion actually shipped
+// a pull request (kubestellar/hive#2393 item 7): a completion WITH a prURL gets
+// the full completedTaskCooldownHours (real work landed — don't re-dispatch for
+// a week), while a completion WITHOUT one — the agent merely returned to idle —
+// gets the short completedNoPRCooldownHours so an issue where nothing shipped
+// is not locked out for a week. The chosen expiry is stored per task and honored
+// by isTaskInCooldown; the prURL is retained for stats/audit and #2356
+// duplicate detection.
+func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL string) {
 	key := fmt.Sprintf("%s#%d", repo, number)
+	cooldown := completedNoPRCooldownHours * time.Hour
+	if prURL != "" {
+		cooldown = completedTaskCooldownHours * time.Hour
+	}
 	h.completedMu.Lock()
 	h.completedTasks[key] = time.Now()
+	if h.completedTaskCooldown != nil {
+		h.completedTaskCooldown[key] = cooldown
+	}
+	if h.completedTaskPRURL != nil {
+		h.completedTaskPRURL[key] = prURL
+	}
 	h.completedMu.Unlock()
 	h.saveCompletedTasks()
+}
+
+// cooldownForLocked returns the cooldown duration to apply to key. Callers must
+// already hold completedMu. When no per-task override was recorded (older
+// on-disk entries, or hubs built directly in tests) it falls back to the full
+// completedTaskCooldownHours — the original, conservative default.
+func (h *ContributeWSHub) cooldownForLocked(key string) time.Duration {
+	if h.completedTaskCooldown != nil {
+		if d, ok := h.completedTaskCooldown[key]; ok {
+			return d
+		}
+	}
+	return completedTaskCooldownHours * time.Hour
 }
 
 func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
@@ -299,8 +417,10 @@ func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
 	if !ok {
 		return false
 	}
-	if time.Since(t) > completedTaskCooldownHours*time.Hour {
+	if time.Since(t) > h.cooldownForLocked(key) {
 		delete(h.completedTasks, key)
+		delete(h.completedTaskCooldown, key)
+		delete(h.completedTaskPRURL, key)
 		return false
 	}
 	return true
@@ -670,7 +790,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 
 				if hasTask {
 					if completedTask != nil {
-						h.markTaskCompleted(completedTask.Repo, completedTask.Number)
+						// #2393 item 7: keep the full week-long cooldown only when a
+						// PR was actually reported; an idle-but-no-PR completion gets
+						// the short cooldown so the issue is not locked for a week.
+						h.markTaskCompleted(completedTask.Repo, completedTask.Number, msg.PRURL)
 					}
 					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
 					h.logger.Info("[contribute-ws] task complete",

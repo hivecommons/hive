@@ -71,12 +71,56 @@ func TestCovK2_AddActivityCap(t *testing.T) {
 
 func TestCovK2_MarkTaskCompletedAndCooldown(t *testing.T) {
 	hub, _ := covK2Hub(t)
-	hub.markTaskCompleted("org/repo", 42)
+	hub.markTaskCompleted("org/repo", 42, "https://github.com/org/repo/pull/1")
 	if !hub.isTaskInCooldown("org/repo", 42) {
 		t.Fatalf("expected task in cooldown after marking complete")
 	}
 	if hub.isTaskInCooldown("org/repo", 99) {
 		t.Fatalf("unmarked task should not be in cooldown")
+	}
+}
+
+// TestConditionalCooldownByPRURL covers kubestellar/hive#2393 item 7: a
+// completion that reports a PR URL keeps the full week-long cooldown, while a
+// completion with no PR (agent merely went idle) gets only the short no-PR
+// cooldown, so an issue where nothing shipped is not locked out for a week.
+func TestConditionalCooldownByPRURL(t *testing.T) {
+	hub, _ := covK2Hub(t)
+
+	// WITH a PR URL -> full completedTaskCooldownHours (168h).
+	hub.markTaskCompleted("org/withpr", 1, "https://github.com/org/withpr/pull/1")
+	if !hub.isTaskInCooldown("org/withpr", 1) {
+		t.Fatalf("task with PR should be in cooldown immediately after completion")
+	}
+	// Age it just under the short no-PR window: still in cooldown because it
+	// holds the full 168h cooldown, not the short one.
+	hub.completedMu.Lock()
+	hub.completedTasks["org/withpr#1"] = time.Now().Add(-(completedNoPRCooldownHours + 1) * time.Hour)
+	hub.completedMu.Unlock()
+	if !hub.isTaskInCooldown("org/withpr", 1) {
+		t.Fatalf("task with PR should still be in cooldown after %dh (full cooldown is %dh)",
+			completedNoPRCooldownHours+1, completedTaskCooldownHours)
+	}
+	// Aged past the full cooldown -> released.
+	hub.completedMu.Lock()
+	hub.completedTasks["org/withpr#1"] = time.Now().Add(-(completedTaskCooldownHours + 1) * time.Hour)
+	hub.completedMu.Unlock()
+	if hub.isTaskInCooldown("org/withpr", 1) {
+		t.Fatalf("task with PR should be released after the full cooldown elapses")
+	}
+
+	// WITHOUT a PR URL -> short completedNoPRCooldownHours.
+	hub.markTaskCompleted("org/nopr", 2, "")
+	if !hub.isTaskInCooldown("org/nopr", 2) {
+		t.Fatalf("no-PR task should be in a (short) cooldown right after completion")
+	}
+	// Aged just past the short no-PR window -> released, unlike the 168h default.
+	hub.completedMu.Lock()
+	hub.completedTasks["org/nopr#2"] = time.Now().Add(-(completedNoPRCooldownHours + 1) * time.Hour)
+	hub.completedMu.Unlock()
+	if hub.isTaskInCooldown("org/nopr", 2) {
+		t.Fatalf("no-PR task should be released after only %dh, not locked for %dh",
+			completedNoPRCooldownHours, completedTaskCooldownHours)
 	}
 }
 
@@ -131,7 +175,7 @@ func TestCovK2_SelectTask(t *testing.T) {
 
 	// A second select for the same issue while it's the connection's current task
 	// is skipped (activeIssues), and after marking it complete it's in cooldown.
-	hub.markTaskCompleted("myorg/repo1", 7)
+	hub.markTaskCompleted("myorg/repo1", 7, "https://github.com/myorg/repo1/pull/9")
 	conn.currentTask = nil
 	if msg := hub.selectTask(conn); msg != nil {
 		t.Fatalf("expected nil task (cooldown) but got %+v", msg)
