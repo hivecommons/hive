@@ -1812,11 +1812,20 @@ func (s *HubServer) handleStats(w http.ResponseWriter, r *http.Request) {
 // hive, so the numbers are a true fleet total (every managed repo of every
 // live spoke) rather than a single org's figures.
 type FleetStats struct {
-	ReposManaged int    `json:"repos_managed"`
-	PRsMerged    int    `json:"prs_merged"`
-	PRsRejected  int    `json:"prs_rejected"`
-	CVEsClosed   int    `json:"cves_closed"`
-	Hives        int    `json:"hives"`
+	ReposManaged int `json:"repos_managed"`
+	PRsMerged    int `json:"prs_merged"`
+	PRsRejected  int `json:"prs_rejected"`
+	CVEsClosed   int `json:"cves_closed"`
+	// Hives is the number of ONLINE, ASSIGNED hives fleet-wide (the loop below
+	// skips offline and unassigned ones) — i.e. "hives up". TotalHives is every
+	// ASSIGNED hive, online or not. The landing page shows "hives up / total"
+	// (Hives/TotalHives) so the ratio reflects real fleet uptime rather than the
+	// public-list size, and unclaimed inventory doesn't inflate it. AvailableHives
+	// is the count of UNASSIGNED placeholders a user could still request. All
+	// three are anonymous scalars — no name/org/repo/owner/URL is derivable.
+	Hives          int `json:"hives"`
+	TotalHives     int `json:"total_hives"`
+	AvailableHives int `json:"available_hives"`
 	// AgentsRunning and Contributors are fleet-wide ANONYMOUS counts, summed
 	// over ALL online hives rather than only the public ones.
 	//
@@ -1826,9 +1835,9 @@ type FleetStats struct {
 	// public). Computing them here counts every hive while disclosing none: like
 	// every other field on this struct they are scalars, and no name, org, repo,
 	// owner or URL is derivable from them.
-	AgentsRunning int `json:"agents_running"`
-	Contributors  int `json:"contributors"`
-	UpdatedAt    string `json:"updated_at"`
+	AgentsRunning int    `json:"agents_running"`
+	Contributors  int    `json:"contributors"`
+	UpdatedAt     string `json:"updated_at"`
 	// Reporting is the number of eligible hives that actually contributed a
 	// fresh count to the totals above; Eligible is how many were considered.
 	// Without this pair the totals are indistinguishable from a healthy fleet:
@@ -1878,7 +1887,20 @@ func (s *HubServer) computeFleetStats() FleetStats {
 	var fs FleetStats
 	repoSet := make(map[string]struct{})
 	for _, h := range s.registry.Hives {
-		// ALL hives count, public and private alike.
+		// An UNASSIGNED hive is a pre-provisioned placeholder nobody has claimed
+		// yet — it carries no project, so its Org is empty (a claimed hive always
+		// has one). It is counted as AVAILABLE and excluded from the assigned
+		// totals below: "hives up / total" and the contribution sums are about the
+		// working fleet, not idle inventory a user could still request.
+		if h.Org == "" {
+			fs.AvailableHives++
+			continue
+		}
+		// TotalHives is every ASSIGNED hive (online or not) — the denominator of
+		// "hives up / total". Counted before the online skip below so a down hive
+		// still contributes to the total.
+		fs.TotalHives++
+		// ALL assigned hives count, public and private alike.
 		//
 		// These totals are ANONYMOUS SUMS: every field on FleetStats is a
 		// scalar — counts, a timestamp, booleans. No name, org, repo, owner or

@@ -697,6 +697,11 @@
                right-click-openable; the href drives a native smooth scroll via
                the page's scroll-behavior. -->
           <a href="#hives" class="stat-jump" title="Jump to the public hives"><span>Public hives</span><strong id="stat-total">—</strong></a>
+          <!-- Available hives = unassigned placeholders a user could claim. The
+               tile links to the Request-a-Hive wizard (/get-started), so seeing
+               "N available" and acting on it is one click. Anchor for the same
+               keyboard/right-click reasons as the Public hives tile. -->
+          <a href="/get-started" class="stat-jump" title="Request one of the available hives"><span>Available hives</span><strong id="stat-available">—</strong></a>
         </div>
       </div>
     </section>
@@ -1131,20 +1136,27 @@
     function renderStats(hives) {
       var agents = 0, contributors = 0, online = 0, repos = 0;
       hives.forEach(function(h) { agents += h.agentCount || 0; contributors += h.activeContributors || 0; repos += (h.repos || []).length; if (h.online) online++; });
-      // "Hives online" is online-out-of-TOTAL-FLEET: the denominator is the
-      // fleet-wide hive count (_fleetWide.hives, which covers every spoke, ~50),
-      // NOT the public-list length (~18) — showing 18/18 read as "all hives up"
-      // when two-thirds of the fleet is simply not public. The numerator stays
-      // the online count from the public list the page can actually see; fall
-      // back to the public length until the fleet-stats poll lands so it never
-      // shows online/undefined.
+      // "Hives online" is HIVES UP / TOTAL ASSIGNED, both fleet-wide:
+      //   • up    = _fleetWide.hives  (online, assigned hives across the fleet)
+      //   • total = _fleetWide.total_hives (all assigned hives, up or not)
+      // Neither is the public-list size — showing online-public/public read
+      // "18/18" (all up) when two-thirds of the fleet is simply not public.
+      // Unassigned placeholders are excluded from both (they're counted under
+      // "Available hives"). Until the fleet-stats poll lands, fall back to the
+      // public list the page can see so it never renders undefined.
       var f = _fleetWide;
-      var fleetTotal = (f && typeof f.hives === 'number' && f.hives >= hives.length) ? f.hives : hives.length;
-      document.getElementById('stat-online').textContent = online + '/' + fleetTotal;
-      // "Public hives" is deliberately the length of the PUBLIC list — it
-      // labels exactly what the table below shows, and is the one counter here
-      // that should not be fleet-wide.
+      var up = (f && typeof f.hives === 'number') ? f.hives : online;
+      var total = (f && typeof f.total_hives === 'number') ? f.total_hives : hives.length;
+      document.getElementById('stat-online').textContent = up + '/' + total;
+      // "Public hives" is deliberately the length of the PUBLIC list — it labels
+      // exactly the table below and is the one counter here that is not fleet-wide.
       document.getElementById('stat-total').textContent = hives.length;
+      // "Available hives" = unassigned placeholders a user can request (fleet-wide,
+      // anonymous scalar). Em dash until the poll lands.
+      var availEl = document.getElementById('stat-available');
+      if (availEl) {
+        availEl.textContent = (f && typeof f.available_hives === 'number') ? f.available_hives : '—';
+      }
       // The rest are fleet-wide when the hub has told us, falling back to the
       // public-list sums so an older hub (or a failed poll) still renders a
       // number rather than an em dash. (f = _fleetWide, resolved above.)

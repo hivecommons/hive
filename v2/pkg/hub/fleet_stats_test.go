@@ -61,7 +61,7 @@ func TestComputeFleetStats(t *testing.T) {
 					PRsMerged90d: ptrInt(5), PRsRejected90d: ptrInt(1), CVEsClosed: ptrInt(3)},
 			},
 			// repos: a/r1, a/r2, a/r3 = 3 distinct; a/r2 reported twice + as "r2".
-			want: FleetStats{ReposManaged: 3, PRsMerged: 15, PRsRejected: 3, CVEsClosed: 4, Hives: 2, Reporting: 2, Eligible: 2},
+			want: FleetStats{ReposManaged: 3, PRsMerged: 15, PRsRejected: 3, CVEsClosed: 4, Hives: 2, TotalHives: 2, Reporting: 2, Eligible: 2},
 		},
 		{
 			// A PRIVATE hive now COUNTS: these totals are anonymous sums, and
@@ -75,7 +75,9 @@ func TestComputeFleetStats(t *testing.T) {
 				{IsPublic: true, Online: false, Org: "a", Repos: []string{"r2"}, PRsMerged90d: ptrInt(99)},
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r3"}, PRsMerged90d: ptrInt(7)},
 			},
-			want: FleetStats{ReposManaged: 2, PRsMerged: 106, Hives: 2, Reporting: 2, Eligible: 2},
+			// TotalHives is 3: all three are assigned (Org set); one is offline so
+			// it's in the total but not "up" (Hives 2).
+			want: FleetStats{ReposManaged: 2, PRsMerged: 106, Hives: 2, TotalHives: 3, Reporting: 2, Eligible: 2},
 		},
 		{
 			name: "nil counts are not aggregated as zero",
@@ -83,7 +85,7 @@ func TestComputeFleetStats(t *testing.T) {
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}}, // all nil
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r2"}, PRsMerged90d: ptrInt(4)},
 			},
-			want: FleetStats{ReposManaged: 2, PRsMerged: 4, Hives: 2, Reporting: 1, Eligible: 2},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 4, Hives: 2, TotalHives: 2, Reporting: 1, Eligible: 2},
 		},
 		{
 			name: "empty repo strings are skipped",
@@ -91,7 +93,21 @@ func TestComputeFleetStats(t *testing.T) {
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"", "r1", ""},
 					PRsMerged90d: ptrInt(2)},
 			},
-			want: FleetStats{ReposManaged: 1, PRsMerged: 2, Hives: 1, Reporting: 1, Eligible: 1},
+			want: FleetStats{ReposManaged: 1, PRsMerged: 2, Hives: 1, TotalHives: 1, Reporting: 1, Eligible: 1},
+		},
+		{
+			// Unassigned placeholders (Org == "") are counted as AVAILABLE and
+			// excluded from the assigned totals — "hives up / total" is about the
+			// working fleet, not idle inventory. Here: 2 assigned (1 up), 3 available.
+			name: "unassigned placeholders count as available, not assigned",
+			hives: []RegistryEntry{
+				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(3)},
+				{IsPublic: false, Online: false, Org: "b", Repos: []string{"r2"}, PRsMerged90d: ptrInt(1)},
+				{Online: true, Org: ""},  // available placeholder, online
+				{Online: false, Org: ""}, // available placeholder, offline
+				{Online: true, Org: ""},  // available placeholder, online
+			},
+			want: FleetStats{ReposManaged: 1, PRsMerged: 3, Hives: 1, TotalHives: 2, AvailableHives: 3, Reporting: 1, Eligible: 1},
 		},
 		{
 			name:  "no hives yields empty",
