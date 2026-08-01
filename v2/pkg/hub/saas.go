@@ -440,6 +440,16 @@ func loadSaaSUser(username string) *SaaSUser {
 	if u.Hives == nil {
 		u.Hives = make(map[string]string)
 	}
+	// Backfill LoginCount for records that predate the login counter (added with
+	// the admin engagement card). Those users have a real LastLogin but a zero
+	// LoginCount, which renders as the contradictory "0 logins (last <date>)" on
+	// the stats card. A user who has logged in at least once is, at minimum, one
+	// login — so a present LastLogin with a zero count normalizes to 1. This is a
+	// read-time floor only; the real counter keeps incrementing from here on the
+	// next OAuth login (handleOAuthCallback), and it never lowers a genuine count.
+	if u.LoginCount == 0 && strings.TrimSpace(u.LastLogin) != "" {
+		u.LoginCount = 1
+	}
 	return &u
 }
 
