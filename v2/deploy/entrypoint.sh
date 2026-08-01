@@ -58,8 +58,38 @@ if [ -n "${KUBERNETES_SERVICE_HOST:-}" ] || [ -f /var/run/secrets/kubernetes.io/
 fi
 
 if [ "$IS_KUBERNETES" = "true" ]; then
-  # ── Kubernetes mode: ConfigMap seed + dashboard overlay ────────────
-  if [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ]; then
+  # ── Kubernetes mode: the PVC runtime config is the boot input ──────
+  #
+  # PHASE 2 OF THE LAYER COLLAPSE. The ConfigMap is now a SEED — consulted
+  # on first boot, when the PVC has no runtime config yet — and not a
+  # per-boot input that has to be merged over.
+  #
+  # Why this is the right way round: the ConfigMap is frozen at provision
+  # time and cannot be written by anything at runtime (the hub has only
+  # `get` on ConfigMaps, spoke RBAC omits them entirely, and the hub has no
+  # kubectl path to vllm-d at all). The runtime config on the PVC is the
+  # only layer any component can actually write. Treating the writable
+  # layer as the input — instead of merging it over a frozen one on every
+  # boot — is what removes the "which layer wins" question that cost about
+  # an hour during the 2026-07-31 GHE incident, when three read-only layers
+  # were patched before the writable one was found.
+  #
+  # Measured before the change: on 50 readable spokes all three layers held
+  # identical values for every identity field. The merge was recomputing a
+  # result equal to its own input on every boot.
+  HIVE_CONFIG_BOOT="$(hive_runtime_config_read)"
+  if [ -n "$HIVE_CONFIG_BOOT" ]; then
+    # Steady state: boot from what this hive last had. The ConfigMap seed is
+    # deliberately NOT merged — it is frozen at provision and every field it
+    # could contribute is either already here or re-asserted by the hub on
+    # the next heartbeat (~30s), including hub.is_public.
+    if cp "$HIVE_CONFIG_BOOT" "$HIVE_CONFIG_PATH" 2>/dev/null; then
+      echo "[entrypoint] K8s mode — booting from runtime config $HIVE_CONFIG_BOOT (ConfigMap is a seed, not merged)"
+    else
+      export HIVE_CONFIG="$HIVE_CONFIG_BOOT"
+      echo "[entrypoint] K8s mode — config path read-only, using $HIVE_CONFIG_BOOT directly"
+    fi
+  elif [ -f "$HIVE_CONFIG_PATH" ] && [ -s "$HIVE_CONFIG_PATH" ]; then
     # The copy-config init container re-seeded $HIVE_CONFIG_PATH from the
     # ConfigMap on this boot. Config saved via the dashboard (Config.Save
     # writes /etc/hive/hive.yaml, an emptyDir) would be silently lost —
@@ -182,22 +212,11 @@ PYEOF
     cp "$HIVE_CONFIG_PATH" "$HIVE_CONFIG_RUNTIME" 2>/dev/null || true
     echo "[entrypoint] K8s mode — ConfigMap is the seed, runtime config written to $HIVE_CONFIG_RUNTIME"
   else
-    # ConfigMap is missing or empty. Fall back to the persisted runtime
-    # config, preferring the new name and accepting the legacy one so a
-    # hive that has not yet written the new file still recovers.
-    HIVE_CONFIG_RECOVER="$(hive_runtime_config_read)"
-    if [ -n "$HIVE_CONFIG_RECOVER" ]; then
-      if cp "$HIVE_CONFIG_RECOVER" "$HIVE_CONFIG_PATH" 2>/dev/null; then
-        echo "[entrypoint] K8s mode — ConfigMap missing/empty, RECOVERED from $HIVE_CONFIG_RECOVER"
-      else
-        export HIVE_CONFIG="$HIVE_CONFIG_RECOVER"
-        echo "[entrypoint] K8s mode — ConfigMap missing/empty and read-only, using $HIVE_CONFIG_RECOVER directly"
-      fi
-    else
-      echo "[entrypoint] ERROR: No ConfigMap at $HIVE_CONFIG_PATH and no PVC runtime config at $HIVE_CONFIG_RUNTIME (or legacy $HIVE_CONFIG_RUNTIME_LEGACY)."
-      echo "[entrypoint] Ensure the hive ConfigMap is created before deploying."
-      exit 1
-    fi
+    # Neither source exists: no runtime config on the PVC (checked first,
+    # above) and no ConfigMap seed. There is nothing to boot from.
+    echo "[entrypoint] ERROR: no runtime config at $HIVE_CONFIG_RUNTIME (or legacy $HIVE_CONFIG_RUNTIME_LEGACY) and no ConfigMap seed at $HIVE_CONFIG_PATH."
+    echo "[entrypoint] Ensure the hive ConfigMap is created before deploying."
+    exit 1
   fi
 else
   # ── Docker mode: the PVC runtime config is the source of truth ─────
