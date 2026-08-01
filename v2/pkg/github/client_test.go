@@ -488,8 +488,12 @@ func TestFetchPRs_PRFields(t *testing.T) {
 	if pr.Repo != repo {
 		t.Errorf("PR Repo = %q, want %q", pr.Repo, repo)
 	}
-	if !pr.Mergeable {
-		t.Error("PR Mergeable should be true")
+	// Mergeability is NOT read from the list endpoint: GitHub never populates
+	// "mergeable" there. It stays MergeableUnknown until EnrichCIStatus fills
+	// it in from a per-PR GET. (This assertion previously expected true, which
+	// only held because the fixture supplied a field the real API omits.)
+	if pr.Mergeable != MergeableUnknown {
+		t.Errorf("PR Mergeable = %q, want MergeableUnknown from a list response", pr.Mergeable)
 	}
 }
 

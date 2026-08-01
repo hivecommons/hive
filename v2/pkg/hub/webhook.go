@@ -282,6 +282,35 @@ func (s *HubServer) loadAppPrivateKey(hive *RegistryEntry) string {
 		return ""
 	}
 
+	// HONOUR THE HIVE'S OWN ELECTED FORGE, not just its cluster.
+	//
+	// This function used to resolve identity from cluster config alone: it
+	// received the hive and never read its recorded host. That made a hive's own
+	// intent structurally unreachable from the decision, and on 2026-07-31 it
+	// overwrote a correctly-repaired torch-spyre six seconds after boot with the
+	// cluster's GHE App key.
+	//
+	// When the hive has elected a forge its cluster does not default to, the
+	// cluster's key is the WRONG key by construction — it belongs to an App
+	// registered on the other GitHub. Prefer the key of the App this hive should
+	// actually authenticate as, looked up by app_id across the fleet's keys.
+	if identity := ResolveHiveIdentityInFleet(loadSaaSHive(hive.ID), &cluster, s.forgeAppsAcrossFleet()); identity.FromHiveIntent && identity.AppID != 0 {
+		if k, found := s.appKeysByAppID()[identity.AppID]; found && k.PrivateKey != "" {
+			s.logger.Info("app key follows the hive's elected forge, not the cluster default",
+				"hive_id", hive.ID, "cluster_id", clusterID,
+				"forge", identity.Forge, "app_id", identity.AppID)
+			return k.PrivateKey
+		}
+		// No key for the elected App. Deliberately fall through to the cluster
+		// key rather than returning "": an empty key is treated as "leave the
+		// spoke's key alone" downstream, and that is strictly safer than
+		// silently handing over a key from the wrong forge — but it is also not
+		// a repair, so say so.
+		s.logger.Warn("hive elected a forge whose app key the hub does not hold",
+			"hive_id", hive.ID, "forge", identity.Forge, "app_id", identity.AppID)
+		return ""
+	}
+
 	// First: check the hive's own secret (already configured hives).
 	ns := "hive-hosted-" + hive.ID
 	out, err := kubectlForCluster(&cluster, "get", "secret", "hive-secrets", "-n", ns,

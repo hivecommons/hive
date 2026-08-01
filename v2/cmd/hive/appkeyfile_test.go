@@ -43,13 +43,22 @@ func redirectSpokeKeyPaths(t *testing.T) (dataPath, secretsPath string) {
 	t.Helper()
 	dir := t.TempDir()
 	origData, origSecrets, origDir := spokeAppKeyPath, spokeProvisionedAppKeyPath, spokeAppKeyDir
+	origProvDir := spokeProvisionedAppKeyDir
 	spokeAppKeyPath = filepath.Join(dir, "data-gh-app-key.pem")
 	spokeProvisionedAppKeyPath = filepath.Join(dir, "secrets-gh-app-key.pem")
 	// Per-app-id keys land in this same temp dir, so perAppIDKeyPath and
 	// heldPerAppIDKeyFingerprints never touch the real /data.
 	spokeAppKeyDir = dir
+	// The provisioning mount gets a SEPARATE dir: the PVC and the read-only
+	// Secret hold per-app-id files under identical names, so pointing both at one
+	// dir would make it impossible to tell which source a resolution came from.
+	spokeProvisionedAppKeyDir = filepath.Join(dir, "secrets")
+	if err := os.MkdirAll(spokeProvisionedAppKeyDir, 0o700); err != nil {
+		t.Fatalf("mkdir provisioned key dir: %v", err)
+	}
 	t.Cleanup(func() {
 		spokeAppKeyPath, spokeProvisionedAppKeyPath, spokeAppKeyDir = origData, origSecrets, origDir
+		spokeProvisionedAppKeyDir = origProvDir
 	})
 	return spokeAppKeyPath, spokeProvisionedAppKeyPath
 }
@@ -281,5 +290,70 @@ func TestWritePerAppIDKeyAndReport(t *testing.T) {
 	// A non-positive app_id is refused rather than writing an ambiguous file.
 	if _, err := writePerAppIDKey(0, pemData); err == nil {
 		t.Error("writePerAppIDKey(0, ...) succeeded; a non-positive app_id must be refused")
+	}
+}
+
+// TestResolveAppKeyFileUsesProvisionedPerAppIDKey covers the birth of a hive:
+// provisioning has written the fleet's keys into the read-only Secret, and no
+// heartbeat has run yet, so the PVC holds nothing. The spoke must still sign as
+// the App it is configured as rather than falling through to the generic
+// single-file paths — which on a GHE cluster hold the OTHER forge's key and
+// produce "404 Integration not found".
+func TestResolveAppKeyFileUsesProvisionedPerAppIDKey(t *testing.T) {
+	redirectSpokeKeyPaths(t)
+	const publicAppID = 3568013
+
+	provisioned := perAppIDProvisionedKeyPath(publicAppID)
+	writeTestKey(t, provisioned)
+
+	if got := resolveAppKeyFile("", "", publicAppID); got != provisioned {
+		t.Fatalf("want provisioned per-app-id key %s, got %s", provisioned, got)
+	}
+}
+
+// A heartbeat-delivered key on the PVC must outrank the copy frozen into the
+// Secret at provision time: that is what makes key ROTATION possible, since the
+// Secret cannot be rewritten in place by the spoke.
+func TestResolveAppKeyFilePrefersPVCOverProvisionedPerAppID(t *testing.T) {
+	redirectSpokeKeyPaths(t)
+	const publicAppID = 3568013
+
+	writeTestKey(t, perAppIDProvisionedKeyPath(publicAppID))
+	pvc := perAppIDKeyPath(publicAppID)
+	writeTestKey(t, pvc)
+
+	if got := resolveAppKeyFile("", "", publicAppID); got != pvc {
+		t.Fatalf("rotated PVC key must win, want %s, got %s", pvc, got)
+	}
+}
+
+// An explicit operator override still beats both per-app-id sources.
+func TestResolveAppKeyFileExplicitOverrideBeatsProvisionedPerAppID(t *testing.T) {
+	redirectSpokeKeyPaths(t)
+	const publicAppID = 3568013
+
+	writeTestKey(t, perAppIDProvisionedKeyPath(publicAppID))
+	named := filepath.Join(t.TempDir(), "operator-named.pem")
+	writeTestKey(t, named)
+
+	if got := resolveAppKeyFile(named, "", publicAppID); got != named {
+		t.Fatalf("explicit key_file must win, want %s, got %s", named, got)
+	}
+}
+
+// A truncated per-app-id file in the Secret must not shadow a usable generic
+// key: existence is not enough, it has to be a parseable key.
+func TestResolveAppKeyFileIgnoresUnusableProvisionedPerAppIDKey(t *testing.T) {
+	dataPath, _ := redirectSpokeKeyPaths(t)
+	const publicAppID = 3568013
+
+	if err := os.WriteFile(perAppIDProvisionedKeyPath(publicAppID),
+		[]byte("PLACEHOLDER-awaiting-github-app-key"), 0o600); err != nil {
+		t.Fatalf("write placeholder: %v", err)
+	}
+	writeTestKey(t, dataPath)
+
+	if got := resolveAppKeyFile("", "", publicAppID); got != dataPath {
+		t.Fatalf("unusable per-app-id key must be skipped, want %s, got %s", dataPath, got)
 	}
 }

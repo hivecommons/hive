@@ -109,10 +109,23 @@ for arg in "${args[@]}"; do
   esac
 done
 
-# Block gh issue list and gh pr list (global) — except contributors listing their own PRs
+# ── READ/WRITE SPLIT for GitHub lookups (fixes #2356; addresses #2393 item 6) ──
+# Contributor agents MUST be able to do READ-ONLY lookups before starting work so
+# they can check whether a PR already exists for their assigned issue — otherwise
+# they send DUPLICATE PRs (#2356). We therefore ALLOW read-only enumeration
+# (`gh pr list`, `gh issue list`, `gh search prs|issues`, `gh pr/issue view`,
+# `gh pr diff`) and GET-only `gh api repos/*/{issues,pulls}` reads, while keeping
+# EVERY write/destructive path blocked (create/merge/close/edit/delete, `gh auth`,
+# and any mutating `gh api` -X/--method POST|PATCH|PUT|DELETE — enforced below).
+#
+# Block gh issue list and gh pr list for NON-contributor hive agents (they consume
+# assigned work from actionable.json). Contributors are exempt so they can look
+# before they leap. `--author` self-listing stays allowed for everyone.
 if { [ "$subcmd" = "issue" ] || [ "$subcmd" = "pr" ]; } && [ "$action" = "list" ]; then
-  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]] && echo "$FULL_CMD" | grep -q "\-\-author"; then
-    : # Allow contributors to list their own PRs for review
+  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]]; then
+    : # Allow contributor agents read-only list/search to avoid duplicate PRs (#2356)
+  elif echo "$FULL_CMD" | grep -q "\-\-author"; then
+    : # Allow any agent to list their own PRs for review
   else
     echo "⛔ BLOCKED: gh $subcmd list is disabled for agents." >&2
     echo "Read /var/run/hive-metrics/actionable.json instead." >&2
@@ -328,14 +341,55 @@ except Exception as e:
   fi
 fi
 
-# Block gh api calls that list issues or pulls (global)
+# ── gh api read/write split (fixes #2356; addresses #2393 item 6) ──
+# GET requests to repos/*/{issues,pulls} are READ-ONLY lookups an agent needs to
+# check for an existing PR/issue before starting → ALLOWED. Any MUTATING method
+# (POST/PATCH/PUT/DELETE, via -X/--method, or an implicit POST when -f/--field/
+# --input is present with no explicit GET) stays BLOCKED. `gh api` defaults to GET
+# only when no fields are supplied; supplying fields makes it a POST, so we treat
+# "fields present without an explicit GET" as a write and deny it.
 if [ "$subcmd" = "api" ]; then
+  api_method="GET"        # gh api default
+  api_method_explicit=false
+  api_has_fields=false
+  _next_is_method=false
+  for arg in "${args[@]}"; do
+    if $_next_is_method; then
+      api_method="$(printf '%s' "$arg" | tr '[:lower:]' '[:upper:]')"
+      api_method_explicit=true
+      _next_is_method=false
+      continue
+    fi
+    case "$arg" in
+      -X|--method)          _next_is_method=true ;;
+      -X*)                  api_method="$(printf '%s' "${arg#-X}" | tr '[:lower:]' '[:upper:]')"; api_method_explicit=true ;;
+      --method=*)           api_method="$(printf '%s' "${arg#--method=}" | tr '[:lower:]' '[:upper:]')"; api_method_explicit=true ;;
+      -f|-F|--field|--raw-field|--input) api_has_fields=true ;;
+      -f*|-F*)              api_has_fields=true ;;
+      --field=*|--raw-field=*|--input=*) api_has_fields=true ;;
+    esac
+  done
+  # Fields without an explicit method mean gh sends a POST → treat as a write.
+  if ! $api_method_explicit && $api_has_fields; then
+    api_method="POST"
+  fi
+
+  # Any mutating gh api (POST/PATCH/PUT/DELETE) stays blocked for contributor
+  # agents — the read/write split opens READS only, never writes. Non-contributor
+  # hive agents keep their existing write paths (governed by mode/ACMM gates above).
+  if [[ "${HIVE_CONTRIBUTOR_MODE:-}" == "true" ]] && [ "$api_method" != "GET" ]; then
+    echo "⛔ BLOCKED: mutating gh api (${api_method}) is disabled for contributor agents." >&2
+    exit 1
+  fi
+
   for arg in "${args[@]}"; do
     case "$arg" in
       repos/*/issues\?*|repos/*/issues|repos/*/pulls\?*|repos/*/pulls)
-        echo "⛔ BLOCKED: gh api issue/PR listing is disabled for agents." >&2
-        echo "Read /var/run/hive-metrics/actionable.json instead." >&2
-        exit 1
+        if [ "$api_method" != "GET" ]; then
+          echo "⛔ BLOCKED: mutating gh api (${api_method}) to issues/pulls is disabled for agents." >&2
+          exit 1
+        fi
+        # GET is a read-only lookup — allowed so agents can check for existing PRs (#2356).
         ;;
     esac
   done

@@ -117,3 +117,54 @@ func TestSetGitHubAppStateRoundTrips(t *testing.T) {
 		t.Errorf("GetGitHubAppState() = %q after clearing the requirement, want empty", got)
 	}
 }
+
+// TestGitHubAppBannerStartTagIsClosed guards a whole class of silent HTML
+// corruption that no JS syntax check can catch.
+//
+// The banner's opening <div> shipped for seven weeks with no ">" at all:
+//
+//	<div id="gh-app-install-banner" class="gh-app-install-banner" hidden
+//	  <span style="font-size:1.5rem">&#9888;&#65039;</span>
+//
+// Per the HTML5 tokenizer, "<" is a legal attribute-name character, so the
+// parser stayed in the div's start tag and consumed "<span" as an attribute
+// NAME and "font-size:1.5rem" as the value of a "style" attribute it then
+// hung on the DIV. The ">" that was meant to close the <span> closed the
+// <div> instead. Net effect: the ⚠️ glyph was swallowed into the tag and
+// never rendered, and the banner div acquired a bogus inline
+// style="font-size:1.5rem" that fights the cssText the show/hide code
+// assigns. node --check sees none of this — the script bodies are untouched.
+//
+// Assert on the parsed shape rather than the literal text so a future
+// reformat of the attribute list cannot silently retire the guard.
+func TestGitHubAppBannerStartTagIsClosed(t *testing.T) {
+	html := spokeIndexHTML(t)
+
+	const bannerID = `id="gh-app-install-banner"`
+	start := strings.Index(html, bannerID)
+	if start < 0 {
+		t.Fatalf("static/index.html no longer contains %s", bannerID)
+	}
+	// Walk back to the "<" that opens this element, then forward to the first
+	// ">" — everything between them is the start tag as the browser sees it.
+	open := strings.LastIndex(html[:start], "<")
+	if open < 0 {
+		t.Fatalf("could not find the opening < for the banner div")
+	}
+	end := strings.Index(html[open:], ">")
+	if end < 0 {
+		t.Fatalf("banner div start tag is never terminated by >")
+	}
+	tag := html[open : open+end+1]
+
+	// A well-formed start tag cannot contain another "<": if it does, the
+	// tokenizer has swallowed the next element into this tag's attributes.
+	if strings.Contains(tag[1:], "<") {
+		t.Errorf("banner div start tag swallowed a following element — missing '>':\n%s", tag)
+	}
+	// The warning glyph must be real text content, not tag innards.
+	afterTag := html[open+end+1:]
+	if !strings.HasPrefix(strings.TrimSpace(afterTag), "<span") {
+		t.Errorf("expected the warning <span> to follow the banner div start tag, got: %.80s", strings.TrimSpace(afterTag))
+	}
+}

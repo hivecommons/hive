@@ -48,6 +48,10 @@ type ApplyPackResult struct {
 	Skipped []string `json:"skipped"`
 	Paused  []string `json:"paused"`
 	Resumed []string `json:"resumed"`
+	// Tombstoned lists pack agents deliberately deleted by the operator and
+	// therefore NOT re-created. Surfaced so an under-full roster reads as an
+	// honored choice rather than an apply that quietly dropped agents.
+	Tombstoned []string `json:"tombstoned,omitempty"`
 }
 
 // ApplyPack applies the ACMM pack for the given level. It creates agents,
@@ -77,11 +81,143 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 	var skipped []string
 	var updated []string
 	var createErrs []string
-	if err := s.mutateConfig(func(candidate *config.Config) error {
-		if forceLevel {
-			for name, agentConfig := range candidate.Agents {
-				agentConfig.Mode = ""
-				candidate.Agents[name] = agentConfig
+	// tombstoned collects pack agents skipped because the operator deleted
+	// them. Reported back so the caller (and the apply-pack response) can say
+	// so out loud instead of silently under-delivering the level's roster.
+	var tombstoned []string
+	for _, pa := range pack.Agents {
+		// A deliberately deleted agent is NOT re-created, at any level. The
+		// pack listing it is exactly why deletion did not stick: ApplyPack
+		// runs on every restart, so the pack re-added `brainstorm`/`guide` to
+		// a hive whose operator had removed them, four times over.
+		if s.deps.Config.IsAgentRemoved(pa.Name) {
+			tombstoned = append(tombstoned, pa.Name)
+			continue
+		}
+		if existing, exists := s.deps.Config.Agents[pa.Name]; exists {
+			changed := false
+
+			// Pack-behavior fields define what an agent DOES at a given ACMM
+			// level (which kick template it runs, its issue/PR mode, which model,
+			// its role/description). These MUST be reconciled to the current pack
+			// on every level change — otherwise a value written by a PREVIOUS
+			// level's pack is indistinguishable from a user override and sticks
+			// forever, so the agent keeps behaving at its old level. That is the
+			// exact drift observed in the field: hives that climbed levels kept
+			// scanner/ci-maintainer/quality on their lower-level advisory
+			// templates and models even though acmm_level had moved up. Reconcile
+			// these replace-on-diff (kick_template and mode already did; model,
+			// description, role, bead_role, display_name did NOT — that gap is the
+			// bug).
+			//
+			// Model/Backend are the exception: an operator sets them from the
+			// Governor grid, so they carry an ownership marker and are reconciled
+			// only while still pack-owned (see below). The in-memory
+			// ModelOverride/BackendOverride on the agent process are NOT a
+			// durable home for that choice — they are replayed from
+			// /data/hive-state.json, while hive.yaml (which this writes) is what
+			// the pack re-reads on the next restart.
+			if pa.KickTemplate != "" && existing.KickTemplate != pa.KickTemplate {
+				existing.KickTemplate = pa.KickTemplate
+				changed = true
+			}
+			if pa.Mode != "" && existing.Mode != pa.Mode {
+				existing.Mode = pa.Mode
+				changed = true
+			}
+			// Model is reconciled to the pack ONLY while the pack still owns
+			// it. Once an operator picks a model in the Governor grid the
+			// field becomes operator-owned and the pack must leave it alone:
+			// ApplyPack runs on every restart ("merging pack updates"), so an
+			// unconditional replace-on-diff here silently reverted the
+			// operator's choice on the next pod restart — repeatedly, which is
+			// exactly the reported "they always come back".
+			if pa.Model != "" && existing.Model != pa.Model && !existing.ModelIsOperatorOwned() {
+				existing.Model = pa.Model
+				existing.ModelOwner = config.FieldOwnerPack
+				changed = true
+			}
+			if pa.Description != "" && existing.Description != pa.Description {
+				existing.Description = pa.Description
+				changed = true
+			}
+			if pa.Role != "" && existing.Role != pa.Role {
+				existing.Role = pa.Role
+				changed = true
+			}
+			if pa.BeadRole != "" && existing.BeadRole != pa.BeadRole {
+				existing.BeadRole = pa.BeadRole
+				changed = true
+			}
+			if pa.DisplayName != "" && existing.DisplayName != pa.DisplayName {
+				existing.DisplayName = pa.DisplayName
+				changed = true
+			}
+
+			// Backend is fill-if-empty: it never varies by level (always the same
+			// per agent across all packs), and users legitimately pin it, so the
+			// pack must not stomp a user's choice.
+			if existing.Backend == "" && pa.Backend != "" && !existing.BackendIsOperatorOwned() {
+				existing.Backend = pa.Backend
+				existing.BackendOwner = config.FieldOwnerPack
+				changed = true
+			}
+
+			// Respect user's enabled: false — don't override it.
+			if changed {
+				s.deps.Config.Agents[pa.Name] = existing
+				_ = s.deps.AgentMgr.UpdateConfig(pa.Name, existing)
+				updated = append(updated, pa.Name)
+			} else {
+				skipped = append(skipped, pa.Name)
+			}
+			continue
+		}
+
+		includeRepos := pa.IncludeRepos
+		agentCfg := config.AgentConfig{
+			Backend: pa.Backend,
+			Model:   pa.Model,
+			// A freshly created agent's model/backend come from the pack, so
+			// the pack owns them until an operator overrides in the grid.
+			ModelOwner:   config.FieldOwnerPack,
+			BackendOwner: config.FieldOwnerPack,
+			Enabled:      true,
+			DisplayName:  pa.DisplayName,
+			Description:  pa.Description,
+			Role:         pa.Role,
+			SortOrder:    pa.SortOrder,
+			Emoji:        pa.Emoji,
+			Color:        pa.Color,
+			BeadRole:     pa.BeadRole,
+			KickTemplate: pa.KickTemplate,
+			IncludeRepos: &includeRepos,
+			LaneKeywords: pa.LaneKeywords,
+			Mode:         pa.Mode,
+			OnDemand:     pa.OnDemand,
+			Managed:      true,
+		}
+
+		if err := config.SaveAgentFile(agentsDir, pa.Name, agentCfg); err != nil {
+			// Do not abort: keep reconciling the rest of the roster. The agent
+			// is still added to the in-memory config below so it appears in
+			// /api/status and is retried on the next apply; the combined error
+			// returned at the end prevents the level from being recorded as
+			// cleanly applied.
+			s.logger.Error("failed to save agent overlay file from pack (continuing)", "agent", pa.Name, "error", err)
+			createErrs = append(createErrs, fmt.Sprintf("%s: %v", pa.Name, err))
+		}
+
+		s.deps.Config.Agents[pa.Name] = agentCfg
+		s.deps.Config.ApplyAgentDefaults(pa.Name)
+
+		finalCfg := s.deps.Config.Agents[pa.Name]
+		s.deps.AgentMgr.AddAgent(pa.Name, finalCfg)
+		// On-demand agents are only triggered explicitly (e.g. by inception).
+		// Also skip starting agents the user explicitly disabled.
+		if !pa.OnDemand && finalCfg.Enabled {
+			if err := s.deps.AgentMgr.Start(s.deps.Ctx, pa.Name); err != nil {
+				s.logger.Warn("failed to start agent after pack create", "agent", pa.Name, "error", err)
 			}
 		}
 
@@ -265,15 +401,23 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 
 	s.persistOnly()
 	go s.refreshAsync()
-	s.logger.Info("ACMM pack applied", "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed))
+	s.logger.Info("ACMM pack applied", "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned))
+	if len(tombstoned) > 0 {
+		// Say it plainly in the log too: an operator reading "this level has 6
+		// agents but I see 4" needs the reason, not a silent gap.
+		s.logger.Info("ACMM pack: agents NOT re-created because the operator deleted them",
+			"agents", strings.Join(tombstoned, ", "),
+			"hint", "re-add the agent from the Governor grid to undo the deletion")
+	}
 
 	result := &ApplyPackResult{
-		Name:    pack.Name,
-		Created: created,
-		Updated: updated,
-		Skipped: skipped,
-		Paused:  paused,
-		Resumed: resumed,
+		Name:       pack.Name,
+		Created:    created,
+		Updated:    updated,
+		Skipped:    skipped,
+		Paused:     paused,
+		Resumed:    resumed,
+		Tombstoned: tombstoned,
 	}
 	if len(createErrs) > 0 {
 		return result, fmt.Errorf("failed to persist %d pack agent(s): %s", len(createErrs), strings.Join(createErrs, "; "))
@@ -309,6 +453,8 @@ func (s *Server) handlePackApply(w http.ResponseWriter, r *http.Request) {
 		"skipped": result.Skipped,
 		"paused":  result.Paused,
 		"resumed": result.Resumed,
+		// Empty unless the operator deleted one of this level's agents.
+		"tombstoned": result.Tombstoned,
 	})
 }
 

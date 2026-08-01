@@ -35,7 +35,7 @@ func TestProvisionHiveSuccess(t *testing.T) {
 	h := &SaaSHive{ID: "hosted-acme-repo-abcd", Owner: "alice", Org: "acme", Repos: []string{"repo"}, PrimaryRepo: "repo", ACMMLevel: 2}
 	req := &CreateHiveRequest{Org: "acme", Repos: "repo", PrimaryRepo: "repo", ACMMLevel: 2, ClusterID: "hive-oke"}
 
-	if err := provisionHive(h, req, dynamicCluster(), slog.Default()); err != nil {
+	if err := provisionHive(h, req, dynamicCluster(), nil, slog.Default()); err != nil {
 		t.Fatalf("provisionHive: %v", err)
 	}
 }
@@ -51,7 +51,7 @@ func TestProvisionHiveWithAppAuth(t *testing.T) {
 		AuthMethod: "app", AppID: "123", InstallationID: "456",
 		AppPrivateKey: "-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----",
 	}
-	if err := provisionHive(h, req, dynamicCluster(), slog.Default()); err != nil {
+	if err := provisionHive(h, req, dynamicCluster(), nil, slog.Default()); err != nil {
 		t.Fatalf("provisionHive app auth: %v", err)
 	}
 }

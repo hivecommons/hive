@@ -6,7 +6,7 @@
 //   - /data/saas/**            hub SaaS state (users, hives, keys, timeline)
 //   - /data/hub-registry.json  the fleet registry
 //   - Kubernetes Secrets       credentials that live OUTSIDE the PVC
-//   - per-spoke config         hive.yaml.bak, gh-app-key*.pem, hive-id
+//   - per-spoke config         hive.yaml.runtime, gh-app-key*.pem, hive-id
 //
 // Deliberately EXCLUDED as regenerable agent scratch: nous/, home/, beads/,
 // logs/. Including them would grow a ~5MB archive into gigabytes.

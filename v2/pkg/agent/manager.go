@@ -50,52 +50,59 @@ const (
 )
 
 type AgentProcess struct {
-	Name                     string
-	ID                       string
-	Config                   config.AgentConfig
-	State                    ProcessState
-	PID                      int
-	UID                      int
-	StartedAt                *time.Time
-	LastKick                 *time.Time
-	Paused                   bool
-	PausedAt                 time.Time
-	PausedReason             string
-	PausedTrigger            string
-	PinnedCLI                string
-	PinnedModel              string
-	ModelOverride            string
-	BackendOverride          string
-	RestartCount             int
-	OutputBuffer             *RingBuffer
-	lastPaneCapture          []string
-	paneMu                   sync.RWMutex
-	KickHistory              []KickRecord
-	LastKickMessage          string
-	KickRefused              bool
-	KickRefusalReason        string
-	LaunchedMode             AgentMode
-	HasLaunched              bool
-	specialistReady          bool
-	specialistProviderSHA256 string
-	tmuxSession              string
-	tmuxSocket               string
-	cancel                   context.CancelFunc
-	forceRelaunch            bool
-	BootstrapOverride        string    // when set, replaces buildBootstrapPrompt output
-	LastError                string    // captured from bare copilot diagnostic launch
-	lastTokenRestart         time.Time // cooldown for auto-restart after token detection
-	NeedsLogin               bool      // true when pane shows a login prompt
-	consentSeenAt            time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss       time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt          time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane        string    // stall watchdog: hash of the visible pane just after kick delivery
-	stallNudgeSent           bool      // stall watchdog: at most one nudge per kick
-	StallNudges              int       // total post-kick stall nudges sent (surfaced to the dashboard)
-	launchGen                int       // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks       int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
-	actionNudgeSent          bool      // no-action watchdog: at most one action nudge per kick
-	ActionNudges             int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+	Name            string
+	ID              string
+	Config          config.AgentConfig
+	State           ProcessState
+	PID             int
+	UID             int
+	StartedAt       *time.Time
+	LastKick        *time.Time
+	Paused          bool
+	PausedAt        time.Time
+	PausedReason    string
+	PausedTrigger   string
+	PinnedCLI       string
+	PinnedModel     string
+	ModelOverride   string
+	BackendOverride string
+	RestartCount    int
+	OutputBuffer    *RingBuffer
+	lastPaneCapture []string
+	paneMu          sync.RWMutex
+	KickHistory     []KickRecord
+	LastKickMessage    string
+	KickRefused        bool
+	KickRefusalReason  string
+	LaunchedMode       AgentMode
+	HasLaunched     bool
+	tmuxSession     string
+	tmuxSocket      string
+	cancel context.CancelFunc
+	forceRelaunch       bool
+	BootstrapOverride   string // when set, replaces buildBootstrapPrompt output
+	LastError           string // captured from bare copilot diagnostic launch
+	lastTokenRestart    time.Time // cooldown for auto-restart after token detection
+	NeedsLogin          bool   // true when pane shows a login prompt
+	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
+	// observed by the 3s pane poller. It is the spoke's only evidence of an
+	// agent actually doing something: State says what the manager intends,
+	// StartedAt says when the CLI launched, and LastKick says when the
+	// governor last spoke to it — none of them move when a running,
+	// authenticated CLI sits there producing nothing. Written under paneMu by
+	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
+	// has seen two differing captures, which reads as "unknown", never "idle".
+	LastPaneChange      time.Time
+	consentSeenAt       time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss  time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt     time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane   string    // stall watchdog: hash of the visible pane just after kick delivery
+	stallNudgeSent      bool      // stall watchdog: at most one nudge per kick
+	StallNudges         int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	launchGen           int       // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks  int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	actionNudgeSent     bool      // no-action watchdog: at most one action nudge per kick
+	ActionNudges        int       // total prose-only-response action nudges sent (surfaced to the dashboard)
 
 	// awaitingBobKey marks an agent that launchInTmux parked in StateFailed
 	// for the single, fully-recoverable reason "bob backend with no API key".
@@ -788,9 +795,25 @@ func (m *Manager) tmuxSessionExists(session string) bool {
 	return cmd.Run() == nil
 }
 
-func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {
+// tmuxSessionExists probes for a live tmux session. It is a function variable
+// solely as a TEST SEAM: production never assigns it, and the default below is
+// the real probe.
+//
+// Without the seam, any test reaching this line executes a REAL `tmux
+// has-session` against the developer's or the CI runner's own tmux server.
+// That is the same class of hazard as a test shelling to a real kubectl, which
+// previously created ~196 stray namespaces on live clusters: the outcome
+// depends on machine state rather than on the code under test, so a test can
+// pass for the wrong reason. Tests that need to assert WHETHER the probe was
+// consulted — SessionMissing's early returns exist precisely so it is not —
+// replace this and observe the calls.
+var tmuxSessionExists = func(m *Manager, agent *AgentProcess) bool {
 	cmd := m.tmuxCmd(agent, "has-session", "-t", agent.tmuxSession)
 	return cmd.Run() == nil
+}
+
+func (m *Manager) tmuxSessionExistsForAgent(agent *AgentProcess) bool {
+	return tmuxSessionExists(m, agent)
 }
 
 // cliPaneMarkers are strings that appear in a tmux pane when a CLI (claude,
@@ -1425,6 +1448,22 @@ func (m *Manager) installCavemanForAgent(agent *AgentProcess, backend string) {
 	}
 }
 
+// samePaneCapture reports whether two pane captures are identical line for
+// line. Used to decide whether the agent produced anything since the last
+// poll; equality means the pane is static, which is the observable signature
+// of an agent that is running but not working.
+func samePaneCapture(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // pollTmuxOutputForAgent is pollTmuxOutput using the agent's tmux socket.
 func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Context) {
 	const pollInterval = 3 * time.Second
@@ -1456,6 +1495,15 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			showsLogin := paneShowsLoginPrompt(filtered)
 
 			agent.paneMu.Lock()
+			// Advance the activity clock only when the pane actually changed.
+			// Comparing against the PREVIOUS capture (not prevLines, which the
+			// ring-buffer diff below consumes and rewrites) is what separates
+			// "the CLI is producing output" from "the CLI is sitting at an idle
+			// prompt": a static pane re-captured every 3s is byte-identical, so
+			// an agent that renders nothing new never moves this timestamp.
+			if !samePaneCapture(agent.lastPaneCapture, filtered) {
+				agent.LastPaneChange = time.Now()
+			}
 			agent.lastPaneCapture = filtered
 			agent.NeedsLogin = showsLogin
 			agent.paneMu.Unlock()
@@ -2573,6 +2621,44 @@ func (m *Manager) bobAgentsAwaitingKey() []string {
 	return candidates
 }
 
+// notRunningReason explains WHY an agent is not in StateRunning, in terms an
+// operator can act on.
+//
+// The old wording — "agent <name> not running" — came from this same
+// State != StateRunning check and conflated three unrelated situations: an
+// agent the operator deliberately paused, one that failed to launch, and one
+// that was stopped or never started. During a live incident it read as a
+// launch failure on agents that were paused exactly as intended, and sent the
+// investigation after a tmux problem that did not exist. Naming the state, and
+// the pause trigger where there is one, is the whole fix.
+//
+// Caller holds m.mu.
+func notRunningReason(agent *AgentProcess) string {
+	switch {
+	case agent.Paused || agent.State == StatePaused:
+		reason := "it is paused"
+		if t := strings.TrimSpace(agent.PausedTrigger); t != "" {
+			reason += " (by " + t + ")"
+		}
+		if r := strings.TrimSpace(agent.PausedReason); r != "" {
+			reason += ": " + r
+		}
+		return reason
+	case agent.State == StateFailed:
+		reason := "it failed to start"
+		if e := strings.TrimSpace(agent.LastError); e != "" {
+			reason += ": " + e
+		}
+		return reason
+	case agent.State == StateStopped:
+		return "it is stopped"
+	case agent.State == StateIdle:
+		return "it has not been started yet"
+	default:
+		return "it is in state " + string(agent.State)
+	}
+}
+
 func (m *Manager) SendKick(name string, message string) error {
 	return m.sendKick(name, message, "")
 }
@@ -2592,7 +2678,7 @@ func (m *Manager) sendKick(name string, message string, specialistTaskID string)
 	}
 
 	if agent.State != StateRunning {
-		return fmt.Errorf("agent %s not running", name)
+		return fmt.Errorf("agent %s cannot be kicked: %s", name, notRunningReason(agent))
 	}
 
 	if !m.tmuxSessionExistsForAgent(agent) {
@@ -3455,8 +3541,9 @@ func (a *AgentProcess) snapshot() AgentProcess {
 	a.paneMu.RLock()
 	pane := make([]string, len(a.lastPaneCapture))
 	copy(pane, a.lastPaneCapture)
-	// NeedsLogin is written by the pane poller under paneMu.
+	// NeedsLogin and LastPaneChange are written by the pane poller under paneMu.
 	needsLogin := a.NeedsLogin
+	lastPaneChange := a.LastPaneChange
 	a.paneMu.RUnlock()
 	return AgentProcess{
 		Name:            a.Name,
@@ -3479,6 +3566,7 @@ func (a *AgentProcess) snapshot() AgentProcess {
 		KickHistory:     history,
 		LastKickMessage: a.LastKickMessage,
 		NeedsLogin:      needsLogin,
+		LastPaneChange:  lastPaneChange,
 		StallNudges:     a.StallNudges,
 		ActionNudges:    a.ActionNudges,
 		HasLaunched:     a.HasLaunched,
@@ -5539,6 +5627,33 @@ func (m *Manager) IsPaused(name string) bool {
 		return false
 	}
 	return agent.Paused
+}
+
+// SessionMissing reports whether an agent the manager believes is RUNNING has
+// no live tmux session — the zombie case, where in-memory state and reality
+// have diverged.
+//
+// It is deliberately false for any agent that is not StateRunning: a paused,
+// stopped or never-started agent legitimately has no session, and reporting
+// those as missing would turn every deliberate pause into a fault.
+//
+// The session check must go through the agent's OWN tmux socket. Each agent
+// runs under its own UID on its own socket (e.g. /tmp/tmux-2007/hive-scanner),
+// so a query against the default socket answers "no server running" even when
+// every session is alive — the exact false reading that has sent live
+// diagnosis down the wrong path.
+func (m *Manager) SessionMissing(name string) bool {
+	m.mu.RLock()
+	agent, ok := m.agents[name]
+	if !ok || agent.State != StateRunning || agent.Paused {
+		m.mu.RUnlock()
+		return false
+	}
+	m.mu.RUnlock()
+	// The exec runs outside the lock: it shells out to tmux, and holding a
+	// manager lock across a subprocess is how the startup path has deadlocked
+	// before.
+	return !m.tmuxSessionExistsForAgent(agent)
 }
 
 func (m *Manager) TmuxSession(name string) string {

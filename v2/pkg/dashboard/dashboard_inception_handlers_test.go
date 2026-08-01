@@ -189,16 +189,23 @@ func TestHandleGHUserAuthStatusNoToken(t *testing.T) {
 	}
 }
 
-func TestHandleGHUserAuthStartNoClientID(t *testing.T) {
+// A blank oauth_client_id resolves to the PUBLIC github.com Hive App client
+// rather than failing: device-flow login is always github.com, even for a hive
+// whose App and repos live on GHE. An earlier revision returned 400 here, which
+// broke login for every hive that had not set oauth_client_id explicitly.
+func TestHandleGHUserAuthStartBlankClientIDResolvesPublicDefault(t *testing.T) {
 	srv := newMinimalServer(t)
-	req := httptest.NewRequest("POST", "/api/gh-user-auth/start", nil)
-	w := httptest.NewRecorder()
-	srv.handleGHUserAuthStart(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", w.Code)
+	if got := srv.deps.Config.GitHub.OAuthClientID; got != "" {
+		t.Fatalf("precondition: want blank oauth_client_id, got %q", got)
 	}
-	if !strings.Contains(w.Body.String(), "oauth_client_id not configured") {
-		t.Error("should mention oauth_client_id")
+	if got := srv.deps.Config.GitHub.OAuthClientIDResolved(); got != config.DefaultOAuthClientID {
+		t.Fatalf("blank oauth_client_id must resolve to the public default %q, got %q",
+			config.DefaultOAuthClientID, got)
+	}
+	// Login host stays public github.com regardless of a GHE App host.
+	srv.deps.Config.GitHub.BaseURL = "https://github.ibm.com"
+	if got := srv.deps.Config.GitHub.OAuthBaseURL(); got != config.DefaultGitHubBaseURL {
+		t.Fatalf("GHE hive must still log in via %q, got %q", config.DefaultGitHubBaseURL, got)
 	}
 }
 

@@ -34,20 +34,88 @@ undecryptable ciphertext and every user must re-authorize via OAuth.** No
 restore procedure recovers it. This backup is the only thing standing between
 you and that outcome.
 
-### 3. The authoritative spoke config is `hive.yaml.bak` — NOT `hive.yaml`
+### 3. The authoritative spoke config is the PVC overlay — usually NOT `hive.yaml.runtime`
 
-Each spoke's running config is **`/data/hive.yaml.bak`** on its own PVC. The
-ConfigMap is only a fallback seed read at startup. The spoke's `copy-config`
-init container does:
+> **Corrected.** This section previously stated that `copy-config` restores from
+> `/data/hive.yaml.runtime`, and that restoring that file is what brings a spoke
+> back. **That is true on only 3 of 51 live hives.** Following it on the other
+> 48 produces a differently-configured spoke with no error — the worst kind of
+> DR bug, because it fails only when you are already in an emergency.
+
+The fleet runs **two different `copy-config` variants**, baked into each
+spoke's Deployment at provision time and never migrated.
+
+| Variant | Init-container behaviour | Hives |
+|---|---|---|
+| **A/B — `.runtime` wins** | restores `/data/hive.yaml.runtime` over the seed | **3**: `kubestellar-console`, `projectbluefin-knuckle`, `aslom-hive-agent` |
+| **C — seed wins** | copies the ConfigMap seed; merely *echoes* whether `hive.yaml.runtime` exists | **48**: everything else (15 on hive-oke, 33 on vllm-d) |
+
+Variant C, which is what new hives get:
 
 ```sh
-if [ -f /data/hive.yaml.bak ]; then cp /data/hive.yaml.bak /etc/hive/hive.yaml
-else cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml; fi
+cp /etc/hive-seed/hive.yaml /etc/hive/hive.yaml && echo configmap-copied
+if [ -f /data/hive.yaml.runtime ]; then echo runtime-config-exists-for-recovery
+elif [ -f /data/hive.yaml.bak ]; then echo legacy-runtime-config-exists-for-recovery; fi
 ```
 
-**A restore that omits `hive.yaml.bak` silently falls back to the stale
-ConfigMap seed with no error**, losing every customization the user made. There
-is no warning — the spoke just comes up wrong. Always restore `hive.yaml.bak`.
+Note it only *reports* the runtime config. It never restores from it.
+
+> **Naming.** This file was `hive.yaml.bak` until the rename to
+> `hive.yaml.runtime`. The migration is copy-forward: writers emit the new name,
+> readers fall back to the legacy one, and nothing renames or deletes the legacy
+> file on a PVC. A hive that has not saved since upgrading still carries only
+> `hive.yaml.bak` and boots normally from it. Backups capture **both** names, so
+> restore whichever the archive contains — under the new name.
+>
+> On Docker/LXC this file is not a snapshot at all but the boot-time source of
+> truth, since there is no ConfigMap and no overlay there. See
+> `v2/docs/config-layering.md`.
+
+**How to tell which variant a hive runs** — this is the only way to know:
+
+```sh
+kubectl -n hive-hosted-<id> get deploy -o jsonpath\
+='{.items[*].spec.template.spec.initContainers[?(@.name=="copy-config")].command}'
+```
+
+#### What actually holds the running config
+
+On **every** hive, the config in effect is dominated by the PVC overlay
+`/data/hive.yaml.dashboard`, which the entrypoint merges over the seed at boot.
+The ConfigMap seed is 4–11% of the running config on sampled hives and omits
+whole top-level blocks (`policies`, `data`, `knowledge`, `notifications`,
+`hive_id`).
+
+**So the file to restore is `/data/hive.yaml.dashboard`.** It is the only
+writable layer and the one that wins. See `v2/docs/config-layering.md` for the
+full precedence order, and `GET /api/config/provenance` on a running spoke to
+ask which layer set any given field.
+
+#### `hive.yaml.runtime` is a snapshot, not a restore source
+
+The name misleads. `hive.yaml.runtime` is written by the entrypoint **after** the merge
+(`v2/deploy/entrypoint.sh:150`) — it is a snapshot of the *result*, not an
+input. On variant-C hives nothing reads it during a normal boot.
+
+It has exactly one non-redundant role: the **disaster fallback** at
+`entrypoint.sh:152-161`, which restores from `hive.yaml.runtime` when the ConfigMap is
+missing or empty. That is a genuinely different scenario from the overlay path,
+which is why the file is still worth capturing.
+
+`hive.yaml.runtime` and the overlay are **near-copies but not interchangeable**. The overlay
+is written secret-free on purpose (`dashboardOverlayBytes` collapses
+`HIVE_GITHUB_TOKEN` back to `${HIVE_GITHUB_TOKEN}` and blanks a
+pod-env-derived `dashboard.auth_token`), while `hive.yaml.runtime` is a verbatim copy of the
+merged config **including** those secrets. Observed live on
+`projectbluefin-knuckle`:
+
+```
+/data/hive.yaml.runtime        14609 B   auth_token: 55c076f9…
+/data/hive.yaml.dashboard  14547 B   auth_token: ""
+```
+
+On a hive with no such env vars set the two files are byte-identical — but that
+is incidental, not structural. **Capture both.**
 
 ### 4. A PVC-only backup is NOT restorable
 
@@ -55,13 +123,22 @@ Four Kubernetes Secrets live **outside** the hub PVC and are required:
 
 | Secret | Without it |
 |---|---|
-| `hive-hub-secrets` | OAuth login broken for all users |
+| `hive-hub-secrets` | OAuth login broken for all users; Slack messaging disabled |
 | `oci-api-key` | Hub cannot provision spoke storage or write backups |
 | `hive-hub-kubeconfigs` | Hub cannot reach remote spoke clusters (vllm-d) |
 | `hive-hub-tls` | Cert-manager reissues automatically (not fatal) |
 
 `hive-backup` captures these automatically and **fails the backup** if any of
 the first three is missing.
+
+> **Adding a new hub credential?** Put it in the **existing `hive-hub-secrets`**
+> Secret rather than creating a new one. That Secret is already in
+> `hubbackup.DefaultHubSecrets`, so a key added to it is captured — and restored
+> — for free. A brand-new Secret is **silently lost in a restore** unless it is
+> also added to `DefaultHubSecrets`.
+>
+> This is why the Slack bot token (`HIVE_HUB_SLACK_BOT_TOKEN`, see
+> [Slack messaging](#slack-messaging)) is a key on `hive-hub-secrets`.
 
 ---
 
@@ -72,7 +149,7 @@ the first three is missing.
 | `/data/saas/**` | users, hives, keys, timeline, provisioning state |
 | `/data/hub-registry.json` | the 50-hive fleet registry |
 | 4 Kubernetes Secrets | credentials outside the PVC |
-| per-spoke `hive.yaml.bak`, `gh-app-key*.pem`, `hive-id` | rebuild each spoke |
+| per-spoke `hive.yaml.dashboard`, `hive.yaml.runtime`, `gh-app-key*.pem`, `hive-id` | rebuild each spoke |
 
 **Deliberately excluded** as regenerable agent scratch: `nous/`, `home/`,
 `beads/`, `logs/`. These are ~110MB of the hub's ~125MB and ~796MB per spoke.
@@ -222,9 +299,16 @@ NS=hive-hosted-$HIVE
 POD=$(kubectl get pods -n $NS --field-selector=status.phase=Running \
         -o jsonpath='{.items[0].metadata.name}')
 
-# hive.yaml.bak is authoritative — without it the spoke silently uses the
-# stale ConfigMap seed.
-kubectl cp restore/spokes/$HIVE/hive.yaml.bak $NS/$POD:/data/hive.yaml.bak -c hive
+# Restore BOTH config files. The overlay is what wins on a normal boot
+# (all 51 hives); hive.yaml.runtime is what the disaster fallback reads when the
+# ConfigMap is missing/empty, and what variant-A/B hives boot from.
+#
+# Archives taken before the hive.yaml.bak -> hive.yaml.runtime rename carry the
+# legacy name. Restore whichever the archive has, under the NEW name.
+kubectl cp restore/spokes/$HIVE/hive.yaml.dashboard $NS/$POD:/data/hive.yaml.dashboard -c hive
+RUNTIME_SRC=restore/spokes/$HIVE/hive.yaml.runtime
+[ -f "$RUNTIME_SRC" ] || RUNTIME_SRC=restore/spokes/$HIVE/hive.yaml.bak
+kubectl cp "$RUNTIME_SRC" $NS/$POD:/data/hive.yaml.runtime -c hive
 kubectl cp restore/spokes/$HIVE/hive-id       $NS/$POD:/data/hive-id       -c hive
 for k in restore/spokes/$HIVE/gh-app-key*.pem; do
   kubectl cp "$k" $NS/$POD:/data/$(basename "$k") -c hive
@@ -233,10 +317,26 @@ done
 kubectl rollout restart deploy/hive -n $NS
 ```
 
-Confirm the spoke used the restored config, not the seed:
+Confirm the spoke used the restored config. **Which log line to expect depends
+on the variant** (see §3):
 
 ```bash
-kubectl logs -n $NS -c copy-config $POD    # expect "override-used", not "seed-copied"
+kubectl logs -n $NS -c copy-config $POD
+#   variant A/B  -> "override-used"     (runtime config restored)
+#   variant C    -> "configmap-copied"  (seed copied; runtime config NOT read)
+
+# On variant C the overlay is what matters, and the merge happens in the
+# main container, not copy-config:
+kubectl logs -n $NS -c hive $POD | grep '\[entrypoint\]'
+#   expect: "dashboard overlay merged over ConfigMap seed"
+#   NOT:    "dashboard overlay invalid, using ConfigMap seed as-is"
+```
+
+The best confirmation is to ask the spoke directly:
+
+```bash
+kubectl -n $NS exec $POD -c hive -- \
+  curl -s localhost:3002/api/config/provenance | jq '.overlay_rejected, .fields'
 ```
 
 ### Step 6 — Re-link GitHub
@@ -255,7 +355,7 @@ Manual, and unavoidable:
 - [ ] users can log in without re-authorizing (proves `hmac.key` restored)
 - [ ] hive count and vanity URLs unchanged
 - [ ] spokes appear online and heartbeat to the hub
-- [ ] `copy-config` logged `override-used` on each spoke
+- [ ] `copy-config` logged the expected line for the spoke's variant (`override-used` on A/B, `configmap-copied` on C), and the hive container logged "dashboard overlay merged over ConfigMap seed"
 - [ ] a fresh `hive-backup run` succeeds against the rebuilt hub
 
 ---
@@ -281,7 +381,7 @@ writes confined to a throwaway namespace that was deleted afterwards):
 - Wrong key and bit-flips are rejected (GCM auth tag)
 - Restored `hmac.key` byte-identical to production
 - **All 88 restored user tokens decrypt successfully**
-- Restored `hive.yaml.bak` byte-identical to the live spoke
+- Restored `hive.yaml.dashboard` and `hive.yaml.runtime` byte-identical to the live spoke
 - Secrets restored into a throwaway namespace matched live values
 - Hub PVC data restored into a live pod: 88 users, 50 hives
 
@@ -322,7 +422,8 @@ they had already found, claimed, deferred or closed. This backup preserves that.
 
 | Path | Why |
 |---|---|
-| `hive.yaml.bak` | The **authoritative** spoke config (see below) |
+| `hive.yaml.dashboard` | The **overlay** — the layer that wins the boot merge (see below) |
+| `hive.yaml.runtime` | Post-merge snapshot; disaster fallback + variant-A/B boot source |
 | `hive-id` | Hive identity as known to the hub |
 | `hive-state.json` | Agent runtime state |
 | `gh-app-key*.pem` | GitHub App private keys — **credentials** |
@@ -349,15 +450,25 @@ Bead directories are **discovered, not hardcoded**. A production spoke had ten
 production spoke (beads 2.6MB dominating), versus ~796MB for the whole PVC.
 Small enough to stream to a browser and stay responsive.
 
-## `hive.yaml.bak`, not `hive.yaml`
+## Capture the overlay and `hive.yaml.runtime`, not `hive.yaml`
 
-The same trap as the hub backup, and worth repeating because it is silent. The
-`copy-config` init container restores from `hive.yaml.bak` and falls back to the
-stale ConfigMap seed only when it is absent. On a sampled production spoke the
-two files had **different content and different timestamps** — `hive.yaml` was a
-root-owned copy days older than the live, user-customised `hive.yaml.bak`.
-Backing up the wrong one produces no error at backup time and no symptom until a
-restore quietly reverts the owner's settings. A test locks this in.
+The same trap as the hub backup, and worth repeating because it is silent.
+
+`/etc/hive/hive.yaml` is **not** the file to back up. On a sampled production
+spoke it was a root-owned copy days older than the live config. It is
+regenerated from the seed plus the overlay on every boot.
+
+The two files worth capturing are:
+
+| File | Why |
+|---|---|
+| `/data/hive.yaml.dashboard` | The **overlay** — the only writable layer, and the one that wins the boot-time merge on all 51 hives. This is the real running config. |
+| `/data/hive.yaml.runtime` | The post-merge snapshot. Read by the disaster fallback when the ConfigMap is missing/empty, and by variant-A/B hives on every boot. Also the only copy that retains env-derived secrets. |
+
+They are near-copies but **not interchangeable** — the overlay is deliberately
+secret-free. Backing up the wrong one produces no error at backup time and no
+symptom until a restore quietly reverts the owner's settings. Tests lock this
+in.
 
 ## Encryption is mandatory
 
@@ -398,7 +509,7 @@ hive-backup extract --archive hive-spoke-backup-<id>-<ts>.tar.gz.enc --dest ./re
 
 # Layout:
 #   ./restore/MANIFEST.json
-#   ./restore/spoke/{hive.yaml.bak,hive-id,hive-state.json,gh-app-key*.pem}
+#   ./restore/spoke/{hive.yaml.dashboard,hive.yaml.runtime,hive-id,hive-state.json,gh-app-key*.pem}
 #   ./restore/beads/<agent>/**
 
 # 1. Identify the target spoke pod.
@@ -418,8 +529,13 @@ kubectl -n $NS scale deploy/hive --replicas=1
 POD=$(kubectl -n $NS get pods --field-selector=status.phase=Running \
         -o jsonpath='{.items[0].metadata.name}')
 
-# 3. Config FIRST — .bak is what copy-config actually restores from.
-kubectl -n $NS cp ./restore/spoke/hive.yaml.bak   $POD:/data/hive.yaml.bak -c hive
+# 3. Config FIRST. Restore BOTH: the overlay is what wins the boot merge on
+#    every hive; hive.yaml.runtime covers the disaster fallback and variant-A/B hives.
+#    Pre-rename archives carry hive.yaml.bak — restore it under the new name.
+kubectl -n $NS cp ./restore/spoke/hive.yaml.dashboard $POD:/data/hive.yaml.dashboard -c hive
+RUNTIME_SRC=./restore/spoke/hive.yaml.runtime
+[ -f "$RUNTIME_SRC" ] || RUNTIME_SRC=./restore/spoke/hive.yaml.bak
+kubectl -n $NS cp "$RUNTIME_SRC" $POD:/data/hive.yaml.runtime -c hive
 kubectl -n $NS cp ./restore/spoke/hive-id         $POD:/data/hive-id       -c hive
 kubectl -n $NS cp ./restore/spoke/hive-state.json $POD:/data/hive-state.json -c hive
 
@@ -436,7 +552,7 @@ for d in ./restore/beads/*/; do
   kubectl -n $NS cp "$d" $POD:/data/beads/$agent -c hive
 done
 
-# 6. Restart so copy-config picks up hive.yaml.bak.
+# 6. Restart so the boot-time merge picks up the restored config.
 kubectl -n $NS rollout restart deploy/hive
 kubectl -n $NS rollout status  deploy/hive --timeout=300s
 ```
@@ -455,7 +571,7 @@ ownership to match the surrounding directories rather than loosening the mode.
 
 **Verified:**
 
-- Unit tests cover: `hive.yaml.bak` captured and `hive.yaml` excluded; beads
+- Unit tests cover: `hive.yaml.dashboard` and `hive.yaml.runtime` captured and `hive.yaml` excluded; beads
   captured for every discovered agent; `nous`/`logs`/`home`/`audit.jsonl`/
   `dashboard-sessions.json` excluded; App keys captured; sealed archive is
   opaque ciphertext with no plaintext key/config leakage; wrong key and
@@ -467,7 +583,7 @@ ownership to match the surrounding directories rather than loosening the mode.
   `no-store` caching, and an `.enc` attachment.
 - Archives are extracted through `hubbackup.Extract`, proving both backups
   share one format and one restore path.
-- Spoke layout, `hive.yaml`/`hive.yaml.bak` divergence, bead directory names
+- Spoke layout, `hive.yaml`/`hive.yaml.runtime` divergence, bead directory names
   and all sizes above were read from a live production spoke (read-only).
 
 **UNTESTED:**
@@ -477,3 +593,82 @@ ownership to match the surrounding directories rather than loosening the mode.
   only against temporary directories in tests.
 - Browser download of a multi-MB archive was not exercised end-to-end in a
   real browser.
+
+---
+
+## Slack messaging
+
+The hub can send Slack DMs to a single user, to the owner of a hive, or to every
+user. Recipients are resolved from the **existing** `slack_id` contact field on
+each user record (`/data/saas/users/<GitHubUsername>.json`), which admins edit
+from the Users panel.
+
+### Credential
+
+The bot token is read from the environment with **no default**:
+
+| Variable | Source |
+|---|---|
+| `HIVE_HUB_SLACK_BOT_TOKEN` | key on the existing `hive-hub-secrets` Secret |
+
+It is deliberately a key on `hive-hub-secrets` rather than a new Secret, so it is
+already inside the DR-captured set (`hubbackup.DefaultHubSecrets`) and survives a
+restore. **The token must never be committed to this repository** — a previous
+leak required scrubbing the git history.
+
+Add it without disturbing the other keys:
+
+```bash
+kubectl -n <hub-namespace> patch secret hive-hub-secrets \
+  --type merge \
+  -p "{\"stringData\":{\"slack-bot-token\":\"$SLACK_BOT_TOKEN\"}}"
+```
+
+...and reference it from the hub Deployment:
+
+```yaml
+- name: HIVE_HUB_SLACK_BOT_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: hive-hub-secrets
+      key: slack-bot-token
+      optional: true   # unset simply disables Slack messaging
+```
+
+The token needs the `chat:write` scope. A webhook will **not** work: a webhook is
+bound to one channel at creation time and cannot DM a user.
+
+If the variable is unset, the send endpoints return **503** naming the variable.
+They never report a successful send that did not happen.
+
+### Endpoints
+
+| Endpoint | Auth | Notes |
+|---|---|---|
+| `POST /api/saas/slack/user/{username}` | admin, or the user themselves | |
+| `POST /api/saas/hives/{id}/slack` | hive owner or admin | messages the hive's owner |
+| `POST /api/saas/admin/slack/broadcast` | **admin only** | requires confirmation |
+
+Body: `{"message": "...", "dry_run": false, "confirm": "..."}`.
+
+### Broadcast safety
+
+Broadcast reaches every user with a `slack_id` and cannot be recalled, so:
+
+1. **Dry-run first.** `{"dry_run": true}` sends nothing and returns the recipient
+   count, the **names** of users who will be skipped, a message preview, and an
+   estimated duration.
+2. **Confirm explicitly.** A real broadcast requires `"confirm": "SEND TO ALL
+   USERS"` — a typed string, not a boolean, so no client can set it by accident.
+   Without it the request returns **409** and reports the blast radius.
+3. **Sending is paced and backgrounded.** Slack throttles `chat.postMessage` at
+   roughly 1/sec, so sends are spaced one second apart and run in a goroutine;
+   ~88 users takes about a minute and a half. The HTTP response returns
+   immediately with the estimate.
+
+### Users without a Slack ID are skipped VISIBLY
+
+A user with no `slack_id` cannot be reached. Every response reports how many were
+skipped **and names them**, and the full skipped list is written to the hub log on
+a broadcast. Silent drops are not acceptable: "sent to 61" while 27 people never
+heard anything is worse than a clear failure.

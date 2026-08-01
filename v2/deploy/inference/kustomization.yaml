@@ -3,4 +3,5 @@ kind: Kustomization
 
 resources:
   - vllm-deployment.yaml
-  - llm-d-deployment.yaml
+  # Durable RBAC + InferencePool for the live hive-inference EPP (issue #2341).
+  - hive-epp-rbac.yaml

@@ -72,15 +72,30 @@ func dfServer(t *testing.T, tokenStatus, login string) (*Server, *Dependencies, 
 	deps.Config.GitHub.OAuthClientID = "Ov23liTest"
 	deps.Config.GitHub.BaseURL = mock.URL
 	deps.Config.GitHub.APIURL = mock.URL
+	// Device-flow login resolves through OAuthBaseURL/OAuthAPIURL, which are
+	// pinned to public github.com for GHE hives. Without these overrides the
+	// handlers ignore the mock and POST to the real github.com.
+	deps.Config.GitHub.OAuthBaseURLOverride = mock.URL
+	deps.Config.GitHub.OAuthAPIURLOverride = mock.URL
 	s.RegisterAPI(deps)
 	return s, deps, mock
 }
 
-func TestCovDF_GHUserAuthStart_NoClientID(t *testing.T) {
+// A blank oauth_client_id is NOT an error: OAuthClientIDResolved() falls back to
+// the public github.com Hive App client, which is the correct client for every
+// hive including GHE ones. This asserts the fallback actually reaches the device
+// flow rather than short-circuiting to 400 as an earlier revision did.
+func TestCovDF_GHUserAuthStart_BlankClientIDUsesPublicDefault(t *testing.T) {
 	s, deps, _ := dfServer(t, "complete", "octocat")
 	deps.Config.GitHub.OAuthClientID = ""
-	if rec := doPost(s, "/api/gh-user-auth/start", nil); rec.Code != http.StatusBadRequest {
-		t.Fatalf("no client id: want 400, got %d", rec.Code)
+	rec := doPost(s, "/api/gh-user-auth/start", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("blank client id: want 200 via public default, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body["user_code"] != "ABCD-1234" {
+		t.Fatalf("device flow did not run: user_code=%v", body["user_code"])
 	}
 }
 

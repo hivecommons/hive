@@ -980,7 +980,7 @@ func TestHandleRequestProvisionWithFilesystem(t *testing.T) {
 
 	// github_host is required — the forge the org lives on must be captured at
 	// request time, so this end-to-end save fixture carries one.
-	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3}`
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"full_name":"Ada Lovelace"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_reqprov_fs")
@@ -1022,7 +1022,7 @@ func TestHandleRequestProvisionClampsAboveOnboardingCeiling(t *testing.T) {
 
 			srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d}`, requested)
+			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d,"full_name":"Ada Lovelace"}`, requested)
 			req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -1058,7 +1058,7 @@ func TestHandleRequestProvisionAcceptsOnboardingLevels(t *testing.T) {
 
 			srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d}`, requested)
+			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d,"full_name":"Ada Lovelace"}`, requested)
 			req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+token)
