@@ -105,6 +105,34 @@ func TestNormalServiceRetiresExactRedRepairAndConsumesOnlyOldEvidence(t *testing
 	}
 }
 
+func TestNormalServiceRetiresExactGreenRepairSupersededByChangedDefaultHead(t *testing.T) {
+	fixture := newServiceFixture(t)
+	service := fixture.service(t, fixture.verifier)
+	if err := service.RunCycle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.source.consumes != 1 || fixture.intake.completes != 1 {
+		t.Fatalf("green proposal did not complete before retirement: source=%+v intake=%+v", fixture.source, fixture.intake)
+	}
+	plan, err := service.PlanRepairRetirement(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.PullRequestNumber != 9 || plan.CurrentDefaultHeadSHA != fixture.retirement.currentHead {
+		t.Fatalf("green retirement plan lost exact proposal binding: %+v", plan)
+	}
+	if err := service.RetireRepair(context.Background(), &plan); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.retirement.applies != 1 || fixture.retirement.sideEffects != 1 ||
+		fixture.source.consumes != 1 || fixture.source.consumeSideEffects != 1 {
+		t.Fatalf("green retirement repeated consumed evidence or missed proposal retirement: retirement=%+v source=%+v", fixture.retirement, fixture.source)
+	}
+	if _, exists, err := service.loadLedger(); err != nil || exists {
+		t.Fatalf("retired green repair ledger remains: exists=%t err=%v", exists, err)
+	}
+}
+
 func TestNormalServiceRepairRetirementCrashReplayUsesSealedPlanWithoutRepeatingSideEffect(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.setRedVerdict()

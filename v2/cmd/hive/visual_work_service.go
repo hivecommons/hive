@@ -363,10 +363,10 @@ func validateNormalRepairRetirementFinding(lifecycle *visualhive.LifecycleStore,
 			return nil
 		}
 	}
-	if finding.Status != visualhive.StatusNeedsRevision || finding.MergeSHA != "" ||
+	if (finding.Status != visualhive.StatusNeedsRevision && finding.Status != visualhive.StatusReady) || finding.MergeSHA != "" ||
 		finding.PRNumber != plan.PullRequestNumber || finding.PRURL != plan.PullRequestURL ||
 		finding.Branch != plan.Branch || !strings.EqualFold(finding.RepairCommitSHA, plan.HeadSHA) {
-		return errors.New("repair retirement no longer matches the exact red, unmerged lifecycle proposal")
+		return errors.New("repair retirement no longer matches the exact verified, unmerged lifecycle proposal")
 	}
 	return nil
 }

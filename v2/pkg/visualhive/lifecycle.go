@@ -732,6 +732,10 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 			}
 		}
 		if deferredReason != "" {
+			// A changed verified packet supersedes any older pre-admission issue
+			// intent. Without clearing it here, a later Governor admission can
+			// publish an observation that this packet explicitly deferred.
+			finding.PendingIssueAction = ""
 			result.Deferred++
 			if err := audit(LifecycleAuditEntry{Action: "defer_open_issue", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: deferredReason}); err != nil {
 				return result, err
@@ -747,6 +751,9 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				action = OutboxUpdateIssue
 			}
 		} else if !publicationSet[observation.RepositoryFingerprint] {
+			// The bounded current publication ranking is authoritative for this
+			// packet. Never retain an open intent selected by an older packet.
+			finding.PendingIssueAction = ""
 			result.Deferred++
 			if err := audit(LifecycleAuditEntry{Action: "defer_open_issue", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: "active issue work-in-progress limit reached"}); err != nil {
 				return result, err
@@ -1992,7 +1999,7 @@ func (s *LifecycleStore) MarkChecksWithEvidence(repositoryFingerprint, testedSHA
 	})
 }
 
-// RetireRepairForVerification returns one exact red, unmerged Hive proposal to
+// RetireRepairForVerification returns one exact superseded, unmerged Hive proposal to
 // its still-open issue after the default branch changed independently. It
 // deliberately clears active repair identity so a subsequent authoritative
 // scan can prove presence or absence; it never resolves or closes the finding.
@@ -2049,40 +2056,71 @@ func validateRepairRetirementFinding(finding *FindingLifecycle, retired RetiredR
 		!validLifecycleGitObject(retired.HeadSHA) || retired.BaseBranch == "" || !validLifecycleGitObject(retired.BaseSHA) ||
 		!validLifecycleGitObject(retired.CurrentDefaultHeadSHA) || retired.CurrentDefaultHeadSHA == retired.BaseSHA ||
 		!validLifecycleSHA256(retired.VerdictReceiptSHA256) || !json.Valid(retired.VerdictReceipt) {
-		return fmt.Errorf("retired repair identity, canonical failed receipt, and changed default head are required")
+		return fmt.Errorf("retired repair identity, canonical verdict receipt, and changed default head are required")
 	}
 	digest := sha256.Sum256(retired.VerdictReceipt)
 	if fmt.Sprintf("%x", digest[:]) != retired.VerdictReceiptSHA256 {
-		return fmt.Errorf("retired repair failed-verdict receipt digest does not match its exact bytes")
+		return fmt.Errorf("retired repair verdict receipt digest does not match its exact bytes")
 	}
-	var receipt failedPullRequestReceiptIdentity
-	if err := json.Unmarshal(retired.VerdictReceipt, &receipt); err != nil {
-		return fmt.Errorf("parse retired repair failed-verdict receipt: %w", err)
+	expectedStatus := StatusNeedsRevision
+	var schema struct {
+		Legacy string `json:"schema_version"`
+		V1     string `json:"schemaVersion"`
 	}
-	canonical, err := json.Marshal(receipt)
-	if err != nil || string(canonical) != string(retired.VerdictReceipt) {
-		return fmt.Errorf("retired repair failed-verdict receipt is not canonical")
+	if err := json.Unmarshal(retired.VerdictReceipt, &schema); err != nil {
+		return fmt.Errorf("parse retired repair verdict receipt: %w", err)
 	}
-	if receipt.SchemaVersion != "hive.normal-visual-pr-failure.v1" ||
-		!strings.EqualFold(receipt.Repository, finding.Repository) || receipt.RepositoryID != finding.RepositoryID ||
-		receipt.PullRequestNumber != retired.PullRequestNumber || receipt.PullRequestURL != retired.PullRequestURL ||
-		receipt.BaseBranch != retired.BaseBranch || !strings.EqualFold(receipt.BaseSHA, retired.BaseSHA) ||
-		receipt.HeadBranch != retired.Branch || !strings.EqualFold(receipt.HeadSHA, retired.HeadSHA) ||
-		receipt.WorkflowRunID <= 0 || receipt.WorkflowRunAttempt <= 0 ||
-		receipt.WorkflowName != "Visual Hive PR" || receipt.WorkflowPath != ".github/workflows/visual-hive-pr.yml" ||
-		receipt.WorkflowEvent != "pull_request" || receipt.Conclusion != "failure" || receipt.RunURL == "" ||
-		receipt.ArtifactID <= 0 || receipt.ArtifactName != "visual-hive-pr" ||
-		!validLifecycleSHA256(strings.ToLower(receipt.ArtifactIndexSHA256)) ||
-		receipt.Authority != "check-evidence-only; no completion, consume, merge, or resolution authority" {
-		return fmt.Errorf("retired repair receipt does not bind the exact failed PR workflow, proposal, artifact, and check-only authority")
+	switch {
+	case schema.Legacy == "hive.normal-visual-pr-failure.v1":
+		var receipt failedPullRequestReceiptIdentity
+		if err := json.Unmarshal(retired.VerdictReceipt, &receipt); err != nil {
+			return fmt.Errorf("parse retired repair failed-verdict receipt: %w", err)
+		}
+		canonical, err := json.Marshal(receipt)
+		if err != nil || string(canonical) != string(retired.VerdictReceipt) {
+			return fmt.Errorf("retired repair failed-verdict receipt is not canonical")
+		}
+		if !strings.EqualFold(receipt.Repository, finding.Repository) || receipt.RepositoryID != finding.RepositoryID ||
+			receipt.PullRequestNumber != retired.PullRequestNumber || receipt.PullRequestURL != retired.PullRequestURL ||
+			receipt.BaseBranch != retired.BaseBranch || !strings.EqualFold(receipt.BaseSHA, retired.BaseSHA) ||
+			receipt.HeadBranch != retired.Branch || !strings.EqualFold(receipt.HeadSHA, retired.HeadSHA) ||
+			receipt.WorkflowRunID <= 0 || receipt.WorkflowRunAttempt <= 0 ||
+			receipt.WorkflowName != "Visual Hive PR" || receipt.WorkflowPath != ".github/workflows/visual-hive-pr.yml" ||
+			receipt.WorkflowEvent != "pull_request" || receipt.Conclusion != "failure" || receipt.RunURL == "" ||
+			receipt.ArtifactID <= 0 || receipt.ArtifactName != "visual-hive-pr" ||
+			!validLifecycleSHA256(strings.ToLower(receipt.ArtifactIndexSHA256)) ||
+			receipt.Authority != "check-evidence-only; no completion, consume, merge, or resolution authority" {
+			return fmt.Errorf("retired repair receipt does not bind the exact failed PR workflow, proposal, artifact, and check-only authority")
+		}
+	case schema.V1 == PullRequestCheckReceiptSchema:
+		var receipt PullRequestCheckReceiptIdentity
+		if err := json.Unmarshal(retired.VerdictReceipt, &receipt); err != nil {
+			return fmt.Errorf("parse retired repair successful-verdict receipt: %w", err)
+		}
+		canonical, err := json.Marshal(receipt)
+		if err != nil || string(canonical) != string(retired.VerdictReceipt) {
+			return fmt.Errorf("retired repair successful-verdict receipt is not canonical")
+		}
+		if err := validatePullRequestCheckIdentity(receipt); err != nil {
+			return fmt.Errorf("retired repair successful-verdict receipt is invalid: %w", err)
+		}
+		if !strings.EqualFold(receipt.Source.Repository, finding.Repository) || receipt.Source.RepositoryID != finding.RepositoryID ||
+			receipt.Source.PullRequest != retired.PullRequestNumber || receipt.Source.Base.Ref != retired.BaseBranch ||
+			!strings.EqualFold(receipt.Source.Base.SHA, retired.BaseSHA) || receipt.Source.Head.Ref != retired.Branch ||
+			!strings.EqualFold(receipt.Source.Head.SHA, retired.HeadSHA) {
+			return fmt.Errorf("retired repair receipt does not bind the exact successful PR workflow, proposal, artifact, and check-only authority")
+		}
+		expectedStatus = StatusReady
+	default:
+		return fmt.Errorf("retired repair verdict receipt schema is unsupported")
 	}
 	if finding.Status == StatusIssueOpen && sameRetiredRepair(finding.LastRetiredRepair, retired) {
 		return nil
 	}
-	if finding.Status != StatusNeedsRevision || finding.MergeSHA != "" || finding.IssueNumber <= 0 ||
+	if finding.Status != expectedStatus || finding.MergeSHA != "" || finding.IssueNumber <= 0 ||
 		finding.PRNumber != retired.PullRequestNumber || finding.PRURL != retired.PullRequestURL ||
 		finding.Branch != retired.Branch || !strings.EqualFold(finding.RepairCommitSHA, retired.HeadSHA) {
-		return fmt.Errorf("only the exact open needs-revision repair can be retired")
+		return fmt.Errorf("only the exact open superseded repair can be retired")
 	}
 	return nil
 }

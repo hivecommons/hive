@@ -58,7 +58,7 @@ type Repairer interface {
 }
 
 // RepairRetirementPlan is the complete immutable authority for retiring one
-// exact red, unmerged Hive repair proposal after the default branch changed
+// exact verified, unmerged Hive repair proposal after the default branch changed
 // independently. Retirement is not finding resolution: it only makes a later
 // authoritative production scan possible while preserving the issue, finding,
 // evidence, and bounded repair-attempt history.
@@ -596,8 +596,9 @@ func (service *Service) RunCycle(ctx context.Context) error {
 	return service.finish(ctx, ledger)
 }
 
-// PlanRepairRetirement returns the exact, read-only plan for the one active
-// red Worker proposal. It never persists an intent or mutates GitHub.
+// PlanRepairRetirement returns the exact, read-only plan for one active Worker
+// proposal superseded by an independently changed default branch. It never
+// persists an intent or mutates GitHub.
 func (service *Service) PlanRepairRetirement(ctx context.Context) (RepairRetirementPlan, error) {
 	if service == nil {
 		return RepairRetirementPlan{}, errors.New("normal Visual Hive service is nil")
@@ -690,10 +691,10 @@ func (service *Service) RetireRepair(ctx context.Context, expected *RepairRetire
 			return err
 		}
 	}
-	if err := service.options.Source.Consume(ledger.Workflow, true); err != nil {
-		return err
-	}
 	if !ledger.Consumed {
+		if err := service.options.Source.Consume(ledger.Workflow, true); err != nil {
+			return err
+		}
 		ledger.Consumed = true
 		if err := service.saveLedger(ledger); err != nil {
 			return err
@@ -703,10 +704,12 @@ func (service *Service) RetireRepair(ctx context.Context, expected *RepairRetire
 }
 
 func repairRetirementBinding(ledger workLedger) (RepairRetirementPlan, error) {
-	if ledger.VerdictStatus != "failure" || !validSHA256Value(ledger.VerdictReceiptSHA256) ||
+	redProposal := ledger.VerdictStatus == "failure" && !ledger.CompletionRecorded && !ledger.ConsumeStarted && !ledger.Consumed
+	greenProposal := ledger.VerdictStatus == "success" && ledger.CompletionRecorded && ledger.ConsumeStarted && ledger.Consumed
+	if (!redProposal && !greenProposal) || !validSHA256Value(ledger.VerdictReceiptSHA256) ||
 		ledger.PullRequestNumber <= 0 || ledger.PullRequestURL == "" || ledger.Branch == "" ||
-		!validGitObject(ledger.CommitSHA) || ledger.CompletionRecorded || ledger.ConsumeStarted || ledger.Consumed {
-		return RepairRetirementPlan{}, errors.New("only an exact red, unconsumed Worker repair proposal can be retired")
+		!validGitObject(ledger.CommitSHA) {
+		return RepairRetirementPlan{}, errors.New("only an exact verified Worker repair proposal superseded by a changed default branch can be retired")
 	}
 	return RepairRetirementPlan{
 		SchemaVersion: repairRetirementPlan, Repository: ledger.Repository,
@@ -1112,8 +1115,12 @@ func validateWorkLedger(ledger workLedger) error {
 
 func ledgerWithoutRetirement(ledger workLedger) workLedger {
 	ledger.RepairRetirement = nil
-	ledger.ConsumeStarted = false
-	ledger.Consumed = false
+	if ledger.VerdictStatus == "failure" {
+		// Red retirement may be reloaded after its old evidence consume
+		// checkpoint; validate against the original unconsumed proposal.
+		ledger.ConsumeStarted = false
+		ledger.Consumed = false
+	}
 	return ledger
 }
 

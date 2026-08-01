@@ -532,7 +532,7 @@ func (controller *Controller) RetireSpecialistPullRequest(sourceExternalRef stri
 		!strings.EqualFold(retired.BaseSHA, retirement.BaseSHA) ||
 		!strings.EqualFold(retired.CurrentDefaultHeadSHA, retirement.CurrentDefaultHeadSHA) ||
 		!strings.EqualFold(retired.VerdictReceiptSHA256, retirement.VerdictReceiptSHA256) {
-		return errors.New("specialist PR retirement does not match the exact lifecycle, work order, proposal, and red receipt")
+		return errors.New("specialist PR retirement does not match the exact lifecycle, work order, proposal, and verdict receipt")
 	}
 	encoded, err := json.Marshal(retirement)
 	if err != nil {
@@ -547,7 +547,7 @@ func (controller *Controller) RetireSpecialistPullRequest(sourceExternalRef stri
 			value.Metadata = map[string]interface{}{}
 		}
 		value.Metadata["visual_hive_admission_state"] = "admitted_pr_retired_for_verification"
-		value.Metadata["visual_hive_stage_detail"] = "exact red repair proposal retired; awaiting fresh authoritative verification"
+		value.Metadata["visual_hive_stage_detail"] = "exact superseded repair proposal retired; awaiting fresh authoritative verification"
 		value.Metadata["visual_hive_pr_retirement_json"] = string(encoded)
 		value.Metadata["visual_hive_retirement_audit_id"] = auditEvent.EventID
 		value.Metadata["visual_hive_retirement_audit_recorded"] = false
@@ -624,7 +624,7 @@ func specialistRetirementAuditEvent(bead *beads.Bead, sourceExternalRef string, 
 		SourceExternalRef:     strings.TrimSpace(sourceExternalRef),
 		RepositoryFingerprint: envelope.Work.RepositoryFingerprint,
 		Detail: fmt.Sprintf(
-			"work_order=%s pr=%d branch=%s red_head=%s changed_default_head=%s receipt=%s reason=%s no_resolution_authority=true",
+			"work_order=%s pr=%d branch=%s proposal_head=%s changed_default_head=%s receipt=%s reason=%s no_resolution_authority=true",
 			retirement.WorkOrderID, retirement.PullRequestNumber, retirement.Branch, retirement.CommitSHA,
 			retirement.CurrentDefaultHeadSHA, retirement.VerdictReceiptSHA256, retirement.RetirementReasonCode,
 		),

@@ -1392,6 +1392,49 @@ func TestInactiveHistoricalIssueMustWinCurrentPublicationRankingBeforeReopen(t *
 	}
 }
 
+func TestCurrentPublicationRankingClearsStalePreAdmissionIssueActions(t *testing.T) {
+	root := t.TempDir()
+	lowOne := publicationTestObservation("low-one", "canonical", "finding/missing_visual_coverage/low-one", "missing_visual_coverage", "Add generic visual coverage one")
+	lowTwo := publicationTestObservation("low-two", "canonical", "finding/missing_visual_coverage/low-two", "missing_visual_coverage", "Add generic visual coverage two")
+	first := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "first"), "bundle-stale-pre-admission-first", []Observation{lowOne, lowTwo}, false,
+	))
+	lifecycle, err := NewLifecycleStore(filepath.Join(root, "lifecycle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestBeadStore(t, filepath.Join(root, "beads"))
+	if _, err := lifecycle.ApplyBundle(first, store, ApplyLifecycleOptions{DisableIssuePublication: true, MaxActiveIssues: 3, PreferRepairable: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, observation := range first.Manifest.Observations {
+		finding, exists := lifecycle.Finding(observation.RepositoryFingerprint)
+		if !exists || finding.PendingIssueAction != OutboxOpenIssue {
+			t.Fatalf("initial selected finding lacks pre-admission open intent: found=%t finding=%+v", exists, finding)
+		}
+	}
+
+	highOne := publicationTestObservation("high-one", "canonical", "contract/localPreview/high-one", "visual_regression", "high-one failed deterministic validation")
+	highTwo := publicationTestObservation("high-two", "canonical", "contract/localPreview/high-two", "visual_regression", "high-two failed deterministic validation")
+	highThree := publicationTestObservation("high-three", "canonical", "contract/localPreview/high-three", "visual_regression", "high-three failed deterministic validation")
+	second := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "second"), "bundle-stale-pre-admission-second", []Observation{lowOne, lowTwo, highOne, highTwo, highThree}, false,
+	))
+	result, err := lifecycle.ApplyBundle(second, store, ApplyLifecycleOptions{DisableIssuePublication: true, MaxActiveIssues: 3, PreferRepairable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deferred < 2 {
+		t.Fatalf("lower-ranked findings were not deferred: %+v", result)
+	}
+	for _, observation := range first.Manifest.Observations {
+		finding, exists := lifecycle.Finding(observation.RepositoryFingerprint)
+		if !exists || finding.PendingIssueAction != "" || finding.LastBundleID != second.Manifest.BundleID {
+			t.Fatalf("current ranking retained stale pre-admission issue intent: found=%t finding=%+v", exists, finding)
+		}
+	}
+}
+
 func TestExplicitRootPublicationFailsOpenForUncoveredValidLinkage(t *testing.T) {
 	root := "mutation/api-500/localPreview/dashboard-shell"
 	observations := []Observation{
