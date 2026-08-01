@@ -113,9 +113,10 @@ func TestHiveProvisionSortUsesRegisteredAt(t *testing.T) {
 	for _, snippet := range []string{
 		"function hiveProvisionTime(h)",
 		"var raw = h && h.registeredAt;",
-		"sortDashHives(\\'registeredAt\\')",
-		// The provision-date sort survives as a thin "Prov ⇅" header (the date
-		// itself moved into the status hover); the sort trigger must remain.
+		// After the 15-to-9 fold the standalone Prov column is gone, but its sort
+		// survives as an inline "Prov ⇅" control on the Uptime header, wired via the
+		// subSort() helper to the registeredAt key. The trigger must remain reachable.
+		"subSort('registeredAt', 'Prov ⇅'",
 		"Prov ⇅",
 		// registeredAt must be a recognised sort key, otherwise a persisted
 		// choice of it would be rejected on the next load.
