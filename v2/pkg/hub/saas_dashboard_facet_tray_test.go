@@ -424,8 +424,15 @@ func TestDriftFoldedIntoVersion(t *testing.T) {
 	if n := strings.Count(header, ">Version<"); n != 1 {
 		t.Errorf("Version header appears %d times, want 1", n)
 	}
-	if !strings.Contains(header, ">Maturity ") {
-		t.Error("Maturity header cell is missing — ACMM and Journey were meant to fold into it")
+	// The Maturity header is now stacked (title on line 1, the ACMM/Journey sort
+	// chips on line 2) via stackHeader, so the source builds it as
+	// stackHeader('Maturity', ...) rather than the old inline "Maturity " prefix.
+	// Both folded sort controls must still be reachable in the header.
+	if !strings.Contains(header, "stackHeader('Maturity'") {
+		t.Error("Maturity header title is missing — ACMM and Journey were meant to fold into it")
+	}
+	if !strings.Contains(header, "subSort('acmmLevel', 'ACMM ⇅'") || !strings.Contains(header, "subSort('journey', 'Journey ⇅'") {
+		t.Error("the Maturity header dropped a folded sort control — both ACMM and Journey ⇅ must stay reachable")
 	}
 	if !strings.Contains(body, "acmmBadge(h.acmmLevel)") || !strings.Contains(body, "journeyBadge(h.journey)") {
 		t.Error("the Maturity cell must render BOTH acmmBadge and journeyBadge — no maturity datum may be dropped")

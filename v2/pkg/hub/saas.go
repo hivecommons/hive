@@ -10429,6 +10429,33 @@ const dashboardHTML = `<!DOCTYPE html>
         (titleRaw ? ' title="' + titleRaw + '"' : '') + '>' + label + '</span>';
     }
 
+    /* stackHeader lays a combined column's header out on TWO lines instead of one
+       inline string: the title on line 1, its sub-sort ⇅ chips on line 2. The
+       inline form ("Uptime ⇅ Prov ⇅", "Activity Iss ⇅ PRs ⇅ Ctr ⇅") set each
+       folded column's width from the full concatenated string, which made the
+       fleet table far wider than it needed to be. Stacking makes the column width
+       track the widest SINGLE line instead.
+
+       .hive-table th sets white-space:nowrap, which would keep everything on one
+       line; a flex column overrides that for layout, and the chip row is allowed
+       to wrap (flex-wrap) so three chips fold onto a further line on a truly
+       narrow table rather than forcing the column wide. Colours come from the
+       existing --muted token and the inherited th colour, so both themes track.
+
+       titleHTML    — the line-1 content. May be plain text (e.g. 'Maturity') or
+                      an already-built clickable span; inserted VERBATIM, callers
+                      pass trusted markup only.
+       subSortsHTML — the line-2 content: one or more subSort() spans (each already
+                      carries its own onclick + event.stopPropagation()). Passed
+                      through unchanged, so every folded sort stays reachable and
+                      the stopPropagation contract is untouched. */
+    function stackHeader(titleHTML, subSortsHTML) {
+      return '<span style="display:inline-flex;flex-direction:column;align-items:center;gap:1px;line-height:1.15">' +
+        '<span style="white-space:nowrap">' + titleHTML + '</span>' +
+        '<span style="display:inline-flex;flex-wrap:wrap;justify-content:center;gap:2px;font-size:0.9em;color:var(--muted)">' +
+        subSortsHTML + '</span></span>';
+    }
+
     /* persistHiveSort records the operator's EXPLICIT sort choice. Written only
        from sortDashHives (a header click), never from loadHiveSortPrefs, so
        restoring a preference can't rewrite it and a first visit leaves the key
@@ -11830,18 +11857,18 @@ const dashboardHTML = `<!DOCTYPE html>
            sort keys, so each key gets its own inline clickable span. subSort() is
            the shared helper; every folded sort therefore stays reachable directly
            from the header, exactly as the standalone columns were. */
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th>' +
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer;vertical-align:middle" title="Where this hive runs, and whether it is listed publicly">' + stackHeader('Location /', 'Public ⇅') + '</th>' +
         /* Uptime hosts BOTH temporal sorts: live uptime (startedAt) and the folded
            provision-date sort (registeredAt, the old "Prov ⇅"). The date itself now
            lives in the status hover; only its sort trigger rides here. */
-        '<th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅ ' + subSort('registeredAt', 'Prov ⇅', 'Sort by when this hive was first provisioned (the hub&apos;s first-seen time). The date itself now lives in the status hover.') + '</th>' +
+        '<th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer;vertical-align:middle" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">' + stackHeader('Uptime ⇅', subSort('registeredAt', 'Prov ⇅', 'Sort by when this hive was first provisioned (the hub&apos;s first-seen time). The date itself now lives in the status hover.')) + '</th>' +
         '<th title="Version, branch and any configuration drift from the fleet norm — a coloured dot appears beside the commit when this hive drifts; hover it for the specific signals">Version</th><th>Repos</th>' +
         /* MATURITY folds ACMM (where it is) and Journey (what it owes next); both
            sorts survive as inline ⇅ controls. */
-        '<th title="Adoption maturity: ACMM level and the next journey step">Maturity ' + subSort('acmmLevel', 'ACMM ⇅', 'Sort by ACMM level') + ' ' + subSort('journey', 'Journey ⇅', 'Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level') + '</th>' +
+        '<th style="vertical-align:middle" title="Adoption maturity: ACMM level and the next journey step">' + stackHeader('Maturity', subSort('acmmLevel', 'ACMM ⇅', 'Sort by ACMM level') + subSort('journey', 'Journey ⇅', 'Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level')) + '</th>' +
         '<th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th>' +
         /* ACTIVITY folds Issues, PRs and Contrib; each keeps its own sort ⇅. */
-        '<th title="Actionable issues, actionable PRs and active contributors">Activity ' + subSort('actionableIssues', 'Iss ⇅', 'Sort by actionable issues') + ' ' + subSort('actionablePRs', 'PRs ⇅', 'Sort by actionable PRs') + ' ' + subSort('activeContributors', 'Ctr ⇅', 'Sort by active contributors') + '</th>' +
+        '<th style="vertical-align:middle" title="Actionable issues, actionable PRs and active contributors">' + stackHeader('Activity', subSort('actionableIssues', 'Iss ⇅', 'Sort by actionable issues') + subSort('actionablePRs', 'PRs ⇅', 'Sort by actionable PRs') + subSort('activeContributors', 'Ctr ⇅', 'Sort by active contributors')) + '</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */
