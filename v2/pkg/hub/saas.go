@@ -8947,8 +8947,8 @@ const dashboardHTML = `<!DOCTYPE html>
     /* saveCurrentView names and stores the current group-by + filters + sort.
        Saving over an existing name overwrites it, which is what "save" means
        when the picker already shows that name. */
-    function saveCurrentView() {
-      var raw = window.prompt('Name this view:', '');
+    async function saveCurrentView() {
+      var raw = await hivePrompt('Name this view', '');
       if (raw === null) return;
       var name = String(raw).trim().slice(0, HIVE_VIEW_NAME_MAX_LEN);
       if (!name) { hiveToast('View name cannot be empty', 'error'); return; }
@@ -8956,7 +8956,7 @@ const dashboardHTML = `<!DOCTYPE html>
       state.name = name;
       var existing = findSavedView(name);
       if (existing) {
-        if (!window.confirm('A view named "' + name + '" already exists. Overwrite it?')) return;
+        if (!await hiveConfirm('Overwrite view?', 'A view named "' + name + '" already exists.', {ok: 'Overwrite'})) return;
         existing.groupBy = state.groupBy;
         existing.filters = state.filters;
         existing.sortKey = state.sortKey;
@@ -9007,7 +9007,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!_dashActiveView) { hiveToast('Select a view to rename', 'error'); return; }
       var v = findSavedView(_dashActiveView);
       if (!v) return;
-      var raw = window.prompt('Rename view:', v.name);
+      var raw = await hivePrompt('Rename view', v.name);
       if (raw === null) return;
       var name = String(raw).trim().slice(0, HIVE_VIEW_NAME_MAX_LEN);
       if (!name) { hiveToast('View name cannot be empty', 'error'); return; }
@@ -9027,7 +9027,7 @@ const dashboardHTML = `<!DOCTYPE html>
        if it pointed at the deleted view. */
     function deleteSavedView() {
       if (!_dashActiveView) { hiveToast('Select a view to delete', 'error'); return; }
-      if (!window.confirm('Delete view "' + _dashActiveView + '"?')) return;
+      if (!await hiveConfirm('Delete view?', 'View: ' + _dashActiveView, {ok: 'Delete', danger: true})) return;
       var kept = [];
       for (var i = 0; i < (_dashSavedViews || []).length; i++) {
         if (_dashSavedViews[i].name !== _dashActiveView) kept.push(_dashSavedViews[i]);
@@ -12221,15 +12221,22 @@ const dashboardHTML = `<!DOCTYPE html>
        owner a re-install, and the reset is delivered on the spoke's next
        heartbeat rather than immediately. */
     async function resetHiveApp(hiveId, hiveName) {
-      if (!confirm('Reset the GitHub App for "' + hiveName + '"?\n\nThe spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again. The App ID, slug and key are left alone.')) return;
+      var ok = await hiveConfirm('Reset the GitHub App?',
+        'Hive: ' + hiveName + '\n' +
+        'The spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again.\n' +
+        'The App ID, slug and key are left alone.',
+        {ok: 'Reset App', danger: true});
+      if (!ok) return;
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-app', {method: 'POST'});
         var data = await resp.json().catch(function() { return {}; });
-        if (!resp.ok) { alert('Reset failed: ' + (data.error || resp.status)); return; }
-        alert('App reset armed for "' + hiveName + '".\n\nThe spoke clears its installation on the next heartbeat (~30s), then shows the install prompt.');
+        if (!resp.ok) { await hiveNotify('Reset failed', String(data.error || resp.status)); return; }
+        await hiveNotify('App reset armed',
+          'Hive: ' + hiveName + '\n' +
+          'The spoke clears its installation on the next heartbeat (about 30 seconds), then shows the install prompt.');
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
-        alert('Reset failed: ' + e);
+        await hiveNotify('Reset failed', String(e));
       }
     }
 
@@ -14485,6 +14492,95 @@ const dashboardHTML = `<!DOCTYPE html>
        placeholders (optional) turns the fixed hive id into a dropdown, so that
        user-first entry point can retarget without backing out to the hive list.
        Both are omitted by the original ⋮ → "Assign / Claim" call site. */
+    /* hiveConfirm / hiveNotify replace window.confirm() and window.alert().
+       Native dialogs are jarring in a themed dashboard, cannot be styled, and
+       block the whole tab; they also read as a browser warning rather than as
+       part of the product. These follow the same overlay pattern the assign,
+       access and timeline modals already use.
+
+       Promise-based so they drop into the existing await-style call sites
+       without restructuring them. Escape and a backdrop click both resolve
+       false, matching what a user expects from a dismissable dialog. */
+    function _hiveDialog(opts) {
+      return new Promise(function(resolve) {
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
+        var btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
+        var body = (opts.body || '').split('\n').map(function(line) {
+          return line ? '<p style="margin:0 0 8px 0;color:var(--muted);font-size:0.85rem;line-height:1.5">' + esc(line) + '</p>' : '';
+        }).join('');
+        overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px;max-width:460px;width:90%">' +
+          '<h3 style="margin:0 0 10px 0;font-size:1rem">' + esc(opts.title || '') + '</h3>' + body +
+          '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:18px">' +
+          (opts.cancel ? '<button data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">' + esc(opts.cancel) + '</button>' : '') +
+          '<button data-act="yes" style="' + btn + ';background:' + (opts.danger ? '#da3633' : 'var(--accent,#3fb950)') + ';color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'OK') + '</button>' +
+          '</div></div>';
+        function done(v) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(v);
+        }
+        function onKey(e) { if (e.key === 'Escape') done(false); }
+        overlay.addEventListener('click', function(e) {
+          if (e.target === overlay) { done(false); return; }
+          var act = e.target.getAttribute && e.target.getAttribute('data-act');
+          if (act) done(act === 'yes');
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        var y = overlay.querySelector('[data-act="yes"]');
+        if (y) y.focus();
+      });
+    }
+    function hiveConfirm(title, body, opts) {
+      opts = opts || {};
+      return _hiveDialog({title: title, body: body, ok: opts.ok || 'Confirm', cancel: opts.cancel || 'Cancel', danger: opts.danger});
+    }
+    function hiveNotify(title, body) {
+      return _hiveDialog({title: title, body: body, ok: 'OK'});
+    }
+    /* hivePrompt replaces window.prompt(). Resolves to the trimmed string, or
+       null when cancelled — same contract as the native call it replaces, so
+       existing null checks keep working. */
+    function hivePrompt(title, defaultValue, opts) {
+      opts = opts || {};
+      return new Promise(function(resolve) {
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:3000;display:flex;align-items:center;justify-content:center';
+        var btn = 'padding:7px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:0.8rem';
+        overlay.innerHTML = '<div style="background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:22px;max-width:420px;width:90%">' +
+          '<h3 style="margin:0 0 12px 0;font-size:1rem">' + esc(title || '') + '</h3>' +
+          '<input id="_hive-prompt-input" type="text" value="' + esc(defaultValue || '') + '" style="width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box;font-size:0.85rem">' +
+          '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">' +
+          '<button data-act="no" style="' + btn + ';background:transparent;color:var(--fg)">Cancel</button>' +
+          '<button data-act="yes" style="' + btn + ';background:var(--accent,#3fb950);color:#fff;border-color:transparent;font-weight:600">' + esc(opts.ok || 'Save') + '</button>' +
+          '</div></div>';
+        function done(v) {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(v);
+        }
+        function submit() {
+          var el = document.getElementById('_hive-prompt-input');
+          done(el ? el.value.trim() : null);
+        }
+        function onKey(e) {
+          if (e.key === 'Escape') done(null);
+          if (e.key === 'Enter') submit();
+        }
+        overlay.addEventListener('click', function(e) {
+          if (e.target === overlay) { done(null); return; }
+          var act = e.target.getAttribute && e.target.getAttribute('data-act');
+          if (act === 'yes') submit();
+          else if (act === 'no') done(null);
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        var inp = document.getElementById('_hive-prompt-input');
+        if (inp) { inp.focus(); inp.select(); }
+      });
+    }
+
     function openAssignModal(hiveId, prefillOwner, placeholders) {
       var h = (_allDashHives || []).reduce(function(m, x) { return x.id === hiveId ? x : m; }, null) || {};
       var fld = 'width:100%;padding:8px;background:var(--surface);color:var(--fg);border:1px solid var(--border);border-radius:6px;box-sizing:border-box';
