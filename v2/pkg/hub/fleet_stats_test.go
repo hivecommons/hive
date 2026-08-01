@@ -64,13 +64,18 @@ func TestComputeFleetStats(t *testing.T) {
 			want: FleetStats{ReposManaged: 3, PRsMerged: 15, PRsRejected: 3, CVEsClosed: 4, Hives: 2, Reporting: 2, Eligible: 2},
 		},
 		{
-			name: "skips private and offline hives",
+			// A PRIVATE hive now COUNTS: these totals are anonymous sums, and
+			// excluding private hives described about a third of the fleet
+			// (~18 of 51 spokes are public). Naming a hive is a different
+			// disclosure and is still gated on IsPublic in the registry listing.
+			// OFFLINE hives are still skipped — their counts are not current.
+			name: "counts private hives, skips offline ones",
 			hives: []RegistryEntry{
 				{IsPublic: false, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(99)},
 				{IsPublic: true, Online: false, Org: "a", Repos: []string{"r2"}, PRsMerged90d: ptrInt(99)},
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r3"}, PRsMerged90d: ptrInt(7)},
 			},
-			want: FleetStats{ReposManaged: 1, PRsMerged: 7, Hives: 1, Reporting: 1, Eligible: 1},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 106, Hives: 2, Reporting: 2, Eligible: 2},
 		},
 		{
 			name: "nil counts are not aggregated as zero",

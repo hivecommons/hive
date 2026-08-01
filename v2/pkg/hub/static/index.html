@@ -676,7 +676,7 @@
           <div><span>Agents running</span><strong id="stat-agents">—</strong></div>
           <div><span>Managed repos</span><strong id="stat-repos">—</strong></div>
           <div><span>Contributors</span><strong id="stat-contributors">—</strong></div>
-          <div><span>Active hives</span><strong id="stat-total">—</strong></div>
+          <div><span>Public hives</span><strong id="stat-total">—</strong></div>
         </div>
       </div>
     </section>
@@ -1103,14 +1103,29 @@
       }
     }
 
+    // Fleet-wide counters, filled in by the /api/fleet-stats poll. They cover
+    // ALL hives; the `hives` array here is the PUBLIC list only, so summing it
+    // described about a third of the fleet (~18 of 51 spokes are public).
+    var _fleetWide = null;
+
     function renderStats(hives) {
       var agents = 0, contributors = 0, online = 0, repos = 0;
       hives.forEach(function(h) { agents += h.agentCount || 0; contributors += h.activeContributors || 0; repos += (h.repos || []).length; if (h.online) online++; });
+      // "Public hives" is deliberately the length of the PUBLIC list — it
+      // labels exactly what the table below shows, and is the one counter here
+      // that should not be fleet-wide.
       document.getElementById('stat-online').textContent = online + '/' + hives.length;
-      document.getElementById('stat-agents').textContent = agents;
-      document.getElementById('stat-repos').textContent = repos;
-      document.getElementById('stat-contributors').textContent = contributors;
       document.getElementById('stat-total').textContent = hives.length;
+      // The rest are fleet-wide when the hub has told us, falling back to the
+      // public-list sums so an older hub (or a failed poll) still renders a
+      // number rather than an em dash.
+      var f = _fleetWide;
+      document.getElementById('stat-agents').textContent =
+        f && typeof f.agents_running === 'number' ? f.agents_running : agents;
+      document.getElementById('stat-repos').textContent =
+        f && typeof f.repos_managed === 'number' ? f.repos_managed : repos;
+      document.getElementById('stat-contributors').textContent =
+        f && typeof f.contributors === 'number' ? f.contributors : contributors;
     }
 
     var _allMainHives = [];
@@ -1430,7 +1445,15 @@
       function go() {
         fetch('/api/fleet-stats')
           .then(function(r) { return r.json(); })
-          .then(apply)
+          .then(function(d) {
+            // Hand the fleet-wide counters to renderStats, which otherwise sums
+            // the PUBLIC hive list and so undercounts the fleet by ~2/3.
+            _fleetWide = d;
+            if (typeof _allMainHives !== 'undefined' && _allMainHives) {
+              try { renderStats(_allMainHives); } catch (e) {}
+            }
+            apply(d);
+          })
           .catch(function() { apply(null); });
       }
       go();

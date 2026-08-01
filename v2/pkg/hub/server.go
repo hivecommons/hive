@@ -1678,6 +1678,17 @@ type FleetStats struct {
 	PRsRejected  int    `json:"prs_rejected"`
 	CVEsClosed   int    `json:"cves_closed"`
 	Hives        int    `json:"hives"`
+	// AgentsRunning and Contributors are fleet-wide ANONYMOUS counts, summed
+	// over ALL online hives rather than only the public ones.
+	//
+	// The landing page used to compute these in the browser from /api/registry,
+	// which returns public hives only — so "agents running" and "contributors"
+	// silently described about a third of the fleet (roughly 18 of 51 spokes are
+	// public). Computing them here counts every hive while disclosing none: like
+	// every other field on this struct they are scalars, and no name, org, repo,
+	// owner or URL is derivable from them.
+	AgentsRunning int `json:"agents_running"`
+	Contributors  int `json:"contributors"`
 	UpdatedAt    string `json:"updated_at"`
 	// Reporting is the number of eligible hives that actually contributed a
 	// fresh count to the totals above; Eligible is how many were considered.
@@ -1728,10 +1739,29 @@ func (s *HubServer) computeFleetStats() FleetStats {
 	var fs FleetStats
 	repoSet := make(map[string]struct{})
 	for _, h := range s.registry.Hives {
-		if !h.IsPublic || !h.Online {
+		// ALL hives count, public and private alike.
+		//
+		// These totals are ANONYMOUS SUMS: every field on FleetStats is a
+		// scalar — counts, a timestamp, booleans. No name, org, repo, owner or
+		// URL reaches this struct, and repoSet below is internal with only its
+		// len() published. So a private hive contributing to a count discloses
+		// nothing about itself.
+		//
+		// Excluding them made the published figures describe about a THIRD of
+		// reality: 51 spokes exist and roughly 18 are public. "Hives", "repos
+		// managed" and the PR/CVE counts all understated the fleet by that
+		// margin, which is the opposite of what a fleet total is for.
+		//
+		// The PUBLIC LIST at the bottom of the landing page is a separate
+		// concern and is deliberately untouched: it names hives and links to
+		// them, so it stays opt-in via IsPublic. Aggregate counts and named
+		// listings are different disclosures and are now treated as such.
+		if !h.Online {
 			continue
 		}
 		fs.Hives++
+		fs.AgentsRunning += h.AgentCount
+		fs.Contributors += h.ActiveContributors
 		for _, r := range h.Repos {
 			if r == "" {
 				continue
