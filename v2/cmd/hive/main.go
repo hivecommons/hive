@@ -2289,6 +2289,12 @@ func main() {
 		// configured key is entitled to, learned by the proxy from a key-info
 		// probe or a "team not allowed" 403.
 		dashboard.SetEntitledModelsProvider(githubProxy.EntitledModels)
+		// Surface a stale/invalid inference gateway key (repeated 401s on every
+		// inference call) as a hive health signal: the proxy latches the failure
+		// after several consecutive rejections and clears it on the next success,
+		// and the heartbeat builder reports it to the hub (both as an immediate
+		// advisory-staleness cause and as a dedicated inference-auth alert).
+		dashboard.SetInferenceAuthProvider(githubProxy.InferenceAuthError)
 
 		// Wire the inference token sink so the translator records per-agent
 		// usage (from the gateway's OpenAI usage block) into the same metrics
@@ -2390,12 +2396,36 @@ func main() {
 					if model == "" {
 						model = lc.DefaultModel
 					}
+					// Key source must MATCH the entitlement/probe path (gateways.go,
+					// cost.go, openrouter.go), which resolve the key from the gateway
+					// via ResolveGateway(backend).ResolveAPIKey(). When an EXPLICIT
+					// `gateways:` block names this backend, that gateway carries its
+					// own api_key_file (e.g. the key saved from the Model Gateways
+					// tab). Reading the legacy Governor.LiteLLM key file here instead
+					// would send a DIFFERENT (often stale) key than entitlement
+					// validated, causing inference 401s after a key rotation done via
+					// the Gateways tab. Resolve from the same gateway so inference and
+					// entitlement always agree on one key source.
+					//
+					// Only explicit gateways override: ResolvedGateways synthesizes an
+					// implicit "litellm" gateway from the legacy block when no
+					// `gateways:` are set, but that synthetic gateway lacks the
+					// multi-location file fallback of LiteLLMConfig.ResolveAPIKey
+					// (k8s Secret mount + PVC copy). For no-gateway hives we therefore
+					// keep the legacy resolver to preserve today's behavior.
+					apiKey := cfg.Governor.ResolveLiteLLMInferenceKey(backend)
+					caBundle := lc.CABundle
+					if len(cfg.Governor.Gateways) > 0 {
+						if gw := cfg.Governor.ResolveGateway(backend); gw != nil {
+							caBundle = gw.CABundle
+						}
+					}
 					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
 						Backend:  backend,
 						Endpoint: endpoint,
 						Model:    model,
-						APIKey:   lc.ResolveAPIKey(),
-						CABundle: lc.CABundle,
+						APIKey:   apiKey,
+						CABundle: caBundle,
 					})
 					return
 				}
@@ -2649,6 +2679,17 @@ func main() {
 				}(),
 				AdvisoryError: func() string {
 					_, _, errMsg := dashSrv.AdvisoryState()
+					return errMsg
+				}(),
+				// Inference-backend auth-failure signal (repeated 401s from a
+				// stale gateway key). Reported as its own field so the hub can
+				// raise a dedicated inference-auth alert whose ROOT cause an
+				// operator sees directly — distinct from the advisory-staleness
+				// pill AdvisoryError also trips. Empty when inference auth is
+				// healthy or the hive routes to no inference backend; self-clears
+				// on the next successful inference call.
+				InferenceAuthError: func() string {
+					errMsg, _ := dashSrv.InferenceAuthState()
 					return errMsg
 				}(),
 				Repos:       cfg.Project.Repos,

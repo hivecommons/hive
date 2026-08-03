@@ -365,17 +365,28 @@ type HeartbeatPayload struct {
 	// or empty when the last attempt succeeded. It is the same string the spoke
 	// already logs, so it never carries key material. Set = the hub flags the
 	// digest as stale (gated on advisory-mode + app-can-write) with this cause.
-	AdvisoryError string         `json:"advisory_error,omitempty"`
-	Health        map[string]any `json:"health"`
-	DashboardURL  string         `json:"dashboard_url"`
-	SnapshotURL   string         `json:"snapshot_url"`
-	Owner         string         `json:"owner,omitempty"`
-	HiveType      string         `json:"hive_type,omitempty"`
-	ClusterID     string         `json:"cluster_id,omitempty"`
-	IsPublic      bool           `json:"is_public"`
-	Version       string         `json:"version"`
-	GitHash       string         `json:"git_hash"`
-	GitBranch     string         `json:"git_branch,omitempty"`
+	AdvisoryError string `json:"advisory_error,omitempty"`
+	// InferenceAuthError is the log-safe cause string set when this spoke's
+	// self-hosted inference backend (LiteLLM/vLLM/llm-d gateway) has rejected
+	// several CONSECUTIVE calls with 401 — a stale/invalid gateway key that
+	// silently halts every agent while the hive still heartbeats and looks
+	// "quiet". Empty means inference auth is healthy (or the spoke does not
+	// route through an inference backend, or is too old to report it): the hub
+	// reads empty as no-signal, never an alarm. Non-empty raises a dedicated
+	// inference-auth alert whose ROOT cause an operator sees directly, distinct
+	// from a GitHub-post advisory staleness. It clears the moment an inference
+	// call succeeds, so a fixed hive self-heals. Never carries key material.
+	InferenceAuthError string         `json:"inference_auth_error,omitempty"`
+	Health             map[string]any `json:"health"`
+	DashboardURL       string         `json:"dashboard_url"`
+	SnapshotURL        string         `json:"snapshot_url"`
+	Owner              string         `json:"owner,omitempty"`
+	HiveType           string         `json:"hive_type,omitempty"`
+	ClusterID          string         `json:"cluster_id,omitempty"`
+	IsPublic           bool           `json:"is_public"`
+	Version            string         `json:"version"`
+	GitHash            string         `json:"git_hash"`
+	GitBranch          string         `json:"git_branch,omitempty"`
 	// ImageRef is the container image this spoke's own Deployment runs, read
 	// in-cluster from the Deployment spec. GitHash says which commit the
 	// BINARY was built from; ImageRef says which TAG the deployment tracks —
