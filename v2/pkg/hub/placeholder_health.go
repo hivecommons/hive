@@ -12,8 +12,11 @@ package hub
 // hive's overall status is green.
 //
 // sanitizePlaceholderRows therefore rewrites each placeholder's spoke-reported
-// Health payload before it ships to the browser: failing auth-class checks are
-// reclassified as "skip" with placeholderAuthNote as their detail, and the
+// Health payload before it ships to the browser: checks whose non-passing
+// state IS the designed state of an unassigned slot — the auth-class family,
+// and the tokens check's zero-consumed warning (no project means no workload
+// to spend on); see placeholderDesignedCheckNote — are reclassified as "skip"
+// with a note saying why as their detail, and the
 // overall status / fails / warns are recomputed from the surviving checks
 // using the spoke's own thresholds. Genuine placeholder-applicable failures —
 // not ready, agents crash-looping, queue wedged — keep their status untouched
@@ -29,6 +32,33 @@ package hub
 // failure's error detail on an unassigned row, so the hover says WHY the check
 // is not evaluated instead of presenting a designed state as a fault.
 const placeholderAuthNote = "Unassigned — auth not configured by design"
+
+// healthCheckTokens is the spoke's token-consumption check (HealthSummary,
+// pkg/dashboard/server.go). It warns with "zero consumed" whenever the hive
+// has spent nothing — which on an unassigned pool slot is not a warning at
+// all: a slot with no project has no workload to spend tokens on.
+const healthCheckTokens = "tokens"
+
+// placeholderTokensNote replaces the tokens check's "zero consumed" warning
+// detail on an unassigned row, for the same reason as placeholderAuthNote.
+const placeholderTokensNote = "Unassigned — no workload by design"
+
+// placeholderDesignedCheckNote reports whether a named check's non-passing
+// state is the DESIGNED state of an unassigned pool slot, and if so returns
+// the hover note that replaces its error detail. Everything else returns ""
+// and keeps its reported status: ready, agents, stall_detection,
+// template_vars, kick_refusal and queue failures are genuine faults even on a
+// placeholder (it runs a real spoke process), and governor/contribute only
+// ever report pass.
+func placeholderDesignedCheckNote(name string) string {
+	switch {
+	case isAuthClassHealthCheck(name):
+		return placeholderAuthNote
+	case name == healthCheckTokens:
+		return placeholderTokensNote
+	}
+	return ""
+}
 
 const (
 	// healthCheckStatusSkip is the spoke's own not-applicable check status
@@ -68,9 +98,10 @@ func isFailingCheckStatus(st string) bool {
 }
 
 // sanitizePlaceholderRows rewrites the Health payload of every UNASSIGNED
-// placeholder row in the My Hives result so auth-class check failures — the
-// pool's designed state — no longer read as degradation, while every other
-// failure keeps its colour. Claimed hives pass through untouched. Called after
+// placeholder row in the My Hives result so designed-state check failures
+// (placeholderDesignedCheckNote: the auth-class family and the zero-consumed
+// tokens warning) no longer read as degradation, while every other failure
+// keeps its colour. Claimed hives pass through untouched. Called after
 // enrichFromSaaSMeta has run on every row (provStatus must be present, or a
 // placeholder that has not yet reported it would be misread as claimed by
 // everything downstream of the org-prefix fallback).
@@ -119,19 +150,20 @@ func placeholderSanitizedHealth(health map[string]any) map[string]any {
 		}
 		name, _ := ck["name"].(string)
 		st, _ := ck["status"].(string)
-		if isAuthClassHealthCheck(name) && isFailingCheckStatus(st) {
+		if note := placeholderDesignedCheckNote(name); note != "" && isFailingCheckStatus(st) {
 			neutralized++
 			replaced := make(map[string]any, len(ck)+1)
 			for k, val := range ck {
 				replaced[k] = val
 			}
 			replaced["status"] = healthCheckStatusSkip
-			replaced["detail"] = placeholderAuthNote
+			replaced["detail"] = note
 			outChecks = append(outChecks, replaced)
 			continue
 		}
-		// Non-auth checks keep their reported status and are what the row's
-		// recomputed overall status is derived from.
+		// Checks whose failure is genuine even on a placeholder keep their
+		// reported status and are what the recomputed overall status is
+		// derived from.
 		switch st {
 		case healthCheckStatusFail, healthCheckStatusCritical, healthCheckStatusError:
 			fails++

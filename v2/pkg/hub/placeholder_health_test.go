@@ -180,6 +180,85 @@ func TestPlaceholderRowKeepsWarningFromRealCheck(t *testing.T) {
 	}
 }
 
+// Zero token consumption is the DESIGNED state of an unassigned pool slot —
+// no project means no workload to spend on — so the spoke's tokens check
+// warning ("zero consumed") must not amber the row: it is reclassified to
+// skip with the no-workload note and the row ships green.
+func TestPlaceholderRowGreenWhenTokensWarnZeroConsumed(t *testing.T) {
+	e := placeholderEntryWithHealth(map[string]any{
+		"status": "warning",
+		"fails":  0,
+		"warns":  1,
+		"checks": []any{
+			map[string]any{"name": "ready", "status": "pass"},
+			map[string]any{"name": healthCheckTokens, "status": "warn", "detail": "zero consumed"},
+		},
+	})
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusOK {
+		t.Fatalf("placeholder with only the zero-consumed tokens warning: status = %q, want %q", st, healthStatusOK)
+	}
+	if warns, _ := got["warns"].(int); warns != 0 {
+		t.Errorf("warns = %v, want 0 — the pill must not render", got["warns"])
+	}
+	st, detail := checkStatusByName(t, got, healthCheckTokens)
+	if st != healthCheckStatusSkip {
+		t.Errorf("tokens status = %q, want %q", st, healthCheckStatusSkip)
+	}
+	if detail != placeholderTokensNote {
+		t.Errorf("tokens detail = %q, want the no-workload note %q", detail, placeholderTokensNote)
+	}
+}
+
+// The SAME zero-consumed warning on a CLAIMED hive is a real signal (an
+// assigned project spending nothing is worth noticing) and must pass through
+// untouched.
+func TestClaimedRowKeepsTokensWarning(t *testing.T) {
+	e := MyHiveEntry{RegistryEntry: RegistryEntry{
+		ID:     "claimed-2",
+		Org:    "acme",
+		Online: true,
+		Health: map[string]any{
+			"status": "warning",
+			"checks": []any{
+				map[string]any{"name": healthCheckTokens, "status": "warn", "detail": "zero consumed"},
+			},
+		},
+	}}
+	e.ProvStatus = "active"
+
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusWarning {
+		t.Fatalf("claimed hive status = %q, want %q — the tokens exemption must not leak", st, healthStatusWarning)
+	}
+	if st, detail := checkStatusByName(t, got, healthCheckTokens); st != healthCheckStatusWarn || detail != "zero consumed" {
+		t.Errorf("claimed hive tokens shipped as %q/%q, want warn/zero consumed untouched", st, detail)
+	}
+}
+
+// A tokens warning alongside a genuine failure: the tokens check is
+// neutralised but the real fault still owns the row colour.
+func TestPlaceholderTokensWarnDoesNotMaskRealFailure(t *testing.T) {
+	e := placeholderEntryWithHealth(map[string]any{
+		"status": "degraded",
+		"checks": []any{
+			map[string]any{"name": "ready", "status": "fail", "detail": "not ready"},
+			map[string]any{"name": healthCheckTokens, "status": "warn", "detail": "zero consumed"},
+		},
+	})
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	if st := healthStatusOf(rows[0].Health); st != healthStatusDegraded {
+		t.Fatalf("status = %q, want %q — neutralising tokens must not hide the not-ready fault", st, healthStatusDegraded)
+	}
+}
+
 // The sanitizer only touches Health: liveness signals (online, lastHeartbeat)
 // that drive the offline dot and the stale-heartbeat drift/alert rules must
 // pass through untouched, so a stale placeholder still reads as degraded.
