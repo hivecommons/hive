@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 )
@@ -37,6 +38,28 @@ var lastHeartbeatSuccessUnix atomic.Int64
 // heartbeat freshness at all — otherwise every hub-less hive would fail
 // liveness forever. Set once at startup; read from the HTTP handler.
 var heartbeatLoopStarted atomic.Bool
+
+// heartbeatLoopActive is the process-wide "a heartbeat loop is RUNNING right
+// now" guard — deliberately separate from heartbeatLoopStarted, which records
+// "a loop was ever launched" and feeds /api/livez via HeartbeatEnabled (a
+// semantics that must not change: liveness keeps gating on heartbeat freshness
+// even while a duplicate start is being refused).
+//
+// WHY THIS EXISTS (#2453): a production spoke was observed running TWO
+// concurrent heartbeat loops in one process — two independent 2-minute
+// cadences from one pod, alternating a fresh and a stale auth snapshot on the
+// wire, flipping the hub registry every beat. The code has exactly one
+// StartHeartbeat call site, so the second loop's origin is unknown. This CAS
+// makes a second concurrent loop impossible no matter what path tries to
+// start one: the first caller wins, every later caller is refused and returns
+// cleanly. The refusal logs the refused caller's FULL STACK at ERROR, so the
+// next time the trigger fires in production the log names it — the guard is
+// both the fix and the instrument.
+//
+// Cleared (via defer) when a loop exits on context cancellation, so a
+// deliberate stop-then-restart stays possible; only CONCURRENT duplication is
+// refused.
+var heartbeatLoopActive atomic.Bool
 
 // lastHeartbeatAttemptUnix holds the unix-seconds timestamp of the most
 // recent heartbeat the loop *tried* to send, regardless of whether the hub
@@ -532,6 +555,21 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		logger.Info("hub heartbeat disabled (no HIVE_HUB_URL)")
 		return
 	}
+	// Durable single-loop guard (#2453): exactly one heartbeat loop may run in
+	// this process, ever, no matter which path calls StartHeartbeat. A refused
+	// duplicate returns cleanly — the already-running loop keeps beating — and
+	// logs the refused caller's full stack so a live occurrence names the
+	// trigger instead of just alternating states on the wire.
+	if !heartbeatLoopActive.CompareAndSwap(false, true) {
+		logger.Error("duplicate StartHeartbeat REFUSED: a heartbeat loop is already running in this process (#2453) — the stack below names the caller that tried to start a second one",
+			"hub_url", hubURL,
+			"stack", string(debug.Stack()),
+		)
+		return
+	}
+	// Release only when THIS loop exits (context cancelled), so a deliberate
+	// stop-then-restart works while concurrent duplication stays impossible.
+	defer heartbeatLoopActive.Store(false)
 	// Mark the loop as active before the first send so /api/livez can tell
 	// "hub-connected, awaiting first beat" (healthy during startup grace)
 	// apart from "no hub configured" (never gated on heartbeat freshness).
@@ -629,10 +667,19 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	}
 }
 
+// waitForReady's knobs are vars (not consts) for the same reason as
+// taskPushInterval: tests need a StartHeartbeat that reaches its send loop in
+// milliseconds, not after a 3-minute readiness wait. Production keeps the
+// defaults.
+var (
+	waitForReadyPollInterval = 5 * time.Second
+	waitForReadyMaxWait      = 3 * time.Minute
+)
+
 func waitForReady(ctx context.Context, logger *slog.Logger) {
 	const healthURL = "http://localhost:3001/api/health"
-	const pollInterval = 5 * time.Second
-	const maxWait = 3 * time.Minute
+	pollInterval := waitForReadyPollInterval
+	maxWait := waitForReadyMaxWait
 	deadline := time.After(maxWait)
 	logger.Info("heartbeat waiting for dashboard readiness")
 	for {
