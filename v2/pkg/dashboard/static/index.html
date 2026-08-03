@@ -3453,6 +3453,57 @@
       });
     }
 
+    // ---- Agent-detail scroll anchoring ------------------------------------
+    // Clicking an agent scrolls to the detail panel, but content that renders
+    // AFTER the click shifts the layout out from under the in-flight scroll:
+    // the 3s status poll re-renders every section above the panel (agents,
+    // repos, gov strip), and ocFetchPane lands async pane content. The scroll
+    // then finishes at a stale Y and the view is anchored on the wrong thing.
+    // ocScrollToAgentDetail() re-anchors for a short settle window: on each
+    // animation frame it recomputes the panel's target Y and, if layout drift
+    // moved it beyond a small tolerance, retargets the scroll (scrollTo with
+    // the same behavior redirects the in-flight smooth scroll — no visible
+    // restart). The window is hard-capped, and ANY user scroll input (wheel,
+    // touch, scrollbar mousedown, keys) cancels correction immediately so
+    // manual scrolling right after a click is never hijacked.
+    const OC_SCROLL_SETTLE_MS = 700;   // correction window after a click; capped so late shifts never fight the user
+    const OC_SCROLL_TOLERANCE_PX = 4;  // re-anchor only when the target drifted beyond this
+    const OC_SCROLL_CANCEL_EVENTS = ['wheel', 'touchstart', 'mousedown', 'keydown'];
+    let _ocScrollSettleCancel = null;
+
+    function ocScrollToAgentDetail(behavior) {
+      const detail = document.getElementById('oc-agent-detail');
+      if (!detail) return;
+      if (_ocScrollSettleCancel) _ocScrollSettleCancel();
+      const mode = behavior || 'smooth';
+      const targetY = () => Math.max(0, detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT);
+      let lastTarget = targetY();
+      window.scrollTo({ top: lastTarget, behavior: mode });
+      let cancelled = false;
+      const cancel = () => {
+        if (cancelled) return;
+        cancelled = true;
+        OC_SCROLL_CANCEL_EVENTS.forEach(t => window.removeEventListener(t, cancel));
+        if (_ocScrollSettleCancel === cancel) _ocScrollSettleCancel = null;
+      };
+      // Passive listeners: cancellation must never delay the user's own
+      // scrolling. Programmatic scrolls fire none of these events, so the
+      // settle loop cannot cancel itself.
+      OC_SCROLL_CANCEL_EVENTS.forEach(t => window.addEventListener(t, cancel, { passive: true }));
+      _ocScrollSettleCancel = cancel;
+      const deadline = performance.now() + OC_SCROLL_SETTLE_MS;
+      (function settle() {
+        if (cancelled) return;
+        const want = targetY();
+        if (Math.abs(want - lastTarget) > OC_SCROLL_TOLERANCE_PX) {
+          lastTarget = want;
+          window.scrollTo({ top: want, behavior: mode });
+        }
+        if (performance.now() > deadline) { cancel(); return; }
+        requestAnimationFrame(settle);
+      })();
+    }
+
     function ocSelectAgent(name) {
       _ocSelectedAgent = name;
       history.replaceState(null, '', name ? '#' + name : location.pathname);
@@ -3462,11 +3513,7 @@
       ocRenderAgentDetail();
       ocUpdateFocusedState();
       if (name) { ocStartPanePoll(); } else { ocStopPanePoll(); }
-      const detail = document.getElementById('oc-agent-detail');
-      if (detail) {
-        const y = detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-      }
+      ocScrollToAgentDetail('smooth');
     }
 
     function ocFormatSummary(raw) {
@@ -10750,8 +10797,10 @@ function burnAreaChart() {
             const detail = document.getElementById('oc-agent-detail');
             if (detail) {
               detail.classList.add('active');
-              const y = detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT;
-              window.scrollTo({ top: y, behavior: 'instant' });
+              // Instant behavior (no animation on load), but still routed
+              // through the settle loop: first-load layout shifts the most
+              // (deferred sections, images, async fetches all land late).
+              ocScrollToAgentDetail('instant');
             }
           });
         } else {
