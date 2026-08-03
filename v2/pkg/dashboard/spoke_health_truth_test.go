@@ -122,6 +122,42 @@ func TestDeepHealthFirstBeatReadyPasses(t *testing.T) {
 	}
 }
 
+// The refactor onto healthSummaryFor must not weaken the public path: an
+// un-ready server (no MarkReady, no status) still reports a failing "ready"
+// check through HealthSummary, exactly as the heartbeat relies on.
+func TestHealthSummaryNotReadyStillFails(t *testing.T) {
+	srv := newFullServer(t)
+
+	raw, err := json.Marshal(srv.HealthSummary())
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal summary: %v", err)
+	}
+	checks, ok := m["checks"].([]any)
+	if !ok {
+		t.Fatalf("checks is %T, want array", m["checks"])
+	}
+	found := false
+	for _, c := range checks {
+		cm, ok := c.(map[string]any)
+		if !ok {
+			continue
+		}
+		if cm["name"] == "ready" {
+			found = true
+			if cm["status"] != "fail" {
+				t.Errorf("ready check on un-ready server = %v, want fail", cm["status"])
+			}
+		}
+	}
+	if !found {
+		t.Error("HealthSummary has no ready check")
+	}
+}
+
 // UI wiring: the header pill and sidebar agent dots must read the strong
 // signals. Snippet assertions in the style of gh_app_banner_test.go — they
 // pin the load-bearing lines of the inline script.
