@@ -6304,10 +6304,15 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Accept a pasted org/repo URL here too — an admin assigning a hive reaches
-	// for the same paste the requester did.
-	if h, o := normalizeOrgRef(body.Org); o != "" {
-		body.Org = o
-		if h != "" && body.GitHubHost == "" {
+	// for the same paste the requester did. normalizeOrgRef returns a non-empty
+	// host with an EMPTY org when the field held only a forge host
+	// ("github.ibm.com") and no org — clear body.Org in that case so the
+	// isValidName check below rejects it, instead of the raw hostname (which
+	// isValidName accepts, dots and all) silently becoming the org. That
+	// host-as-org bug produced the two broken github.ibm.com claims on vllm-d.
+	if h, o := normalizeOrgRef(body.Org); h != "" {
+		body.Org = o // may be "" for a bare-host paste — rejected just below
+		if body.GitHubHost == "" {
 			body.GitHubHost = h
 		}
 	}
