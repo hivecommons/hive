@@ -228,7 +228,7 @@ cat /var/run/hive-metrics/merge-eligible.json | jq -r '.merge_eligible[] | "\(.r
 # Use repo-appropriate worktree paths (see dispatch template below)
 
 # 4. For PRs: auto-merge AI-authored (${PROJECT_AI_AUTHOR}, copilot-swe-agent[bot]) when CI green
-# One `gh pr merge --admin --squash` per eligible PR, on ANY repo
+# One `gh pr merge --squash` per eligible PR, on ANY repo (never --admin)
 ```
 
 **Drop / skip entirely in lean mode:**
@@ -500,7 +500,7 @@ This is the recovery mechanism for usage-limit failures. The user /logins manual
 | Scan finds a new issue/PR not yet tracked | `bd create --title "<repo>#<num>: <short title>" --type bug\|feature\|task\|epic\|chore --priority 0-4 --actor ${AGENT_NAME} --external-ref gh-<num>` (metadata is attached via a follow-up `bd update <id> --set-metadata key=value`; `--set-metadata` is NOT valid on `bd create` in bd 1.0.2) |
 | Link to GitHub | `bd update <bead-id> --set-metadata github_url=https://github.com/<org>/<repo>/issues/<num>` |
 | Dispatch fix agent | `bd update <bead-id> --claim` (atomic: sets assignee and status=in_progress) |
-| PR merged that closes the issue | `bd close <bead-id>` — ⛔ ONLY close after verifying the PR is MERGED (`gh pr view <num> --json state` must show `"state":"MERGED"`). CI-green is NOT merged. "Ready to merge" is NOT merged. If the PR is still OPEN, you MUST run `gh pr merge <num> --admin --squash` FIRST, verify it succeeds, THEN close the bead. |
+| PR merged that closes the issue | `bd close <bead-id>` — ⛔ ONLY close after verifying the PR is MERGED (`gh pr view <num> --json state` must show `"state":"MERGED"`). CI-green is NOT merged. "Ready to merge" is NOT merged. If the PR is still OPEN, you MUST run `gh pr merge <num> --squash` (never `--admin`) FIRST, verify it succeeds, THEN close the bead. |
 | Defer with reason | `bd update <bead-id> --status blocked --set-metadata defer_reason=<reason>` |
 | Dependency (A needs B first) | `bd dep add <bead-a> <bead-b>` |
 | End of iteration | `bd sync` (commits `.beads/` state to local git — no remote) |
@@ -667,7 +667,7 @@ All repos are already included. The enumerator covers all repos listed in hive-p
 
 2. **CI status** (required for any merge):
    - All blocking checks passing (ignore Playwright per policy) → proceed.
-   - **`tide` is NOT a blocking check** — it is Prow's merge queue and will stay pending forever without `lgtm`/`approved` labels. If `tide` is the only pending or failing check, treat CI as green and merge with `gh pr merge --admin --squash --repo <repo>`. NEVER post `/lgtm`, `/approve`, or `/ok-to-test` comments as a merge strategy — always use `--admin --squash` directly.
+   - **`tide` is NOT a blocking check** — it is Prow's merge queue and will stay pending forever without `lgtm`/`approved` labels. If `tide` is the only pending or failing check, treat CI as green and merge with `gh pr merge --squash --repo <repo>` (`tide` is not a required check, so a normal squash merge goes through). NEVER post `/lgtm`, `/approve`, or `/ok-to-test` comments as a merge strategy, and NEVER pass `--admin` — bypassing branch protection caused the 2026-06-12 merge-loop incident.
    - Failing blocking check (anything other than `tide` or Playwright) → leave a comment pointing at the failure + `@author` mention, move on.
    - Checks pending >30min (excluding `tide` and Playwright) → assume stuck, comment asking to re-run.
 
@@ -680,8 +680,8 @@ All repos are already included. The enumerator covers all repos listed in hive-p
 
 | Author | CI | Size | Action |
 |---|---|---|---|
-| AI-authored | green | any | `gh pr merge --admin --squash` (matches policy auto-merge workflow for ${PROJECT_PRIMARY_REPO}) |
-| Community | green | small | Read diff, if clean: `gh pr merge --admin --squash --repo <repo>`. Thank the contributor. NEVER use `/lgtm` or `/approve` — Prow labels don't trigger for bot-authored PRs and cause merges to stall. |
+| AI-authored | green | any | `gh pr merge --squash` (matches policy auto-merge workflow for ${PROJECT_PRIMARY_REPO}; never `--admin`) |
+| Community | green | small | Read diff, if clean: `gh pr merge --squash --repo <repo>` (never `--admin`). Thank the contributor. NEVER use `/lgtm` or `/approve` — Prow labels don't trigger for bot-authored PRs and cause merges to stall. |
 | Community | green | medium | Read diff, leave 1-2 specific comments if improvements possible; if clean, approve + merge. |
 | Community | green | large | Leave a structured review: what works, what needs changes, link to docs/conventions. If structural (new pattern, API change), lane-transfer to architect via `bd create --actor architect --set-metadata lane_transfer=${AGENT_NAME}-to-architect` for RFC review. |
 | Any | red | any | Comment at the specific failing check. Do not merge. |
