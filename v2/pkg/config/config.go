@@ -1539,6 +1539,17 @@ func (g GitHubConfig) HasUsableApp() bool {
 	return g.HasApp() && g.InstallationID != 0
 }
 
+// ConfiguredButUninstalled reports the half-configured state that must NEVER
+// read as healthy: a real App is named but there is no installation to mint
+// tokens against. Every token this hive will ever hold is App-minted, so this
+// state means auth is a countdown — any client still working is riding a
+// cached token that cannot be renewed. Callers use this to raise the install
+// banner and fail github_auth from CONFIG truth, not from whether a residual
+// token still breathes.
+func (g GitHubConfig) ConfiguredButUninstalled() bool {
+	return g.HasApp() && g.InstallationID == 0
+}
+
 // ResolvedAPIURL returns the configured API URL or the default for github.com.
 func (g GitHubConfig) ResolvedAPIURL() string {
 	if g.APIURL != "" {

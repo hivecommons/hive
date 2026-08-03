@@ -933,6 +933,17 @@ func main() {
 	// against a hive whose credentials the operator never delivered).
 	githubAppDiag := appAuthFailure
 	githubAppState := appAuthState
+	// Config truth outranks live probes: an App with no installation cannot
+	// mint, period. A cached token can keep clients green for up to an hour
+	// after an installation is cleared, and waiting for the first failed mint
+	// left the banner down and the hub green exactly when the operator needed
+	// the opposite (the fast-model-actuation incident).
+	if cfg.GitHub.ConfiguredButUninstalled() {
+		githubAppRequired = true
+		githubAppState = github.AppStateNotInstalled
+		githubAppDiag = "GitHub App " + strconv.FormatInt(cfg.GitHub.AppID, 10) +
+			" has no installation for this org — install it (the spoke adopts the installation automatically)"
+	}
 
 	// Find or create the pinned advisory issue. Any level can have advisory
 	// agents whose findings should be posted to this issue.
@@ -2960,6 +2971,11 @@ func main() {
 			// the hub does not track); assigning zero here would blank a working
 			// value and turn a key-only fault into a total auth outage.
 			if next, cleared := nextInstallationID(cfg.GitHub.InstallationID, ghCfg); cleared {
+				// The banner and the hub must flip to not-installed NOW, not
+				// when the cached token dies an hour from now. Same config-truth
+				// rule as startup.
+				dashSrv.SetGitHubAppRequired(true)
+				dashSrv.SetGitHubAppState(github.AppStateNotInstalled.String())
 				logger.Info("clearing github app installation_id on operator request",
 					"was", cfg.GitHub.InstallationID)
 				cfg.GitHub.InstallationID = next

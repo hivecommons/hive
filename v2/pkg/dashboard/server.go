@@ -1142,6 +1142,23 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]bool{"ok": true})
 }
 
+// githubAppStateNotInstalledToken is the pkg/github AppAuthState wire token
+// for "genuinely not installed" (AppStateNotInstalled.String()), kept as the
+// string the setter receives so this package needs no classifier dependency.
+const githubAppStateNotInstalledToken = "not-installed"
+
+// githubAppNotInstalled reports the config-truth state that must fail
+// github_auth in BOTH health surfaces regardless of which client object still
+// exists: an App with no installation cannot mint, so any working client is
+// riding a cached token that cannot be renewed. Waiting for the first failed
+// mint kept the banner down and the hub green for up to an hour after an
+// installation was cleared — exactly when the operator needed the opposite.
+func (s *Server) githubAppNotInstalled() bool {
+	s.githubAppMu.RLock()
+	defer s.githubAppMu.RUnlock()
+	return s.githubAppRequired && s.githubAppState == githubAppStateNotInstalledToken
+}
+
 func (s *Server) SetGitHubAppRequired(required bool) {
 	s.githubAppMu.Lock()
 	defer s.githubAppMu.Unlock()
@@ -1441,8 +1458,12 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		failCount++
 	}
 
-	// 2. GitHub auth
-	if s.deps != nil && s.deps.GHAppAuth != nil {
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	if s.githubAppNotInstalled() {
+		checks["github_auth"] = map[string]any{"status": "fail", "detail": "GitHub App not installed — no installation for this org"}
+		overall = "degraded"
+		failCount++
+	} else if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err == nil {
 			checks["github_auth"] = map[string]any{"status": "pass"}
 		} else {
@@ -2020,8 +2041,11 @@ func (s *Server) HealthSummary() map[string]any {
 		fails++
 	}
 
-	// 2. GitHub auth
-	if s.deps != nil && s.deps.GHAppAuth != nil {
+	// 2. GitHub auth — config truth first (see githubAppNotInstalled).
+	if s.githubAppNotInstalled() {
+		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "GitHub App not installed — no installation for this org"})
+		fails++
+	} else if s.deps != nil && s.deps.GHAppAuth != nil {
 		if _, err := s.deps.GHAppAuth.Token(s.deps.Ctx); err != nil {
 			// Surface the underlying error, not a bare "token error": this
 			// detail travels to the hub and into the dashboard tooltip, and a
