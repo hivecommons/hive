@@ -2315,12 +2315,36 @@ func main() {
 					if model == "" {
 						model = lc.DefaultModel
 					}
+					// Key source must MATCH the entitlement/probe path (gateways.go,
+					// cost.go, openrouter.go), which resolve the key from the gateway
+					// via ResolveGateway(backend).ResolveAPIKey(). When an EXPLICIT
+					// `gateways:` block names this backend, that gateway carries its
+					// own api_key_file (e.g. the key saved from the Model Gateways
+					// tab). Reading the legacy Governor.LiteLLM key file here instead
+					// would send a DIFFERENT (often stale) key than entitlement
+					// validated, causing inference 401s after a key rotation done via
+					// the Gateways tab. Resolve from the same gateway so inference and
+					// entitlement always agree on one key source.
+					//
+					// Only explicit gateways override: ResolvedGateways synthesizes an
+					// implicit "litellm" gateway from the legacy block when no
+					// `gateways:` are set, but that synthetic gateway lacks the
+					// multi-location file fallback of LiteLLMConfig.ResolveAPIKey
+					// (k8s Secret mount + PVC copy). For no-gateway hives we therefore
+					// keep the legacy resolver to preserve today's behavior.
+					apiKey := cfg.Governor.ResolveLiteLLMInferenceKey(backend)
+					caBundle := lc.CABundle
+					if len(cfg.Governor.Gateways) > 0 {
+						if gw := cfg.Governor.ResolveGateway(backend); gw != nil {
+							caBundle = gw.CABundle
+						}
+					}
 					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
 						Backend:  backend,
 						Endpoint: endpoint,
 						Model:    model,
-						APIKey:   lc.ResolveAPIKey(),
-						CABundle: lc.CABundle,
+						APIKey:   apiKey,
+						CABundle: caBundle,
 					})
 					return
 				}
