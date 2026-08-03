@@ -185,11 +185,11 @@ func TestSpokeHealthTruthUIWiring(t *testing.T) {
 			why:     "the sidebar dot must treat every non-running, non-paused process state (stopped, failed, idle) as down",
 		},
 		{
-			snippet: "const needsLoginDown = isDown && needsLogin;",
+			snippet: "const needsLoginDown = (isDown && needsLogin) || a.needsLogin === true;",
 			why:     "a down agent with an unauthenticated CLI must get the distinct needs-login state, not plain down-red",
 		},
 		{
-			snippet: ".oc-agent-dot.needs-login { background: var(--amber); }",
+			snippet: ".oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }",
 			why:     "the sidebar needs-login dot must render amber (warning), not green or red",
 		},
 		{

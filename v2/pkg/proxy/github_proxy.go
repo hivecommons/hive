@@ -66,6 +66,13 @@ type GitHubProxy struct {
 	// models.
 	entitlements *entitlementStore
 
+	// inferenceAuth tracks CONSECUTIVE inference-backend auth failures (a stale
+	// gateway key returning 401 on every call) so the spoke can surface a hive
+	// that is silently 401'ing as a health signal instead of merely looking
+	// quiet. It latches only after inferenceAuthFailureThreshold failures and
+	// clears on the next success (self-heal). Never nil after NewGitHubProxy.
+	inferenceAuth *inferenceAuthState
+
 	// tokenSink records per-agent token usage for bare-mode inference
 	// agents, whose usage the file-scanning token collector cannot see
 	// otherwise. May be nil (Record is a safe no-op on a nil sink).
@@ -121,16 +128,17 @@ func NewGitHubProxy(logger *slog.Logger, org string, repos []string) (*GitHubPro
 	}
 
 	p := &GitHubProxy{
-		listenAddr:   fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
-		caCert:       caCert,
-		caX509:       caX509,
-		logger:       logger,
-		uidMap:       uidMap,
-		allowedRepos: allowed,
-		violations:   make(map[string]int),
-		certCache:    make(map[string]cachedCert),
-		inference:    newInferenceRouter(),
-		entitlements: newEntitlementStore(),
+		listenAddr:    fmt.Sprintf("127.0.0.1:%d", proxyListenPort),
+		caCert:        caCert,
+		caX509:        caX509,
+		logger:        logger,
+		uidMap:        uidMap,
+		allowedRepos:  allowed,
+		violations:    make(map[string]int),
+		certCache:     make(map[string]cachedCert),
+		inference:     newInferenceRouter(),
+		entitlements:  newEntitlementStore(),
+		inferenceAuth: &inferenceAuthState{},
 	}
 
 	// Pre-warm cert cache for known GitHub hosts to avoid startup burst
@@ -1048,7 +1056,25 @@ func (p *GitHubProxy) EntitledModels(endpoint string) (models []string, source s
 // filtered discovery list drives that heal path for any agent left on a
 // non-entitled model.
 func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName string, status int, body []byte) {
-	if route == nil || route.Backend != "litellm" || status != http.StatusForbidden {
+	if route == nil {
+		return
+	}
+
+	// Inference-backend AUTH failure (a stale/invalid gateway key returning 401
+	// on every call). Tracked for ANY inference backend, not just litellm — a
+	// self-hosted vLLM/llm-d fronted by auth can 401 too. Latches only after
+	// inferenceAuthFailureThreshold consecutive failures and clears on the next
+	// success, so a single transient blip never alarms. The stored cause is
+	// log-safe: the gateway's 401 body describes the rejection without echoing
+	// the presented token, and inferenceAuthErrorMessage never reads the key.
+	if isInferenceAuthStatus(status) && p.inferenceAuth != nil {
+		msg := inferenceAuthErrorMessage(route.Backend, status, truncateBytes(body, 200))
+		p.inferenceAuth.recordFailure(msg, time.Now())
+		p.logger.Warn("inference backend auth failure",
+			"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "status", status)
+	}
+
+	if route.Backend != "litellm" || status != http.StatusForbidden {
 		return
 	}
 	entitled := parseTeam403Models(string(body))
@@ -1058,6 +1084,30 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 	p.entitlements.set(route.Endpoint, route.APIKey, entitled, "403")
 	p.logger.Info("litellm entitled models learned from 403",
 		"agent", agentName, "endpoint", route.Endpoint, "count", len(entitled), "model", route.Model)
+}
+
+// recordInferenceSuccess records a successful inference call so a previously
+// latched auth-failure signal clears — the self-heal for the inference-auth
+// health signal. Called from every inference forward path on a 2xx response.
+// A nil tracker (impossible after NewGitHubProxy, but cheap to guard) is a
+// no-op.
+func (p *GitHubProxy) recordInferenceSuccess() {
+	if p.inferenceAuth != nil {
+		p.inferenceAuth.recordSuccess()
+	}
+}
+
+// InferenceAuthError reports the current inference-backend auth-failure signal:
+// a non-empty, log-safe cause string (and the time it first latched) ONLY while
+// the backend has been auth-failing for inferenceAuthFailureThreshold
+// consecutive calls, empty otherwise. Wired to the dashboard/heartbeat so the
+// hub can flag a hive that is silently 401'ing on every inference call. Safe on
+// a nil tracker.
+func (p *GitHubProxy) InferenceAuthError() (errMsg string, since time.Time) {
+	if p == nil || p.inferenceAuth == nil {
+		return "", time.Time{}
+	}
+	return p.inferenceAuth.snapshot()
 }
 
 // ClearInferenceRoute removes an agent's inference backend override.
@@ -1176,6 +1226,10 @@ func (p *GitHubProxy) StartInferenceTranslator() error {
 			w.Write([]byte(anthropicErr))
 			return
 		}
+
+		// A 2xx means the gateway accepted the key — clear any latched
+		// inference-auth failure so a hive whose key was fixed self-heals.
+		p.recordInferenceSuccess()
 
 		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
@@ -1335,6 +1389,10 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		anthropicErr.Write(conn)
 		return
 	}
+
+	// A 2xx means the gateway accepted the key — clear any latched
+	// inference-auth failure so a hive whose key was fixed self-heals.
+	p.recordInferenceSuccess()
 
 	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 

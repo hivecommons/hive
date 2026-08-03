@@ -111,7 +111,15 @@ type RegistryEntry struct {
 	// AdvisoryError is the log-safe error from the spoke's most recent failed
 	// advisory-post attempt ("" on success). When set on an app-can-write hive
 	// it trips the stale pill directly, carrying the specific cause.
-	AdvisoryError      string `json:"advisoryError,omitempty"`
+	AdvisoryError string `json:"advisoryError,omitempty"`
+	// InferenceAuthError is the log-safe cause set when the spoke's inference
+	// backend has rejected several consecutive calls with 401 (a stale gateway
+	// key). Empty = inference auth healthy / no inference backend / old spoke,
+	// which the hub reads as no-signal. Non-empty raises the inference-auth
+	// alert (AlertTypeInferenceAuthFailed) and, on an advisory-participating
+	// hive, also trips advisory staleness immediately with this cause. Self-
+	// clears when inference recovers. Never carries key material.
+	InferenceAuthError string `json:"inferenceAuthError,omitempty"`
 	PrimaryRepo        string `json:"primaryRepo"`
 	DashboardURL       string `json:"dashboardUrl"`
 	SnapshotURL        string `json:"snapshotUrl,omitempty"`
@@ -1042,9 +1050,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// empty so the render/gate reads it as UNKNOWN rather than stale.
 		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
 		AdvisoryError:        sanitizeField(payload.AdvisoryError),
-		DashboardURL:         payload.DashboardURL,
-		SnapshotURL:          payload.SnapshotURL,
-		ACMMLevel:            clampInt(payload.ACMMLevel, 0, 6),
+		// Inference-backend auth-failure signal. Sanitized like every other
+		// spoke-reported string; empty is preserved as empty (no signal).
+		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
+		DashboardURL:       payload.DashboardURL,
+		SnapshotURL:        payload.SnapshotURL,
+		ACMMLevel:          clampInt(payload.ACMMLevel, 0, 6),
 		AgentCount: func() int {
 			count := 0
 			for _, a := range payload.Agents {

@@ -356,7 +356,11 @@
     .oc-agent-detail-header .status-dot.paused { background: var(--yellow); }
     .oc-agent-detail-header .status-dot.on-demand { background: var(--indigo); }
     .oc-agent-detail-header .status-dot.stopped { background: var(--red); }
-    .oc-agent-detail-header .status-dot.needs-login { background: var(--amber); }
+    /* needs-login is a HOLLOW amber ring — paused is a solid yellow dot.
+       The two states were both rendered as near-identical solid amber/yellow
+       and operators could not tell "resting by choice" from "blocked on a
+       human logging in". Hollow reads as "waiting to be filled in". */
+    .oc-agent-detail-header .status-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
     .oc-agent-detail-header .status-dot.off { background: var(--muted); }
     .oc-detail-fields {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 24px; margin-bottom: 16px;
@@ -421,7 +425,7 @@
     .oc-agent-dot.paused { background: var(--yellow); }
     .oc-agent-dot.on-demand { background: var(--indigo); }
     .oc-agent-dot.stopped { background: var(--red); }
-    .oc-agent-dot.needs-login { background: var(--amber); }
+    .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
     .oc-agent-dot.off { background: var(--muted); }
     @keyframes oc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -839,7 +843,7 @@
     .dot.on-demand { background: var(--indigo); }
     .dot.off { background: var(--muted); }
     .dot.stopped { background: var(--red); }
-    .dot.needs-login { background: var(--amber); }
+    .dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 2px 0; }
     .agent-field .label { color: var(--muted); }
     .agent-field .value { text-align: right; }
@@ -3449,6 +3453,57 @@
       });
     }
 
+    // ---- Agent-detail scroll anchoring ------------------------------------
+    // Clicking an agent scrolls to the detail panel, but content that renders
+    // AFTER the click shifts the layout out from under the in-flight scroll:
+    // the 3s status poll re-renders every section above the panel (agents,
+    // repos, gov strip), and ocFetchPane lands async pane content. The scroll
+    // then finishes at a stale Y and the view is anchored on the wrong thing.
+    // ocScrollToAgentDetail() re-anchors for a short settle window: on each
+    // animation frame it recomputes the panel's target Y and, if layout drift
+    // moved it beyond a small tolerance, retargets the scroll (scrollTo with
+    // the same behavior redirects the in-flight smooth scroll — no visible
+    // restart). The window is hard-capped, and ANY user scroll input (wheel,
+    // touch, scrollbar mousedown, keys) cancels correction immediately so
+    // manual scrolling right after a click is never hijacked.
+    const OC_SCROLL_SETTLE_MS = 700;   // correction window after a click; capped so late shifts never fight the user
+    const OC_SCROLL_TOLERANCE_PX = 4;  // re-anchor only when the target drifted beyond this
+    const OC_SCROLL_CANCEL_EVENTS = ['wheel', 'touchstart', 'mousedown', 'keydown'];
+    let _ocScrollSettleCancel = null;
+
+    function ocScrollToAgentDetail(behavior) {
+      const detail = document.getElementById('oc-agent-detail');
+      if (!detail) return;
+      if (_ocScrollSettleCancel) _ocScrollSettleCancel();
+      const mode = behavior || 'smooth';
+      const targetY = () => Math.max(0, detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT);
+      let lastTarget = targetY();
+      window.scrollTo({ top: lastTarget, behavior: mode });
+      let cancelled = false;
+      const cancel = () => {
+        if (cancelled) return;
+        cancelled = true;
+        OC_SCROLL_CANCEL_EVENTS.forEach(t => window.removeEventListener(t, cancel));
+        if (_ocScrollSettleCancel === cancel) _ocScrollSettleCancel = null;
+      };
+      // Passive listeners: cancellation must never delay the user's own
+      // scrolling. Programmatic scrolls fire none of these events, so the
+      // settle loop cannot cancel itself.
+      OC_SCROLL_CANCEL_EVENTS.forEach(t => window.addEventListener(t, cancel, { passive: true }));
+      _ocScrollSettleCancel = cancel;
+      const deadline = performance.now() + OC_SCROLL_SETTLE_MS;
+      (function settle() {
+        if (cancelled) return;
+        const want = targetY();
+        if (Math.abs(want - lastTarget) > OC_SCROLL_TOLERANCE_PX) {
+          lastTarget = want;
+          window.scrollTo({ top: want, behavior: mode });
+        }
+        if (performance.now() > deadline) { cancel(); return; }
+        requestAnimationFrame(settle);
+      })();
+    }
+
     function ocSelectAgent(name) {
       _ocSelectedAgent = name;
       history.replaceState(null, '', name ? '#' + name : location.pathname);
@@ -3458,11 +3513,7 @@
       ocRenderAgentDetail();
       ocUpdateFocusedState();
       if (name) { ocStartPanePoll(); } else { ocStopPanePoll(); }
-      const detail = document.getElementById('oc-agent-detail');
-      if (detail) {
-        const y = detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT;
-        window.scrollTo({ top: y, behavior: 'smooth' });
-      }
+      ocScrollToAgentDetail('smooth');
     }
 
     function ocFormatSummary(raw) {
@@ -3614,7 +3665,12 @@
       // Same formula as the Auth section's Login button below: a down agent
       // with an unauthenticated CLI gets the amber needs-login state instead
       // of plain down-red (#2465).
-      const needsLoginDown = isStopped && (a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true));
+      /* needs-login applies to a STOPPED agent with any unauthenticated
+         signal, and ALSO to a RUNNING agent whose pane shows a login prompt
+         (a.needsLogin) — alive-but-wedged must not render as healthy. The
+         weaker probe-based inference stays stopped-only so a stale probe
+         cannot repaint a genuinely working agent. */
+      const needsLoginDown = (isStopped && (a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true))) || a.needsLogin === true;
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
       const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
 
@@ -3723,7 +3779,7 @@
       detail.innerHTML = `
         <div class="oc-agent-detail-header">
           <span class="status-dot ${dotCls}"></span>
-          <span class="agent-name-big">${esc(a.displayName || a.name)}</span>
+          <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${needsLoginDown ? '<span title="CLI needs login" style="margin-left:6px">\uD83D\uDD11</span>' : ''}
           <span style="font-size:0.78rem;color:var(--muted);margin-left:auto">${stateLabel}${pauseInfoIcon(a)}</span>
         </div>
         <div class="oc-detail-actions">
@@ -3886,7 +3942,7 @@
       // applies when the agent is not running: a running authenticated agent
       // is green, a non-running authenticated agent is red (#2465).
       const needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
-      const needsLoginDown = isDown && needsLogin;
+      const needsLoginDown = (isDown && needsLogin) || a.needsLogin === true;
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
       const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
@@ -3896,7 +3952,7 @@
       const label = a.displayName || a.name;
       const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
       const modeHtml = (a.modeEmoji || a.mode) ? `<span class="oc-nav-mode" title="${esc(a.mode || '')}">${a.modeEmoji || modeEmoji(a.mode)}</span>` : '';
-      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotCls}"></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${modeHtml}<span class="oc-nav-actions"><button data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
+      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotCls}"></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${modeHtml}<span class="oc-nav-actions"><button data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
     }
 
     function _sidebarBuildGroups(agents) {
@@ -5279,7 +5335,7 @@
         const compactCls = isAgentCompact(a.name) ? ' compact' : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotCls}"></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotCls}"></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
@@ -10741,8 +10797,10 @@ function burnAreaChart() {
             const detail = document.getElementById('oc-agent-detail');
             if (detail) {
               detail.classList.add('active');
-              const y = detail.getBoundingClientRect().top + window.scrollY - OC_TOPBAR_HEIGHT;
-              window.scrollTo({ top: y, behavior: 'instant' });
+              // Instant behavior (no animation on load), but still routed
+              // through the settle loop: first-load layout shifts the most
+              // (deferred sections, images, async fetches all land late).
+              ocScrollToAgentDetail('instant');
             }
           });
         } else {
