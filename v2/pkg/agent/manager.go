@@ -119,6 +119,17 @@ type AgentProcess struct {
 	// here changes for it.
 	specialistReady          bool
 	specialistProviderSHA256 string
+
+	// lastLaunchFailureBanner is the exact in-pane shell line typed by the most
+	// recent aborted launch (see announceLaunchFailureInPane), "" after a
+	// successful launch. A launch aborted before send-keys used to leave a
+	// BARE interactive shell with the only explanation in the hive log — an
+	// operator attached via ttyd saw a silent prompt and nothing else
+	// (observed live: backend "bob" on a hive whose launch was refused). The
+	// pane itself is the production surface for the banner; this field exists
+	// so tests can assert the announcement actually happened without a tmux
+	// server.
+	lastLaunchFailureBanner string
 }
 
 // effectiveBackend returns the agent's backend accounting for any override.
@@ -1042,7 +1053,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	}
 	if err != nil {
 		agent.State = StateFailed
+		agent.LastError = err.Error()
 		m.logger.Warn("backend binary not found", "name", agent.Name, "backend", backend, "error", err)
+		// The tmux session already exists (Start/Restart ran ensureTmuxSession
+		// before this), so without a banner the pane is a silent bare shell —
+		// the operator attaches and sees a prompt, not a failure. Say which
+		// binary was attempted, that it is missing, and what to do.
+		m.announceLaunchFailureInPane(agent, fmt.Sprintf(
+			"backend %s did not launch: %v. The CLI for this backend is not installed in this hive image — upgrade the hive image or switch this agent to a different backend.",
+			backend, err))
 		return nil
 	}
 
@@ -1064,12 +1083,20 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		if m.bobAPIKey() == "" {
 			agent.State = StateFailed
 			agent.awaitingBobKey = true
+			agent.LastError = "no bob API key configured (" + config.BobAPIKeyEnvVar + ")"
 			m.logger.Warn("bob requires "+config.BobAPIKeyEnvVar+" for headless operation; ask your hub admin to configure it",
 				"name", agent.Name,
 				"backend", backend,
 				"remedy", "set governor.bob.api_key_file (e.g. "+config.DefaultBobAPIKeyFile+
 					") or the "+config.DefaultBobAPIKeyEnv+" env var on the hive pod",
 			)
+			// Same silent-bare-shell hazard as the missing-binary branch above:
+			// the session exists, nothing was typed, and the log line is
+			// invisible from the terminal. Name the missing credential (never
+			// its value) and the remedy in the pane itself.
+			m.announceLaunchFailureInPane(agent, fmt.Sprintf(
+				"backend bob did not launch: no API key is configured (%s). Save an IBM bob API key in the dashboard under Governor -> Bob — parked bob agents relaunch automatically when a key is saved.",
+				config.BobAPIKeyEnvVar))
 			return nil
 		}
 		// Re-assert hive's ownership of the SHARED /data/home/.bob/settings.json
@@ -1267,6 +1294,8 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		m.logger.Info("CLI already running in tmux pane, skipping launch", "name", agent.Name, "session", agent.tmuxSession)
 		now := time.Now()
 		agent.State = StateRunning
+		agent.LastError = ""
+		agent.lastLaunchFailureBanner = ""
 		agent.StartedAt = &now
 
 		agentCtx, cancel := context.WithCancel(ctx)
@@ -1344,6 +1373,11 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	now := time.Now()
 	agent.State = StateRunning
+	// A prior aborted launch is history the moment a real one succeeds; a
+	// stale "no API key" reason lingering after a key-save relaunch would
+	// send an operator chasing a problem that no longer exists.
+	agent.LastError = ""
+	agent.lastLaunchFailureBanner = ""
 	agent.StartedAt = &now
 	agent.launchGen++
 	m.logger.Info("audit: agent started",
@@ -2994,6 +3028,45 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 // tmuxSendLiteralForAgent sends text using the agent's tmux socket.
 func (m *Manager) tmuxSendLiteralForAgent(agent *AgentProcess, text string) {
 	_ = m.tmuxCmd(agent, "send-keys", "-t", agent.tmuxSession, "-l", text).Run()
+}
+
+// launchFailurePrefix opens every in-pane launch-failure banner so the line is
+// unmistakable in a pane full of shell prompts and greppable in scrollback.
+const launchFailurePrefix = "HIVE LAUNCH FAILED: "
+
+// launchFailureBanner composes the exact shell line typed into a pane when a
+// launch is aborted before any CLI starts. The message is wrapped in single
+// quotes; any single quotes, newlines, or carriage returns inside it are
+// replaced with spaces so the line can never break out of the quoting or
+// leave bash in PS2 continuation (the same hazard the C-c before every real
+// launch guards against).
+func launchFailureBanner(msg string) string {
+	sanitized := strings.Map(func(r rune) rune {
+		switch r {
+		case '\'', '\n', '\r':
+			return ' '
+		}
+		return r
+	}, msg)
+	return "echo '" + launchFailurePrefix + sanitized + "'"
+}
+
+// announceLaunchFailureInPane makes an aborted launch visible IN the agent's
+// tmux pane. launchInTmux's park-and-return branches (missing backend binary,
+// bob with no API key) run after ensureTmuxSession has already created a
+// fresh shell, so returning silently leaves a bare prompt: the operator
+// attaches via ttyd, sees nothing wrong, and the only explanation is in the
+// hive log they are not reading. Typing an echo into the pane puts the reason
+// and the remedy exactly where the operator is looking.
+//
+// Best-effort by design: the send-keys errors are ignored like every other
+// pane write on the launch path — a missing session must not turn a parked
+// agent into a crashed manager. Caller holds m.mu (same discipline as
+// launchInTmux, which is its only caller).
+func (m *Manager) announceLaunchFailureInPane(agent *AgentProcess, msg string) {
+	agent.lastLaunchFailureBanner = launchFailureBanner(msg)
+	m.tmuxSendLiteralForAgent(agent, agent.lastLaunchFailureBanner)
+	m.tmuxSendKeysForAgent(agent, "Enter")
 }
 
 // dismissInferencePrompts polls the tmux pane for Claude Code interactive
