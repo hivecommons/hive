@@ -11454,7 +11454,7 @@ const dashboardHTML = `<!DOCTYPE html>
            case it exists for: a hive provisioned with its own GitHub App keeps
            that App's installation_id after its identity is moved to the fleet
            App, so every field reads correct while freshly minted tokens 404. */
-        if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Reset App</div>');
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Reset Forge App</div>');
         /* Restart Spoke rolling-restarts every instance reporting as this
            hive. The case it exists for: two instances alternating as one hive
            (conflictingReporters drift) on a cluster the hub cannot reach —
@@ -12381,12 +12381,12 @@ const dashboardHTML = `<!DOCTYPE html>
        owner a re-install, and the reset is delivered on the spoke's next
        heartbeat rather than immediately. */
     async function resetHiveApp(hiveId, hiveName) {
-      if (!confirm('Reset the GitHub App for "' + hiveName + '"?\n\nThe spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again. The App ID, slug and key are left alone.')) return;
+      if (!confirm('Reset the Forge App for "' + hiveName + '"?\n\nThe spoke clears its installation ID on the next heartbeat and the owner is prompted to install the App again. The App ID, slug and key are left alone.')) return;
       try {
         var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/reset-app', {method: 'POST'});
         var data = await resp.json().catch(function() { return {}; });
         if (!resp.ok) { alert('Reset failed: ' + (data.error || resp.status)); return; }
-        alert('App reset armed for "' + hiveName + '".\n\nThe spoke clears its installation on the next heartbeat (~30s), then shows the install prompt.');
+        alert('Forge App reset armed for "' + hiveName + '".\n\nThe spoke clears its installation on the next heartbeat (~30s), then shows the install prompt.');
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         alert('Reset failed: ' + e);
