@@ -3655,6 +3655,45 @@
       return `<span class="pause-info" title="${esc(reason)} (${esc(trigger)})">ℹ️<span class="pause-tooltip">Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}<br>Since: ${esc(at)}</span></span>`;
     }
 
+    // Volatile stat fields of the focused agent-detail panel, factored out so
+    // the fast path can refresh them on every status payload. Everything shown
+    // here (pause/interval state, last/next run, restarts, tokens, auth) goes
+    // permanently stale while an agent is focused otherwise.
+    function ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand) {
+      const _tok = (window._tokensByAgent || {})[a.name] || {};
+      const _tokTotal = (_tok.input || 0) + (_tok.output || 0) + (_tok.cacheRead || 0);
+      const _tokAvg = _tok.avgPerSession || (_tok.sessions > 0 ? Math.floor(_tokTotal / _tok.sessions) : 0);
+      return `
+        <div class="oc-detail-fields">
+          <div class="oc-detail-field"><div class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${INFERENCE_BACKENDS.includes(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
+          <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.cadence || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="When the governor last kicked (started a work pass for) this agent.">Last Run</div><div class="value">${esc(a.lastKick || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval.">Next Run</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.nextKick || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
+          <div class="oc-detail-field"><div class="label" title="Average tokens consumed per work pass (kick session). Lower is more efficient.">Avg/Pass</div><div class="value">${_tokAvg > 0 ? fmtTokens(_tokAvg) : '—'}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Number of separate CLI sessions this agent has had in the last 24 hours.">Sessions</div><div class="value">${_tok.sessions ?? '—'}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Total number of messages (prompts + responses) across all sessions in the last 24 hours.">Messages</div><div class="value">${_tok.messages ?? '—'}</div></div>
+          <div class="oc-detail-field"><div class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">Auth</div><div class="value">${(() => {
+            const isClaude = a.cli === 'claude';
+            const isCopilot = a.cli === 'copilot';
+            const _needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
+            const claudeIcon = '<span class="cli-icon claude-icon"></span>';
+            const copilotIcon = '<span class="cli-icon copilot-icon"></span>';
+            if (_needsLogin) {
+              if (isClaude) return '<button class="cli-login-btn claude" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Authenticate Claude Code CLI">' + claudeIcon + ' Login</button>';
+              if (isCopilot) return '<button class="cli-login-btn copilot" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Authenticate GitHub Copilot CLI">' + copilotIcon + ' Login</button>';
+              return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">Login</button>';
+            }
+            if (isClaude) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Re-authenticate Claude Code CLI">' + claudeIcon + ' ✓ logged in</button>';
+            if (isCopilot) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Re-authenticate GitHub Copilot CLI">' + copilotIcon + ' ✓ logged in</button>';
+            return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
+          })()}</div></div>
+        </div>
+      `;
+    }
+
     function ocRenderAgentDetail() {
       const detail = document.getElementById('oc-agent-detail');
       if (!detail || !_ocSelectedAgent) return;
@@ -3703,7 +3742,24 @@
         const dot = detail.querySelector('.status-dot');
         if (dot) { dot.className = 'status-dot ' + dotCls; }
         const stateSpan = detail.querySelector('.oc-agent-detail-header > span:last-child');
-        if (stateSpan) { stateSpan.textContent = stateLabel; }
+        if (stateSpan) { stateSpan.innerHTML = stateLabel + pauseInfoIcon(a); }
+        // The pause/resume toggle must track state here too — the fast path
+        // runs on every status poll while an agent is focused, so a stale
+        // button would otherwise persist until the user navigates away.
+        const fastToggle = detail.querySelector('.oc-detail-actions .btn-toggle');
+        if (fastToggle && !isOnDemand) {
+          fastToggle.className = `btn-toggle ${isPaused ? 'paused' : isOff ? 'off' : 'running'}`;
+          fastToggle.textContent = isPaused ? '▶ resume' : isOff ? '▶ start' : '⏸ pause';
+          fastToggle.dataset.paused = String(isPaused);
+          fastToggle.title = isPaused ? 'Resume this agent — it will start running on its configured cadence' : isOff ? 'Start this agent — it is currently off in this governor mode' : 'Pause this agent — stops governor from kicking it until resumed';
+        }
+        // Same for the stat fields and indicators — they live outside the
+        // scroll region, so replacing them wholesale cannot cause the scroll
+        // jumps the fast path exists to prevent.
+        const fieldsEl = detail.querySelector('.oc-detail-fields');
+        if (fieldsEl) fieldsEl.outerHTML = ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand);
+        const indEl = detail.querySelector('.oc-detail-indicators');
+        if (indEl) indEl.innerHTML = agentIndicators(a.name);
         detail.className = 'oc-agent-detail active state-' + dotCls;
         return;
       }
@@ -3784,10 +3840,6 @@
         mergeable: (window._lastStatus?.repos || []).reduce((n, r) => n + (r.openPrs || []).filter(p => p.mergeable).length, 0),
       };
 
-      const _tok = (window._tokensByAgent || {})[a.name] || {};
-      const _tokTotal = (_tok.input || 0) + (_tok.output || 0) + (_tok.cacheRead || 0);
-      const _tokAvg = _tok.avgPerSession || (_tok.sessions > 0 ? Math.floor(_tokTotal / _tok.sessions) : 0);
-
       detail.innerHTML = `
         <div class="oc-agent-detail-header">
           <span class="status-dot ${dotCls}"></span>
@@ -3811,33 +3863,7 @@
             ${modelOptionsHtml(a.cli, a.model)}
           </select>
         </div>
-        <div class="oc-detail-fields">
-          <div class="oc-detail-field"><div class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${INFERENCE_BACKENDS.includes(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
-          <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.cadence || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="When the governor last kicked (started a work pass for) this agent.">Last Run</div><div class="value">${esc(a.lastKick || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval.">Next Run</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.nextKick || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
-          <div class="oc-detail-field"><div class="label" title="Average tokens consumed per work pass (kick session). Lower is more efficient.">Avg/Pass</div><div class="value">${_tokAvg > 0 ? fmtTokens(_tokAvg) : '—'}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Number of separate CLI sessions this agent has had in the last 24 hours.">Sessions</div><div class="value">${_tok.sessions ?? '—'}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Total number of messages (prompts + responses) across all sessions in the last 24 hours.">Messages</div><div class="value">${_tok.messages ?? '—'}</div></div>
-          <div class="oc-detail-field"><div class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">Auth</div><div class="value">${(() => {
-            const isClaude = a.cli === 'claude';
-            const isCopilot = a.cli === 'copilot';
-            const _needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
-            const claudeIcon = '<span class="cli-icon claude-icon"></span>';
-            const copilotIcon = '<span class="cli-icon copilot-icon"></span>';
-            if (_needsLogin) {
-              if (isClaude) return '<button class="cli-login-btn claude" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Authenticate Claude Code CLI">' + claudeIcon + ' Login</button>';
-              if (isCopilot) return '<button class="cli-login-btn copilot" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Authenticate GitHub Copilot CLI">' + copilotIcon + ' Login</button>';
-              return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">Login</button>';
-            }
-            if (isClaude) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Re-authenticate Claude Code CLI">' + claudeIcon + ' ✓ logged in</button>';
-            if (isCopilot) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Re-authenticate GitHub Copilot CLI">' + copilotIcon + ' ✓ logged in</button>';
-            return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
-          })()}</div></div>
-        </div>
+        ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
         <div class="oc-detail-summary-wrap">
           <div class="oc-detail-summary" id="oc-summary-scroll">${(a.detailSummary || a.liveSummary) ? escBlock(a.detailSummary || a.liveSummary) : '<span style="color:var(--muted)">No activity summary</span>'}</div>
@@ -12325,6 +12351,10 @@ function burnAreaChart() {
       // Update in-memory agent state so cadence table re-renders correctly
       const agentObj = (window._lastAgents || []).find(a => a.name === agent);
       if (agentObj) { agentObj.paused = (action === 'pause'); }
+      // The focused agent-detail panel renders its own toggle button — the
+      // .agent-card loop above never reaches it, so re-render it from the
+      // just-updated state or the button stays stale until navigation.
+      if (typeof ocRenderAgentDetail === 'function') ocRenderAgentDetail();
       const lastData = window._lastStatus || {};
       if (lastData.governor) {
         renderGovernor(lastData.governor, lastData.cadenceMatrix || [], lastData);
