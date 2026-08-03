@@ -338,6 +338,7 @@
     .oc-agent-detail.state-paused { border-color: var(--yellow); }
     .oc-agent-detail.state-on-demand { border-color: var(--indigo); }
     .oc-agent-detail.state-stopped { border-color: var(--red); }
+    .oc-agent-detail.state-needs-login { border-color: var(--amber); }
     .oc-agent-detail.state-off { border-color: var(--line); }
     .oc-agent-detail-header {
       display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
@@ -355,6 +356,7 @@
     .oc-agent-detail-header .status-dot.paused { background: var(--yellow); }
     .oc-agent-detail-header .status-dot.on-demand { background: var(--indigo); }
     .oc-agent-detail-header .status-dot.stopped { background: var(--red); }
+    .oc-agent-detail-header .status-dot.needs-login { background: var(--amber); }
     .oc-agent-detail-header .status-dot.off { background: var(--muted); }
     .oc-detail-fields {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 24px; margin-bottom: 16px;
@@ -419,6 +421,7 @@
     .oc-agent-dot.paused { background: var(--yellow); }
     .oc-agent-dot.on-demand { background: var(--indigo); }
     .oc-agent-dot.stopped { background: var(--red); }
+    .oc-agent-dot.needs-login { background: var(--amber); }
     .oc-agent-dot.off { background: var(--muted); }
     @keyframes oc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -836,6 +839,7 @@
     .dot.on-demand { background: var(--indigo); }
     .dot.off { background: var(--muted); }
     .dot.stopped { background: var(--red); }
+    .dot.needs-login { background: var(--amber); }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 2px 0; }
     .agent-field .label { color: var(--muted); }
     .agent-field .value { text-align: right; }
@@ -3607,11 +3611,15 @@
       // 'running'. Matching only 'stopped' let 'failed' agents render the
       // green idle styling here (#2465).
       const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      // Same formula as the Auth section's Login button below: a down agent
+      // with an unauthenticated CLI gets the amber needs-login state instead
+      // of plain down-red (#2465).
+      const needsLoginDown = isStopped && (a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true));
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
-      const dotCls = isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
 
       detail.className = 'oc-agent-detail active state-' + dotCls;
-      const stateLabel = isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
+      const stateLabel = needsLoginDown ? 'needs login' : isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
 
       const kickId = `oc-kick-${a.name}`;
       const prevInput = document.getElementById(kickId);
@@ -3872,11 +3880,19 @@
       // down (#2465). Match the deep check: non-running + non-paused = down,
       // with paused/off/on-demand keeping their own styling.
       const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      // A down agent whose CLI is unauthenticated is not merely down — it can
+      // never do work until someone logs it in. Same formula as the agent
+      // panel's Login button; rendered amber with a "needs login" note. Only
+      // applies when the agent is not running: a running authenticated agent
+      // is green, a non-running authenticated agent is red (#2465).
+      const needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
+      const needsLoginDown = isDown && needsLogin;
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
-      const dotCls = isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       const isActive = _ocSelectedAgent === a.name ? ' active' : '';
-      const agentDesc = a.description || AGENT_DESCRIPTIONS[a.name] || '';
+      const baseDesc = a.description || AGENT_DESCRIPTIONS[a.name] || '';
+      const agentDesc = needsLoginDown ? (baseDesc ? baseDesc + '\n' : '') + 'needs login — CLI unauthenticated, the agent cannot work until logged in' : baseDesc;
       const label = a.displayName || a.name;
       const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
       const modeHtml = (a.modeEmoji || a.mode) ? `<span class="oc-nav-mode" title="${esc(a.mode || '')}">${a.modeEmoji || modeEmoji(a.mode)}</span>` : '';
@@ -5235,7 +5251,9 @@
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
         const cls = needsLogin ? 'needs-login' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
-        const dotCls = isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        // Down + unauthenticated CLI = amber needs-login (same formula as the
+        // card's Login button above), not plain down-red (#2465).
+        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         const canToggle = a.beadRole !== 'supervisor';
         const toggleBtn = canToggle ? (isOff
           ? `<button class="btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Agent is off in this governor mode — click to configure per-mode cadences">⚙ off</button>`

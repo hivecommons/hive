@@ -184,6 +184,18 @@ func TestSpokeHealthTruthUIWiring(t *testing.T) {
 			snippet: "const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;",
 			why:     "the sidebar dot must treat every non-running, non-paused process state (stopped, failed, idle) as down",
 		},
+		{
+			snippet: "const needsLoginDown = isDown && needsLogin;",
+			why:     "a down agent with an unauthenticated CLI must get the distinct needs-login state, not plain down-red",
+		},
+		{
+			snippet: ".oc-agent-dot.needs-login { background: var(--amber); }",
+			why:     "the sidebar needs-login dot must render amber (warning), not green or red",
+		},
+		{
+			snippet: "needs login — CLI unauthenticated",
+			why:     "the needs-login state must carry a 'needs login' note in the tooltip",
+		},
 	}
 	for _, r := range required {
 		if !strings.Contains(html, r.snippet) {
