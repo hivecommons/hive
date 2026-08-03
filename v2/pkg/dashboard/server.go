@@ -643,6 +643,10 @@ func (s *Server) registerCoreRoutes() {
 	// second GitHub device-flow login. Public path (see isPublicPath) because
 	// the caller has no session yet — the token IS the credential.
 	s.mux.HandleFunc("GET /sso", s.handleSSO)
+	// /terminal → in-container ttyd, so the dashboard's "▶ terminal" links
+	// work even when the cluster route sends the whole host to this server
+	// (see registerTerminalProxy).
+	s.registerTerminalProxy()
 }
 
 func (s *Server) Start() error {
@@ -2038,10 +2042,44 @@ func (s *Server) RecordAdvisoryError(errMsg string) {
 // spoke has never posted one), the finding count that went out then, and the
 // most recent post error ("" when the last attempt succeeded). The heartbeat
 // builder reports these so the hub can flag a stale advisory digest.
+//
+// An inference-backend AUTH failure is folded into lastError so an advisory
+// digest that cannot be produced BECAUSE every inference call is 401'ing trips
+// the hub's staleness gate 3a IMMEDIATELY (with the auth cause) instead of
+// waiting 90 minutes for the last-post time to age out. This is deliberately
+// gated on the hive being an advisory PARTICIPANT — advisoryLastPostedAt
+// non-zero, i.e. it has successfully posted at least once — so a pure PR/merge
+// hive with no advisory agents (which never posts, so the hub reads it as
+// UNKNOWN) is never false-alarmed by an inference-auth blip on some other path.
+// A real advisory-post error already recorded takes precedence, since it is the
+// more specific cause; the inference-auth fold only fills an otherwise-empty
+// error. It self-clears the moment inference recovers, because the provider
+// stops reporting the signal.
 func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, lastError string) {
 	s.advisoryMu.RLock()
-	defer s.advisoryMu.RUnlock()
-	return s.advisoryLastPostedAt, s.advisoryLastFindings, s.advisoryLastError
+	postedAt, findings, errMsg := s.advisoryLastPostedAt, s.advisoryLastFindings, s.advisoryLastError
+	s.advisoryMu.RUnlock()
+
+	if errMsg == "" && !postedAt.IsZero() {
+		if infErr, _ := InferenceAuthError(); infErr != "" {
+			errMsg = infErr
+		}
+	}
+	return postedAt, findings, errMsg
+}
+
+// InferenceAuthState returns the spoke's current inference-backend auth-failure
+// signal — a non-empty, log-safe cause string and the time it first latched
+// while every inference call is being rejected (a stale gateway key), empty
+// otherwise. The heartbeat builder reports it as a DEDICATED field so the hub
+// can raise an "inference auth failing" alert whose ROOT cause an operator sees
+// directly, distinct from a GitHub-post advisory staleness. Unlike the
+// AdvisoryState fold, this is NOT gated on advisory participation: a hive whose
+// inference key is dead is broken whether or not it also posts advisories, and
+// the hub-side alert is the right place to surface that. Self-clears when
+// inference recovers.
+func (s *Server) InferenceAuthState() (errMsg string, since time.Time) {
+	return InferenceAuthError()
 }
 
 // HealthSummary returns a deep-health summary with individual check results for heartbeats.
@@ -2054,6 +2092,12 @@ func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, last
 // BackendOverride wins over the configured backend. For backends the probe
 // cannot introspect (known=false) this returns false — an unknown auth state
 // must not reclassify a genuinely crashed agent out of "down".
+// healthAgentStatuses returns the agent snapshots the health check classifies.
+// A test seam mirroring SetBackendAuthProvider: AllStatuses returns value
+// snapshots, so tests cannot stage states (running-at-login-prompt) by
+// mutating manager internals — they override this instead. nil ⇒ live manager.
+var healthAgentStatuses func() map[string]*agent.AgentProcess
+
 func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend string) (available, known bool)) bool {
 	if proc.NeedsLogin {
 		return true
@@ -2140,12 +2184,29 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		// dropped right here where it was known.
 		var downNames, stalledNames, needLoginNames []string
 		authFn := getBackendAuthFn()
-		for name, proc := range s.deps.AgentMgr.AllStatuses() {
+		statuses := s.deps.AgentMgr.AllStatuses()
+		if healthAgentStatuses != nil {
+			statuses = healthAgentStatuses()
+		}
+		for name, proc := range statuses {
 			if proc.Paused {
 				paused++
 				continue
 			}
 			if proc.State == agent.StateRunning {
+				// A RUNNING agent sitting at a login prompt is alive but cannot
+				// work — the pane poller has literally seen "/login" on its
+				// terminal (proc.NeedsLogin). Counting it as running rendered a
+				// wedged agent healthy (green dot, Health OK) while its pane
+				// begged for authentication. Only the pane-poller signal moves a
+				// running agent here: the shared-credential probe can lag a
+				// just-completed login, and a running agent that is actually
+				// working must never be reclassified by a stale probe.
+				if !grace && proc.NeedsLogin {
+					needLogin++
+					needLoginNames = append(needLoginNames, name)
+					continue
+				}
 				running++
 				if !grace && proc.LastKickMessage != "" {
 					for _, v := range []string{"${ISSUE_LIST}", "${PR_LIST}", "${HIVE_REPO}", "${KNOWLEDGE}"} {

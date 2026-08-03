@@ -1,6 +1,82 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// Regression for the LiteLLM inference/entitlement split-brain (post-rotation
+// 401s): when an explicit `gateways:` block names a "litellm" gateway with its
+// OWN key file (the file the Model Gateways tab writes), inference must resolve
+// its key from THAT gateway — the same source the entitlement/probe path uses
+// (ResolveGateway(name).ResolveAPIKey()) — not from the legacy Governor.LiteLLM
+// key file. Before the fix, inference read the legacy file and sent a stale key
+// while entitlement validated the fresh gateway key, causing inference 401s.
+func TestResolveLiteLLMInferenceKeyMatchesEntitlement(t *testing.T) {
+	dir := t.TempDir()
+	// Key A: the fresh key saved via the Gateways tab (the gateway's file).
+	gatewayKeyFile := filepath.Join(dir, "gateway_litellm_api_key")
+	if err := os.WriteFile(gatewayKeyFile, []byte("sk-gateway-FRESH\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Key B: the stale legacy key (the classic litellm_api_key file).
+	legacyKeyFile := filepath.Join(dir, "litellm_api_key")
+	if err := os.WriteFile(legacyKeyFile, []byte("sk-legacy-STALE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	g := GovernorConfig{
+		// Legacy block points at the STALE file B.
+		LiteLLM: LiteLLMConfig{
+			Endpoint:   "https://litellm.example.com",
+			APIKeyFile: legacyKeyFile,
+		},
+		// Explicit gateway named "litellm" points at the FRESH file A — this is
+		// what the entitlement/probe path resolves and validates.
+		Gateways: []GatewayConfig{
+			{Name: "litellm", Kind: GatewayKindLiteLLM, Endpoint: "https://litellm.example.com", APIKeyFile: gatewayKeyFile},
+		},
+	}
+
+	// Entitlement path (dashboard) resolves the gateway's key.
+	entitlementKey := g.ResolveGateway("litellm").ResolveAPIKey()
+	if entitlementKey != "sk-gateway-FRESH" {
+		t.Fatalf("entitlement key = %q, want the gateway's fresh key", entitlementKey)
+	}
+
+	// Inference path MUST resolve the same fresh key (fails before the fix,
+	// which returned the legacy stale key).
+	inferenceKey := g.ResolveLiteLLMInferenceKey("litellm")
+	if inferenceKey != entitlementKey {
+		t.Fatalf("inference key = %q, want %q (must match entitlement — one source, no split-brain)", inferenceKey, entitlementKey)
+	}
+	if inferenceKey == "sk-legacy-STALE" {
+		t.Fatal("inference resolved the STALE legacy key — the split-brain 401 bug is back")
+	}
+}
+
+// No-regression: a classic hive with only the legacy `litellm:` block (NO
+// explicit gateways:) must still resolve the inference key from the legacy
+// Governor.LiteLLM resolver, including its multi-location file fallback. The fix
+// must not change behavior for these hives.
+func TestResolveLiteLLMInferenceKeyLegacyFallback(t *testing.T) {
+	dir := t.TempDir()
+	legacyKeyFile := filepath.Join(dir, "litellm_api_key")
+	if err := os.WriteFile(legacyKeyFile, []byte("sk-legacy-ONLY\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g := GovernorConfig{
+		LiteLLM: LiteLLMConfig{
+			Endpoint:   "https://litellm.example.com",
+			APIKeyFile: legacyKeyFile,
+		},
+		// No Gateways configured.
+	}
+	if got := g.ResolveLiteLLMInferenceKey("litellm"); got != "sk-legacy-ONLY" {
+		t.Fatalf("no-gateway hive: inference key = %q, want the legacy key %q", got, "sk-legacy-ONLY")
+	}
+}
 
 // A hive with only the legacy litellm block (no gateways:) must resolve to a
 // single implicit gateway named "litellm" so existing agents route unchanged.

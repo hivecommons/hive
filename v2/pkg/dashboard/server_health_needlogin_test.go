@@ -145,3 +145,41 @@ func TestAgentCLIUnauthenticated(t *testing.T) {
 		t.Fatal("BackendOverride's auth state must be the one consulted")
 	}
 }
+
+// A RUNNING agent whose pane shows a login prompt (NeedsLogin) is alive but
+// cannot work — it must land in "needs login", never in "running". Seen live:
+// a copilot agent sat at "Please use /login to sign in" with a green dot and
+// Health OK. Only the pane-poller signal moves a running agent — the
+// probe-based inference stays non-running-only (a stale probe must not
+// reclassify a working agent).
+func TestHealthSummary_RunningAtLoginPromptNeedsLogin(t *testing.T) {
+	deps := testDeps(t)
+	agentCfgs := map[string]config.AgentConfig{
+		"wedged": {Backend: "copilot", Enabled: true},
+		"worker": {Backend: "copilot", Enabled: true},
+	}
+	deps.AgentMgr = agent.NewManager(agentCfgs, deps.Logger, agent.ProjectContext{})
+	// The probe says copilot credentials exist — proving that the pane-poller
+	// NeedsLogin signal alone moves a RUNNING agent into the bucket.
+	SetBackendAuthProvider(func(backend string) (available, known bool) { return true, true })
+	t.Cleanup(func() { SetBackendAuthProvider(nil) })
+
+	healthAgentStatuses = func() map[string]*agent.AgentProcess {
+		return map[string]*agent.AgentProcess{
+			"wedged": {State: agent.StateRunning, NeedsLogin: true, Config: config.AgentConfig{Backend: "copilot", Enabled: true}},
+			"worker": {State: agent.StateRunning, Config: config.AgentConfig{Backend: "copilot", Enabled: true}},
+		}
+	}
+	t.Cleanup(func() { healthAgentStatuses = nil })
+
+	s := NewServer(0, deps.Logger)
+	s.RegisterAPI(deps)
+
+	status, detail := agentsCheckOf(t, s)
+	if want := "1 running, 1 needs login: wedged"; detail != want {
+		t.Fatalf("agents detail = %q, want %q", detail, want)
+	}
+	if status != "fail" {
+		t.Fatalf("agents status = %q, want fail — a wedged agent must surface", status)
+	}
+}

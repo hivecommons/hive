@@ -67,6 +67,9 @@ var (
 
 	entitledModelsMu sync.RWMutex
 	entitledModelsFn func(endpoint string) (models []string, source string, known bool)
+
+	inferenceAuthMu sync.RWMutex
+	inferenceAuthFn func() (errMsg string, since time.Time)
 )
 
 // SetEntitledModelsProvider registers a function that reports the per-key
@@ -83,6 +86,39 @@ func getEntitledModelsFn() func(endpoint string) (models []string, source string
 	entitledModelsMu.RLock()
 	defer entitledModelsMu.RUnlock()
 	return entitledModelsFn
+}
+
+// SetInferenceAuthProvider registers a function reporting the proxy's current
+// inference-backend auth-failure signal: a non-empty, log-safe cause string
+// (and the time it first latched) ONLY while the backend has been auth-failing
+// for several consecutive calls, empty otherwise. The heartbeat builder reports
+// it to the hub so a hive silently 401'ing on every inference call surfaces as
+// a health signal instead of merely looking quiet. Wired to the proxy's
+// InferenceAuthError; nil in tests and on spokes with no proxy, which the
+// accessors below tolerate.
+func SetInferenceAuthProvider(fn func() (errMsg string, since time.Time)) {
+	inferenceAuthMu.Lock()
+	defer inferenceAuthMu.Unlock()
+	inferenceAuthFn = fn
+}
+
+func getInferenceAuthFn() func() (errMsg string, since time.Time) {
+	inferenceAuthMu.RLock()
+	defer inferenceAuthMu.RUnlock()
+	return inferenceAuthFn
+}
+
+// InferenceAuthError returns the current inference-backend auth-failure signal
+// from the registered provider, or ("", zero) when none is registered or the
+// backend is healthy. It is the single source both heartbeat fields read (the
+// AdvisoryError fold and the dedicated inference-auth field) so they can never
+// disagree about whether a hive is auth-failing.
+func InferenceAuthError() (errMsg string, since time.Time) {
+	fn := getInferenceAuthFn()
+	if fn == nil {
+		return "", time.Time{}
+	}
+	return fn()
 }
 
 // AgentStatusPayload is a lightweight payload containing only agent metadata,
@@ -127,20 +163,20 @@ func BuildFrontendStatus(
 	issueToMerge := buildIssueToMerge(metricsCollector)
 
 	payload := &StatusPayload{
-		Timestamp:    time.Now().UTC().Format(time.RFC3339),
-		HiveID:       cfg.HiveID,
-		Agents:       buildAgents(agentStatuses, cfg, govState),
-		Governor:     buildGovernor(govState, cfg),
-		Tokens:       buildTokens(tokenCollector),
-		Repos:        buildRepos(cfg, actionable),
-		Beads:        BuildBeadsFromConfig(beadStores, cfg),
-		Health:       buildHealth(ghClient, ctx),
-		Budget:       buildBudget(gov, tokenCollector),
-		CadenceMatrix: buildCadenceMatrix(cfg, agentStatuses),
-		GHRateLimits: buildGHRateLimits(ghClient, ctx, cfg),
-		AgentMetrics: agentMetrics,
-		Hold:         buildHold(actionable),
-		IssueToMerge: issueToMerge,
+		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		HiveID:          cfg.HiveID,
+		Agents:          buildAgents(agentStatuses, cfg, govState),
+		Governor:        buildGovernor(govState, cfg),
+		Tokens:          buildTokens(tokenCollector),
+		Repos:           buildRepos(cfg, actionable),
+		Beads:           BuildBeadsFromConfig(beadStores, cfg),
+		Health:          buildHealth(ghClient, ctx),
+		Budget:          buildBudget(gov, tokenCollector),
+		CadenceMatrix:   buildCadenceMatrix(cfg, agentStatuses),
+		GHRateLimits:    buildGHRateLimits(ghClient, ctx, cfg),
+		AgentMetrics:    agentMetrics,
+		Hold:            buildHold(actionable),
+		IssueToMerge:    issueToMerge,
 		ACMMLevel:       detectACMMLevel(cfg),
 		ACMMPackAgents:  buildACMMPackAgents(cfg),
 		SystemResources: collectSystemResources(),
@@ -697,12 +733,12 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 	// Per-agent breakdown with full detail
 	for agentName, detail := range summary.ByAgentDetail {
 		bucket := FrontendTokenBucket{
-			Input:     detail.Input,
-			Output:    detail.Output,
-			CacheRead: detail.CacheRead,
+			Input:       detail.Input,
+			Output:      detail.Output,
+			CacheRead:   detail.CacheRead,
 			CacheCreate: detail.CacheCreate,
-			Messages:  detail.Messages,
-			Sessions:  detail.Sessions,
+			Messages:    detail.Messages,
+			Sessions:    detail.Sessions,
 		}
 		if detail.Sessions > 0 {
 			totalForAgent := detail.Input + detail.Output + detail.CacheRead + detail.CacheCreate
@@ -714,12 +750,12 @@ func buildTokens(collector *tokens.Collector) FrontendTokens {
 	// Per-model breakdown with full detail
 	for modelName, detail := range summary.ByModelDetail {
 		bucket := FrontendTokenBucket{
-			Input:     detail.Input,
-			Output:    detail.Output,
-			CacheRead: detail.CacheRead,
+			Input:       detail.Input,
+			Output:      detail.Output,
+			CacheRead:   detail.CacheRead,
 			CacheCreate: detail.CacheCreate,
-			Messages:  detail.Messages,
-			Sessions:  detail.Sessions,
+			Messages:    detail.Messages,
+			Sessions:    detail.Sessions,
 		}
 		if detail.Sessions > 0 {
 			totalForModel := detail.Input + detail.Output + detail.CacheRead + detail.CacheCreate
