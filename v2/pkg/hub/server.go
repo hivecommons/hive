@@ -820,6 +820,10 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	}
 
 	s.loadRegistry()
+	// Rebuild the in-memory upgrade-delivery map from the durable registry
+	// BEFORE the server takes its first heartbeat, so a hub restart can never
+	// orphan an armed upgrade (#2476).
+	s.recoverArmedUpgrades()
 	s.loadHubBanners()
 	s.timeline.load()
 	if err := s.journey.load(time.Now()); err != nil {
@@ -2404,6 +2408,48 @@ func (s *HubServer) loadRegistry() {
 		s.logger.Warn("failed to parse hub registry", "error", err)
 	} else {
 		s.logger.Info("hub registry loaded", "hives", len(s.registry.Hives))
+	}
+}
+
+// recoverArmedUpgrades rebuilds s.heartbeatUpgrade — the in-memory map that
+// actually DELIVERS upgrade instructions on each heartbeat — from the durable
+// registry latch (Upgrading/UpgradeTarget), which survives a hub restart.
+//
+// Without this, a hub restart between arming an upgrade (handleUpgradeHive,
+// bulk upgrade, auto-upgrade fallback) and its completion silently dropped the
+// instruction: the registry kept saying "Upgrading" while the hub sent the
+// spoke nothing, forever, because the map died with the old process (#2476 —
+// four hives sat latched 15+ minutes with zero instructions after a hub
+// self-upgrade). The heartbeat path clears both the map entry and the registry
+// latch when the spoke reports the target SHA, so re-arming here is idempotent
+// and self-terminating.
+//
+// Called from NewHubServer immediately after loadRegistry; takes s.mu like
+// every other heartbeatUpgrade writer so it is also safe to invoke later.
+func (s *HubServer) recoverArmedUpgrades() {
+	type armed struct{ id, target string }
+	var recovered []armed
+	s.mu.Lock()
+	if s.heartbeatUpgrade == nil {
+		s.heartbeatUpgrade = make(map[string]string)
+	}
+	for i := range s.registry.Hives {
+		h := &s.registry.Hives[i]
+		if !h.Upgrading || h.UpgradeTarget == "" {
+			continue
+		}
+		// A recorded terminal failure must stay terminal — re-arming it would
+		// resurrect an upgrade the orphan sweep already gave up on and reported.
+		if h.UpgradeFailed {
+			continue
+		}
+		s.heartbeatUpgrade[h.ID] = h.UpgradeTarget
+		recovered = append(recovered, armed{id: h.ID, target: h.UpgradeTarget})
+	}
+	s.mu.Unlock()
+	for _, a := range recovered {
+		s.logger.Info("recovered armed upgrade from registry after restart",
+			"hive_id", a.id, "target", a.target)
 	}
 }
 

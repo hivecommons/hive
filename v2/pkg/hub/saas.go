@@ -4104,25 +4104,6 @@ func (s *HubServer) rolloutRestartHive(cluster *ClusterConfig, hiveID string) bo
 func (s *HubServer) triggerAutoUpgrades() {
 	hives := listSaaSHives()
 	for _, h := range hives {
-		if !h.AutoUpgrade {
-			continue
-		}
-		// Scheduling gate. Instant-mode hives (and every legacy record, whose
-		// mode is empty) pass straight through, so this changes nothing for the
-		// existing fleet. Daily-mode hives are held until the first cycle at or
-		// after autoUpgradeDailyHour ET and released only once per ET day.
-		// Evaluated BEFORE any of the work below so a held hive costs nothing.
-		decision := shouldAutoUpgradeNow(h.AutoUpgradeMode, h.AutoUpgradeLastFired, time.Now())
-		if !decision.Allowed {
-			s.logger.Debug("auto-upgrade held by schedule",
-				"hive_id", h.ID, "mode", h.AutoUpgradeMode, "reason", decision.Reason)
-			continue
-		}
-		// Skip hives that are actively provisioning or in error state.
-		// Empty status means the hive predates the provisioning system — treat as eligible.
-		if h.Status == "provisioning" || h.Status == "error" {
-			continue
-		}
 		s.mu.RLock()
 		var currentSHA, branch, upgradeTarget string
 		var alreadyUpgrading bool
@@ -4138,10 +4119,18 @@ func (s *HubServer) triggerAutoUpgrades() {
 			}
 		}
 		s.mu.RUnlock()
+		if branch == "" {
+			branch = "v2"
+		}
 		if alreadyUpgrading {
-			if branch == "" {
-				branch = "v2"
-			}
+			// Latched-upgrade recovery runs for EVERY hive, deliberately BEFORE
+			// the AutoUpgrade gate below (#2476). The registry latch
+			// (Upgrading/UpgradeTarget/UpgradeStartedAt) is durable, but
+			// heartbeatUpgrade — the map that actually delivers the instruction
+			// — is in-memory; when this recovery lived behind
+			// `if !h.AutoUpgrade { continue }`, a hub restart orphaned every
+			// manually upgraded hive forever: latched "Upgrading" in the
+			// registry, zero instructions on the wire.
 			upgradeAge := time.Since(upgradeStartedAt)
 			// Zero UpgradeStartedAt means the timestamp was lost (heartbeats
 			// used to wipe it on rebuild) — treat as stale so already-stuck
@@ -4163,13 +4152,21 @@ func (s *HubServer) triggerAutoUpgrades() {
 				// target advances. Previously, when the target already equalled
 				// latest, this branch was skipped entirely and the hive stayed
 				// latched-upgrading forever behind an unreachable kubectl.
-				latestSHA := getLatestSHAForBranch(branch)
 				recoverTarget := upgradeTarget
-				if latestSHA != "" && latestSHA != upgradeTarget {
+				if h.AutoUpgrade {
+					// Target advancement is an auto-upgrade behaviour: those
+					// hives always chase latest. A manual upgrade keeps exactly
+					// the target that was requested — with AutoUpgrade off,
+					// silently delivering a newer build than the one the owner
+					// clicked would override their setting.
+					if latestSHA := getLatestSHAForBranch(branch); latestSHA != "" && latestSHA != upgradeTarget {
+						recoverTarget = latestSHA
+					}
+				}
+				if recoverTarget != upgradeTarget {
 					s.logger.Warn("advancing upgrade target for stale upgrade",
 						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
-						"old_target", upgradeTarget, "new_target", latestSHA)
-					recoverTarget = latestSHA
+						"old_target", upgradeTarget, "new_target", recoverTarget)
 				} else {
 					s.logger.Warn("re-arming heartbeat fallback for stale upgrade",
 						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
@@ -4214,8 +4211,26 @@ func (s *HubServer) triggerAutoUpgrades() {
 				"hive", h.ID, "current", currentSHA)
 			continue
 		}
-		if branch == "" {
-			branch = "v2"
+		// Everything below STARTS a new upgrade, which only auto-upgrade hives
+		// opt into. The recovery above must stay ahead of this gate — see #2476.
+		if !h.AutoUpgrade {
+			continue
+		}
+		// Scheduling gate. Instant-mode hives (and every legacy record, whose
+		// mode is empty) pass straight through, so this changes nothing for the
+		// existing fleet. Daily-mode hives are held until the first cycle at or
+		// after autoUpgradeDailyHour ET and released only once per ET day.
+		// Evaluated BEFORE any of the work below so a held hive costs nothing.
+		decision := shouldAutoUpgradeNow(h.AutoUpgradeMode, h.AutoUpgradeLastFired, time.Now())
+		if !decision.Allowed {
+			s.logger.Debug("auto-upgrade held by schedule",
+				"hive_id", h.ID, "mode", h.AutoUpgradeMode, "reason", decision.Reason)
+			continue
+		}
+		// Skip hives that are actively provisioning or in error state.
+		// Empty status means the hive predates the provisioning system — treat as eligible.
+		if h.Status == "provisioning" || h.Status == "error" {
+			continue
 		}
 		if currentSHA == "" {
 			continue
