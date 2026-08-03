@@ -192,6 +192,17 @@ type RegistryEntry struct {
 	GitHubAppRequired     bool         `json:"githubAppRequired,omitempty"`
 	GitHubAppPermIssue    string       `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState        string       `json:"githubAppState,omitempty"`
+	// ConflictingReporters names two spoke instances that are BOTH reporting
+	// as this hive (e.g. "hive-abc… ↔ hive-def…"), set when their beats
+	// alternate. Non-empty is a critical drift signal: every field in this
+	// entry is only as trustworthy as whichever instance reported last.
+	ConflictingReporters string `json:"conflictingReporters,omitempty"`
+	// StatusFlipping is true while this hive's reported App-auth state keeps
+	// alternating between two values (status_flip.go) — the row cannot be
+	// trusted because each beat tells a different story. Works for spokes too
+	// old to report a Reporter; when both fire, duplicate-spoke names the
+	// culprit pods.
+	StatusFlipping bool `json:"statusFlipping,omitempty"`
 	// GitHubAppID is the App ID the spoke reports it is authenticating AS.
 	//
 	// Carried into the registry so the hub can SEE a spoke running the
@@ -602,6 +613,17 @@ type HubServer struct {
 	// the time after which kubectl may be retried.
 	clusterUnreachableUntil map[string]time.Time
 	clusterUnreachableMu    sync.Mutex
+	// reporterSeen tracks which spoke instance (payload.Reporter, the pod
+	// name) last reported as each hive, to catch two instances alternating
+	// under one hive_id. Guarded by reporterMu, not s.mu — it is touched on
+	// every beat and must never contend with the registry lock.
+	reporterSeen map[string]*reporterFlipState
+	reporterMu   sync.Mutex
+	// statusFlipSeen tracks each hive's reported App-auth state to catch
+	// oscillation (status_flip.go). Same shape as reporterSeen, separate
+	// mutex for the same reason: touched on every beat.
+	statusFlipSeen map[string]*reporterFlipState
+	statusFlipMu   sync.Mutex
 	// heartbeatSwitchTag tracks hives that should switch their deployment
 	// image to a specific tag (branch switch) via heartbeat, for clusters
 	// the hub can't reach over kubectl. Cleared once the spoke reports it.
@@ -973,6 +995,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
 		StartedAt:         sanitizeField(payload.StartedAt),
+		// Duplicate-instance detection. noteReporter returns "" until two
+		// distinct reporters have ALTERNATED (A→B→A), so a normal rollout
+		// (A→B, B stays) never trips it.
+		ConflictingReporters: s.noteReporter(payload.HiveID, sanitizeField(payload.Reporter)),
 		// Advisory-staleness signal. Both are sanitized like every other
 		// spoke-reported string; an empty AdvisoryLastPostedAt is preserved as
 		// empty so the render/gate reads it as UNKNOWN rather than stale.
@@ -1054,6 +1080,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppRequired:       payload.GitHubAppRequired,
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
+		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
 		GitHubAppID:             payload.GitHubAppID,
 		GitHubAppSlug:           payload.GitHubAppSlug,
 		GitHubInstallationID:    payload.GitHubInstallationID,
@@ -1499,6 +1526,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			"from", payload.GitHash,
 			"to", hbTarget,
 		)
+	}
+
+	if s.restartSpokeForHeartbeat(payload.HiveID) {
+		resp.RestartSpoke = true
+		s.logger.Info("heartbeat: delivering spoke restart", "hive_id", payload.HiveID, "reporter", payload.Reporter)
 	}
 
 	if ghCfg := s.pendingAppIdentityForHeartbeat(&payload); ghCfg != nil {

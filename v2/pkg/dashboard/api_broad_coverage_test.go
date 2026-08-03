@@ -76,6 +76,9 @@ func TestCovBR_ConfigGitHub_BadBody(t *testing.T) {
 
 func TestCovBR_ConfigGitHub_KeyFileAndIDs(t *testing.T) {
 	s := covApiServer(t)
+	// The handler now refuses updates it cannot persist (#2459), so the
+	// config needs a real source path.
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
 	appID := int64(123)
 	instID := int64(456)
 	rec := doPut(s, "/api/config/github", map[string]any{
@@ -95,6 +98,7 @@ func TestCovBR_ConfigGitHub_KeyFileAndIDs(t *testing.T) {
 
 func TestCovBR_ConfigGitHub_PrivateKeyWrite(t *testing.T) {
 	s := covApiServer(t)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
 	keyPath := filepath.Join(t.TempDir(), "sub", "gh-app-key.pem")
 	rec := doPut(s, "/api/config/github", map[string]any{
 		"private_key": "-----BEGIN KEY-----\nabc\n-----END KEY-----",

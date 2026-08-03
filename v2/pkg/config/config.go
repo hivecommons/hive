@@ -1550,6 +1550,17 @@ func (g GitHubConfig) HasUsableApp() bool {
 	return g.HasApp() && g.InstallationID != 0
 }
 
+// ConfiguredButUninstalled reports the half-configured state that must NEVER
+// read as healthy: a real App is named but there is no installation to mint
+// tokens against. Every token this hive will ever hold is App-minted, so this
+// state means auth is a countdown — any client still working is riding a
+// cached token that cannot be renewed. Callers use this to raise the install
+// banner and fail github_auth from CONFIG truth, not from whether a residual
+// token still breathes.
+func (g GitHubConfig) ConfiguredButUninstalled() bool {
+	return g.HasApp() && g.InstallationID == 0
+}
+
 // ResolvedAPIURL returns the configured API URL or the default for github.com.
 func (g GitHubConfig) ResolvedAPIURL() string {
 	if g.APIURL != "" {
@@ -2249,15 +2260,32 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &overlay); err != nil {
 		return cfg, nil // malformed overlay: fall back to seed, don't fail the reload
 	}
+	// Tombstones live in the dashboard overlay because that is the only agent
+	// source the dashboard can write. Adopt them BEFORE the fullness guard below
+	// so a short/empty overlay (one that has no agents yet, or only carries the
+	// removed_agents list) still yields the tombstone. Previously this ran AFTER
+	// the guard, so on a reload the guard's early return dropped RemovedAgents to
+	// empty; the ~2-min saver then rewrote every layer tombstone-free and the
+	// deleted agents reappeared on an interval (#2439). Merge already skips and
+	// prunes tombstoned agents, so adopting them early is safe even when we bail.
+	if len(overlay.RemovedAgents) > 0 {
+		cfg.RemovedAgents = overlay.RemovedAgents
+		cfg.PruneRemovedAgents()
+		// Observability (#2439): this runs on boot AND on every ~2-min config reload,
+		// so keep it at DEBUG. It confirms the reload adopted the overlay's tombstones
+		// BEFORE the fullness guard below — the exact ordering whose absence let the
+		// deleted agents reappear on an interval.
+		slog.Default().Debug("reload: adopted removed-agents from overlay",
+			"hive_id", cfg.HiveID,
+			"count", len(cfg.RemovedAgents),
+			"agents", cfg.RemovedAgents,
+		)
+	}
 	// Guard: the overlay must look like a full hive config (same check the
 	// entrypoint and validateSaveGuard apply) before we trust its agents.
 	if overlay.Project.Org == "" || len(overlay.Agents) == 0 {
 		return cfg, nil
 	}
-	// Tombstones live in the dashboard overlay because that is the only agent
-	// source the dashboard can write. Adopt them BEFORE merging so a deleted
-	// agent is neither re-merged from the overlay nor left behind by the seed.
-	cfg.RemovedAgents = overlay.RemovedAgents
 	// Overlay agents win — they carry the reconciled pack-behavior fields.
 	cfg.MergeAgentOverrides(overlay.Agents)
 	for name := range overlay.Agents {

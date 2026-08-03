@@ -668,6 +668,17 @@ func startDocsTokenRefresh(ctx context.Context, cfg *config.Config, appKeyFile s
 // short uptime that keeps resetting is the only visible tell.
 var processStartedAt = time.Now()
 
+// reporterName identifies this spoke process to the hub (HeartbeatPayload
+// Reporter). In-cluster the hostname IS the pod name; on failure it stays
+// empty, which the hub reads as "too old / cannot report", never as data.
+var reporterName, _ = os.Hostname()
+
+// spokeRestartMinUptime is how old this process must be before it acts on a
+// hub-delivered restart. The hub delivers the instruction to every beat in a
+// multi-minute window so all instances hear it; without this guard the
+// restarted process would come back inside the same window and restart again.
+const spokeRestartMinUptime = 10 * time.Minute
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == repair.ContainmentProbeCommand {
 		os.Exit(repair.RunContainmentProbeChild())
@@ -725,7 +736,14 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(*configPath)
+	// Use LoadWithDashboardOverlay (not plain Load) so the dashboard overlay's
+	// removed_agents tombstones are populated into cfg.RemovedAgents at boot —
+	// BEFORE the startup ApplyPack below reconciles the ACMM roster. Plain Load
+	// never reads the overlay, so on restart the tombstone was invisible and
+	// ApplyPack re-added deleted pack agents (brainstorm/guide) every time
+	// (#2439). Same return signature as Load; falls back to the seed when no
+	// overlay exists or the pod is not in Kubernetes.
+	cfg, err := config.LoadWithDashboardOverlay(*configPath)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -740,6 +758,16 @@ func main() {
 	// Load or generate a unique Hive ID for this instance
 	cfg.HiveID = loadOrGenerateHiveID(logger)
 	os.Setenv("HIVE_ID", cfg.HiveID)
+
+	// Observability (#2439): report the removed-agents tombstone LoadWithDashboardOverlay
+	// adopted from the dashboard overlay at boot, BEFORE the startup ApplyPack below. On
+	// a non-sticking-removal report this line is the first check — an empty set here on a
+	// hive that removed an agent means the tombstone did not persist across the restart.
+	logger.Info("boot: loaded removed-agents tombstone",
+		"hive_id", cfg.HiveID,
+		"count", len(cfg.RemovedAgents),
+		"agents", cfg.RemovedAgents,
+	)
 
 	// Surface config provenance: when the persisted runtime config exists, init
 	// containers restore it over the ConfigMap seed on restart, so edits made
@@ -948,6 +976,17 @@ func main() {
 	// against a hive whose credentials the operator never delivered).
 	githubAppDiag := appAuthFailure
 	githubAppState := appAuthState
+	// Config truth outranks live probes: an App with no installation cannot
+	// mint, period. A cached token can keep clients green for up to an hour
+	// after an installation is cleared, and waiting for the first failed mint
+	// left the banner down and the hub green exactly when the operator needed
+	// the opposite (the fast-model-actuation incident).
+	if cfg.GitHub.ConfiguredButUninstalled() {
+		githubAppRequired = true
+		githubAppState = github.AppStateNotInstalled
+		githubAppDiag = "GitHub App " + strconv.FormatInt(cfg.GitHub.AppID, 10) +
+			" has no installation for this org — install it (the spoke adopts the installation automatically)"
+	}
 
 	// Find or create the pinned advisory issue. Any level can have advisory
 	// agents whose findings should be posted to this issue.
@@ -1847,6 +1886,33 @@ func main() {
 		},
 		IntegratedSetupFunc:     runDashboardIntegratedSetup,
 		IntegratedLifecycleFunc: runDashboardIntegratedLifecycle,
+		// Same key resolution as boot (initGitHubAuth) and the heartbeat apply
+		// path: without it, the dashboard Set ID handler gated reinit on the
+		// raw key_file, which is deliberately empty on hub-delivered per-app-id
+		// keys (#2459).
+		ResolveAppKeyFileFunc: func(configured string, appID int64) string {
+			return resolveAppKeyFile(configured, os.Getenv("GH_APP_KEY_FILE"), appID)
+		},
+	})
+
+	// Forge App tab inventory: the resolved active key path and the per-app-id
+	// PVC keys live here in cmd/hive, so they are injected as a provider (the
+	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
+	// provider never touches key material.
+	dashSrv.SetForgeAppInventoryFn(func() dashboard.ForgeAppInventory {
+		held := heldPerAppIDKeyFingerprints()
+		keys := make([]dashboard.ForgeAppKey, 0, len(held))
+		for idStr, fp := range held {
+			keys = append(keys, dashboard.ForgeAppKey{
+				AppID:       idStr,
+				Path:        filepath.Join(spokeAppKeyDir, perAppIDKeyFilePrefix+idStr+perAppIDKeyFileSuffix),
+				Fingerprint: fp,
+			})
+		}
+		return dashboard.ForgeAppInventory{
+			ActiveKeyFile: resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID),
+			HeldKeys:      keys,
+		}
 	})
 
 	dashSrv.SetGitHubAppRequired(githubAppRequired)
@@ -2101,6 +2167,18 @@ func main() {
 				level := *current.ACMMLevel
 				candidate.ACMMLevel = &level
 			}
+
+			// Preserve removed-agent tombstones across the swap as a union of
+			// the live cfg and the incoming reload. A removal that landed in
+			// the live cfg after this reload's snapshot (or an overlay too
+			// short/stale to echo it back yet) must not be lost — otherwise
+			// the next persistState saver rewrites every layer tombstone-free
+			// and the deleted agents reappear (#2439). Union keeps any
+			// tombstone present in either side.
+			for _, name := range current.RemovedAgents {
+				candidate.MarkAgentRemoved(name)
+			}
+			candidate.PruneRemovedAgents()
 			return nil
 		}); err != nil {
 			logger.Error("failed to publish config reload", "error", err)
@@ -2552,6 +2630,10 @@ func main() {
 				AIAuthor:          cfg.Project.AIAuthor,
 				AIAuthorEffective: cfg.EffectiveAIAuthor(),
 				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
+				// Reporter names THIS process (the pod) so the hub can tell two
+				// instances reporting as one hive apart — the pod name is the
+				// hostname inside the container.
+				Reporter: reporterName,
 				// Advisory-staleness signal (mirrors StartedAt/uptime). Report the
 				// last successful digest-post time only if the spoke has actually
 				// posted one — a zero time is left as an empty string so the hub
@@ -2704,7 +2786,23 @@ func main() {
 				// and then stops re-sending them.
 				GitHubAppKeysHeld: heldPerAppIDKeyFingerprints(),
 			}
-		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
+		}, heartbeatSendInterval, logger, hub.RestartSpokeCallback(func() {
+			if up := time.Since(processStartedAt); up < spokeRestartMinUptime {
+				logger.Info("hub requested a spoke restart; ignoring — this process just started",
+					"uptime", up.Round(time.Second))
+				return
+			}
+			logger.Warn("hub requested a spoke restart — rolling this deployment",
+				"reporter", reporterName)
+			if err := hub.RolloutRestartSelf(logger); err != nil {
+				// Do NOT exit here: without deployment-patch RBAC an exit would
+				// restart onto the same state every delivery and look like a
+				// crash-loop. The error names the missing Role instead.
+				logger.Error("spoke restart failed: could not patch own Deployment",
+					"error", err,
+					"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)")
+			}
+		}), hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
 
 			// attemptCount carries the number of PREVIOUS failed attempts for this
@@ -3033,6 +3131,11 @@ func main() {
 			// the hub does not track); assigning zero here would blank a working
 			// value and turn a key-only fault into a total auth outage.
 			if next, cleared := nextInstallationID(cfg.GitHub.InstallationID, ghCfg); cleared {
+				// The banner and the hub must flip to not-installed NOW, not
+				// when the cached token dies an hour from now. Same config-truth
+				// rule as startup.
+				dashSrv.SetGitHubAppRequired(true)
+				dashSrv.SetGitHubAppState(github.AppStateNotInstalled.String())
 				logger.Info("clearing github app installation_id on operator request",
 					"was", cfg.GitHub.InstallationID)
 				cfg.GitHub.InstallationID = next

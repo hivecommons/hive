@@ -338,6 +338,7 @@
     .oc-agent-detail.state-paused { border-color: var(--yellow); }
     .oc-agent-detail.state-on-demand { border-color: var(--indigo); }
     .oc-agent-detail.state-stopped { border-color: var(--red); }
+    .oc-agent-detail.state-needs-login { border-color: var(--amber); }
     .oc-agent-detail.state-off { border-color: var(--line); }
     .oc-agent-detail-header {
       display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
@@ -355,6 +356,7 @@
     .oc-agent-detail-header .status-dot.paused { background: var(--yellow); }
     .oc-agent-detail-header .status-dot.on-demand { background: var(--indigo); }
     .oc-agent-detail-header .status-dot.stopped { background: var(--red); }
+    .oc-agent-detail-header .status-dot.needs-login { background: var(--amber); }
     .oc-agent-detail-header .status-dot.off { background: var(--muted); }
     .oc-detail-fields {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 24px; margin-bottom: 16px;
@@ -419,6 +421,7 @@
     .oc-agent-dot.paused { background: var(--yellow); }
     .oc-agent-dot.on-demand { background: var(--indigo); }
     .oc-agent-dot.stopped { background: var(--red); }
+    .oc-agent-dot.needs-login { background: var(--amber); }
     .oc-agent-dot.off { background: var(--muted); }
     @keyframes oc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -836,6 +839,7 @@
     .dot.on-demand { background: var(--indigo); }
     .dot.off { background: var(--muted); }
     .dot.stopped { background: var(--red); }
+    .dot.needs-login { background: var(--amber); }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 2px 0; }
     .agent-field .label { color: var(--muted); }
     .agent-field .value { text-align: right; }
@@ -3603,12 +3607,19 @@
       const isOff = a.offByCadence === true;
       const isOnDemand = a.onDemand === true;
       const isPaused = a.paused === true && !isOff && !isOnDemand;
-      const isStopped = a.state === 'stopped';
+      // Down = process not alive ('stopped', 'failed', …) — anything but
+      // 'running'. Matching only 'stopped' let 'failed' agents render the
+      // green idle styling here (#2465).
+      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      // Same formula as the Auth section's Login button below: a down agent
+      // with an unauthenticated CLI gets the amber needs-login state instead
+      // of plain down-red (#2465).
+      const needsLoginDown = isStopped && (a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true));
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
-      const dotCls = isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
 
       detail.className = 'oc-agent-detail active state-' + dotCls;
-      const stateLabel = isStopped ? 'stopped' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
+      const stateLabel = needsLoginDown ? 'needs login' : isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
 
       const kickId = `oc-kick-${a.name}`;
       const prevInput = document.getElementById(kickId);
@@ -3862,12 +3873,26 @@
       const isOff = a.offByCadence === true;
       const isOnDemand = a.onDemand === true;
       const isPaused = a.paused === true && !isOff && !isOnDemand;
-      const isStopped = a.state === 'stopped';
-      const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
+      // Down = the PROCESS is not alive ('stopped', 'failed', or never
+      // launched — anything but 'running'). The dot used to read only the
+      // 'stopped' state, so a failed/crash-looping agent fell through to the
+      // green 'idle' class while the deep "agents" health check reported it
+      // down (#2465). Match the deep check: non-running + non-paused = down,
+      // with paused/off/on-demand keeping their own styling.
+      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      // A down agent whose CLI is unauthenticated is not merely down — it can
+      // never do work until someone logs it in. Same formula as the agent
+      // panel's Login button; rendered amber with a "needs login" note. Only
+      // applies when the agent is not running: a running authenticated agent
+      // is green, a non-running authenticated agent is red (#2465).
+      const needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
+      const needsLoginDown = isDown && needsLogin;
+      const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
-      const dotCls = isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       const isActive = _ocSelectedAgent === a.name ? ' active' : '';
-      const agentDesc = a.description || AGENT_DESCRIPTIONS[a.name] || '';
+      const baseDesc = a.description || AGENT_DESCRIPTIONS[a.name] || '';
+      const agentDesc = needsLoginDown ? (baseDesc ? baseDesc + '\n' : '') + 'needs login — CLI unauthenticated, the agent cannot work until logged in' : baseDesc;
       const label = a.displayName || a.name;
       const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
       const modeHtml = (a.modeEmoji || a.mode) ? `<span class="oc-nav-mode" title="${esc(a.mode || '')}">${a.modeEmoji || modeEmoji(a.mode)}</span>` : '';
@@ -5215,7 +5240,9 @@
         const isOff = a.offByCadence === true;
         const isOnDemand = a.onDemand === true;
         const isPaused = a.paused === true && !isOff && !isOnDemand;
-        const isStopped = a.state === 'stopped' && !isPaused && !isOff;
+        // Down = process not alive — anything but 'running'. 'stopped'-only
+        // matching rendered crash-looping ('failed') agents green (#2465).
+        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';
@@ -5224,7 +5251,9 @@
         else if (isStale) statusCls = 'status-stale';
         const isOnDemandIdle = isOnDemand && a.busy !== 'working';
         const cls = needsLogin ? 'needs-login' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isStopped ? 'stopped' : `${a.busy} ${statusCls}`.trim();
-        const dotCls = isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        // Down + unauthenticated CLI = amber needs-login (same formula as the
+        // card's Login button above), not plain down-red (#2465).
+        const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
         const canToggle = a.beadRole !== 'supervisor';
         const toggleBtn = canToggle ? (isOff
           ? `<button class="btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Agent is off in this governor mode — click to configure per-mode cadences">⚙ off</button>`
@@ -10605,7 +10634,21 @@ function burnAreaChart() {
         const CI_PASS_THRESHOLD = 70;
         const HEALTH_LABELS = _buildHealthLabels(data.agents || []);
         const failing = [];
+        const warning = [];
         const passing = [];
+        // Deep checks first — the spoke's own health (ready, github_auth,
+        // agents with "N down: names", …), the exact checks the heartbeat
+        // reports to the hub. These decide the pill's color: a pill that read
+        // only the repo-workflow map below showed "Health OK" while this
+        // spoke's own agents were down (#2465).
+        const deepChecks = Array.isArray((data.deepHealth || {}).checks) ? data.deepHealth.checks : [];
+        const deepFailNames = [];
+        for (const c of deepChecks) {
+          const line = c.detail ? `${c.name}: ${c.detail}` : c.name;
+          if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
+          else if (c.status === 'warn') warning.push(line);
+          else passing.push(line);
+        }
         for (const [k, v] of Object.entries(h)) {
           const label = HEALTH_LABELS[k] || k;
           if (k === 'ci') {
@@ -10621,9 +10664,17 @@ function burnAreaChart() {
         }
         const hoverLines = [];
         if (failing.length) hoverLines.push('FAILING:\n' + failing.map(f => '  ✗ ' + f).join('\n'));
+        if (warning.length) hoverLines.push('WARNINGS:\n' + warning.map(wl => '  ⚠ ' + wl).join('\n'));
         if (passing.length) hoverLines.push('PASSING:\n' + passing.map(p => '  ✓ ' + p).join('\n'));
         ocHealth.title = hoverLines.join('\n\n') || 'No health data';
-        if (failing.length > 0) {
+        if (deepFailNames.length > 0) {
+          // Any failing deep check ⇒ the spoke itself is degraded — same
+          // verdict the hub renders for this hive's row.
+          ocHealth.textContent = '● Degraded';
+          ocHealth.style.color = 'var(--red)';
+          ocHealth.style.background = 'var(--red-bg)';
+          ocHealth.style.borderColor = 'var(--red-border)';
+        } else if (failing.length > 0) {
           ocHealth.textContent = `● ${failing.length} Issue${failing.length > 1 ? 's' : ''}`;
           ocHealth.style.color = 'var(--red)';
           ocHealth.style.background = 'var(--red-bg)';
@@ -11923,9 +11974,12 @@ function burnAreaChart() {
       dismissToast(toast, `${agent} restart counter reset`, 'success');
     }
 
-    // Prompts for the LiteLLM endpoint + API key the first time the
-    // backend is selected anywhere in the UI. Resolves true when litellm
-    // is (or has just been) configured; false when the user cancels. The
+    // Prompts for the LiteLLM endpoint + API key when litellm is picked in
+    // the agent-config dialog flows (CLI pin / create), where navigating to
+    // Governor Config would discard unsaved edits. The agent-card METHOD
+    // dropdown instead saves the choice and navigates (maybeOpenMethodConfig).
+    // Resolves true when litellm is (or has just been) configured; false when
+    // the user cancels. The
     // key VALUE goes to the server's private key store — never hive.yaml —
     // and the save runs a live /v1/models test whose result is shown
     // inline (endpoint/key mistakes fail here, not as agent 401s later).
@@ -12031,15 +12085,63 @@ function burnAreaChart() {
       });
     }
 
+
+    // Methods that need hive-side configuration before they can actually run:
+    // bob needs its API key (Governor Config → Bob); the gateway-backed
+    // methods need a Model Gateway configured FOR THAT method (Governor
+    // Config → Model Gateways). The check is per-method — an openrouter
+    // gateway does not satisfy a vllm selection.
+    const GATEWAY_METHODS = ['openrouter', 'litellm', 'vllm', 'llm-d'];
+
+    // maybeOpenMethodConfig runs AFTER a method switch is saved: the choice is
+    // never blocked, but when the selected method's backing config is absent
+    // the Governor Configuration dialog opens directly on the tab that fixes
+    // it. Presence comes from data the dashboard already serves — the bob key
+    // status endpoint (presence only, never material) and the configured
+    // gateway list — plus the live model-discovery cache (a non-fallback
+    // discovery proves an env-configured vllm/llm-d endpoint exists even
+    // without a named gateway). Best-effort: any fetch failure just skips the
+    // navigation rather than interrupting the switch.
+    async function maybeOpenMethodConfig(backend) {
+      try {
+        if (backend === 'bob') {
+          const r = await fetch('/api/config/governor/bob');
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d.configured !== true) {
+            showToast('bob needs an API key — opening Governor Config → Bob', 'info');
+            openConfigDialog('governor', null, GOVERNOR_BOB_TAB);
+          }
+          return;
+        }
+        if (!GATEWAY_METHODS.includes(backend)) return;
+        // A live (non-fallback) model discovery for this method means it is
+        // genuinely configured (possibly via HIVE_*_ENDPOINT env, which never
+        // appears in the gateway list) — nothing to fix.
+        const cached = _inferenceModelCache[backend];
+        if (cached && !cached.fallback) return;
+        const r = await fetch('/api/config/governor/gateways');
+        if (!r.ok) return;
+        const d = await r.json();
+        const has = (d.gateways || []).some(g => g && (g.kind === backend || g.name === backend));
+        if (!has) {
+          showToast('No ' + backend + ' gateway configured — opening Governor Config → Model Gateways', 'info');
+          openConfigDialog('governor', null, 'Model Gateways');
+        }
+      } catch (e) { /* presence check is best-effort; never surface as a switch error */ }
+    }
+
     async function switchCli(agent, backend) {
       if (!backend) return;
-      if (backend === 'litellm' && !(await ensureLiteLLMConfigured())) return;
       const label = INFERENCE_BACKENDS.includes(backend) ? 'method' : 'CLI';
       const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       dismissToast(toast, `${agent} ${label} → ${backend} (session restarted)`, 'success');
+      // The selection is saved; if its backing config is missing, land the
+      // user on the Governor Config tab that fixes it (never blocks).
+      maybeOpenMethodConfig(backend);
       await updateModelDropdown(agent, backend);
       if (window._lastAgents) {
         const a = window._lastAgents.find(x => x.name === agent);
@@ -12993,7 +13095,7 @@ function burnAreaChart() {
     // hub-synced user/role data. It sits next to Model Gateways because both
     // are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -13452,6 +13554,9 @@ function burnAreaChart() {
         if (tabId === 'Model Gateways') {
           loadGateways();
         }
+        // The Forge App tab renders a shell synchronously, then loads the
+        // credential inventory (fingerprints only) from the spoke.
+        if (tabId === 'Forge App') loadForgeApps();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -13589,6 +13694,7 @@ function burnAreaChart() {
         case 'Sensing': return renderGovSensing(d.sensing || {});
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Hub': return renderGovHub(d.hub || {});
+        case 'Forge App': return renderGovForgeApp();
         case 'Model Gateways': return renderGovGateways();
         case GOVERNOR_BOB_TAB: return renderGovBob();
         case 'Variables': return renderGovVariables();
@@ -13790,6 +13896,7 @@ function burnAreaChart() {
             <span style="font-weight:600;font-size:0.9rem">bob</span>
             <span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid #4589ff;color:#4589ff">IBM bobshell</span>
             <span style="flex:1"></span>
+            ${configured ? '<button data-action="bobKeyTest" title="Validate the saved key against the bob backend — the key value never leaves this hive" style="padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:0.74rem">Test</button>' : ''}
             ${configured ? '<button data-action="bobKeyClear" style="padding:4px 12px;border:1px solid var(--red);border-radius:6px;background:var(--bg);color:var(--red);cursor:pointer;font-size:0.74rem">Clear key</button>' : ''}
             <button data-action="bobKeySet" style="padding:4px 12px;border:none;border-radius:6px;background:#0f62fe;color:#fff;cursor:pointer;font-size:0.74rem;font-weight:600">${configured ? 'Replace key' : 'Set API key'}</button>
           </div>
@@ -13812,6 +13919,18 @@ function burnAreaChart() {
       if (setBtn) setBtn.addEventListener('click', () => openBobKeyDialog(configured, source));
       const clearBtn = host.querySelector('[data-action="bobKeyClear"]');
       if (clearBtn) clearBtn.addEventListener('click', clearBobKey);
+      // Test the SAVED key from the card: result goes to the card's inline
+      // status line (green ok / red reason + backend detail).
+      const testBtn = host.querySelector('[data-action="bobKeyTest"]');
+      if (testBtn) testBtn.addEventListener('click', async () => {
+        const statusEl = document.getElementById('bob-key-inline-status');
+        const setStatus = (msg, color) => {
+          if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+        };
+        testBtn.disabled = true;
+        await testBobKey('', setStatus);
+        testBtn.disabled = false;
+      });
     }
 
     function renderGovAccess() {
@@ -14068,6 +14187,143 @@ function burnAreaChart() {
 
     function gatewayKindMeta(kind) {
       return GATEWAY_KIND_META[kind] || GATEWAY_KIND_META.custom;
+    }
+
+    // ---- Forge App tab -----------------------------------------------------
+    // Inventory of every forge App credential this spoke holds: the active
+    // github config plus every per-app-id key file on the PVC. Fingerprints
+    // and paths ONLY — private key material never reaches this page. Only the
+    // config whose forge matches the forge this hive's repos live on is
+    // editable; everything else renders read-only.
+    function renderGovForgeApp() {
+      return `
+        <div style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">
+          Every forge App credential this hive holds. The active config is editable only
+          when its forge matches the forge this hive's repos live on; everything else is
+          read-only. Private keys appear as fingerprints — key material never leaves the hive.
+        </div>
+        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>`;
+    }
+
+    async function loadForgeApps() {
+      const host = document.getElementById('forge-app-host');
+      try {
+        const res = await fetch('/api/config/github/forge-apps');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        renderForgeApps(await res.json());
+      } catch (e) {
+        if (host) host.innerHTML = `<div style="color:var(--red);font-size:0.8rem">Failed to load forge Apps: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function forgeAppRow(label, valueHtml) {
+      return `<div style="display:flex;gap:10px;font-size:0.78rem;padding:3px 0"><span style="min-width:140px;color:var(--muted);flex-shrink:0">${esc(label)}</span><span style="word-break:break-all">${valueHtml}</span></div>`;
+    }
+
+    function renderForgeApps(data) {
+      const host = document.getElementById('forge-app-host');
+      if (!host) return;
+      const a = data.active || {};
+      // The classified auth state is a debugging surface: show the wire token
+      // verbatim (not-installed / wrong-installation / key-invalid / ...).
+      const stateHtml = a.auth_state
+        ? `<code style="font-size:0.74rem;padding:1px 6px;border:1px solid ${a.auth_state === 'ok' ? 'var(--green)' : 'var(--yellow)'};border-radius:6px">${esc(a.auth_state)}</code>`
+        : '<span style="color:var(--muted)">— (not classified)</span>';
+      const editBadge = a.editable
+        ? '<span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid var(--green);color:var(--green)">editable</span>'
+        : `<span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid var(--border);color:var(--muted)">read-only — repos are on ${esc(data.repos_forge || 'github.com')}</span>`;
+      let html = `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px;background:var(--surface)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="font-weight:600;font-size:0.9rem">Active config — ${esc(a.forge || 'github.com')}</span>
+            ${editBadge}
+          </div>
+          ${forgeAppRow('App ID', esc(String(a.app_id || 0)))}
+          ${forgeAppRow('App slug', esc(a.app_slug || '—'))}
+          ${forgeAppRow('API URL', esc(a.api_url || '—'))}
+          ${forgeAppRow('Base URL', esc(a.base_url || '—'))}
+          ${forgeAppRow('Installation ID', esc(String(a.installation_id || 0)))}
+          ${forgeAppRow('Key file', esc(a.key_file || '—'))}
+          ${forgeAppRow('Key fingerprint', a.key_fingerprint ? '<code style="font-size:0.74rem">' + esc(a.key_fingerprint) + '</code>' : '<span style="color:var(--muted)">— (no usable key)</span>')}
+          ${forgeAppRow('Auth state', stateHtml)}
+          ${a.editable ? forgeAppEditForm(a) : ''}
+        </div>`;
+      html += '<div style="font-weight:600;font-size:0.85rem;margin:14px 0 6px">Per-app-id keys on disk</div>';
+      const keys = data.held_keys || [];
+      if (!keys.length) {
+        html += '<div style="color:var(--muted);font-size:0.78rem">No per-app-id key files held on this hive.</div>';
+      } else {
+        html += keys.map(k => `
+          <div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:0.76rem;background:var(--surface)">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <span style="font-weight:600">App ${esc(k.app_id)}</span>
+              <span style="font-size:0.66rem;font-weight:600;padding:1px 7px;border-radius:10px;border:1px solid var(--border);color:var(--muted)">read-only</span>
+            </div>
+            <div style="color:var(--muted);word-break:break-all;margin-top:4px">${esc(k.path)}</div>
+            <div style="margin-top:2px">fingerprint: <code style="font-size:0.72rem">${esc(k.fingerprint)}</code></div>
+          </div>`).join('');
+      }
+      host.innerHTML = html;
+    }
+
+    function forgeAppEditForm(a) {
+      const inputStyle = 'width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem;box-sizing:border-box';
+      return `
+        <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+          <div style="font-size:0.78rem;font-weight:600;margin-bottom:8px">Edit active config</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <label style="font-size:0.72rem;color:var(--muted)">App ID<input id="forge-app-appid" type="number" value="${esc(String(a.app_id || ''))}" style="${inputStyle}"></label>
+            <label style="font-size:0.72rem;color:var(--muted)">Installation ID<input id="forge-app-instid" type="number" value="${esc(String(a.installation_id || ''))}" style="${inputStyle}"></label>
+          </div>
+          <label style="font-size:0.72rem;color:var(--muted)">Key file path<input id="forge-app-keyfile" type="text" value="${esc(a.key_file || '')}" style="${inputStyle};margin-bottom:8px"></label>
+          <label style="font-size:0.72rem;color:var(--muted)">Private key (PEM — write-only, replaces the key file; never displayed back)<textarea id="forge-app-pem" rows="3" placeholder="-----BEGIN RSA PRIVATE KEY----- (leave empty to keep the current key)" style="${inputStyle};font-family:monospace;margin-bottom:8px"></textarea></label>
+          <button id="forge-app-save-btn" onclick="saveForgeApp()" style="padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.8rem">Save</button>
+        </div>`;
+    }
+
+    async function saveForgeApp() {
+      const btn = document.getElementById('forge-app-save-btn');
+      const numVal = id => {
+        const el = document.getElementById(id);
+        const v = (el && el.value || '').trim();
+        return v === '' ? null : parseInt(v, 10);
+      };
+      const appId = numVal('forge-app-appid');
+      const instId = numVal('forge-app-instid');
+      const keyFileEl = document.getElementById('forge-app-keyfile');
+      const pemEl = document.getElementById('forge-app-pem');
+      const keyFile = (keyFileEl && keyFileEl.value || '').trim();
+      const pem = (pemEl && pemEl.value || '').trim();
+      const body = {};
+      if (appId !== null) {
+        if (isNaN(appId) || appId <= 0) { showToast('App ID must be a positive number', 'error'); return; }
+        body.app_id = appId;
+      }
+      if (instId !== null) {
+        if (isNaN(instId) || instId < 0) { showToast('Installation ID must be a non-negative number', 'error'); return; }
+        body.installation_id = instId;
+      }
+      if (keyFile) body.key_file = keyFile;
+      if (pem) body.private_key = pem;
+      if (!Object.keys(body).length) { showToast('Nothing to save', 'error'); return; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        // The existing config-github handler: persists, then live-reinits the
+        // GitHub client when the config becomes usable.
+        const res = await fetch('/api/config/github', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        showToast(data.reinit === 'ok' ? 'Forge App config saved and reconnected' : 'Forge App config saved', 'success');
+        loadForgeApps();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      }
     }
 
     function renderGovGateways() {
@@ -17733,8 +17989,34 @@ function burnAreaChart() {
     // authoritative one for this CLI, so the dialog says Inference and links
     // BOTH pages so the operator can check if a key is rejected.
     var BOB_PORTAL_URL = 'https://bob.ibm.com';
+    var BOB_API_KEY_MANAGE_URL = 'https://bob.ibm.com/admin/apikeys';
     var BOB_API_KEY_DOCS_URL = 'https://bob.ibm.com/docs/ide/account/api-keys';
     var BOB_SHELL_SETUP_DOCS_URL = 'https://bob.ibm.com/docs/shell/getting-started/install-and-setup';
+
+    // testBobKey POSTs to the bob key-test endpoint and reports the verdict
+    // via setStatus. `pastedKey` non-empty tests THAT key (pre-save); empty
+    // tests the SAVED key — the server resolves it, the value never reaches
+    // the browser. Shared by the key dialog and the Bob tab card.
+    async function testBobKey(pastedKey, setStatus) {
+      setStatus(pastedKey ? 'Testing pasted key…' : 'Testing saved key…');
+      try {
+        var resp = await fetch('/api/config/governor/bob/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(pastedKey ? { apiKey: pastedKey } : {})
+        });
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+          setStatus(data.error || ('Test failed (HTTP ' + resp.status + ')'), 'var(--red)');
+        } else if (data.status === 'ok') {
+          setStatus('✓ ' + (data.detail || 'The bob backend accepted the key.'), 'var(--green)');
+        } else {
+          setStatus('✗ ' + (data.detail || data.reason || 'Test failed'), 'var(--red)');
+        }
+      } catch (e) {
+        setStatus('Test failed: ' + e.message, 'var(--red)');
+      }
+    }
 
     function openBobKeyDialog(configured, source) {
       var overlay = document.getElementById('bob-key-overlay');
@@ -17762,7 +18044,8 @@ function burnAreaChart() {
           '<ol style="margin:0;padding-left:18px;line-height:1.6">' +
             '<li>Sign in at <a href="' + BOB_PORTAL_URL + '" target="_blank" rel="noopener noreferrer" ' +
               'style="color:#4589ff">bob.ibm.com</a> and open your subscription instance.</li>' +
-            '<li>Go to API key management and create a key with <strong>Scope: Inference</strong>.</li>' +
+            '<li>Go to <a href="' + BOB_API_KEY_MANAGE_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">API key management</a> and create a key with <strong>Scope: Inference</strong>.</li>' +
             '<li>Copy it immediately — IBM shows the value only once.</li>' +
           '</ol>' +
           '<div style="margin-top:8px">' +
@@ -17779,6 +18062,9 @@ function burnAreaChart() {
         '<div id="bob-key-status" style="color:var(--muted);font-size:0.8rem;min-height:20px;margin:4px 0"></div>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">' +
           '<button id="bob-key-cancel" class="gh-cancel" style="margin-top:0">Cancel</button>' +
+          '<button id="bob-key-test" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);' +
+            'padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer" ' +
+            'title="Validate against the bob backend without saving: tests the pasted key if the field is non-empty, else the saved key">Test key</button>' +
           '<button id="bob-key-save" style="background:#0f62fe;color:#fff;border:none;padding:6px 16px;' +
             'border-radius:6px;font-weight:600;cursor:pointer">Save key</button>' +
         '</div>' +
@@ -17801,6 +18087,21 @@ function burnAreaChart() {
 
       var cancelBtn = document.getElementById('bob-key-cancel');
       if (cancelBtn) cancelBtn.addEventListener('click', closeDialog);
+
+      // Test key: pre-save validation of the pasted value, or of the saved
+      // key when the field is empty. The pasted value goes only to the test
+      // endpoint (never persisted); the result renders inline.
+      var testBtn = document.getElementById('bob-key-test');
+      if (testBtn) testBtn.addEventListener('click', async function() {
+        var pasted = (input && input.value || '').trim();
+        if (!pasted && !configured) {
+          setStatus('Paste a key to test — none is saved yet.', 'var(--red)');
+          return;
+        }
+        testBtn.disabled = true;
+        await testBobKey(pasted, setStatus);
+        testBtn.disabled = false;
+      });
 
       var saveBtn = document.getElementById('bob-key-save');
       if (saveBtn) saveBtn.addEventListener('click', async function() {

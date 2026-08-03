@@ -278,7 +278,18 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 
 	s.persistOnly()
 	go s.refreshAsync()
-	s.logger.Info("ACMM pack applied", "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed))
+	// Observability (#2439): the counts alone ("tombstoned":0) were the tell in the
+	// field report, so also list WHICH agents were tombstoned (deleted by the operator
+	// and NOT re-created) vs skipped (already present) — a grep by agent name against
+	// this single line answers "did the pack try to re-add the agent I removed?".
+	s.logger.Info("ACMM pack applied", "hive_id", s.deps.Config.HiveID, "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed), "tombstoned", len(tombstoned), "tombstoned_agents", tombstoned, "skipped_agents", skipped)
+	if len(tombstoned) > 0 {
+		// Say it plainly in the log too: an operator reading "this level has 6
+		// agents but I see 4" needs the reason, not a silent gap.
+		s.logger.Info("ACMM pack: agents NOT re-created because the operator deleted them",
+			"agents", strings.Join(tombstoned, ", "),
+			"hint", "re-add the agent from the Governor grid to undo the deletion")
+	}
 
 	result := &ApplyPackResult{
 		Name:       pack.Name,

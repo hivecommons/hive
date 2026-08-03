@@ -241,13 +241,16 @@ func TestHandleUpgradeHiveKubectlFails(t *testing.T) {
 		t.Errorf("missing hive status = %d, want 404", rec.Code)
 	}
 
-	// Owner, cluster resolves, kubectl fails (fake) -> 500.
+	// Owner, cluster resolves, kubectl fails (fake), and no build target is
+	// known for the branch — the one remaining hard-failure case. A kubectl
+	// failure alone no longer fails the request: with a known target it arms
+	// the heartbeat fallback instead (TestHandleUpgradeHiveUnreachableCluster*).
 	saveSaaSHive(&SaaSHive{ID: "h1", Owner: "alice", ClusterID: "hive-oke"})
 	rec = httptest.NewRecorder()
 	req = setPathValue(reqWithUser(http.MethodPost, "/up", "", "alice"), "id", "h1")
 	s.handleUpgradeHive(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("kubectl-fail upgrade status = %d, want 500", rec.Code)
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("kubectl-fail upgrade with no target status = %d, want 502", rec.Code)
 	}
 }
 
