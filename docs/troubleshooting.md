@@ -142,7 +142,7 @@ All agents that merge PRs (scanner, reviewer, supervisor) MUST follow these rule
 
 ### Why `tide` is safe to ignore
 
-`tide` is Prow's automatic merge controller. It requires `lgtm` + `approved` labels to queue a PR. Since AI-authored PRs use `--admin --squash` merge (bypassing Prow), `tide` will never transition to `success`. It is not a CI quality gate — it is a merge queue status indicator.
+`tide` is Prow's automatic merge controller. It requires `lgtm` + `approved` labels to queue a PR. Since AI-authored PRs use a normal `--squash` merge (Prow is not involved, and `--admin` is never used), `tide` will never transition to `success`. It is not a CI quality gate — it is a merge queue status indicator.
 
 ### Checking CI status
 

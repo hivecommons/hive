@@ -259,7 +259,7 @@ Before merging any PR:
 5. **NEVER merge llm-d org PRs** without explicit operator approval
 6. **NEVER merge ADOPTERS PRs** without explicit operator approval
 
-Merge command: `unset GITHUB_TOKEN && gh pr merge <N> --repo <repo> --admin --squash`
+Merge command: `unset GITHUB_TOKEN && gh pr merge <N> --repo <repo> --squash` (never `--admin` — wait for required checks instead)
 
 ## Scan Cadence (when operator is active)
 
