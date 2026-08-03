@@ -7298,11 +7298,14 @@ const dashboardHTML = `<!DOCTYPE html>
       <div id="past-requests-body" style="display:none;overflow-x:auto"><div id="admin-request-history"></div></div>
     </div>
 
+    <!-- Usage renders ABOVE the attention strip on purpose: the strip's drift
+         pills filter the hive list, so the strip and the list it narrows must
+         sit directly adjacent with no unrelated card between them. -->
+    <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="hive-drift-summary" style="display:none"></div>
     <div id="fleet-alerts-panel" style="display:none"></div>
     <div id="hive-view-bar" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
-    <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="bulk-action-bar" style="display:none"></div>
     <div class="hive-layout">
       <div class="facet-shell" id="hive-facet-shell">
@@ -8668,6 +8671,14 @@ const dashboardHTML = `<!DOCTYPE html>
        states", this answers "which specific misconfiguration". */
     var _dashDriftFilter = '';
 
+    /* Search text stashed away while a drift pill is selected, or null when no
+       stash is held. Clicking a pill clears the search box (a stale search
+       silently intersecting with the pill filter reads as hives having
+       disappeared) but remembers what was typed; deselecting the last pill
+       restores it. Typing WHILE a pill is active drops the stash — the new
+       text is what the user wants and must survive deselection. */
+    var _driftSearchStash = null;
+
     /* hiveMatchesDriftFilter answers whether a hive carries the selected drift
        kind. Guarded so a row with no drift report never throws. */
     function hiveMatchesDriftFilter(h) {
@@ -9257,6 +9268,9 @@ const dashboardHTML = `<!DOCTYPE html>
       _dashStatusFilters = {};
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
+      /* Everything is being cleared, search included — a search stashed at
+         drift-pill-selection time must not come back later. */
+      _driftSearchStash = null;
       _dashUpgradeFilter = '';
       _dashAdvisoryStaleFilter = false;
       _alertTypeFilter = '';
@@ -9670,6 +9684,10 @@ const dashboardHTML = `<!DOCTYPE html>
       var el = document.getElementById('hive-search');
       var next = el ? el.value : '';
       if (_hiveSearchTimer) clearTimeout(_hiveSearchTimer);
+      /* Typing while a drift pill is active supersedes the search stashed at
+         pill-selection time: drop the stash immediately (not in the debounce)
+         so a quick type-then-deselect cannot resurrect the old text. */
+      if (_dashDriftFilter) _driftSearchStash = null;
       _hiveSearchTimer = setTimeout(function() {
         _dashSearchQuery = next;
         renderHives(_allDashHives, true);
@@ -9680,6 +9698,9 @@ const dashboardHTML = `<!DOCTYPE html>
       var el = document.getElementById('hive-search');
       if (el) el.value = '';
       _dashSearchQuery = '';
+      /* An explicit Clear is a statement the user wants NO search — do not
+         resurrect a stashed one when the drift pills are later deselected. */
+      _driftSearchStash = null;
       renderHives(_allDashHives, true);
     }
 
@@ -10169,6 +10190,9 @@ const dashboardHTML = `<!DOCTYPE html>
          button look broken. */
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
+      /* The drift filter is being force-cleared without going through
+         toggleDriftFilter, so drop any stashed search with it. */
+      _driftSearchStash = null;
       _dashUpgradeFilter = '';
       _dashAdvisoryStaleFilter = false;
       renderHives(_allDashHives, true);
@@ -10189,9 +10213,32 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     /* toggleDriftFilter selects (or deselects) one drift kind in the fleet
-       exceptions summary. */
+       exceptions summary.
+
+       Pill selection also owns the search box: selecting the first pill
+       stashes and clears the search (so a stale search cannot silently
+       intersect with the pill filter), switching between pills keeps the
+       stash, and deselecting the last pill restores the stashed text —
+       unless the user typed a new search while a pill was active, in which
+       case the stash was dropped and their new text wins. */
     function toggleDriftFilter(kind) {
+      var prev = _dashDriftFilter;
       _dashDriftFilter = (_dashDriftFilter === kind) ? '' : kind;
+      var searchEl = document.getElementById('hive-search');
+      if (!prev && _dashDriftFilter) {
+        /* First pill selected: stash the search and clear it. */
+        _driftSearchStash = _dashSearchQuery;
+        _dashSearchQuery = '';
+        if (searchEl) searchEl.value = '';
+      } else if (prev && !_dashDriftFilter) {
+        /* Last pill deselected: restore the stashed search, if it is still
+           ours to restore. */
+        if (_driftSearchStash !== null) {
+          _dashSearchQuery = _driftSearchStash;
+          if (searchEl) searchEl.value = _dashSearchQuery;
+        }
+        _driftSearchStash = null;
+      }
       renderHives(_allDashHives, true);
     }
 
