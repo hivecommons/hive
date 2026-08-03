@@ -2971,33 +2971,59 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"no cluster config for this hive"}`, http.StatusInternalServerError)
 		return
 	}
-	ns := "hive-hosted-" + id
-	cmd := kubectlForCluster(cluster, "rollout", "restart", "deployment/hive", "-n", ns)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		s.logger.Warn("upgrade failed", "hive", id, "cluster", cluster.ID, "output", string(out))
-		http.Error(w, `{"error":"upgrade failed — check hub logs for details"}`, http.StatusInternalServerError)
-		return
-	}
-	s.logger.Info("audit: hosted hive upgraded", "hive_id", id, "by", username, "cluster", cluster.ID)
-	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard", username)
+
+	// kubectl is attempt one; the heartbeat fallback below is the ONLY path
+	// that works for a cluster the hub cannot route to (the spoke pulls, the
+	// hub answers). rolloutRestartHive bounds the attempt and honours the
+	// unreachable-cluster cache, so a firewalled cluster costs seconds here,
+	// not a gateway timeout.
+	delivered := s.rolloutRestartHive(cluster, id)
+
 	s.mu.Lock()
+	var latestSHA string
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
 			branch := s.registry.Hives[i].GitBranch
 			if branch == "" {
 				branch = "v2"
 			}
-			latestSHA := getLatestSHAForBranch(branch)
+			latestSHA = getLatestSHAForBranch(branch)
 			s.registry.Hives[i].Upgrading = true
 			s.registry.Hives[i].UpgradeTarget = latestSHA
 			s.registry.Hives[i].UpgradeStartedAt = time.Now()
 			break
 		}
 	}
+	if !delivered && latestSHA != "" {
+		// Arm the durable fallback: the spoke self-restarts onto the target
+		// when its next heartbeat carries UpgradeTo. The stale-upgrade sweep
+		// re-arms this if the spoke misses it, so the request cannot be lost.
+		if s.heartbeatUpgrade == nil {
+			s.heartbeatUpgrade = make(map[string]string)
+		}
+		s.heartbeatUpgrade[id] = latestSHA
+	}
 	s.mu.Unlock()
+
+	if !delivered && latestSHA == "" {
+		// kubectl failed AND no build target is known for the branch — there is
+		// nothing a heartbeat could deliver. This is the only remaining
+		// hard-failure case.
+		s.logger.Warn("upgrade failed: cluster unreachable and no build target known",
+			"hive", id, "cluster", cluster.ID)
+		http.Error(w, `{"error":"upgrade failed — cluster unreachable and no build target known"}`, http.StatusBadGateway)
+		return
+	}
+
+	mode := "kubectl"
+	if !delivered {
+		mode = "heartbeat"
+	}
+	s.logger.Info("audit: hosted hive upgrade requested",
+		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
+	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"upgrading"}`))
+	w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
 }
 
 // branchToTag converts a git branch name into a valid Docker image tag.
@@ -4021,6 +4047,9 @@ func (s *HubServer) markClusterUnreachable(clusterID string) {
 	}
 	s.clusterUnreachableMu.Lock()
 	defer s.clusterUnreachableMu.Unlock()
+	if s.clusterUnreachableUntil == nil {
+		s.clusterUnreachableUntil = make(map[string]time.Time)
+	}
 	s.clusterUnreachableUntil[clusterID] = time.Now().Add(clusterUnreachableTTL)
 }
 
