@@ -4571,8 +4571,8 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 	//
 	// The tombstone closes both: MergeAgentOverrides skips and prunes it, and
 	// ApplyPack refuses to re-create it.
-	s.deps.Config.MarkAgentRemoved(name)
-	s.removeAgentOverlayFile(name)
+	tombstoned := s.deps.Config.MarkAgentRemoved(name)
+	overlayExisted, overlayDeleted := s.removeAgentOverlayFile(name)
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after agent removal", "error", err)
@@ -4581,23 +4581,53 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 	s.refreshAndPersist()
 	s.logger.Info("agent removed and tombstoned", "agent", name,
 		"note", "will not be re-created by an ACMM pack apply until explicitly re-added")
+	// One greppable audit line for the whole removal action: whether the
+	// tombstone was newly written, whether a stale per-agent overlay file was
+	// present and whether it was deleted, and the resulting tombstone set so a
+	// grep by agent name tells the story of a non-sticking removal report
+	// (#2439) without exec'ing into the pod to diff config files.
+	s.logger.Info("audit: agent removed via dashboard",
+		"hive_id", s.deps.Config.HiveID,
+		"agent", name,
+		"tombstoned", tombstoned,
+		"overlay_file_existed", overlayExisted,
+		"overlay_file_deleted", overlayDeleted,
+		"removed_agents", s.deps.Config.RemovedAgents,
+	)
 	jsonResponse(w, agentDeletionResponse("removed", name, packLevelsDefining(name)))
 }
 
 // removeAgentOverlayFile deletes /data/agent-configs/<name>.yaml. A leftover
 // overlay file is re-merged by every config load, which is one of the two ways
 // a deleted agent used to come back.
-func (s *Server) removeAgentOverlayFile(name string) {
+//
+// Returns (existed, deleted) purely for the caller's audit log: existed reports
+// whether a per-agent overlay file was present before the delete (the stale-file
+// resurrection vector), and deleted reports whether the removal succeeded. The
+// deletion behavior itself is unchanged — an error is still non-fatal because the
+// tombstone already prevents the merge from resurrecting the agent.
+func (s *Server) removeAgentOverlayFile(name string) (existed, deleted bool) {
 	agentsDir := s.deps.Config.Data.AgentsDir
 	if agentsDir == "" {
-		return
+		return false, false
+	}
+	// Observe presence before deleting so the audit log can distinguish
+	// "no stale file" from "stale file removed". Stat errors other than
+	// not-exist leave existed false — we only claim a file was present when
+	// we positively saw one.
+	overlayPath := filepath.Join(agentsDir, name+".yaml")
+	if _, statErr := os.Stat(overlayPath); statErr == nil {
+		existed = true
 	}
 	if err := config.RemoveAgentFile(agentsDir, name); err != nil {
 		// Not fatal: the tombstone already prevents the merge from
-		// resurrecting the agent. Log it so a stale file is still visible.
-		s.logger.Error("failed to remove agent overlay file after delete (tombstone still applies)",
-			"agent", name, "error", err)
+		// resurrecting the agent. Log it at WARN so a stale file — the
+		// resurrection vector for #2439 — is loud and greppable with its path.
+		s.logger.Warn("failed to remove agent overlay file after delete (tombstone still applies)",
+			"hive_id", s.deps.Config.HiveID, "agent", name, "path", overlayPath, "error", err)
+		return existed, false
 	}
+	return existed, existed
 }
 
 // packLevelsDefining returns the ACMM levels whose pack defines this agent, so

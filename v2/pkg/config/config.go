@@ -2033,6 +2033,15 @@ func LoadWithDashboardOverlay(path string) (*Config, error) {
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
+		// Observability (#2439): this runs on boot AND on every ~2-min config reload,
+		// so keep it at DEBUG. It confirms the reload adopted the overlay's tombstones
+		// BEFORE the fullness guard below — the exact ordering whose absence let the
+		// deleted agents reappear on an interval.
+		slog.Default().Debug("reload: adopted removed-agents from overlay",
+			"hive_id", cfg.HiveID,
+			"count", len(cfg.RemovedAgents),
+			"agents", cfg.RemovedAgents,
+		)
 	}
 	// Guard: the overlay must look like a full hive config (same check the
 	// entrypoint and validateSaveGuard apply) before we trust its agents.

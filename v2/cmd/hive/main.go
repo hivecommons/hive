@@ -750,6 +750,16 @@ func main() {
 	cfg.HiveID = loadOrGenerateHiveID(logger)
 	os.Setenv("HIVE_ID", cfg.HiveID)
 
+	// Observability (#2439): report the removed-agents tombstone LoadWithDashboardOverlay
+	// adopted from the dashboard overlay at boot, BEFORE the startup ApplyPack below. On
+	// a non-sticking-removal report this line is the first check — an empty set here on a
+	// hive that removed an agent means the tombstone did not persist across the restart.
+	logger.Info("boot: loaded removed-agents tombstone",
+		"hive_id", cfg.HiveID,
+		"count", len(cfg.RemovedAgents),
+		"agents", cfg.RemovedAgents,
+	)
+
 	// Surface config provenance: when the persisted runtime config exists, init
 	// containers restore it over the ConfigMap seed on restart, so edits made
 	// only to the seed (or only to the live file) silently lose to it.
@@ -2055,6 +2065,16 @@ func main() {
 			newCfg.MarkAgentRemoved(name)
 		}
 		newCfg.PruneRemovedAgents()
+
+		// Observability (#2439): this is the ~2-min interval reload path, so keep it
+		// at DEBUG to avoid spamming a healthy hive. When a removal is not sticking,
+		// enabling DEBUG shows the tombstone surviving each swap — an empty count here
+		// while the agent keeps reappearing localizes the leak to this union-preserve.
+		logger.Debug("reload: preserved removed-agents",
+			"hive_id", cfg.HiveID,
+			"count", len(newCfg.RemovedAgents),
+			"agents", newCfg.RemovedAgents,
+		)
 
 		// Capture the outgoing GitHub App identity before the swap so we can
 		// tell whether the reload changed it.
