@@ -1055,11 +1055,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// distinct reporters have ALTERNATED (A→B→A), so a normal rollout
 		// (A→B, B stays) never trips it.
 		ConflictingReporters: s.noteReporter(payload.HiveID, sanitizeField(payload.Reporter)),
-		// Advisory-staleness signal. Both are sanitized like every other
-		// spoke-reported string; an empty AdvisoryLastPostedAt is preserved as
-		// empty so the render/gate reads it as UNKNOWN rather than stale.
+		// Advisory-staleness signal. The timestamp is an identifier-shaped
+		// string; the error is prose (a sentence shown to a human), so it takes
+		// the prose sanitizer — html.EscapeString here plus the dashboard's own
+		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
+		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
+		// it as UNKNOWN rather than stale.
 		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
-		AdvisoryError:        sanitizeField(payload.AdvisoryError),
+		AdvisoryError:        sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
@@ -1131,13 +1134,19 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			for i := range payload.Leaderboard {
 				payload.Leaderboard[i].HiveName = hiveName
 				payload.Leaderboard[i].GitHubUsername = sanitizeHeartbeatField(payload.Leaderboard[i].GitHubUsername)
-				payload.Leaderboard[i].CurrentTask = sanitizeHeartbeatField(payload.Leaderboard[i].CurrentTask)
+				// A task title is prose ("Fix the drift hover"), not an
+				// identifier — the strict sanitizer would strip its spaces.
+				payload.Leaderboard[i].CurrentTask = sanitizeProseField(payload.Leaderboard[i].CurrentTask)
 			}
 			return payload.Leaderboard
 		}(),
-		Online:                  true,
-		GitHubAppRequired:       payload.GitHubAppRequired,
-		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
+		Online:            true,
+		GitHubAppRequired: payload.GitHubAppRequired,
+		// GitHubAppPermIssue is a full sentence the drift hover renders
+		// verbatim ("The GitHub App is configured but has no installation.
+		// Install the app on your org to enable agents.") — the strict
+		// identifier sanitizer stripped every space out of it.
+		GitHubAppPermIssue:      sanitizeProseField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
 		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
 		GitHubAppID:             payload.GitHubAppID,
@@ -1203,7 +1212,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if payload.UpgradeFailed {
 		entry.Upgrading = false
 		entry.UpgradeFailed = true
-		entry.UpgradeError = sanitizeHeartbeatField(payload.UpgradeError)
+		// An upgrade failure cause is a sentence, not an identifier.
+		entry.UpgradeError = sanitizeProseField(payload.UpgradeError)
 		entry.UpgradeFailedAt = time.Now()
 		s.mu.Lock()
 		delete(s.heartbeatUpgrade, payload.HiveID)
@@ -2695,6 +2705,60 @@ func sanitizeHeartbeatField(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// maxProseFieldRunes bounds a sanitized prose field. Prose fields carry full
+// sentences (an App-permission diagnosis, an upgrade failure cause), so the cap
+// is generous — but a hostile or broken spoke must still not be able to bloat
+// the registry with megabytes of "detail".
+const maxProseFieldRunes = 500
+
+// sanitizeProseField sanitizes a spoke-reported HUMAN-READABLE string — a
+// sentence the dashboard renders verbatim to a person, such as
+// GitHubAppPermIssue, UpgradeError, AdvisoryError, a leaderboard task title, or
+// a health-check detail.
+//
+// This is DELIBERATELY separate from sanitizeHeartbeatField. That allowlist is
+// for identifiers (hive IDs, branches, owners, agent states) where a space is
+// never legal — but applied to prose it deletes every space and renders
+// "The GitHub App is configured but has no installation." as
+// "TheGitHubAppisconfiguredbuthasnoinstallation.", which is exactly the
+// mangling this variant exists to end. Identifiers keep the strict sanitizer;
+// only fields whose value is a sentence go through this one.
+//
+// What it keeps: letters, digits, spaces, and normal punctuation — the text
+// stays a readable sentence.
+//
+// What it still neutralizes:
+//   - '<', '>' and '&' are dropped, so no tag and no entity can ever be formed
+//     even if a future render path forgets to escape;
+//   - backticks are dropped (they are fenced-code/template metacharacters in
+//     every surface this text could be pasted into);
+//   - newlines, carriage returns and tabs become single spaces (these fields
+//     are one-line UI strings and log fields);
+//   - all other control characters (including ESC, so ANSI sequences cannot
+//     ride along) are dropped;
+//   - runs of whitespace collapse to one space and the result is trimmed;
+//   - length is capped at maxProseFieldRunes.
+func sanitizeProseField(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch {
+		case c == '\n' || c == '\r' || c == '\t':
+			b.WriteRune(' ')
+		case c < 0x20 || c == 0x7f:
+			// Other control characters (incl. ESC): dropped entirely.
+		case c == '<' || c == '>' || c == '&' || c == '`':
+			// HTML/markup-dangerous: dropped.
+		default:
+			b.WriteRune(c)
+		}
+	}
+	out := strings.Join(strings.Fields(b.String()), " ")
+	if runes := []rune(out); len(runes) > maxProseFieldRunes {
+		out = string(runes[:maxProseFieldRunes])
+	}
+	return out
 }
 
 // sanitizeImageRef sanitizes a container image reference reported by a spoke.

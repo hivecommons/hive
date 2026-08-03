@@ -8412,13 +8412,36 @@ const dashboardHTML = `<!DOCTYPE html>
         s = s || {};
         var sc = DRIFT_SEVERITY_COLORS[s.severity] || DRIFT_SEVERITY_COLORS.info;
         var sevLabel = DRIFT_SEVERITY_LABELS[s.severity] || s.severity || 'Info';
+        /* First-seen: the server stamps when this (hive, kind) signal was
+           first observed and keeps it stable while the signal persists (see
+           stampDriftFirstSeen in drift.go). Rendered compactly ("since
+           3:42 PM" today, "since Jul 30, 3:42 PM" otherwise) with the full
+           absolute datetime as the title. An absent or unparseable stamp
+           (older hub, hand-built report) renders nothing rather than a
+           misleading "since Invalid Date". */
+        var since = '';
+        if (s.firstSeen) {
+          var fd = new Date(s.firstSeen);
+          if (!isNaN(fd.getTime())) {
+            var timeStr = fd.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+            var label = fd.toDateString() === new Date().toDateString()
+              ? timeStr
+              : fd.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ', ' + timeStr;
+            since = '<div style="color:var(--muted);font-size:0.62rem;margin-top:2px" title="' +
+              esc(fd.toLocaleString()) + '">since ' + esc(label) + '</div>';
+          }
+        }
+        /* overflow-wrap on the reason: a signal can quote an unbroken token
+           (an image ref, a URL, a pod name) longer than the panel is wide,
+           and without a break opportunity it runs out of the dialog. */
         return '<div style="padding:4px 0;border-top:1px solid var(--border)">' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">' +
           '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + sc + ';flex:0 0 auto"></span>' +
           '<span style="color:' + sc + ';font-weight:600">' + esc(driftKindLabel(s.kind)) + '</span>' +
           '<span style="margin-left:auto;color:var(--muted);font-size:0.6rem;text-transform:uppercase;letter-spacing:0.04em">' + esc(sevLabel) + '</span>' +
           '</div>' +
-          '<div style="color:var(--muted);line-height:1.4">' + esc(s.reason || '') + '</div>' +
+          '<div style="color:var(--muted);line-height:1.4;overflow-wrap:anywhere;word-break:break-word">' + esc(s.reason || '') + '</div>' +
+          since +
           '</div>';
       }).join('');
 
@@ -8429,7 +8452,8 @@ const dashboardHTML = `<!DOCTYPE html>
         'color:' + c + ';background:rgba(255,255,255,0.04);border:1px solid ' + c + '">' + d.count + '</span>' +
         '<span class="hive-access-pop" style="display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:60;' +
         'min-width:260px;max-width:380px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);' +
-        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;white-space:normal">' +
+        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;' +
+        'white-space:normal;overflow-wrap:anywhere;word-break:break-word">' +
         '<span style="display:block;color:' + c + ';font-weight:600;margin-bottom:2px">' + esc(heading) + '</span>' +
         rows + '</span></span>';
     }
