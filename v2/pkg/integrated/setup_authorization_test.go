@@ -374,6 +374,9 @@ func TestGeneratedNodeSetupVerifierMatchesGoBindingAndFailsClosed(t *testing.T) 
 			t.Fatal(removeErr)
 		}
 	}
+	if err := os.Remove(filepath.Join(repository, ".visual-hive", "snapshots", "home", "chromium.png")); err != nil {
+		t.Fatal(err)
+	}
 	setupAuthorizationGit(t, repository, "add", "-A")
 	setupAuthorizationGit(t, repository, "commit", "-m", "managed uninstall")
 	headSHA = strings.TrimSpace(setupAuthorizationGit(t, repository, "rev-parse", "HEAD"))

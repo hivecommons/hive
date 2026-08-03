@@ -1194,10 +1194,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 			if agent.specialistReady {
 				launchCmd = codexSpecialistLaunchCmd(binary, model, filepath.Join(m.workDir, agent.Name))
 			} else {
-				launchCmd = binary
-				if model != "" {
-					launchCmd = fmt.Sprintf("%s --model %s", binary, model)
-				}
+				launchCmd = codexAgentLaunchCmd(binary, model)
 			}
 		case "gemini":
 			launchCmd = fmt.Sprintf("%s --model %s", binary, model)
@@ -2098,12 +2095,12 @@ func paneShowsInputPrompt(output string) bool {
 		return false
 	}
 	return strings.Contains(output, "❯") ||
+		paneHasInputPrompt(output) ||
 		strings.Contains(output, "goose is ready") ||
 		strings.Contains(output, "> Enter to send") ||
 		strings.Contains(output, "\n>\n") ||
 		strings.Contains(output, bobInputPlaceholder) ||
-		strings.Contains(output, bobInputPlaceholderDefault) ||
-		strings.Contains(output, codexInputPromptMarker)
+		strings.Contains(output, bobInputPlaceholderDefault)
 }
 
 // waitForCLIReady polls the tmux pane until the CLI shows its ready prompt
@@ -2181,6 +2178,7 @@ func (m *Manager) waitForInputPromptForAgent(agent *AgentProcess) bool {
 				"has_goose_ready", strings.Contains(output, "goose is ready"),
 				"has_enter", strings.Contains(output, "> Enter to send"),
 				"has_arrow", strings.Contains(output, "❯"),
+				"has_codex_arrow", strings.Contains(output, "\u203a"),
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
@@ -5717,6 +5715,8 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 			cmd += fmt.Sprintf(" --deny-tool='%s'", copilotPattern)
 		}
 		return cmd
+	case "codex":
+		return codexAgentLaunchCmd(binary, model)
 	default:
 		cmd := binary
 		if model != "" {
@@ -5724,6 +5724,19 @@ func toolRulesToLaunchCmd(binary, model, backend string, tools *config.ToolsConf
 		}
 		return cmd
 	}
+}
+
+// codexAgentLaunchCmd keeps ordinary long-lived Codex agents unattended while
+// preserving Codex's sandbox. Without the explicit approval policy, a
+// read-only command that needs network access can stop the entire Hive agent at
+// an interactive prompt that no controller owns. This is intentionally not the
+// dangerous sandbox bypass flag.
+func codexAgentLaunchCmd(binary, model string) string {
+	cmd := binary
+	if model != "" {
+		cmd = fmt.Sprintf("%s --model %s", binary, model)
+	}
+	return cmd + " --ask-for-approval never"
 }
 
 // connectionMCPFlags builds MCP-related launch flags from connection configs.

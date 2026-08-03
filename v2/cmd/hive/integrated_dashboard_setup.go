@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 		"--runtime", "local",
 		"--visual-hive=true",
 		"--visual-hive-ref", request.VisualHiveRef,
+		"--max-active-issues", strconv.Itoa(dashboardSetupMaxActiveIssues(request)),
 	}
 	stateDir, err := dashboardSetupStateDir(request.Repository)
 	if err != nil {
@@ -46,11 +48,7 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 			return replay, replayErr
 		}
 		if recoverStale {
-			result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
-			if mutationErr == nil {
-				result = reconcileDashboardSetupRuntime(ctx, result)
-			}
-			return result, mutationErr
+			return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token)
 		}
 	}
 	plan, planBytes, err := dashboardSetupCLIRunner(ctx, append(append([]string(nil), baseArgs...), "--plan"), token)
@@ -72,11 +70,32 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 	if request.ExpectedPlanSHA256 != planSHA256 {
 		return nil, fmt.Errorf("integrated setup plan changed: expected %s, current %s", request.ExpectedPlanSHA256, planSHA256)
 	}
-	result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
-	if mutationErr == nil {
-		result = reconcileDashboardSetupRuntime(ctx, result)
+	return runDashboardSetupMutationWithRuntimeRebind(ctx, stateDir, request, baseArgs, token)
+}
+
+func runDashboardSetupMutationWithRuntimeRebind(
+	ctx context.Context,
+	stateDir string,
+	request dashboard.IntegratedSetupRequest,
+	baseArgs []string,
+	token string,
+) (map[string]any, error) {
+	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
+	if normalVisualRuntime != nil {
+		if err := normalVisualRuntime.Stop(ctx); err != nil {
+			return nil, fmt.Errorf("quiesce normal Visual Hive runtime before managed setup apply: %w", err)
+		}
 	}
-	return result, mutationErr
+	result, mutationErr := runDashboardSetupMutation(ctx, stateDir, request, baseArgs, token)
+	if mutationErr != nil {
+		if normalVisualRuntime != nil {
+			if _, resumeErr := normalVisualRuntime.ResumeReconciliation(ctx); resumeErr != nil {
+				return result, errors.Join(mutationErr, fmt.Errorf("restore normal Visual Hive runtime after failed managed setup apply: %w", resumeErr))
+			}
+		}
+		return result, mutationErr
+	}
+	return reconcileDashboardSetupRuntime(ctx, result), nil
 }
 
 func reconcileDashboardSetupRuntime(ctx context.Context, result map[string]any) map[string]any {
@@ -130,16 +149,24 @@ func dashboardSetupPlanDigest(request dashboard.IntegratedSetupRequest, planByte
 		return "", fmt.Errorf("encode canonical setup plan: %w", err)
 	}
 	binding := strings.Join([]string{
-		"hive.dashboard-integrated-setup-plan.v3",
+		"hive.dashboard-integrated-setup-plan.v4",
 		request.RequestID,
 		request.Repository,
 		request.Coverage,
 		request.Automation,
 		request.Provider,
 		request.VisualHiveRef,
+		strconv.Itoa(dashboardSetupMaxActiveIssues(request)),
 	}, "\n") + "\n"
 	sum := sha256.Sum256(append([]byte(binding), canonicalPlan...))
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func dashboardSetupMaxActiveIssues(request dashboard.IntegratedSetupRequest) int {
+	if request.MaxActiveIssues == nil {
+		return 5
+	}
+	return *request.MaxActiveIssues
 }
 
 func ensureDashboardSetupJSONEOF(decoder *json.Decoder) error {

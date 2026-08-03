@@ -160,6 +160,48 @@ func TestApplyPullRequestCheckUpdateHasNoIssueBaselineMergeOrWriteAuthority(t *t
 	}
 }
 
+func TestReadyRepairCanRetireAfterIndependentDefaultBranchResolution(t *testing.T) {
+	update := testPullRequestCheckUpdate(t)
+	update.Identity.Source.Head.Ref = "hive/repair-ready"
+	update.Identity.Source.Workflow.RunID = "88"
+	update.Identity.Workflow.RunID = "88"
+	update.Identity.Source.Workflow.SourceName = "visual-hive-pr-source-88-2"
+	update.Identity.Source.Workflow.BundleName = "visual-hive-pr-bundle-88-2"
+	update.Identity.SourceArtifact.Name = "visual-hive-pr-source-88-2"
+	update.Identity.BundleArtifact.Name = "visual-hive-pr-bundle-88-2"
+	update.Identity.ReplayKey = PullRequestCheckReplayKey(update.Identity)
+	update.ReceiptSHA256 = testExternalReceiptDigest(t, update.Identity)
+	lifecycle, fingerprint := testPullRequestCheckLifecycle(t, update.Identity)
+	finding := lifecycle.state.Findings[fingerprint]
+	finding.IssueNumber = 41
+	finding.IssueURL = "https://github.test/owner/repo/issues/41"
+	finding.PRURL = "https://github.test/owner/repo/pull/7"
+	if _, err := lifecycle.ApplySealedPullRequestCheckReceipt(fingerprint, testSealedPullRequestCheckUpdate(t, update)); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := json.Marshal(update.Identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retired := RetiredRepair{
+		PullRequestNumber: 7, PullRequestURL: finding.PRURL, Branch: update.Identity.Source.Head.Ref,
+		HeadSHA: update.Identity.Source.Head.SHA, BaseBranch: update.Identity.Source.Base.Ref,
+		BaseSHA: update.Identity.Source.Base.SHA, CurrentDefaultHeadSHA: strings.Repeat("c", 40),
+		VerdictReceipt: receipt, VerdictReceiptSHA256: update.ReceiptSHA256,
+	}
+	if err := lifecycle.ValidateRepairRetirement(fingerprint, retired); err != nil {
+		t.Fatalf("ready superseded repair failed read-only retirement validation: %v", err)
+	}
+	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := lifecycle.Finding(fingerprint)
+	if after.Status != StatusIssueOpen || after.PRNumber != 0 || after.Branch != "" || after.RepairCommitSHA != "" ||
+		after.LastRetiredRepair == nil || after.LastRetiredRepair.VerdictReceiptSHA256 != update.ReceiptSHA256 {
+		t.Fatalf("ready repair retirement lost issue or exact receipt history: %+v", after)
+	}
+}
+
 func testApplyPullRequestCheckUpdate(t *testing.T, update PullRequestCheckReceiptSnapshot) (ApplyPullRequestCheckUpdateResult, error) {
 	t.Helper()
 	lifecycle, fingerprint := testPullRequestCheckLifecycle(t, update.Identity)

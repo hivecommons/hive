@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,5 +132,225 @@ func TestCancelForUninstallRetiresAllJournaledRefsAcrossCrashAndPreservesForeign
 		if value, err := readRepairRef(ctx, repository, foreign); err != nil || value != head {
 			t.Fatalf("foreign ref %s was consumed by retry: value=%q err=%v", foreign, value, err)
 		}
+	}
+}
+
+func TestCancelForUninstallRecoversJournaledRefAfterWorktreeLocatorLoss(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		changeIdentity bool
+		wantError      bool
+	}{
+		{name: "exact journaled repository"},
+		{name: "changed repository identity", changeIdentity: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			repository, _ := seedGitRepository(t)
+			worktree := filepath.Join(t.TempDir(), "repair-worktree")
+			branch := "hive/repair-uninstall-locator-loss"
+			runCommand(t, repository, "git", "worktree", "add", "-b", branch, worktree)
+			state, err := NewStore(filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := strings.TrimSpace(gitOutput(t, worktree, "rev-parse", "HEAD"))
+			tree := strings.TrimSpace(gitOutput(t, worktree, "rev-parse", "HEAD^{tree}"))
+			attempt := Attempt{
+				Repository: "owner/repo", RepositoryFingerprint: "owner/repo:locator-loss", Attempt: 1, AttemptCounted: true,
+				Branch: branch, Worktree: worktree, Stage: StageModelComplete, Provider: "test", StartedAt: time.Now().UTC(),
+			}
+			worker := &Worker{State: state}
+			ref, commit, binding, err := worker.createSealedTreeGuard(ctx, attempt, sealedTreeModelBase, tree, head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt.ModelBaseTree, attempt.ModelBaseParent = tree, head
+			attempt.ModelBaseGuardRef, attempt.ModelBaseGuardCommit, attempt.ModelBaseGuardBinding, attempt.ModelBaseGuardKind = ref, commit, binding, sealedTreeModelBase
+			if err := state.Put(attempt); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(worktree, ".git"), nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if test.changeIdentity {
+				runCommand(t, repository, "git", "remote", "set-url", "origin", "https://example.invalid/other.git")
+			}
+
+			err = state.CancelForUninstall(ctx, attempt.RepositoryFingerprint)
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "journaled repository identity changed") {
+					t.Fatalf("expected fail-closed identity error, got %v", err)
+				}
+				if value, readErr := readRepairRef(ctx, repository, ref); readErr != nil || value != commit {
+					t.Fatalf("guard ref changed after rejected recovery: value=%q err=%v", value, readErr)
+				}
+				current, exists := state.Get(attempt.RepositoryFingerprint)
+				if !exists || current.Stage == StageCancelled {
+					t.Fatalf("attempt was cancelled after rejected recovery: %+v", current)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, readErr := readRepairRef(ctx, repository, ref); readErr != nil || value != "" {
+				t.Fatalf("journal-owned guard ref survived recovery: value=%q err=%v", value, readErr)
+			}
+			current, exists := state.Get(attempt.RepositoryFingerprint)
+			if !exists || current.Stage != StageCancelled || !UninstallRefsRetired(current) {
+				t.Fatalf("recovered attempt did not reach a retired terminal state: %+v", current)
+			}
+		})
+	}
+}
+
+func TestRepairSymbolicRefMissingAcceptsOnlyExactGitMissingRefDiagnostic(t *testing.T) {
+	ref := "refs/hive/repair-sealed-trees/model_base/" + strings.Repeat("a", 24) + "/" + strings.Repeat("b", 32)
+	for _, test := range []struct {
+		name     string
+		exitCode int
+		output   string
+		want     bool
+	}{
+		{name: "traditional quiet missing ref", exitCode: 1, want: true},
+		{name: "new Git missing ref", exitCode: 128, output: "fatal: No such ref: " + ref + "\n", want: true},
+		{name: "different missing ref", exitCode: 128, output: "fatal: No such ref: refs/hive/other", want: false},
+		{name: "repository corruption", exitCode: 128, output: "fatal: not a git repository", want: false},
+		{name: "unexpected exit", exitCode: 2, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := repairSymbolicRefMissing(test.exitCode, test.output, ref); got != test.want {
+				t.Fatalf("repairSymbolicRefMissing()=%t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestCancelForUninstallRemovesOnlyJournaledZeroByteBrokenRef(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		refBytes  []byte
+		wantError bool
+	}{
+		{name: "zero-byte disk truncation"},
+		{name: "non-empty invalid foreign value", refBytes: []byte("foreign\n"), wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			repository, _ := seedGitRepository(t)
+			state, err := NewStore(filepath.Join(t.TempDir(), "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "HEAD"))
+			tree := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "HEAD^{tree}"))
+			attempt := Attempt{
+				Repository: "owner/repo", RepositoryFingerprint: "owner/repo:broken-ref", Attempt: 1, AttemptCounted: true,
+				Branch: "main", Worktree: repository, Stage: StageModelComplete, Provider: "test", StartedAt: time.Now().UTC(),
+			}
+			worker := &Worker{State: state}
+			ref, commit, binding, err := worker.createSealedTreeGuard(ctx, attempt, sealedTreeModelBase, tree, head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt.ModelBaseTree, attempt.ModelBaseParent = tree, head
+			attempt.ModelBaseGuardRef, attempt.ModelBaseGuardCommit, attempt.ModelBaseGuardBinding, attempt.ModelBaseGuardKind = ref, commit, binding, sealedTreeModelBase
+			if err := state.Put(attempt); err != nil {
+				t.Fatal(err)
+			}
+			commonDir := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "--git-common-dir"))
+			if !filepath.IsAbs(commonDir) {
+				commonDir = filepath.Join(repository, commonDir)
+			}
+			refPath := filepath.Join(commonDir, filepath.FromSlash(ref))
+			if err := os.WriteFile(refPath, test.refBytes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err = state.CancelForUninstall(ctx, attempt.RepositoryFingerprint)
+			if test.wantError {
+				if err == nil || !strings.Contains(err.Error(), "not an ordinary zero-byte loose ref") {
+					t.Fatalf("expected fail-closed broken-ref error, got %v", err)
+				}
+				if data, readErr := os.ReadFile(refPath); readErr != nil || string(data) != string(test.refBytes) {
+					t.Fatalf("non-empty broken ref changed: data=%q err=%v", data, readErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, statErr := os.Lstat(refPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("zero-byte broken ref survived retirement: %v", statErr)
+			}
+			current, exists := state.Get(attempt.RepositoryFingerprint)
+			if !exists || current.Stage != StageCancelled || !UninstallRefsRetired(current) {
+				t.Fatalf("broken-ref recovery did not reach terminal retirement: %+v", current)
+			}
+		})
+	}
+}
+
+func TestRetireBrokenUnpublishedBranchForUninstall(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		remoteAbsent bool
+		refBytes     []byte
+		wantRemoved  bool
+		wantError    string
+	}{
+		{name: "exact zero-byte unpublished branch", remoteAbsent: true, wantRemoved: true},
+		{name: "remote absence required", wantError: "absence was not proven"},
+		{name: "non-empty invalid ref is preserved", remoteAbsent: true, refBytes: []byte("foreign\n"), wantError: "not an ordinary zero-byte loose ref"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository, _ := seedGitRepository(t)
+			fingerprint := "owner/repo:unpublished-branch"
+			attempt := Attempt{
+				Repository: "owner/repo", RepositoryFingerprint: fingerprint, Attempt: 1,
+				Branch: repairBranchName(fingerprint, 0, 1), Worktree: "discarded-worktree", Stage: StageCancelled,
+			}
+			commonDir := strings.TrimSpace(gitOutput(t, repository, "rev-parse", "--git-common-dir"))
+			if !filepath.IsAbs(commonDir) {
+				commonDir = filepath.Join(repository, commonDir)
+			}
+			refPath := filepath.Join(commonDir, filepath.FromSlash("refs/heads/"+attempt.Branch))
+			if err := os.MkdirAll(filepath.Dir(refPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(refPath, test.refBytes, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			removed, err := RetireBrokenUnpublishedBranchForUninstall(context.Background(), repository, attempt, test.remoteAbsent)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) || removed {
+					t.Fatalf("result removed=%t err=%v", removed, err)
+				}
+				if data, readErr := os.ReadFile(refPath); readErr != nil || string(data) != string(test.refBytes) {
+					t.Fatalf("denied ref changed: data=%q err=%v", data, readErr)
+				}
+				return
+			}
+			if err != nil || removed != test.wantRemoved {
+				t.Fatalf("result removed=%t err=%v", removed, err)
+			}
+			if _, statErr := os.Lstat(refPath); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("zero-byte unpublished ref survived: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestRetireBrokenUnpublishedBranchRejectsDifferentBinding(t *testing.T) {
+	repository, _ := seedGitRepository(t)
+	attempt := Attempt{
+		Repository: "owner/repo", RepositoryFingerprint: "owner/repo:different-binding", Attempt: 1,
+		Branch: "hive/repair-foreign-a1", Stage: StageCancelled,
+	}
+	removed, err := RetireBrokenUnpublishedBranchForUninstall(context.Background(), repository, attempt, true)
+	if err != nil || removed {
+		t.Fatalf("different branch binding removed=%t err=%v", removed, err)
 	}
 }

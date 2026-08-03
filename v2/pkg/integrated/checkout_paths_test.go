@@ -133,6 +133,45 @@ func TestSetupStateRootRejectsCommonOrNonemptyProjectDirectories(t *testing.T) {
 	}
 }
 
+func TestSetupStateRootAcceptsOnlyRuntimePreparedEmptyIntegratedScaffold(t *testing.T) {
+	t.Run("exact-empty-scaffold", func(t *testing.T) {
+		state := t.TempDir()
+		if err := os.Mkdir(filepath.Join(state, "integrated"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateSetupStateRoot(state, "owner/repo"); err != nil {
+			t.Fatalf("runtime-prepared empty integrated scaffold was rejected: %v", err)
+		}
+	})
+
+	t.Run("scaffold-with-top-level-sibling", func(t *testing.T) {
+		state := t.TempDir()
+		if err := os.Mkdir(filepath.Join(state, "integrated"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(state, "sentinel"), []byte("unowned"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateSetupStateRoot(state, "owner/repo"); err == nil {
+			t.Fatal("runtime scaffold with an unowned top-level sibling was accepted")
+		}
+	})
+
+	t.Run("nonempty-scaffold", func(t *testing.T) {
+		state := t.TempDir()
+		integrated := filepath.Join(state, "integrated")
+		if err := os.Mkdir(integrated, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(integrated, "sentinel"), []byte("unowned"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateSetupStateRoot(state, "owner/repo"); err == nil {
+			t.Fatal("nonempty runtime scaffold without ownership was accepted")
+		}
+	})
+}
+
 func TestManagedCheckoutRejectsPreplacedRootAndGitLinksBeforeGit(t *testing.T) {
 	for _, linkGit := range []bool{false, true} {
 		name := "checkout-root"

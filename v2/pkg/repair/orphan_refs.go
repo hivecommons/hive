@@ -33,6 +33,12 @@ type repairRefJournalEntry struct {
 	TombstoneRef       string    `json:"tombstone_ref,omitempty"`
 }
 
+type brokenRepairRefError struct{ ref string }
+
+func (e *brokenRepairRefError) Error() string {
+	return "repair ref " + e.ref + " has a broken loose value"
+}
+
 var repairRefTombstonePattern = regexp.MustCompile(`^refs/hive/repair-ref-tombstones/[a-f0-9]{24}/[a-f0-9]{32}$`)
 
 func (s *Store) recordRepairRefIntent(ctx context.Context, worktree, repository, kind, ref, commit, binding string) error {
@@ -296,7 +302,7 @@ func readRepairRef(ctx context.Context, worktree, ref string) (string, error) {
 		return "", fmt.Errorf("repair ref %s is symbolic and cannot carry cleanup authority", ref)
 	} else {
 		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		if !errors.As(err, &exitErr) || !repairSymbolicRefMissing(exitErr.ExitCode(), symbolicOutput.String(), ref) {
 			return "", fmt.Errorf("inspect repair ref %s for symbolic indirection: %w: %s", ref, err, safeExcerpt(symbolicOutput.String()))
 		}
 	}
@@ -311,6 +317,9 @@ func readRepairRef(ctx context.Context, worktree, ref string) (string, error) {
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(output.String()) == "" {
 			return "", nil
 		}
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(output.String()) == "warning: ignoring broken ref "+ref {
+			return "", &brokenRepairRefError{ref: ref}
+		}
 		return "", fmt.Errorf("read repair ref %s: %w: %s", ref, err, safeExcerpt(output.String()))
 	}
 	value := strings.TrimSpace(output.String())
@@ -318,6 +327,17 @@ func readRepairRef(ctx context.Context, worktree, ref string) (string, error) {
 		return "", fmt.Errorf("repair ref %s resolved to invalid object ID", ref)
 	}
 	return value, nil
+}
+
+// Git versions disagree on the exit code for `symbolic-ref -q` when the exact
+// ref does not exist. Exit 128 is accepted only for Git's exact missing-ref
+// diagnostic; every other fatal error remains fail-closed. rev-parse below is
+// still the authority for whether an ordinary direct ref exists.
+func repairSymbolicRefMissing(exitCode int, output, ref string) bool {
+	if exitCode == 1 {
+		return true
+	}
+	return exitCode == 128 && strings.TrimSpace(output) == "fatal: No such ref: "+ref
 }
 
 // sweepOrphanRepairRefs deletes only an exact ref/commit/binding named by a

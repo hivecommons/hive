@@ -1465,6 +1465,13 @@ func (s *Server) handleGHAuth(w http.ResponseWriter, r *http.Request) {
 
 const userTokenPath = "/data/gh-user-token"
 
+func (s *Server) resolvedUserTokenPath() string {
+	if strings.TrimSpace(s.userTokenPath) != "" {
+		return s.userTokenPath
+	}
+	return userTokenPath
+}
+
 func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) {
 	// The login status must reflect THIS request's user, not the single
 	// persisted token. On a direct-route spoke, resolving from the per-user
@@ -1487,7 +1494,7 @@ func (s *Server) handleGHUserAuthStatus(w http.ResponseWriter, r *http.Request) 
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
 		return
 	}
-	tokenData, err := os.ReadFile(userTokenPath)
+	tokenData, err := os.ReadFile(s.resolvedUserTokenPath())
 	if err != nil || len(strings.TrimSpace(string(tokenData))) == 0 {
 		jsonResponse(w, map[string]interface{}{"logged_in": false})
 		return
@@ -1600,12 +1607,13 @@ func (s *Server) handleGHUserAuthPoll(w http.ResponseWriter, r *http.Request) {
 	// clobber the owner's token/client with their own identity. Viewers still
 	// get a per-user session below, they just don't become the hive's actor.
 	if role == config.RoleOwner {
-		tmpTokenPath := userTokenPath + ".tmp"
+		tokenPath := s.resolvedUserTokenPath()
+		tmpTokenPath := tokenPath + ".tmp"
 		if err := os.WriteFile(tmpTokenPath, []byte(token), 0o600); err != nil {
 			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to save token: " + err.Error()})
 			return
 		}
-		if err := os.Rename(tmpTokenPath, userTokenPath); err != nil {
+		if err := os.Rename(tmpTokenPath, tokenPath); err != nil {
 			jsonResponse(w, map[string]interface{}{"status": "error", "error": "failed to persist token: " + err.Error()})
 			return
 		}
@@ -1842,7 +1850,7 @@ func (s *Server) handleGHUserAuthLogout(w http.ResponseWriter, r *http.Request) 
 	// logging-out owner's own token stranded on disk. Viewer logouts leave the
 	// hive's user client intact.
 	if !s.directRouteAuthzEnabled() || loggedOutRole == config.RoleOwner {
-		os.Remove(userTokenPath)
+		os.Remove(s.resolvedUserTokenPath())
 	}
 	clearSessionCookie(w)
 	s.auditFromRequest(r, "gh_auth_logout", "", "")
@@ -1866,7 +1874,7 @@ func (s *Server) restoreGHUserSession() {
 		return
 	}
 
-	tokenData, err := os.ReadFile(userTokenPath)
+	tokenData, err := os.ReadFile(s.resolvedUserTokenPath())
 	if err != nil {
 		return // no saved token — nothing to restore
 	}
@@ -1879,7 +1887,7 @@ func (s *Server) restoreGHUserSession() {
 	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
 	if err != nil {
 		s.deps.Logger.Warn("saved GitHub user token is invalid, removing", "error", err)
-		os.Remove(userTokenPath)
+		os.Remove(s.resolvedUserTokenPath())
 		return
 	}
 

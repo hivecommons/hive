@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/kubestellar/hive/v2/pkg/automation"
+	"github.com/kubestellar/hive/v2/pkg/integrated"
 	"github.com/kubestellar/hive/v2/pkg/repair"
 	"github.com/kubestellar/hive/v2/pkg/visualhive"
 )
@@ -38,5 +40,33 @@ func TestExactWorkerCommandsRejectsUnconfiguredVisualHiveLookalikes(t *testing.T
 				t.Fatalf("unconfigured validation command %q did not fail closed", command)
 			}
 		})
+	}
+}
+
+func TestNormalRepairRetirementRequiresCurrentL4RepairAuthority(t *testing.T) {
+	config := integrated.Config{
+		Repository: "owner/repo", Automation: integrated.AutomationRepairPR,
+		ACMMLevel: 4, MaxRepairAttempts: 3,
+	}
+	finding := visualhive.FindingLifecycle{
+		IssueKind: "visual_regression", OwningAgentHint: "hive/quality",
+		ValidationCommand: "npm test", AffectedContracts: []string{"app"},
+		RepairAttempts: 1,
+	}
+	decisions := normalRepairRetirementDecisions(config, 4, finding)
+	if len(decisions) != 2 || decisions[0].Action != automation.ActionCloseRepairPR ||
+		decisions[1].Action != automation.ActionDeleteRepairBranch ||
+		!decisions[0].Allowed || !decisions[1].Allowed {
+		t.Fatalf("L4 repair authority did not permit exact retirement: %+v", decisions)
+	}
+	config.Paused = true
+	paused := normalRepairRetirementDecisions(config, 4, finding)
+	if len(paused) != 2 || paused[0].Allowed || paused[1].Allowed {
+		t.Fatalf("paused authority permitted remote retirement: %+v", paused)
+	}
+	config.Paused = false
+	lowerNormalAuthority := normalRepairRetirementDecisions(config, 2, finding)
+	if lowerNormalAuthority[0].Allowed || lowerNormalAuthority[1].Allowed {
+		t.Fatalf("lower ordinary Hive ACMM permitted repair retirement: %+v", lowerNormalAuthority)
 	}
 }

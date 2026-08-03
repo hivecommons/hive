@@ -131,6 +131,13 @@ func TestIntegratedControlPlanAndApplyUseClosedTypedContract(t *testing.T) {
 		requests[1].Operation != "control-apply" || requests[1].ExpectedPlanSHA256 != strings.Repeat("a", 64) {
 		t.Fatalf("apply status=%d requests=%+v body=%s", apply.Code, requests, apply.Body.String())
 	}
+	retire := doIntegratedPost(server, "/api/integrated/control/plan", map[string]any{
+		"operation":  "repair-retire",
+		"request_id": "proof-cycle-a-retire-001",
+	})
+	if retire.Code != http.StatusOK || len(requests) != 3 || requests[2].Action != "repair-retire" {
+		t.Fatalf("repair-retire status=%d requests=%+v body=%s", retire.Code, requests, retire.Body.String())
+	}
 
 	unknown := doIntegratedPost(server, "/api/integrated/control/plan", map[string]any{
 		"operation":  "shell",

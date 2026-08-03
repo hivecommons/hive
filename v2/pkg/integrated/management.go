@@ -222,6 +222,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 	managed := managedSetupFilesForConfig(config)
 	title := ""
 	marker := fmt.Sprintf("<!-- hive-%s: %s -->", options.Operation, strings.ToLower(config.Repository))
+	unmergedSetupTargetClean := false
 	if options.Operation == OperationUninstall {
 		marker, err = newUninstallMarker(config.Repository)
 		if err != nil {
@@ -260,7 +261,18 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 		if managedPathPreimagesConfigured(config) && !hasValidManagedPathPreimages(config) {
 			return result, fmt.Errorf("managed uninstall refuses an invalid repository preimage ledger")
 		}
-		if hasValidManagedPathPreimages(config) {
+		unmergedSetupTargetClean, err = unmergedSetupProposalLeavesTargetUninstalled(ctx, options.GitHub, config, baseSHA)
+		if err != nil {
+			return result, fmt.Errorf("verify unmerged setup recovery before uninstall: %w", err)
+		}
+		if unmergedSetupTargetClean {
+			if err := store.AuditStrict(AuditEntry{
+				Action: "uninstall_unmerged_setup_target", Allowed: true, Repository: config.Repository,
+				Detail: fmt.Sprintf("pr=%d head=%s base=%s target_already_uninstalled=true", config.SetupPRNumber, config.SetupHeadSHA, baseSHA),
+			}); err != nil {
+				return result, err
+			}
+		} else if hasValidManagedPathPreimages(config) {
 			if err := restoreManagedPathPreimages(config.CheckoutDir, config); err != nil {
 				return result, fmt.Errorf("restore repository-owned files during uninstall: %w", err)
 			}
@@ -274,6 +286,13 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 				}
 			}
 		}
+		if !unmergedSetupTargetClean {
+			baselinePaths, restoreErr := restoreSetupBaselinePreimages(ctx, options.GitHub, config.CheckoutDir, config)
+			if restoreErr != nil {
+				return result, fmt.Errorf("restore setup baseline preimages during uninstall: %w", restoreErr)
+			}
+			managed = sortedUniquePaths(append(managed, baselinePaths...))
+		}
 		title = uninstallTitle()
 	}
 	if err := authorizeSetup(store, policy, config.Repository, automation.ActionSetupCommit); err != nil {
@@ -282,7 +301,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 	if err := stageManagedPaths(ctx, config.CheckoutDir, managed); err != nil {
 		return result, err
 	}
-	if options.Operation == OperationUninstall {
+	if options.Operation == OperationUninstall && !unmergedSetupTargetClean {
 		if err := applyManagedPathPreimageModes(ctx, config.CheckoutDir, config); err != nil {
 			return result, err
 		}
@@ -316,7 +335,7 @@ func RunManagement(ctx context.Context, options ManagementOptions) (ManagementRe
 			return result, err
 		}
 		if intent.Phase == uninstallAlreadyClean {
-			if err := VerifyUninstalledSetupAtCommit(ctx, options.GitHub, config, intent.BaseSHA); err != nil {
+			if err := verifyUninstalledSetupOrPendingProposalAtCommit(ctx, options.GitHub, config, intent.BaseSHA); err != nil {
 				return result, fmt.Errorf("cleanup produced no changes but target is not exactly uninstalled: %w", err)
 			}
 			if err := store.AuditStrict(AuditEntry{Action: "uninstall_already_clean", Allowed: true, Repository: config.Repository, Detail: "head=" + intent.BaseSHA}); err != nil {

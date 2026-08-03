@@ -227,10 +227,13 @@ func TestManagedQuickstartAndRequiredActionsDistinguishRuntimeOwner(t *testing.T
 				t.Fatalf("required actions did not describe %q owner: %s", test.name, actions)
 			}
 			if test.normalOwner {
-				for _, required := range []string{"HIVE_STATE_DIR=" + stateDir, "normal project scope includes `owner/console-fork`", "dashboard listener is HTTP-ready", "restarting ordinary Hive/dashboard", "Use `hive stop` only when `hive status` or `hive doctor` directs cleanup"} {
+				for _, required := range []string{"HIVE_STATE_DIR=" + stateDir, "normal project scope includes `owner/console-fork`", "dashboard listener is HTTP-ready", "automatically reconciles and activates the installed contract without a restart", "Use `hive stop` only when `hive status` or `hive doctor` directs cleanup"} {
 					if !strings.Contains(guide, required) {
 						t.Fatalf("normal-owner guide omitted %q: %s", required, guide)
 					}
+				}
+				if !strings.Contains(actions, "automatically reconciles and activates the installed contract without a restart") {
+					t.Fatalf("normal-owner required actions still advertise a restart: %s", actions)
 				}
 				for _, forbidden := range []string{"\nhive run --json\n", "\nhive start --json\n", "\nhive stop --json\n"} {
 					if strings.Contains(guide, forbidden) {

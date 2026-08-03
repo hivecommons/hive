@@ -44,6 +44,8 @@ type normalVisualRuntimeInstance interface {
 	Binding() normalVisualRuntimeBinding
 	Start(context.Context) error
 	Trigger(context.Context) error
+	PlanRepairRetirement(context.Context) (normalservice.RepairRetirementPlan, error)
+	RetireRepair(context.Context, *normalservice.RepairRetirementPlan) error
 	Import(context.Context, hivegithub.VerifiedVisualHiveArtifact) (visualcontroller.Result, error)
 	Stop(context.Context) error
 	ClearDashboardReadiness() error
@@ -184,6 +186,40 @@ func (manager *normalVisualRuntimeManager) Trigger(ctx context.Context) error {
 		return errors.New("normal Visual Hive service is not running in this dashboard process")
 	}
 	return instance.Trigger(ctx)
+}
+
+func (manager *normalVisualRuntimeManager) PlanRepairRetirement(ctx context.Context) (normalservice.RepairRetirementPlan, error) {
+	active, err := manager.Ensure(ctx)
+	if err != nil {
+		return normalservice.RepairRetirementPlan{}, err
+	}
+	if !active {
+		return normalservice.RepairRetirementPlan{}, errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	manager.mu.Lock()
+	instance := manager.active
+	manager.mu.Unlock()
+	if instance == nil {
+		return normalservice.RepairRetirementPlan{}, errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	return instance.PlanRepairRetirement(ctx)
+}
+
+func (manager *normalVisualRuntimeManager) RetireRepair(ctx context.Context, expected *normalservice.RepairRetirementPlan) error {
+	active, err := manager.Ensure(ctx)
+	if err != nil {
+		return err
+	}
+	if !active {
+		return errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	manager.mu.Lock()
+	instance := manager.active
+	manager.mu.Unlock()
+	if instance == nil {
+		return errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	return instance.RetireRepair(ctx, expected)
 }
 
 func (manager *normalVisualRuntimeManager) Import(ctx context.Context, source hivegithub.VerifiedVisualHiveArtifact) (visualcontroller.Result, error) {
@@ -465,6 +501,26 @@ func (runtime *concreteNormalVisualRuntime) Trigger(ctx context.Context) error {
 		return errors.New("normal Visual Hive service is not running in this dashboard process")
 	}
 	return runner.Trigger(ctx)
+}
+
+func (runtime *concreteNormalVisualRuntime) PlanRepairRetirement(ctx context.Context) (normalservice.RepairRetirementPlan, error) {
+	runtime.mu.Lock()
+	runner, started := runtime.runner, runtime.started
+	runtime.mu.Unlock()
+	if !started || runner == nil {
+		return normalservice.RepairRetirementPlan{}, errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	return runner.PlanRepairRetirement(ctx)
+}
+
+func (runtime *concreteNormalVisualRuntime) RetireRepair(ctx context.Context, expected *normalservice.RepairRetirementPlan) error {
+	runtime.mu.Lock()
+	runner, started := runtime.runner, runtime.started
+	runtime.mu.Unlock()
+	if !started || runner == nil {
+		return errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	return runner.RetireRepair(ctx, expected)
 }
 
 func (runtime *concreteNormalVisualRuntime) Import(ctx context.Context, source hivegithub.VerifiedVisualHiveArtifact) (visualcontroller.Result, error) {

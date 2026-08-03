@@ -401,7 +401,7 @@ func setupAuthorizationWorkflowVerifierScript() string {
               }
               const diff = diffEvidence(baseSHA, headSHA);
               diffDigest = diff.digest;
-              for (const record of diff.records) if (!allowed.has(record.pathText) && !(operation !== "uninstall" && baselinePattern.test(record.pathText))) throw new Error("unmanaged setup path " + record.pathText);
+              for (const record of diff.records) if (!allowed.has(record.pathText) && !baselinePattern.test(record.pathText)) throw new Error("unmanaged setup path " + record.pathText);
               const files = requiredFiles(headSHA);
               const binding = {
                 schema_version: schema,

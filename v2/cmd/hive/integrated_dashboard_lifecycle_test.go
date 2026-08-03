@@ -47,14 +47,78 @@ func installDashboardLifecycleFakes(t *testing.T) {
 	t.Helper()
 	originalRunner := dashboardLifecycleCLIRunner
 	originalTrigger := dashboardLifecycleTrigger
+	originalPlanRetirement := dashboardLifecyclePlanRetirement
+	originalRetireRepair := dashboardLifecycleRetireRepair
 	originalStopNormalVisual := dashboardLifecycleStopNormalVisual
 	originalNormalBeadsDirs := append([]string(nil), dashboardLifecycleNormalBeadsDirs...)
 	t.Cleanup(func() {
 		dashboardLifecycleCLIRunner = originalRunner
 		dashboardLifecycleTrigger = originalTrigger
+		dashboardLifecyclePlanRetirement = originalPlanRetirement
+		dashboardLifecycleRetireRepair = originalRetireRepair
 		dashboardLifecycleStopNormalVisual = originalStopNormalVisual
 		dashboardLifecycleNormalBeadsDirs = originalNormalBeadsDirs
 	})
+}
+
+func TestDashboardRepairRetirementPlanApplyAndReplayBindExactProposal(t *testing.T) {
+	stateDir := writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	dashboardLifecycleCLIRunner = func(_ context.Context, args []string, _ string, _ bool) (map[string]any, []byte, error) {
+		if args[0] != "status" {
+			t.Fatalf("unexpected command %v", args)
+		}
+		return map[string]any{
+			"schema_version": "hive.status.v1", "config": map[string]any{"repository": "owner/repository"},
+		}, []byte(`{"schema_version":"hive.status.v1"}`), nil
+	}
+	retirement := normalservice.RepairRetirementPlan{
+		SchemaVersion: "hive.normal-visual-repair-retirement.v1", Repository: "owner/repository",
+		RepositoryFingerprint: strings.Repeat("a", 64), SourceExternalRef: "visual-hive://owner/repository/finding",
+		WorkflowKey: strings.Repeat("b", 64), WorkOrderID: "swo-" + strings.Repeat("c", 64),
+		RequestSHA256: strings.Repeat("c", 64), BaseBranch: "main", BaseSHA: strings.Repeat("d", 40),
+		CurrentDefaultHeadSHA: strings.Repeat("e", 40), PullRequestNumber: 17,
+		PullRequestURL: "https://github.test/owner/repository/pull/17", Branch: "hive/repair-proof",
+		HeadSHA: strings.Repeat("f", 40), VerdictReceiptSHA256: strings.Repeat("1", 64),
+		RepairRetirementReasonCode: "default_branch_changed_requires_fresh_authoritative_verification",
+	}
+	planCalls, applyCalls := 0, 0
+	dashboardLifecyclePlanRetirement = func(context.Context) (normalservice.RepairRetirementPlan, error) {
+		planCalls++
+		return retirement, nil
+	}
+	dashboardLifecycleRetireRepair = func(_ context.Context, expected *normalservice.RepairRetirementPlan) error {
+		applyCalls++
+		if expected == nil || !reflect.DeepEqual(*expected, retirement) {
+			t.Fatalf("retirement apply lost exact plan: %+v", expected)
+		}
+		return nil
+	}
+	request := dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-plan", Action: "repair-retire",
+		RequestID: "cycle-a-repair-retire-001",
+	}
+	plan, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := plan["repair_retirement"].(normalservice.RepairRetirementPlan); !ok || !reflect.DeepEqual(got, retirement) {
+		t.Fatalf("control plan did not expose exact repair binding: %+v", plan)
+	}
+	request.Operation = "control-apply"
+	request.ExpectedPlanSHA256, _ = plan["plan_sha256"].(string)
+	result, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil || result["outcome"] != "retired_for_fresh_verification" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	replay, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil || replay["idempotent_replay"] != true || applyCalls != 1 || planCalls != 2 {
+		t.Fatalf("replay=%+v err=%v planCalls=%d applyCalls=%d", replay, err, planCalls, applyCalls)
+	}
+	ledger, err := loadDashboardLifecycleLedger(stateDir)
+	if err != nil || len(ledger.Entries) != 1 || ledger.Entries[0].Operation != "repair-retire" {
+		t.Fatalf("ledger=%+v err=%v", ledger, err)
+	}
 }
 
 func TestDashboardIntegratedLifecycleStatusUsesAuthoritativeState(t *testing.T) {

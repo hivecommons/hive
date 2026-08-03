@@ -1303,7 +1303,12 @@ func main() {
 			if _, statErr := os.Stat(beadsFile); statErr != nil {
 				continue // no beads.json in this directory
 			}
-			store, err := beads.NewStore(agentBeadsDir)
+			// Retired or currently disabled managed roles still share their
+			// durable store with the ordinary Hive process. Reopening one as a
+			// private store would chmod the role directory from 2770 to 0700,
+			// so a later supported ACMM transition could not persist lifecycle
+			// beads through the same in-process controller.
+			store, err := openConfiguredRoleBeadStore(name, agentBeadsDir)
 			if err != nil {
 				logger.Warn("failed to load orphan beads store", "agent", name, "error", err)
 				continue
@@ -3476,15 +3481,24 @@ func main() {
 }
 
 func openConfiguredRoleBeadStore(role, dir string) (*beads.Store, error) {
-	if isManagedRoleBeadStore(role, dir) {
+	return openRoleBeadStoreUnderRoot(role, dir, "/data/beads")
+}
+
+func openRoleBeadStoreUnderRoot(role, dir, root string) (*beads.Store, error) {
+	if isRoleBeadStoreUnderRoot(role, dir, root) {
 		return beads.NewSharedStore(dir)
 	}
 	return beads.NewStore(dir)
 }
 
 func isManagedRoleBeadStore(role, dir string) bool {
+	return isRoleBeadStoreUnderRoot(role, dir, "/data/beads")
+}
+
+func isRoleBeadStoreUnderRoot(role, dir, root string) bool {
 	role = strings.TrimSpace(role)
-	return role != "" && role != "." && role != ".." && !strings.ContainsAny(role, `/\\`) && sameSpecialistRuntimePath(dir, filepath.Join("/data/beads", role))
+	return role != "" && role != "." && role != ".." && !strings.ContainsAny(role, `/\\`) &&
+		sameSpecialistRuntimePath(dir, filepath.Join(root, role))
 }
 
 func runEarlyCLI(args []string) (bool, int) {

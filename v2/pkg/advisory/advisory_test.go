@@ -70,6 +70,37 @@ func TestFormatDigestMarkdownEmpty(t *testing.T) {
 	}
 }
 
+func TestFormatDigestMarkdownIsStableAcrossFindingOrder(t *testing.T) {
+	generatedAt := time.Date(2026, time.August, 2, 3, 10, 0, 0, time.UTC)
+	findings := []Finding{
+		{Agent: "quality", Type: "bug", Severity: "low", Title: "Zulu", Detail: "second", File: "z.go", Line: 20},
+		{Agent: "quality", Type: "bug", Severity: "low", Title: "Alpha", Detail: "first", File: "a.go", Line: 10},
+		{Agent: "scanner", Type: "security", Severity: "high", Title: "Guard", Detail: "high", File: "guard.go", Line: 1},
+	}
+	forward := &Digest{
+		GeneratedAt: generatedAt,
+		ByAgent: map[string][]Finding{
+			"quality": {findings[0], findings[1]},
+			"scanner": {findings[2]},
+		},
+		TotalCount: len(findings),
+	}
+	reversed := &Digest{
+		GeneratedAt: generatedAt,
+		ByAgent: map[string][]Finding{
+			"scanner": {findings[2]},
+			"quality": {findings[1], findings[0]},
+		},
+		TotalCount: len(findings),
+	}
+
+	gotForward := FormatDigestMarkdown(forward, "", "")
+	gotReversed := FormatDigestMarkdown(reversed, "", "")
+	if gotForward != gotReversed {
+		t.Fatalf("finding order changed advisory markdown:\nforward:\n%s\nreversed:\n%s", gotForward, gotReversed)
+	}
+}
+
 func TestFormatDigestMarkdownWithResolved(t *testing.T) {
 	d := &Digest{
 		GeneratedAt: time.Now(),

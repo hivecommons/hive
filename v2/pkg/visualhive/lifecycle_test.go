@@ -2,7 +2,9 @@ package visualhive
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -246,6 +248,270 @@ func TestLifecycleIssuePRMergeCloseAndRecurrence(t *testing.T) {
 	if reopenEntry.Action != OutboxReopenIssue || reopenEntry.IssueNumber != 101 {
 		t.Fatalf("expected reopen issue outbox, got %+v", reopenEntry)
 	}
+}
+
+func TestLifecycleRetiredRepairRequiresFreshAuthoritativeAbsence(t *testing.T) {
+	root := t.TempDir()
+	beadStore := newTestBeadStore(t, filepath.Join(root, "beads"))
+	lifecyclePath := filepath.Join(root, "lifecycle")
+	lifecycle, err := NewLifecycleStore(lifecyclePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := validateLocalBundle(t, writeLifecycleBundle(t, filepath.Join(root, "present"), "bundle-retire-present", "present", "refs/heads/main", true))
+	if _, err := lifecycle.ApplyBundle(present, beadStore, ApplyLifecycleOptions{TargetRef: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := present.Manifest.Observations[0].RepositoryFingerprint
+	if err := lifecycle.MarkIssueOpened(fingerprint, 101, "https://github.test/owner/repo/issues/101"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkOutboxAttempt(lifecycle.PendingOutbox()[0].ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	branch := "hive/repair-retire-proof"
+	head := strings.Repeat("a", 40)
+	base := strings.Repeat("b", 40)
+	current := strings.Repeat("c", 40)
+	if err := lifecycle.MarkRepairStarted(fingerprint, branch); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkPROpen(fingerprint, head, 202, "https://github.test/owner/repo/pull/202"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkChecks(fingerprint, head, false); err != nil {
+		t.Fatal(err)
+	}
+	retired := RetiredRepair{
+		PullRequestNumber: 202, PullRequestURL: "https://github.test/owner/repo/pull/202",
+		Branch: branch, HeadSHA: head, BaseBranch: "main", BaseSHA: base, CurrentDefaultHeadSHA: current,
+	}
+	findingBeforeRetirement, _ := lifecycle.Finding(fingerprint)
+	retired.VerdictReceipt, retired.VerdictReceiptSHA256 = failedRetirementReceipt(t, findingBeforeRetirement, retired)
+	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err != nil {
+		t.Fatalf("exact retirement replay was not idempotent: %v", err)
+	}
+	lifecycle, err = NewLifecycleStore(lifecyclePath)
+	if err != nil {
+		t.Fatalf("reload exact retired repair history: %v", err)
+	}
+	finding, _ := lifecycle.Finding(fingerprint)
+	if finding.Status != StatusIssueOpen || finding.IssueNumber != 101 || finding.RepairAttempts != 1 ||
+		finding.PRNumber != 0 || finding.Branch != "" || finding.RepairCommitSHA != "" ||
+		finding.LastRetiredRepair == nil || finding.ResolvedAt != nil {
+		t.Fatalf("retirement resolved the issue or lost bounded history: %+v", finding)
+	}
+
+	absent := validateLocalBundle(t, writeLifecycleBundle(t, filepath.Join(root, "absent"), "bundle-retire-absent", "absent", "refs/heads/main", true))
+	resolved, err := lifecycle.ApplyBundle(absent, beadStore, ApplyLifecycleOptions{
+		TargetRef: "main", CurrentTargetCommitSHA: absent.Manifest.Source.CommitSHA,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Resolved != 1 {
+		t.Fatalf("fresh authoritative absence did not resolve retired proposal finding: %+v", resolved)
+	}
+}
+
+func TestRetiredRepairVerificationReconcilesAbsenceWithoutAdmittingUnrelatedWork(t *testing.T) {
+	root := t.TempDir()
+	beadStore := newTestBeadStore(t, filepath.Join(root, "beads"))
+	lifecycle, err := NewLifecycleStore(filepath.Join(root, "lifecycle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiredObservation := publicationTestObservation("retired-source", "canonical", "retired-root", "visual_regression", "Retired repair")
+	unrelatedObservation := publicationTestObservation("unrelated-source", "canonical", "unrelated-root", "visual_regression", "Unrelated existing finding")
+	initial := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "initial"), "bundle-retirement-initial",
+		[]Observation{retiredObservation, unrelatedObservation}, true,
+	))
+	if _, err := lifecycle.ApplyBundle(initial, beadStore, ApplyLifecycleOptions{TargetRef: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	retiredFingerprint := initial.Manifest.Observations[0].RepositoryFingerprint
+	unrelatedFingerprint := initial.Manifest.Observations[1].RepositoryFingerprint
+	if err := lifecycle.MarkIssueOpened(retiredFingerprint, 101, "https://github.test/owner/repo/issues/101"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkIssueOpened(unrelatedFingerprint, 102, "https://github.test/owner/repo/issues/102"); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range lifecycle.PendingOutbox() {
+		if err := lifecycle.MarkOutboxAttempt(entry.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	branch := "hive/repair-retirement-scope"
+	head, base, current := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+	if err := lifecycle.MarkRepairStarted(retiredFingerprint, branch); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkPROpen(retiredFingerprint, head, 202, "https://github.test/owner/repo/pull/202"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lifecycle.MarkChecks(retiredFingerprint, head, false); err != nil {
+		t.Fatal(err)
+	}
+	retired := RetiredRepair{
+		PullRequestNumber: 202, PullRequestURL: "https://github.test/owner/repo/pull/202",
+		Branch: branch, HeadSHA: head, BaseBranch: "main", BaseSHA: base, CurrentDefaultHeadSHA: current,
+	}
+	findingBeforeRetirement, _ := lifecycle.Finding(retiredFingerprint)
+	retired.VerdictReceipt, retired.VerdictReceiptSHA256 = failedRetirementReceipt(t, findingBeforeRetirement, retired)
+	if err := lifecycle.RetireRepairForVerification(retiredFingerprint, retired); err != nil {
+		t.Fatal(err)
+	}
+
+	retiredObservation.State = "absent"
+	newObservation := publicationTestObservation("new-source", "canonical", "new-root", "visual_regression", "New unrelated finding")
+	verification := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "verification"), "bundle-retirement-verification",
+		[]Observation{retiredObservation, unrelatedObservation, newObservation}, true,
+	))
+	applied, err := lifecycle.ApplyBundle(verification, beadStore, ApplyLifecycleOptions{
+		TargetRef: "main", CurrentTargetCommitSHA: verification.Manifest.Source.CommitSHA,
+		RetiredRepairVerificationOnly: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.Resolved != 1 || applied.Created != 0 || applied.Reopened != 0 || applied.BeadsCreated != 0 || applied.Deferred != 2 {
+		t.Fatalf("retired-repair verification admitted unrelated work: %+v", applied)
+	}
+	retiredFinding, _ := lifecycle.Finding(retiredFingerprint)
+	if retiredFinding.Status != StatusResolved || retiredFinding.PendingIssueAction != OutboxCloseIssue {
+		t.Fatalf("retired finding was not authoritatively reconciled: %+v", retiredFinding)
+	}
+	unrelatedFinding, _ := lifecycle.Finding(unrelatedFingerprint)
+	if unrelatedFinding.Status != StatusIssueOpen || unrelatedFinding.PendingIssueAction != "" {
+		t.Fatalf("unrelated existing finding was published or reopened: %+v", unrelatedFinding)
+	}
+	newFingerprint := verification.Manifest.Observations[2].RepositoryFingerprint
+	if _, exists := lifecycle.Finding(newFingerprint); exists {
+		t.Fatal("new unrelated finding was admitted during bounded retirement verification")
+	}
+	pending := lifecycle.PendingOutbox()
+	if len(pending) != 1 || pending[0].Action != OutboxCloseIssue || pending[0].RepositoryFingerprint != retiredFingerprint {
+		t.Fatalf("retirement verification produced unexpected GitHub lifecycle writes: %+v", pending)
+	}
+}
+
+func TestLifecycleRepairRetirementFailsClosedOnWrongReceiptOrUnchangedHead(t *testing.T) {
+	lifecycle, err := NewLifecycleStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := strings.Repeat("a", 64)
+	lifecycle.mu.Lock()
+	lifecycle.state.Findings[fingerprint] = &FindingLifecycle{
+		Repository: "owner/repo", RepositoryID: "123", RepositoryFingerprint: fingerprint, Status: StatusNeedsRevision,
+		IssueNumber: 7, PRNumber: 8, PRURL: "https://example.test/pull/8", Branch: "hive/repair-proof",
+		RepairCommitSHA: strings.Repeat("b", 40),
+	}
+	if err := lifecycle.persistLocked(); err != nil {
+		lifecycle.mu.Unlock()
+		t.Fatal(err)
+	}
+	lifecycle.mu.Unlock()
+	base := strings.Repeat("d", 40)
+	retired := RetiredRepair{
+		PullRequestNumber: 8, PullRequestURL: "https://example.test/pull/8", Branch: "hive/repair-proof",
+		HeadSHA: strings.Repeat("b", 40), BaseBranch: "main", BaseSHA: base, CurrentDefaultHeadSHA: base,
+	}
+	findingBeforeRetirement, _ := lifecycle.Finding(fingerprint)
+	retired.VerdictReceipt, retired.VerdictReceiptSHA256 = failedRetirementReceipt(t, findingBeforeRetirement, retired)
+	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err == nil {
+		t.Fatal("unchanged default head authorized repair retirement")
+	}
+	retired.CurrentDefaultHeadSHA = strings.Repeat("e", 40)
+	retired.VerdictReceiptSHA256 = strings.Repeat("f", 64)
+	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err == nil {
+		t.Fatal("wrong exact-head receipt authorized repair retirement")
+	}
+	var forged failedPullRequestReceiptIdentity
+	if err := json.Unmarshal(retired.VerdictReceipt, &forged); err != nil {
+		t.Fatal(err)
+	}
+	forged.Conclusion = "success"
+	retired.VerdictReceipt, _ = json.Marshal(forged)
+	forgedDigest := sha256.Sum256(retired.VerdictReceipt)
+	retired.VerdictReceiptSHA256 = fmt.Sprintf("%x", forgedDigest[:])
+	if err := lifecycle.RetireRepairForVerification(fingerprint, retired); err == nil {
+		t.Fatal("canonical but non-failing receipt authorized repair retirement")
+	}
+	finding, _ := lifecycle.Finding(fingerprint)
+	if finding.Status != StatusNeedsRevision || finding.PRNumber != 8 {
+		t.Fatalf("denied retirement mutated lifecycle: %+v", finding)
+	}
+}
+
+func TestRetiredRepairExactReceiptSurvivesIndentedPersistenceAndLegacyReload(t *testing.T) {
+	finding := FindingLifecycle{Repository: "owner/repo", RepositoryID: "123"}
+	retired := RetiredRepair{
+		PullRequestNumber: 8, PullRequestURL: "https://example.test/pull/8", Branch: "hive/repair-proof",
+		HeadSHA: strings.Repeat("b", 40), BaseBranch: "main", BaseSHA: strings.Repeat("c", 40),
+		CurrentDefaultHeadSHA: strings.Repeat("d", 40), RetiredAt: time.Unix(1, 0).UTC(),
+	}
+	retired.VerdictReceipt, retired.VerdictReceiptSHA256 = failedRetirementReceipt(t, finding, retired)
+
+	current, err := json.MarshalIndent(retired, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(current, []byte(`"verdict_receipt": "{\"schema_version\"`)) {
+		t.Fatalf("exact receipt was not persisted as an escaped byte-preserving string: %s", current)
+	}
+	var currentReload RetiredRepair
+	if err := json.Unmarshal(current, &currentReload); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRetiredRepairHistory(currentReload); err != nil {
+		t.Fatalf("current exact receipt did not survive indented persistence: %v", err)
+	}
+
+	type legacyRetiredRepair RetiredRepair
+	legacy, err := json.MarshalIndent(legacyRetiredRepair(retired), "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(legacy, []byte(`"verdict_receipt": {`)) {
+		t.Fatalf("legacy fixture did not reproduce the indented object encoding: %s", legacy)
+	}
+	var legacyReload RetiredRepair
+	if err := json.Unmarshal(legacy, &legacyReload); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRetiredRepairHistory(legacyReload); err != nil {
+		t.Fatalf("legacy indented receipt was not recovered to its exact canonical bytes: %v", err)
+	}
+}
+
+func failedRetirementReceipt(t *testing.T, finding FindingLifecycle, retired RetiredRepair) (json.RawMessage, string) {
+	t.Helper()
+	identity := failedPullRequestReceiptIdentity{
+		SchemaVersion: "hive.normal-visual-pr-failure.v1",
+		Repository:    finding.Repository, RepositoryID: finding.RepositoryID,
+		PullRequestNumber: retired.PullRequestNumber, PullRequestURL: retired.PullRequestURL,
+		BaseBranch: retired.BaseBranch, BaseSHA: retired.BaseSHA,
+		HeadBranch: retired.Branch, HeadSHA: retired.HeadSHA,
+		WorkflowRunID: 77, WorkflowRunAttempt: 1,
+		WorkflowName: "Visual Hive PR", WorkflowPath: ".github/workflows/visual-hive-pr.yml",
+		WorkflowEvent: "pull_request", Conclusion: "failure",
+		RunURL:     "https://github.test/owner/repo/actions/runs/77",
+		ArtifactID: 88, ArtifactName: "visual-hive-pr", ArtifactIndexSHA256: strings.Repeat("a", 64),
+		Authority: "check-evidence-only; no completion, consume, merge, or resolution authority",
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(encoded)
+	return encoded, fmt.Sprintf("%x", digest[:])
 }
 
 func TestRepairedFindingCannotResolveBeforeRecordedPostMergeVerification(t *testing.T) {
@@ -582,11 +848,11 @@ func TestResolutionAllowsLegacyTestAdequacyOnlyWhenUnitLayerWasEvaluated(t *test
 		Source: Source{Ref: "refs/heads/main"},
 		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true, EvaluatedContracts: []string{"testing-layer:2"}},
 	}
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); !allowed {
 		t.Fatalf("verified Unit layer should resolve a legacy test-adequacy finding: %s", reason)
 	}
 	manifest.Scan.EvaluatedContracts = []string{"testing-layer:3"}
-	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); allowed {
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); allowed {
 		t.Fatal("a different testing layer must not resolve the Unit adequacy finding")
 	}
 	manifest.Scan.EvaluatedContracts = []string{"testing-layer:2"}
@@ -596,11 +862,11 @@ func TestResolutionAllowsLegacyTestAdequacyOnlyWhenUnitLayerWasEvaluated(t *test
 	finding.MergeSHA = "repair-merge"
 	finding.ValidationRunID = "run-verified"
 	verified := ApplyLifecycleOptions{VerificationRunID: "run-verified", VerificationCommitSHA: "target-head", VerifiedMergeAncestorFingerprint: "finding", VerifiedMergeAncestorSHA: "repair-merge"}
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", verified); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", verified, false); !allowed {
 		t.Fatalf("verified non-conflicting descendant should be accepted: %s", reason)
 	}
 	verified.VerificationCommitSHA = "different-head"
-	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", verified); allowed {
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", verified, false); allowed {
 		t.Fatal("descendant authorization bound to a different verification SHA must be rejected")
 	}
 }
@@ -611,16 +877,110 @@ func TestResolutionAllowsRepositoryAuditFindingsOnlyForExactEvaluatedScope(t *te
 		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true, EvaluatedContracts: []string{"workflow-safety"}},
 	}
 	finding := &FindingLifecycle{IssueKind: "workflow_safety"}
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); !allowed {
 		t.Fatalf("verified workflow audit should resolve a repository workflow finding: %s", reason)
 	}
 	manifest.Scan.EvaluatedContracts = []string{"provider-governance"}
-	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); allowed {
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); allowed {
 		t.Fatal("provider evidence must not resolve a workflow finding")
 	}
 	finding.IssueKind = "provider_governance"
-	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}); !allowed {
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); !allowed {
 		t.Fatalf("verified provider evidence should resolve a provider finding: %s", reason)
+	}
+}
+
+func TestResolutionAllowsStorybookDiscoveryOnlyWithVerifiedRepositoryMap(t *testing.T) {
+	manifest := Manifest{
+		Source: Source{Ref: "refs/heads/main"},
+		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true},
+	}
+	finding := &FindingLifecycle{
+		RepositoryFingerprint: "discovery",
+		IssueKind:             "missing_visual_coverage",
+		OwningAgentHint:       "visual-hive/map",
+		Title:                 "[Visual Hive] Repo map finding: storybook-discovery:.storybook/QualificationMissing.stories.tsx",
+		Status:                StatusIssueOpen,
+	}
+	if allowed, _ := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, false); allowed {
+		t.Fatal("an unverified repository map must not resolve a Storybook discovery finding")
+	}
+	if allowed, reason := resolutionAllowed(finding, manifest, true, "main", ApplyLifecycleOptions{}, true); !allowed {
+		t.Fatalf("complete verified repository map should resolve omitted Storybook discovery finding: %s", reason)
+	}
+
+	wrongOwner := *finding
+	wrongOwner.OwningAgentHint = "hive/quality"
+	if allowed, _ := resolutionAllowed(&wrongOwner, manifest, true, "main", ApplyLifecycleOptions{}, true); allowed {
+		t.Fatal("repository map evidence must not resolve a non-map finding")
+	}
+	wrongTitle := *finding
+	wrongTitle.Title = "[Visual Hive] Add visual coverage: generic advisory"
+	if allowed, _ := resolutionAllowed(&wrongTitle, manifest, true, "main", ApplyLifecycleOptions{}, true); allowed {
+		t.Fatal("repository map evidence must not resolve a generic coverage finding")
+	}
+	activeRepair := *finding
+	activeRepair.PRNumber = 17
+	if allowed, _ := resolutionAllowed(&activeRepair, manifest, true, "main", ApplyLifecycleOptions{}, true); allowed {
+		t.Fatal("repository map evidence must not bypass post-repair verification")
+	}
+}
+
+func TestVerifiedRepositoryMapRequiresExactIndexedBytes(t *testing.T) {
+	root := t.TempDir()
+	data := []byte(`{"schemaVersion":"visual-hive.repo-map.v1","findings":[]}`)
+	path := filepath.Join(root, filepath.FromSlash(repositoryMapArtifactPath))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bundle := &ValidatedBundle{
+		Validation:         Validation{Authoritative: true},
+		sourceVerified:     true,
+		verifiedSourceRoot: root,
+		artifactIndex: &ArtifactIndexReport{Artifacts: []ArtifactIndexEntry{{
+			Path: repositoryMapArtifactPath, Kind: "json", ContentType: "application/json; charset=utf-8",
+			Bytes: int64(len(data)), SHA256: digest(data),
+		}}},
+	}
+	if !bundle.hasVerifiedRepositoryMap() {
+		t.Fatal("exact indexed repository map was not accepted")
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.hasVerifiedRepositoryMap() {
+		t.Fatal("changed repository map bytes retained resolution authority")
+	}
+	bundle.sourceVerified = false
+	if bundle.hasVerifiedRepositoryMap() {
+		t.Fatal("unverified source artifact granted repository-map resolution authority")
+	}
+}
+
+func TestControllerProjectsOmittedStorybookDiscoveryOnlyWithVerifiedRepositoryMap(t *testing.T) {
+	manifest := Manifest{
+		Source: Source{Repository: "owner/repo", Ref: "refs/heads/main"},
+		Scan:   Scan{Scope: "full", AuthoritativeForResolution: true},
+	}
+	finding := &FindingLifecycle{
+		Repository:            "owner/repo",
+		RepositoryFingerprint: "discovery",
+		IssueKind:             "missing_visual_coverage",
+		OwningAgentHint:       "visual-hive/map",
+		Title:                 "[Visual Hive] Repo map finding: storybook-discovery:.storybook/QualificationMissing.stories.tsx",
+		Status:                StatusIssueOpen,
+	}
+	findings := map[string]*FindingLifecycle{"discovery": finding}
+	options := ApplyLifecycleOptions{TargetRef: "main"}
+	if inputs := controllerAbsenceImportInputs(manifest, findings, nil, options, true, false); len(inputs) != 0 {
+		t.Fatalf("controller projected unverified repository-map absence: %+v", inputs)
+	}
+	inputs := controllerAbsenceImportInputs(manifest, findings, nil, options, true, true)
+	if _, ok := inputs["discovery"]; !ok || len(inputs) != 1 {
+		t.Fatalf("controller did not project verified repository-map absence: %+v", inputs)
 	}
 }
 
@@ -1028,6 +1388,49 @@ func TestInactiveHistoricalIssueMustWinCurrentPublicationRankingBeforeReopen(t *
 		finding, exists := lifecycle.Finding(id)
 		if !exists || finding.Status != StatusDetected || finding.PendingIssueAction != OutboxOpenIssue {
 			t.Fatalf("selected current root %q was not published: found=%t finding=%+v", rootCauseKey, exists, finding)
+		}
+	}
+}
+
+func TestCurrentPublicationRankingClearsStalePreAdmissionIssueActions(t *testing.T) {
+	root := t.TempDir()
+	lowOne := publicationTestObservation("low-one", "canonical", "finding/missing_visual_coverage/low-one", "missing_visual_coverage", "Add generic visual coverage one")
+	lowTwo := publicationTestObservation("low-two", "canonical", "finding/missing_visual_coverage/low-two", "missing_visual_coverage", "Add generic visual coverage two")
+	first := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "first"), "bundle-stale-pre-admission-first", []Observation{lowOne, lowTwo}, false,
+	))
+	lifecycle, err := NewLifecycleStore(filepath.Join(root, "lifecycle"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestBeadStore(t, filepath.Join(root, "beads"))
+	if _, err := lifecycle.ApplyBundle(first, store, ApplyLifecycleOptions{DisableIssuePublication: true, MaxActiveIssues: 3, PreferRepairable: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, observation := range first.Manifest.Observations {
+		finding, exists := lifecycle.Finding(observation.RepositoryFingerprint)
+		if !exists || finding.PendingIssueAction != OutboxOpenIssue {
+			t.Fatalf("initial selected finding lacks pre-admission open intent: found=%t finding=%+v", exists, finding)
+		}
+	}
+
+	highOne := publicationTestObservation("high-one", "canonical", "contract/localPreview/high-one", "visual_regression", "high-one failed deterministic validation")
+	highTwo := publicationTestObservation("high-two", "canonical", "contract/localPreview/high-two", "visual_regression", "high-two failed deterministic validation")
+	highThree := publicationTestObservation("high-three", "canonical", "contract/localPreview/high-three", "visual_regression", "high-three failed deterministic validation")
+	second := validateLocalBundle(t, writePublicationLifecycleBundle(
+		t, filepath.Join(root, "second"), "bundle-stale-pre-admission-second", []Observation{lowOne, lowTwo, highOne, highTwo, highThree}, false,
+	))
+	result, err := lifecycle.ApplyBundle(second, store, ApplyLifecycleOptions{DisableIssuePublication: true, MaxActiveIssues: 3, PreferRepairable: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Deferred < 2 {
+		t.Fatalf("lower-ranked findings were not deferred: %+v", result)
+	}
+	for _, observation := range first.Manifest.Observations {
+		finding, exists := lifecycle.Finding(observation.RepositoryFingerprint)
+		if !exists || finding.PendingIssueAction != "" || finding.LastBundleID != second.Manifest.BundleID {
+			t.Fatalf("current ranking retained stale pre-admission issue intent: found=%t finding=%+v", exists, finding)
 		}
 	}
 }

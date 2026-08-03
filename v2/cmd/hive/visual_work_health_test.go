@@ -173,6 +173,7 @@ func TestNormalVisualServiceExpectedIdleResultsRemainHealthy(t *testing.T) {
 	idleResults := []error{
 		normalservice.ErrNoDispatch,
 		normalservice.ErrOpenPullRequest,
+		normalservice.ErrRepairRetirement,
 		normalservice.ErrFinalVerdictPending,
 		integrated.ErrRunInProgress,
 		integrated.ErrNormalVisualSetupBaselinePending,

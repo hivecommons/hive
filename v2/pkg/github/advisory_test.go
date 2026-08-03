@@ -517,7 +517,7 @@ func TestPostAdvisoryDigest_UpdateExisting(t *testing.T) {
 	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/10/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			json.NewEncoder(w).Encode([]map[string]any{
-				{"id": 555, "body": advisoryDigestPrefix + " — old content"},
+				{"id": 555, "body": advisoryDigestPrefix + " — 2026-07-31 06:00 UTC\n\n### Findings\n- old content"},
 			})
 			return
 		}
@@ -532,12 +532,41 @@ func TestPostAdvisoryDigest_UpdateExisting(t *testing.T) {
 	defer server.Close()
 
 	c := newTestClient(t, server, org, []string{repo})
-	err := c.PostAdvisoryDigest(context.Background(), repo, 10, advisoryDigestPrefix+" — new content")
+	err := c.PostAdvisoryDigest(context.Background(), repo, 10, advisoryDigestPrefix+" — 2026-07-31 07:00 UTC\n\n### Findings\n- new content")
 	if err != nil {
 		t.Fatalf("PostAdvisoryDigest: %v", err)
 	}
 	if !commentUpdated {
 		t.Error("expected comment to be updated")
+	}
+}
+
+func TestPostAdvisoryDigest_DoesNotUpdateTimestampOnlyChange(t *testing.T) {
+	org, repo := "testorg", "testrepo"
+	var commentUpdated bool
+	existing := advisoryDigestPrefix + " — 2026-07-31 06:00 UTC\n\n### Findings\n- same finding"
+	next := advisoryDigestPrefix + " — 2026-07-31 07:00 UTC\n\n### Findings\n- same finding"
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/10/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 555, "body": existing},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/comments/555", org, repo), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PATCH" {
+			commentUpdated = true
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": 555})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	c := newTestClient(t, server, org, []string{repo})
+	if err := c.PostAdvisoryDigest(context.Background(), repo, 10, next); err != nil {
+		t.Fatalf("PostAdvisoryDigest: %v", err)
+	}
+	if commentUpdated {
+		t.Error("timestamp-only advisory digest change must not update the GitHub comment")
 	}
 }
 
