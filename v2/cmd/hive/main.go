@@ -727,7 +727,14 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(*configPath)
+	// Use LoadWithDashboardOverlay (not plain Load) so the dashboard overlay's
+	// removed_agents tombstones are populated into cfg.RemovedAgents at boot —
+	// BEFORE the startup ApplyPack below reconciles the ACMM roster. Plain Load
+	// never reads the overlay, so on restart the tombstone was invisible and
+	// ApplyPack re-added deleted pack agents (brainstorm/guide) every time
+	// (#2439). Same return signature as Load; falls back to the seed when no
+	// overlay exists or the pod is not in Kubernetes.
+	cfg, err := config.LoadWithDashboardOverlay(*configPath)
 	if err != nil {
 		logger.Error("failed to load config", "error", err)
 		os.Exit(1)
@@ -2036,6 +2043,18 @@ func main() {
 		if cfg.ACMMLevel != nil {
 			newCfg.ACMMLevel = cfg.ACMMLevel
 		}
+
+		// Preserve removed-agent tombstones across the swap as a union of the
+		// live cfg and the incoming reload. LoadWithDashboardOverlay now carries
+		// the overlay's tombstones into newCfg, but a removal that landed in the
+		// live cfg after this reload's snapshot (or an overlay too short/stale to
+		// echo it back yet) must not be lost — otherwise the next persistState
+		// saver rewrites every layer tombstone-free and the deleted agents
+		// reappear (#2439). Union keeps any tombstone present in either side.
+		for _, name := range cfg.RemovedAgents {
+			newCfg.MarkAgentRemoved(name)
+		}
+		newCfg.PruneRemovedAgents()
 
 		// Capture the outgoing GitHub App identity before the swap so we can
 		// tell whether the reload changed it.
