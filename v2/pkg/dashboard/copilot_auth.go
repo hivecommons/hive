@@ -18,12 +18,6 @@ const (
 	// for the device flow (same app the Copilot CLI authenticates as).
 	copilotClientID = "Iv1.b507a08c87ecfe98"
 
-	// copilotDeviceCodeURL starts a device-flow authorization.
-	copilotDeviceCodeURL = "https://github.com/login/device/code"
-
-	// copilotAccessTokenURL is polled until the user enters the code.
-	copilotAccessTokenURL = "https://github.com/login/oauth/access_token"
-
 	// copilotDefaultPollIntervalSec is used when GitHub doesn't specify one.
 	copilotDefaultPollIntervalSec = 5
 
@@ -36,6 +30,23 @@ const (
 
 	// copilotHTTPTimeout limits each GitHub API call.
 	copilotHTTPTimeout = 30 * time.Second
+)
+
+// copilotDeviceCodeURL, copilotAccessTokenURL, and copilotUserTokenPath are
+// `var`s (not `const`) purely so tests can redirect them at a httptest server
+// / t.TempDir() path (see copilot_auth_test.go). Production always uses the
+// values below; nothing else in this file mutates them.
+var (
+	// copilotDeviceCodeURL starts a device-flow authorization.
+	copilotDeviceCodeURL = "https://github.com/login/device/code"
+
+	// copilotAccessTokenURL is polled until the user enters the code.
+	copilotAccessTokenURL = "https://github.com/login/oauth/access_token"
+
+	// copilotUserTokenPath mirrors agent.CopilotUserTokenPath; kept as an
+	// overridable var (test-only seam) rather than referencing the agent
+	// package constant directly everywhere below.
+	copilotUserTokenPath = agent.CopilotUserTokenPath
 )
 
 // copilotAuthFlow holds server-side state for an in-progress device-flow login.
@@ -61,7 +72,7 @@ func (s *Server) handleCopilotAuthStatus(w http.ResponseWriter, r *http.Request)
 	s.copilotAuthFlow.mu.Unlock()
 
 	loggedIn := false
-	if data, err := os.ReadFile(agent.CopilotUserTokenPath); err == nil && strings.TrimSpace(string(data)) != "" {
+	if data, err := os.ReadFile(copilotUserTokenPath); err == nil && strings.TrimSpace(string(data)) != "" {
 		loggedIn = true
 	} else if os.Getenv("COPILOT_GITHUB_TOKEN") != "" {
 		loggedIn = true
@@ -227,11 +238,11 @@ func (s *Server) pollCopilotToken(deviceCode string, intervalSec int, expiry tim
 
 // saveCopilotToken persists the token and hands it to the agent manager.
 func (s *Server) saveCopilotToken(token string) error {
-	tmpPath := agent.CopilotUserTokenPath + ".tmp"
+	tmpPath := copilotUserTokenPath + ".tmp"
 	if err := os.WriteFile(tmpPath, []byte(token), 0o600); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, agent.CopilotUserTokenPath); err != nil {
+	if err := os.Rename(tmpPath, copilotUserTokenPath); err != nil {
 		return err
 	}
 	if s.deps != nil && s.deps.AgentMgr != nil {
@@ -242,7 +253,7 @@ func (s *Server) saveCopilotToken(token string) error {
 
 // handleCopilotAuthLogout removes the stored Copilot token.
 func (s *Server) handleCopilotAuthLogout(w http.ResponseWriter, r *http.Request) {
-	os.Remove(agent.CopilotUserTokenPath)
+	os.Remove(copilotUserTokenPath)
 	if s.deps != nil && s.deps.AgentMgr != nil {
 		s.deps.AgentMgr.SetCopilotToken("")
 	}
