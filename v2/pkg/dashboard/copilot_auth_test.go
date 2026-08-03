@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -160,6 +161,10 @@ func TestCopilotAuthStart_ReturnsDeviceCode(t *testing.T) {
 
 	s := NewServer(0, covBLogger())
 	s.RegisterAPI(testDeps(t))
+	// The handler spawns a poll goroutine that reads the package-level
+	// endpoint/path vars; join it before the withCopilot* cleanups restore
+	// them, or it races the restores (and later tests' mocks).
+	t.Cleanup(s.stopCopilotPoll)
 
 	rec := doPost(s, "/api/copilot-auth/start", map[string]interface{}{})
 	if rec.Code != http.StatusOK {
@@ -231,7 +236,7 @@ func TestPollCopilotToken_SucceedsAndSavesToken(t *testing.T) {
 	// does not sleep for real GitHub-scale intervals.
 	done := make(chan struct{})
 	go func() {
-		s.pollCopilotToken("dev-code-1", 0, 2*time.Second)
+		s.pollCopilotToken(context.Background(), "dev-code-1", 0, 2*time.Second)
 		close(done)
 	}()
 
@@ -275,7 +280,7 @@ func TestPollCopilotToken_RetriesOnPendingThenSucceeds(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		s.pollCopilotToken("dev-code-2", 0, 5*time.Second)
+		s.pollCopilotToken(context.Background(), "dev-code-2", 0, 5*time.Second)
 		close(done)
 	}()
 
@@ -317,7 +322,7 @@ func TestPollCopilotToken_SlowDownBumpsInterval(t *testing.T) {
 		// its expiry deadline only at the top of each loop iteration (after
 		// the sleep), so with a 6s expiry the bumped 5s sleep still fits
 		// inside the deadline and the second (successful) poll fires.
-		s.pollCopilotToken("dev-code-3", 0, 6*time.Second)
+		s.pollCopilotToken(context.Background(), "dev-code-3", 0, 6*time.Second)
 		close(done)
 	}()
 
@@ -360,7 +365,7 @@ func TestPollCopilotToken_ExpiresWithoutSuccess(t *testing.T) {
 	start := time.Now()
 	done := make(chan struct{})
 	go func() {
-		s.pollCopilotToken("dev-code-4", 0, 300*time.Millisecond)
+		s.pollCopilotToken(context.Background(), "dev-code-4", 0, 300*time.Millisecond)
 		close(done)
 	}()
 
@@ -398,7 +403,7 @@ func TestPollCopilotToken_AccessDeniedStopsImmediately(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		s.pollCopilotToken("dev-code-5", 0, 10*time.Second)
+		s.pollCopilotToken(context.Background(), "dev-code-5", 0, 10*time.Second)
 		close(done)
 	}()
 
@@ -515,4 +520,75 @@ func TestCopilotAuthLogout_NoFileIsNoop(t *testing.T) {
 	if got["status"] != "logged_out" {
 		t.Fatalf("status = %v, want logged_out", got["status"])
 	}
+}
+
+func TestPollCopilotToken_CancelStopsPromptly(t *testing.T) {
+	withCopilotTokenPath(t)
+	mock := newCopilotDeviceMock(t, "dev-code-6", 900, 0,
+		map[string]any{"error": "authorization_pending"},
+	)
+	withCopilotMockURLs(t, mock.srv.URL)
+
+	s := NewServer(0, covBLogger())
+	s.RegisterAPI(testDeps(t))
+
+	// interval 5s: without cancellation the poller would sit in its sleep
+	// for the full interval (and keep polling for the whole 10m expiry).
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.pollCopilotToken(ctx, "dev-code-6", 5, 10*time.Minute)
+		close(done)
+	}()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("pollCopilotToken did not stop promptly after cancel")
+	}
+}
+
+func TestStopCopilotPoll_JoinsHandlerSpawnedPoller(t *testing.T) {
+	withCopilotTokenPath(t)
+	mock := newCopilotDeviceMock(t, "dev-code-7", 900, 5,
+		map[string]any{"error": "authorization_pending"},
+	)
+	withCopilotMockURLs(t, mock.srv.URL)
+
+	s := NewServer(0, covBLogger())
+	s.RegisterAPI(testDeps(t))
+
+	rec := doPost(s, "/api/copilot-auth/start", map[string]interface{}{})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// stopCopilotPoll must cancel the goroutine the handler spawned, wait
+	// for it to exit, and leave the flow idle — promptly, not after the
+	// poller's 5s interval or 900s expiry.
+	joined := make(chan struct{})
+	go func() {
+		s.stopCopilotPoll()
+		close(joined)
+	}()
+	select {
+	case <-joined:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("stopCopilotPoll did not join the poll goroutine promptly")
+	}
+
+	s.copilotAuthFlow.mu.Lock()
+	polling := s.copilotAuthFlow.polling
+	cancelFn := s.copilotAuthFlow.cancel
+	s.copilotAuthFlow.mu.Unlock()
+	if polling {
+		t.Fatalf("polling = true after stopCopilotPoll, want false")
+	}
+	if cancelFn != nil {
+		t.Fatalf("cancel should be cleared after stopCopilotPoll")
+	}
+
+	// A second stop with no poller running must be a harmless no-op.
+	s.stopCopilotPoll()
 }
