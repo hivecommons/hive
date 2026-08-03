@@ -361,6 +361,13 @@
        and operators could not tell "resting by choice" from "blocked on a
        human logging in". Hollow reads as "waiting to be filled in". */
     .oc-agent-detail-header .status-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
+    /* off-healthy is a HOLLOW GREEN ring (same technique as needs-login, green
+       instead of amber). The agent process is healthy, but its governor cadence
+       for the CURRENT mode is pause/off — so the governor will never kick it.
+       A solid green dot read as "running/idle" and hid that the agent was
+       actually off (e.g. a hive stuck in SURGE where every cadence is pause).
+       Hollow green = alive but not being kicked. No pulse: it is not working. */
+    .oc-agent-detail-header .status-dot.off-healthy { background: transparent; border: 2px solid var(--green); box-sizing: border-box; }
     .oc-agent-detail-header .status-dot.off { background: var(--muted); }
     .oc-detail-fields {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 24px; margin-bottom: 16px;
@@ -426,6 +433,10 @@
     .oc-agent-dot.on-demand { background: var(--indigo); }
     .oc-agent-dot.stopped { background: var(--red); }
     .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
+    /* off-healthy: hollow GREEN ring — healthy agent whose governor cadence for
+       the current mode is pause/off, so it will not be kicked. Mirrors the
+       needs-login hollow technique (see detail-header rule above). No pulse. */
+    .oc-agent-dot.off-healthy { background: transparent; border: 2px solid var(--green); box-sizing: border-box; }
     .oc-agent-dot.off { background: var(--muted); }
     @keyframes oc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -842,6 +853,9 @@
     .dot.paused { background: var(--yellow); }
     .dot.on-demand { background: var(--indigo); }
     .dot.off { background: var(--muted); }
+    /* off-healthy: hollow GREEN — healthy agent, governor cadence paused/off for
+       the current mode, so it will not be kicked (mirrors needs-login, green). */
+    .dot.off-healthy { background: transparent; border: 2px solid var(--green); box-sizing: border-box; }
     .dot.stopped { background: var(--red); }
     .dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 2px 0; }
@@ -3444,6 +3458,10 @@
     })();
 
     const STRATEGY_AGENT_NAMES = ['strategist'];
+    // Tooltip for the hollow-green (off-healthy) dot: the agent process is fine,
+    // but its governor cadence for the current mode is paused/off, so it is not
+    // being kicked. Shared by every renderer that can show the hollow-green dot.
+    const OFF_HEALTHY_TITLE = "Agent is healthy but off — the governor's cadence for this mode is paused, so it won't be kicked.";
     function ocUpdateFocusedState() {
       const isFocused = !!_ocSelectedAgent && getLayout() === 'light';
       document.body.classList.toggle('oc-agent-focused', isFocused);
@@ -3673,6 +3691,15 @@
       const needsLoginDown = (isStopped && (a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true))) || a.needsLogin === true;
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
       const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      // A healthy agent that is off *because of its governor cadence* (offByCadence,
+      // i.e. cadence==pause/off for the current mode) reaches the isOff branch above
+      // only after the stopped / needs-login / on-demand / manual-paused guards, so
+      // it is provably alive. Render its DOT as hollow green (off-healthy) instead of
+      // grey 'off' to show "alive but the governor won't kick it" — a solid green dot
+      // misled operators into thinking a surge-paused agent was running. The border/
+      // state class (dotCls) stays 'off' so the panel border rule still applies.
+      const dotState = isOff ? 'off-healthy' : dotCls;
+      const dotTitle = isOff ? OFF_HEALTHY_TITLE : '';
 
       detail.className = 'oc-agent-detail active state-' + dotCls;
       const stateLabel = needsLoginDown ? 'needs login' : isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
@@ -3705,7 +3732,7 @@
           existingSummary.scrollTop = existingSummary.scrollHeight;
         }
         const dot = detail.querySelector('.status-dot');
-        if (dot) { dot.className = 'status-dot ' + dotCls; }
+        if (dot) { dot.className = 'status-dot ' + dotState; dot.title = dotTitle; }
         const stateSpan = detail.querySelector('.oc-agent-detail-header > span:last-child');
         if (stateSpan) { stateSpan.innerHTML = stateLabel + pauseInfoIcon(a); }
         // The pause/resume toggle must track state here too — the fast path
@@ -3778,7 +3805,7 @@
 
       detail.innerHTML = `
         <div class="oc-agent-detail-header">
-          <span class="status-dot ${dotCls}"></span>
+          <span class="status-dot ${dotState}"${dotTitle ? ` title="${esc(dotTitle)}"` : ''}></span>
           <span class="agent-name-big">${esc(a.displayName || a.name)}</span>${needsLoginDown ? '<span title="CLI needs login" style="margin-left:6px">\uD83D\uDD11</span>' : ''}
           <span style="font-size:0.78rem;color:var(--muted);margin-left:auto">${stateLabel}${pauseInfoIcon(a)}</span>
         </div>
@@ -3946,13 +3973,17 @@
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
       const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
+      // isOff is only reached past the down / needs-login / on-demand / manual-paused
+      // guards, so the agent is provably alive; render off-healthy instead of grey off.
+      const dotState = isOff ? 'off-healthy' : dotCls;
       const isActive = _ocSelectedAgent === a.name ? ' active' : '';
       const baseDesc = a.description || AGENT_DESCRIPTIONS[a.name] || '';
       const agentDesc = needsLoginDown ? (baseDesc ? baseDesc + '\n' : '') + 'needs login — CLI unauthenticated, the agent cannot work until logged in' : baseDesc;
       const label = a.displayName || a.name;
       const emojiHtml = a.emoji ? `<span class="oc-nav-emoji">${a.emoji}</span>` : '';
       const modeHtml = (a.modeEmoji || a.mode) ? `<span class="oc-nav-mode" title="${esc(a.mode || '')}">${a.modeEmoji || modeEmoji(a.mode)}</span>` : '';
-      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotCls}"></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${modeHtml}<span class="oc-nav-actions"><button data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
+      return `<a class="oc-nav-item${isActive}" data-agent-nav="${esc(a.name)}" draggable="true" data-action="ocSelectAgent" data-agent="${esc(a.name)}" title="${esc(agentDesc)}"><span class="oc-agent-dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${emojiHtml}<span class="oc-nav-text">${esc(label)}</span>${needsLoginDown ? '<span class="oc-nav-key" title="CLI needs login">\uD83D\uDD11</span>' : ''}${modeHtml}<span class="oc-nav-actions"><button data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure">⚙</button><button class="oc-nav-delete" data-action="deleteAgentFromConfig" data-agent="${esc(a.name)}" title="Delete">✕</button></span></a>`;
     }
 
     function _sidebarBuildGroups(agents) {
@@ -5310,6 +5341,8 @@
         // Down + unauthenticated CLI = amber needs-login (same formula as the
         // card's Login button above), not plain down-red (#2465).
         const dotCls = (isStopped && needsLogin) ? 'needs-login' : isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy === 'working' ? 'running' : 'idle';
+        // Healthy-but-governor-paused → hollow green dot (see detail-header renderer).
+        const dotState = isOff ? 'off-healthy' : dotCls;
         const canToggle = a.beadRole !== 'supervisor';
         const toggleBtn = canToggle ? (isOff
           ? `<button class="btn-toggle off" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Agent is off in this governor mode — click to configure per-mode cadences">⚙ off</button>`
@@ -5335,7 +5368,7 @@
         const compactCls = isAgentCompact(a.name) ? ' compact' : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotCls}"></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotState}"${isOff ? ` title="${esc(OFF_HEALTHY_TITLE)}"` : ''}></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
