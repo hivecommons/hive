@@ -2066,6 +2066,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Unassigned placeholder rows: auth-class check failures are the pool's
+	// DESIGNED state, not degradation, so neutralise them before anything
+	// downstream (drift, the fleet alerts, the browser's row dot and
+	// failing-checks pill) reads Health. Runs after enrichment for the same
+	// provStatus reason annotateDrift documents below, and before it so the
+	// drift health signal and the row agree. See placeholder_health.go.
+	sanitizePlaceholderRows(result)
+
 	// Config drift, computed once over the caller's full visible set — the
 	// fleet norm is derived from that set, so this must run AFTER every row has
 	// been collected and enriched (a row still missing its provStatus would be
@@ -7879,9 +7887,11 @@ const dashboardHTML = `<!DOCTYPE html>
       var st = hp.status || 'unknown';
       /* githubAppRequired means the spoke wants the App but it is not usable:
          with a perm issue it is installed-but-insufficient, without one it is
-         not installed at all. healthBadge() forces "degraded" in both cases. */
-      var appMissing = !!h.githubAppRequired && !h.githubAppPermIssue;
-      var degraded = !!h.githubAppRequired || st === 'degraded' || st === 'critical';
+         not installed at all. healthBadge() forces "degraded" in both cases —
+         EXCEPT on an unassigned placeholder, where having no usable App is the
+         pool's designed state (mirrored here so dot and chip never disagree). */
+      var appMissing = !isPlaceholderHive(h) && !!h.githubAppRequired && !h.githubAppPermIssue;
+      var degraded = (!isPlaceholderHive(h) && !!h.githubAppRequired) || st === 'degraded' || st === 'critical';
       /* An offline hive has no live reading at all, so it is not "OK" even if
          its last stored health snapshot said ok. */
       var ok = !degraded && st === 'ok' && !!h.online;
@@ -8153,7 +8163,15 @@ const dashboardHTML = `<!DOCTYPE html>
         if (ck.detail) line += ': ' + ck.detail;
         lines.push(line);
       }
-      if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
+      if (isPlaceholderHive(h)) {
+        /* An UNASSIGNED pool slot has no GitHub auth BY DESIGN — credentials
+           only arrive when a project is claimed — so none of the App-degraded
+           rules below may fire here. The hub has already reclassified the
+           auth-class checks (sanitizePlaceholderRows, placeholder_health.go);
+           this line says WHY the row is green instead of claiming an App. */
+        lines.push('– Unassigned — GitHub auth not configured by design');
+      }
+      else if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
         /* Operator-side: the key we distribute has not landed, or is for the
            wrong App. Still degraded — the hive genuinely cannot work — but the
            hover must name the real cause so an admin does not chase the user
