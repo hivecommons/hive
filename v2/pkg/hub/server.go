@@ -197,6 +197,12 @@ type RegistryEntry struct {
 	// alternate. Non-empty is a critical drift signal: every field in this
 	// entry is only as trustworthy as whichever instance reported last.
 	ConflictingReporters string `json:"conflictingReporters,omitempty"`
+	// StatusFlipping is true while this hive's reported App-auth state keeps
+	// alternating between two values (status_flip.go) — the row cannot be
+	// trusted because each beat tells a different story. Works for spokes too
+	// old to report a Reporter; when both fire, duplicate-spoke names the
+	// culprit pods.
+	StatusFlipping bool `json:"statusFlipping,omitempty"`
 	// GitHubAppID is the App ID the spoke reports it is authenticating AS.
 	//
 	// Carried into the registry so the hub can SEE a spoke running the
@@ -613,6 +619,11 @@ type HubServer struct {
 	// every beat and must never contend with the registry lock.
 	reporterSeen map[string]*reporterFlipState
 	reporterMu   sync.Mutex
+	// statusFlipSeen tracks each hive's reported App-auth state to catch
+	// oscillation (status_flip.go). Same shape as reporterSeen, separate
+	// mutex for the same reason: touched on every beat.
+	statusFlipSeen map[string]*reporterFlipState
+	statusFlipMu   sync.Mutex
 	// heartbeatSwitchTag tracks hives that should switch their deployment
 	// image to a specific tag (branch switch) via heartbeat, for clusters
 	// the hub can't reach over kubectl. Cleared once the spoke reports it.
@@ -1069,6 +1080,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppRequired:       payload.GitHubAppRequired,
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
+		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
 		GitHubAppID:             payload.GitHubAppID,
 		GitHubAppSlug:           payload.GitHubAppSlug,
 		GitHubInstallationID:    payload.GitHubInstallationID,

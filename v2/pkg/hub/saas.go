@@ -8293,7 +8293,9 @@ const dashboardHTML = `<!DOCTYPE html>
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
       'acmm-unset':      'ACMM level unset',
-      'no-agents':       'No agents running'
+      'no-agents':       'No agents running',
+      'duplicate-spoke': 'Duplicate spoke instances',
+      'status-flipping': 'Status flipping'
     };
 
     function driftKindLabel(kind) { return DRIFT_KIND_LABELS[kind] || kind || 'Unknown'; }

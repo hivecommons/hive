@@ -74,6 +74,9 @@ const (
 	// this one hive, so every registry field flips with whichever spoke
 	// reported last.
 	DriftKindDuplicateSpoke = "duplicate-spoke"
+	// DriftKindStatusFlipping: the hive's reported status keeps alternating
+	// between two values on a heartbeat cadence — the row cannot be trusted.
+	DriftKindStatusFlipping = "status-flipping"
 	// DriftKindAppIDPlaceholder marks a hive still authenticating as the
 	// placeholder App sentinel (config.PlaceholderAppID). Distinct from
 	// app-creds-operator because the fault is the app_id itself, not the key:
@@ -509,6 +512,15 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 		add(DriftKindDuplicateSpoke, DriftCritical,
 			"two spoke instances are reporting as this hive ("+h.ConflictingReporters+
 				") and their states alternate every beat — use Restart Spoke to shed the stale instance")
+	} else if h.StatusFlipping {
+		// Suppressed when duplicate-spoke already fired: that signal carries
+		// the same fact PLUS the culprit pod names, and two rows for one
+		// oscillation would double-count the hive in the summary strip.
+		add(DriftKindStatusFlipping, DriftWarn,
+			"reported status keeps flipping between two values on a heartbeat cadence — "+
+				"usually two spoke instances alternating as this hive (a spoke too old to report "+
+				"its pod name cannot be told apart) or an auth check oscillating; "+
+				"use Restart Spoke, or upgrade the spoke so the instances identify themselves")
 	}
 
 	// A placeholder legitimately has no App, no agents and ACMM 0. Flagging it
