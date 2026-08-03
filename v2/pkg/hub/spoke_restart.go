@@ -2,6 +2,8 @@ package hub
 
 import (
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -25,18 +27,32 @@ const reporterConflictWindow = 15 * time.Minute
 // reporter is the signature of two live instances.
 const reporterFlipsToConfirm = 2
 
-// reporterFlipState is the per-hive memory behind noteReporter.
+// reporterFlipState is the per-hive memory behind noteReporter (and, minus
+// the seen set, noteStatusFlip).
 type reporterFlipState struct {
 	last     string // reporter of the most recent beat
 	prev     string // reporter seen immediately before last
 	flips    int    // times the reporter returned to a previously seen one
 	lastFlip time.Time
+	// seen maps every reporter observed within reporterConflictWindow to the
+	// time it last beat (noteReporter only; noteStatusFlip never populates
+	// it). Tracking the SET rather than only prev/last is what closes the
+	// ≥3-reporter blind spot found in #2496: with 4-5 senders rotating
+	// (A,B,C,A,B,C,…) a beat almost never returns to the IMMEDIATELY
+	// preceding reporter, so a prev-only comparison declared "fresh handover"
+	// forever and the conflict was never flagged. A return to ANY recently
+	// seen reporter is the signature of concurrent instances.
+	seen map[string]time.Time
 }
 
 // noteReporter records which spoke instance sent this beat and returns a
-// non-empty "a ↔ b" description while two instances are alternating as the
-// same hive. Empty reporter (a spoke too old to report one) is UNKNOWN and
-// never counts for or against a conflict — the state is left untouched.
+// non-empty "a ↔ b" (or "a ↔ b ↔ c …") description while two or more
+// instances are alternating as the same hive. Reporters are opaque identity
+// strings: modern spokes send "<pod>/<pid>" so even two processes in ONE pod
+// (#2453/#2496) alternate visibly as "pod-x/123 ↔ pod-x/456"; older spokes
+// send the bare pod name and keep working unchanged. Empty reporter (a spoke
+// too old to report one) is UNKNOWN and never counts for or against a
+// conflict — the state is left untouched.
 func (s *HubServer) noteReporter(hiveID, reporter string) string {
 	if reporter == "" {
 		return ""
@@ -46,32 +62,50 @@ func (s *HubServer) noteReporter(hiveID, reporter string) string {
 	if s.reporterSeen == nil {
 		s.reporterSeen = make(map[string]*reporterFlipState)
 	}
+	now := time.Now()
 	st := s.reporterSeen[hiveID]
 	if st == nil {
-		st = &reporterFlipState{last: reporter}
+		st = &reporterFlipState{last: reporter, seen: map[string]time.Time{reporter: now}}
 		s.reporterSeen[hiveID] = st
 		return ""
 	}
+	if st.seen == nil {
+		st.seen = make(map[string]time.Time)
+		st.seen[st.last] = now
+	}
+	// Age out reporters that have not beaten within the window BEFORE deciding
+	// whether this one "came back": a pod gone for longer than the window is a
+	// completed rollout, and its eventual reuse must not read as a conflict.
+	for r, ts := range st.seen {
+		if r != st.last && now.Sub(ts) >= reporterConflictWindow {
+			delete(st.seen, r)
+		}
+	}
 	if reporter != st.last {
-		if reporter == st.prev {
-			// The reporter came BACK — both instances are alive.
+		if _, cameBack := st.seen[reporter]; cameBack {
+			// The reporter returned while another was beating in between —
+			// multiple instances are alive.
 			st.flips++
 		} else {
-			// A reporter never seen adjacent to this one: treat as a fresh
-			// handover (rollout), not a conflict.
+			// A reporter never seen recently: treat as a fresh handover
+			// (rollout), not a conflict.
 			st.flips = 0
 		}
 		st.prev, st.last = st.last, reporter
-		st.lastFlip = time.Now()
+		st.lastFlip = now
 	}
-	if st.flips >= reporterFlipsToConfirm && time.Since(st.lastFlip) < reporterConflictWindow {
-		a, b := st.prev, st.last
-		if a > b {
-			a, b = b, a
+	st.seen[reporter] = now
+	if st.flips >= reporterFlipsToConfirm && now.Sub(st.lastFlip) < reporterConflictWindow {
+		// Name EVERY instance currently alternating, not just the last two —
+		// with 4-5 senders (#2496) the pair alone under-reports the fault.
+		names := make([]string, 0, len(st.seen))
+		for r := range st.seen {
+			names = append(names, r)
 		}
-		return a + " ↔ " + b
+		sort.Strings(names)
+		return strings.Join(names, " ↔ ")
 	}
-	if time.Since(st.lastFlip) >= reporterConflictWindow {
+	if now.Sub(st.lastFlip) >= reporterConflictWindow {
 		st.flips = 0
 	}
 	return ""

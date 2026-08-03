@@ -670,6 +670,12 @@ type HubServer struct {
 	// mutex for the same reason: touched on every beat.
 	statusFlipSeen map[string]*reporterFlipState
 	statusFlipMu   sync.Mutex
+	// appKeyDelivery tracks, per hive, consecutive GitHub App key deliveries
+	// that the spoke never reflected, so a broken reporter cannot pull key
+	// material onto the wire every beat forever (app_key_backoff.go, #2496).
+	// Own mutex for the reporterSeen reason: touched on every beat.
+	appKeyDelivery   map[string]*appKeyDeliveryState
+	appKeyDeliveryMu sync.Mutex
 	// heartbeatSwitchTag tracks hives that should switch their deployment
 	// image to a specific tag (branch switch) via heartbeat, for clusters
 	// the hub can't reach over kubectl. Cleared once the spoke reports it.

@@ -43,6 +43,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/logscrub"
 	"github.com/kubestellar/hive/v2/pkg/notify"
 	"github.com/kubestellar/hive/v2/pkg/policies"
+	"github.com/kubestellar/hive/v2/pkg/proclock"
 	"github.com/kubestellar/hive/v2/pkg/promptsrc"
 	"github.com/kubestellar/hive/v2/pkg/proxy"
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
@@ -665,10 +666,74 @@ func startDocsTokenRefresh(ctx context.Context, cfg *config.Config, appKeyFile s
 // short uptime that keeps resetting is the only visible tell.
 var processStartedAt = time.Now()
 
-// reporterName identifies this spoke process to the hub (HeartbeatPayload
-// Reporter). In-cluster the hostname IS the pod name; on failure it stays
-// empty, which the hub reads as "too old / cannot report", never as data.
-var reporterName, _ = os.Hostname()
+// reporterName identifies this spoke PROCESS to the hub (HeartbeatPayload
+// Reporter) as "<hostname>/<pid>". In-cluster the hostname IS the pod name;
+// the PID suffix exists because two hive processes were observed beating from
+// ONE pod (#2453, #2496) — bare os.Hostname() made them indistinguishable, so
+// the hub's duplicate-spoke detector (noteReporter) stayed silent through 11+
+// alternating beats while the dashboard flipped state every beat. With the
+// PID attached, same-pod duplicates alternate as "pod-x/123 ↔ pod-x/456" and
+// the detector names the exact culprits. The hub compares the whole string as
+// an opaque identity, so old spokes sending bare hostnames keep working; a
+// hostname failure yields empty, which the hub reads as "too old / cannot
+// report", never as data.
+var reporterName = func() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/%d", host, os.Getpid())
+}()
+
+// ── Process singleton (#2453, #2496) ────────────────────────────────────
+//
+// A spoke pod ran TWO hive processes concurrently: startedAt alternated
+// between two values beat to beat, the hub saw 4-5 heartbeat senders behind
+// one pod name, and one process's stale App-auth snapshot flipped the
+// dashboard every beat. The per-process StartHeartbeat guard (#2462) cannot
+// see across processes; only a kernel-level mutual exclusion can. main()
+// takes an exclusive flock before doing anything else — the second process
+// logs the holder's PID and exits instead of becoming a shadow sender. The
+// flock releases automatically on process death, so a crashed holder never
+// blocks a legitimate restart.
+const (
+	// singletonLockEnv overrides the lock file location (tests, unusual
+	// container layouts). Empty means the default resolution below.
+	singletonLockEnv = "HIVE_SINGLETON_LOCK"
+	// singletonLockDisable is the env value that skips the guard entirely —
+	// an escape hatch for deliberately running two instances on one host
+	// (local development with distinct configs).
+	singletonLockDisable = "off"
+	// singletonLockDir is the preferred lock directory: container-local tmpfs
+	// created by the entrypoint, shared by every process in the container but
+	// by NOTHING outside it. Deliberately NOT /data — the PVC is shared
+	// across PODS during a rolling update (maxSurge=1), and a pod-spanning
+	// lock would deadlock the surge pod against the terminating one.
+	singletonLockDir = "/var/run/hive-metrics"
+	// singletonLockName is the lock file's basename in whichever directory is
+	// chosen.
+	singletonLockName = "hive.singleton.lock"
+	// duplicateProcessExitCode marks an exit caused by refusing to run beside
+	// an already-running hive process. Distinct from 0 (clean) and 17
+	// (selfUpgradeFailureExitCode) so the refusal is legible in the
+	// container's termination state.
+	duplicateProcessExitCode = 18
+)
+
+// singletonLockPath resolves where the process singleton lock lives. Every
+// process in a container resolves the same path (the filesystem is shared),
+// so the choice is deterministic where it matters; the temp-dir fallback
+// covers bare-metal/dev runs where the entrypoint never created the
+// container dir.
+func singletonLockPath() string {
+	if p := os.Getenv(singletonLockEnv); p != "" {
+		return p
+	}
+	if st, err := os.Stat(singletonLockDir); err == nil && st.IsDir() {
+		return filepath.Join(singletonLockDir, singletonLockName)
+	}
+	return filepath.Join(os.TempDir(), singletonLockName)
+}
 
 // spokeRestartMinUptime is how old this process must be before it acts on a
 // hub-delivered restart. The hub delivers the instruction to every beat in a
@@ -696,6 +761,28 @@ func main() {
 
 	logger := slog.New(logscrub.NewHandler(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 	slog.SetDefault(logger)
+
+	// Process singleton: refuse to become a second hive process in this
+	// container (#2453, #2496). Two concurrent processes beat as the same pod,
+	// alternate registry state every beat, and are invisible to both the
+	// in-process StartHeartbeat guard and the hub's duplicate-spoke detector.
+	// The flock releases on process death, so this never blocks a restart.
+	if os.Getenv(singletonLockEnv) != singletonLockDisable {
+		lockPath := singletonLockPath()
+		procLock, lockErr := proclock.Acquire(lockPath)
+		if lockErr != nil {
+			logger.Error("another hive process is already running in this container — refusing to start a duplicate (#2453, #2496)",
+				"lock", lockPath,
+				"pid", os.Getpid(),
+				"error", lockErr.Error(),
+			)
+			os.Exit(duplicateProcessExitCode)
+		}
+		// Held for the process lifetime; the kernel releases it on exit. Kept
+		// referenced so the *os.File is never garbage-collected (a collected
+		// file closes its descriptor, which would silently drop the flock).
+		defer procLock.Release()
+	}
 
 	// Clear stale upgrade marker if the current SHA differs from the marker's
 	// current_sha — this means the upgrade succeeded and the marker is from a
