@@ -105,7 +105,7 @@ func TestHealthSummary_NeedLoginOnly(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	status, detail := agentsCheckOf(t, s)
-	if want := "0 running, 1 need login: supervisor"; detail != want {
+	if want := "0 running, 1 needs login: supervisor"; detail != want {
 		t.Fatalf("agents detail = %q, want %q", detail, want)
 	}
 	if status != "fail" {

@@ -191,14 +191,14 @@ type Server struct {
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.
 type StatusPayload struct {
-	Timestamp           string                 `json:"timestamp"`
-	HiveID              string                 `json:"hiveId"`
-	Agents              []FrontendAgent        `json:"agents"`
-	Governor            FrontendGovernor       `json:"governor"`
-	Tokens              FrontendTokens         `json:"tokens"`
-	Repos               []FrontendRepo         `json:"repos"`
-	Beads               FrontendBeads          `json:"beads"`
-	Health              map[string]any         `json:"health"`
+	Timestamp string           `json:"timestamp"`
+	HiveID    string           `json:"hiveId"`
+	Agents    []FrontendAgent  `json:"agents"`
+	Governor  FrontendGovernor `json:"governor"`
+	Tokens    FrontendTokens   `json:"tokens"`
+	Repos     []FrontendRepo   `json:"repos"`
+	Beads     FrontendBeads    `json:"beads"`
+	Health    map[string]any   `json:"health"`
 	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
 	// ready, github_auth, agents, …) — the same checks the heartbeat reports
 	// to the hub. The dashboard's header Health pill renders from these, NOT
@@ -2184,7 +2184,11 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			detail += fmt.Sprintf(", %d down: %s", down, strings.Join(downNames, ", "))
 		}
 		if needLogin > 0 {
-			detail += fmt.Sprintf(", %d need login: %s", needLogin, strings.Join(needLoginNames, ", "))
+			verb := "need"
+			if needLogin == 1 {
+				verb = "needs"
+			}
+			detail += fmt.Sprintf(", %d %s login: %s", needLogin, verb, strings.Join(needLoginNames, ", "))
 		}
 		st := "pass"
 		// need-login keeps the same fail semantics as down: the agent still
