@@ -126,6 +126,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor/bob", s.handleGovernorBobStatus)
 	s.mux.HandleFunc("PUT /api/config/governor/bob", s.handleGovernorBobKey)
 	s.mux.HandleFunc("DELETE /api/config/governor/bob", s.handleGovernorBobKeyClear)
+	// Live key validation (pasted or saved key) — see bob_key_probe.go.
+	s.mux.HandleFunc("POST /api/config/governor/bob/test", s.handleGovernorBobKeyTest)
 	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
 	s.mux.HandleFunc("GET /api/config/governor/gateways", s.handleGovernorGatewaysList)
 	s.mux.HandleFunc("PUT /api/config/governor/gateways", s.handleGovernorGatewaysUpsert)
@@ -4377,6 +4379,15 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(key) > bobKeyMaxLen {
 		jsonError(w, fmt.Sprintf("apiKey is too long (limit %d characters)", bobKeyMaxLen),
+			http.StatusBadRequest)
+		return
+	}
+	// A key with interior whitespace/newlines is always a broken paste, and
+	// storing one is a proven auth failure ("invalid jwt string" 401 → every
+	// bob agent parks at the auth prompt). Refuse at save time with the real
+	// explanation. Leading/trailing whitespace was already trimmed above.
+	if strings.ContainsAny(key, " \t\r\n") {
+		jsonError(w, "apiKey contains interior whitespace or line breaks — a bob API key is a single unbroken token; re-copy it from bob.ibm.com and paste it again",
 			http.StatusBadRequest)
 		return
 	}

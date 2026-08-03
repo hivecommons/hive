@@ -11923,9 +11923,12 @@ function burnAreaChart() {
       dismissToast(toast, `${agent} restart counter reset`, 'success');
     }
 
-    // Prompts for the LiteLLM endpoint + API key the first time the
-    // backend is selected anywhere in the UI. Resolves true when litellm
-    // is (or has just been) configured; false when the user cancels. The
+    // Prompts for the LiteLLM endpoint + API key when litellm is picked in
+    // the agent-config dialog flows (CLI pin / create), where navigating to
+    // Governor Config would discard unsaved edits. The agent-card METHOD
+    // dropdown instead saves the choice and navigates (maybeOpenMethodConfig).
+    // Resolves true when litellm is (or has just been) configured; false when
+    // the user cancels. The
     // key VALUE goes to the server's private key store — never hive.yaml —
     // and the save runs a live /v1/models test whose result is shown
     // inline (endpoint/key mistakes fail here, not as agent 401s later).
@@ -12031,15 +12034,63 @@ function burnAreaChart() {
       });
     }
 
+
+    // Methods that need hive-side configuration before they can actually run:
+    // bob needs its API key (Governor Config → Bob); the gateway-backed
+    // methods need a Model Gateway configured FOR THAT method (Governor
+    // Config → Model Gateways). The check is per-method — an openrouter
+    // gateway does not satisfy a vllm selection.
+    const GATEWAY_METHODS = ['openrouter', 'litellm', 'vllm', 'llm-d'];
+
+    // maybeOpenMethodConfig runs AFTER a method switch is saved: the choice is
+    // never blocked, but when the selected method's backing config is absent
+    // the Governor Configuration dialog opens directly on the tab that fixes
+    // it. Presence comes from data the dashboard already serves — the bob key
+    // status endpoint (presence only, never material) and the configured
+    // gateway list — plus the live model-discovery cache (a non-fallback
+    // discovery proves an env-configured vllm/llm-d endpoint exists even
+    // without a named gateway). Best-effort: any fetch failure just skips the
+    // navigation rather than interrupting the switch.
+    async function maybeOpenMethodConfig(backend) {
+      try {
+        if (backend === 'bob') {
+          const r = await fetch('/api/config/governor/bob');
+          if (!r.ok) return;
+          const d = await r.json();
+          if (d.configured !== true) {
+            showToast('bob needs an API key — opening Governor Config → Bob', 'info');
+            openConfigDialog('governor', null, GOVERNOR_BOB_TAB);
+          }
+          return;
+        }
+        if (!GATEWAY_METHODS.includes(backend)) return;
+        // A live (non-fallback) model discovery for this method means it is
+        // genuinely configured (possibly via HIVE_*_ENDPOINT env, which never
+        // appears in the gateway list) — nothing to fix.
+        const cached = _inferenceModelCache[backend];
+        if (cached && !cached.fallback) return;
+        const r = await fetch('/api/config/governor/gateways');
+        if (!r.ok) return;
+        const d = await r.json();
+        const has = (d.gateways || []).some(g => g && (g.kind === backend || g.name === backend));
+        if (!has) {
+          showToast('No ' + backend + ' gateway configured — opening Governor Config → Model Gateways', 'info');
+          openConfigDialog('governor', null, 'Model Gateways');
+        }
+      } catch (e) { /* presence check is best-effort; never surface as a switch error */ }
+    }
+
     async function switchCli(agent, backend) {
       if (!backend) return;
-      if (backend === 'litellm' && !(await ensureLiteLLMConfigured())) return;
       const label = INFERENCE_BACKENDS.includes(backend) ? 'method' : 'CLI';
       const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       dismissToast(toast, `${agent} ${label} → ${backend} (session restarted)`, 'success');
+      // The selection is saved; if its backing config is missing, land the
+      // user on the Governor Config tab that fixes it (never blocks).
+      maybeOpenMethodConfig(backend);
       await updateModelDropdown(agent, backend);
       if (window._lastAgents) {
         const a = window._lastAgents.find(x => x.name === agent);
@@ -13790,6 +13841,7 @@ function burnAreaChart() {
             <span style="font-weight:600;font-size:0.9rem">bob</span>
             <span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid #4589ff;color:#4589ff">IBM bobshell</span>
             <span style="flex:1"></span>
+            ${configured ? '<button data-action="bobKeyTest" title="Validate the saved key against the bob backend — the key value never leaves this hive" style="padding:4px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);cursor:pointer;font-size:0.74rem">Test</button>' : ''}
             ${configured ? '<button data-action="bobKeyClear" style="padding:4px 12px;border:1px solid var(--red);border-radius:6px;background:var(--bg);color:var(--red);cursor:pointer;font-size:0.74rem">Clear key</button>' : ''}
             <button data-action="bobKeySet" style="padding:4px 12px;border:none;border-radius:6px;background:#0f62fe;color:#fff;cursor:pointer;font-size:0.74rem;font-weight:600">${configured ? 'Replace key' : 'Set API key'}</button>
           </div>
@@ -13812,6 +13864,18 @@ function burnAreaChart() {
       if (setBtn) setBtn.addEventListener('click', () => openBobKeyDialog(configured, source));
       const clearBtn = host.querySelector('[data-action="bobKeyClear"]');
       if (clearBtn) clearBtn.addEventListener('click', clearBobKey);
+      // Test the SAVED key from the card: result goes to the card's inline
+      // status line (green ok / red reason + backend detail).
+      const testBtn = host.querySelector('[data-action="bobKeyTest"]');
+      if (testBtn) testBtn.addEventListener('click', async () => {
+        const statusEl = document.getElementById('bob-key-inline-status');
+        const setStatus = (msg, color) => {
+          if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+        };
+        testBtn.disabled = true;
+        await testBobKey('', setStatus);
+        testBtn.disabled = false;
+      });
     }
 
     function renderGovAccess() {
@@ -17733,8 +17797,34 @@ function burnAreaChart() {
     // authoritative one for this CLI, so the dialog says Inference and links
     // BOTH pages so the operator can check if a key is rejected.
     var BOB_PORTAL_URL = 'https://bob.ibm.com';
+    var BOB_API_KEY_MANAGE_URL = 'https://bob.ibm.com/admin/apikeys';
     var BOB_API_KEY_DOCS_URL = 'https://bob.ibm.com/docs/ide/account/api-keys';
     var BOB_SHELL_SETUP_DOCS_URL = 'https://bob.ibm.com/docs/shell/getting-started/install-and-setup';
+
+    // testBobKey POSTs to the bob key-test endpoint and reports the verdict
+    // via setStatus. `pastedKey` non-empty tests THAT key (pre-save); empty
+    // tests the SAVED key — the server resolves it, the value never reaches
+    // the browser. Shared by the key dialog and the Bob tab card.
+    async function testBobKey(pastedKey, setStatus) {
+      setStatus(pastedKey ? 'Testing pasted key…' : 'Testing saved key…');
+      try {
+        var resp = await fetch('/api/config/governor/bob/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(pastedKey ? { apiKey: pastedKey } : {})
+        });
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) {
+          setStatus(data.error || ('Test failed (HTTP ' + resp.status + ')'), 'var(--red)');
+        } else if (data.status === 'ok') {
+          setStatus('✓ ' + (data.detail || 'The bob backend accepted the key.'), 'var(--green)');
+        } else {
+          setStatus('✗ ' + (data.detail || data.reason || 'Test failed'), 'var(--red)');
+        }
+      } catch (e) {
+        setStatus('Test failed: ' + e.message, 'var(--red)');
+      }
+    }
 
     function openBobKeyDialog(configured, source) {
       var overlay = document.getElementById('bob-key-overlay');
@@ -17762,7 +17852,8 @@ function burnAreaChart() {
           '<ol style="margin:0;padding-left:18px;line-height:1.6">' +
             '<li>Sign in at <a href="' + BOB_PORTAL_URL + '" target="_blank" rel="noopener noreferrer" ' +
               'style="color:#4589ff">bob.ibm.com</a> and open your subscription instance.</li>' +
-            '<li>Go to API key management and create a key with <strong>Scope: Inference</strong>.</li>' +
+            '<li>Go to <a href="' + BOB_API_KEY_MANAGE_URL + '" target="_blank" rel="noopener noreferrer" ' +
+              'style="color:#4589ff">API key management</a> and create a key with <strong>Scope: Inference</strong>.</li>' +
             '<li>Copy it immediately — IBM shows the value only once.</li>' +
           '</ol>' +
           '<div style="margin-top:8px">' +
@@ -17779,6 +17870,9 @@ function burnAreaChart() {
         '<div id="bob-key-status" style="color:var(--muted);font-size:0.8rem;min-height:20px;margin:4px 0"></div>' +
         '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">' +
           '<button id="bob-key-cancel" class="gh-cancel" style="margin-top:0">Cancel</button>' +
+          '<button id="bob-key-test" style="background:var(--bg);color:var(--fg);border:1px solid var(--border);' +
+            'padding:6px 16px;border-radius:6px;font-weight:600;cursor:pointer" ' +
+            'title="Validate against the bob backend without saving: tests the pasted key if the field is non-empty, else the saved key">Test key</button>' +
           '<button id="bob-key-save" style="background:#0f62fe;color:#fff;border:none;padding:6px 16px;' +
             'border-radius:6px;font-weight:600;cursor:pointer">Save key</button>' +
         '</div>' +
@@ -17801,6 +17895,21 @@ function burnAreaChart() {
 
       var cancelBtn = document.getElementById('bob-key-cancel');
       if (cancelBtn) cancelBtn.addEventListener('click', closeDialog);
+
+      // Test key: pre-save validation of the pasted value, or of the saved
+      // key when the field is empty. The pasted value goes only to the test
+      // endpoint (never persisted); the result renders inline.
+      var testBtn = document.getElementById('bob-key-test');
+      if (testBtn) testBtn.addEventListener('click', async function() {
+        var pasted = (input && input.value || '').trim();
+        if (!pasted && !configured) {
+          setStatus('Paste a key to test — none is saved yet.', 'var(--red)');
+          return;
+        }
+        testBtn.disabled = true;
+        await testBobKey(pasted, setStatus);
+        testBtn.disabled = false;
+      });
 
       var saveBtn = document.getElementById('bob-key-save');
       if (saveBtn) saveBtn.addEventListener('click', async function() {
