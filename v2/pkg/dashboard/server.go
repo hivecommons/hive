@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -2050,7 +2051,11 @@ func (s *Server) HealthSummary() map[string]any {
 		stalled := 0
 		unsubstituted := 0
 		down := 0
-		for _, proc := range s.deps.AgentMgr.AllStatuses() {
+		// The names behind the counts. "1 down" alone is unactionable — the
+		// operator's next question is always WHICH one, and the answer was
+		// dropped right here where it was known.
+		var downNames, stalledNames []string
+		for name, proc := range s.deps.AgentMgr.AllStatuses() {
 			if proc.Paused {
 				paused++
 				continue
@@ -2068,18 +2073,25 @@ func (s *Server) HealthSummary() map[string]any {
 				if !grace && proc.OutputBuffer != nil && proc.OutputBuffer.Count() == 0 && proc.LastKick != nil {
 					if time.Since(*proc.LastKick) > staleOutputThreshold {
 						stalled++
+						stalledNames = append(stalledNames, name)
 					}
 				}
 			} else if !grace {
 				down++
+				downNames = append(downNames, name)
 			}
 		}
+		// Map iteration order is random; sorted names keep the detail line
+		// stable across beats so the hub does not see a "changed" status that
+		// is really the same agents in a different order.
+		sort.Strings(downNames)
+		sort.Strings(stalledNames)
 		detail := fmt.Sprintf("%d running", running)
 		if paused > 0 {
 			detail += fmt.Sprintf(", %d paused", paused)
 		}
 		if down > 0 {
-			detail += fmt.Sprintf(", %d down", down)
+			detail += fmt.Sprintf(", %d down: %s", down, strings.Join(downNames, ", "))
 		}
 		st := "pass"
 		if down > 0 {
@@ -2089,7 +2101,7 @@ func (s *Server) HealthSummary() map[string]any {
 		checks = append(checks, check{Name: "agents", Status: st, Detail: detail})
 
 		if stalled > 0 {
-			checks = append(checks, check{Name: "stall_detection", Status: "warn", Detail: fmt.Sprintf("%d stalled (no output 30+ min)", stalled)})
+			checks = append(checks, check{Name: "stall_detection", Status: "warn", Detail: fmt.Sprintf("%d stalled (no output 30+ min): %s", stalled, strings.Join(stalledNames, ", "))})
 			warns++
 		} else {
 			checks = append(checks, check{Name: "stall_detection", Status: "pass"})
