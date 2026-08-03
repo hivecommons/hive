@@ -349,21 +349,23 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 		t.Errorf("header emits %d <th> cells but a row emits %d cells — "+
 			"every column right of the mismatch is shifted", thCount, tdCount)
 	}
-	// 17: the Public column folded into Location (visibility stacks beneath the
-	// location badge) and the AI Author column folded into the Repos cell (its
-	// "as:" line, freeing a column). Provisioned keeps a thin sort-only header
-	// ("Prov ⇅") but its date moved into the status hover panel — so it stays a
-	// column (empty placeholder cell) for the sort trigger while giving back the
-	// wide date. Provision-date ordering still works via that header.
-	const wantColumns = 17
+	// 12: the fleet table was folded from 15 named columns down to ~9 (four folds
+	// on top of the earlier Public→Location and AI-Author→Repos folds):
+	//   PROV    → date in the status hover; its sort rides the Uptime header
+	//   DRIFT   → a dot on the Version cell (driftBadge, full hover preserved)
+	//   ACMM+JOURNEY  → one Maturity cell (both badges stacked, both sorts kept)
+	//   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts)
+	// The 12 <th>/<td> cells are: bulk, ⋮ menu, Hive, Location, Uptime, Version,
+	// Repos, Maturity, Agents, Tokens, Mode, Activity.
+	const wantColumns = 12
 	if thCount != wantColumns {
 		t.Errorf("hive table has %d columns, want %d", thCount, wantColumns)
 	}
 	// The colspan constants span the whole table; a stale value leaves the
 	// section separators and the pending-requests row visibly short.
 	for _, decl := range []string{
-		"var TOTAL_COLUMNS = 17;",
-		"var TOTAL_COLUMNS_HEADER = 17;",
+		"var TOTAL_COLUMNS = 12;",
+		"var TOTAL_COLUMNS_HEADER = 12;",
 	} {
 		if !strings.Contains(html, decl) {
 			t.Errorf("missing or stale colspan constant: %s", decl)
@@ -371,63 +373,68 @@ func TestHiveTableColumnCountsAgree(t *testing.T) {
 	}
 }
 
-// TestDriftColumnSitsRightOfJourney pins the column ORDER, in both the header
-// and the body, at the same index. Asserting only the header is how the last
-// column-move bug shipped.
-func TestDriftColumnSitsRightOfJourney(t *testing.T) {
+// TestDriftFoldedIntoVersion pins the DRIFT fold: after the 15-to-9 fold the
+// Drift column is gone and its indicator rides on the Version cell instead. The
+// datum is not lost — driftBadge (its full per-signal hover panel) still renders
+// once in the body, gated on there being drift — and there is no standalone Drift
+// header or column any more.
+func TestDriftFoldedIntoVersion(t *testing.T) {
 	html := dashScript(t)
 
-	// --- header order.
 	start := strings.Index(html, `'<div class="table-wrap"><table class="hive-table"><thead><tr>'`)
 	end := strings.Index(html[start:], `</tr></thead><tbody>' + rows`)
 	if start < 0 || end < 0 {
 		t.Fatal("could not isolate the hive table header")
 	}
 	header := html[start : start+end]
-	journeyTh := strings.Index(header, ">Journey ")
-	driftTh := strings.Index(header, ">Drift<")
-	if journeyTh < 0 || driftTh < 0 {
-		t.Fatal("could not find the Journey and Drift header cells")
-	}
-	if driftTh < journeyTh {
-		t.Fatal("Drift header cell comes before Journey")
-	}
-	// Nothing but the closing tag of Journey's own cell may sit between them:
-	// any other <th> would mean Drift is not IMMEDIATELY right of Journey.
-	between := header[journeyTh:driftTh]
-	if n := len(regexp.MustCompile(`<th[\s>]`).FindAllString(between, -1)); n != 1 {
-		t.Errorf("found %d header cells between Journey and Drift, want exactly 1 "+
-			"(Drift's own <th>) — Drift must sit immediately right of Journey", n)
+	// No standalone Drift column header survives the fold.
+	if strings.Contains(header, ">Drift<") {
+		t.Error("a standalone Drift header cell is still present — it was meant to fold onto Version")
 	}
 
-	// --- body order, over the same expression the row is built from.
+	// The whole buildRow body, not just its return expression: driftDot is
+	// computed above the return, so the drift-fold assertions look at the body.
 	bStart := strings.Index(html, "var buildRow = function(h, i, section) {")
+	if bStart < 0 {
+		t.Fatal("could not find buildRow")
+	}
+	bEnd := strings.Index(html[bStart:], "'</tr>' + pendingExpandRow;")
 	retIdx := strings.Index(html[bStart:], buildRowReturnAnchor)
-	rStart := bStart + retIdx
-	rEnd := strings.Index(html[rStart:], "'</tr>' + pendingExpandRow;")
-	if bStart < 0 || retIdx < 0 || rEnd < 0 {
-		t.Fatal("could not isolate buildRow's return expression")
+	if bEnd < 0 || retIdx < 0 {
+		t.Fatal("could not isolate buildRow's body")
 	}
-	rowExpr := html[rStart : rStart+rEnd]
-	journeyTd := strings.Index(rowExpr, "journeyBadge(h.journey)")
-	driftTd := strings.Index(rowExpr, "driftBadge(h)")
-	if journeyTd < 0 || driftTd < 0 {
-		t.Fatal("could not find the Journey and Drift body cells")
+	body := html[bStart : bStart+bEnd]
+
+	// The drift indicator is computed once (driftDot) and embedded in the Version
+	// cell; the full per-signal panel (driftBadge) is still what renders it, so no
+	// drift detail was dropped when the column went away.
+	if !strings.Contains(body, "var driftDot = driftOf(h).count > 0 ? driftBadge(h)") {
+		t.Error("buildRow no longer computes driftDot — drift is not folded into Version")
 	}
-	if driftTd < journeyTd {
-		t.Fatal("the Drift body cell comes before the Journey body cell")
+	if n := strings.Count(body, "driftBadge(h)"); n != 1 {
+		t.Errorf("driftBadge appears %d times in a row, want 1 (folded into the Version cell)", n)
 	}
-	between = rowExpr[journeyTd:driftTd]
-	if n := len(regexp.MustCompile(`'<td[\s>]`).FindAllString(between, -1)); n != 1 {
-		t.Errorf("found %d body cells between Journey and Drift, want exactly 1 "+
-			"(Drift's own <td>) — the body must match the header order", n)
+	// driftDot must actually reach the Version cell, not just be computed.
+	if !strings.Contains(body, "driftDot ? ' ' + driftDot") {
+		t.Error("driftDot is computed but never embedded in the Version cell")
 	}
-	// Drift must appear exactly once in each, i.e. the move did not leave a copy
-	// behind at the old position.
-	if n := strings.Count(header, ">Drift<"); n != 1 {
-		t.Errorf("Drift appears %d times in the header, want 1", n)
+
+	// Version and Maturity (ACMM + Journey folded together) must both be present
+	// exactly once, and the Maturity cell must render BOTH badges.
+	if n := strings.Count(header, ">Version<"); n != 1 {
+		t.Errorf("Version header appears %d times, want 1", n)
 	}
-	if n := strings.Count(rowExpr, "driftBadge(h)"); n != 1 {
-		t.Errorf("driftBadge appears %d times in a row, want 1", n)
+	// The Maturity header is now stacked (title on line 1, the ACMM/Journey sort
+	// chips on line 2) via stackHeader, so the source builds it as
+	// stackHeader('Maturity', ...) rather than the old inline "Maturity " prefix.
+	// Both folded sort controls must still be reachable in the header.
+	if !strings.Contains(header, "stackHeader('Maturity'") {
+		t.Error("Maturity header title is missing — ACMM and Journey were meant to fold into it")
+	}
+	if !strings.Contains(header, "subSort('acmmLevel', 'ACMM ⇅'") || !strings.Contains(header, "subSort('journey', 'Journey ⇅'") {
+		t.Error("the Maturity header dropped a folded sort control — both ACMM and Journey ⇅ must stay reachable")
+	}
+	if !strings.Contains(body, "acmmBadge(h.acmmLevel)") || !strings.Contains(body, "journeyBadge(h.journey)") {
+		t.Error("the Maturity cell must render BOTH acmmBadge and journeyBadge — no maturity datum may be dropped")
 	}
 }
