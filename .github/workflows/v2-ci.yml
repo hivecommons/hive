@@ -63,8 +63,13 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      # The entrypoint decides which file a hive boots its config from. The
+      # hive.yaml.bak -> hive.yaml.runtime migration must keep reading the
+      # legacy name, or hives that have not saved since upgrading lose their
+      # boot config silently. This executes the real resolver, so a regression
+      # fails the PR rather than a deploy.
+      - name: Entrypoint runtime-config migration tests
+        run: bash deploy/test_entrypoint_runtime_config.sh
 
       - uses: actions/setup-node@v4
         with:

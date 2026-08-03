@@ -117,6 +117,68 @@ type AgentSummary struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	Mode  string `json:"mode,omitempty"`
+	// Paused distinguishes an agent the OPERATOR deliberately parked from one
+	// that is merely not running. State already carries "paused", but a paused
+	// agent that has not yet been through Start() reports its prior state with
+	// Paused set, so the two are not interchangeable. The hub's inactive-agent
+	// rule keys off this to guarantee a deliberate pause is never alerted on.
+	Paused bool `json:"paused,omitempty"`
+	// NeedsLogin is true when the agent's CLI is sitting on a login /
+	// device-code prompt. This is the "running but not logged in" state: the
+	// session is alive, the CLI process is alive, and the agent still cannot do
+	// any work. It is invisible in State, which reads "running" throughout.
+	NeedsLogin bool `json:"needsLogin,omitempty"`
+	// SessionMissing is true when the manager expected a live tmux session for
+	// a running agent and did not find one — the zombie case. Reported
+	// explicitly rather than inferred hub-side, because only the spoke can see
+	// the per-UID tmux socket (each agent runs on its own,
+	// e.g. /tmp/tmux-2007/hive-scanner; a default-socket check reports "no
+	// server running" even when every session is alive).
+	SessionMissing bool `json:"sessionMissing,omitempty"`
+	// StartedAt is when this agent's CLI was last launched (RFC3339), empty if
+	// it has never launched. Wiring it through closes #2324: AgentProcess has
+	// carried it all along, but both the dashboard and the heartbeat dropped
+	// it, so no persisted per-agent session duration existed anywhere.
+	StartedAt string `json:"startedAt,omitempty"`
+	// LastActivityAt is when the agent's pane content last changed (RFC3339),
+	// empty when the spoke has not yet observed a change. It is what separates
+	// "running and working" from "running and producing nothing" — State,
+	// StartedAt and the kick log all keep their values while a CLI sits idle.
+	LastActivityAt string `json:"lastActivityAt,omitempty"`
+}
+
+// AgentActivity is the per-agent liveness evidence the spoke has and the hub
+// does not. It exists so the two heartbeat build sites in cmd/hive (the
+// ordinary loop and the upgrade beat) fill AgentSummary identically — they
+// were already duplicated line for line, and a signal that is only reported on
+// one of the two paths is a signal that quietly disappears mid-upgrade.
+type AgentActivity struct {
+	Paused         bool
+	NeedsLogin     bool
+	SessionMissing bool
+	StartedAt      time.Time
+	LastActivityAt time.Time
+}
+
+// NewAgentSummary builds one AgentSummary from an agent's name, state, mode and
+// activity evidence. Zero timestamps serialise as empty (not as a bogus
+// year-1 string), which the hub reads as "unknown" — never as "idle".
+func NewAgentSummary(name, state, mode string, act AgentActivity) AgentSummary {
+	as := AgentSummary{
+		Name:           name,
+		State:          state,
+		Mode:           mode,
+		Paused:         act.Paused,
+		NeedsLogin:     act.NeedsLogin,
+		SessionMissing: act.SessionMissing,
+	}
+	if !act.StartedAt.IsZero() {
+		as.StartedAt = act.StartedAt.UTC().Format(time.RFC3339)
+	}
+	if !act.LastActivityAt.IsZero() {
+		as.LastActivityAt = act.LastActivityAt.UTC().Format(time.RFC3339)
+	}
+	return as
 }
 
 type GovernorSummary struct {
@@ -161,8 +223,14 @@ type HeartbeatNodeMetric struct {
 	MemTotalMB    int64  `json:"mem_total_mb"`
 	MemUsedMB     int64  `json:"mem_used_mb"`
 	MemPercent    int    `json:"mem_percent"`
-	Pods          int    `json:"pods"`
-	PodCapacity   int    `json:"pod_capacity"`
+	// Disk fields are pointers so a spoke that could not read kubelet stats
+	// (or an older spoke build that does not report them at all) leaves them
+	// absent, and the hub renders unknown rather than a misleading 0%.
+	DiskTotalMB *int64 `json:"disk_total_mb,omitempty"`
+	DiskUsedMB  *int64 `json:"disk_used_mb,omitempty"`
+	DiskPercent *int   `json:"disk_percent,omitempty"`
+	Pods        int    `json:"pods"`
+	PodCapacity int    `json:"pod_capacity"`
 	// HiveCount is the number of distinct hive-hosted-* namespaces with a
 	// running pod on this node (namespaces, not pods, so a hive briefly
 	// running two pods during a rollout is counted once).
@@ -182,7 +250,11 @@ type HeartbeatClusterSummary struct {
 	TotalCPUPct   int `json:"total_cpu_percent"`
 	TotalMemGB    int `json:"total_mem_gb"`
 	TotalMemPct   int `json:"total_mem_percent"`
-	TotalPods     int `json:"total_pods"`
+	// Disk totals cover only the nodes that reported live usage; nil when no
+	// node did, so the hub omits disk instead of showing a false 0%.
+	TotalDiskGB  *int `json:"total_disk_gb,omitempty"`
+	TotalDiskPct *int `json:"total_disk_percent,omitempty"`
+	TotalPods    int  `json:"total_pods"`
 	// HiveCapacityRemaining estimates how many MORE hives the cluster can
 	// hold (see hive_capacity.go). Pointer so old spokes that do not report
 	// it are distinguishable from a genuinely full cluster (nil vs 0).
@@ -231,6 +303,14 @@ type HeartbeatPayload struct {
 	Tokens24h    int64              `json:"tokens_24h"`
 	Contributors ContributorSummary `json:"contributors"`
 	Leaderboard  []LeaderboardEntry `json:"leaderboard"`
+	// ActiveSessionUsers is the DISTINCT set of GitHub usernames with a live
+	// dashboard session on this hive at heartbeat time (spoke:
+	// ActiveSessionUsernames). The hub credits each one the inter-beat interval so
+	// per-user "time in hive" accumulates without needing a session-end event.
+	// Non-secret: bare usernames only (no session ids/tokens/roles). omitempty so a
+	// spoke too old to report it, or one with no live sessions, sends nothing —
+	// which the hub reads as "credit no one this beat", never as an error.
+	ActiveSessionUsers []string `json:"active_session_users,omitempty"`
 	// StartedAt is the spoke process start time (RFC3339). The hub renders it
 	// as an uptime pill so a hive that is quietly crash-looping — 1/1 Running
 	// but restarted 35 times — is visible in My Hives instead of looking
@@ -329,6 +409,17 @@ type HeartbeatPayload struct {
 	// nudge", NOT as a genuine zero. Never threaten a hive over a signal that
 	// was never sent.
 	AgentsWithModel *int `json:"agents_with_model,omitempty"`
+	// GatewayNames lists the model gateways this spoke currently has configured.
+	//
+	// It is the READ-BACK for a hub-funded gateway. Without it the hub drained
+	// its pending record the moment it put the gateway on the wire, so a
+	// delivery lost to a dropped beat, a hub restart, or a spoke-side
+	// ApplyDeliveredGateway error was gone for good — the user paid and the
+	// gateway never arrived, with nothing left to retry from.
+	//
+	// nil/empty means the spoke is too old to report (UNKNOWN, never "has
+	// none"), so an absent list must not be read as a failed delivery.
+	GatewayNames []string `json:"gateway_names,omitempty"`
 	// GitHubAppKeyFingerprint is a NON-SECRET identifier for the GitHub App
 	// private key this spoke currently holds — "sha256:<hex>" over the DER
 	// public key derived from it (config.AppKeyFingerprint). It exists so the
@@ -362,6 +453,49 @@ type HeartbeatPayload struct {
 	// read as "unknown": the hub falls back to the conservative per-hive
 	// override and declines to overwrite. Never infer a mismatch from silence.
 	GitHubAppID int64 `json:"github_app_id,omitempty"`
+	// GitHubAppSlug and GitHubInstallationID complete the spoke's report of the
+	// GitHub identity it is actually running.
+	//
+	// WHY THEY EXIST
+	//
+	// A GitHub App identity is an ATOMIC SET — app_id, app_slug, api_url and
+	// base_url must all name the same forge. The hub pushes app_id and app_slug
+	// (HeartbeatGitHubAppConfig) and api_url (HeartbeatProjectConfig), but until
+	// now it received back only app_id and the key fingerprint. Two of the
+	// pushed fields were therefore STRUCTURALLY UNCONFIRMABLE: the hub could
+	// push a slug or an installation id and had no way, ever, to learn whether
+	// it landed.
+	//
+	// That is not a theoretical gap. A cluster-config change pushed a GHE
+	// app_id to a set of hives WITHOUT a matching api_url. The spokes ended up
+	// with a GHE App ID pointed at api.github.com and every token request
+	// failed:
+	//
+	//	POST https://api.github.com/app/installations/<id>/access_tokens
+	//	404 Integration not found
+	//
+	// The hives that also received api_url=https://github.ibm.com/api/v3 were
+	// fine — the failure split exactly on that one field. With only app_id
+	// reported back, a half-applied identity is invisible to the hub: it looks
+	// like a successful delivery. Reporting the whole set is what makes the
+	// inconsistency detectable, and is a prerequisite for ever confirming a
+	// delivery of it.
+	//
+	// Both are NON-SECRET. Empty/zero means "too old to report, or not
+	// configured" — read as UNKNOWN, never as a mismatch. Never infer a
+	// half-applied identity from silence; see IdentitySetIssues.
+	GitHubAppSlug string `json:"github_app_slug,omitempty"`
+	// GitHubInstallationID is the installation the spoke is using. It is
+	// forge-scoped: an ID issued by one forge names nothing on another, which is
+	// why a forge switch deliberately never carries it across.
+	GitHubInstallationID int64 `json:"github_installation_id,omitempty"`
+	// GitHubBaseURL is the web base URL the spoke runs against (github.base_url).
+	// It is reported but never pushed — the spoke derives its host from
+	// base_url with a fallback to api_url (GitHubConfig.HostLabel), so pushing
+	// api_url alone is sufficient to move a hive between forges. It is reported
+	// here so the hub can see the COMPLETE identity set and detect a base_url
+	// that disagrees with api_url.
+	GitHubBaseURL string `json:"github_base_url,omitempty"`
 	// GitHubAppKeysHeld reports the NON-SECRET fingerprint of every ADDITIONAL
 	// per-app-id key file this spoke holds on its PVC, keyed by app_id as a
 	// decimal string (JSON object keys must be strings). It exists so the hub can
@@ -704,6 +838,42 @@ type HeartbeatGitHubAppConfig struct {
 	// Empty means "leave the spoke's slug unchanged" — never a way to blank a
 	// working value.
 	AppSlug string `json:"app_slug,omitempty"`
+	// ResetInstallation tells the spoke to CLEAR its installation_id.
+	//
+	// A separate flag because zero cannot carry this meaning: the spoke adopts
+	// an installation only when the pushed value is non-zero, since zero means
+	// "not speaking to this field". Overloading it would make every push that
+	// omits an installation blank a working one.
+	//
+	// The spoke clearing its installation makes HasUsableApp() false, which
+	// raises githubAppRequired — so the owner is prompted to install the App
+	// again AND the 2-minute self-heal ticker starts, whose RediscoverAndAdopt
+	// finds the correct installation for whichever App is installed.
+	ResetInstallation bool `json:"reset_installation,omitempty"`
+	// APIURL and BaseURL complete the identity SET.
+	//
+	// WHY THEY ARE HERE AND NOT ON ProjectConfig
+	//
+	// app_id, app_slug, api_url and base_url are ONE value: an App ID presented
+	// to the wrong forge returns "404 Integration not found". Until now the App
+	// half travelled on this channel and api_url travelled on
+	// HeartbeatProjectConfig, dispatched independently to a different callback.
+	// Nothing composed them, so nothing could validate them together — and a
+	// forge switch (saas.go, pendingForgeAPIURL) deliberately sends api_url
+	// ALONE, which is precisely the operation that changes identity. Between
+	// those beats the spoke holds a half-identity: exactly the 404 shape that
+	// took 26 hives down on 2026-07-31.
+	//
+	// Carrying them here lets the whole set be built and validated in one place,
+	// and lets the spoke adopt it atomically instead of in two unordered halves.
+	//
+	// Empty means "leave the spoke's value unchanged", the same contract as
+	// AppSlug — never a way to blank a working URL. Note that empty is ALSO the
+	// correct steady state for a public-GitHub hive (~41 of 50 spokes run that
+	// way), which is why the spoke must not infer "public" from silence here;
+	// the App ID is the field that names the forge.
+	APIURL  string `json:"api_url,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
 	// AdditionalKeys carries EVERY OTHER GitHub App private key the fleet knows,
 	// keyed by its own app_id, so a spoke can hold both the github.com App key
 	// AND its cluster's GitHub Enterprise App key at once — and pick whichever

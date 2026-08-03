@@ -608,7 +608,7 @@ func TestHandleRequestProvisionValidBody(t *testing.T) {
 
 	// github_host is required: a request must name the GitHub forge its org
 	// lives on, so a "valid body" fixture has to carry one.
-	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token"}`
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"auth_method":"token","full_name":"Ada Lovelace"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_prov_valid")
@@ -628,15 +628,26 @@ func TestHandleRequestProvisionACMMLevelDefault(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	body := `{"org":"validorg","repos":"repo1","acmm_level":0}`
+	// Carries github_host AND full_name on purpose: both are required, and
+	// omitting either makes the handler 400 long before the ACMM clamp this
+	// test exists to cover. This fixture used to omit full_name and discard the
+	// status with `_ = w.Code`, so after #2369 made the name required it passed
+	// while silently exercising the 400 branch instead of the clamp.
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1","acmm_level":0,"full_name":"Ada Lovelace"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_prov_acmm")
 	w := httptest.NewRecorder()
 	srv.handleRequestProvision(w, req)
 
-	// ACMM 0 → clamped to 1
-	_ = w.Code
+	// ACMM 0 → clamped to minRequestACMMLevel. Assert we got PAST validation:
+	// a 400 here means a required field regressed, which is exactly the failure
+	// the old `_ = w.Code` hid. Persisting needs /data, absent in unit tests, so
+	// the success path legitimately ends in 500 — anything but 400 proves the
+	// clamp was reached.
+	if w.Code == http.StatusBadRequest {
+		t.Errorf("ACMM clamp path should not 400 — a required field likely regressed; body: %s", w.Body.String())
+	}
 }
 
 func TestHandleRequestProvisionACMMLevelHigh(t *testing.T) {
@@ -645,15 +656,20 @@ func TestHandleRequestProvisionACMMLevelHigh(t *testing.T) {
 
 	srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-	body := `{"org":"validorg","repos":"repo1","acmm_level":99}`
+	// See TestHandleRequestProvisionACMMLevelDefault: github_host and full_name
+	// are required, so a fixture missing them never reaches the clamp.
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1","acmm_level":99,"full_name":"Ada Lovelace"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_prov_high")
 	w := httptest.NewRecorder()
 	srv.handleRequestProvision(w, req)
 
-	// ACMM 99 → clamped to 1
-	_ = w.Code
+	// ACMM 99 (above maxRequestACMMLevel) → clamped to minRequestACMMLevel.
+	// As above, 400 means validation rejected us before the clamp ran.
+	if w.Code == http.StatusBadRequest {
+		t.Errorf("ACMM clamp path should not 400 — a required field likely regressed; body: %s", w.Body.String())
+	}
 }
 
 // ============================================================

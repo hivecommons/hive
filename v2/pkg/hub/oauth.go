@@ -288,10 +288,17 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	http.SetCookie(w, cookie)
 
 	saasUser := ensureSaaSUser(user.Login)
+	// A completed OAuth callback IS a login — count it here and nowhere else.
+	// ensureSaaSUser already refreshed LastLogin; the count is the engagement
+	// signal the admin Users card reads. Persist unconditionally below so a login
+	// is recorded even when there is no token to encrypt (the token branch used to
+	// be the only save path, so a token-encrypt failure silently dropped the whole
+	// record update).
+	saasUser.LoginCount++
 	if encrypted, err := encryptToken(tokenResp.AccessToken); err == nil {
 		saasUser.EncryptedToken = encrypted
-		saveSaaSUser(saasUser)
 	}
+	saveSaaSUser(saasUser)
 
 	redirect := "/dashboard"
 	if state := r.URL.Query().Get("state"); state != "" {

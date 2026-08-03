@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -234,6 +236,93 @@ func TestFleetStatsCollector_RetriesThenSucceeds(t *testing.T) {
 	}
 	if fc.CollectedAt().IsZero() {
 		t.Error("CollectedAt must be set after a successful collect")
+	}
+}
+
+// TestFleetStatsCollector_PersistAndReload is the #2329 durability guard: a
+// successful collect must be written to the PVC, and a FRESH collector must load
+// those exact counts on start — with the ORIGINAL collectedAt, never restamped
+// to now — so a spoke restart resumes from its last-known counts (which the
+// hub's fleetStatsMaxAge aging can still evaluate) instead of nil.
+func TestFleetStatsCollector_PersistAndReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fleet-stats.json")
+
+	c := newFleetTestClient(t, map[string]int{
+		"is:merged merged:>=":             20,
+		"is:closed is:unmerged closed:>=": 3,
+		`"CVE-"`:                          6,
+	})
+	fc := NewFleetStatsCollector(c, "bot", "org", slog.Default())
+	fc.EnablePersistence(path) // no file yet: clean no-op, stays not-ready
+	if _, ready := fc.Snapshot(); ready {
+		t.Fatal("collector should be not-ready before any collect (missing file is a no-op)")
+	}
+	fc.collect(context.Background())
+	want, ready := fc.Snapshot()
+	if !ready {
+		t.Fatal("collector should be ready after collect")
+	}
+	origCollectedAt := fc.CollectedAt()
+	if origCollectedAt.IsZero() {
+		t.Fatal("collectedAt must be set after a successful collect")
+	}
+
+	// The file must now exist on the PVC.
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected fleet stats file at %s: %v", path, err)
+	}
+
+	// A fresh collector (simulating a restart) must resume from the file WITHOUT
+	// any collect, reporting the same counts and the same collectedAt.
+	fresh := NewFleetStatsCollector(nil, "bot", "org", slog.Default())
+	fresh.EnablePersistence(path)
+	got, ready := fresh.Snapshot()
+	if !ready {
+		t.Fatal("fresh collector should be ready after loading persisted counts")
+	}
+	if got != want {
+		t.Errorf("restored counts = %+v, want %+v", got, want)
+	}
+	if !fresh.CollectedAt().Equal(origCollectedAt) {
+		t.Errorf("restored collectedAt = %v, want original %v (must not be restamped)",
+			fresh.CollectedAt(), origCollectedAt)
+	}
+}
+
+// TestFleetStatsCollector_LoadCorruptOrMissing confirms a missing file and a
+// corrupt file both load cleanly as not-ready (zero counts), never a panic and
+// never a fake zero contribution.
+func TestFleetStatsCollector_LoadCorruptOrMissing(t *testing.T) {
+	// Missing file.
+	missing := filepath.Join(t.TempDir(), "does-not-exist.json")
+	fc := NewFleetStatsCollector(nil, "bot", "org", slog.Default())
+	fc.EnablePersistence(missing)
+	if _, ready := fc.Snapshot(); ready {
+		t.Error("missing file should load as not-ready")
+	}
+
+	// Corrupt file.
+	corrupt := filepath.Join(t.TempDir(), "corrupt.json")
+	if err := os.WriteFile(corrupt, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("write corrupt file: %v", err)
+	}
+	fc2 := NewFleetStatsCollector(nil, "bot", "org", slog.Default())
+	fc2.EnablePersistence(corrupt)
+	if snap, ready := fc2.Snapshot(); ready || snap != (ghpkg.FleetContribCounts{}) {
+		t.Errorf("corrupt file should load as not-ready/zero, got ready=%v snap=%+v", ready, snap)
+	}
+
+	// A well-formed file with a zero collectedAt is treated as absent — the hub
+	// would otherwise age it out against a zero timestamp.
+	zeroTime := filepath.Join(t.TempDir(), "zero-time.json")
+	blob, _ := json.Marshal(map[string]any{"counts": map[string]int{"prs_merged": 5}})
+	if err := os.WriteFile(zeroTime, blob, 0o600); err != nil {
+		t.Fatalf("write zero-time file: %v", err)
+	}
+	fc3 := NewFleetStatsCollector(nil, "bot", "org", slog.Default())
+	fc3.EnablePersistence(zeroTime)
+	if _, ready := fc3.Snapshot(); ready {
+		t.Error("file with zero collectedAt should load as not-ready")
 	}
 }
 

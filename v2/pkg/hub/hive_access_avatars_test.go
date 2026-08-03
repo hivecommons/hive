@@ -80,9 +80,13 @@ func TestInlineAccessAvatarEscaping(t *testing.T) {
 		{"avatar url built from the encoded profile url", `'<img src="' + escAttr(ghProfileURL(username)) + '.png?size='`},
 		// Quoted attribute values.
 		{"anchor href uses escAttr", `'<a href="' + escAttr(ghProfileURL(uname)) + '" target="_blank" rel="noopener noreferrer" '`},
-		{"anchor title and aria-label use escAttr", `'title="' + escAttr(label || uname) + '" aria-label="' + escAttr(label || uname) + '" '`},
-		// The inline face still carries the role in its tooltip, via the helper.
-		{"inline face labels username and role", `return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, uname + (role ? ' — ' + role : ''),`},
+		// title now folds in a live line via a `title` var; both title and
+		// aria-label still go through escAttr.
+		{"anchor title uses escAttr", `'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" '`},
+		// The inline face still carries the role in its tooltip, now built by the
+		// shared accessAvatarTitle helper (username — role, plus contact metadata).
+		{"inline face labels username and role via title helper", `return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),`},
+		{"access title helper carries username and role", `var lines = [uname + (role ? ' — ' + role : '')];`},
 		{"overflow chip title uses escAttr", `'<span title="' + escAttr(hiddenNames.join(', ')) + '" '`},
 		{"aria-label uses escAttr", `'<span class="hive-access-faces" aria-label="' + escAttr(label) + '" '`},
 	}
@@ -178,17 +182,18 @@ func TestHoverPanelReusesSharedRoleColor(t *testing.T) {
 // section-header colspan and the pending-expand colspan all stay correct; a
 // stale count leaves the table visibly ragged.
 //
-// 18 = the 16 columns left after the standalone Public column was folded into
-// Location (visibility stacks beneath the location badge), plus the AI Author
-// column added with App-bot PR authorship, plus the Provisioned column that
-// exposes each hive's first-seen time as a sort option.
+// 12 = the columns left after the 15-to-9 fold (PROV, DRIFT, ACMM+JOURNEY→Maturity,
+// ISSUES+PRS+CONTRIB→Activity), on top of the earlier Public→Location and
+// AI-Author→Repos folds. The inline access avatars still add NO column — they live
+// inside the existing name cell, so the header, section-header colspan and
+// pending-expand colspan all stay correct.
 // TestHiveTableColumnCountsAgree is the authority on this number: it counts the
 // emitted <th> and <td> cells rather than trusting a literal, so update it
 // first and follow it here.
 func TestHiveTableColumnCountUnchanged(t *testing.T) {
 	for _, snippet := range []string{
-		"var TOTAL_COLUMNS = 18;",
-		"var TOTAL_COLUMNS_HEADER = 18;",
+		"var TOTAL_COLUMNS = 12;",
+		"var TOTAL_COLUMNS_HEADER = 12;",
 	} {
 		if !strings.Contains(dashboardHTML, snippet) {
 			t.Errorf("dashboardHTML is missing %q — did the hive table gain or lose a column?", snippet)

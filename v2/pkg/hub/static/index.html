@@ -82,7 +82,7 @@
     .header-right { display: flex; align-items: center; gap: .8rem; justify-self: end; }
 
     /* ── Utility ── */
-    .section-pad { padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 4vw, 4.5rem); }
+    .section-pad { padding: clamp(4rem, 8vw, 7rem) clamp(1rem, 4vw, 4.5rem); scroll-margin-top: 5.5rem; }
     .section-label {
       color: var(--amber);
       letter-spacing: .12em;
@@ -356,6 +356,23 @@
     }
     .metric-grid span { color: var(--muted); font-size: .86rem; }
     .metric-grid strong { color: var(--green); font-size: 1.4rem; }
+    /* The Public hives tile is an <a> so it can jump to the hive table; give it
+       the same box as the sibling <div> tiles, plus a clickable affordance. */
+    .metric-grid a.stat-jump {
+      border: 1px solid var(--line);
+      background: #080b0f85;
+      border-radius: .7rem;
+      gap: .35rem;
+      min-height: 5.5rem;
+      padding: 1rem;
+      display: grid;
+      text-decoration: none;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease;
+    }
+    .metric-grid a.stat-jump:hover { border-color: var(--green); background: #0b1016; }
+    /* Muted call-to-action subtext inside a stat tile (e.g. "click to request one"). */
+    .metric-grid a.stat-jump .stat-cta { color: var(--muted); font-size: .7rem; }
 
     /* ── Loop rail ── */
     .loop { background: linear-gradient(#0c121900, #121922bf 30%, #12192200); }
@@ -466,7 +483,15 @@
     }
 
     /* ── Hive table ── */
-    .section { max-width: 1200px; margin: 0 auto; padding: 0 clamp(1rem, 4vw, 4.5rem) 3rem; }
+    /* scroll-margin-top clears the sticky .site-header (~4.5rem tall) so an
+       in-page jump (Contributors/Public-hives tiles, leaderboard link) lands
+       with the section's own heading visible, not scrolled up under the nav. */
+    /* Match .section-pad's horizontal geometry (same side padding, no narrower
+       max-width cap) so #hives ("Active Hives") and #leaderboard line up with the
+       full-width sections above them. Previously .section capped at 1200px and
+       centered, so on a wide viewport its left edge sat far right of the
+       edge-to-edge .section-pad sections and the table looked misaligned. */
+    .section { margin: 0 auto; padding: 0 clamp(1rem, 4vw, 4.5rem) 3rem; scroll-margin-top: 5.5rem; }
     .section > h2 {
       font-size: 1.4rem;
       font-weight: 800;
@@ -675,8 +700,26 @@
         <div class="metric-grid">
           <div><span>Agents running</span><strong id="stat-agents">—</strong></div>
           <div><span>Managed repos</span><strong id="stat-repos">—</strong></div>
-          <div><span>Contributors</span><strong id="stat-contributors">—</strong></div>
-          <div><span>Active hives</span><strong id="stat-total">—</strong></div>
+          <!-- The Contributors tile jumps to the public-hive table (#hives),
+               where the "Want to help?" blurb explains that clicking a hive's
+               Contribute button lends your AI CLI to run its agents via ClankeR.
+               Sending the click straight to the actionable list (rather than the
+               explainer card lower down) is why this points at #hives; the
+               "click to help a hive" CTA names the action, mirroring the
+               "click to request one" Available-hives tile. Same stat-jump
+               affordance/keyboard access as the Public hives tile. -->
+          <a href="#hives" class="stat-jump" title="Help a public hive — lend your CLI to its agents"><span>Contributors</span><strong id="stat-contributors">—</strong><span class="stat-cta">click to help a hive</span></a>
+          <!-- The Public hives tile jumps to the public-hive table below (#hives),
+               since that table IS the list of public hives this count describes.
+               An <a> (not a JS scroll handler) keeps it keyboard-focusable and
+               right-click-openable; the href drives a native smooth scroll via
+               the page's scroll-behavior. -->
+          <a href="#hives" class="stat-jump" title="Jump to the public hives"><span>Public hives</span><strong id="stat-total">—</strong></a>
+          <!-- Available hives = unassigned placeholders a user could claim. The
+               tile links to the Request-a-Hive wizard (/get-started), so seeing
+               "N available" and acting on it is one click. Anchor for the same
+               keyboard/right-click reasons as the Public hives tile. -->
+          <a href="/get-started" class="stat-jump" title="Request one of the available hives"><span>Available hives</span><strong id="stat-available">—</strong><span class="stat-cta">click to request one</span></a>
         </div>
       </div>
     </section>
@@ -856,10 +899,10 @@
           <div style="margin-top:1rem"><a class="button primary" href="/get-started">Request a Hive</a></div>
           <p style="font-size:.8rem;margin-top:.8rem"><a href="/get-started#self-host" style="color:var(--blue)">Prefer to self-host? →</a></p>
         </div>
-        <div class="proof-card">
+        <div class="proof-card" id="contribute-compute">
           <div class="tag">Community</div>
           <h3>Contribute compute to a hive</h3>
-          <p>Lend your AI CLI to run agents for a public project. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
+          <p>Lend your AI CLI to run agents for a public project via ClankeR, the contributor relay. Pick a public hive from the table below, run the contribute command, and ClankeR hands your CLI tasks to work &mdash; your GitHub username shows up as a live contributor on that hive with the PRs you land, not as a new hive. Earn trust tiers as you complete tasks and climb the leaderboard.</p>
           <div style="margin-top:1rem"><a class="button secondary" href="/get-started#contribute">Start contributing</a></div>
         </div>
         <div class="proof-card">
@@ -959,6 +1002,9 @@
         <h2>Active Hives</h2>
         <input type="text" id="hive-search" placeholder="Search hives..." oninput="filterHiveTable()" style="padding:8px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:0.85rem;width:250px">
       </div>
+      <!-- Contribute blurb: the Contributors tile and the "Contribute compute"
+           card both point here, so name the action next to the list it refers to. -->
+      <p style="color:var(--muted);font-size:.85rem;margin:-4px 0 14px;max-width:60ch">Want to help? Pick a public hive below and click its <strong style="color:var(--text)">Contribute</strong> button to run its agents through ClankeR and contribute fixes to a hive of your choice. Your work shows up as tasks completed under your GitHub username, on that hive and on the <a href="#leaderboard" style="color:var(--blue)">leaderboard</a>.</p>
       <div id="hive-table-container"><div class="loading">Loading hives...</div></div>
     </section>
 
@@ -1103,14 +1149,44 @@
       }
     }
 
+    // Fleet-wide counters, filled in by the /api/fleet-stats poll. They cover
+    // ALL hives; the `hives` array here is the PUBLIC list only, so summing it
+    // described about a third of the fleet (~18 of 51 spokes are public).
+    var _fleetWide = null;
+
     function renderStats(hives) {
       var agents = 0, contributors = 0, online = 0, repos = 0;
       hives.forEach(function(h) { agents += h.agentCount || 0; contributors += h.activeContributors || 0; repos += (h.repos || []).length; if (h.online) online++; });
-      document.getElementById('stat-online').textContent = online + '/' + hives.length;
-      document.getElementById('stat-agents').textContent = agents;
-      document.getElementById('stat-repos').textContent = repos;
-      document.getElementById('stat-contributors').textContent = contributors;
+      // "Hives online" is HIVES UP / TOTAL ASSIGNED, both fleet-wide:
+      //   • up    = _fleetWide.hives  (online, assigned hives across the fleet)
+      //   • total = _fleetWide.total_hives (all assigned hives, up or not)
+      // Neither is the public-list size — showing online-public/public read
+      // "18/18" (all up) when two-thirds of the fleet is simply not public.
+      // Unassigned placeholders are excluded from both (they're counted under
+      // "Available hives"). Until the fleet-stats poll lands, fall back to the
+      // public list the page can see so it never renders undefined.
+      var f = _fleetWide;
+      var up = (f && typeof f.hives === 'number') ? f.hives : online;
+      var total = (f && typeof f.total_hives === 'number') ? f.total_hives : hives.length;
+      document.getElementById('stat-online').textContent = up + '/' + total;
+      // "Public hives" is deliberately the length of the PUBLIC list — it labels
+      // exactly the table below and is the one counter here that is not fleet-wide.
       document.getElementById('stat-total').textContent = hives.length;
+      // "Available hives" = unassigned placeholders a user can request (fleet-wide,
+      // anonymous scalar). Em dash until the poll lands.
+      var availEl = document.getElementById('stat-available');
+      if (availEl) {
+        availEl.textContent = (f && typeof f.available_hives === 'number') ? f.available_hives : '—';
+      }
+      // The rest are fleet-wide when the hub has told us, falling back to the
+      // public-list sums so an older hub (or a failed poll) still renders a
+      // number rather than an em dash. (f = _fleetWide, resolved above.)
+      document.getElementById('stat-agents').textContent =
+        f && typeof f.agents_running === 'number' ? f.agents_running : agents;
+      document.getElementById('stat-repos').textContent =
+        f && typeof f.repos_managed === 'number' ? f.repos_managed : repos;
+      document.getElementById('stat-contributors').textContent =
+        f && typeof f.contributors === 'number' ? f.contributors : contributors;
     }
 
     var _allMainHives = [];
@@ -1327,20 +1403,52 @@
         { key: 'cves_closed', box: 'proof-cves' }
       ];
       function fmt(n) { return n.toLocaleString('en-US'); }
+      // Render "as of" for a stale figure. Same-day collections show a clock
+      // time (the common case — a fleet recollecting for an hour or two);
+      // anything older shows a date, since "as of 14:20" is actively
+      // misleading when 14:20 was last week.
+      function asOfLabel(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        var sameDay = d.toDateString() === new Date().toDateString();
+        return sameDay
+          ? d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+          : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      }
       function apply(data) {
         // The hub tells us whether enough of the fleet reported for these
-        // totals to mean anything. When it says no, show NOTHING rather than a
-        // number assembled from a handful of hives — a precise-looking total
-        // built from 2 of 50 spokes is the exact failure this guards against.
+        // totals to be presented as CURRENT. When it says no, it now also
+        // serves the last-known-good figure (stale_data + as_of) instead of
+        // nothing: a total that is honestly labelled stale is far more useful
+        // to a visitor than a blank strip, which reads as "this fleet did
+        // nothing" rather than "we are recollecting". What we must never do is
+        // present stale numbers AS current — hence the caveat line below.
         // Treat a response without the field (older hub) as trustworthy so an
         // upgrade skew never blanks a strip that is actually fine.
         var trustworthy = !data || typeof data.trustworthy !== 'boolean' ? true : data.trustworthy;
+        var stale = !!(data && data.stale_data);
+        // Show a real number whenever we have one.
+        //
+        // These totals are a SUM OF FACTS, not a sample: every hive counts its
+        // own merged PRs and the hub adds them up (repos are deduplicated via a
+        // set). A total from 7 of 18 hives is not a guess at a fleet figure, it
+        // is exactly what those 7 did — correct, merely incomplete. So the
+        // honest presentation is the number plus its coverage, which the
+        // caption below always states.
+        //
+        // Hiding it was strictly worse: a blank strip reads as "this fleet did
+        // nothing", the one reading that is actually false. It stayed blank for
+        // months because the old gate needed >=50% coverage AND its
+        // last-known-good fallback was only ever written while ABOVE that bar,
+        // so on a fleet that never cleared it the fallback was never filled.
+        var showValues = trustworthy || stale;
         var anyLive = false;
         (LIVE_STATS || []).forEach(function(s) {
           var box = document.getElementById(s.box);
           if (!box) return;
           var val = data && typeof data[s.key] === 'number' ? data[s.key] : 0;
-          if (trustworthy && val > 0) {
+          if (showValues && val > 0) {
             box.querySelector('[data-stat]').textContent = fmt(val);
             box.hidden = false;
             anyLive = true;
@@ -1348,14 +1456,46 @@
             box.hidden = true;
           }
         });
+        // Staleness has to be visible in the UI, not just in a server log.
+        // When values came from the cache, caption the strip so the reader
+        // knows these are last-known-good rather than live.
+        if (anyLive && stale) {
+          var when = asOfLabel(data && data.as_of);
+          var note2 = document.getElementById('hero-proof-note');
+          if (note2) {
+            note2.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet totals above are <strong>last known good</strong>' +
+              (when ? ' (as of ' + esc(when) + ')' : '') +
+              ' while the fleet recollects &mdash; ' + fmt((data && data.reporting) || 0) + ' of ' +
+              fmt((data && data.eligible) || 0) + ' hives reporting right now. ' +
+              '<a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+          }
+        }
+        // Values shown and LIVE: state the coverage alongside them. This is the
+        // half that makes an ungated total honest — the number is exactly what
+        // the reporting hives did, and saying how many reported is what stops a
+        // partial total being read as a complete one. Without this line,
+        // removing the coverage gate would trade a misleading blank for a
+        // misleadingly confident number.
+        if (anyLive && !stale) {
+          var noteLive = document.getElementById('hero-proof-note');
+          var rep = (data && data.reporting) || 0;
+          var elig = (data && data.eligible) || 0;
+          if (noteLive && elig > 0) {
+            noteLive.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet totals above are the sum from <strong>' +
+              fmt(rep) + ' of ' + fmt(elig) + ' hives</strong> reporting' +
+              (rep < elig ? ' &mdash; the rest are still collecting' : '') +
+              '. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+          }
+        }
         var note = document.getElementById('hero-proof-note');
         if (!anyLive && note) {
           if (!trustworthy && data && data.eligible > 0) {
-            // Data IS degraded and we know it. Say so plainly instead of
-            // letting a blank strip read as "the fleet did nothing".
-            note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet contribution totals are <strong>currently being recollected</strong> (' +
+            // Degraded AND no last-known-good figure to fall back on (a true
+            // first-boot fleet). Say so plainly instead of letting a blank
+            // strip read as "the fleet did nothing".
+            note.innerHTML = 'The <strong>90% coverage gate</strong> is enforced on Hive\'s own build. Fleet contribution totals are <strong>currently being collected</strong> (' +
               fmt(data.reporting || 0) + ' of ' + fmt(data.eligible || 0) +
-              ' hives reporting) and are hidden until enough of the fleet has reported. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
+              ' hives reporting) and appear once the fleet has reported. <a href="/learn" target="_blank" rel="noopener">Learn how earned autonomy works</a>.';
           } else {
             // No fleet data yet: don't imply live numbers exist. Swap to a
             // qualitative line alongside the (always-true) 90% coverage stat.
@@ -1366,7 +1506,15 @@
       function go() {
         fetch('/api/fleet-stats')
           .then(function(r) { return r.json(); })
-          .then(apply)
+          .then(function(d) {
+            // Hand the fleet-wide counters to renderStats, which otherwise sums
+            // the PUBLIC hive list and so undercounts the fleet by ~2/3.
+            _fleetWide = d;
+            if (typeof _allMainHives !== 'undefined' && _allMainHives) {
+              try { renderStats(_allMainHives); } catch (e) {}
+            }
+            apply(d);
+          })
           .catch(function() { apply(null); });
       }
       go();

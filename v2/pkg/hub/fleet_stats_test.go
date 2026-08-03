@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -60,16 +61,23 @@ func TestComputeFleetStats(t *testing.T) {
 					PRsMerged90d: ptrInt(5), PRsRejected90d: ptrInt(1), CVEsClosed: ptrInt(3)},
 			},
 			// repos: a/r1, a/r2, a/r3 = 3 distinct; a/r2 reported twice + as "r2".
-			want: FleetStats{ReposManaged: 3, PRsMerged: 15, PRsRejected: 3, CVEsClosed: 4, Hives: 2, Reporting: 2, Eligible: 2},
+			want: FleetStats{ReposManaged: 3, PRsMerged: 15, PRsRejected: 3, CVEsClosed: 4, Hives: 2, TotalHives: 2, Reporting: 2, Eligible: 2},
 		},
 		{
-			name: "skips private and offline hives",
+			// A PRIVATE hive now COUNTS: these totals are anonymous sums, and
+			// excluding private hives described about a third of the fleet
+			// (~18 of 51 spokes are public). Naming a hive is a different
+			// disclosure and is still gated on IsPublic in the registry listing.
+			// OFFLINE hives are still skipped — their counts are not current.
+			name: "counts private hives, skips offline ones",
 			hives: []RegistryEntry{
 				{IsPublic: false, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(99)},
 				{IsPublic: true, Online: false, Org: "a", Repos: []string{"r2"}, PRsMerged90d: ptrInt(99)},
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r3"}, PRsMerged90d: ptrInt(7)},
 			},
-			want: FleetStats{ReposManaged: 1, PRsMerged: 7, Hives: 1, Reporting: 1, Eligible: 1},
+			// TotalHives is 3: all three are assigned (Org set); one is offline so
+			// it's in the total but not "up" (Hives 2).
+			want: FleetStats{ReposManaged: 2, PRsMerged: 106, Hives: 2, TotalHives: 3, Reporting: 2, Eligible: 2},
 		},
 		{
 			name: "nil counts are not aggregated as zero",
@@ -77,7 +85,7 @@ func TestComputeFleetStats(t *testing.T) {
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}}, // all nil
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"r2"}, PRsMerged90d: ptrInt(4)},
 			},
-			want: FleetStats{ReposManaged: 2, PRsMerged: 4, Hives: 2, Reporting: 1, Eligible: 2},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 4, Hives: 2, TotalHives: 2, Reporting: 1, Eligible: 2},
 		},
 		{
 			name: "empty repo strings are skipped",
@@ -85,7 +93,86 @@ func TestComputeFleetStats(t *testing.T) {
 				{IsPublic: true, Online: true, Org: "a", Repos: []string{"", "r1", ""},
 					PRsMerged90d: ptrInt(2)},
 			},
-			want: FleetStats{ReposManaged: 1, PRsMerged: 2, Hives: 1, Reporting: 1, Eligible: 1},
+			want: FleetStats{ReposManaged: 1, PRsMerged: 2, Hives: 1, TotalHives: 1, Reporting: 1, Eligible: 1},
+		},
+		{
+			// Unassigned placeholders are counted as AVAILABLE and excluded from
+			// the assigned totals — "hives up / total" is about the working fleet,
+			// not idle inventory. Availability mirrors the dashboard EXACTLY:
+			// ProvStatus=="available" OR an "available-" org prefix. The immutable
+			// "hosted-available-" ID prefix is deliberately NOT a signal (a claimed
+			// placeholder keeps that ID forever). Here: h1 (up) + h2 (down) are
+			// assigned; the "available-pool" org rows are available; the ID-only row
+			// with a cleared org is a CLAIMED placeholder → assigned, offline.
+			name: "placeholders count as available via provStatus/org, not the ID prefix",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(3)},
+				{ID: "h2", IsPublic: false, Online: false, Org: "b", Repos: []string{"r2"}, PRsMerged90d: ptrInt(1)},
+				{ID: "hosted-available-oke-01-placeholder-aa01", Online: true, Org: "available-pool"}, // org marker → available
+				{ID: "hosted-available-oke-02-placeholder-aa02", Online: false, Org: ""},              // claimed: ID prefix alone is NOT available → assigned, down
+				{ID: "regular-id", Online: true, Org: "available-pool"},                               // org marker → available
+			},
+			// Assigned total = h1 + h2 + the ID-only row (3); assigned & up = h1 (1);
+			// available = the two "available-pool" rows (2).
+			want: FleetStats{ReposManaged: 1, PRsMerged: 3, Hives: 1, TotalHives: 3, AvailableHives: 2, Reporting: 1, Eligible: 1},
+		},
+		{
+			// A CLAIMED placeholder whose org was rewritten off the pool prefix
+			// (live example id="hosted-available-oke-01-placeholder-bb95",
+			// org="TradingAsBuddies") is ASSIGNED — its status is not "available"
+			// and its org has no "available-" prefix. The "hosted-available-" ID it
+			// still carries must NOT resurrect it as available. This is the exact
+			// over-count that showed 38 available when only 17 are unclaimed.
+			name: "claimed placeholder with rewritten org is assigned, not available via ID prefix",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(9)},
+				{ID: "hosted-available-oke-01-placeholder-bb95", Online: true, Org: "TradingAsBuddies", Repos: []string{"leftover/repo"}, PRsMerged90d: ptrInt(4)},
+			},
+			// Both assigned & up; the placeholder's rewritten org means 0 available.
+			want: FleetStats{ReposManaged: 2, PRsMerged: 13, Hives: 2, TotalHives: 2, AvailableHives: 0, Reporting: 2, Eligible: 2},
+		},
+		{
+			// THE OVER-COUNT BUG, now via the explicit statusAssigned the claim
+			// paths set: a CLAIMED placeholder KEEPS its "hosted-available-" ID and
+			// a leftover "available-pool" org, but its provStatus is "assigned".
+			// Availability keys off provStatus=="available" (false) and the org
+			// prefix — and here the claim rewrote neither the ID nor the org, so
+			// this case pins that provStatus alone must win: assigned, NOT available.
+			name: "claimed placeholder keeps hosted-available ID/org but statusAssigned makes it assigned",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(4), ProvStatus: statusAssigned},
+				{ID: "hosted-available-oke-01-placeholder-cc11", Online: true, Org: "claimed-org",
+					Repos: []string{"real/repo"}, PRsMerged90d: ptrInt(6), ProvStatus: statusAssigned},
+			},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 10, Hives: 2, TotalHives: 2, AvailableHives: 0, Reporting: 2, Eligible: 2},
+		},
+		{
+			// ProvStatus=="available" is authoritative even for a hive whose ID does
+			// NOT carry the "hosted-available-" prefix and whose org is not a pool
+			// prefix — a placeholder whose ID/org markers alone would miss it. It
+			// still counts as AVAILABLE, matching the dashboard's Unassigned section.
+			name: "provStatus available is authoritative regardless of ID",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(5)},
+				{ID: "regular-looking-id", Online: true, Org: "some-org", ProvStatus: statusAvailable},
+			},
+			want: FleetStats{ReposManaged: 1, PRsMerged: 5, Hives: 1, TotalHives: 1, AvailableHives: 1, Reporting: 1, Eligible: 1},
+		},
+		{
+			// Reconciliation shape mirroring the live fleet the bug was found on:
+			// 2 hosted-available-* IDs, one still unclaimed (ProvStatus available →
+			// AVAILABLE) and one claimed (statusAssigned + org rewritten off the pool
+			// prefix → ASSIGNED). The claimed one must NOT be double-counted as
+			// available even though its ID prefix matches. Available=1, assigned
+			// total=2 (the plain hive + the claimed placeholder).
+			name: "mixed hosted-available pool splits by provStatus",
+			hives: []RegistryEntry{
+				{ID: "h1", IsPublic: true, Online: true, Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(2)},
+				{ID: "hosted-available-oke-01-placeholder-dd01", Online: true, Org: "available-pool", ProvStatus: statusAvailable},
+				{ID: "hosted-available-oke-02-placeholder-dd02", Online: true, Org: "claimed-org",
+					Repos: []string{"claimed/repo"}, PRsMerged90d: ptrInt(3), ProvStatus: statusAssigned},
+			},
+			want: FleetStats{ReposManaged: 2, PRsMerged: 5, Hives: 2, TotalHives: 2, AvailableHives: 1, Reporting: 2, Eligible: 2},
 		},
 		{
 			name:  "no hives yields empty",
@@ -186,28 +273,64 @@ func TestComputeFleetStatsZeroCollectedAtIsTrusted(t *testing.T) {
 // total assembled from a small minority of the fleet must NOT be presented as
 // a fleet-wide figure. 2 reporting out of 50 eligible is the live shape of the
 // "statistics are missing again" report.
+// TestFleetStatsTrustworthy pins the contract AFTER the coverage gate was
+// removed: a total is publishable whenever at least one hive reported it.
+//
+// The previous version of this test called "2 of 50" the reported regression
+// and required false — it encoded SUPPRESSION as the fix. That was wrong. These
+// totals are a sum of facts, not a sample: each hive counts its own merged PRs
+// and the hub adds them (repos deduplicated via a set), so 2 of 50 hives
+// reporting 12,819 PRs is exactly what those two did, not a guess at a fleet
+// figure. Hiding it made the page read "this fleet did nothing", the one
+// interpretation that is false.
+//
+// Coverage is now communicated instead of gated: the landing page always states
+// "N of M hives reporting" beside the number.
 func TestFleetStatsTrustworthy(t *testing.T) {
 	tests := []struct {
 		name      string
 		reporting int
 		eligible  int
 		want      bool
+		why       string
 	}{
-		{"the reported regression: 2 of 50", 2, 50, false},
-		{"nothing eligible", 0, 0, false},
-		{"eligible but none reporting", 0, 12, false},
-		{"exactly at the threshold", 5, 10, true},
-		{"just under the threshold", 4, 10, false},
-		{"whole fleet reporting", 50, 50, true},
+		{"2 of 50 is a real count, not a bad estimate", 2, 50, true,
+			"publishing it with its coverage beats a blank strip that implies zero activity"},
+		{"a single reporting hive still has real data", 1, 40, true,
+			"one hive's merged PRs are still merged PRs"},
+		{"nothing eligible", 0, 0, false, "no hives, no total"},
+		{"eligible but none reporting", 0, 12, false,
+			"nothing to publish — this is the ONLY case that hides the strip"},
+		{"whole fleet reporting", 50, 50, true, "complete"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fs := FleetStats{Reporting: tt.reporting, Eligible: tt.eligible}
 			if got := fs.FleetStatsTrustworthy(); got != tt.want {
-				t.Errorf("Trustworthy(%d/%d) = %v, want %v",
-					tt.reporting, tt.eligible, got, tt.want)
+				t.Errorf("Trustworthy(%d/%d) = %v, want %v — %s",
+					tt.reporting, tt.eligible, got, tt.want, tt.why)
 			}
 		})
+	}
+}
+
+// TestFleetStatsLKGNoLongerNeedsAThresholdToInitialise pins the trap that kept
+// the strip blank for months.
+//
+// The last-known-good aggregate was RECORDED only while Trustworthy was true,
+// and SERVED only while it was false. On a fleet that never once cleared the
+// 50% bar it was therefore never written, so the fallback built for exactly
+// that situation had nothing to serve: the safety net could only be filled by
+// the condition it existed to protect against. Live coverage was 2/18, 7/18 and
+// 10/50 on the day this was found.
+func TestFleetStatsLKGNoLongerNeedsAThresholdToInitialise(t *testing.T) {
+	// The historical coverage levels that could never record an LKG before.
+	for _, c := range []struct{ reporting, eligible int }{{2, 18}, {7, 18}, {10, 50}} {
+		fs := FleetStats{Reporting: c.reporting, Eligible: c.eligible}
+		if !fs.FleetStatsTrustworthy() {
+			t.Errorf("%d of %d still cannot publish or record an LKG; the strip stays blank forever",
+				c.reporting, c.eligible)
+		}
 	}
 }
 
@@ -227,5 +350,205 @@ func TestComputeFleetStatsSkipsRepolessHives(t *testing.T) {
 	}
 	if !got.FleetStatsTrustworthy() {
 		t.Error("a fully-reporting fleet of one must be trustworthy")
+	}
+}
+
+// fleetStatsLKGTestServer builds a hub whose registry save path is redirected
+// into a temp dir, so recordFleetStatsLKG's requestSave cannot touch /data.
+func fleetStatsLKGTestServer(t *testing.T) *HubServer {
+	t.Helper()
+	old := registryPath
+	registryPath = t.TempDir() + "/reg.json"
+	t.Cleanup(func() { registryPath = old })
+	return &HubServer{logger: slog.Default()}
+}
+
+func decodeFleetStats(t *testing.T, s *HubServer) FleetStats {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.handleFleetStats(rec, httptest.NewRequest(http.MethodGet, "/api/fleet-stats", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d", rec.Code)
+	}
+	var fs FleetStats
+	if err := json.Unmarshal(rec.Body.Bytes(), &fs); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return fs
+}
+
+// A collection that clears the coverage bar must be recorded as last-known-good
+// and served as fresh (not stale).
+func TestHandleFleetStats_TrustworthyRecordsLKG(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(),
+			Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(20)},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(),
+			Org: "a", Repos: []string{"r2"}, PRsMerged90d: ptrInt(6)},
+	}
+
+	fs := decodeFleetStats(t, s)
+	if !fs.Trustworthy {
+		t.Fatalf("Trustworthy = false, want true (2 of 2 reporting)")
+	}
+	if fs.StaleData {
+		t.Error("StaleData = true, want false for a fresh trustworthy aggregate")
+	}
+	if fs.PRsMerged != 26 {
+		t.Errorf("PRsMerged = %d, want 26", fs.PRsMerged)
+	}
+	if fs.AsOf != fs.UpdatedAt {
+		t.Errorf("AsOf = %q, want it to equal UpdatedAt %q when fresh", fs.AsOf, fs.UpdatedAt)
+	}
+	lkg := s.fleetStatsLKG()
+	if lkg == nil {
+		t.Fatal("fleetStatsLKG() = nil, want the trustworthy aggregate recorded")
+	}
+	if lkg.PRsMerged != 26 || lkg.Reporting != 2 || lkg.Eligible != 2 {
+		t.Errorf("LKG = %+v, want PRsMerged 26 / Reporting 2 / Eligible 2", *lkg)
+	}
+}
+
+// Once the coverage gate was removed, LIVE data always wins: a partial total is
+// a real count of what the reporting hives did, so replacing it with a cached
+// figure would substitute older numbers for current ones.
+//
+// This test previously asserted the opposite — that 1-of-4 coverage should swap
+// the live total for the LKG and label it stale. That was a consequence of the
+// gate, not a goal: it treated a real partial count as unusable. The LKG now
+// covers only the case where NOTHING is reporting and there is nothing live to
+// show.
+func TestHandleFleetStats_LiveDataWinsOverLKG(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	collectedAt := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		ReposManaged: 42, PRsMerged: 26, PRsRejected: 3, CVEsClosed: 1,
+		Hives: 18, Reporting: 12, Eligible: 18, CollectedAt: collectedAt,
+	}
+	// Live fleet: only 1 of 4 eligible hives reporting → 25%, below the bar.
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(),
+			Org: "a", Repos: []string{"r1"}, PRsMerged90d: ptrInt(2)},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r2"}},
+		{ID: "h3", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r3"}},
+		{ID: "h4", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r4"}},
+	}
+
+	fs := decodeFleetStats(t, s)
+	if !fs.Trustworthy {
+		t.Fatal("Trustworthy = false; a real count from 1 of 4 hives is publishable")
+	}
+	if fs.StaleData {
+		t.Error("StaleData = true; live data was available and must not be replaced by the cache")
+	}
+	// Counts come from the LIVE hive, not the cache. The cached 26 is older; a
+	// real count of 2 from the hives reporting right now is the current truth.
+	if fs.PRsMerged != 2 {
+		t.Errorf("PRsMerged = %d, want the live 2 (not the cached 26)", fs.PRsMerged)
+	}
+	if fs.ReposManaged != 4 {
+		t.Errorf("ReposManaged = %d, want the live 4 (not the cached 42)", fs.ReposManaged)
+	}
+	// Coverage is reported alongside so the page can state "1 of 4 reporting".
+	if fs.Reporting != 1 || fs.Eligible != 4 {
+		t.Errorf("Reporting/Eligible = %d/%d, want live 1/4", fs.Reporting, fs.Eligible)
+	}
+	// AsOf is NOW, because these are live numbers, not a cached snapshot.
+	if fs.AsOf == collectedAt.Format(time.RFC3339) {
+		t.Errorf("AsOf = %q, the cached timestamp; live data must carry its own", fs.AsOf)
+	}
+	// And a publishable aggregate now REFRESHES the cache. Under the old gate
+	// this could never happen below 50%, which is why the fallback stayed empty
+	// on a fleet that never cleared the bar.
+	if lkg := s.fleetStatsLKG(); lkg == nil || lkg.PRsMerged != 2 {
+		t.Errorf("LKG was not refreshed from the live aggregate: %+v", lkg)
+	}
+}
+
+// When NOTHING is reporting but eligible hives exist AND a last-known-good
+// aggregate was stored, the handler serves the cached counts and labels them
+// stale — the strip keeps a real (older) number rather than going blank on a
+// fleet that has merely gone quiet. This exercises the LKG-serving branch that
+// only fires at zero live coverage.
+func TestHandleFleetStats_ZeroReportingServesStaleLKG(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	collectedAt := time.Now().Add(-3 * time.Hour).UTC().Truncate(time.Second)
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		ReposManaged: 42, PRsMerged: 26, PRsRejected: 3, CVEsClosed: 1,
+		Hives: 5, Reporting: 5, Eligible: 5, CollectedAt: collectedAt,
+	}
+	// Eligible (online, has repos) but NOT reporting (no counts at all), so
+	// Reporting==0 while Eligible>0 — the exact state the LKG fallback covers.
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r1"}},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r2"}},
+	}
+
+	fs := decodeFleetStats(t, s)
+	if fs.Trustworthy {
+		t.Fatal("Trustworthy = true, want false when nothing is reporting")
+	}
+	if !fs.StaleData {
+		t.Error("StaleData = false, want true when serving the cached aggregate")
+	}
+	// The served counts come from the cache, not the (empty) live aggregate.
+	if fs.PRsMerged != 26 || fs.ReposManaged != 42 {
+		t.Errorf("served PRsMerged/ReposManaged = %d/%d, want cached 26/42", fs.PRsMerged, fs.ReposManaged)
+	}
+	// AsOf reflects the cache's collection time, not now.
+	if fs.AsOf != collectedAt.Format(time.RFC3339) {
+		t.Errorf("AsOf = %q, want the cached collection time %q", fs.AsOf, collectedAt.Format(time.RFC3339))
+	}
+	// Live coverage figures are kept so the page can show recollection progress.
+	if fs.Reporting != 0 || fs.Eligible != 2 {
+		t.Errorf("Reporting/Eligible = %d/%d, want live 0/2", fs.Reporting, fs.Eligible)
+	}
+}
+
+// Genuine first boot — never collected, nothing cached — is the only state
+// that legitimately shows no total.
+func TestHandleFleetStats_NoLKGShowsNothing(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	s.registry.Hives = []RegistryEntry{
+		{ID: "h1", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r1"}},
+		{ID: "h2", IsPublic: true, Online: true, LastHeartbeat: freshHeartbeat(), Org: "a", Repos: []string{"r2"}},
+	}
+	fs := decodeFleetStats(t, s)
+	if fs.Trustworthy || fs.StaleData {
+		t.Errorf("Trustworthy=%v StaleData=%v, want both false on first boot", fs.Trustworthy, fs.StaleData)
+	}
+	if fs.PRsMerged != 0 || fs.AsOf != "" {
+		t.Errorf("PRsMerged=%d AsOf=%q, want 0 and empty with no cache", fs.PRsMerged, fs.AsOf)
+	}
+}
+
+// The LKG must round-trip through the registry file, or a hub restart would
+// blank the strip again — the durability half of the fix.
+func TestFleetStatsLKG_PersistsAcrossReload(t *testing.T) {
+	s := fleetStatsLKGTestServer(t)
+	collectedAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		PRsMerged: 26, Reporting: 12, Eligible: 18, CollectedAt: collectedAt,
+	}
+	if err := s.saveRegistryNow(); err != nil {
+		t.Fatalf("saveRegistryNow: %v", err)
+	}
+	var reloaded Registry
+	data, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatalf("read registry: %v", err)
+	}
+	if err := json.Unmarshal(data, &reloaded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if reloaded.FleetStatsLKG == nil {
+		t.Fatal("FleetStatsLKG did not survive the registry round-trip")
+	}
+	if reloaded.FleetStatsLKG.PRsMerged != 26 {
+		t.Errorf("PRsMerged = %d, want 26", reloaded.FleetStatsLKG.PRsMerged)
+	}
+	if !reloaded.FleetStatsLKG.CollectedAt.Equal(collectedAt) {
+		t.Errorf("CollectedAt = %v, want %v", reloaded.FleetStatsLKG.CollectedAt, collectedAt)
 	}
 }

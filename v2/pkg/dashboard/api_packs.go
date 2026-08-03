@@ -48,6 +48,10 @@ type ApplyPackResult struct {
 	Skipped []string `json:"skipped"`
 	Paused  []string `json:"paused"`
 	Resumed []string `json:"resumed"`
+	// Tombstoned lists pack agents deliberately deleted by the operator and
+	// therefore NOT re-created. Surfaced so an under-full roster reads as an
+	// honored choice rather than an apply that quietly dropped agents.
+	Tombstoned []string `json:"tombstoned,omitempty"`
 }
 
 // ApplyPack applies the ACMM pack for the given level. It creates agents,
@@ -75,6 +79,10 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 
 	var created []string
 	var skipped []string
+	// tombstoned collects pack agents skipped because the operator deleted
+	// them. Reported back so the caller can say so out loud instead of
+	// silently under-delivering the level's roster.
+	var tombstoned []string
 	var updated []string
 	var createErrs []string
 	if err := s.mutateConfig(func(candidate *config.Config) error {
@@ -86,6 +94,14 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 		}
 
 		for _, pa := range pack.Agents {
+			// A deliberately deleted agent is NOT re-created, at any level.
+			// ApplyPack runs on every restart, so without this the pack re-added
+			// agents whose operator had removed them — four times over on one
+			// hive.
+			if s.deps.Config.IsAgentRemoved(pa.Name) {
+				tombstoned = append(tombstoned, pa.Name)
+				continue
+			}
 			if existing, exists := candidate.Agents[pa.Name]; exists {
 				changed := false
 				// Pack-behavior fields define what an agent DOES at a given ACMM
@@ -265,12 +281,13 @@ func (s *Server) applyPack(level int, forceLevel bool) (*ApplyPackResult, error)
 	s.logger.Info("ACMM pack applied", "level", level, "name", pack.Name, "created", len(created), "updated", len(updated), "skipped", len(skipped), "paused", len(paused), "resumed", len(resumed))
 
 	result := &ApplyPackResult{
-		Name:    pack.Name,
-		Created: created,
-		Updated: updated,
-		Skipped: skipped,
-		Paused:  paused,
-		Resumed: resumed,
+		Name:       pack.Name,
+		Created:    created,
+		Updated:    updated,
+		Skipped:    skipped,
+		Paused:     paused,
+		Resumed:    resumed,
+		Tombstoned: tombstoned,
 	}
 	if len(createErrs) > 0 {
 		return result, fmt.Errorf("failed to persist %d pack agent(s): %s", len(createErrs), strings.Join(createErrs, "; "))

@@ -980,7 +980,7 @@ func TestHandleRequestProvisionWithFilesystem(t *testing.T) {
 
 	// github_host is required — the forge the org lives on must be captured at
 	// request time, so this end-to-end save fixture carries one.
-	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3}`
+	body := `{"org":"validorg","github_host":"github.com","repos":"repo1,repo2","primary_repo":"repo1","acmm_level":3,"full_name":"Ada Lovelace"}`
 	req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer ghp_reqprov_fs")
@@ -1022,7 +1022,7 @@ func TestHandleRequestProvisionClampsAboveOnboardingCeiling(t *testing.T) {
 
 			srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d}`, requested)
+			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d,"full_name":"Ada Lovelace"}`, requested)
 			req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -1058,7 +1058,7 @@ func TestHandleRequestProvisionAcceptsOnboardingLevels(t *testing.T) {
 
 			srv := NewHubServer(0, slog.Default(), "test", "v2")
 
-			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d}`, requested)
+			body := fmt.Sprintf(`{"org":"validorg","github_host":"github.com","repos":"repo1","primary_repo":"repo1","acmm_level":%d,"full_name":"Ada Lovelace"}`, requested)
 			req := httptest.NewRequest("POST", "/provision", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -1137,8 +1137,12 @@ func TestHandleApproveProvisionWithFilesystem(t *testing.T) {
 	if h.Org != "org" {
 		t.Errorf("org = %q, want org", h.Org)
 	}
-	if h.Status != "" {
-		t.Errorf("status = %q, want empty (cleared)", h.Status)
+	// A claimed placeholder must carry the explicit statusAssigned, NOT an empty
+	// string. Empty was indistinguishable from "unknown" and made every
+	// availability check fall back to the immutable "hosted-available-" ID
+	// prefix, mis-counting claimed hives as available (38 shown vs the true 17).
+	if h.Status != statusAssigned {
+		t.Errorf("status = %q, want %q (claimed, no longer available)", h.Status, statusAssigned)
 	}
 }
 
@@ -1213,7 +1217,10 @@ func TestHandleAssignHiveWithFilesystem(t *testing.T) {
 	if h == nil {
 		t.Fatal("hive missing after assign")
 	}
-	if h.Owner != "newowner" || h.Org != "neworg" || h.PrimaryRepo != "repoa" || h.ACMMLevel != 3 || h.Status != "" {
+	// Status must be the explicit statusAssigned on claim, not empty — empty made
+	// the fleet counters fall back to the immutable ID prefix and over-count
+	// available hives.
+	if h.Owner != "newowner" || h.Org != "neworg" || h.PrimaryRepo != "repoa" || h.ACMMLevel != 3 || h.Status != statusAssigned {
 		t.Errorf("assign wrote wrong meta: %+v", h)
 	}
 

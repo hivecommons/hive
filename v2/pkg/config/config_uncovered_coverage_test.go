@@ -350,19 +350,31 @@ func TestGitHubConfig_AppInstallURL_Table(t *testing.T) {
 			want:    "https://github.com/apps/acme-hive/installations/new",
 		},
 		{
-			name:    "GHE host uses the enterprise /github-apps/ path",
+			// The public default names an App that exists ONLY on github.com. On a
+			// GHE host it produced github.ibm.com/github-apps/kubestellar-hive/...,
+			// a live 404 a real user hit. Empty is the honest answer and callers
+			// render it as "install link unavailable" plus the missing config.
+			name:    "GHE host with no configured slug yields no link, not a 404",
 			baseURL: "https://github.ibm.com",
-			want:    "https://github.ibm.com/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+			want:    "",
 		},
 		{
 			name:    "GHE host with a trailing slash does not double up",
 			baseURL: "https://github.cisco.com/",
-			want:    "https://github.cisco.com/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+			appSlug: "acme-ghe",
+			want:    "https://github.cisco.com/github-apps/acme-ghe/installations/new",
 		},
 		{
 			name:    "GHE host with multiple trailing slashes",
 			baseURL: "https://github.cisco.com///",
-			want:    "https://github.cisco.com/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+			appSlug: "acme-ghe",
+			want:    "https://github.cisco.com/github-apps/acme-ghe/installations/new",
+		},
+		{
+			name:    "GHE slug that is only whitespace is treated as unset",
+			baseURL: "https://github.ibm.com",
+			appSlug: "   ",
+			want:    "",
 		},
 		{
 			name:    "GHE host honours a per-instance app slug",
@@ -383,7 +395,8 @@ func TestGitHubConfig_AppInstallURL_Table(t *testing.T) {
 			// broken link is the safer outcome than a plausible wrong one.
 			name:    "malformed base url is not rewritten to github.com",
 			baseURL: "not a url",
-			want:    "not a url/github-apps/" + DefaultGitHubAppSlug + "/installations/new",
+			appSlug: "acme-ghe",
+			want:    "not a url/github-apps/acme-ghe/installations/new",
 		},
 	}
 	for _, tt := range tests {

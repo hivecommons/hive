@@ -173,6 +173,7 @@ func TestRequestProvisionAcceptsAllForgeForms(t *testing.T) {
 			"repos":       "repo1",
 			"github_host": tc.forge,
 			"acmm_level":  3,
+			"full_name":   "Ada Lovelace",
 		})
 		if err != nil {
 			t.Fatalf("marshal: %v", err)

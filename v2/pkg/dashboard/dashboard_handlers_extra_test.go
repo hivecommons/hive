@@ -29,7 +29,7 @@ func newFullServer(t *testing.T) *Server {
 			Org: "testorg", Name: "test", PrimaryRepo: "testrepo",
 			Repos: []string{"testrepo"},
 		},
-		Data:   config.DataConfig{AgentsDir: t.TempDir()},
+		Data: config.DataConfig{AgentsDir: t.TempDir()},
 		Agents: map[string]config.AgentConfig{
 			"scanner": {ID: "scan-001", Role: "scanner", Backend: "claude", Model: "sonnet", DisplayName: "Scanner"},
 		},
@@ -47,12 +47,12 @@ func newFullServer(t *testing.T) *Server {
 
 	srv := NewServer(0, logger)
 	srv.deps = &Dependencies{
-		Config:   cfg,
-		AgentMgr: mgr,
-		Governor: gov,
-		BeadStores: map[string]*beads.Store{"scanner": scannerStore},
-		Logger:   logger,
-		Ctx:      context.Background(),
+		Config:         cfg,
+		AgentMgr:       mgr,
+		Governor:       gov,
+		BeadStores:     map[string]*beads.Store{"scanner": scannerStore},
+		Logger:         logger,
+		Ctx:            context.Background(),
 		RefreshFunc:    func() {},
 		PersistFunc:    func() {},
 		SkipReloadFunc: func() {},
@@ -222,7 +222,9 @@ func TestHandleGovernorReposBadJSON(t *testing.T) {
 
 func TestHandleGovernorReposValid(t *testing.T) {
 	srv := newFullServer(t)
-	body := `{"repos":["repo1","repo2"],"primary_repo":"repo1"}`
+	// Field is primaryRepo (camelCase — the handler decodes that key); it must
+	// name one of the repos so the always-exactly-one-default guard passes.
+	body := `{"repos":["repo1","repo2"],"primaryRepo":"repo1"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
@@ -673,7 +675,7 @@ func TestHandleGovernorReposSpecialChars(t *testing.T) {
 
 func TestHandleGovernorReposStripOrgPrefix(t *testing.T) {
 	srv := newFullServer(t)
-	body := `{"repos":["testorg/my-repo","other-repo"]}`
+	body := `{"repos":["testorg/my-repo","other-repo"],"primaryRepo":"my-repo"}`
 	req := httptest.NewRequest("PUT", "/api/governor/repos", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()

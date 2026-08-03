@@ -27,6 +27,9 @@ func v1Server(t *testing.T, login string) *Server {
 	s := covApiServer(t)
 	mock := userMock(t, login)
 	s.deps.Config.GitHub.APIURL = mock.URL
+	// validateGitHubToken resolves through OAuthAPIURL (pinned to api.github.com),
+	// not APIURL, so the mock is only reached via the override.
+	s.deps.Config.GitHub.OAuthAPIURLOverride = mock.URL
 	return s
 }
 

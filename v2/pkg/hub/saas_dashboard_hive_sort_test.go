@@ -113,8 +113,11 @@ func TestHiveProvisionSortUsesRegisteredAt(t *testing.T) {
 	for _, snippet := range []string{
 		"function hiveProvisionTime(h)",
 		"var raw = h && h.registeredAt;",
-		"sortDashHives(\\'registeredAt\\')",
-		"Provisioned ⇅",
+		// After the 15-to-9 fold the standalone Prov column is gone, but its sort
+		// survives as an inline "Prov ⇅" control on the Uptime header, wired via the
+		// subSort() helper to the registeredAt key. The trigger must remain reachable.
+		"subSort('registeredAt', 'Prov ⇅'",
+		"Prov ⇅",
 		// registeredAt must be a recognised sort key, otherwise a persisted
 		// choice of it would be rejected on the next load.
 		"'registeredAt'",
@@ -132,14 +135,19 @@ func TestHiveProvisionSortUsesRegisteredAt(t *testing.T) {
 	}
 }
 
-// TestHiveProvisionCellHandlesMissingTimestamp guards the render path: a hive
-// with no usable timestamp must show an em dash, never the string
-// "Invalid Date" that new Date(”) stringifies to.
-func TestHiveProvisionCellHandlesMissingTimestamp(t *testing.T) {
+// TestHiveProvisionTimeGuardedByUsability guards the render path: the provisioned
+// time (now shown in the status hover panel, not a dedicated column) must only be
+// emitted when hiveProvisionTime says it is usable, so a hive with an empty
+// registeredAt never renders the "Invalid Date" that new Date(”) stringifies to.
+func TestHiveProvisionTimeGuardedByUsability(t *testing.T) {
 	html := dashScript(t)
-	// The cell and the comparator must agree on "is this usable", so the cell
-	// asks hiveProvisionTime rather than testing the raw field itself.
-	if !strings.Contains(html, "hiveProvisionTime(h) === null ? '—'") {
-		t.Error("the Provisioned cell does not fall back to an em dash via hiveProvisionTime — a hive with an empty registeredAt would render 'Invalid Date'")
+	// The hover line and the sort comparator must agree on "is this usable", so
+	// the line is gated on hiveProvisionTime rather than testing the raw field.
+	if !strings.Contains(html, "hiveProvisionTime(h) !== null") {
+		t.Error("the provisioned hover line is not gated on hiveProvisionTime — a hive with an empty registeredAt could render 'Invalid Date'")
+	}
+	// And it must have left the table body: no standalone Provisioned <td>/<th>.
+	if strings.Contains(html, ">Provisioned ⇅</th>") {
+		t.Error("the Provisioned column header is still present — it was meant to move into the status hover panel")
 	}
 }

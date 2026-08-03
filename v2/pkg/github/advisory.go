@@ -117,6 +117,42 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	return nil
 }
 
+// ProbeIssueWrite (#2353) verifies that the current credential can actually
+// WRITE to repo by performing a benign, self-reverting edit of the advisory
+// issue: it reads the issue's current body and writes that same body straight
+// back. GitHub records no visible change, but the request still exercises the
+// exact issues:write path (and repo scope) a real digest post needs.
+//
+// This closes the recheck false-positive: a READ (finding the advisory issue)
+// succeeds even when the App cannot write, and an installation-permission check
+// cannot see that the repo is absent from the App installation's selected
+// repos. Only a real write proves write capability, so callers that must not
+// clear the write-forbidden banner (#2353) probe with this before declaring the
+// App healthy.
+//
+// Returns nil on a successful write; the underlying error (e.g. the 403
+// "Resource not accessible by integration") otherwise, so the caller can
+// classify it exactly as it would a failed digest post.
+func (c *Client) ProbeIssueWrite(ctx context.Context, repo string, issueNum int) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, issueNum)
+	if err != nil {
+		return fmt.Errorf("reading advisory issue %s#%d for write probe: %w", repo, issueNum, err)
+	}
+	// Write the current body back unchanged — a no-op edit that still requires
+	// (and thus proves) issues:write on THIS repo.
+	_, _, err = c.client.Issues.Edit(ctx, owner, repoName, issueNum, &gh.IssueRequest{
+		Body: gh.Ptr(issue.GetBody()),
+	})
+	if err != nil {
+		return fmt.Errorf("write probe on advisory issue %s#%d: %w", repo, issueNum, err)
+	}
+	return nil
+}
+
 func truncateDigest(digest string) string {
 	if len(digest) <= githubCommentCharLimit {
 		return digest

@@ -183,7 +183,7 @@
     }
     .oc-nav-emoji { display: inline-flex; width: 18px; font-size: 0.9rem; flex-shrink: 0; justify-content: center; }
     .oc-nav-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-    .oc-nav-mode { flex-shrink: 0; font-size: 0.9rem; margin-left: 2px; transition: opacity 0.15s; }
+    .oc-nav-mode { flex-shrink: 0; font-size: 0.9rem; margin-left: 2px; transition: opacity 0.15s; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
     /* The hover-revealed row actions (⚙/✕) take the right edge — fade the
        passive mode icon out so they never overlap it at any sidebar width. */
     .oc-nav-item:hover .oc-nav-mode { opacity: 0; }
@@ -688,6 +688,80 @@
        there is nothing for the reader to do. */
     .gh-app-install-banner.operator-issue { background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
     .gh-app-install-banner.operator-issue .gh-app-desc { color: var(--text); }
+    /* Installation-ID discoverability hint. The field is a bare numeric input
+       with no on-screen clue where the number comes from, which cost real
+       support round-trips. The `?` button reveals a rendered mock of the org's
+       installed-app settings URL with the ID segment highlighted.
+
+       Deliberately NOT hover-only: the button is a real <button> toggled by
+       click and by keyboard (Enter/Space activate it natively), so touch and
+       keyboard users reach it. Hover merely previews the same panel. The
+       dashboard already carries a hover-only defect in .oc-nav-actions /
+       .oc-group-actions; this must not become another instance. */
+    .gh-idhint { position: relative; display: inline-flex; align-items: center; margin-right: 6px; }
+    .gh-idhint-btn {
+      width: 18px; height: 18px; padding: 0; line-height: 1;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--line-strong); border-radius: 50%;
+      background: var(--panel); color: var(--muted);
+      font-size: 0.68rem; font-weight: 700; cursor: pointer;
+    }
+    .gh-idhint-btn:hover, .gh-idhint-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+    .gh-idhint-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    /* z-index 10002: above the toast container (10001) so a toast fired by
+       "Set ID" cannot cover the panel explaining where the ID comes from. */
+    .gh-idhint-pop {
+      display: none; position: absolute; bottom: calc(100% + 8px); left: 50%;
+      transform: translateX(-50%);
+      /* Clamp to the viewport so the panel never overflows a narrow screen;
+         340px is the natural width of the URL mock at its default font size. */
+      width: min(340px, calc(100vw - 32px));
+      background: var(--panel-strong); border: 1px solid var(--line);
+      border-radius: var(--radius); padding: 10px 12px;
+      box-shadow: var(--shadow-raised); z-index: 10002;
+      text-align: left; white-space: normal; cursor: default;
+    }
+    .gh-idhint:hover .gh-idhint-pop,
+    .gh-idhint:focus-within .gh-idhint-pop,
+    .gh-idhint-btn[aria-expanded="true"] + .gh-idhint-pop { display: block; }
+    .gh-idhint-pop .gh-idhint-lead { font-size: var(--fs-xs); color: var(--text); margin-bottom: 8px; line-height: 1.45; }
+    .gh-idhint-pop .gh-idhint-foot { font-size: var(--fs-xs); color: var(--muted); margin-top: 8px; line-height: 1.45; }
+    /* The URL mock: a rendered browser address bar, not a screenshot.
+       .gh-idhint-url is the pill-shaped chrome (rounded ends, lock glyph);
+       .gh-idhint-urltext is the scrollable URL row inside it, and the caret
+       callout sits below as its own line so it keeps pointing at the ID
+       segment even while the URL row scrolls horizontally. */
+    .gh-idhint-url {
+      display: flex; align-items: center; gap: 7px;
+      background: var(--bg-soft); border: 1px solid var(--line-strong);
+      border-radius: 999px; padding: 6px 12px;
+    }
+    /* Lock glyph stands in for the browser's HTTPS padlock. Shrink-to-fit so
+       it never gets squeezed by the scrolling URL text next to it. */
+    .gh-idhint-url .seg-lock {
+      flex: 0 0 auto; color: var(--green); font-size: 0.72rem; opacity: 0.9;
+    }
+    .gh-idhint-urltext {
+      flex: 1 1 auto; min-width: 0;
+      font-family: var(--font-mono); font-size: 0.66rem; line-height: 1.6;
+      color: var(--muted); overflow-x: auto; white-space: nowrap;
+    }
+    .gh-idhint-url .seg-host { color: var(--text); }
+    /* The highlighted segment. Digits are MASKED (see ghAppInstallIdHintHtml)
+       so nobody copies the example into the field as their own ID. */
+    .gh-idhint-url .seg-id {
+      color: var(--amber); font-weight: 700;
+      background: color-mix(in srgb, var(--amber) 18%, transparent);
+      border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
+      border-radius: 3px; padding: 1px 4px;
+    }
+    /* Caret callout under the bar, pointing up at the ID segment. Own line
+       (not inside the scrolling pill) so it never gets clipped by
+       overflow-x when a long org name scrolls the URL row. */
+    .gh-idhint-caret {
+      display: block; color: var(--amber); font-size: 0.6rem;
+      font-family: var(--font-mono); margin-top: 4px; padding-left: 12px;
+    }
     .gh-app-perm-details { font-size: 0.8rem; margin-top: 6px; color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
     .gh-app-perm-details .perm-missing { color: var(--red); font-weight: 600; }
@@ -1147,6 +1221,11 @@
     .cost-bar { flex: 1 1 0; min-width: 2px; background: var(--green); border-radius: 2px 2px 0 0; opacity: 0.8; transition: opacity 0.1s; align-self: flex-end; }
     .cost-bar:hover { opacity: 1; }
     .cost-bar.zero { background: rgba(128,128,128,0.25); }
+    .cost-bars-wrap { position: relative; }
+    /* Centered over the flat bars when a covered window really did spend $0, so
+       empty axes never read as a failed render. */
+    .cost-bars-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: 0.62rem; color: var(--muted); font-style: italic; pointer-events: none; }
     .cost-bars-axis { display: flex; justify-content: space-between; font-size: 0.58rem; color: var(--muted); font-family: var(--font-mono); margin-top: 3px; }
     .cost-trend-empty { font-size: 0.66rem; color: var(--muted); font-style: italic; padding: 8px 0; }
 
@@ -2508,6 +2587,7 @@
       <a class="oc-nav-item" data-section="faq-section" onclick="ocNavigate('faq-section')" title="Answers to common first-time questions: the Advisory Digest, ACMM levels, how to advance, and managing cost"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" onclick="openWelcomeDialog()" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
+      <a class="oc-nav-item" href="https://github.com/kubestellar/hive/issues" target="_blank" rel="noopener noreferrer"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
     </div>
     <div class="system-gauges" id="system-gauges">
       <div class="sys-gauge-row" id="sys-gauge-disk" title="Disk usage">
@@ -2601,7 +2681,7 @@
     <a href="/api/widget" class="widget-dl" title="Download Übersicht widget">⬇ Widget</a>
   </h1>
 
-  <div id="gh-app-install-banner" class="gh-app-install-banner" hidden
+  <div id="gh-app-install-banner" class="gh-app-install-banner" hidden>
     <span style="font-size:1.5rem">&#9888;&#65039;</span>
     <div style="flex:1">
       <div class="gh-app-title">GitHub App Not Installed</div>
@@ -2610,6 +2690,17 @@
     <input id="gh-app-install-id-input" type="text" inputmode="numeric" placeholder="Installation ID"
       title="After installing the app, paste the numeric installation_id from the install URL (github.com/settings/installations/&lt;ID&gt;)"
       style="width:120px;padding:6px 8px;margin-right:6px;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);font-size:0.8rem" />
+    <!-- Where-do-I-find-this hint. Content is injected by
+         renderGitHubAppInstallIdHint() because the GitHub host and org are only
+         known at runtime (a GHE hive must not be told to look at github.com).
+         The button is click/keyboard operable, not hover-only. -->
+    <span class="gh-idhint" id="gh-app-install-id-hint">
+      <button type="button" class="gh-idhint-btn" id="gh-app-install-id-hint-btn"
+        aria-expanded="false" aria-controls="gh-app-install-id-hint-pop"
+        aria-label="Where do I find my Installation ID?"
+        onclick="toggleInstallIdHint(event)">?</button>
+      <span class="gh-idhint-pop" id="gh-app-install-id-hint-pop" role="tooltip"></span>
+    </span>
     <button onclick="submitGitHubInstallationID()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--text);margin-right:8px" id="gh-app-set-id-btn">Set ID</button>
     <button onclick="recheckGitHubApp()" class="gh-app-btn" style="background:transparent;border-color:var(--line);color:var(--muted);margin-right:8px" id="gh-app-recheck-btn">Re-check</button>
     <a id="gh-app-install-link" href="" target="_blank" rel="noopener" class="gh-app-btn">Install GitHub App</a>
@@ -3462,6 +3553,45 @@
       return `<span class="pause-info" title="${esc(reason)} (${esc(trigger)})">ℹ️<span class="pause-tooltip">Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}<br>Since: ${esc(at)}</span></span>`;
     }
 
+    // Volatile stat fields of the focused agent-detail panel, factored out so
+    // the fast path can refresh them on every status payload. Everything shown
+    // here (pause/interval state, last/next run, restarts, tokens, auth) goes
+    // permanently stale while an agent is focused otherwise.
+    function ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand) {
+      const _tok = (window._tokensByAgent || {})[a.name] || {};
+      const _tokTotal = (_tok.input || 0) + (_tok.output || 0) + (_tok.cacheRead || 0);
+      const _tokAvg = _tok.avgPerSession || (_tok.sessions > 0 ? Math.floor(_tokTotal / _tok.sessions) : 0);
+      return `
+        <div class="oc-detail-fields">
+          <div class="oc-detail-field"><div class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${INFERENCE_BACKENDS.includes(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
+          <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.cadence || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="When the governor last kicked (started a work pass for) this agent.">Last Run</div><div class="value">${esc(a.lastKick || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval.">Next Run</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.nextKick || '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
+          <div class="oc-detail-field"><div class="label" title="Average tokens consumed per work pass (kick session). Lower is more efficient.">Avg/Pass</div><div class="value">${_tokAvg > 0 ? fmtTokens(_tokAvg) : '—'}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Number of separate CLI sessions this agent has had in the last 24 hours.">Sessions</div><div class="value">${_tok.sessions ?? '—'}</div></div>
+          <div class="oc-detail-field"><div class="label" title="Total number of messages (prompts + responses) across all sessions in the last 24 hours.">Messages</div><div class="value">${_tok.messages ?? '—'}</div></div>
+          <div class="oc-detail-field"><div class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">Auth</div><div class="value">${(() => {
+            const isClaude = a.cli === 'claude';
+            const isCopilot = a.cli === 'copilot';
+            const _needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
+            const claudeIcon = '<span class="cli-icon claude-icon"></span>';
+            const copilotIcon = '<span class="cli-icon copilot-icon"></span>';
+            if (_needsLogin) {
+              if (isClaude) return '<button class="cli-login-btn claude" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Authenticate Claude Code CLI">' + claudeIcon + ' Login</button>';
+              if (isCopilot) return '<button class="cli-login-btn copilot" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Authenticate GitHub Copilot CLI">' + copilotIcon + ' Login</button>';
+              return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">Login</button>';
+            }
+            if (isClaude) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Re-authenticate Claude Code CLI">' + claudeIcon + ' ✓ logged in</button>';
+            if (isCopilot) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Re-authenticate GitHub Copilot CLI">' + copilotIcon + ' ✓ logged in</button>';
+            return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
+          })()}</div></div>
+        </div>
+      `;
+    }
+
     function ocRenderAgentDetail() {
       const detail = document.getElementById('oc-agent-detail');
       if (!detail || !_ocSelectedAgent) return;
@@ -3510,7 +3640,24 @@
         const dot = detail.querySelector('.status-dot');
         if (dot) { dot.className = 'status-dot ' + dotCls; }
         const stateSpan = detail.querySelector('.oc-agent-detail-header > span:last-child');
-        if (stateSpan) { stateSpan.textContent = stateLabel; }
+        if (stateSpan) { stateSpan.innerHTML = stateLabel + pauseInfoIcon(a); }
+        // The pause/resume toggle must track state here too — the fast path
+        // runs on every status poll while an agent is focused, so a stale
+        // button would otherwise persist until the user navigates away.
+        const fastToggle = detail.querySelector('.oc-detail-actions .btn-toggle');
+        if (fastToggle && !isOnDemand) {
+          fastToggle.className = `btn-toggle ${isPaused ? 'paused' : isOff ? 'off' : 'running'}`;
+          fastToggle.textContent = isPaused ? '▶ resume' : isOff ? '▶ start' : '⏸ pause';
+          fastToggle.dataset.paused = String(isPaused);
+          fastToggle.title = isPaused ? 'Resume this agent — it will start running on its configured cadence' : isOff ? 'Start this agent — it is currently off in this governor mode' : 'Pause this agent — stops governor from kicking it until resumed';
+        }
+        // Same for the stat fields and indicators — they live outside the
+        // scroll region, so replacing them wholesale cannot cause the scroll
+        // jumps the fast path exists to prevent.
+        const fieldsEl = detail.querySelector('.oc-detail-fields');
+        if (fieldsEl) fieldsEl.outerHTML = ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand);
+        const indEl = detail.querySelector('.oc-detail-indicators');
+        if (indEl) indEl.innerHTML = agentIndicators(a.name);
         detail.className = 'oc-agent-detail active state-' + dotCls;
         return;
       }
@@ -3562,10 +3709,6 @@
         mergeable: (window._lastStatus?.repos || []).reduce((n, r) => n + (r.openPrs || []).filter(p => p.mergeable).length, 0),
       };
 
-      const _tok = (window._tokensByAgent || {})[a.name] || {};
-      const _tokTotal = (_tok.input || 0) + (_tok.output || 0) + (_tok.cacheRead || 0);
-      const _tokAvg = _tok.avgPerSession || (_tok.sessions > 0 ? Math.floor(_tokTotal / _tok.sessions) : 0);
-
       detail.innerHTML = `
         <div class="oc-agent-detail-header">
           <span class="status-dot ${dotCls}"></span>
@@ -3589,33 +3732,7 @@
             ${modelOptionsHtml(a.cli, a.model)}
           </select>
         </div>
-        <div class="oc-detail-fields">
-          <div class="oc-detail-field"><div class="label" title="${INFERENCE_BACKENDS.includes(a.cli) ? 'Inference backend (self-hosted model server)' : 'The CLI backend running this agent (e.g. claude, copilot, gemini)'}">${INFERENCE_BACKENDS.includes(a.cli) ? 'Method' : 'CLI'}</div><div class="value">${INFERENCE_BACKENDS.includes(a.cli) ? backendLabel(a.cli) : esc(a.cli || '—')}${(a.pinnedBoth || a.pinnedCli) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="true" style="cursor:pointer" title="Unpin CLI">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="cli" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin CLI">📌</span>`}</div></div>
-          <div class="oc-detail-field"><div class="label" title="The LLM model powering this agent. Governor may change it based on budget.">Model</div><div class="value">${esc(a.model || '—')}${(a.pinnedBoth || a.pinnedModel) ? ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="true" style="cursor:pointer" title="Unpin model">📌</span>` : ` <span data-action="togglePin" data-agent="${esc(a.name)}" data-pin-type="model" data-unpin="false" style="cursor:pointer;opacity:0.3" title="Pin model">📌</span>`}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Time between governor kicks in the current mode. Configured per mode (idle/quiet/busy/surge).">Interval</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.cadence || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="When the governor last kicked (started a work pass for) this agent.">Last Run</div><div class="value">${esc(a.lastKick || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="When the governor will next kick this agent based on its cadence interval.">Next Run</div><div class="value">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : esc(a.nextKick || '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Total tokens consumed by this agent in the last 24 hours across all sessions.">Tokens (24h)</div><div class="value">${_tokTotal > 0 ? fmtTokens(_tokTotal) : (_tok.sessions > 0 ? _tok.sessions + ' sess' : '—')}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Number of times this agent has been restarted in the last 24 hours. High counts may indicate instability.">Restarts</div><div class="value${(a.restarts || 0) > 5 ? ' restart-high' : (a.restarts || 0) > 0 ? ' restart-warn' : ''}">${a.restarts ?? 0}<span class="restart-label">24h</span>${(a.restarts || 0) > 0 ? ` <button class="restart-reset" data-action="resetRestarts" data-agent="${esc(a.name)}" title="Reset the restart counter to zero — does not affect the agent">✕</button>` : ''}<span class="restart-spark">${restartSparkSvg(a.name)}</span></div></div>
-          <div class="oc-detail-field"><div class="label" title="Average tokens consumed per work pass (kick session). Lower is more efficient.">Avg/Pass</div><div class="value">${_tokAvg > 0 ? fmtTokens(_tokAvg) : '—'}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Number of separate CLI sessions this agent has had in the last 24 hours.">Sessions</div><div class="value">${_tok.sessions ?? '—'}</div></div>
-          <div class="oc-detail-field"><div class="label" title="Total number of messages (prompts + responses) across all sessions in the last 24 hours.">Messages</div><div class="value">${_tok.messages ?? '—'}</div></div>
-          <div class="oc-detail-field"><div class="label" title="CLI authentication status — log in to authenticate the agent's CLI tool">Auth</div><div class="value">${(() => {
-            const isClaude = a.cli === 'claude';
-            const isCopilot = a.cli === 'copilot';
-            const _needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
-            const claudeIcon = '<span class="cli-icon claude-icon"></span>';
-            const copilotIcon = '<span class="cli-icon copilot-icon"></span>';
-            if (_needsLogin) {
-              if (isClaude) return '<button class="cli-login-btn claude" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Authenticate Claude Code CLI">' + claudeIcon + ' Login</button>';
-              if (isCopilot) return '<button class="cli-login-btn copilot" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Authenticate GitHub Copilot CLI">' + copilotIcon + ' Login</button>';
-              return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">Login</button>';
-            }
-            if (isClaude) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27claude\x27)" title="Re-authenticate Claude Code CLI">' + claudeIcon + ' ✓ logged in</button>';
-            if (isCopilot) return '<button class="cli-login-btn logged-in" onclick="event.stopPropagation();loginAgent(\x27' + esc(a.name) + '\x27,\x27copilot\x27)" title="Re-authenticate GitHub Copilot CLI">' + copilotIcon + ' ✓ logged in</button>';
-            return '<button class="cli-login-btn disabled" disabled title="This backend requires manual /login in the terminal">✓ logged in</button>';
-          })()}</div></div>
-        </div>
+        ${ocDetailFieldsHtml(a, isPaused, isOff, isOnDemand)}
         <div class="oc-detail-indicators">${agentIndicators(a.name)}</div>
         <div class="oc-detail-summary-wrap">
           <div class="oc-detail-summary" id="oc-summary-scroll">${(a.detailSummary || a.liveSummary) ? escBlock(a.detailSummary || a.liveSummary) : '<span style="color:var(--muted)">No activity summary</span>'}</div>
@@ -4359,9 +4476,21 @@
       // one-time re-seed jump against the same baseline (a bucket holding only
       // the spike has no local typical of its own).
       const ceiling = costDiscontinuityCeiling(hist, rate);
+      // Spread each increment across the interval it accrued over rather than
+      // billing it to the instant it was observed — otherwise a bucket narrower
+      // than the observation cadence (notably every hourly bucket) reads $0 even
+      // while agents were working. See COST_ACCRUAL_* above.
+      const spans = costAccrualSpans(hist, rate);
       for (const b of buckets) {
-        const s = costSpendBetween(hist, rate, b.start, b.end, ceiling);
-        if (s != null) { b.spend = s; b.hasData = true; }
+        // Coverage, not spend, decides hasData: a bucket the history actually
+        // spans is a real $0 (nothing ran), whereas a bucket outside the
+        // recorded range is genuinely unknown. Keeping these distinct is what
+        // lets the empty state say which one it is.
+        const covered = costSpendBetween(hist, rate, b.start, b.end, ceiling) != null
+          || spans.some(s => s.to > b.start && s.from < b.end);
+        if (!covered) continue;
+        b.spend = costSpreadSpendBetween(spans, b.start, b.end, ceiling);
+        b.hasData = true;
       }
       return buckets;
     }
@@ -4430,6 +4559,46 @@
     // spend never trips it, while a ~$18k all-time restore obviously does.
     const COST_DISCONTINUITY_FLOOR_USD = 500;
 
+    // ── Accrual spreading ──────────────────────────────────────────────────
+    // The cumulative token counter does NOT rise smoothly as agents work: the
+    // scanner only observes a session's tokens once that session's transcript
+    // is flushed, so the counter sits flat for hours and then jumps by the whole
+    // session at once. Observed on a live spoke: 285 snapshots over 6.5 days
+    // produced just 4 increases, spaced a median of ~8.5h apart.
+    //
+    // Attributing a jump to the single instant it was OBSERVED is wrong twice
+    // over: the one bucket containing that instant gets the entire session's
+    // spend, and every other bucket reads $0 even though agents were busy. For
+    // an hourly view (24 one-hour buckets) that means the chart is blank unless
+    // the viewer happens to load it within an hour of an observation — which is
+    // exactly the reported "I see data there once in a while".
+    //
+    // Fix: treat an increment as spend that accrued EVENLY across the interval
+    // between the previous observation and this one, and bill each bucket the
+    // overlapping fraction. Totals are unchanged (every dollar is still counted
+    // exactly once); they are simply placed where the work happened rather than
+    // where it was noticed.
+    //
+    // How far back an increment may be spread is bounded by RECORDED LIVENESS,
+    // not by a fixed wall-clock limit. Spreading should follow the interval the
+    // hive was actually up and sampling: if snapshots kept arriving every ~5 min
+    // while the counter sat flat, the hive was alive and agents plausibly
+    // working the whole time, so the spend belongs across all of it. If instead
+    // the snapshots themselves stop, the hive was down — no work happened, and
+    // smearing spend across that dead air would invent activity.
+    //
+    // A gap between consecutive SNAPSHOTS longer than this means the sampler
+    // wasn't running (it records every ~5 min, so a few missed cycles is normal
+    // jitter but a long silence is an outage/restart). Spreading is cut at the
+    // most recent such silence.
+    const COST_ACCRUAL_LIVENESS_GAP_MS = 30 * 60e3; // 30 minutes
+    // Absolute backstop so a hive that sampled continuously for weeks while the
+    // counter never moved still can't smear one jump across the entire chart.
+    const COST_ACCRUAL_MAX_SPREAD_MS = 24 * 3600e3; // 24 hours
+    // An interval shorter than this is treated as instantaneous — no meaningful
+    // spreading to do, and it keeps back-to-back snapshots cheap to compute.
+    const COST_ACCRUAL_MIN_SPREAD_MS = 60e3; // 1 minute
+
     // costPositiveIncrements: the list of POSITIVE step-to-step increments over
     // [t0, t1], differenced only within a like measure (see costSpendBetween).
     // Shared by the spend sum and the discontinuity ceiling so both judge the
@@ -4452,6 +4621,73 @@
         prev = cur; prevKind = kind;
       }
       return { incs, sawWindow };
+    }
+
+    // costAccrualSpans: every POSITIVE increment in the WHOLE history, each
+    // tagged with the interval [from, to] it is presumed to have accrued over —
+    // i.e. from the previous observation to the one that revealed it. See the
+    // COST_ACCRUAL_* notes above for why observation time ≠ spend time.
+    //
+    // Deliberately walks the entire series rather than a window: an increment
+    // observed just AFTER a bucket ends may still have accrued largely INSIDE
+    // it, and one observed inside a bucket may have started well before it.
+    // Windowing first would drop exactly the spans that need splitting.
+    function costAccrualSpans(hist, rate) {
+      const pricedTok = (models) => {
+        let s = 0;
+        for (const k in models) { const m = models[k]; s += ((m.i || 0) + (m.o || 0)) * (rate[k] || 0); }
+        return s;
+      };
+      const spans = [];
+      // Timestamps of every usable snapshot, in order, so an increment can walk
+      // back over the stretch the sampler was demonstrably alive.
+      const stamps = [];
+      let prev = null, prevKind = null;
+      for (const e of (hist || [])) {
+        const kind = e.models ? 'm' : (typeof e.usd === 'number' ? 'u' : null);
+        if (kind == null) continue;
+        const cur = kind === 'm' ? pricedTok(e.models) : e.usd;
+        if (prev != null && kind === prevKind && cur > prev) {
+          // Walk back while snapshots stayed dense: that is the stretch the hive
+          // was up and this spend could have been accruing. Stop at the first
+          // long silence (outage/restart) so spend never smears across dead air.
+          let from = e.timestamp;
+          for (let i = stamps.length - 1; i > 0; i--) {
+            if (stamps[i] - stamps[i - 1] > COST_ACCRUAL_LIVENESS_GAP_MS) break;
+            from = stamps[i - 1];
+            if (e.timestamp - from >= COST_ACCRUAL_MAX_SPREAD_MS) break;
+          }
+          from = Math.max(from, e.timestamp - COST_ACCRUAL_MAX_SPREAD_MS);
+          spans.push({ amount: cur - prev, from, to: e.timestamp });
+        }
+        prev = cur; prevKind = kind;
+        stamps.push(e.timestamp);
+      }
+      return spans;
+    }
+
+    // costSpreadSpendBetween: estimated $ that accrued inside [t0, t1], billing
+    // each increment the fraction of its accrual interval that overlaps the
+    // bucket. An increment whose interval is shorter than
+    // COST_ACCRUAL_MIN_SPREAD_MS is treated as a point event at its observation
+    // time. Increments above `cap` are dropped as data corrections, exactly as
+    // in costSpendBetween.
+    function costSpreadSpendBetween(spans, t0, t1, cap) {
+      const ceil = (typeof cap === 'number') ? cap : Infinity;
+      let spend = 0;
+      for (const s of (spans || [])) {
+        if (s.amount > ceil) continue;
+        const span = s.to - s.from;
+        if (span < COST_ACCRUAL_MIN_SPREAD_MS) {
+          // Point event: bill it entirely to the bucket containing it.
+          if (s.to > t0 && s.to <= t1) spend += s.amount;
+          continue;
+        }
+        const lo = Math.max(s.from, t0), hi = Math.min(s.to, t1);
+        if (hi <= lo) continue;
+        spend += s.amount * ((hi - lo) / span);
+      }
+      return spend;
     }
 
     // costDiscontinuityCeiling: the $ threshold above which a single positive
@@ -4542,7 +4778,9 @@
 
       let body;
       if (!_costHistory || _costHistory.length < 2 || withData.length === 0) {
-        body = `<div class="cost-trend-empty">No cost history yet for this range — data accrues as agents run.</div>`;
+        // Nothing recorded anywhere in this window — distinct from "recorded and
+        // it was $0", which is handled by the overlay below.
+        body = `<div class="cost-trend-empty">No cost history recorded for this range — data accrues as agents run.</div>`;
       } else {
         const bars = buckets.map(b => {
           // All-zero windows still draw a 2% baseline so the chart reads as
@@ -4552,9 +4790,17 @@
           const tip = `${new Date(b.start).toLocaleString()} → ${new Date(b.end).toLocaleString()}: ${fmtUSD(b.spend)}`;
           return `<div class="${cls}" style="height:${h.toFixed(1)}%" title="${esc(tip)}"></div>`;
         }).join('');
+        // Bare axes with no visible series are indistinguishable from a broken
+        // chart. When the range IS covered by history but every bucket is $0,
+        // say so on top of the (flat) bars instead of leaving the reader to
+        // guess whether the panel failed to render.
+        const allZero = max <= 0;
+        const overlay = allZero
+          ? `<div class="cost-bars-note">no spend recorded in this window</div>`
+          : '';
         // Show first, middle, and last axis labels to avoid crowding.
         const first = buckets[0], mid = buckets[Math.floor(buckets.length / 2)], last = buckets[buckets.length - 1];
-        body = `<div class="cost-bars">${bars}</div>
+        body = `<div class="cost-bars-wrap"><div class="cost-bars">${bars}</div>${overlay}</div>
           <div class="cost-bars-axis"><span>${esc(costBucketAxisLabel(first))}</span><span>${esc(costBucketAxisLabel(mid))}</span><span>${esc(costBucketAxisLabel(last))}</span></div>`;
       }
 
@@ -5102,9 +5348,119 @@
       return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
     }
 
+    /* ── Installation-ID discoverability hint ──────────────────────────────
+       The banner asks for a numeric Installation ID and gives no clue where it
+       comes from, so users ask an operator instead of self-serving. The answer
+       is that the ID is the LAST PATH SEGMENT of the org's installed-app
+       settings URL. We render that URL as a mock rather than embedding a
+       screenshot: a rendered mock is a fraction of the bytes in a
+       single-file embedded dashboard, inherits the theme variables so it stays
+       legible in light and dark, and is structurally incapable of leaking a
+       real installation ID the way a real screenshot would. */
+
+    /* Placeholder for the ID segment. The owner was explicit that the real
+       digits must be masked so nobody copies the example into the field as
+       their own ID; a run of filled circles reads as "a number goes here"
+       while being obviously un-copyable. Nine is the length of a present-day
+       GitHub installation ID, so the mock has the right visual weight. */
+    var INSTALL_ID_MASK_CHAR = '●';           /* ● BLACK CIRCLE */
+    var INSTALL_ID_MASK_LENGTH = 9;                /* typical installation ID digit count */
+    var INSTALL_ID_MASK = new Array(INSTALL_ID_MASK_LENGTH + 1).join(INSTALL_ID_MASK_CHAR);
+    /* Shown when the hive's org is not known yet — never a real org name. */
+    var INSTALL_ID_ORG_PLACEHOLDER = 'your-org';
+    /* Fallback host when the hive has not reported one. github.com is only
+       ever a fallback: a GHE hive reports its own host and must see that. */
+    var INSTALL_ID_DEFAULT_HOST = 'github.com';
+
+    /* Host label for the hint, derived from the hive's configured GitHub host
+       rather than hardcoded. Prefers the status payload's githubBaseURL (the
+       same signal the banner title already uses to say "GitHub App Not
+       Installed on github.ibm.com"), then the boot /api/config value, then
+       github.com. */
+    function ghAppHintHost(data) {
+      var base = (data && data.githubBaseURL)
+        || (typeof window !== 'undefined' && window._githubBaseUrl)
+        || '';
+      var host = String(base).replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      return host || INSTALL_ID_DEFAULT_HOST;
+    }
+
+    /* Org slug for the hint path, from the boot /api/config fetch. Falls back
+       to a placeholder rather than inventing an org name. */
+    function ghAppHintOrg() {
+      var org = (typeof window !== 'undefined' && window._githubOrg) || '';
+      org = String(org).trim();
+      return org || INSTALL_ID_ORG_PLACEHOLDER;
+    }
+
+    /* Builds the popover markup: a short lead, a mocked browser address bar
+       (lock glyph + URL) with the ID segment highlighted and MASKED, a caret
+       callout pointing at it, and a footnote. Every interpolated value is
+       escaped — org and host originate from server config. */
+    function ghAppInstallIdHintHtml(data) {
+      var host = escapeHtml(ghAppHintHost(data));
+      var org = escapeHtml(ghAppHintOrg());
+      return '<span class="gh-idhint-lead">Your Installation ID is the <strong>last part of the URL</strong> '
+        + 'in your browser’s address bar on your org’s installed-app settings page:</span>'
+        + '<span class="gh-idhint-url">'
+        +   '<span class="seg-lock" aria-hidden="true">🔒</span>'
+        +   '<span class="gh-idhint-urltext">'
+        +     'https://<span class="seg-host">' + host + '</span>/organizations/'
+        +     org + '/settings/installations/'
+        +     '<span class="seg-id">' + INSTALL_ID_MASK + '</span>'
+        +   '</span>'
+        + '</span>'
+        + '<span class="gh-idhint-caret">' + new Array(INSTALL_ID_MASK_LENGTH + 1).join('↑')
+        +   ' this number</span>'
+        + '<span class="gh-idhint-foot">Open <strong>' + host + '</strong> → your org → '
+        + 'Settings → GitHub Apps → the Hive app → <em>Configure</em>, then copy the digits '
+        + 'shown in your browser’s address bar. The circles above are a placeholder — '
+        + 'they are not a real ID.</span>';
+    }
+
+    /* Refreshes the hint content for the hive's current host/org. Safe to call
+       repeatedly; called on every banner render so a late /api/config response
+       still corrects a hint that first rendered with the fallback host. */
+    function renderGitHubAppInstallIdHint(data) {
+      var pop = document.getElementById('gh-app-install-id-hint-pop');
+      if (!pop) return;
+      pop.innerHTML = ghAppInstallIdHintHtml(data);
+    }
+
+    /* Click/keyboard toggle. Enter and Space activate a <button> natively, so
+       this one handler serves mouse, touch, and keyboard alike — the panel is
+       never hover-only. */
+    function toggleInstallIdHint(event) {
+      if (event) event.stopPropagation();
+      var btn = document.getElementById('gh-app-install-id-hint-btn');
+      if (!btn) return;
+      var open = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+    }
+
+    /* Dismissal: a click anywhere outside the hint, or Escape, closes it.
+       Without this a tapped panel on touch would have no way to close, since
+       there is no hover-out event to rely on. */
+    document.addEventListener('click', function (e) {
+      var btn = document.getElementById('gh-app-install-id-hint-btn');
+      if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
+      var wrap = document.getElementById('gh-app-install-id-hint');
+      if (wrap && e.target && wrap.contains(e.target)) return;
+      btn.setAttribute('aria-expanded', 'false');
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'Escape') return;
+      var btn = document.getElementById('gh-app-install-id-hint-btn');
+      if (!btn || btn.getAttribute('aria-expanded') !== 'true') return;
+      btn.setAttribute('aria-expanded', 'false');
+      btn.focus();
+    });
+
     function renderGitHubAppBanner(data) {
       var banner = document.getElementById('gh-app-install-banner');
       if (!banner) return;
+      /* Keep the hint's host/org in step with whatever this render knows. */
+      renderGitHubAppInstallIdHint(data);
       var appState = data ? String(data.githubAppState || '').trim() : '';
       var isOperatorSide = data && data.githubAppRequired && ghAppIsOperatorSide(appState);
 
@@ -5220,7 +5576,29 @@
           if (desc) desc.textContent = isGHE
             ? 'This hive cannot post advisory reports. Install the GitHub App on your GHE org to enable full functionality.'
             : 'This hive cannot create issues or advisory reports. Install the Hive Hub GitHub App on your repository to enable full functionality.';
-          if (link) { link.textContent = 'Install GitHub App'; link.href = data.githubAppInstallURL; }
+          /* A GitHub Enterprise host whose App slug was never configured yields
+             an EMPTY install URL from the server, deliberately: the public
+             "kubestellar-hive" slug names no App on an enterprise host, so a
+             best-effort link would 404 and read as a broken product. Say what is
+             missing instead of offering a dead button. */
+          if (link) {
+            if (data.githubAppInstallURL) {
+              link.textContent = 'Install GitHub App';
+              link.href = data.githubAppInstallURL;
+              link.removeAttribute('aria-disabled');
+            } else {
+              link.removeAttribute('href');
+              link.setAttribute('aria-disabled', 'true');
+              link.textContent = isGHE ? 'Install link unavailable for this GitHub host' : 'Install URL unavailable';
+              if (desc) {
+                desc.textContent = isGHE
+                  ? 'This hive cannot post advisory reports. The GitHub App slug for '
+                    + String(data.githubBaseURL).replace(/^https?:\/\//, '')
+                    + ' is not configured, so an install link cannot be built. Ask your hub operator to set github_app_slug for this cluster.'
+                  : desc.textContent;
+              }
+            }
+          }
         }
         banner.removeAttribute('hidden');
         banner.style.cssText = 'display:flex !important';
@@ -11511,6 +11889,10 @@ function burnAreaChart() {
       // Update in-memory agent state so cadence table re-renders correctly
       const agentObj = (window._lastAgents || []).find(a => a.name === agent);
       if (agentObj) { agentObj.paused = (action === 'pause'); }
+      // The focused agent-detail panel renders its own toggle button — the
+      // .agent-card loop above never reaches it, so re-render it from the
+      // just-updated state or the button stays stale until navigation.
+      if (typeof ocRenderAgentDetail === 'function') ocRenderAgentDetail();
       const lastData = window._lastStatus || {};
       if (lastData.governor) {
         renderGovernor(lastData.governor, lastData.cadenceMatrix || [], lastData);
@@ -12547,6 +12929,14 @@ function burnAreaChart() {
     fetch("/api/config").then(r => r.json()).then(cfg => {
       const ghBase = cfg.github_base_url || 'https://github.com';
       window._githubBaseUrl = ghBase;
+      // Org slug, used by the Installation-ID hint to render this hive's own
+      // installed-app settings URL rather than a generic placeholder.
+      window._githubOrg = cfg.org || '';
+      // The banner may have rendered before this fetch resolved, in which case
+      // its hint shows the fallback host/org. Refresh it now that both are known.
+      if (typeof renderGitHubAppInstallIdHint === 'function') {
+        renderGitHubAppInstallIdHint(window._lastStatus || null);
+      }
       // Who agents author PRs/commits as — the App bot ("<slug>[bot]") when this
       // hive runs App-authored mode, else the configured ai_author. Surfaced on
       // the governor card so operators can see the write identity at a glance.
@@ -13063,6 +13453,10 @@ function burnAreaChart() {
           loadGateways();
         }
       }
+      // Keep the Save button's enabled state in lockstep with the repos/default
+      // invariant on every render (requirement #4). Cheap and idempotent — a
+      // no-op on tabs/dialogs without a repos list.
+      if (typeof syncRepoSaveGuard === 'function') syncRepoSaveGuard();
     }
 
     function renderAgentImport() {
@@ -15830,14 +16224,32 @@ function burnAreaChart() {
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
         : ` on <strong>${esc(ghHost)}</strong>`;
+      // The forge is shown as a fixed, non-editable prefix before the input so
+      // the user only types org/repo and the GitHub host can never be
+      // mistaken (requirement #1). The prefix color matches the per-row pill
+      // (indigo for GHE, muted for public github.com). All host machinery is
+      // client-side + CSP-safe (inline styles, no external resources).
+      const prefixColor = isGHE ? 'var(--indigo)' : 'var(--muted)';
+      // needDefault is true when repos exist but none is the current default —
+      // the Save-guard state. renderGovRepos surfaces it inline; syncRepoSaveGuard
+      // (called on every tab render) is what actually disables the Save button.
+      const needDefault = repos.length > 0 && !repos.includes(primary);
+      const defaultWarn = needDefault
+        ? '<div id="cfg-repo-default-warn" style="font-size:0.72rem;color:var(--amber);margin-top:6px">⚠ Set a default repo before saving — click a ☆ star to choose the repo where the advisory issue is maintained.</div>'
+        : '';
       return `
         <p style="font-size:0.75rem;color:var(--muted);margin-bottom:14px">GitHub repositories monitored by this hive${hostNote}. Click the star to set the default repo where the advisory issue is maintained.</p>
         <div class="config-list">
           ${list || '<div style="font-size:0.75rem;color:var(--muted);margin-bottom:6px">No repos configured</div>'}
-          <div class="config-list-add">
-            <input type="text" id="cfg-repo-input" placeholder="org/repo (on ${esc(ghHost)})" title="GitHub repository in org/repo format (e.g. kubestellar/console). It must live on this hive's forge, ${esc(ghHost)} — the governor rejects repos on other GitHub hosts. It will be monitored for issues, PRs, and CI status.">
+          <div class="config-list-add" style="align-items:stretch">
+            <div style="display:flex;flex:1;min-width:0;align-items:stretch;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+              <span style="display:inline-flex;align-items:center;padding:0 8px;background:color-mix(in srgb, ${prefixColor} 12%, var(--surface));color:${prefixColor};font-size:0.78rem;font-weight:600;white-space:nowrap;border-right:1px solid var(--border)" title="This hive's forge — every repo must live on ${esc(ghHost)}">${esc(ghHost)}/</span>
+              <input type="text" id="cfg-repo-input" style="flex:1;min-width:0;border:none;border-radius:0" placeholder="org/repo" onkeydown="if(event.key==='Enter'){event.preventDefault();addListItem('repos','list','cfg-repo-input');}" title="GitHub repository in org/repo format (e.g. kubestellar/console). It must live on this hive's forge, ${esc(ghHost)} — the governor rejects repos on other GitHub hosts. It will be monitored for issues, PRs, and CI status.">
+            </div>
             <button onclick="addListItem('repos','list','cfg-repo-input')" title="Add this repository to the monitored list">+ Add</button>
           </div>
+          <div id="cfg-repo-add-status" style="font-size:0.72rem;margin-top:6px"></div>
+          ${defaultWarn}
         </div>`;
     }
 
@@ -16268,6 +16680,143 @@ function burnAreaChart() {
       return raw.replace(/^https?:\/\/github\.com\//, '').replace(/\/+$/, '');
     }
 
+    // hiveForgeHostLabel returns this hive's bare GitHub host ("github.com" or a
+    // GHE hostname). Mirrors the server's hiveForgeHost() and renderGovRepos so
+    // the single-host rule matches everywhere.
+    function hiveForgeHostLabel() {
+      const ghBase = window._githubBaseUrl || 'https://github.com';
+      return ghBase.replace(/^https?:\/\//, '').replace(/\/$/, '') || 'github.com';
+    }
+
+    // repoRefHostLabel extracts the GitHub host a pasted repo carries, or '' when
+    // it names none (bare "repo"/"owner/repo" belong to the hive's forge).
+    // Mirrors the server's repoRefHostLabel (a leading dotted segment or full URL
+    // is an explicit host).
+    function repoRefHostLabel(s) {
+      s = (s || '').trim().replace(/^https?:\/\//, '').replace(/^\/+|\/+$/g, '');
+      if (!s) return '';
+      const parts = s.split('/');
+      if (parts.length > 1 && parts[0].indexOf('.') !== -1) return parts[0].toLowerCase();
+      return '';
+    }
+
+    function sameForgeHost(a, b) {
+      const norm = h => { h = (h || '').trim().toLowerCase(); return (!h || h === 'github.com') ? 'github.com' : h; };
+      return norm(a) === norm(b);
+    }
+
+    // addRepoWithChecks handles the Repos-tab "+ Add": it enforces the
+    // single-host-per-spoke rule client-side (requirement #2), then asks the
+    // server whether the hive's GitHub App can access the new repo's org and, if
+    // not, guides the user through installing/authorizing the App before the repo
+    // is accepted (requirement #3). Only on a clean check is the repo appended.
+    async function addRepoWithChecks() {
+      const input = document.getElementById('cfg-repo-input');
+      if (!input) return;
+      const raw = input.value.trim();
+      if (!raw) return;
+      const statusEl = document.getElementById('cfg-repo-add-status');
+      const setStatus = (html, color) => { if (statusEl) { statusEl.innerHTML = html; statusEl.style.color = color || 'var(--muted)'; } };
+
+      // Requirement #2: reject a paste on a different forge before any round-trip.
+      const spokeHost = hiveForgeHostLabel();
+      const refHost = repoRefHostLabel(raw);
+      if (refHost && !sameForgeHost(refHost, spokeHost)) {
+        setStatus('✕ ' + esc(raw) + ' is on <strong>' + esc(refHost) + '</strong>, but this hive is on <strong>' + esc(spokeHost) + '</strong>. A hive\'s repos must all live on one GitHub host — remove the host or use a repo on ' + esc(spokeHost) + '.', 'var(--red)');
+        return;
+      }
+
+      const val = normalizeRepoInput(raw);
+      if (!_configState.data.repos) _configState.data.repos = [];
+      if (_configState.data.repos.includes(val)) {
+        setStatus('This repo is already in the list.', 'var(--muted)');
+        return;
+      }
+
+      // Requirement #3: verify the App can access the repo's org.
+      setStatus('Checking GitHub App access…', 'var(--muted)');
+      try {
+        const res = await fetch('/api/config/governor/repos/check-access', {
+          method: 'POST', headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ repo: val })
+        });
+        const d = await res.json().catch(() => ({}));
+        if (res.status === 409 && d && d.needsInstall) {
+          // App not installed on the new org: surface the correct per-forge
+          // install URL wired to the existing pending-install/recheck plumbing.
+          // Clicking Install flags the heartbeat (handleGitHubAppInstallClicked)
+          // exactly like the App-required banner; Re-check re-probes and, on
+          // success, completes the add.
+          const installBtn = (d.installUrl)
+            ? '<a href="' + esc(d.installUrl) + '" target="_blank" rel="noopener" onclick="markGitHubAppInstallClicked()" style="color:var(--accent);font-weight:600">Install/authorize the App for ' + esc(d.org || '') + ' ↗</a>'
+            : '<span style="color:var(--amber)">This hive\'s GitHub Enterprise App slug is not configured, so an install link cannot be built — ask your operator to install the Hive App for ' + esc(d.org || '') + '.</span>';
+          setStatus('⚠ ' + esc(d.error || ('The App needs access to ' + val)) + '<br>' + installBtn + ' &nbsp;·&nbsp; <a href="#" onclick="recheckRepoAccessThenAdd(event)" style="color:var(--accent);font-weight:600">Re-check &amp; add</a>', 'var(--amber)');
+          return;
+        }
+        if (!res.ok) {
+          setStatus('✕ ' + esc((d && d.error) || ('HTTP ' + res.status)), 'var(--red)');
+          return;
+        }
+      } catch (e) {
+        // Network error probing access is non-fatal: the server re-validates the
+        // single-host rule and the default-repo rule on save, so let the add
+        // proceed rather than hard-block on a transient dashboard hiccup.
+        _appendRepoAccepted(val);
+        setStatus('Added (App-access check could not be reached; the server will re-validate on save).', 'var(--muted)');
+        return;
+      }
+      _appendRepoAccepted(val);
+      setStatus('✓ Added — App has access.', 'var(--green)');
+    }
+
+    // _appendRepoAccepted appends a validated repo, seeds the first repo as the
+    // default (a hive must always have one), and re-renders.
+    function _appendRepoAccepted(val) {
+      if (!_configState.data.repos) _configState.data.repos = [];
+      _configState.data.repos.push(val);
+      markDirty('repos', 'repos', _configState.data.repos);
+      // First repo added to an empty list becomes the default automatically, so
+      // there is always exactly one default (requirement #4).
+      if (!_configState.data.primaryRepo || !_configState.data.repos.includes(_configState.data.primaryRepo)) {
+        _configState.data.primaryRepo = val;
+        markDirty('repos', 'primaryRepo', val);
+      }
+      const input = document.getElementById('cfg-repo-input');
+      if (input) input.value = '';
+      renderConfigTab(_configState.tab);
+    }
+
+    // markGitHubAppInstallClicked flags the heartbeat that an install link was
+    // clicked, reusing the existing pending-install endpoint. Fire-and-forget.
+    function markGitHubAppInstallClicked() {
+      fetch('/api/github-app/install-clicked', { method: 'POST', headers: _inceptionAuthHeaders() }).catch(() => {});
+    }
+
+    // recheckRepoAccessThenAdd re-runs the App-access probe after the user
+    // installs/authorizes the App, and completes the add when access is now
+    // confirmed — the same re-check pattern the App-required banner uses.
+    async function recheckRepoAccessThenAdd(ev) {
+      if (ev) ev.preventDefault();
+      await addRepoWithChecks();
+    }
+
+    // syncRepoSaveGuard disables the config dialog Save button while the Repos
+    // tab has repos but no default selected, so a hive can never be saved without
+    // exactly one default (requirement #4). Called after every config tab render.
+    function syncRepoSaveGuard() {
+      const saveBtn = document.querySelector('.config-footer .config-save');
+      if (!saveBtn) return;
+      let block = false;
+      const d = _configState.data || {};
+      if (_configState.type === 'governor' && Array.isArray(d.repos) && d.repos.length > 0) {
+        block = !d.primaryRepo || !d.repos.includes(d.primaryRepo);
+      }
+      saveBtn.disabled = block;
+      saveBtn.style.opacity = block ? '0.5' : '';
+      saveBtn.style.cursor = block ? 'not-allowed' : '';
+      saveBtn.title = block ? 'Set a default repo before saving — click a ☆ star in the Repos tab.' : '';
+    }
+
     function addListItem(section, key, inputId) {
       const input = document.getElementById(inputId);
       let val = input.value.trim();
@@ -16282,10 +16831,11 @@ function burnAreaChart() {
         _configState.data.labels.push(val);
         markDirty('labels', 'labels', _configState.data.labels);
       } else if (section === 'repos') {
-        val = normalizeRepoInput(val);
-        if (!_configState.data.repos) _configState.data.repos = [];
-        _configState.data.repos.push(val);
-        markDirty('repos', 'repos', _configState.data.repos);
+        // Repos go through the async host-check + App-access workflow, which
+        // owns input clearing and re-render on success. Return here so the
+        // synchronous tail below does not double-add or clear prematurely.
+        addRepoWithChecks();
+        return;
       }
       input.value = '';
       renderConfigTab(_configState.tab);
@@ -16330,12 +16880,25 @@ function burnAreaChart() {
         .catch(err => showToast(`Failed: ${err.message}`, 'error'));
     }
 
+    // _packAgentNote returns an extra confirm-dialog line when the agent is part
+    // of the active ACMM pack. Deleting a pack agent used to look like it had
+    // silently failed — the pack re-added it on the next config reload — so the
+    // dialog now states up front that the deletion is recorded and permanent.
+    function _packAgentNote(name) {
+      const packAgents = (window._lastStatus && window._lastStatus.acmmPackAgents) || [];
+      if (!packAgents.includes(name)) return '';
+      return `\n\n"${name}" is part of this hive's ACMM pack. The deletion will be recorded, so no restart or ACMM level change will bring it back. Add it again from the Agents tab if you change your mind.`;
+    }
+
     async function deleteAgentFromConfig(name) {
-      if (!(await hiveConfirm(`Delete agent "${name}"?\n\nThis will remove its env file, governor config, and sidebar entry. The tmux session (if running) will NOT be killed.`))) return;
+      if (!(await hiveConfirm(`Delete agent "${name}"?\n\nThis will remove its env file, governor config, and sidebar entry. The tmux session (if running) will NOT be killed.${_packAgentNote(name)}`))) return;
       fetch(`/api/config/governor/agents/${name}`, { method: 'DELETE' })
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then(() => {
-          showToast(`Agent "${name}" deleted`, 'success');
+        .then(d => {
+          // Say out loud when the agent belongs to an ACMM pack. The pack used
+          // to re-add it on the next reload/restart with no explanation, which
+          // is why this was reported as a bug rather than asked about.
+          showToast(((d || {}).note) || `Agent "${name}" deleted`, 'success');
           closeConfigDialog();
           // Remove from cached agents so cards disappear immediately
           window._lastAgents = (window._lastAgents || []).filter(a => a.name !== name);
@@ -16353,11 +16916,11 @@ function burnAreaChart() {
     }
 
     async function removeAgent(name) {
-      if (!(await hiveConfirm(`Remove agent "${name}"? This will delete its configuration.`))) return;
+      if (!(await hiveConfirm(`Remove agent "${name}"? This will delete its configuration.${_packAgentNote(name)}`))) return;
       fetch(`/api/config/governor/agents/${name}`, { method: 'DELETE' })
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then(() => {
-          showToast(`Agent "${name}" removed`, 'success');
+        .then(d => {
+          showToast(((d || {}).note) || `Agent "${name}" removed`, 'success');
           _configState.data.agents = (_configState.data.agents || []).filter(a => a !== name);
           renderConfigTab('Agents');
         })
@@ -16380,6 +16943,19 @@ function burnAreaChart() {
 
     async function saveConfig() {
       const dirty = _configState.dirty;
+
+      // Guard: a governor config with repos must always name a default that is
+      // one of them (requirement #4). The Save button is disabled in this state,
+      // but a keyboard/racy click could still reach here — refuse and point the
+      // user at the fix rather than letting the server 400 opaquely.
+      if (_configState.type === 'governor') {
+        const d = _configState.data || {};
+        if (Array.isArray(d.repos) && d.repos.length > 0 && (!d.primaryRepo || !d.repos.includes(d.primaryRepo))) {
+          showToast('Set a default repo before saving — click a ☆ star in the Repos tab.', 'error');
+          renderConfigTab('Repos');
+          return;
+        }
+      }
 
       if (_configState.isCreate) {
         const createData = dirty._create || {};

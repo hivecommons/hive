@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -132,6 +133,36 @@ func (s *Server) createUserSession(username, role string) string {
 	s.persistSessionsLocked()
 	s.sessionMu.Unlock()
 	return id
+}
+
+// ActiveSessionUsernames returns the DISTINCT GitHub usernames that have at
+// least one live (non-expired) session on this hive right now. It is reported to
+// the hub in the heartbeat so the hub can accumulate per-user "time in hive" by
+// crediting each live user the inter-beat interval.
+//
+// NON-SECRET BY CONSTRUCTION: it returns bare usernames only — never a session
+// id, the OAuth token (which the session never holds; see userSession's doc), or
+// even the role. The result is sorted so the heartbeat payload is stable and does
+// not churn a diff on every beat.
+func (s *Server) ActiveSessionUsernames() []string {
+	now := time.Now()
+	seen := make(map[string]struct{})
+	s.sessionMu.RLock()
+	for _, sess := range s.userSessions {
+		if sess == nil || now.After(sess.ExpiresAt) {
+			continue
+		}
+		if sess.Username != "" {
+			seen[sess.Username] = struct{}{}
+		}
+	}
+	s.sessionMu.RUnlock()
+	out := make([]string, 0, len(seen))
+	for u := range seen {
+		out = append(out, u)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // lookupSession resolves a session id to its user session, dropping and

@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -55,6 +56,32 @@ const (
 type Registry struct {
 	Hives     []RegistryEntry `json:"hives"`
 	UpdatedAt string          `json:"updatedAt"`
+	// FleetStatsLKG is the last fleet-stats aggregate that met the coverage
+	// bar, persisted with the registry so it survives a hub restart. It is what
+	// the landing page falls back to when coverage dips: a figure that is
+	// honestly labelled stale beats a blank strip, because "no number" reads to
+	// a visitor as "this fleet did nothing" rather than "we are recollecting".
+	// Nil until the fleet has ever reported well enough to produce one — that
+	// genuine first-boot state is the only case where the page shows no total.
+	FleetStatsLKG *FleetStatsSnapshot `json:"fleetStatsLastKnownGood,omitempty"`
+}
+
+// FleetStatsSnapshot is a point-in-time fleet aggregate retained as the
+// last-known-good figure. It stores the counts together with the coverage they
+// were computed from, so the UI can say not just "as of 14:20" but "based on
+// 12 of 18 hives" — staleness that describes itself rather than a bare number
+// the viewer has to trust blindly.
+type FleetStatsSnapshot struct {
+	ReposManaged int `json:"repos_managed"`
+	PRsMerged    int `json:"prs_merged"`
+	PRsRejected  int `json:"prs_rejected"`
+	CVEsClosed   int `json:"cves_closed"`
+	Hives        int `json:"hives"`
+	Reporting    int `json:"reporting"`
+	Eligible     int `json:"eligible"`
+	// CollectedAt is when this aggregate was computed, i.e. what "as of" means
+	// on the public page.
+	CollectedAt time.Time `json:"collected_at"`
 }
 
 type RegistryEntry struct {
@@ -84,29 +111,42 @@ type RegistryEntry struct {
 	// AdvisoryError is the log-safe error from the spoke's most recent failed
 	// advisory-post attempt ("" on success). When set on an app-can-write hive
 	// it trips the stale pill directly, carrying the specific cause.
-	AdvisoryError      string         `json:"advisoryError,omitempty"`
-	PrimaryRepo        string         `json:"primaryRepo"`
-	DashboardURL       string         `json:"dashboardUrl"`
-	SnapshotURL        string         `json:"snapshotUrl,omitempty"`
-	ACMMLevel          int            `json:"acmmLevel"`
-	AgentCount         int            `json:"agentCount"`
-	GovernorMode       string         `json:"governorMode"`
-	TotalTokens24h     int64          `json:"totalTokens24h"`
-	ActionableIssues   int            `json:"actionableIssues"`
-	ActionablePRs      int            `json:"actionablePRs"`
-	ContributorCount   int            `json:"contributorCount"`
-	ActiveContributors int            `json:"activeContributors"`
-	Owner              string         `json:"owner,omitempty"`
-	ClusterID          string         `json:"clusterId,omitempty"`
-	ClusterName        string         `json:"clusterName,omitempty"`
-	HiveType           string         `json:"hiveType,omitempty"`
-	IsPublic           bool           `json:"isPublic"`
-	RegisteredAt       string         `json:"registeredAt"`
-	LastHeartbeat      string         `json:"lastHeartbeat"`
-	Health             map[string]any `json:"health"`
-	Version            string         `json:"version"`
-	GitHash            string         `json:"gitHash,omitempty"`
-	GitBranch          string         `json:"gitBranch,omitempty"`
+	AdvisoryError      string `json:"advisoryError,omitempty"`
+	PrimaryRepo        string `json:"primaryRepo"`
+	DashboardURL       string `json:"dashboardUrl"`
+	SnapshotURL        string `json:"snapshotUrl,omitempty"`
+	ACMMLevel          int    `json:"acmmLevel"`
+	AgentCount         int    `json:"agentCount"`
+	GovernorMode       string `json:"governorMode"`
+	TotalTokens24h     int64  `json:"totalTokens24h"`
+	ActionableIssues   int    `json:"actionableIssues"`
+	ActionablePRs      int    `json:"actionablePRs"`
+	ContributorCount   int    `json:"contributorCount"`
+	ActiveContributors int    `json:"activeContributors"`
+	Owner              string `json:"owner,omitempty"`
+	ClusterID          string `json:"clusterId,omitempty"`
+	ClusterName        string `json:"clusterName,omitempty"`
+	HiveType           string `json:"hiveType,omitempty"`
+	// ProvStatus is the authoritative provisioning status copied from the hive's
+	// SaaSHive record (sh.Status) on the heartbeat path — statusAvailable
+	// ("available") for a genuinely-unclaimed pool placeholder, else a claimed
+	// status ("claimed", "assigned", …) or "" for a hive with no SaaSHive record.
+	//
+	// It exists because a CLAIMED placeholder KEEPS its "hosted-available-" ID and
+	// leftover pool org after assignment (the ID is minted at pool creation and
+	// never changes on claim), so the ID/org prefix alone OVER-counts available
+	// hives. computeFleetStats and isPlaceholderEntry both treat this field as
+	// authoritative, with the prefix used only as a fallback when it is empty, so
+	// the landing-page count and the dashboard's Assigned/Unassigned sections
+	// agree on what "available" means. A scalar status — no PII.
+	ProvStatus    string         `json:"provStatus,omitempty"`
+	IsPublic      bool           `json:"isPublic"`
+	RegisteredAt  string         `json:"registeredAt"`
+	LastHeartbeat string         `json:"lastHeartbeat"`
+	Health        map[string]any `json:"health"`
+	Version       string         `json:"version"`
+	GitHash       string         `json:"gitHash,omitempty"`
+	GitBranch     string         `json:"gitBranch,omitempty"`
 	// ImageRef is the container image this spoke's own Deployment runs, as
 	// read in-cluster by the spoke and reported over the heartbeat. The hub
 	// cannot see it any other way for firewalled/heartbeat-only spokes, and
@@ -146,14 +186,40 @@ type RegistryEntry struct {
 	// re-armed forever, which looks like progress but never is. Past
 	// maxOrphanedUpgradeSweeps the hub stops retrying and records a failure a
 	// human can see. Reset whenever the hive reaches a target.
-	OrphanedUpgradeSweeps     int          `json:"orphanedUpgradeSweeps,omitempty"`
-	IssueHistory              []SparkPoint `json:"issueHistory,omitempty"`
-	PRHistory                 []SparkPoint `json:"prHistory,omitempty"`
-	GitHubAppRequired         bool         `json:"githubAppRequired,omitempty"`
-	GitHubAppPermIssue        string       `json:"githubAppPermIssue,omitempty"`
-	GitHubAppState            string       `json:"githubAppState,omitempty"`
-	PendingGitHubAppInstall   bool         `json:"pendingGitHubAppInstall,omitempty"`
-	PendingGitHubAppInstallAt time.Time    `json:"pendingGitHubAppInstallAt,omitempty"`
+	OrphanedUpgradeSweeps int          `json:"orphanedUpgradeSweeps,omitempty"`
+	IssueHistory          []SparkPoint `json:"issueHistory,omitempty"`
+	PRHistory             []SparkPoint `json:"prHistory,omitempty"`
+	GitHubAppRequired     bool         `json:"githubAppRequired,omitempty"`
+	GitHubAppPermIssue    string       `json:"githubAppPermIssue,omitempty"`
+	GitHubAppState        string       `json:"githubAppState,omitempty"`
+	// GitHubAppID is the App ID the spoke reports it is authenticating AS.
+	//
+	// Carried into the registry so the hub can SEE a spoke running the
+	// placeholder sentinel (config.PlaceholderAppID) without waiting for that
+	// spoke to classify and report the fault itself. The spoke's own
+	// classification is the better signal when it arrives, but it depends on the
+	// spoke being new enough to produce it — and the sentinel's whole failure
+	// mode is that nothing said anything for weeks. A raw, hub-observed number
+	// cannot be silenced by a stale spoke.
+	//
+	// Zero means "not reported", never "no App".
+	GitHubAppID int64 `json:"githubAppId,omitempty"`
+	// GitHubAppSlug, GitHubInstallationID, GitHubAPIURL and GitHubBaseURL
+	// complete the hub's picture of the identity the spoke is RUNNING.
+	//
+	// They are carried here for the same reason GitHubAppID is: a hub-observed
+	// fact cannot be silenced by a stale or too-old spoke. Together they make a
+	// half-applied identity detectable — a GHE app_id with an empty api_url
+	// authenticates as nothing and 404s on every token request, and with only
+	// app_id reported it looked exactly like a healthy delivery.
+	//
+	// Zero/empty means "not reported", never "not configured".
+	GitHubAppSlug             string    `json:"githubAppSlug,omitempty"`
+	GitHubInstallationID      int64     `json:"githubInstallationId,omitempty"`
+	GitHubAPIURL              string    `json:"githubApiUrl,omitempty"`
+	GitHubBaseURL             string    `json:"githubBaseUrl,omitempty"`
+	PendingGitHubAppInstall   bool      `json:"pendingGitHubAppInstall,omitempty"`
+	PendingGitHubAppInstallAt time.Time `json:"pendingGitHubAppInstallAt,omitempty"`
 	// Fleet contribution counts reported by the spoke (nil = not reported /
 	// not yet computed). Aggregated across public, non-stale hives into the
 	// /api/fleet-stats total. Pointers preserve the nil-vs-zero distinction so
@@ -503,6 +569,15 @@ type HubServer struct {
 	vanityHostServable func(hiveID, vanityHost string, cluster *ClusterConfig) error
 	heartbeatHealth    map[string]*HeartbeatHealthEntry // cluster ID → latest health from spoke heartbeat
 	heartbeatHealthMu  sync.RWMutex
+
+	// liveHiveUsers maps a GitHub username → the last time any hive reported it as
+	// having a live dashboard session. It powers the "logged into their hive right
+	// now" avatar treatment (a green dashed border). In-memory only and rebuilt
+	// from heartbeats — a hub restart simply re-learns it within a beat or two.
+	// Freshness-gated on read (liveHiveUsernames), so a user whose hive stopped
+	// beating drops out on its own rather than staying "live" forever.
+	liveHiveUsers   map[string]time.Time
+	liveHiveUsersMu sync.RWMutex
 
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to
@@ -954,6 +1029,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
 				payload.Agents[i].State = sanitizeHeartbeatField(payload.Agents[i].State)
 				payload.Agents[i].Mode = sanitizeHeartbeatField(payload.Agents[i].Mode)
+				// Timestamps are spoke-reported strings like every other field
+				// here. An unparseable value is later read as "unknown" by the
+				// inactive-agent rule, never as evidence of idleness.
+				payload.Agents[i].StartedAt = sanitizeHeartbeatField(payload.Agents[i].StartedAt)
+				payload.Agents[i].LastActivityAt = sanitizeHeartbeatField(payload.Agents[i].LastActivityAt)
 			}
 			const maxAgents = 50
 			if len(payload.Agents) > maxAgents {
@@ -974,6 +1054,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		GitHubAppRequired:       payload.GitHubAppRequired,
 		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
+		GitHubAppID:             payload.GitHubAppID,
+		GitHubAppSlug:           payload.GitHubAppSlug,
+		GitHubInstallationID:    payload.GitHubInstallationID,
+		GitHubAPIURL:            payload.GitHubAPIURL,
+		GitHubBaseURL:           payload.GitHubBaseURL,
 		PendingGitHubAppInstall: payload.PendingGitHubAppInstall,
 		PendingGitHubAppInstallAt: func() time.Time {
 			if payload.PendingGitHubAppInstall {
@@ -999,10 +1084,15 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AgentsWithModel: clampFleetCount(payload.AgentsWithModel),
 	}
 
-	// Populate ClusterID from SaaS hive record, heartbeat payload, or default.
+	// Populate ClusterID and the authoritative ProvStatus from the SaaS hive
+	// record (a single load reused for both). ProvStatus is what lets
+	// computeFleetStats tell a genuinely-unclaimed placeholder (statusAvailable)
+	// from a CLAIMED one that still carries the "hosted-available-" ID — the ID
+	// prefix alone over-counts available hives because it never changes on claim.
 	clusterID := ""
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		clusterID = sh.ClusterID
+		entry.ProvStatus = sh.Status
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
@@ -1215,6 +1305,13 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	s.requestSave()
 
+	// Credit per-user "time in hive" from the spoke's active-session report.
+	// Deliberately AFTER s.mu.Unlock() (like the timeline/token-trend work above):
+	// it does per-user load-modify-write file I/O and must not serialize behind
+	// the registry write lock. hadPrev==false (a brand-new hive) credits nothing —
+	// there is no prior sample point to measure an interval against.
+	s.creditActiveSessionTime(&prevEntry, hadPrev, payload.ActiveSessionUsers)
+
 	// Store heartbeat-reported cluster health so the hub can use it as a
 	// fallback when it cannot reach the cluster directly via kubectl.
 	if payload.ClusterHealth != nil && entry.ClusterID != "" {
@@ -1288,6 +1385,19 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// very beat. No-op (and silent) for every hive that already has a host, is
 	// an unclaimed placeholder, or sits on a non-GHE cluster.
 	s.repairGitHubHostForHive(payload.HiveID)
+	// Beyond filling a BLANK host, repair a persisted host that is set but WRONG
+	// from the forge the spoke actually reports it runs against (public→GHE only,
+	// never demoting a legit public pin). Closes the vllmd-06 class: meta said
+	// github.com while the spoke ran api_url github.ibm.com.
+	s.reconcileGitHubHostFromSpoke(&payload)
+
+	// Close the FORGE handshake before building the project config, so the beat
+	// on which the spoke first reports the requested host is also the beat the
+	// push stops. Ordering matters for the same reason it does above: doing this
+	// after projectConfigForHiveID would re-send an api_url that has already
+	// landed. No-op (and silent) for every hive with no outstanding switch,
+	// which is all of them until an operator runs one.
+	s.adoptSpokeForge(payload.HiveID, payload.GitHubHost)
 
 	// Retroactively mint the vanity host for a hive CLAIMED BEFORE the vanity
 	// feature existed, also BEFORE building the project config, so the URL-only
@@ -1309,9 +1419,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Deliver a funded OpenRouter gateway to a firewalled/heartbeat-only spoke.
-	// Drained on delivery (carries a secret key value, so it is sent once, not
-	// re-sent every beat). The key value is not logged.
-	if gw := s.takePendingGateway(payload.HiveID); gw != nil {
+	// Re-offered until the spoke REPORTS the gateway back, then cleared. The key
+	// value is never logged. Draining on send instead made this at-most-once for
+	// something already paid for — see pendingGatewayFor.
+	if gw := s.pendingGatewayFor(payload.HiveID, payload.GatewayNames); gw != nil {
 		resp.PendingGateway = gw
 		s.logger.Info("heartbeat: delivering funded gateway to spoke",
 			"hive_id", payload.HiveID, "gateway", gw.Name, "default_model", gw.DefaultModel)
@@ -1390,7 +1501,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	if ghCfg := s.consumePendingGitHubAppConfig(payload.HiveID); ghCfg != nil {
+	if ghCfg := s.pendingAppIdentityForHeartbeat(&payload); ghCfg != nil {
 		resp.GitHubAppConfig = ghCfg
 		s.logger.Info("heartbeat: delivering github app config to spoke",
 			"hive_id", payload.HiveID,
@@ -1441,6 +1552,128 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	data, _ := json.Marshal(resp)
 	w.Write(data)
+}
+
+const (
+	// expectedHeartbeatSecs mirrors cmd/hive's heartbeatSendInterval (2 min). It
+	// is redeclared here because that constant lives in package main and cannot be
+	// imported; the value is the sampling cadence for session-time accounting.
+	expectedHeartbeatSecs = 120.0
+	// maxSessionCreditSecs caps how much time a single beat may credit a user, so
+	// a hub or spoke outage (a long gap between two beats) never back-credits hours
+	// of "time in hive" that nobody was actually logged in for. Two beats' worth is
+	// generous enough to absorb ordinary jitter while bounding the fault.
+	maxSessionCreditSecs = 2 * expectedHeartbeatSecs
+	// maxActiveSessionUsers bounds the per-beat work from a spoke that reports an
+	// implausibly large active-session list (defensive; a real hive has a handful).
+	maxActiveSessionUsers = 200
+)
+
+// creditActiveSessionTime accumulates per-user "time in hive" from one heartbeat's
+// active-session report. Each distinct, valid username that had a live session on
+// this beat is credited the elapsed time since this hive's PREVIOUS beat — the
+// sampling interval — clamped so an outage gap is never back-credited.
+//
+// Correctness:
+//   - hadPrev==false (first-ever beat) → no prior sample point → credit nothing.
+//   - the interval is (now - prevEntry.LastHeartbeat); keyed off the PERSISTED
+//     registry LastHeartbeat, so a hub restart resumes from the last stored beat
+//     and the next beat credits only the (clamped) gap — never a giant catch-up.
+//   - unknown users (no SaaSUser record) are skipped, never auto-created.
+//   - load-modify-write per user so a concurrent contact/quota edit is not clobbered.
+//
+// It runs post-unlock and does its own file I/O; callers must NOT hold s.mu.
+func (s *HubServer) creditActiveSessionTime(prevEntry *RegistryEntry, hadPrev bool, activeUsers []string) {
+	// Mark everyone reported active as live NOW, independent of the time-credit
+	// path below: the "logged in right now" avatar treatment must light up on the
+	// FIRST beat that sees a session (there is no prior sample yet), and must not
+	// depend on a valid prevEntry. Freshness is applied on read.
+	s.markUsersLive(activeUsers)
+	if !hadPrev || prevEntry == nil || prevEntry.LastHeartbeat == "" || len(activeUsers) == 0 {
+		return
+	}
+	prev, err := time.Parse(time.RFC3339, prevEntry.LastHeartbeat)
+	if err != nil {
+		return
+	}
+	elapsed := time.Since(prev).Seconds()
+	if elapsed <= 0 {
+		return // clock skew or a duplicate beat at the same instant — credit nothing.
+	}
+	if elapsed > maxSessionCreditSecs {
+		elapsed = maxSessionCreditSecs
+	}
+	creditSecs := int64(elapsed)
+	if creditSecs <= 0 {
+		return
+	}
+	// Dedupe + validate the reported usernames with the same gate the leaderboard
+	// path uses, and bound the work.
+	seen := make(map[string]struct{}, len(activeUsers))
+	for _, name := range activeUsers {
+		if len(seen) >= maxActiveSessionUsers {
+			break
+		}
+		if name == "" || !isValidName(name) {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		u := loadSaaSUser(name)
+		if u == nil {
+			continue // an active session for a user the hub has no record of — skip.
+		}
+		u.SessionSeconds += creditSecs
+		if err := saveSaaSUser(u); err != nil {
+			s.logger.Warn("creditActiveSessionTime: save failed", "user", name, "error", err)
+		}
+	}
+}
+
+// liveHiveUserStaleness is how long after a hive's last active-session report a
+// user is still considered "logged into their hive". Two beats absorbs one missed
+// heartbeat before the avatar treatment drops.
+const liveHiveUserStaleness = time.Duration(maxSessionCreditSecs) * time.Second
+
+// markUsersLive stamps each reported active user as live as of now. Cheap map
+// write under its own mutex; validation/freshness are applied on read.
+func (s *HubServer) markUsersLive(activeUsers []string) {
+	if len(activeUsers) == 0 {
+		return
+	}
+	now := time.Now()
+	s.liveHiveUsersMu.Lock()
+	if s.liveHiveUsers == nil {
+		s.liveHiveUsers = make(map[string]time.Time)
+	}
+	for _, name := range activeUsers {
+		if name == "" || !isValidName(name) {
+			continue
+		}
+		s.liveHiveUsers[name] = now
+	}
+	s.liveHiveUsersMu.Unlock()
+}
+
+// liveHiveUsernames returns the usernames with a live hive session seen within
+// the staleness window, and opportunistically prunes stale entries so the map
+// cannot grow without bound. Admin-facing (presence data) — the caller gates it.
+func (s *HubServer) liveHiveUsernames() []string {
+	cutoff := time.Now().Add(-liveHiveUserStaleness)
+	s.liveHiveUsersMu.Lock()
+	defer s.liveHiveUsersMu.Unlock()
+	out := make([]string, 0, len(s.liveHiveUsers))
+	for name, seen := range s.liveHiveUsers {
+		if seen.Before(cutoff) {
+			delete(s.liveHiveUsers, name)
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *HubServer) storePendingGitHubAppConfig(hiveID string, cfg *HeartbeatGitHubAppConfig) {
@@ -1597,12 +1830,32 @@ func (s *HubServer) handleStats(w http.ResponseWriter, r *http.Request) {
 // hive, so the numbers are a true fleet total (every managed repo of every
 // live spoke) rather than a single org's figures.
 type FleetStats struct {
-	ReposManaged int    `json:"repos_managed"`
-	PRsMerged    int    `json:"prs_merged"`
-	PRsRejected  int    `json:"prs_rejected"`
-	CVEsClosed   int    `json:"cves_closed"`
-	Hives        int    `json:"hives"`
-	UpdatedAt    string `json:"updated_at"`
+	ReposManaged int `json:"repos_managed"`
+	PRsMerged    int `json:"prs_merged"`
+	PRsRejected  int `json:"prs_rejected"`
+	CVEsClosed   int `json:"cves_closed"`
+	// Hives is the number of ONLINE, ASSIGNED hives fleet-wide (the loop below
+	// skips offline and unassigned ones) — i.e. "hives up". TotalHives is every
+	// ASSIGNED hive, online or not. The landing page shows "hives up / total"
+	// (Hives/TotalHives) so the ratio reflects real fleet uptime rather than the
+	// public-list size, and unclaimed inventory doesn't inflate it. AvailableHives
+	// is the count of UNASSIGNED placeholders a user could still request. All
+	// three are anonymous scalars — no name/org/repo/owner/URL is derivable.
+	Hives          int `json:"hives"`
+	TotalHives     int `json:"total_hives"`
+	AvailableHives int `json:"available_hives"`
+	// AgentsRunning and Contributors are fleet-wide ANONYMOUS counts, summed
+	// over ALL online hives rather than only the public ones.
+	//
+	// The landing page used to compute these in the browser from /api/registry,
+	// which returns public hives only — so "agents running" and "contributors"
+	// silently described about a third of the fleet (roughly 18 of 51 spokes are
+	// public). Computing them here counts every hive while disclosing none: like
+	// every other field on this struct they are scalars, and no name, org, repo,
+	// owner or URL is derivable from them.
+	AgentsRunning int    `json:"agents_running"`
+	Contributors  int    `json:"contributors"`
+	UpdatedAt     string `json:"updated_at"`
 	// Reporting is the number of eligible hives that actually contributed a
 	// fresh count to the totals above; Eligible is how many were considered.
 	// Without this pair the totals are indistinguishable from a healthy fleet:
@@ -1619,6 +1872,16 @@ type FleetStats struct {
 	// totals to stand as a fleet-wide figure. The landing page shows a
 	// "collecting" state instead of the numbers when this is false.
 	Trustworthy bool `json:"trustworthy"`
+	// Stale is true when the counts above did NOT come from the current
+	// collection but from the persisted last-known-good aggregate. The page
+	// still shows the numbers — hiding them entirely is what made a
+	// recollecting fleet look like a dead one — but it must label them, so
+	// this flag and AsOf travel with the payload. Stale-and-says-so is the
+	// goal; wrong-and-silent is the thing to avoid.
+	StaleData bool `json:"stale_data,omitempty"`
+	// AsOf is the RFC3339 time the returned counts were actually collected.
+	// Equal to UpdatedAt for a fresh aggregate; older when StaleData is true.
+	AsOf string `json:"as_of,omitempty"`
 }
 
 // fleetStatsMaxAge is how old a spoke's last successful collect may be and
@@ -1630,13 +1893,28 @@ type FleetStats struct {
 // rather than freezing a stale figure on the public page forever.
 const fleetStatsMaxAge = 6 * time.Hour
 
-// fleetStatsMinReportingFraction is the share of eligible hives that must
-// report fresh counts before the aggregate is considered trustworthy enough to
-// display as a fleet-wide total. Below this the landing page shows a degraded
-// state instead of a confidently wrong number — the regression this guards
-// against is precisely a total silently assembled from a small minority of the
-// fleet (2 of 50) and rendered as though it were complete.
-const fleetStatsMinReportingFraction = 0.5
+// isAvailableRegistryEntry reports whether a registry entry is a genuinely
+// unclaimed pool placeholder — the "available"/"unassigned" bucket on the
+// landing page and dashboard. It mirrors the frontend's isPlaceholderHive and
+// drift.go's isPlaceholderEntry EXACTLY:
+//
+//	provStatus == "available"  OR  org has the "available-" prefix
+//
+// The "hosted-available-" ID prefix is deliberately NOT consulted. A claimed
+// placeholder KEEPS that ID forever (it is minted at pool-creation time and
+// never rewritten on assignment), so an ID-prefix fallback counted every
+// claimed placeholder as still available — 38 reported vs the true 17. The
+// claim paths rewrite the org OFF the "available-" prefix and now set an
+// explicit statusAssigned, so both remaining signals flip correctly on claim.
+// Keeping this in lockstep with the JS and drift.go is what lets the landing
+// tiles, the dashboard's Assigned/Unassigned split, and server-side drift never
+// disagree about what is claimed.
+func isAvailableRegistryEntry(h RegistryEntry) bool {
+	if h.ProvStatus == statusAvailable {
+		return true
+	}
+	return strings.HasPrefix(h.Org, placeholderOrgPrefix)
+}
 
 // computeFleetStats aggregates fleet-wide contribution counts across public,
 // non-stale hives. A hive that never reported a given count (nil pointer) is
@@ -1650,10 +1928,61 @@ func (s *HubServer) computeFleetStats() FleetStats {
 	var fs FleetStats
 	repoSet := make(map[string]struct{})
 	for _, h := range s.registry.Hives {
-		if !h.IsPublic || !h.Online {
+		// An UNASSIGNED hive is a pre-provisioned placeholder nobody has claimed
+		// yet. It is counted as AVAILABLE and excluded from the assigned totals
+		// below: "hives up / total" and the contribution sums are about the
+		// working fleet, not idle inventory a user could still request.
+		//
+		// A placeholder is NOT detectable by an empty Org: an unclaimed slot
+		// keeps its "hosted-available-" ID prefix and frequently a leftover pool
+		// org (live example: id="hosted-available-oke-01-placeholder-bb95",
+		// org="TradingAsBuddies"). Testing Org=="" therefore matched zero
+		// placeholders AND counted every one as assigned.
+		//
+		// The ID/org PREFIX alone over-counts the other way: a CLAIMED placeholder
+		// KEEPS its "hosted-available-" ID and pool org after assignment (the ID is
+		// minted at pool creation and never changes on claim). ~21 of the 38
+		// "hosted-available-" hives are actually claimed, so the prefix reported 38
+		// "available" when the truth is 17 unclaimed / 33 assigned.
+		//
+		// Detect it the way the rest of the codebase does — see isPlaceholderEntry
+		// in drift.go and the dashboard's Assigned/Unassigned sections: the
+		// authoritative signal is ProvStatus==statusAvailable, with the
+		// "hosted-available-" ID prefix / "available-" org prefix used ONLY as a
+		// fallback when ProvStatus is unknown (empty — a hive with no SaaSHive
+		// record or one that predates the field). A claimed placeholder therefore
+		// counts as ASSIGNED, not available.
+		if isAvailableRegistryEntry(h) {
+			fs.AvailableHives++
+			continue
+		}
+		// TotalHives is every ASSIGNED hive (online or not) — the denominator of
+		// "hives up / total". Counted before the online skip below so a down hive
+		// still contributes to the total.
+		fs.TotalHives++
+		// ALL assigned hives count, public and private alike.
+		//
+		// These totals are ANONYMOUS SUMS: every field on FleetStats is a
+		// scalar — counts, a timestamp, booleans. No name, org, repo, owner or
+		// URL reaches this struct, and repoSet below is internal with only its
+		// len() published. So a private hive contributing to a count discloses
+		// nothing about itself.
+		//
+		// Excluding them made the published figures describe about a THIRD of
+		// reality: 51 spokes exist and roughly 18 are public. "Hives", "repos
+		// managed" and the PR/CVE counts all understated the fleet by that
+		// margin, which is the opposite of what a fleet total is for.
+		//
+		// The PUBLIC LIST at the bottom of the landing page is a separate
+		// concern and is deliberately untouched: it names hives and links to
+		// them, so it stays opt-in via IsPublic. Aggregate counts and named
+		// listings are different disclosures and are now treated as such.
+		if !h.Online {
 			continue
 		}
 		fs.Hives++
+		fs.AgentsRunning += h.AgentCount
+		fs.Contributors += h.ActiveContributors
 		for _, r := range h.Repos {
 			if r == "" {
 				continue
@@ -1700,15 +2029,68 @@ func (s *HubServer) computeFleetStats() FleetStats {
 	return fs
 }
 
-// FleetStatsTrustworthy reports whether enough of the eligible fleet
-// contributed fresh counts for the totals to be presented as a fleet-wide
-// figure. A total built from a small minority is worse than no total at all:
-// it renders as a confident, precise, badly wrong number.
+// FleetStatsTrustworthy reports whether ANY hive contributed a fresh count.
+//
+// It used to require half the eligible fleet, on the reasoning that "a total
+// built from a small minority is worse than no total at all". That reasoning
+// treats the aggregate as an ESTIMATE — a sample you extrapolate from, where
+// too small a sample gives a confidently wrong answer.
+//
+// It is not an estimate. Every hive counts its OWN merged PRs and the loop
+// above sums them with +=; ReposManaged is len(repoSet), so shared repos are
+// already deduplicated. Seven hives reporting 12,819 PRs is not a guess at a
+// fleet total, it is an exact count of what those seven did. The number is
+// correct; only its COMPLETENESS is partial.
+//
+// So the honest presentation is the number plus its coverage, not silence.
+// Suppressing it was strictly worse: a blank strip reads as "this fleet did
+// nothing", which is the one interpretation that is actually false. The page
+// now always renders the coverage alongside, so a partial total can never be
+// mistaken for a complete one.
+//
+// This also removes a trap. The last-known-good fallback was only RECORDED
+// when this returned true, and served only when it returned false — so on a
+// fleet that had never once cleared the bar it was never written, and the
+// fallback designed for exactly that situation had nothing to serve. The
+// safety net could only be filled by the condition it existed to protect
+// against. Live for months: coverage was 2/18, 7/18 and 10/50 on the day this
+// was found, and the strip had been blank throughout.
 func (fs FleetStats) FleetStatsTrustworthy() bool {
-	if fs.Eligible == 0 || fs.Reporting == 0 {
-		return false
+	return fs.Reporting > 0
+}
+
+// fleetStatsLKG returns a copy of the persisted last-known-good aggregate, or
+// nil if the fleet has never produced one. A copy (not the pointer) so callers
+// cannot mutate registry state they do not hold the write lock for.
+func (s *HubServer) fleetStatsLKG() *FleetStatsSnapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.registry.FleetStatsLKG == nil {
+		return nil
 	}
-	return float64(fs.Reporting)/float64(fs.Eligible) >= fleetStatsMinReportingFraction
+	snapshot := *s.registry.FleetStatsLKG
+	return &snapshot
+}
+
+// recordFleetStatsLKG stores fs as the new last-known-good aggregate and asks
+// for a registry flush, so the figure survives a hub restart. Only ever called
+// with an aggregate that already cleared the coverage bar — a degraded total
+// must never become the fallback, or the cache would launder exactly the
+// unbacked number the coverage gate exists to suppress.
+func (s *HubServer) recordFleetStatsLKG(fs FleetStats, collectedAt time.Time) {
+	s.mu.Lock()
+	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
+		ReposManaged: fs.ReposManaged,
+		PRsMerged:    fs.PRsMerged,
+		PRsRejected:  fs.PRsRejected,
+		CVEsClosed:   fs.CVEsClosed,
+		Hives:        fs.Hives,
+		Reporting:    fs.Reporting,
+		Eligible:     fs.Eligible,
+		CollectedAt:  collectedAt.UTC(),
+	}
+	s.mu.Unlock()
+	s.requestSave()
 }
 
 func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
@@ -1720,20 +2102,56 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	fs := s.computeFleetStats()
 	s.mu.RUnlock()
-	fs.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
+	fs.UpdatedAt = now.Format(time.RFC3339)
 	fs.Trustworthy = fs.FleetStatsTrustworthy()
+
+	// Last-known-good handling. A fleet total does not have to be current to be
+	// useful, but it does have to say how current it is. When this collection
+	// clears the coverage bar we record it as the new LKG; when it does not, we
+	// serve the stored LKG and mark it stale so the page can label it. Only a
+	// fleet that has never once reported well enough shows no number at all.
+	if fs.Trustworthy {
+		fs.AsOf = fs.UpdatedAt
+		s.recordFleetStatsLKG(fs, now)
+	} else if lkg := s.fleetStatsLKG(); lkg != nil {
+		// Keep the LIVE coverage figures (Reporting/Eligible/Stale) so the page
+		// can still show recollection progress, but serve the cached counts.
+		fs.ReposManaged = lkg.ReposManaged
+		fs.PRsMerged = lkg.PRsMerged
+		fs.PRsRejected = lkg.PRsRejected
+		fs.CVEsClosed = lkg.CVEsClosed
+		fs.StaleData = true
+		fs.AsOf = lkg.CollectedAt.UTC().Format(time.RFC3339)
+		s.logger.Warn("fleet stats: serving last-known-good totals; live coverage is below the publish threshold",
+			"reporting", fs.Reporting,
+			"eligible", fs.Eligible,
+			"lkg_collected_at", fs.AsOf,
+			"lkg_based_on_reporting", lkg.Reporting,
+			"lkg_based_on_eligible", lkg.Eligible,
+		)
+	}
 
 	// Make the degraded case loud on the server too. The landing page hides the
 	// numbers, but a silent hide is how this regressed unnoticed before: with
 	// no log line, a fleet-wide collector failure looks identical to a quiet
 	// day. This is the operator-visible signal that the data, not the fleet,
 	// is what shrank.
-	if !fs.Trustworthy {
-		s.logger.Warn("fleet stats degraded: too few hives reporting to publish a fleet total",
+	// The total is always published now, so this is no longer a publish gate —
+	// it is the operator signal that the DATA shrank, not the fleet. Keep it
+	// loud: a silent hide is how the blank strip regressed unnoticed before,
+	// where a fleet-wide collector failure looked identical to a quiet day.
+	if fs.Eligible > 0 && fs.Reporting*2 < fs.Eligible {
+		s.logger.Warn("fleet stats: fewer than half the eligible hives are reporting; the published total is partial",
 			"reporting", fs.Reporting,
 			"eligible", fs.Eligible,
 			"stale", fs.Stale,
-			"min_fraction", fleetStatsMinReportingFraction,
+		)
+	}
+	if fs.Reporting == 0 && fs.Eligible > 0 {
+		s.logger.Warn("fleet stats: NO hive reported a fresh count; the strip will show nothing",
+			"eligible", fs.Eligible,
+			"stale", fs.Stale,
 		)
 	}
 
@@ -1824,12 +2242,35 @@ func (s *HubServer) handleRegistryDelete(w http.ResponseWriter, r *http.Request)
 func (s *HubServer) handleHubVersion(w http.ResponseWriter, r *http.Request) {
 	// The hub secret is never returned from this browser-reachable endpoint; the
 	// raw shared secret has no legitimate consumer over HTTP.
+	// latest_shas is the SPOKE-image-verified target actually advertised to
+	// spokes (see the heartbeat response in handleHeartbeat). It legitimately
+	// lags head_shas while a new commit's spoke image builds, so a bare
+	// "latest_shas is behind HEAD" reading cannot distinguish a healthy
+	// mid-build window from a wedged poller. head_shas + image_statuses make
+	// that difference explicit:
+	//
+	//   head == latest                      → fully rolled out
+	//   head > latest, status "building"    → normal, transient, no action
+	//   head > latest, status "failed"      → the image build failed
+	//   head > latest, status "ready"       → poller fault: the image exists
+	//                                         but the advertised SHA never
+	//                                         advanced
+	//   head_shas empty / far behind GitHub → poller not running or erroring
+	//
+	// latest_hub_shas is the HUB image for the same commits, a SEPARATE build
+	// that can land in either order. upgrade_state is computed from it, not
+	// from latest_shas, so "upgrade_state: current" beside an older
+	// latest_shas is a legitimate state (hub image published, spoke image
+	// still building) rather than a contradiction.
 	resp := map[string]any{
-		"git_hash":      s.hubGitHash,
-		"git_branch":    s.hubGitBranch,
-		"latest_sha":    getLatestSHA(),
-		"latest_shas":   getLatestSHAs(),
-		"upgrade_state": s.hubUpgradeState(),
+		"git_hash":        s.hubGitHash,
+		"git_branch":      s.hubGitBranch,
+		"latest_sha":      getLatestSHA(),
+		"latest_shas":     getLatestSHAs(),
+		"latest_hub_shas": getLatestHubSHAs(),
+		"head_shas":       getHeadSHAs(),
+		"image_statuses":  getImageStatuses(),
+		"upgrade_state":   s.hubUpgradeState(),
 	}
 	data, _ := json.Marshal(resp)
 	w.Header().Set("Content-Type", "application/json")
