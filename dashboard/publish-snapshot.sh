@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build dashboard snapshots (light + classic) and push to the docs repo.
-# Creates a PR and merges with --admin to satisfy branch protection.
+# Creates a PR and merges with a normal squash (auto-merge fallback) — never --admin.
 #
 # Produces:
 #   public/live/hive/index.html        — default (light mode)
@@ -124,10 +124,12 @@ done
 
 if [ "$netlify_status" = "pass" ]; then
   echo "Netlify deploy-preview passed."
-  if gh pr merge "$PR_NUM" --repo "$DOCS_REPO_SLUG" --admin --squash --delete-branch 2>/dev/null; then
-    echo "Snapshot published via PR #${PR_NUM} (admin merge)."
+  # Never --admin: branch protection is the gate, not an obstacle. A plain
+  # squash lands when required checks are green; otherwise queue auto-merge.
+  if gh pr merge "$PR_NUM" --repo "$DOCS_REPO_SLUG" --squash --delete-branch 2>/dev/null; then
+    echo "Snapshot published via PR #${PR_NUM}."
   else
-    echo "Admin merge unavailable — enabling auto-merge on PR #${PR_NUM}."
+    echo "Checks still pending — enabling auto-merge on PR #${PR_NUM}."
     gh pr merge "$PR_NUM" --repo "$DOCS_REPO_SLUG" --squash --auto --delete-branch
     echo "Auto-merge enabled on PR #${PR_NUM} — will merge when checks pass."
   fi
