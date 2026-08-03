@@ -73,6 +73,18 @@ func (verifier *normalVisualPullRequestVerifier) VerifyPullRequest(ctx context.C
 		}
 		return normalservice.PullRequestVerdictReceipt{}, err
 	}
+	// Production uses the verifier's GitHub client directly, while focused
+	// tests may inject an inspector. Either source must take the red/pending
+	// path before the success-bundle verifier binds the live default branch.
+	if verifier.hasPullRequestGateSource() {
+		gate, gateErr := verifier.inspectPullRequestGate(ctx, current.Repository, request.PullRequestNumber)
+		if gateErr != nil {
+			return normalservice.PullRequestVerdictReceipt{}, gateErr
+		}
+		if strings.ToLower(strings.TrimSpace(gate.VisualHiveCheckState)) != "success" {
+			return verifier.verifyFailedOrPendingPullRequestGate(ctx, request, current, repositoryID, gate)
+		}
+	}
 	verified, err := verifier.fetchExact(ctx, hivegithub.VisualHivePullRequestBundleRequest{
 		Repository: current.Repository, PullRequestNumber: request.PullRequestNumber,
 		ExpectedBaseRepository: current.Repository, ExpectedBaseRepositoryID: repositoryID,
@@ -117,6 +129,10 @@ func (verifier *normalVisualPullRequestVerifier) VerifyPullRequest(ctx context.C
 	}, nil
 }
 
+func (verifier *normalVisualPullRequestVerifier) hasPullRequestGateSource() bool {
+	return verifier != nil && (verifier.inspectGate != nil || verifier.github != nil)
+}
+
 type normalVisualFailedPullRequestReceiptIdentity struct {
 	SchemaVersion       string `json:"schema_version"`
 	Repository          string `json:"repository"`
@@ -156,6 +172,16 @@ func (verifier *normalVisualPullRequestVerifier) verifyFailedOrPendingPullReques
 	if err != nil {
 		return normalservice.PullRequestVerdictReceipt{}, err
 	}
+	return verifier.verifyFailedOrPendingPullRequestGate(ctx, request, current, repositoryID, gate)
+}
+
+func (verifier *normalVisualPullRequestVerifier) verifyFailedOrPendingPullRequestGate(
+	ctx context.Context,
+	request normalservice.PullRequestVerdictRequest,
+	current integrated.Config,
+	repositoryID int64,
+	gate hivegithub.PullRequestGate,
+) (normalservice.PullRequestVerdictReceipt, error) {
 	if gate.Number != request.PullRequestNumber || gate.URL != request.PullRequestURL || !gate.Open || gate.Merged ||
 		gate.BaseBranch != request.BaseBranch || !strings.EqualFold(gate.BaseSHA, request.BaseSHA) ||
 		!strings.EqualFold(gate.HeadSHA, request.HeadSHA) {

@@ -76,6 +76,12 @@ func loadAuthoritativeVisualWorkContract() (integrated.Config, bool, error) {
 	}
 	installed, err := store.Load()
 	if err != nil {
+		if os.IsNotExist(err) {
+			entries, readErr := os.ReadDir(filepath.Join(stateDir, "integrated"))
+			if readErr == nil && len(entries) == 0 {
+				return integrated.Config{}, false, nil
+			}
+		}
 		return integrated.Config{}, false, err
 	}
 	if !sameSpecialistRuntimePath(installed.StateDir, stateDir) {

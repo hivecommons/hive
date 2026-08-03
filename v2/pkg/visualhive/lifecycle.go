@@ -2,6 +2,7 @@ package visualhive
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,9 @@ import (
 const (
 	LifecycleSchemaV1 = "hive.visual-hive-lifecycle.v1"
 	LifecycleSchema   = "hive.visual-hive-lifecycle.v2"
+
+	repositoryMapArtifactPath       = ".visual-hive/repo-map.json"
+	storybookDiscoveryFindingPrefix = "repo map finding: storybook-discovery:"
 )
 
 type LifecycleStatus string
@@ -98,6 +102,126 @@ type FindingLifecycle struct {
 	RepairAttempts                 int                              `json:"repair_attempts"`
 	Recurrences                    int                              `json:"recurrences"`
 	PendingIssueAction             OutboxAction                     `json:"pending_issue_action,omitempty"`
+	LastRetiredRepair              *RetiredRepair                   `json:"last_retired_repair,omitempty"`
+}
+
+// RetiredRepair preserves the exact identity of a Hive-owned unmerged repair
+// proposal that an owner explicitly retired so a changed default branch could
+// receive fresh authoritative verification. It is history, not resolution or
+// proof that the finding is absent.
+type RetiredRepair struct {
+	PullRequestNumber     int             `json:"pull_request_number"`
+	PullRequestURL        string          `json:"pull_request_url"`
+	Branch                string          `json:"branch"`
+	HeadSHA               string          `json:"head_sha"`
+	BaseBranch            string          `json:"base_branch"`
+	BaseSHA               string          `json:"base_sha"`
+	CurrentDefaultHeadSHA string          `json:"current_default_head_sha"`
+	VerdictReceipt        json.RawMessage `json:"verdict_receipt"`
+	VerdictReceiptSHA256  string          `json:"verdict_receipt_sha256"`
+	RetiredAt             time.Time       `json:"retired_at"`
+}
+
+// MarshalJSON stores the canonical failed-verdict receipt as an escaped JSON
+// string. The lifecycle envelope is written with json.MarshalIndent, which
+// otherwise rewrites whitespace inside json.RawMessage and invalidates the
+// digest that binds the receipt's exact bytes.
+func (retired RetiredRepair) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		PullRequestNumber     int       `json:"pull_request_number"`
+		PullRequestURL        string    `json:"pull_request_url"`
+		Branch                string    `json:"branch"`
+		HeadSHA               string    `json:"head_sha"`
+		BaseBranch            string    `json:"base_branch"`
+		BaseSHA               string    `json:"base_sha"`
+		CurrentDefaultHeadSHA string    `json:"current_default_head_sha"`
+		VerdictReceipt        string    `json:"verdict_receipt"`
+		VerdictReceiptSHA256  string    `json:"verdict_receipt_sha256"`
+		RetiredAt             time.Time `json:"retired_at"`
+	}{
+		PullRequestNumber:     retired.PullRequestNumber,
+		PullRequestURL:        retired.PullRequestURL,
+		Branch:                retired.Branch,
+		HeadSHA:               retired.HeadSHA,
+		BaseBranch:            retired.BaseBranch,
+		BaseSHA:               retired.BaseSHA,
+		CurrentDefaultHeadSHA: retired.CurrentDefaultHeadSHA,
+		VerdictReceipt:        string(retired.VerdictReceipt),
+		VerdictReceiptSHA256:  retired.VerdictReceiptSHA256,
+		RetiredAt:             retired.RetiredAt,
+	})
+}
+
+// UnmarshalJSON accepts both the exact-string encoding and the object encoding
+// emitted by the pre-fix candidate. The latter is compacted before validation
+// so an already-retired proposal can be recovered without direct state edits.
+func (retired *RetiredRepair) UnmarshalJSON(data []byte) error {
+	var encoded struct {
+		PullRequestNumber     int             `json:"pull_request_number"`
+		PullRequestURL        string          `json:"pull_request_url"`
+		Branch                string          `json:"branch"`
+		HeadSHA               string          `json:"head_sha"`
+		BaseBranch            string          `json:"base_branch"`
+		BaseSHA               string          `json:"base_sha"`
+		CurrentDefaultHeadSHA string          `json:"current_default_head_sha"`
+		VerdictReceipt        json.RawMessage `json:"verdict_receipt"`
+		VerdictReceiptSHA256  string          `json:"verdict_receipt_sha256"`
+		RetiredAt             time.Time       `json:"retired_at"`
+	}
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		return err
+	}
+	var receipt json.RawMessage
+	trimmedReceipt := bytes.TrimSpace(encoded.VerdictReceipt)
+	if len(trimmedReceipt) > 0 && trimmedReceipt[0] == '"' {
+		var exact string
+		if err := json.Unmarshal(trimmedReceipt, &exact); err != nil {
+			return fmt.Errorf("decode retired repair verdict receipt: %w", err)
+		}
+		receipt = json.RawMessage(exact)
+	} else {
+		var compacted bytes.Buffer
+		if err := json.Compact(&compacted, trimmedReceipt); err != nil {
+			return fmt.Errorf("compact legacy retired repair verdict receipt: %w", err)
+		}
+		receipt = json.RawMessage(compacted.String())
+	}
+	*retired = RetiredRepair{
+		PullRequestNumber:     encoded.PullRequestNumber,
+		PullRequestURL:        encoded.PullRequestURL,
+		Branch:                encoded.Branch,
+		HeadSHA:               encoded.HeadSHA,
+		BaseBranch:            encoded.BaseBranch,
+		BaseSHA:               encoded.BaseSHA,
+		CurrentDefaultHeadSHA: encoded.CurrentDefaultHeadSHA,
+		VerdictReceipt:        receipt,
+		VerdictReceiptSHA256:  encoded.VerdictReceiptSHA256,
+		RetiredAt:             encoded.RetiredAt,
+	}
+	return nil
+}
+
+type failedPullRequestReceiptIdentity struct {
+	SchemaVersion       string `json:"schema_version"`
+	Repository          string `json:"repository"`
+	RepositoryID        string `json:"repository_id"`
+	PullRequestNumber   int    `json:"pull_request_number"`
+	PullRequestURL      string `json:"pull_request_url"`
+	BaseBranch          string `json:"base_branch"`
+	BaseSHA             string `json:"base_sha"`
+	HeadBranch          string `json:"head_branch"`
+	HeadSHA             string `json:"head_sha"`
+	WorkflowRunID       int64  `json:"workflow_run_id"`
+	WorkflowRunAttempt  int    `json:"workflow_run_attempt"`
+	WorkflowName        string `json:"workflow_name"`
+	WorkflowPath        string `json:"workflow_path"`
+	WorkflowEvent       string `json:"workflow_event"`
+	Conclusion          string `json:"conclusion"`
+	RunURL              string `json:"run_url"`
+	ArtifactID          int64  `json:"artifact_id"`
+	ArtifactName        string `json:"artifact_name"`
+	ArtifactIndexSHA256 string `json:"artifact_index_sha256"`
+	Authority           string `json:"authority"`
 }
 
 type CheckEvidence struct {
@@ -191,6 +315,7 @@ type ApplyLifecycleOptions struct {
 	MaxActiveIssues                  int
 	PreferRepairable                 bool
 	DisableIssuePublication          bool
+	RetiredRepairVerificationOnly    bool
 }
 
 type ApplyLifecycleResult struct {
@@ -287,6 +412,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 
 	manifest := bundle.Manifest
 	validatedAuthoritative := bundle.Validation.Authoritative
+	verifiedRepositoryMap := bundle.hasVerifiedRepositoryMap()
 	importInputs, err := buildObservationImportInputs(manifest, bundle.artifactIndex)
 	if err != nil {
 		return ApplyLifecycleResult{}, fmt.Errorf("build verified Visual Hive import plan: %w", err)
@@ -301,7 +427,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 	} else {
 		identities := controllerImportIdentityMap(manifest, s.state.Findings)
 		rekeyControllerImportInputs(manifest.Source.Repository, importInputs, identities)
-		for key, input := range controllerAbsenceImportInputs(manifest, s.state.Findings, identities, options, validatedAuthoritative) {
+		for key, input := range controllerAbsenceImportInputs(manifest, s.state.Findings, identities, options, validatedAuthoritative, verifiedRepositoryMap) {
 			importInputs[key] = input
 		}
 	}
@@ -383,20 +509,22 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 		newLegacyMigrations[observation.RepositoryFingerprint] = legacy
 	}
 	beadInputs := make([]beads.BatchInput, 0, len(importInputs))
-	if controllerOwned {
-		for _, input := range importInputs {
-			if beadStore.FindByExternalRef(input.ExternalRef) == nil {
-				beadInputs = append(beadInputs, input)
-			}
-		}
-	} else {
-		for _, observation := range manifest.Observations {
-			if observation.State != "present" || canonicalOwners[observation.RepositoryFingerprint] != nil {
-				continue
-			}
-			if existing := s.state.Findings[observation.RepositoryFingerprint]; existing == nil || existing.BeadID == "" {
-				if input, exists := importInputs[observation.RepositoryFingerprint]; exists {
+	if !options.RetiredRepairVerificationOnly {
+		if controllerOwned {
+			for _, input := range importInputs {
+				if beadStore.FindByExternalRef(input.ExternalRef) == nil {
 					beadInputs = append(beadInputs, input)
+				}
+			}
+		} else {
+			for _, observation := range manifest.Observations {
+				if observation.State != "present" || canonicalOwners[observation.RepositoryFingerprint] != nil {
+					continue
+				}
+				if existing := s.state.Findings[observation.RepositoryFingerprint]; existing == nil || existing.BeadID == "" {
+					if input, exists := importInputs[observation.RepositoryFingerprint]; exists {
+						beadInputs = append(beadInputs, input)
+					}
 				}
 			}
 		}
@@ -447,7 +575,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				result.IgnoredAbsent++
 				continue
 			}
-			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots); !allowed {
+			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 				result.IgnoredAbsent++
 				if err := audit(LifecycleAuditEntry{Action: "resolve_finding", Allowed: false, Repository: manifest.Source.Repository, RepositoryFingerprint: observation.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: reason}); err != nil {
 					return result, err
@@ -483,6 +611,32 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				return result, err
 			}
 			result.FindingIDs = append(result.FindingIDs, observation.RepositoryFingerprint)
+			continue
+		}
+
+		if options.RetiredRepairVerificationOnly {
+			result.Deferred++
+			if finding == nil {
+				if err := audit(LifecycleAuditEntry{
+					Action: "defer_retired_repair_verification_issue", Allowed: true,
+					Repository: manifest.Source.Repository, RepositoryFingerprint: observation.RepositoryFingerprint,
+					BundleID: manifest.BundleID, Detail: "present unrelated observation was not admitted during exact retired-repair verification",
+				}); err != nil {
+					return result, err
+				}
+				continue
+			}
+			updateFindingFromObservation(finding, manifest, observation)
+			finding.PendingIssueAction = ""
+			result.Updated++
+			result.FindingIDs = append(result.FindingIDs, finding.RepositoryFingerprint)
+			if err := audit(LifecycleAuditEntry{
+				Action: "defer_retired_repair_verification_issue", Allowed: true,
+				Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint,
+				BundleID: manifest.BundleID, Detail: "present existing finding was refreshed without issue publication or repair admission during exact retired-repair verification",
+			}); err != nil {
+				return result, err
+			}
 			continue
 		}
 
@@ -578,6 +732,10 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 			}
 		}
 		if deferredReason != "" {
+			// A changed verified packet supersedes any older pre-admission issue
+			// intent. Without clearing it here, a later Governor admission can
+			// publish an observation that this packet explicitly deferred.
+			finding.PendingIssueAction = ""
 			result.Deferred++
 			if err := audit(LifecycleAuditEntry{Action: "defer_open_issue", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: deferredReason}); err != nil {
 				return result, err
@@ -593,6 +751,9 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				action = OutboxUpdateIssue
 			}
 		} else if !publicationSet[observation.RepositoryFingerprint] {
+			// The bounded current publication ranking is authoritative for this
+			// packet. Never retain an open intent selected by an older packet.
+			finding.PendingIssueAction = ""
 			result.Deferred++
 			if err := audit(LifecycleAuditEntry{Action: "defer_open_issue", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: finding.RepositoryFingerprint, BundleID: manifest.BundleID, Detail: "active issue work-in-progress limit reached"}); err != nil {
 				return result, err
@@ -651,11 +812,13 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 		result.FindingIDs = append(result.FindingIDs, observation.RepositoryFingerprint)
 	}
 
-	// A full authoritative bundle is an exhaustive inventory for the contracts
-	// it says it evaluated. Resolve an existing finding omitted from that
-	// inventory only when every affected contract was actually executed. This
-	// lets a trusted target-branch run close findings without copying Hive's
-	// private lifecycle database into the target workflow.
+	// A full authoritative bundle is an exhaustive inventory for its verified
+	// evaluation scopes. Resolve an existing finding omitted from that inventory
+	// only when every affected contract was actually executed, or when the
+	// finding is a repository-map discovery result and the complete immutable
+	// repository map was independently verified. This lets a trusted
+	// target-branch run close findings without copying Hive's private lifecycle
+	// database into the target workflow.
 	if validatedAuthoritative && manifest.Scan.Scope == "full" && refsEquivalent(manifest.Source.Ref, targetRef) {
 		keys := make([]string, 0, len(s.state.Findings))
 		for key := range s.state.Findings {
@@ -667,7 +830,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 			if finding == nil || !strings.EqualFold(finding.Repository, manifest.Source.Repository) || observedFingerprints[key] || finding.Status == StatusIssueClosed {
 				continue
 			}
-			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots); !allowed {
+			if allowed, reason := s.rootResolutionAllowedLocked(finding, manifest, validatedAuthoritative, targetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 				if err := audit(LifecycleAuditEntry{Action: "infer_absent_finding", Allowed: false, Repository: finding.Repository, RepositoryFingerprint: key, BundleID: manifest.BundleID, Detail: reason}); err != nil {
 					return result, err
 				}
@@ -694,7 +857,7 @@ func (s *LifecycleStore) applyBundle(bundle *ValidatedBundle, beadStore Lifecycl
 				result.OutboxCreated++
 			}
 			result.FindingIDs = append(result.FindingIDs, key)
-			if err := audit(LifecycleAuditEntry{Action: "infer_absent_finding", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: key, BundleID: manifest.BundleID, Detail: "omitted from exhaustive evaluated-contract inventory"}); err != nil {
+			if err := audit(LifecycleAuditEntry{Action: "infer_absent_finding", Allowed: true, Repository: finding.Repository, RepositoryFingerprint: key, BundleID: manifest.BundleID, Detail: "omitted from exhaustive verified inventory"}); err != nil {
 				return result, err
 			}
 		}
@@ -733,6 +896,7 @@ func (s *LifecycleStore) ResolveImportPlanWorks(plan VerifiedImportPlan, options
 	defer s.mu.Unlock()
 	works := plan.Works()
 	manifest := plan.seal.bundle.Manifest
+	verifiedRepositoryMap := plan.seal.bundle.hasVerifiedRepositoryMap()
 	identities := controllerImportIdentityMap(manifest, s.state.Findings)
 	observed := make(map[string]bool, len(works))
 	for index := range works {
@@ -784,7 +948,7 @@ func (s *LifecycleStore) ResolveImportPlanWorks(plan VerifiedImportPlan, options
 				if finding.Status == StatusIssueClosed {
 					continue
 				}
-				if allowed, _ := s.rootResolutionAllowedLocked(finding, manifest, true, options.TargetRef, options, presentRoots); !allowed {
+				if allowed, _ := s.rootResolutionAllowedLocked(finding, manifest, true, options.TargetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 					continue
 				}
 			}
@@ -838,7 +1002,7 @@ func controllerImportIdentityMap(manifest Manifest, findings map[string]*Finding
 	return identities
 }
 
-func controllerAbsenceImportInputs(manifest Manifest, findings map[string]*FindingLifecycle, identities map[string]string, options ApplyLifecycleOptions, authoritative bool) map[string]beads.BatchInput {
+func controllerAbsenceImportInputs(manifest Manifest, findings map[string]*FindingLifecycle, identities map[string]string, options ApplyLifecycleOptions, authoritative, verifiedRepositoryMap bool) map[string]beads.BatchInput {
 	inputs := map[string]beads.BatchInput{}
 	observed := make(map[string]bool, len(manifest.Observations))
 	presentRoots := map[string]bool{}
@@ -882,7 +1046,7 @@ func controllerAbsenceImportInputs(manifest Manifest, findings map[string]*Findi
 			if finding.Status == StatusIssueClosed {
 				continue
 			}
-			if allowed, _ := store.rootResolutionAllowedLocked(finding, manifest, authoritative, options.TargetRef, options, presentRoots); !allowed {
+			if allowed, _ := store.rootResolutionAllowedLocked(finding, manifest, authoritative, options.TargetRef, options, presentRoots, verifiedRepositoryMap); !allowed {
 				continue
 			}
 		}
@@ -1835,6 +1999,164 @@ func (s *LifecycleStore) MarkChecksWithEvidence(repositoryFingerprint, testedSHA
 	})
 }
 
+// RetireRepairForVerification returns one exact superseded, unmerged Hive proposal to
+// its still-open issue after the default branch changed independently. It
+// deliberately clears active repair identity so a subsequent authoritative
+// scan can prove presence or absence; it never resolves or closes the finding.
+func (s *LifecycleStore) RetireRepairForVerification(repositoryFingerprint string, retired RetiredRepair) error {
+	return s.updateFinding(repositoryFingerprint, "repair_retired_for_verification", func(finding *FindingLifecycle) error {
+		retired = normalizeRetiredRepair(retired)
+		if err := validateRepairRetirementFinding(finding, retired); err != nil {
+			return err
+		}
+		if finding.Status == StatusIssueOpen && sameRetiredRepair(finding.LastRetiredRepair, retired) {
+			return nil
+		}
+		if retired.RetiredAt.IsZero() {
+			retired.RetiredAt = time.Now().UTC()
+		} else {
+			retired.RetiredAt = retired.RetiredAt.UTC()
+		}
+		finding.LastRetiredRepair = &retired
+		finding.Status = StatusIssueOpen
+		finding.Branch, finding.RepairCommitSHA, finding.PRNumber, finding.PRURL = "", "", 0, ""
+		finding.MergeSHA, finding.ValidationRunID, finding.ValidationRunURL = "", "", ""
+		finding.LastCheckSummary, finding.LastCheckRuns, finding.LastPullRequestCheckReceipt = "", nil, nil
+		return nil
+	})
+}
+
+// ValidateRepairRetirement performs the same read-only exact-binding check as
+// RetireRepairForVerification. It lets a caller fail closed before the first
+// remote close/delete side effect.
+func (s *LifecycleStore) ValidateRepairRetirement(repositoryFingerprint string, retired RetiredRepair) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	finding := s.state.Findings[repositoryFingerprint]
+	if finding == nil {
+		return fmt.Errorf("finding %s not found", repositoryFingerprint)
+	}
+	return validateRepairRetirementFinding(finding, normalizeRetiredRepair(retired))
+}
+
+func normalizeRetiredRepair(retired RetiredRepair) RetiredRepair {
+	retired.PullRequestURL = strings.TrimSpace(retired.PullRequestURL)
+	retired.Branch = strings.TrimSpace(retired.Branch)
+	retired.HeadSHA = strings.ToLower(strings.TrimSpace(retired.HeadSHA))
+	retired.BaseBranch = strings.TrimSpace(retired.BaseBranch)
+	retired.BaseSHA = strings.ToLower(strings.TrimSpace(retired.BaseSHA))
+	retired.CurrentDefaultHeadSHA = strings.ToLower(strings.TrimSpace(retired.CurrentDefaultHeadSHA))
+	retired.VerdictReceipt = append(json.RawMessage(nil), retired.VerdictReceipt...)
+	retired.VerdictReceiptSHA256 = strings.ToLower(strings.TrimSpace(retired.VerdictReceiptSHA256))
+	return retired
+}
+
+func validateRepairRetirementFinding(finding *FindingLifecycle, retired RetiredRepair) error {
+	if finding == nil || retired.PullRequestNumber <= 0 || retired.PullRequestURL == "" || !strings.HasPrefix(retired.Branch, "hive/repair-") ||
+		!validLifecycleGitObject(retired.HeadSHA) || retired.BaseBranch == "" || !validLifecycleGitObject(retired.BaseSHA) ||
+		!validLifecycleGitObject(retired.CurrentDefaultHeadSHA) || retired.CurrentDefaultHeadSHA == retired.BaseSHA ||
+		!validLifecycleSHA256(retired.VerdictReceiptSHA256) || !json.Valid(retired.VerdictReceipt) {
+		return fmt.Errorf("retired repair identity, canonical verdict receipt, and changed default head are required")
+	}
+	digest := sha256.Sum256(retired.VerdictReceipt)
+	if fmt.Sprintf("%x", digest[:]) != retired.VerdictReceiptSHA256 {
+		return fmt.Errorf("retired repair verdict receipt digest does not match its exact bytes")
+	}
+	expectedStatus := StatusNeedsRevision
+	var schema struct {
+		Legacy string `json:"schema_version"`
+		V1     string `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(retired.VerdictReceipt, &schema); err != nil {
+		return fmt.Errorf("parse retired repair verdict receipt: %w", err)
+	}
+	switch {
+	case schema.Legacy == "hive.normal-visual-pr-failure.v1":
+		var receipt failedPullRequestReceiptIdentity
+		if err := json.Unmarshal(retired.VerdictReceipt, &receipt); err != nil {
+			return fmt.Errorf("parse retired repair failed-verdict receipt: %w", err)
+		}
+		canonical, err := json.Marshal(receipt)
+		if err != nil || string(canonical) != string(retired.VerdictReceipt) {
+			return fmt.Errorf("retired repair failed-verdict receipt is not canonical")
+		}
+		if !strings.EqualFold(receipt.Repository, finding.Repository) || receipt.RepositoryID != finding.RepositoryID ||
+			receipt.PullRequestNumber != retired.PullRequestNumber || receipt.PullRequestURL != retired.PullRequestURL ||
+			receipt.BaseBranch != retired.BaseBranch || !strings.EqualFold(receipt.BaseSHA, retired.BaseSHA) ||
+			receipt.HeadBranch != retired.Branch || !strings.EqualFold(receipt.HeadSHA, retired.HeadSHA) ||
+			receipt.WorkflowRunID <= 0 || receipt.WorkflowRunAttempt <= 0 ||
+			receipt.WorkflowName != "Visual Hive PR" || receipt.WorkflowPath != ".github/workflows/visual-hive-pr.yml" ||
+			receipt.WorkflowEvent != "pull_request" || receipt.Conclusion != "failure" || receipt.RunURL == "" ||
+			receipt.ArtifactID <= 0 || receipt.ArtifactName != "visual-hive-pr" ||
+			!validLifecycleSHA256(strings.ToLower(receipt.ArtifactIndexSHA256)) ||
+			receipt.Authority != "check-evidence-only; no completion, consume, merge, or resolution authority" {
+			return fmt.Errorf("retired repair receipt does not bind the exact failed PR workflow, proposal, artifact, and check-only authority")
+		}
+	case schema.V1 == PullRequestCheckReceiptSchema:
+		var receipt PullRequestCheckReceiptIdentity
+		if err := json.Unmarshal(retired.VerdictReceipt, &receipt); err != nil {
+			return fmt.Errorf("parse retired repair successful-verdict receipt: %w", err)
+		}
+		canonical, err := json.Marshal(receipt)
+		if err != nil || string(canonical) != string(retired.VerdictReceipt) {
+			return fmt.Errorf("retired repair successful-verdict receipt is not canonical")
+		}
+		if err := validatePullRequestCheckIdentity(receipt); err != nil {
+			return fmt.Errorf("retired repair successful-verdict receipt is invalid: %w", err)
+		}
+		if !strings.EqualFold(receipt.Source.Repository, finding.Repository) || receipt.Source.RepositoryID != finding.RepositoryID ||
+			receipt.Source.PullRequest != retired.PullRequestNumber || receipt.Source.Base.Ref != retired.BaseBranch ||
+			!strings.EqualFold(receipt.Source.Base.SHA, retired.BaseSHA) || receipt.Source.Head.Ref != retired.Branch ||
+			!strings.EqualFold(receipt.Source.Head.SHA, retired.HeadSHA) {
+			return fmt.Errorf("retired repair receipt does not bind the exact successful PR workflow, proposal, artifact, and check-only authority")
+		}
+		expectedStatus = StatusReady
+	default:
+		return fmt.Errorf("retired repair verdict receipt schema is unsupported")
+	}
+	if finding.Status == StatusIssueOpen && sameRetiredRepair(finding.LastRetiredRepair, retired) {
+		return nil
+	}
+	if finding.Status != expectedStatus || finding.MergeSHA != "" || finding.IssueNumber <= 0 ||
+		finding.PRNumber != retired.PullRequestNumber || finding.PRURL != retired.PullRequestURL ||
+		finding.Branch != retired.Branch || !strings.EqualFold(finding.RepairCommitSHA, retired.HeadSHA) {
+		return fmt.Errorf("only the exact open superseded repair can be retired")
+	}
+	return nil
+}
+
+func sameRetiredRepair(existing *RetiredRepair, requested RetiredRepair) bool {
+	if existing == nil {
+		return false
+	}
+	left, right := *existing, requested
+	if right.RetiredAt.IsZero() {
+		right.RetiredAt = left.RetiredAt
+	}
+	leftData, leftErr := json.Marshal(left)
+	rightData, rightErr := json.Marshal(right)
+	return leftErr == nil && rightErr == nil && string(leftData) == string(rightData)
+}
+
+func validLifecycleGitObject(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			lower := character | 0x20
+			if lower < 'a' || lower > 'f' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func validLifecycleSHA256(value string) bool {
+	return len(value) == sha256.Size*2 && validLifecycleGitObject(value)
+}
+
 func (s *LifecycleStore) MarkMerged(repositoryFingerprint, mergeSHA string) error {
 	return s.updateFinding(repositoryFingerprint, "pr_merged", func(finding *FindingLifecycle) error {
 		if finding.Status != StatusReady {
@@ -2090,6 +2412,11 @@ func (s *LifecycleStore) load() error {
 		if finding != nil && (finding.IssueWriterID > 0) != (strings.TrimSpace(finding.IssueWriterLogin) != "") {
 			return fmt.Errorf("lifecycle finding %s has a partial immutable issue writer identity", finding.RepositoryFingerprint)
 		}
+		if finding != nil && finding.LastRetiredRepair != nil {
+			if err := validateRetiredRepairHistory(*finding.LastRetiredRepair); err != nil {
+				return fmt.Errorf("lifecycle finding %s has invalid retired repair history: %w", finding.RepositoryFingerprint, err)
+			}
+		}
 		if finding != nil && finding.Status == StatusIssueClosed && (finding.HumanReviewRequired || finding.ManualReviewKind != "" || finding.ManualReviewReason != "") {
 			finding.HumanReviewRequired, finding.ManualReviewKind, finding.ManualReviewReason = false, "", ""
 			migrated = true
@@ -2099,6 +2426,26 @@ func (s *LifecycleStore) load() error {
 		if err := s.persistLocked(); err != nil {
 			return fmt.Errorf("migrate lifecycle state: %w", err)
 		}
+	}
+	return nil
+}
+
+func validateRetiredRepairHistory(retired RetiredRepair) error {
+	if retired.PullRequestNumber <= 0 || retired.PullRequestURL == "" || retired.PullRequestURL != strings.TrimSpace(retired.PullRequestURL) ||
+		!strings.HasPrefix(retired.Branch, "hive/repair-") || retired.Branch != strings.TrimSpace(retired.Branch) ||
+		!validLifecycleGitObject(retired.HeadSHA) || retired.HeadSHA != strings.ToLower(strings.TrimSpace(retired.HeadSHA)) ||
+		retired.BaseBranch == "" || retired.BaseBranch != strings.TrimSpace(retired.BaseBranch) ||
+		!validLifecycleGitObject(retired.BaseSHA) || retired.BaseSHA != strings.ToLower(strings.TrimSpace(retired.BaseSHA)) ||
+		!validLifecycleGitObject(retired.CurrentDefaultHeadSHA) || retired.CurrentDefaultHeadSHA != strings.ToLower(strings.TrimSpace(retired.CurrentDefaultHeadSHA)) ||
+		retired.CurrentDefaultHeadSHA == retired.BaseSHA ||
+		!json.Valid(retired.VerdictReceipt) ||
+		!validLifecycleSHA256(retired.VerdictReceiptSHA256) || retired.VerdictReceiptSHA256 != strings.ToLower(strings.TrimSpace(retired.VerdictReceiptSHA256)) ||
+		retired.RetiredAt.IsZero() || retired.RetiredAt.Location() != time.UTC {
+		return errors.New("retired repair history is not a complete canonical exact proposal, receipt, changed head, and UTC time")
+	}
+	digest := sha256.Sum256(retired.VerdictReceipt)
+	if fmt.Sprintf("%x", digest[:]) != retired.VerdictReceiptSHA256 {
+		return errors.New("retired repair history receipt digest does not match its exact bytes")
 	}
 	return nil
 }
@@ -2361,9 +2708,36 @@ func refsEquivalent(left, right string) bool {
 	return normalize(left) != "" && normalize(left) == normalize(right)
 }
 
-func (s *LifecycleStore) rootResolutionAllowedLocked(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions, presentRoots map[string]bool) (bool, string) {
+func (bundle *ValidatedBundle) hasVerifiedRepositoryMap() bool {
+	if bundle == nil || !bundle.Validation.Authoritative || !bundle.sourceVerified || bundle.artifactIndex == nil {
+		return false
+	}
+	for _, artifact := range bundle.artifactIndex.Artifacts {
+		if artifact.Path != repositoryMapArtifactPath {
+			continue
+		}
+		contentType := strings.ToLower(strings.TrimSpace(artifact.ContentType))
+		if artifact.Kind != "json" || (contentType != "application/json" && !strings.HasPrefix(contentType, "application/json;")) || artifact.Bytes <= 0 || !hexDigest.MatchString(artifact.SHA256) {
+			return false
+		}
+		_, size, sha, err := bundle.VerifiedSourceFileIdentity(repositoryMapArtifactPath)
+		return err == nil && size == artifact.Bytes && sha == artifact.SHA256
+	}
+	return false
+}
+
+func isStorybookDiscoveryFinding(finding *FindingLifecycle) bool {
+	if finding == nil || finding.IssueKind != "missing_visual_coverage" || finding.OwningAgentHint != "visual-hive/map" {
+		return false
+	}
+	title := strings.ToLower(strings.TrimSpace(finding.Title))
+	title = strings.TrimSpace(strings.TrimPrefix(title, "[visual hive]"))
+	return strings.HasPrefix(title, storybookDiscoveryFindingPrefix)
+}
+
+func (s *LifecycleStore) rootResolutionAllowedLocked(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions, presentRoots map[string]bool, verifiedRepositoryMap bool) (bool, string) {
 	resolutionSubject := s.publicationResolutionSubjectLocked(finding)
-	allowed, reason := resolutionAllowed(resolutionSubject, manifest, validatedAuthoritative, targetRef, options)
+	allowed, reason := resolutionAllowed(resolutionSubject, manifest, validatedAuthoritative, targetRef, options, verifiedRepositoryMap)
 	if !allowed || finding == nil || finding.RootCauseKey == "" {
 		return allowed, reason
 	}
@@ -2374,7 +2748,7 @@ func (s *LifecycleStore) rootResolutionAllowedLocked(finding *FindingLifecycle, 
 		if related == nil || related == finding || related.RootCauseKey != finding.RootCauseKey || !strings.EqualFold(related.Repository, finding.Repository) || related.Status == StatusResolved || related.Status == StatusIssueClosed {
 			continue
 		}
-		if relatedAllowed, relatedReason := resolutionAllowed(s.publicationResolutionSubjectLocked(related), manifest, validatedAuthoritative, targetRef, options); !relatedAllowed {
+		if relatedAllowed, relatedReason := resolutionAllowed(s.publicationResolutionSubjectLocked(related), manifest, validatedAuthoritative, targetRef, options, verifiedRepositoryMap); !relatedAllowed {
 			return false, fmt.Sprintf("root %q is not authoritatively absent: %s", finding.RootCauseKey, relatedReason)
 		}
 	}
@@ -2398,7 +2772,7 @@ func (s *LifecycleStore) publicationResolutionSubjectLocked(finding *FindingLife
 	return owner
 }
 
-func resolutionAllowed(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions) (bool, string) {
+func resolutionAllowed(finding *FindingLifecycle, manifest Manifest, validatedAuthoritative bool, targetRef string, options ApplyLifecycleOptions, verifiedRepositoryMap bool) (bool, string) {
 	if !validatedAuthoritative || !manifest.Scan.AuthoritativeForResolution || manifest.Scan.Scope != "full" || !refsEquivalent(manifest.Source.Ref, targetRef) {
 		return false, "absence was not from an authoritative target-ref scan"
 	}
@@ -2424,16 +2798,19 @@ func resolutionAllowed(finding *FindingLifecycle, manifest Manifest, validatedAu
 	if len(affectedContracts) == 0 && finding.IssueKind == "provider_governance" {
 		affectedContracts = []string{"provider-governance"}
 	}
-	if len(affectedContracts) == 0 {
+	repositoryMapEvaluated := len(affectedContracts) == 0 && verifiedRepositoryMap && isStorybookDiscoveryFinding(finding)
+	if len(affectedContracts) == 0 && !repositoryMapEvaluated {
 		return false, "finding has no affected contract that can be proven evaluated"
 	}
-	evaluated := make(map[string]bool, len(manifest.Scan.EvaluatedContracts))
-	for _, contract := range manifest.Scan.EvaluatedContracts {
-		evaluated[contract] = true
-	}
-	for _, contract := range affectedContracts {
-		if !evaluated[contract] {
-			return false, fmt.Sprintf("affected contract %s was not evaluated", contract)
+	if !repositoryMapEvaluated {
+		evaluated := make(map[string]bool, len(manifest.Scan.EvaluatedContracts))
+		for _, contract := range manifest.Scan.EvaluatedContracts {
+			evaluated[contract] = true
+		}
+		for _, contract := range affectedContracts {
+			if !evaluated[contract] {
+				return false, fmt.Sprintf("affected contract %s was not evaluated", contract)
+			}
 		}
 	}
 	hasActiveRepair := finding.Branch != "" || finding.RepairCommitSHA != "" || finding.PRNumber > 0 || finding.MergeSHA != ""

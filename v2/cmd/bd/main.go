@@ -23,6 +23,8 @@ var agentDirPattern = regexp.MustCompile(`^(/home/dev/[^/]+-beads|/data/beads/[^
 // agentWorkdirPattern matches /data/agents/<name> and extracts the agent name.
 var agentWorkdirPattern = regexp.MustCompile(`^/data/agents/([^/]+)$`)
 
+var managedRoleStoreRoot = "/data/beads"
+
 func resolveDir() string {
 	// 1. BD_DIR env var — explicit override.
 	if dir := os.Getenv("BD_DIR"); dir != "" {
@@ -122,11 +124,7 @@ Environment:
 // openStore creates a Store rooted at the resolved directory.
 func openStore() *beads.Store {
 	dir := resolveDir()
-	opener := beads.NewStore
-	if os.Getenv("HIVE_SHARED_ROLE_BEADS") == "1" && isManagedRoleStore(dir) {
-		opener = beads.NewSharedStore
-	}
-	store, err := opener(dir)
+	store, err := openStoreAt(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "bd: failed to open store at %s: %v\n", dir, err)
 		os.Exit(1)
@@ -134,8 +132,25 @@ func openStore() *beads.Store {
 	return store
 }
 
+// openStoreAt treats every exact /data/beads/<role> path as the shared
+// ordinary-Hive/role-agent store that the entrypoint provisions.  The path is
+// authoritative on its own: a read-only bd invocation must not silently
+// downgrade the directory to owner-private mode merely because a wrapper or
+// operator omitted HIVE_SHARED_ROLE_BEADS.
+func openStoreAt(dir string) (*beads.Store, error) {
+	opener := beads.NewStore
+	if usesSharedStore(dir) {
+		opener = beads.NewSharedStore
+	}
+	return opener(dir)
+}
+
+func usesSharedStore(dir string) bool {
+	return isManagedRoleStore(dir)
+}
+
 func isManagedRoleStore(dir string) bool {
-	rel, err := filepath.Rel(filepath.Clean("/data/beads"), filepath.Clean(dir))
+	rel, err := filepath.Rel(filepath.Clean(managedRoleStoreRoot), filepath.Clean(dir))
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
 	}

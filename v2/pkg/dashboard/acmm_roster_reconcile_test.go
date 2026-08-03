@@ -198,6 +198,67 @@ func TestApplyPackReconcilesStalePackFields(t *testing.T) {
 	}
 }
 
+// TestSetLevelReconcilesUnpinnedBackendModelPair locks in the production
+// failure where an L5 agent retained its Codex backend while a forced L4
+// transition replaced only the model with a Copilot-only Claude model. A
+// supported level transition must select the pack's complete runtime pair when
+// the operator has not pinned the CLI.
+func TestSetLevelReconcilesUnpinnedBackendModelPair(t *testing.T) {
+	srv := newFullServer(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = "codex"
+	scanner.Model = "gpt-5.3-codex"
+	scanner.CLIPinned = false
+	srv.deps.Config.Agents["scanner"] = scanner
+
+	req := httptest.NewRequest("PUT", "/api/packs/level", strings.NewReader(`{"level":4}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.handlePackSetLevel(w, req)
+	if w.Code != 200 {
+		t.Fatalf("set L4: status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	pack, err := config.ACMMPackByLevel(4)
+	if err != nil {
+		t.Fatalf("ACMMPackByLevel(4): %v", err)
+	}
+	var want config.PackAgent
+	for _, agent := range pack.Agents {
+		if agent.Name == "scanner" {
+			want = agent
+			break
+		}
+	}
+	got := srv.deps.Config.Agents["scanner"]
+	if got.Backend != want.Backend || got.Model != want.Model {
+		t.Fatalf("forced level runtime pair = %s/%s, want %s/%s", got.Backend, got.Model, want.Backend, want.Model)
+	}
+}
+
+// TestSetLevelPreservesPinnedBackendAndCompatibleModel ensures a forced level
+// transition cannot silently retarget an operator-pinned CLI. When the pinned
+// backend differs from the pack backend, its existing model is preserved too,
+// avoiding a cross-provider model/backend pair.
+func TestSetLevelPreservesPinnedBackendAndCompatibleModel(t *testing.T) {
+	srv := newFullServer(t)
+
+	scanner := srv.deps.Config.Agents["scanner"]
+	scanner.Backend = "codex"
+	scanner.Model = "gpt-5.3-codex"
+	scanner.CLIPinned = true
+	srv.deps.Config.Agents["scanner"] = scanner
+
+	if _, err := srv.applyPack(4, true); err != nil {
+		t.Fatalf("force L4: %v", err)
+	}
+	got := srv.deps.Config.Agents["scanner"]
+	if got.Backend != "codex" || got.Model != "gpt-5.3-codex" {
+		t.Fatalf("pinned runtime pair changed to %s/%s", got.Backend, got.Model)
+	}
+}
+
 // TestApplyPackPreservesOperatorThreshold guards the fix for the governor
 // threshold revert (Joe Runde / spyre): a pure re-apply of the SAME level (a
 // merge, not an expansion) must NOT overwrite an operator-set threshold — even

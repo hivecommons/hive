@@ -268,6 +268,32 @@ func TestToolRulesToLaunchCmd_Default(t *testing.T) {
 	}
 }
 
+func TestCodexAgentLaunchCmd_UnattendedWithoutSandboxBypass(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{name: "with model", model: "gpt-5.6-sol", want: "codex --model gpt-5.6-sol --ask-for-approval never"},
+		{name: "without model", want: "codex --ask-for-approval never"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := codexAgentLaunchCmd("codex", tc.model)
+			if got != tc.want {
+				t.Fatalf("codexAgentLaunchCmd() = %q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, "dangerously") || strings.Contains(got, "sandbox") {
+				t.Fatalf("ordinary Codex launch weakened sandboxing: %q", got)
+			}
+		})
+	}
+
+	got := toolRulesToLaunchCmd("codex", "gpt-5.6-sol", "codex", &config.ToolsConfig{Preset: "advisory"}, false)
+	if got != "codex --model gpt-5.6-sol --ask-for-approval never" {
+		t.Fatalf("Codex tool-rules launch = %q", got)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // connectionMCPFlags
 // ---------------------------------------------------------------------------

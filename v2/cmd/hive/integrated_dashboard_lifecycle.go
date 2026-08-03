@@ -27,6 +27,8 @@ const dashboardLifecycleLedgerSchema = "hive.dashboard-integrated-requests.v1"
 var (
 	dashboardLifecycleCLIRunner        = runDashboardLifecycleCLI
 	dashboardLifecycleTrigger          = triggerDashboardVisualCycle
+	dashboardLifecyclePlanRetirement   = planDashboardRepairRetirement
+	dashboardLifecycleRetireRepair     = retireDashboardRepair
 	dashboardLifecycleStopNormalVisual func(context.Context) error
 	dashboardLifecycleNormalBeadsDirs  []string
 	dashboardLifecycleMu               sync.Mutex
@@ -144,12 +146,22 @@ func dashboardIntegratedControlPlan(ctx context.Context, stateDir string, reques
 		"current_status_sha256": hex.EncodeToString(statusSum[:]),
 		"current_status":        status,
 	}
+	if request.Action == "repair-retire" {
+		retirement, retirementErr := dashboardLifecyclePlanRetirement(ctx)
+		if retirementErr != nil {
+			return nil, retirementErr
+		}
+		plan["repair_retirement"] = retirement
+	}
 	planBinding := map[string]any{
 		"schema_version":        plan["schema_version"],
 		"repository":            request.Repository,
 		"operation":             request.Action,
 		"request_id":            request.RequestID,
 		"current_status_sha256": plan["current_status_sha256"],
+	}
+	if retirement, exists := plan["repair_retirement"]; exists {
+		planBinding["repair_retirement"] = retirement
 	}
 	planBytes, err := json.Marshal(planBinding)
 	if err != nil {
@@ -207,6 +219,7 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 		return replay, err
 	}
 	planSHA256 := request.ExpectedPlanSHA256
+	var authorizedRetirement *normalservice.RepairRetirementPlan
 	if !recoverStale {
 		plan, planErr := dashboardIntegratedControlPlan(ctx, stateDir, request, token)
 		if planErr != nil {
@@ -215,6 +228,13 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 		planSHA256, _ = plan["plan_sha256"].(string)
 		if request.ExpectedPlanSHA256 != planSHA256 {
 			return nil, fmt.Errorf("integrated control plan changed: expected %s, current %s", request.ExpectedPlanSHA256, planSHA256)
+		}
+		if request.Action == "repair-retire" {
+			value, ok := plan["repair_retirement"].(normalservice.RepairRetirementPlan)
+			if !ok {
+				return nil, errors.New("integrated repair retirement plan is missing its exact binding")
+			}
+			authorizedRetirement = &value
 		}
 	}
 	return runDashboardLifecycleMutation(stateDir, request.RequestID, request.Action, planSHA256, func() (map[string]any, error) {
@@ -242,6 +262,16 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 				request.Action, "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
 			}, token, false)
 			return result, runErr
+		case "repair-retire":
+			if err := dashboardLifecycleRetireRepair(ctx, authorizedRetirement); err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"schema_version": "hive.dashboard-repair-retirement.v1",
+				"repository":     request.Repository,
+				"request_id":     request.RequestID,
+				"outcome":        "retired_for_fresh_verification",
+			}, nil
 		case "uninstall", "uninstall-finalize", "uninstall-cancel":
 			if (request.Action == "uninstall" || request.Action == "uninstall-finalize") && dashboardLifecycleStopNormalVisual != nil {
 				if stopErr := dashboardLifecycleStopNormalVisual(ctx); stopErr != nil {
@@ -280,6 +310,22 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			return nil, fmt.Errorf("unsupported integrated control action %q", request.Action)
 		}
 	})
+}
+
+func planDashboardRepairRetirement(ctx context.Context) (normalservice.RepairRetirementPlan, error) {
+	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
+	if normalVisualRuntime == nil {
+		return normalservice.RepairRetirementPlan{}, errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	return normalVisualRuntime.PlanRepairRetirement(ctx)
+}
+
+func retireDashboardRepair(ctx context.Context, expected *normalservice.RepairRetirementPlan) error {
+	normalVisualRuntime := dashboardNormalVisualRuntime.Load()
+	if normalVisualRuntime == nil {
+		return errors.New("normal Visual Hive service is not running in this dashboard process")
+	}
+	return normalVisualRuntime.RetireRepair(ctx, expected)
 }
 
 func runDashboardBaselineApproval(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
@@ -321,6 +367,7 @@ func triggerDashboardVisualCycle(ctx context.Context) error {
 func isBoundedDashboardTriggerOutcome(err error) bool {
 	return errors.Is(err, normalservice.ErrNoDispatch) ||
 		errors.Is(err, normalservice.ErrOpenPullRequest) ||
+		errors.Is(err, normalservice.ErrRepairRetirement) ||
 		errors.Is(err, normalservice.ErrFinalVerdictPending) ||
 		errors.Is(err, integrated.ErrRunInProgress) ||
 		errors.Is(err, integrated.ErrNormalVisualSetupBaselinePending) ||

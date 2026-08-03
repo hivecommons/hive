@@ -422,7 +422,7 @@ func FormatDigestMarkdown(d *Digest, org, primaryRepo string) string {
 			continue
 		}
 		sort.Slice(items, func(i, j int) bool {
-			return items[i].Agent < items[j].Agent
+			return findingSortKey(items[i]) < findingSortKey(items[j])
 		})
 		icon := severityIcon(sev)
 		b.WriteString(fmt.Sprintf("### %s %s (%d)\n\n", icon, strings.ToUpper(sev), len(items)))
@@ -459,6 +459,21 @@ func writeRecentlyResolved(b *strings.Builder, d *Digest, org, primaryRepo strin
 		b.WriteString(fmt.Sprintf("- ~~%s~~%s _%s — resolved %s_\n", linkifyRefs(logscrub.ScrubString(r.Title), org), loc, r.Agent, r.ClosedAt.Format("Jan 2")))
 	}
 	b.WriteString("\n")
+}
+
+// findingSortKey orders every rendered field so an unchanged advisory set
+// produces byte-identical markdown even when bead-store iteration order changes
+// across process restarts. Timestamp is intentionally excluded because it is not
+// rendered in the digest.
+func findingSortKey(f Finding) string {
+	return strings.Join([]string{
+		f.Agent,
+		f.Type,
+		f.Title,
+		f.File,
+		strconv.Itoa(f.Line),
+		f.Detail,
+	}, "\x00")
 }
 
 // SetLatestDigest stores the most recent digest for dashboard access.

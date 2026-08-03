@@ -222,6 +222,155 @@ func (runner *normalVisualRepairer) Run(ctx context.Context, supplied visualcont
 	return normalservice.RepairOutcome{WorkOrderID: order.ID, RequestSHA256: order.RequestSHA256, Result: result}, nil
 }
 
+func (runner *normalVisualRepairer) Plan(ctx context.Context, binding normalservice.RepairRetirementPlan) (normalservice.RepairRetirementPlan, error) {
+	if runner == nil || runner.github == nil || runner.lifecycle == nil || runner.loadConfig == nil {
+		return normalservice.RepairRetirementPlan{}, errors.New("normal Visual Hive repair retirement is not configured")
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	current, _, err := runner.loadConfig()
+	if err != nil {
+		return normalservice.RepairRetirementPlan{}, err
+	}
+	if !strings.EqualFold(current.Repository, binding.Repository) || current.DefaultBranch != binding.BaseBranch ||
+		current.Automation != integrated.AutomationRepairPR && current.Automation != integrated.AutomationAutoMerge {
+		return normalservice.RepairRetirementPlan{}, errors.New("repair retirement does not match the authoritative installed repository")
+	}
+	if err := validateNormalRepairRetirementFinding(runner.lifecycle, binding, false); err != nil {
+		return normalservice.RepairRetirementPlan{}, err
+	}
+	parts := strings.Split(binding.Repository, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return normalservice.RepairRetirementPlan{}, errors.New("repair retirement repository is invalid")
+	}
+	defaultHead, err := runner.github.LatestCommitHash(ctx, parts[0], parts[1], binding.BaseBranch)
+	if err != nil {
+		return normalservice.RepairRetirementPlan{}, fmt.Errorf("read current default head before repair retirement: %w", err)
+	}
+	defaultHead = strings.ToLower(strings.TrimSpace(defaultHead))
+	if defaultHead == "" || strings.EqualFold(defaultHead, binding.BaseSHA) {
+		return normalservice.RepairRetirementPlan{}, errors.New("default branch has not changed since the repair proposal was created")
+	}
+	binding.CurrentDefaultHeadSHA = defaultHead
+	return binding, nil
+}
+
+func (runner *normalVisualRepairer) Apply(ctx context.Context, plan normalservice.RepairRetirementPlan) error {
+	if runner == nil || runner.github == nil || runner.lifecycle == nil || runner.controller == nil || runner.loadConfig == nil {
+		return errors.New("normal Visual Hive repair retirement is not configured")
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	current, normalACMM, err := runner.loadConfig()
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(current.Repository, plan.Repository) || current.DefaultBranch != plan.BaseBranch ||
+		current.Automation != integrated.AutomationRepairPR && current.Automation != integrated.AutomationAutoMerge {
+		return errors.New("repair retirement no longer matches the authoritative installed repository")
+	}
+	if err := validateNormalRepairRetirementFinding(runner.lifecycle, plan, true); err != nil {
+		return err
+	}
+	finding, exists := runner.lifecycle.Finding(plan.RepositoryFingerprint)
+	if !exists {
+		return errors.New("repair retirement lost its exact lifecycle finding")
+	}
+	retired := visualhive.RetiredRepair{
+		PullRequestNumber: plan.PullRequestNumber, PullRequestURL: plan.PullRequestURL,
+		Branch: plan.Branch, HeadSHA: plan.HeadSHA, BaseBranch: plan.BaseBranch, BaseSHA: plan.BaseSHA,
+		CurrentDefaultHeadSHA: plan.CurrentDefaultHeadSHA,
+		VerdictReceipt:        append([]byte(nil), plan.VerdictReceipt...),
+		VerdictReceiptSHA256:  plan.VerdictReceiptSHA256,
+	}
+	if err := runner.lifecycle.ValidateRepairRetirement(plan.RepositoryFingerprint, retired); err != nil {
+		return err
+	}
+	decisions := normalRepairRetirementDecisions(current, normalACMM, finding)
+	for _, decision := range decisions {
+		detail := strings.Join(decision.Reasons, "; ")
+		if decision.Allowed {
+			detail = fmt.Sprintf("owner-authorized exact repair retirement for pull request #%d at %s", plan.PullRequestNumber, plan.HeadSHA)
+		}
+		if err := runner.lifecycle.RecordAuthorizationStrict(plan.RepositoryFingerprint, string(decision.Action), decision.Allowed, detail); err != nil {
+			return fmt.Errorf("persist repair-retirement %s authorization: %w", decision.Action, err)
+		}
+	}
+	for _, decision := range decisions {
+		if !decision.Allowed {
+			return fmt.Errorf("current Hive authority denies %s: %s", decision.Action, strings.Join(decision.Reasons, "; "))
+		}
+	}
+	marker := "<!-- hive-repair: " + plan.RepositoryFingerprint + " -->"
+	if err := runner.github.CloseRepairPullRequestExact(ctx, plan.Repository, plan.PullRequestNumber, marker, plan.Branch, plan.HeadSHA); err != nil {
+		return fmt.Errorf("close exact repair proposal for fresh verification: %w", err)
+	}
+	if err := runner.github.DeleteRepairBranchExact(ctx, plan.Repository, plan.Branch, plan.HeadSHA); err != nil {
+		return fmt.Errorf("delete exact repair branch for fresh verification: %w", err)
+	}
+	if err := runner.lifecycle.RetireRepairForVerification(plan.RepositoryFingerprint, retired); err != nil {
+		return err
+	}
+	return runner.controller.RetireSpecialistPullRequest(plan.SourceExternalRef, visualcontroller.SpecialistPullRequestRetirement{
+		WorkOrderID: plan.WorkOrderID, RequestSHA256: plan.RequestSHA256,
+		Branch: plan.Branch, CommitSHA: plan.HeadSHA, BaseBranch: plan.BaseBranch, BaseSHA: plan.BaseSHA,
+		CurrentDefaultHeadSHA: plan.CurrentDefaultHeadSHA,
+		PullRequestNumber:     plan.PullRequestNumber, PullRequestURL: plan.PullRequestURL,
+		VerdictReceiptSHA256: plan.VerdictReceiptSHA256,
+		RetirementReasonCode: plan.RepairRetirementReasonCode,
+	})
+}
+
+func normalRepairRetirementDecisions(current integrated.Config, normalACMM int, finding visualhive.FindingLifecycle) []automation.Decision {
+	policy := integrated.PolicyForConfig(current)
+	if normalACMM < policy.ACMMLevel {
+		policy.ACMMLevel = normalACMM
+	}
+	route := visualhive.ResolveSpecialist(visualhive.SpecialistRoutingInput{
+		IssueKind: finding.IssueKind, OwningAgentHint: finding.OwningAgentHint,
+		GroundedRepairScope:      strings.TrimSpace(finding.ValidationCommand) != "" && len(finding.AffectedContracts) > 0,
+		BaselineChangesForbidden: true,
+	})
+	actor := strings.TrimSpace(route.Role)
+	if actor == "" {
+		actor = "quality"
+	}
+	return []automation.Decision{
+		policy.Authorize(automation.ActionRequest{
+			Action: automation.ActionCloseRepairPR, Agent: actor, Repository: current.Repository,
+			RepairAttempts: finding.RepairAttempts,
+		}),
+		policy.Authorize(automation.ActionRequest{
+			Action: automation.ActionDeleteRepairBranch, Agent: actor, Repository: current.Repository,
+			RepairAttempts: finding.RepairAttempts,
+		}),
+	}
+}
+
+func validateNormalRepairRetirementFinding(lifecycle *visualhive.LifecycleStore, plan normalservice.RepairRetirementPlan, allowRetired bool) error {
+	finding, exists := lifecycle.Finding(plan.RepositoryFingerprint)
+	if !exists || !strings.EqualFold(finding.Repository, plan.Repository) {
+		return errors.New("repair retirement lost its exact lifecycle finding")
+	}
+	if allowRetired && finding.Status == visualhive.StatusIssueOpen && finding.LastRetiredRepair != nil {
+		retired := finding.LastRetiredRepair
+		if retired.PullRequestNumber == plan.PullRequestNumber && retired.PullRequestURL == plan.PullRequestURL &&
+			retired.Branch == plan.Branch && strings.EqualFold(retired.HeadSHA, plan.HeadSHA) &&
+			retired.BaseBranch == plan.BaseBranch && strings.EqualFold(retired.BaseSHA, plan.BaseSHA) &&
+			strings.EqualFold(retired.CurrentDefaultHeadSHA, plan.CurrentDefaultHeadSHA) &&
+			string(retired.VerdictReceipt) == string(plan.VerdictReceipt) &&
+			strings.EqualFold(retired.VerdictReceiptSHA256, plan.VerdictReceiptSHA256) {
+			return nil
+		}
+	}
+	if (finding.Status != visualhive.StatusNeedsRevision && finding.Status != visualhive.StatusReady) || finding.MergeSHA != "" ||
+		finding.PRNumber != plan.PullRequestNumber || finding.PRURL != plan.PullRequestURL ||
+		finding.Branch != plan.Branch || !strings.EqualFold(finding.RepairCommitSHA, plan.HeadSHA) {
+		return errors.New("repair retirement no longer matches the exact verified, unmerged lifecycle proposal")
+	}
+	return nil
+}
+
 func (runner *normalVisualRepairer) validateRuntime(current integrated.Config, envelope visualcontroller.DispatchEnvelope) error {
 	if !strings.EqualFold(current.Repository, envelope.Work.Packet.Repository) || current.RepositoryID != envelope.Work.Packet.RepositoryID ||
 		current.StateDir == "" || current.CheckoutDir == "" || (current.Automation != integrated.AutomationRepairPR && current.Automation != integrated.AutomationAutoMerge) ||
@@ -333,7 +482,7 @@ func configureNormalVisualWorkRunner(
 			}
 			return current.Paused, nil
 		},
-		Source: source, Intake: controller, Repairer: repairer, PullRequestState: verdict,
+		Source: source, Intake: controller, Repairer: repairer, RepairRetirement: repairer, PullRequestState: verdict,
 		// The verifier applies only its opaque check-evidence capability. The
 		// service/controller still own completion and workflow consumption; no
 		// baseline approval, issue-resolution, merge, or unrelated repository-write

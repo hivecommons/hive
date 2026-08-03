@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	gh "github.com/google/go-github/v72/github"
@@ -122,13 +123,16 @@ func (c *Client) PostAdvisoryDigest(ctx context.Context, repo string, issueNum i
 	digest = advisory.NeutralizeMentions(digest)
 	digest = truncateDigest(logscrub.ScrubString(digest))
 
-	commentID, err := c.findDigestComment(ctx, owner, repoName, issueNum)
+	commentID, existingDigest, err := c.findDigestCommentWithBody(ctx, owner, repoName, issueNum)
 	if err != nil {
 		c.logger.Warn("could not search for existing digest comment, creating new", slog.String("error", err.Error()))
 	}
 
 	var author string
 	if commentID > 0 {
+		if advisoryDigestsSemanticallyEqual(existingDigest, digest) {
+			return nil
+		}
 		edited, _, err := c.client.Issues.EditComment(ctx, owner, repoName, int64(commentID), &gh.IssueComment{
 			Body: gh.Ptr(digest),
 		})
@@ -235,19 +239,48 @@ func (c *Client) ensureAdvisoryLabel(ctx context.Context, owner, repo string, is
 }
 
 func (c *Client) findDigestComment(ctx context.Context, owner, repo string, issueNum int) (int, error) {
+	commentID, _, err := c.findDigestCommentWithBody(ctx, owner, repo, issueNum)
+	return commentID, err
+}
+
+func (c *Client) findDigestCommentWithBody(ctx context.Context, owner, repo string, issueNum int) (int, string, error) {
 	opts := &gh.IssueListCommentsOptions{
 		ListOptions: gh.ListOptions{PerPage: 50},
 	}
 	comments, _, err := c.client.Issues.ListComments(ctx, owner, repo, issueNum, opts)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	for _, comment := range comments {
 		if strings.HasPrefix(comment.GetBody(), advisoryDigestPrefix) {
-			return int(comment.GetID()), nil
+			return int(comment.GetID()), comment.GetBody(), nil
 		}
 	}
-	return 0, nil
+	return 0, "", nil
+}
+
+func advisoryDigestsSemanticallyEqual(existing, next string) bool {
+	if existing == next {
+		return true
+	}
+	existingBody, existingOK := advisoryDigestBodyWithoutGeneratedAt(existing)
+	nextBody, nextOK := advisoryDigestBodyWithoutGeneratedAt(next)
+	return existingOK && nextOK && existingBody == nextBody
+}
+
+func advisoryDigestBodyWithoutGeneratedAt(digest string) (string, bool) {
+	lineEnd := strings.IndexByte(digest, '\n')
+	if lineEnd <= 0 {
+		return "", false
+	}
+	generatedAt, ok := strings.CutPrefix(digest[:lineEnd], advisoryDigestPrefix+" — ")
+	if !ok {
+		return "", false
+	}
+	if _, err := time.Parse("2006-01-02 15:04 MST", generatedAt); err != nil {
+		return "", false
+	}
+	return digest[lineEnd+1:], true
 }
 
 func (c *Client) findAdvisoryIssue(ctx context.Context, owner, repo string) (int, error) {

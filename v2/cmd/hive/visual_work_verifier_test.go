@@ -84,7 +84,7 @@ func TestNormalVisualPullRequestVerifierRejectsReceiptDriftBeforeLifecycleApply(
 	}
 }
 
-func TestNormalVisualPullRequestVerifierRecordsVerifiedFailedReviewWithoutCompletionAuthority(t *testing.T) {
+func TestNormalVisualPullRequestVerifierRecordsVerifiedFailedReviewAfterDefaultBranchAdvances(t *testing.T) {
 	fingerprint := strings.Repeat("f", 64)
 	baseSHA, headSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	lifecycle := writeNormalVisualVerifierLifecycle(t, fingerprint, headSHA)
@@ -98,11 +98,13 @@ func TestNormalVisualPullRequestVerifierRecordsVerifiedFailedReviewWithoutComple
 		HeadBranch: "hive/repair-proof", HeadSHA: headSHA, BaseBranch: "main", BaseSHA: baseSHA,
 	}
 	var reviewRequest hivegithub.PullRequestArtifactRequest
+	successFetches := 0
 	verifier := &normalVisualPullRequestVerifier{
 		lifecycle: lifecycle, loadConfig: func() (integrated.Config, int, error) { return config, 5, nil },
 		actionsAppID: func(context.Context) (int64, error) { return 15368, nil },
 		fetch: func(context.Context, hivegithub.VisualHivePullRequestBundleRequest) (normalVisualVerifiedPullRequest, error) {
-			return nil, hivegithub.ErrNoSuccessfulVisualHivePullRequestRun
+			successFetches++
+			return nil, errors.New("successful-bundle path rejected advanced default branch")
 		},
 		inspectGate: func(_ context.Context, repository string, number int) (hivegithub.PullRequestGate, error) {
 			if repository != config.Repository || number != request.PullRequestNumber {
@@ -139,6 +141,9 @@ func TestNormalVisualPullRequestVerifierRecordsVerifiedFailedReviewWithoutComple
 	if receipt.HeadSHA != headSHA || receipt.Status != "failure" || !json.Valid(receipt.Receipt) {
 		t.Fatalf("failed review did not return an exact red receipt: %+v", receipt)
 	}
+	if successFetches != 0 {
+		t.Fatalf("verified red gate attempted the successful-bundle path after base drift: fetches=%d", successFetches)
+	}
 	digest := sha256.Sum256(receipt.Receipt)
 	if receipt.ReceiptSHA256 != hex.EncodeToString(digest[:]) {
 		t.Fatalf("failed review receipt digest = %s, want %s", receipt.ReceiptSHA256, hex.EncodeToString(digest[:]))
@@ -157,6 +162,22 @@ func TestNormalVisualPullRequestVerifierRecordsVerifiedFailedReviewWithoutComple
 	}
 }
 
+func TestNormalVisualPullRequestVerifierProductionClientEnablesGatePreinspection(t *testing.T) {
+	if (&normalVisualPullRequestVerifier{}).hasPullRequestGateSource() {
+		t.Fatal("empty verifier unexpectedly exposes a pull-request gate source")
+	}
+	if !(&normalVisualPullRequestVerifier{github: &hivegithub.Client{}}).hasPullRequestGateSource() {
+		t.Fatal("production GitHub client did not enable pull-request gate preinspection")
+	}
+	if !(&normalVisualPullRequestVerifier{
+		inspectGate: func(context.Context, string, int) (hivegithub.PullRequestGate, error) {
+			return hivegithub.PullRequestGate{}, nil
+		},
+	}).hasPullRequestGateSource() {
+		t.Fatal("injected pull-request gate inspector did not enable preinspection")
+	}
+}
+
 func TestNormalVisualPullRequestVerifierKeepsUnfinishedExactHeadPending(t *testing.T) {
 	fingerprint := strings.Repeat("f", 64)
 	baseSHA, headSHA := strings.Repeat("a", 40), strings.Repeat("b", 40)
@@ -170,7 +191,8 @@ func TestNormalVisualPullRequestVerifierKeepsUnfinishedExactHeadPending(t *testi
 		lifecycle: lifecycle, loadConfig: func() (integrated.Config, int, error) { return config, 5, nil },
 		actionsAppID: func(context.Context) (int64, error) { return 15368, nil },
 		fetch: func(context.Context, hivegithub.VisualHivePullRequestBundleRequest) (normalVisualVerifiedPullRequest, error) {
-			return nil, hivegithub.ErrNoSuccessfulVisualHivePullRequestRun
+			t.Fatal("unfinished exact-head gate reached successful-bundle fetch")
+			return nil, errors.New("unreachable")
 		},
 		inspectGate: func(context.Context, string, int) (hivegithub.PullRequestGate, error) {
 			return hivegithub.PullRequestGate{

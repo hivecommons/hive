@@ -337,7 +337,10 @@ func finalizeUninstall(ctx context.Context, options ManagementOptions, store *St
 	if err != nil {
 		return err
 	}
-	if err := VerifyUninstalledSetupAtCommit(ctx, options.GitHub, config, currentHead); err != nil {
+	if err := synchronizeUninstallVerificationHead(ctx, config, currentHead); err != nil {
+		return err
+	}
+	if err := verifyUninstalledSetupOrPendingProposalAtCommit(ctx, options.GitHub, config, currentHead); err != nil {
 		return err
 	}
 	if err := verifyUninstallQuiescence(options.StateDir, store); err != nil {
@@ -498,6 +501,84 @@ func verifyUninstallQuiescence(stateDir string, store *Store) error {
 		}
 	}
 	return nil
+}
+
+// restoreSetupBaselinePreimages returns the exact baseline paths that uninstall
+// must stage. New baselines are removed; repository-owned baselines are
+// restored from the immutable base of the exact managed setup PR. The durable
+// initial inventory is verified before any worktree mutation.
+func restoreSetupBaselinePreimages(ctx context.Context, client *hivegithub.Client, checkout string, config Config) ([]string, error) {
+	initialDigest := strings.ToLower(strings.TrimSpace(config.SetupBaselineInitialDigest))
+	if initialDigest == "" {
+		// Legacy installations did not record a baseline inventory. Preserve
+		// their historical behavior rather than guessing ownership.
+		return nil, nil
+	}
+	recomputed, err := setupBaselineCandidateDigest(config.SetupBaselineInitialCandidates)
+	if err != nil || !strings.EqualFold(recomputed, initialDigest) {
+		return nil, fmt.Errorf("durable initial baseline inventory is invalid")
+	}
+	currentSHA, err := git(ctx, checkout, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("resolve current baseline inventory commit: %w", err)
+	}
+	currentCandidates, _, err := setupBaselineInventoryAtCommit(ctx, checkout, strings.ToLower(strings.TrimSpace(currentSHA)))
+	if err != nil {
+		return nil, fmt.Errorf("inspect current baseline inventory: %w", err)
+	}
+	initialByPath := make(map[string]SetupBaselineCandidate, len(config.SetupBaselineInitialCandidates))
+	paths := make([]string, 0, len(currentCandidates)+len(config.SetupBaselineInitialCandidates))
+	for _, candidate := range config.SetupBaselineInitialCandidates {
+		initialByPath[candidate.Path] = candidate
+		paths = append(paths, candidate.Path)
+	}
+	for _, candidate := range currentCandidates {
+		paths = append(paths, candidate.Path)
+	}
+	paths = sortedUniquePaths(paths)
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
+	preinstallSHA := ""
+	if len(config.SetupBaselineInitialCandidates) > 0 {
+		if client == nil || config.SetupPRNumber <= 0 || strings.TrimSpace(config.SetupPRURL) == "" ||
+			!immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(config.SetupHeadSHA))) {
+			return nil, fmt.Errorf("repository-owned baseline restoration requires the exact managed setup PR binding")
+		}
+		marker := "<!-- hive-setup: " + strings.ToLower(strings.TrimSpace(config.Repository)) + " -->"
+		snapshot, inspectErr := client.InspectManagedPullRequestExact(
+			ctx, config.Repository, config.RepositoryID, config.SetupPRNumber,
+			marker, config.SetupBranch, config.SetupHeadSHA, config.DefaultBranch,
+		)
+		if inspectErr != nil {
+			return nil, fmt.Errorf("inspect exact setup PR baseline preimage: %w", inspectErr)
+		}
+		if snapshot.URL != config.SetupPRURL || !immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(snapshot.BaseSHA))) {
+			return nil, fmt.Errorf("managed setup PR baseline preimage binding is invalid")
+		}
+		preinstallSHA = strings.ToLower(snapshot.BaseSHA)
+		preinstallCandidates, preinstallDigest, inventoryErr := setupBaselineInventoryAtCommit(ctx, checkout, preinstallSHA)
+		if inventoryErr != nil {
+			return nil, fmt.Errorf("inspect setup PR base baseline inventory: %w", inventoryErr)
+		}
+		if !strings.EqualFold(preinstallDigest, initialDigest) || !equalSetupBaselineCandidates(preinstallCandidates, config.SetupBaselineInitialCandidates) {
+			return nil, fmt.Errorf("setup PR base no longer matches the durable initial baseline inventory")
+		}
+	}
+
+	for _, relative := range paths {
+		if _, existed := initialByPath[relative]; existed {
+			if _, err := git(ctx, checkout, "restore", "--source="+preinstallSHA, "--staged", "--worktree", "--", relative); err != nil {
+				return nil, fmt.Errorf("restore repository-owned baseline %s: %w", relative, err)
+			}
+			continue
+		}
+		if err := os.Remove(filepath.Join(checkout, filepath.FromSlash(relative))); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("remove Hive-created baseline %s: %w", relative, err)
+		}
+	}
+	return paths, nil
 }
 
 func verifyUninstallRecoveryState(store *Store) error {
@@ -839,7 +920,17 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 		}
 		if attempt.CommitSHA == "" {
-			if attempt.Stage != repair.StageNoChange || attempt.PRNumber != 0 {
+			absentUnpublishedFailure := attempt.Stage == repair.StageFailed &&
+				attempt.ResumeStage == repair.StagePrepared &&
+				!attempt.AttemptCounted
+			// Management holds the serialized lifecycle lock and automation is
+			// already paused here. An uncounted model invocation with no published
+			// ref therefore has no external repair resource left to retire.
+			absentInterruptedModel := attempt.Stage == repair.StageModelRunning &&
+				!attempt.AttemptCounted
+			absentCancelled := attempt.Stage == repair.StageCancelled &&
+				!attempt.AttemptCounted && repair.UninstallRefsRetired(attempt)
+			if (attempt.Stage != repair.StageNoChange && !absentUnpublishedFailure && !absentInterruptedModel && !absentCancelled) || attempt.PRNumber != 0 {
 				return fmt.Errorf("repair attempt %s has an incomplete repair branch binding", attempt.RepositoryFingerprint)
 			}
 			absent, err := client.RepairBranchAbsentExact(ctx, config.Repository, attempt.Branch)
@@ -851,6 +942,17 @@ func drainRepairAttemptResources(ctx context.Context, store *Store, config Confi
 			}
 			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_absent_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", attempt.RepositoryFingerprint, attempt.Branch, attempt.Stage)}); err != nil {
 				return err
+			}
+			if absentInterruptedModel || absentCancelled {
+				removed, err := repair.RetireBrokenUnpublishedBranchForUninstall(ctx, config.CheckoutDir, attempt, true)
+				if err != nil {
+					return err
+				}
+				if removed {
+					if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_remove_broken_local_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s stage=%s remote_absent=true", attempt.RepositoryFingerprint, attempt.Branch, attempt.Stage)}); err != nil {
+						return err
+					}
+				}
 			}
 		} else {
 			if err := store.AuditStrict(AuditEntry{Action: "authorize_uninstall_delete_repair_branch", Allowed: true, Repository: config.Repository, Detail: fmt.Sprintf("finding=%s branch=%s head=%s", attempt.RepositoryFingerprint, attempt.Branch, attempt.CommitSHA)}); err != nil {
@@ -984,6 +1086,121 @@ func currentDefaultBranchHead(ctx context.Context, client *hivegithub.Client, co
 	return sha, nil
 }
 
+// synchronizeUninstallVerificationHead makes the exact current default-branch
+// commit available to the Hive-owned checkout without moving or cleaning it.
+// GitHub normally creates a distinct merge commit for the uninstall PR, so the
+// locally prepared cleanup head alone is insufficient for baseline-inventory
+// verification.
+func synchronizeUninstallVerificationHead(ctx context.Context, config Config, expectedHead string) error {
+	expectedHead = strings.ToLower(strings.TrimSpace(expectedHead))
+	if !immutableCommit.MatchString(expectedHead) {
+		return fmt.Errorf("uninstall verification requires an immutable default-branch head")
+	}
+	branch := strings.TrimSpace(config.DefaultBranch)
+	if !validLegacyBranchName(branch) {
+		return fmt.Errorf("uninstall verification requires a safe installed default branch")
+	}
+	exists, err := validateManagedCheckoutBeforeGit(config.CheckoutDir, config.Repository)
+	if err != nil {
+		return fmt.Errorf("validate managed checkout before uninstall verification: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("uninstall verification managed checkout is unavailable")
+	}
+	remoteURL := RepositoryCloneURL(config.Repository)
+	remoteRef := "refs/remotes/origin/" + branch
+	refspec := "+refs/heads/" + branch + ":" + remoteRef
+	if _, err := gitTransport(ctx, config.CheckoutDir, remoteURL, "fetch", "--no-tags", "--no-recurse-submodules", remoteURL, refspec); err != nil {
+		return fmt.Errorf("fetch uninstall verification head: %w", err)
+	}
+	fetchedHead, err := git(ctx, config.CheckoutDir, "rev-parse", "--verify", remoteRef+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("resolve fetched uninstall verification head: %w", err)
+	}
+	fetchedHead = strings.ToLower(strings.TrimSpace(fetchedHead))
+	if fetchedHead != expectedHead {
+		return fmt.Errorf("fetched default-branch head %s does not match verified uninstall head %s", fetchedHead, expectedHead)
+	}
+	if _, err := git(ctx, config.CheckoutDir, "cat-file", "-e", expectedHead+"^{commit}"); err != nil {
+		return fmt.Errorf("verify fetched uninstall commit %s: %w", expectedHead, err)
+	}
+	return nil
+}
+
+// verifyUninstalledSetupOrPendingProposalAtCommit preserves the normal
+// byte-for-byte preimage proof while allowing one narrower recovery case: the
+// exact Hive-owned setup PR never merged and the target commit still has no
+// installed Hive markers. This avoids restoring stale preimages captured by an
+// interrupted pre-publication setup transaction.
+func verifyUninstalledSetupOrPendingProposalAtCommit(ctx context.Context, client *hivegithub.Client, config Config, commitSHA string) error {
+	if err := VerifyUninstalledSetupAtCommit(ctx, client, config, commitSHA); err == nil {
+		return nil
+	} else {
+		recoverable, recoveryErr := unmergedSetupProposalLeavesTargetUninstalled(ctx, client, config, commitSHA)
+		if recoveryErr != nil {
+			return fmt.Errorf("verify managed-path restoration: %w; verify exact unmerged setup recovery: %v", err, recoveryErr)
+		}
+		if !recoverable {
+			return err
+		}
+	}
+	return nil
+}
+
+// unmergedSetupProposalLeavesTargetUninstalled proves that Hive's exact setup
+// proposal is still unmerged and that its target commit never acquired the
+// authoritative installation markers. It never infers repository cleanliness
+// from local state or from the potentially stale preimage ledger.
+func unmergedSetupProposalLeavesTargetUninstalled(ctx context.Context, client *hivegithub.Client, config Config, commitSHA string) (bool, error) {
+	commitSHA = strings.ToLower(strings.TrimSpace(commitSHA))
+	if client == nil || client.GoGitHub() == nil || !immutableCommit.MatchString(commitSHA) {
+		return false, fmt.Errorf("GitHub client and exact target commit are required")
+	}
+	owner, repo, ok := strings.Cut(config.Repository, "/")
+	if !ok || owner == "" || repo == "" {
+		return false, fmt.Errorf("repository identity is invalid")
+	}
+	markers := []string{".hive/integrated.json"}
+	if config.VisualHive {
+		markers = append(markers, visualHiveProductionWorkflowPath)
+	}
+	for _, relative := range markers {
+		content, directory, response, err := client.GoGitHub().Repositories.GetContents(
+			ctx, owner, repo, relative, &gh.RepositoryContentGetOptions{Ref: commitSHA},
+		)
+		if err == nil || content != nil || len(directory) != 0 {
+			return false, nil
+		}
+		if response == nil || response.StatusCode != http.StatusNotFound {
+			return false, fmt.Errorf("verify absence of installation marker %s: %w", relative, err)
+		}
+	}
+	expectedBranch := managedOperationBranch("setup", config.RepositoryID)
+	if config.SetupPRNumber <= 0 || strings.TrimSpace(config.SetupPRURL) == "" ||
+		config.SetupBranch != expectedBranch || !immutableCommit.MatchString(strings.ToLower(strings.TrimSpace(config.SetupHeadSHA))) {
+		return false, fmt.Errorf("target lacks installation markers but setup proposal identity is incomplete")
+	}
+	marker := "<!-- hive-setup: " + strings.ToLower(strings.TrimSpace(config.Repository)) + " -->"
+	snapshot, err := client.InspectManagedPullRequestExact(
+		ctx, config.Repository, config.RepositoryID, config.SetupPRNumber,
+		marker, config.SetupBranch, config.SetupHeadSHA, config.DefaultBranch,
+	)
+	if err != nil {
+		return false, err
+	}
+	if snapshot.URL != config.SetupPRURL || snapshot.Merged ||
+		(snapshot.State != "open" && snapshot.State != "closed") {
+		return false, fmt.Errorf("setup proposal is not the exact unmerged Hive-owned pull request")
+	}
+	if !strings.EqualFold(snapshot.BaseSHA, commitSHA) {
+		return false, fmt.Errorf("setup proposal base %s does not match target commit %s", snapshot.BaseSHA, commitSHA)
+	}
+	if strings.EqualFold(snapshot.HeadSHA, snapshot.BaseSHA) {
+		return false, fmt.Errorf("setup proposal has no distinct managed head")
+	}
+	return true, nil
+}
+
 // VerifyUninstalledSetupAtCommit is the inverse of installed setup
 // verification. Every managed read is bound to one immutable target commit.
 // Hive-owned paths must return an exact 404 while repository-owned preimages
@@ -1024,6 +1241,19 @@ func VerifyUninstalledSetupAtCommit(ctx context.Context, client *hivegithub.Clie
 		}
 		if response == nil || response.StatusCode != http.StatusNotFound {
 			return fmt.Errorf("verify absence of managed setup path %s: %w", relative, err)
+		}
+	}
+	if initialDigest := strings.ToLower(strings.TrimSpace(config.SetupBaselineInitialDigest)); initialDigest != "" {
+		expectedDigest, digestErr := setupBaselineCandidateDigest(config.SetupBaselineInitialCandidates)
+		if digestErr != nil || !strings.EqualFold(expectedDigest, initialDigest) {
+			return fmt.Errorf("uninstall verification refuses an invalid initial baseline inventory")
+		}
+		liveCandidates, liveDigest, inventoryErr := setupBaselineInventoryAtCommit(ctx, config.CheckoutDir, commitSHA)
+		if inventoryErr != nil {
+			return fmt.Errorf("verify restored baseline inventory at target commit %s: %w", commitSHA, inventoryErr)
+		}
+		if !strings.EqualFold(liveDigest, initialDigest) || !equalSetupBaselineCandidates(liveCandidates, config.SetupBaselineInitialCandidates) {
+			return fmt.Errorf("baseline inventory was not restored byte-for-byte at target commit %s", commitSHA)
 		}
 	}
 	return nil

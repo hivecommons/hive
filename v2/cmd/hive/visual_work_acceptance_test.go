@@ -158,6 +158,12 @@ func TestNormalVisualWorkVerticalAcceptance(t *testing.T) {
 	verifier := &normalVisualPullRequestVerifier{
 		github: githubClient, lifecycle: lifecycle,
 		loadConfig: func() (integrated.Config, int, error) { return installed, manager.GetACMMLevel(), nil },
+		// The vertical fixture exercises the successful v3 bundle path. Its
+		// dedicated GitHub server proves the full bundle separately, so bind
+		// the new preinspection seam to the same successful exact-head gate.
+		inspectGate: func(context.Context, string, int) (hivegithub.PullRequestGate, error) {
+			return hivegithub.PullRequestGate{VisualHiveCheckState: "success"}, nil
+		},
 	}
 	newService := func(verdict normalservice.PullRequestVerdictVerifier) *normalservice.Service {
 		service, serviceErr := normalservice.New(normalservice.Options{

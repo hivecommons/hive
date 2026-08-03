@@ -12,12 +12,37 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/automation"
 	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/repair"
 	"github.com/kubestellar/hive/v2/pkg/visualhive"
 )
+
+func TestPendingRetiredRepairVerificationEndsAfterFreshObservationOrResolution(t *testing.T) {
+	retiredAt := time.Date(2026, 7, 30, 20, 0, 0, 0, time.UTC)
+	finding := &visualhive.FindingLifecycle{
+		Status:     visualhive.StatusIssueOpen,
+		LastSeenAt: retiredAt.Add(-time.Minute),
+		LastRetiredRepair: &visualhive.RetiredRepair{
+			RetiredAt: retiredAt,
+		},
+	}
+	state := visualhive.LifecycleState{Findings: map[string]*visualhive.FindingLifecycle{"retired": finding}}
+	if !pendingRetiredRepairVerification(state) {
+		t.Fatal("fresh authoritative verification was not required after repair retirement")
+	}
+	finding.LastSeenAt = retiredAt.Add(time.Minute)
+	if pendingRetiredRepairVerification(state) {
+		t.Fatal("fresh present observation did not complete the bounded retirement verification cycle")
+	}
+	finding.LastSeenAt = retiredAt.Add(-time.Minute)
+	finding.Status = visualhive.StatusResolved
+	if pendingRetiredRepairVerification(state) {
+		t.Fatal("authoritative resolution did not complete the bounded retirement verification cycle")
+	}
+}
 
 func TestActiveRepairFindingSkipsHumanReviewOnlyIssue(t *testing.T) {
 	state := visualhive.LifecycleState{Findings: map[string]*visualhive.FindingLifecycle{

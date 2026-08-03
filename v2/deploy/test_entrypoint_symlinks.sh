@@ -49,6 +49,12 @@ assert_contains "$ENTRYPOINT" \
 assert_contains "$ENTRYPOINT" \
   'export CODEX_HOME="${CODEX_HOME:-/data/home/.codex}"' \
   "Codex controller health uses persistent bounded auth home"
+assert_contains "$ENTRYPOINT" \
+  'chmod 0660 /data/home/.codex/auth.json' \
+  "persisted Codex login remains readable by isolated agent UIDs"
+assert_contains "$ENTRYPOINT" \
+  '[ ! -L /data/home/.codex/auth.json ]' \
+  "Codex credential normalization rejects linked auth paths"
 
 # 4. ~/.config/github-copilot symlink must still exist (pre-existing)
 assert_contains "$ENTRYPOINT" \
@@ -70,6 +76,18 @@ assert_contains "$ENTRYPOINT" \
 assert_contains "$ENTRYPOINT" \
   'chmod 2775 /data/home /data/home/.config /data/config /data/config/github-copilot' \
   "fresh shared CLI parents remain traversable and group-writable"
+assert_contains "$ENTRYPOINT" \
+  'chmod 0750 /data' \
+  "persistent volume remains private but traversable by isolated agent UIDs"
+assert_contains "$ENTRYPOINT" \
+  'CODEX_AGENT_HOME="/data/home/.codex-${agent_name}"' \
+  "every configured role receives a live-switch-ready Codex home"
+assert_contains "$ENTRYPOINT" \
+  'chown -R "hive-${agent_name}:node" "$CODEX_AGENT_HOME"' \
+  "per-agent Codex home is owned by its isolated runtime UID"
+assert_contains "$ENTRYPOINT" \
+  'ln -sfn /data/home/.codex/auth.json "$CODEX_AGENT_HOME/auth.json"' \
+  "per-agent Codex home retains the bounded shared login bridge"
 
 # 7. Entrypoint loads Copilot PAT for Go binary
 assert_contains "$ENTRYPOINT" \

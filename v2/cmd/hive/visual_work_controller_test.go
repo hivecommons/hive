@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,6 +36,35 @@ func TestLoadAuthoritativeVisualWorkContractUsesCurrentStateRegistry(t *testing.
 	installed, exists, err := loadAuthoritativeVisualWorkContract()
 	if err != nil || !exists || installed.Repository != "owner/current" || !sameSpecialistRuntimePath(installed.StateDir, stateDir) {
 		t.Fatalf("current state selection = %+v exists=%t err=%v", installed, exists, err)
+	}
+}
+
+func TestLoadAuthoritativeVisualWorkContractTreatsEmptyScaffoldAsDormant(t *testing.T) {
+	stateDir := t.TempDir()
+	if _, err := integrated.NewStore(filepath.Join(stateDir, "integrated")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+
+	installed, exists, err := loadAuthoritativeVisualWorkContract()
+	if err != nil || exists || installed.Repository != "" {
+		t.Fatalf("empty scaffold = %+v exists=%t err=%v", installed, exists, err)
+	}
+}
+
+func TestLoadAuthoritativeVisualWorkContractRejectsNonemptyStateWithoutContract(t *testing.T) {
+	stateDir := t.TempDir()
+	integratedDir := filepath.Join(stateDir, "integrated")
+	if _, err := integrated.NewStore(integratedDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(integratedDir, "audit.jsonl"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+
+	if _, exists, err := loadAuthoritativeVisualWorkContract(); err == nil || exists || !os.IsNotExist(err) {
+		t.Fatalf("nonempty state without contract was accepted: exists=%t err=%v", exists, err)
 	}
 }
 
