@@ -2054,6 +2054,12 @@ func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, last
 // BackendOverride wins over the configured backend. For backends the probe
 // cannot introspect (known=false) this returns false — an unknown auth state
 // must not reclassify a genuinely crashed agent out of "down".
+// healthAgentStatuses returns the agent snapshots the health check classifies.
+// A test seam mirroring SetBackendAuthProvider: AllStatuses returns value
+// snapshots, so tests cannot stage states (running-at-login-prompt) by
+// mutating manager internals — they override this instead. nil ⇒ live manager.
+var healthAgentStatuses func() map[string]*agent.AgentProcess
+
 func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend string) (available, known bool)) bool {
 	if proc.NeedsLogin {
 		return true
@@ -2140,12 +2146,29 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		// dropped right here where it was known.
 		var downNames, stalledNames, needLoginNames []string
 		authFn := getBackendAuthFn()
-		for name, proc := range s.deps.AgentMgr.AllStatuses() {
+		statuses := s.deps.AgentMgr.AllStatuses()
+		if healthAgentStatuses != nil {
+			statuses = healthAgentStatuses()
+		}
+		for name, proc := range statuses {
 			if proc.Paused {
 				paused++
 				continue
 			}
 			if proc.State == agent.StateRunning {
+				// A RUNNING agent sitting at a login prompt is alive but cannot
+				// work — the pane poller has literally seen "/login" on its
+				// terminal (proc.NeedsLogin). Counting it as running rendered a
+				// wedged agent healthy (green dot, Health OK) while its pane
+				// begged for authentication. Only the pane-poller signal moves a
+				// running agent here: the shared-credential probe can lag a
+				// just-completed login, and a running agent that is actually
+				// working must never be reclassified by a stale probe.
+				if !grace && proc.NeedsLogin {
+					needLogin++
+					needLoginNames = append(needLoginNames, name)
+					continue
+				}
 				running++
 				if !grace && proc.LastKickMessage != "" {
 					for _, v := range []string{"${ISSUE_LIST}", "${PR_LIST}", "${HIVE_REPO}", "${KNOWLEDGE}"} {

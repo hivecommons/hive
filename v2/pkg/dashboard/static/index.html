@@ -3618,7 +3618,12 @@
       // Same formula as the Auth section's Login button below: a down agent
       // with an unauthenticated CLI gets the amber needs-login state instead
       // of plain down-red (#2465).
-      const needsLoginDown = isStopped && (a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true));
+      /* needs-login applies to a STOPPED agent with any unauthenticated
+         signal, and ALSO to a RUNNING agent whose pane shows a login prompt
+         (a.needsLogin) — alive-but-wedged must not render as healthy. The
+         weaker probe-based inference stays stopped-only so a stale probe
+         cannot repaint a genuinely working agent. */
+      const needsLoginDown = (isStopped && (a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true))) || a.needsLogin === true;
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
       const dotCls = needsLoginDown ? 'needs-login' : isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
 
@@ -3890,7 +3895,7 @@
       // applies when the agent is not running: a running authenticated agent
       // is green, a non-running authenticated agent is red (#2465).
       const needsLogin = a.needsLogin === true || (a.authKnown === true && a.authAvailable !== true);
-      const needsLoginDown = isDown && needsLogin;
+      const needsLoginDown = (isDown && needsLogin) || a.needsLogin === true;
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
       const dotCls = needsLoginDown ? 'needs-login' : isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
