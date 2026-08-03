@@ -12,37 +12,45 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/agent"
 	"github.com/kubestellar/hive/v2/pkg/beads"
 	"github.com/kubestellar/hive/v2/pkg/config"
-	"github.com/kubestellar/hive/v2/pkg/governor"
 	ghpkg "github.com/kubestellar/hive/v2/pkg/github"
+	"github.com/kubestellar/hive/v2/pkg/governor"
 	"github.com/kubestellar/hive/v2/pkg/knowledge"
 	"github.com/kubestellar/hive/v2/pkg/scheduler"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
 )
 
 type Dependencies struct {
-	Config           *config.Config
-	AgentMgr         *agent.Manager
-	Governor         *governor.Governor
-	GHClient         *ghpkg.Client
-	GHAppAuth        *ghpkg.AppAuth
-	Tokens           *tokens.Collector
-	Knowledge        *knowledge.KnowledgeAPI
-	Inception        *knowledge.InceptionEngine
-	Nous             *NousState
-	Scheduler        *scheduler.Scheduler
-	MetricsCollector *MetricsCollector
-	BeadSynthesizer  *knowledge.BeadSynthesizer
-	BeadStores       map[string]*beads.Store
-	Logger           *slog.Logger
-	Ctx              context.Context
-	RefreshFunc      func()
-	PersistFunc      func()
-	SkipReloadFunc   func()
-	ReInitFunc       func()
-	SetUserClient    func(token string)
-	EnumerateFunc      func()
-	AdvisoryResetFunc  func(newPrimaryRepo string)
-	ReinitGitHubFunc   func(appID, installationID int64, keyFile string) error
+	Config            *config.Config
+	AgentMgr          *agent.Manager
+	Governor          *governor.Governor
+	GHClient          *ghpkg.Client
+	GHAppAuth         *ghpkg.AppAuth
+	Tokens            *tokens.Collector
+	Knowledge         *knowledge.KnowledgeAPI
+	Inception         *knowledge.InceptionEngine
+	Nous              *NousState
+	Scheduler         *scheduler.Scheduler
+	MetricsCollector  *MetricsCollector
+	BeadSynthesizer   *knowledge.BeadSynthesizer
+	BeadStores        map[string]*beads.Store
+	Logger            *slog.Logger
+	Ctx               context.Context
+	RefreshFunc       func()
+	PersistFunc       func()
+	SkipReloadFunc    func()
+	ReInitFunc        func()
+	SetUserClient     func(token string)
+	EnumerateFunc     func()
+	AdvisoryResetFunc func(newPrimaryRepo string)
+	ReinitGitHubFunc  func(appID, installationID int64, keyFile string) error
+	// ResolveAppKeyFileFunc resolves which App private key the process would
+	// actually sign with, given the configured key_file and app_id — the SAME
+	// resolution the boot and heartbeat-apply paths use (config value, then
+	// $GH_APP_KEY_FILE, then the per-app-id delivered file, then the generic
+	// fallbacks). Hub-delivered keys deliberately leave key_file empty, so any
+	// handler that gates on the raw config value alone dead-ends on exactly the
+	// fleet-standard hosted-spoke configuration (#2459).
+	ResolveAppKeyFileFunc func(configured string, appID int64) string
 }
 
 type NousState struct {
@@ -69,15 +77,15 @@ type NousPrinciple struct {
 const NousBaselineTarget = 672
 
 type NousSnapshot struct {
-	Timestamp     string         `json:"timestamp"`
-	Mode          string         `json:"mode"`
-	QueueIssues   int            `json:"queue_issues"`
-	QueuePRs      int            `json:"queue_prs"`
-	QueueHold     int            `json:"queue_hold"`
-	SLAViolations int            `json:"sla_violations"`
-	AgentsKicked  []string       `json:"agents_kicked,omitempty"`
+	Timestamp     string            `json:"timestamp"`
+	Mode          string            `json:"mode"`
+	QueueIssues   int               `json:"queue_issues"`
+	QueuePRs      int               `json:"queue_prs"`
+	QueueHold     int               `json:"queue_hold"`
+	SLAViolations int               `json:"sla_violations"`
+	AgentsKicked  []string          `json:"agents_kicked,omitempty"`
 	AgentStates   map[string]string `json:"agent_states,omitempty"`
-	TotalTokens   int64          `json:"total_tokens"`
+	TotalTokens   int64             `json:"total_tokens"`
 }
 
 func (ns *NousState) RecordSnapshot(govState governor.State, actionable *ghpkg.ActionableResult, agentsKicked []string, agentStatuses map[string]*agent.AgentProcess, tokenSummary *tokens.AggregateSummary) error {
@@ -86,13 +94,13 @@ func (ns *NousState) RecordSnapshot(govState governor.State, actionable *ghpkg.A
 	}
 
 	snap := NousSnapshot{
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
-		Mode:          string(govState.Mode),
-		QueueIssues:   govState.QueueIssues,
-		QueuePRs:      govState.QueuePRs,
-		QueueHold:     govState.QueueHold,
-		AgentsKicked:  agentsKicked,
-		AgentStates:   make(map[string]string),
+		Timestamp:    time.Now().UTC().Format(time.RFC3339),
+		Mode:         string(govState.Mode),
+		QueueIssues:  govState.QueueIssues,
+		QueuePRs:     govState.QueuePRs,
+		QueueHold:    govState.QueueHold,
+		AgentsKicked: agentsKicked,
+		AgentStates:  make(map[string]string),
 	}
 	if actionable != nil {
 		snap.SLAViolations = actionable.Issues.SLAViolations

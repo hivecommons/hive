@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -529,5 +530,82 @@ func TestContributorProfilePreferredRole(t *testing.T) {
 	}
 	if loaded.PreferredRole != "scanner" {
 		t.Fatalf("expected preferred_role 'scanner', got %q", loaded.PreferredRole)
+	}
+}
+
+// Auto-promotion grants contents:write and pulls:write, so it must not fire on
+// completions that never reported a pull request. Completion is self-reported:
+// an agent that goes idle without shipping anything still sends task_complete.
+func TestWSAutoPromotionRequiresReportedPR(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+
+	body := `{"github_username":"promote-user"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	var reg map[string]string
+	json.Unmarshal(w.Body.Bytes(), &reg)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	readMsg(t, conn)
+	conn.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
+	readMsg(t, conn)
+
+	// complete drives one task through the hub as if it had been assigned,
+	// reporting a PR only when prURL is non-empty.
+	complete := func(taskID, prURL string) {
+		t.Helper()
+		s.contributeHub.mu.RLock()
+		var c *ContributorConnection
+		for _, candidate := range s.contributeHub.connections {
+			c = candidate
+		}
+		s.contributeHub.mu.RUnlock()
+		if c == nil {
+			t.Fatal("no live contributor connection")
+		}
+		c.mu.Lock()
+		c.currentTask = &WSTaskAssign{TaskID: taskID, Kind: "issue", Repo: "acme/widgets", Number: 1}
+		c.mu.Unlock()
+
+		conn.WriteJSON(WSMessage{Type: "task_complete", TaskID: taskID, Result: "done", PRURL: prURL})
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	for i := 0; i < contributorAutoPromoteAt; i++ {
+		complete(fmt.Sprintf("no-pr-%d", i), "")
+	}
+
+	p := findContributor(reg["contributor_id"])
+	if p == nil {
+		t.Fatal("contributor not found")
+	}
+	if p.TasksCompleted != contributorAutoPromoteAt {
+		t.Fatalf("expected %d completions recorded, got %d", contributorAutoPromoteAt, p.TasksCompleted)
+	}
+	if p.TasksWithPR != 0 {
+		t.Fatalf("expected 0 completions with a PR, got %d", p.TasksWithPR)
+	}
+	if p.TrustTier != "newcomer" {
+		t.Fatalf("promoted to %q on completions that reported no PR", p.TrustTier)
+	}
+
+	for i := 0; i < contributorAutoPromoteAt; i++ {
+		complete(fmt.Sprintf("with-pr-%d", i), "https://github.com/acme/widgets/pull/7")
+	}
+
+	p = findContributor(reg["contributor_id"])
+	if p.TasksWithPR != contributorAutoPromoteAt {
+		t.Fatalf("expected %d completions with a PR, got %d", contributorAutoPromoteAt, p.TasksWithPR)
+	}
+	if p.TrustTier != "contributor" {
+		t.Fatalf("expected promotion to contributor after %d PR-backed completions, got %q", contributorAutoPromoteAt, p.TrustTier)
 	}
 }
