@@ -356,7 +356,11 @@
     .oc-agent-detail-header .status-dot.paused { background: var(--yellow); }
     .oc-agent-detail-header .status-dot.on-demand { background: var(--indigo); }
     .oc-agent-detail-header .status-dot.stopped { background: var(--red); }
-    .oc-agent-detail-header .status-dot.needs-login { background: var(--amber); }
+    /* needs-login is a HOLLOW amber ring — paused is a solid yellow dot.
+       The two states were both rendered as near-identical solid amber/yellow
+       and operators could not tell "resting by choice" from "blocked on a
+       human logging in". Hollow reads as "waiting to be filled in". */
+    .oc-agent-detail-header .status-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
     .oc-agent-detail-header .status-dot.off { background: var(--muted); }
     .oc-detail-fields {
       display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 24px; margin-bottom: 16px;
@@ -421,7 +425,7 @@
     .oc-agent-dot.paused { background: var(--yellow); }
     .oc-agent-dot.on-demand { background: var(--indigo); }
     .oc-agent-dot.stopped { background: var(--red); }
-    .oc-agent-dot.needs-login { background: var(--amber); }
+    .oc-agent-dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
     .oc-agent-dot.off { background: var(--muted); }
     @keyframes oc-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
@@ -839,7 +843,7 @@
     .dot.on-demand { background: var(--indigo); }
     .dot.off { background: var(--muted); }
     .dot.stopped { background: var(--red); }
-    .dot.needs-login { background: var(--amber); }
+    .dot.needs-login { background: transparent; border: 2px solid var(--amber); box-sizing: border-box; }
     .agent-field { display: flex; justify-content: space-between; font-size: 0.8rem; padding: 2px 0; }
     .agent-field .label { color: var(--muted); }
     .agent-field .value { text-align: right; }
@@ -5279,7 +5283,7 @@
         const compactCls = isAgentCompact(a.name) ? ' compact' : '';
         return `<div class="agent-card ${cls}${compactCls}" data-agent="${esc(a.name)}">
           <span class="working-indicator"></span>
-          <div class="agent-name"><span class="dot ${dotCls}"></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
+          <div class="agent-name"><span class="dot ${dotCls}"></span>${a.emoji ? a.emoji + ' ' : ''}${esc(a.displayName || a.name)}${needsLogin ? ' <span title="CLI needs login">\uD83D\uDD11</span>' : ''} ${toggleBtn} <button class="compact-toggle" onclick="event.stopPropagation();toggleAgentCompact('${esc(a.name)}')" title="Toggle compact/expanded view for this agent card">${isAgentCompact(a.name) ? '&#9655; expand' : '&#9661; compact'}</button> <a href="${terminalUrl(a.name)}" target="_blank" class="terminal-link" title="Open tmux session">▶ terminal</a> <button class="restart-btn" data-action="restartAgent" data-agent="${esc(a.name)}" title="Kill tmux session — supervisor will respawn with fresh context">↻ restart</button> <button class="config-gear" data-action="openConfigDialog" data-config-type="agent" data-agent="${esc(a.name)}" title="Configure ${esc(a.displayName || a.name)}">⚙️</button></div>
           <div class="agent-state ${isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}">${isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : a.busy}${pauseInfoIcon(a)}${(() => {
             if (a.structuredStatus === 'BLOCKED') return '<span class="status-badge blocked" title="' + esc(a.statusEvidence) + '">blocked</span>';
             if (a.structuredStatus === 'NEEDS_CONTEXT') return '<span class="status-badge needs-context" title="' + esc(a.statusEvidence) + '">needs context</span>';
