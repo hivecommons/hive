@@ -126,6 +126,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/config/governor/bob", s.handleGovernorBobStatus)
 	s.mux.HandleFunc("PUT /api/config/governor/bob", s.handleGovernorBobKey)
 	s.mux.HandleFunc("DELETE /api/config/governor/bob", s.handleGovernorBobKeyClear)
+	// Live key validation (pasted or saved key) — see bob_key_probe.go.
+	s.mux.HandleFunc("POST /api/config/governor/bob/test", s.handleGovernorBobKeyTest)
 	s.mux.HandleFunc("POST /api/config/governor/litellm/test", s.handleGovernorLiteLLMTest)
 	s.mux.HandleFunc("GET /api/config/governor/gateways", s.handleGovernorGatewaysList)
 	s.mux.HandleFunc("PUT /api/config/governor/gateways", s.handleGovernorGatewaysUpsert)
@@ -141,6 +143,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// and hands back the correct per-forge install URL when it is not.
 	s.mux.HandleFunc("POST /api/config/governor/repos/check-access", s.handleGovernorRepoCheckAccess)
 	s.mux.HandleFunc("PUT /api/config/github", s.handleConfigGitHub)
+	// Read-only inventory for the Forge App tab: every App credential this
+	// spoke holds (active config + per-app-id PVC keys), fingerprints only.
+	s.mux.HandleFunc("GET /api/config/github/forge-apps", s.handleConfigGitHubForgeApps)
 
 	s.mux.HandleFunc("GET /api/agents", s.handleAgentsList)
 	s.mux.HandleFunc("POST /api/agents", s.handleAgentCreate)
@@ -4380,6 +4385,15 @@ func (s *Server) handleGovernorBobKey(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
+	// A key with interior whitespace/newlines is always a broken paste, and
+	// storing one is a proven auth failure ("invalid jwt string" 401 → every
+	// bob agent parks at the auth prompt). Refuse at save time with the real
+	// explanation. Leading/trailing whitespace was already trimmed above.
+	if strings.ContainsAny(key, " \t\r\n") {
+		jsonError(w, "apiKey contains interior whitespace or line breaks — a bob API key is a single unbroken token; re-copy it from bob.ibm.com and paste it again",
+			http.StatusBadRequest)
+		return
+	}
 
 	cfg := s.deps.Config
 	// Apply to a copy so a store failure leaves config untouched.
@@ -4571,8 +4585,8 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 	//
 	// The tombstone closes both: MergeAgentOverrides skips and prunes it, and
 	// ApplyPack refuses to re-create it.
-	s.deps.Config.MarkAgentRemoved(name)
-	s.removeAgentOverlayFile(name)
+	tombstoned := s.deps.Config.MarkAgentRemoved(name)
+	overlayExisted, overlayDeleted := s.removeAgentOverlayFile(name)
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after agent removal", "error", err)
@@ -4581,23 +4595,53 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 	s.refreshAndPersist()
 	s.logger.Info("agent removed and tombstoned", "agent", name,
 		"note", "will not be re-created by an ACMM pack apply until explicitly re-added")
+	// One greppable audit line for the whole removal action: whether the
+	// tombstone was newly written, whether a stale per-agent overlay file was
+	// present and whether it was deleted, and the resulting tombstone set so a
+	// grep by agent name tells the story of a non-sticking removal report
+	// (#2439) without exec'ing into the pod to diff config files.
+	s.logger.Info("audit: agent removed via dashboard",
+		"hive_id", s.deps.Config.HiveID,
+		"agent", name,
+		"tombstoned", tombstoned,
+		"overlay_file_existed", overlayExisted,
+		"overlay_file_deleted", overlayDeleted,
+		"removed_agents", s.deps.Config.RemovedAgents,
+	)
 	jsonResponse(w, agentDeletionResponse("removed", name, packLevelsDefining(name)))
 }
 
 // removeAgentOverlayFile deletes /data/agent-configs/<name>.yaml. A leftover
 // overlay file is re-merged by every config load, which is one of the two ways
 // a deleted agent used to come back.
-func (s *Server) removeAgentOverlayFile(name string) {
+//
+// Returns (existed, deleted) purely for the caller's audit log: existed reports
+// whether a per-agent overlay file was present before the delete (the stale-file
+// resurrection vector), and deleted reports whether the removal succeeded. The
+// deletion behavior itself is unchanged — an error is still non-fatal because the
+// tombstone already prevents the merge from resurrecting the agent.
+func (s *Server) removeAgentOverlayFile(name string) (existed, deleted bool) {
 	agentsDir := s.deps.Config.Data.AgentsDir
 	if agentsDir == "" {
-		return
+		return false, false
+	}
+	// Observe presence before deleting so the audit log can distinguish
+	// "no stale file" from "stale file removed". Stat errors other than
+	// not-exist leave existed false — we only claim a file was present when
+	// we positively saw one.
+	overlayPath := filepath.Join(agentsDir, name+".yaml")
+	if _, statErr := os.Stat(overlayPath); statErr == nil {
+		existed = true
 	}
 	if err := config.RemoveAgentFile(agentsDir, name); err != nil {
 		// Not fatal: the tombstone already prevents the merge from
-		// resurrecting the agent. Log it so a stale file is still visible.
-		s.logger.Error("failed to remove agent overlay file after delete (tombstone still applies)",
-			"agent", name, "error", err)
+		// resurrecting the agent. Log it at WARN so a stale file — the
+		// resurrection vector for #2439 — is loud and greppable with its path.
+		s.logger.Warn("failed to remove agent overlay file after delete (tombstone still applies)",
+			"hive_id", s.deps.Config.HiveID, "agent", name, "path", overlayPath, "error", err)
+		return existed, false
 	}
+	return existed, existed
 }
 
 // packLevelsDefining returns the ACMM levels whose pack defines this agent, so
@@ -4945,6 +4989,16 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 
 	cfg := s.deps.Config
 
+	// saveConfig() silently no-ops when the config has no source path, so
+	// without this guard the handler would report "status":"updated" for a
+	// value that lives only in memory and is lost on the next restart (#2459).
+	// Refuse up front, before mutating anything, and name the cause.
+	if cfg.SourcePath == "" {
+		s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
+		jsonError(w, "config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
+		return
+	}
+
 	if body.PrivateKey != "" {
 		keyPath := body.KeyFile
 		if keyPath == "" {
@@ -4986,12 +5040,23 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		"key_file":        cfg.GitHub.KeyFile,
 	}
 
+	// Resolve the signing key the same way the boot and heartbeat-apply paths
+	// do, NOT from the raw config value: on hosted spokes the key is
+	// hub-delivered to the per-app-id path with key_file deliberately left
+	// empty, and gating reinit on cfg.GitHub.KeyFile alone made Set ID save the
+	// installation_id but never rebuild the client — banner never cleared,
+	// Re-check dead-ended on a nil client (#2459).
+	keyFile := cfg.GitHub.KeyFile
+	if s.deps.ResolveAppKeyFileFunc != nil {
+		keyFile = s.deps.ResolveAppKeyFileFunc(cfg.GitHub.KeyFile, cfg.GitHub.AppID)
+	}
+
 	// HasUsableApp() rejects the placeholder sentinel: reinitializing App auth
 	// against it would fail on every save and, before this guard, could not
 	// succeed no matter what installation_id the operator supplied.
-	if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
+	if cfg.GitHub.HasUsableApp() && keyFile != "" {
 		if s.deps.ReinitGitHubFunc != nil {
-			if err := s.deps.ReinitGitHubFunc(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile); err != nil {
+			if err := s.deps.ReinitGitHubFunc(cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyFile); err != nil {
 				s.logger.Error("github client reinit failed", "error", err)
 				result["reinit"] = "failed"
 				result["reinit_error"] = err.Error()

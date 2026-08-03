@@ -213,6 +213,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// switch-branch and auto-upgrade above.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/forge", s.requireAuth(s.handleSwitchForge))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-app", s.requireAuth(s.handleResetApp))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/restart-spoke", s.requireAuth(s.handleRestartSpoke))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
@@ -2065,6 +2066,14 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Unassigned placeholder rows: auth-class check failures are the pool's
+	// DESIGNED state, not degradation, so neutralise them before anything
+	// downstream (drift, the fleet alerts, the browser's row dot and
+	// failing-checks pill) reads Health. Runs after enrichment for the same
+	// provStatus reason annotateDrift documents below, and before it so the
+	// drift health signal and the row agree. See placeholder_health.go.
+	sanitizePlaceholderRows(result)
+
 	// Config drift, computed once over the caller's full visible set — the
 	// fleet norm is derived from that set, so this must run AFTER every row has
 	// been collected and enriched (a row still missing its provStatus would be
@@ -2971,33 +2980,59 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"no cluster config for this hive"}`, http.StatusInternalServerError)
 		return
 	}
-	ns := "hive-hosted-" + id
-	cmd := kubectlForCluster(cluster, "rollout", "restart", "deployment/hive", "-n", ns)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		s.logger.Warn("upgrade failed", "hive", id, "cluster", cluster.ID, "output", string(out))
-		http.Error(w, `{"error":"upgrade failed — check hub logs for details"}`, http.StatusInternalServerError)
-		return
-	}
-	s.logger.Info("audit: hosted hive upgraded", "hive_id", id, "by", username, "cluster", cluster.ID)
-	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard", username)
+
+	// kubectl is attempt one; the heartbeat fallback below is the ONLY path
+	// that works for a cluster the hub cannot route to (the spoke pulls, the
+	// hub answers). rolloutRestartHive bounds the attempt and honours the
+	// unreachable-cluster cache, so a firewalled cluster costs seconds here,
+	// not a gateway timeout.
+	delivered := s.rolloutRestartHive(cluster, id)
+
 	s.mu.Lock()
+	var latestSHA string
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
 			branch := s.registry.Hives[i].GitBranch
 			if branch == "" {
 				branch = "v2"
 			}
-			latestSHA := getLatestSHAForBranch(branch)
+			latestSHA = getLatestSHAForBranch(branch)
 			s.registry.Hives[i].Upgrading = true
 			s.registry.Hives[i].UpgradeTarget = latestSHA
 			s.registry.Hives[i].UpgradeStartedAt = time.Now()
 			break
 		}
 	}
+	if !delivered && latestSHA != "" {
+		// Arm the durable fallback: the spoke self-restarts onto the target
+		// when its next heartbeat carries UpgradeTo. The stale-upgrade sweep
+		// re-arms this if the spoke misses it, so the request cannot be lost.
+		if s.heartbeatUpgrade == nil {
+			s.heartbeatUpgrade = make(map[string]string)
+		}
+		s.heartbeatUpgrade[id] = latestSHA
+	}
 	s.mu.Unlock()
+
+	if !delivered && latestSHA == "" {
+		// kubectl failed AND no build target is known for the branch — there is
+		// nothing a heartbeat could deliver. This is the only remaining
+		// hard-failure case.
+		s.logger.Warn("upgrade failed: cluster unreachable and no build target known",
+			"hive", id, "cluster", cluster.ID)
+		http.Error(w, `{"error":"upgrade failed — cluster unreachable and no build target known"}`, http.StatusBadGateway)
+		return
+	}
+
+	mode := "kubectl"
+	if !delivered {
+		mode = "heartbeat"
+	}
+	s.logger.Info("audit: hosted hive upgrade requested",
+		"hive_id", id, "by", username, "cluster", cluster.ID, "mode", mode)
+	s.recordTimeline(id, TimelineUpgradeStarted, "upgrade requested from the hub dashboard ("+mode+")", username)
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status":"upgrading"}`))
+	w.Write([]byte(`{"status":"upgrading","mode":"` + mode + `"}`))
 }
 
 // branchToTag converts a git branch name into a valid Docker image tag.
@@ -4021,6 +4056,9 @@ func (s *HubServer) markClusterUnreachable(clusterID string) {
 	}
 	s.clusterUnreachableMu.Lock()
 	defer s.clusterUnreachableMu.Unlock()
+	if s.clusterUnreachableUntil == nil {
+		s.clusterUnreachableUntil = make(map[string]time.Time)
+	}
 	s.clusterUnreachableUntil[clusterID] = time.Now().Add(clusterUnreachableTTL)
 }
 
@@ -7594,6 +7632,18 @@ const dashboardHTML = `<!DOCTYPE html>
     function ghAppIsOperatorSide(state) {
       return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
     }
+    /* Popover label for a user-side App issue, from the classified state.
+       The blanket "permissions insufficient" wording is reserved for genuine
+       permission states (and for unclassified reports from older spokes);
+       the other states name their real cause so the hover stops sending an
+       admin to approve permissions when the installation_id is what's wrong. */
+    function ghAppPermIssueLabel(state) {
+      var s = String(state || '').trim();
+      if (s === 'wrong-installation') return 'wrong installation (installation_id points at another account)';
+      if (s === 'write-forbidden') return 'write forbidden (repo not in the App installation)';
+      if (s === 'no-app-assigned') return 'no App assigned yet';
+      return 'permissions insufficient';
+    }
 
     /* Labels for each journey stage, matching JourneyStage.String() on the hub. */
     var JOURNEY_STAGE_LABELS = {
@@ -7849,9 +7899,11 @@ const dashboardHTML = `<!DOCTYPE html>
       var st = hp.status || 'unknown';
       /* githubAppRequired means the spoke wants the App but it is not usable:
          with a perm issue it is installed-but-insufficient, without one it is
-         not installed at all. healthBadge() forces "degraded" in both cases. */
-      var appMissing = !!h.githubAppRequired && !h.githubAppPermIssue;
-      var degraded = !!h.githubAppRequired || st === 'degraded' || st === 'critical';
+         not installed at all. healthBadge() forces "degraded" in both cases —
+         EXCEPT on an unassigned placeholder, where having no usable App is the
+         pool's designed state (mirrored here so dot and chip never disagree). */
+      var appMissing = !isPlaceholderHive(h) && !!h.githubAppRequired && !h.githubAppPermIssue;
+      var degraded = (!isPlaceholderHive(h) && !!h.githubAppRequired) || st === 'degraded' || st === 'critical';
       /* An offline hive has no live reading at all, so it is not "OK" even if
          its last stored health snapshot said ok. */
       var ok = !degraded && st === 'ok' && !!h.online;
@@ -8123,7 +8175,15 @@ const dashboardHTML = `<!DOCTYPE html>
         if (ck.detail) line += ': ' + ck.detail;
         lines.push(line);
       }
-      if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
+      if (isPlaceholderHive(h)) {
+        /* An UNASSIGNED pool slot has no GitHub auth BY DESIGN — credentials
+           only arrive when a project is claimed — so none of the App-degraded
+           rules below may fire here. The hub has already reclassified the
+           auth-class checks (sanitizePlaceholderRows, placeholder_health.go);
+           this line says WHY the row is green instead of claiming an App. */
+        lines.push('– Unassigned — GitHub auth not configured by design');
+      }
+      else if (h.githubAppRequired && ghAppIsOperatorSide(h.githubAppState)) {
         /* Operator-side: the key we distribute has not landed, or is for the
            wrong App. Still degraded — the hive genuinely cannot work — but the
            hover must name the real cause so an admin does not chase the user
@@ -8133,9 +8193,9 @@ const dashboardHTML = `<!DOCTYPE html>
           : '⚠ GitHub App: credentials not yet delivered by the hub (operator action)');
         st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel;
       }
-      else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
+      else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: ' + ghAppPermIssueLabel(h.githubAppState)); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
-      else if (!h.githubAppRequired) { lines.push('✓ GitHub App installed'); }
+      else if (!h.githubAppRequired) { lines.push('✓ GitHub App: not in use'); }
       if (!checks.length) lines.push('No check data');
       // Heartbeat freshness — so a reading that is minutes old isn't mistaken
       // for current health (the source of "stuck Degraded" reports: the last
@@ -8263,7 +8323,9 @@ const dashboardHTML = `<!DOCTYPE html>
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
       'acmm-unset':      'ACMM level unset',
-      'no-agents':       'No agents running'
+      'no-agents':       'No agents running',
+      'duplicate-spoke': 'Duplicate spoke instances',
+      'status-flipping': 'Status flipping'
     };
 
     function driftKindLabel(kind) { return DRIFT_KIND_LABELS[kind] || kind || 'Unknown'; }
@@ -11393,6 +11455,12 @@ const dashboardHTML = `<!DOCTYPE html>
            that App's installation_id after its identity is moved to the fleet
            App, so every field reads correct while freshly minted tokens 404. */
         if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Reset App</div>');
+        /* Restart Spoke rolling-restarts every instance reporting as this
+           hive. The case it exists for: two instances alternating as one hive
+           (conflictingReporters drift) on a cluster the hub cannot reach —
+           the heartbeat is the only channel, and a restart sheds the stale
+           instance while costing the healthy one a single rolling restart. */
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Restart Spoke</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
@@ -12322,6 +12390,22 @@ const dashboardHTML = `<!DOCTYPE html>
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         alert('Reset failed: ' + e);
+      }
+    }
+
+    /* Restart Spoke: arms a rolling restart delivered to every spoke instance
+       reporting as this hive on their next heartbeats (bounded window). Used
+       to shed a stale duplicate instance the hub cannot delete directly. */
+    async function restartHiveSpoke(hiveId, hiveName) {
+      if (!confirm('Restart the spoke for "' + hiveName + '"?\n\nEvery instance reporting as this hive rolling-restarts on its next heartbeat (up to 5 minutes). The image and configuration are unchanged.')) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/restart-spoke', {method: 'POST'});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { alert('Restart failed: ' + (data.error || resp.status)); return; }
+        alert('Spoke restart armed for "' + hiveName + '".\n\nInstances restart on their next heartbeat within the 5-minute window.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        alert('Restart failed: ' + e);
       }
     }
 

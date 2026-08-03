@@ -622,7 +622,38 @@ const (
 	// reason string. A hive with everything failing should not produce a
 	// paragraph; the count still reflects the true total.
 	maxNamedFailingChecks = 3
+
+	// healthCheckGitHubAuth is the spoke's GitHub credential check
+	// (pkg/dashboard/server.go builds it in both HealthSummary and
+	// handleHealthDeep). It fails whenever no App or token is configured.
+	healthCheckGitHubAuth = "github_auth"
+	// healthCheckGitHubAppPrefix catches any GitHub-App-scoped check name a
+	// spoke version may report (e.g. a future github_app_key). Every check in
+	// that family verifies credentials a placeholder cannot have yet.
+	healthCheckGitHubAppPrefix = "github_app"
 )
+
+// isAuthClassHealthCheck reports whether a named health check verifies GitHub
+// credentials (App or token) rather than the spoke process itself. The split
+// matters for placeholders: an UNASSIGNED pool slot has no GitHub auth BY
+// DESIGN — credentials only arrive when a project is claimed — so an auth
+// check failing on a placeholder is the pool working as designed, not a fault.
+func isAuthClassHealthCheck(name string) bool {
+	return name == healthCheckGitHubAuth ||
+		strings.HasPrefix(name, healthCheckGitHubAppPrefix)
+}
+
+// withoutAuthClassChecks filters auth-class names out of a failing-checks list.
+// Used only for placeholders; a claimed hive's list passes through untouched.
+func withoutAuthClassChecks(names []string) []string {
+	kept := names[:0:0]
+	for _, n := range names {
+		if !isAuthClassHealthCheck(n) {
+			kept = append(kept, n)
+		}
+	}
+	return kept
+}
 
 // fleetMedianTokens returns the median TotalTokens24h across claimed, online
 // hives, and how many hives contributed. Placeholders are excluded — an idle
@@ -756,7 +787,18 @@ func evaluateAlerts(state *alertState, hives []alertHive, driftAlerts []Alert, n
 		}
 
 		// --- Rule: a named health check is failing. ---
-		if failing := failingHealthChecks(h.Health); len(failing) > 0 {
+		// Placeholders keep this rule — drift.go deliberately treats health as
+		// NOT claimed-only, because a pool slot runs a real spoke process that
+		// can genuinely be degraded — but auth-class checks are exempt for
+		// them, mirroring drift's rule 2 ("never flag a placeholder for a
+		// claimed-hive concern"): an unassigned slot has no GitHub auth by
+		// design, and every live placeholder alerting github_auth was burying
+		// a real alert under pool noise. A claimed hive's list is untouched.
+		failing := failingHealthChecks(h.Health)
+		if h.IsPlaceholder {
+			failing = withoutAuthClassChecks(failing)
+		}
+		if len(failing) > 0 {
 			shown := failing
 			suffix := ""
 			if len(shown) > maxNamedFailingChecks {

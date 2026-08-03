@@ -39,6 +39,11 @@ const BASE_RECONNECT_DELAY_MS = 1000;
 const TOKEN_REFRESH_MARGIN_MS = 300000;
 const MAX_TASK_DURATION_MS = 1800000;
 const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
+// After the hub sends an explicit task_unavailable negative-ack (no admissible
+// work, a disabled tier, a concurrency limit, or a token-mint failure — see
+// kubestellar/hive#2436), wait before re-asking so we neither hang forever
+// (the old silent-nil behaviour) nor busy-loop the hub.
+const TASK_UNAVAILABLE_RETRY_MS = 30000;
 
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
@@ -778,6 +783,20 @@ function handleMessage(data) {
       taskAssignedAt = 0;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       send({ type: 'ready', seq: nextSeq() });
+      break;
+
+    case 'task_unavailable':
+      // #2436 finding 1/2/3: the hub explicitly declined to assign work and told
+      // us why (reason: no_work / token_mint_failed / tier_disabled /
+      // concurrency_limit). Surface the reason instead of hanging silently, then
+      // re-ask after a delay so a transient condition (a freed slot, a fixed
+      // installation permission) recovers on its own.
+      console.log(`No task assigned — reason: ${msg.reason || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
+      setTimeout(() => {
+        if (ws && ws.readyState === WebSocket.OPEN && !currentTask) {
+          send({ type: 'ready', seq: nextSeq() });
+        }
+      }, TASK_UNAVAILABLE_RETRY_MS);
       break;
 
     case 'ping':

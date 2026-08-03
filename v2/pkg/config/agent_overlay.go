@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,15 @@ func (c *Config) MergeAgentOverrides(overlays map[string]AgentConfig) {
 	}
 	for name, agent := range overlays {
 		if c.IsAgentRemoved(name) {
+			// Observability (#2439): a tombstoned agent still had a per-agent
+			// overlay file on disk (it is a key in overlays) — the stale-file
+			// resurrection vector — and the tombstone guard just won over it.
+			// Log at INFO once per skip: this line firing proves the guard held.
+			slog.Default().Info("merge: skipped tombstoned agent",
+				"hive_id", c.HiveID,
+				"agent", name,
+				"had_overlay_file", true,
+			)
 			continue
 		}
 		agent.Managed = true

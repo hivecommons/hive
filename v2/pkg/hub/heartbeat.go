@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 )
@@ -37,6 +38,28 @@ var lastHeartbeatSuccessUnix atomic.Int64
 // heartbeat freshness at all — otherwise every hub-less hive would fail
 // liveness forever. Set once at startup; read from the HTTP handler.
 var heartbeatLoopStarted atomic.Bool
+
+// heartbeatLoopActive is the process-wide "a heartbeat loop is RUNNING right
+// now" guard — deliberately separate from heartbeatLoopStarted, which records
+// "a loop was ever launched" and feeds /api/livez via HeartbeatEnabled (a
+// semantics that must not change: liveness keeps gating on heartbeat freshness
+// even while a duplicate start is being refused).
+//
+// WHY THIS EXISTS (#2453): a production spoke was observed running TWO
+// concurrent heartbeat loops in one process — two independent 2-minute
+// cadences from one pod, alternating a fresh and a stale auth snapshot on the
+// wire, flipping the hub registry every beat. The code has exactly one
+// StartHeartbeat call site, so the second loop's origin is unknown. This CAS
+// makes a second concurrent loop impossible no matter what path tries to
+// start one: the first caller wins, every later caller is refused and returns
+// cleanly. The refusal logs the refused caller's FULL STACK at ERROR, so the
+// next time the trigger fires in production the log names it — the guard is
+// both the fix and the instrument.
+//
+// Cleared (via defer) when a loop exits on context cancellation, so a
+// deliberate stop-then-restart stays possible; only CONCURRENT duplication is
+// refused.
+var heartbeatLoopActive atomic.Bool
 
 // lastHeartbeatAttemptUnix holds the unix-seconds timestamp of the most
 // recent heartbeat the loop *tried* to send, regardless of whether the hub
@@ -316,6 +339,13 @@ type HeartbeatPayload struct {
 	// but restarted 35 times — is visible in My Hives instead of looking
 	// healthy. A short uptime that keeps resetting is the tell.
 	StartedAt string `json:"started_at,omitempty"`
+	// Reporter is the pod name (os.Hostname) of the spoke PROCESS that sent
+	// this beat. It exists because two spoke instances can report as the same
+	// hive_id — a stale ReplicaSet pod surviving a rollout, or an orphaned
+	// duplicate deployment — and their alternating states made the dashboard
+	// flip every beat with nothing naming the culprit. Empty means the spoke
+	// is too old to report it: UNKNOWN, never evidence of anything.
+	Reporter string `json:"reporter,omitempty"`
 	// AdvisoryLastPostedAt is when this spoke last SUCCESSFULLY posted/updated
 	// its advisory-digest issue (RFC3339). It is the mirror of StartedAt for the
 	// advisory path: the hub renders a "stale advisory" pill so a hive that
@@ -514,6 +544,10 @@ type StatusCollector func() *HeartbeatPayload
 
 // UpgradeCallback is called when the hub instructs this hive to upgrade
 // to a specific SHA via the heartbeat response.
+// RestartSpokeCallback handles a hub-requested rolling restart of this spoke
+// (HeartbeatResponse.RestartSpoke). The callback owns the uptime guard.
+type RestartSpokeCallback func()
+
 type UpgradeCallback func(targetSHA string)
 
 func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, interval time.Duration, logger *slog.Logger, callbacks ...any) {
@@ -521,6 +555,21 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		logger.Info("hub heartbeat disabled (no HIVE_HUB_URL)")
 		return
 	}
+	// Durable single-loop guard (#2453): exactly one heartbeat loop may run in
+	// this process, ever, no matter which path calls StartHeartbeat. A refused
+	// duplicate returns cleanly — the already-running loop keeps beating — and
+	// logs the refused caller's full stack so a live occurrence names the
+	// trigger instead of just alternating states on the wire.
+	if !heartbeatLoopActive.CompareAndSwap(false, true) {
+		logger.Error("duplicate StartHeartbeat REFUSED: a heartbeat loop is already running in this process (#2453) — the stack below names the caller that tried to start a second one",
+			"hub_url", hubURL,
+			"stack", string(debug.Stack()),
+		)
+		return
+	}
+	// Release only when THIS loop exits (context cancelled), so a deliberate
+	// stop-then-restart works while concurrent duplication stays impossible.
+	defer heartbeatLoopActive.Store(false)
 	// Mark the loop as active before the first send so /api/livez can tell
 	// "hub-connected, awaiting first beat" (healthy during startup grace)
 	// apart from "no hub configured" (never gated on heartbeat freshness).
@@ -533,6 +582,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onAuthorizedUsers AuthorizedUsersCallback
 	var onProjectConfig ProjectConfigCallback
 	var onGatewayConfig GatewayConfigCallback
+	var onRestartSpoke RestartSpokeCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -551,6 +601,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onProjectConfig = fn
 		case GatewayConfigCallback:
 			onGatewayConfig = fn
+		case RestartSpokeCallback:
+			onRestartSpoke = fn
 		}
 	}
 
@@ -594,6 +646,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp.PendingGateway != nil && onGatewayConfig != nil {
 			onGatewayConfig(resp.PendingGateway)
 		}
+		if resp.RestartSpoke && onRestartSpoke != nil {
+			onRestartSpoke()
+		}
 	}
 
 	processHeartbeatResponse(sendHeartbeat(ctx, hubURL, collect, logger))
@@ -612,10 +667,19 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	}
 }
 
+// waitForReady's knobs are vars (not consts) for the same reason as
+// taskPushInterval: tests need a StartHeartbeat that reaches its send loop in
+// milliseconds, not after a 3-minute readiness wait. Production keeps the
+// defaults.
+var (
+	waitForReadyPollInterval = 5 * time.Second
+	waitForReadyMaxWait      = 3 * time.Minute
+)
+
 func waitForReady(ctx context.Context, logger *slog.Logger) {
 	const healthURL = "http://localhost:3001/api/health"
-	const pollInterval = 5 * time.Second
-	const maxWait = 3 * time.Minute
+	pollInterval := waitForReadyPollInterval
+	maxWait := waitForReadyMaxWait
 	deadline := time.After(maxWait)
 	logger.Info("heartbeat waiting for dashboard readiness")
 	for {
@@ -991,7 +1055,16 @@ type HeartbeatResponse struct {
 	// ghcr.io/kubestellar/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
 	// in-cluster RBAC (hive-self-upgrade role) to patch its own deployment.
-	SwitchToTag     string                    `json:"switch_to_tag,omitempty"`
+	SwitchToTag string `json:"switch_to_tag,omitempty"`
+	// RestartSpoke instructs the spoke to rolling-restart its own deployment
+	// (RolloutRestartSelf) without changing the image. It is the remote kill
+	// switch for a duplicate spoke instance on a cluster the hub cannot reach:
+	// an upgrade can't help (the instance is already at the target SHA), only
+	// a restart sheds it. Delivered to every beat inside a bounded arm window
+	// so ALL instances reporting as this hive receive it; the spoke's own
+	// uptime guard keeps a freshly restarted process from acting on the same
+	// window twice.
+	RestartSpoke    bool                      `json:"restart_spoke,omitempty"`
 	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
 	IsPublic        *bool                     `json:"is_public,omitempty"`

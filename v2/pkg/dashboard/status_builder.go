@@ -1258,6 +1258,17 @@ func collectSystemResources() *SystemResources {
 			}
 			cpuFraction := deltaUsec / (deltaSec * microsecondsPerSec * numCPUs)
 			res.CpuPct = roundTo(cpuFraction*pctMultiplierSysRes, 1)
+			// Clamp: on a noisy/oversubscribed host (e.g. a shared CI
+			// runner), scheduler bursts within the short cpuSampleDelayMs
+			// window can push the measured delta a hair past the
+			// theoretical 100% ceiling (observed: 100.1). CpuPct is a
+			// display/reporting value, so clamp rather than let a
+			// momentary sampling artifact read as over-100% or negative.
+			if res.CpuPct > pctMultiplierSysRes {
+				res.CpuPct = pctMultiplierSysRes
+			} else if res.CpuPct < 0 {
+				res.CpuPct = 0
+			}
 		}
 	}
 

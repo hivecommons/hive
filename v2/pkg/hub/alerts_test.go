@@ -406,6 +406,84 @@ func TestEvaluateAlerts_HealthCheckFailingRule(t *testing.T) {
 	}
 }
 
+func TestEvaluateAlerts_PlaceholderAuthCheckSuppressed(t *testing.T) {
+	// An UNCLAIMED placeholder has no GitHub auth by design, so a failing
+	// github_auth (or any github_app*) check must produce NO alert — every
+	// available-* pool slot alerting github_auth buries the real alerts.
+	h := baseHive("p1")
+	h.IsPlaceholder = true
+	h.Health = map[string]any{"checks": []any{
+		map[string]any{"name": "github_auth", "status": "fail", "detail": "no GitHub auth configured"},
+		map[string]any{"name": "github_app_key", "status": "fail"},
+	}}
+	got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	if a, ok := findAlert(got.Alerts, "p1", AlertTypeHealthCheckFailing); ok {
+		t.Fatalf("placeholder with only auth-class checks failing must not alert, got %+v", a)
+	}
+}
+
+func TestEvaluateAlerts_ClaimedHiveAuthCheckStillAlerts(t *testing.T) {
+	// The placeholder exemption must not leak: the SAME failing github_auth
+	// check on a claimed hive is a real fault and must keep alerting.
+	h := baseHive("h1")
+	h.Health = map[string]any{"checks": []any{
+		map[string]any{"name": "github_auth", "status": "fail", "detail": "token expired"},
+	}}
+	got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	a, ok := findAlert(got.Alerts, "h1", AlertTypeHealthCheckFailing)
+	if !ok {
+		t.Fatalf("claimed hive with failing github_auth must alert, got %+v", got.Alerts)
+	}
+	if !contains(a.Reason, "github_auth") {
+		t.Fatalf("reason %q must name the failing check", a.Reason)
+	}
+}
+
+func TestEvaluateAlerts_ClaimedHiveNonAuthCheckStillAlerts(t *testing.T) {
+	// A claimed hive's non-auth checks (the "agents" family) are entirely
+	// outside the exemption and must keep alerting.
+	h := baseHive("h1")
+	h.Health = map[string]any{"checks": []any{
+		map[string]any{"name": "agents", "status": "fail", "detail": "2 agents down"},
+	}}
+	got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	a, ok := findAlert(got.Alerts, "h1", AlertTypeHealthCheckFailing)
+	if !ok {
+		t.Fatalf("claimed hive with failing agents check must alert, got %+v", got.Alerts)
+	}
+	if !contains(a.Reason, "agents") {
+		t.Fatalf("reason %q must name the failing check", a.Reason)
+	}
+}
+
+func TestEvaluateAlerts_PlaceholderNonAuthCheckStillAlerts(t *testing.T) {
+	// Only auth-class checks are placeholder-exempt. Drift deliberately treats
+	// health as NOT claimed-only (a pool slot runs a real spoke process that
+	// can genuinely be degraded), so a placeholder's non-auth failure must
+	// still alert — and the auth-class name failing alongside it must be
+	// filtered out of both the count and the reason.
+	h := baseHive("p1")
+	h.IsPlaceholder = true
+	h.Health = map[string]any{"checks": []any{
+		map[string]any{"name": "github_auth", "status": "fail"},
+		map[string]any{"name": "queue", "status": "fail", "detail": "queue wedged"},
+	}}
+	got := evaluateAlerts(newAlertState(), []alertHive{h}, nil, fixedNow)
+	a, ok := findAlert(got.Alerts, "p1", AlertTypeHealthCheckFailing)
+	if !ok {
+		t.Fatalf("placeholder with a failing non-auth check must alert, got %+v", got.Alerts)
+	}
+	if !contains(a.Reason, "queue") {
+		t.Fatalf("reason %q must name the non-auth failing check", a.Reason)
+	}
+	if contains(a.Reason, "github_auth") {
+		t.Fatalf("reason %q must not name the exempt auth check", a.Reason)
+	}
+	if !contains(a.Reason, "1 health check failing") {
+		t.Fatalf("reason %q must count only the non-exempt check", a.Reason)
+	}
+}
+
 func TestEvaluateAlerts_HealthCheckReasonTruncatesButCountsAll(t *testing.T) {
 	var checks []any
 	total := maxNamedFailingChecks + 4
