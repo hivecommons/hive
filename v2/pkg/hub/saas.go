@@ -8165,7 +8165,7 @@ const dashboardHTML = `<!DOCTYPE html>
       }
       else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
-      else if (!h.githubAppRequired) { lines.push('✓ GitHub App installed'); }
+      else if (!h.githubAppRequired) { lines.push('✓ GitHub App: not in use'); }
       if (!checks.length) lines.push('No check data');
       // Heartbeat freshness — so a reading that is minutes old isn't mistaken
       // for current health (the source of "stuck Degraded" reports: the last
