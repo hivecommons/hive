@@ -53,6 +53,10 @@ type ContributorProfile struct {
 	AvatarURL          string                `json:"avatar_url,omitempty"`
 	RegisteredAt       string                `json:"registered_at"`
 	TasksCompleted     int                   `json:"total_tasks_completed"`
+	// TasksWithPR counts only completions that reported a pull request.
+	// Auto-promotion reads this rather than TasksCompleted, so write access is
+	// never granted for completions where nothing was shown to have shipped.
+	TasksWithPR        int                   `json:"total_tasks_completed_with_pr"`
 	TasksFailed        int                   `json:"total_tasks_failed"`
 	LastActive         string                `json:"last_active,omitempty"`
 	LastCompletedTask  *WSTaskAssign         `json:"last_completed_task,omitempty"`

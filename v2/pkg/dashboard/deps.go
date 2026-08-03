@@ -48,6 +48,14 @@ type Dependencies struct {
 	IntegratedLifecycleFunc       func(context.Context, IntegratedLifecycleRequest, string) (map[string]any, error)
 	IntegratedSetupTokenFunc      func() (string, error)
 	IntegratedSetupAuthorizerFunc func(string) (string, error)
+	// ResolveAppKeyFileFunc resolves which App private key the process would
+	// actually sign with, given the configured key_file and app_id — the SAME
+	// resolution the boot and heartbeat-apply paths use (config value, then
+	// $GH_APP_KEY_FILE, then the per-app-id delivered file, then the generic
+	// fallbacks). Hub-delivered keys deliberately leave key_file empty, so any
+	// handler that gates on the raw config value alone dead-ends on exactly the
+	// fleet-standard hosted-spoke configuration (#2459).
+	ResolveAppKeyFileFunc func(configured string, appID int64) string
 }
 
 type NousState struct {

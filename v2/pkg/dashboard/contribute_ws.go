@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -167,8 +168,25 @@ type ContributeWSHub struct {
 	// for stats/audit and to feed #2356 duplicate detection (a known PR URL per
 	// issue). Empty means the completion reported no PR.
 	completedTaskPRURL map[string]string
-	completedMu        sync.Mutex
-	selectMu           sync.Mutex
+	// failedTasks records, per "repo#number", the time of the most recent
+	// task_failed. It backs the SHORT failure cooldown (failedTaskCooldownMinutes)
+	// that breaks the queue livelock in #2435: without it a just-failed issue is
+	// immediately re-admissible and, sitting at the same position in the same
+	// deterministic scan, is handed straight back out ahead of every other
+	// admissible issue. Kept separate from completedTasks so a failure never masks
+	// as a completion in stats/audit. Guarded by completedMu (shared with the
+	// completed-task ledger — they are read/written from the same paths).
+	failedTasks map[string]time.Time
+	// consecutiveFailures counts back-to-back task_failed reports per
+	// "repo#number", reset to zero on completion. Once it reaches
+	// consecutiveFailureQuarantineThreshold the issue is QUARANTINED for the
+	// longer quarantineCooldownHours window (#2435 remedy 2): this distinguishes
+	// "flaky once" from "nobody can do this", which a flat short cooldown cannot.
+	// A permanent failure (msg.Permanent) counts as permanentFailureWeight toward
+	// the threshold. Guarded by completedMu.
+	consecutiveFailures map[string]int
+	completedMu         sync.Mutex
+	selectMu            sync.Mutex
 }
 
 // completedTaskCooldownHours is the cooldown applied when a task completes
@@ -187,6 +205,41 @@ const completedTaskCooldownHours = 168
 // the same day.
 const completedNoPRCooldownHours = 4
 
+// failedTaskCooldownMinutes is the SHORT cooldown applied to an issue when a
+// contributor reports task_failed (#2435). It is deliberately far shorter than
+// the completion cooldowns above: a failure is often purely environmental
+// (expired token, model outage, transient network) and the issue is likely
+// still perfectly workable, so we must not park it for long. This short window
+// is only large enough to break the tight reject/re-offer livelock — where a
+// just-failed issue at the head of the deterministic scan order is handed
+// straight back out ahead of the whole rest of the queue — while still letting a
+// legitimate retry happen within a few minutes.
+const failedTaskCooldownMinutes = 10
+
+// consecutiveFailureQuarantineThreshold is how many consecutive failures an
+// issue may accumulate (weighted — see permanentFailureWeight) before it is
+// QUARANTINED for the longer quarantineCooldownHours window (#2435 remedy 2).
+// A poison issue that nobody can complete burns at most this many assignments
+// before it is parked for hours instead of minutes, so it stops starving the
+// queue. The counter resets to zero on the issue's next completion.
+const consecutiveFailureQuarantineThreshold = 3
+
+// quarantineCooldownHours is the LONGER cooldown applied once an issue crosses
+// consecutiveFailureQuarantineThreshold. It parks a reliably-failing issue for
+// hours (long enough to stop it dominating the queue) without locking it as long
+// as a genuine week-long completion cooldown — the issue may become workable
+// again (e.g. a dependency merges) and should re-enter circulation the same day.
+const quarantineCooldownHours = 6
+
+// permanentFailureWeight is how much a permanent failure (msg.Permanent — the
+// relay exhausted its per-task CLI-restart budget and will not retry, see
+// bin/contributor-relay.sh) counts toward consecutiveFailureQuarantineThreshold.
+// A permanent failure is a strong "nobody here can do this" signal, so it
+// advances the quarantine counter faster than an ordinary (possibly transient)
+// failure. With a weight of 3 and a threshold of 3, a single permanent failure
+// quarantines the issue immediately.
+const permanentFailureWeight = 3
+
 func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	if logger == nil {
 		logger = slog.Default()
@@ -196,10 +249,13 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		completedTasks:        make(map[string]time.Time),
 		completedTaskCooldown: make(map[string]time.Duration),
 		completedTaskPRURL:    make(map[string]string),
+		failedTasks:           make(map[string]time.Time),
+		consecutiveFailures:   make(map[string]int),
 		logger:                logger,
 		server:                server,
 	}
 	hub.loadCompletedTasks()
+	hub.loadFailedTasks()
 	hub.loadActivity()
 	go hub.cleanupLoop()
 	return hub
@@ -289,6 +345,74 @@ type completedTaskRecord struct {
 	CompletedAt   time.Time `json:"completed_at"`
 	CooldownHours float64   `json:"cooldown_hours,omitempty"`
 	PRURL         string    `json:"pr_url,omitempty"`
+}
+
+const failedTasksFile = "/data/contributors/failed-tasks.json"
+
+// failedTaskRecord is the on-disk shape of one failed-task entry (#2435). It
+// preserves the last-failure time and the running consecutive-failure count so a
+// hub restart does not reset a quarantine — otherwise a bounce would re-admit a
+// poison issue that had already earned its longer parking window.
+type failedTaskRecord struct {
+	FailedAt            time.Time `json:"failed_at"`
+	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
+}
+
+func (h *ContributeWSHub) loadFailedTasks() {
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	data, err := os.ReadFile(failedTasksFile)
+	if err != nil {
+		return
+	}
+	records := make(map[string]failedTaskRecord)
+	if json.Unmarshal(data, &records) != nil {
+		return
+	}
+	for k, rec := range records {
+		if rec.FailedAt.IsZero() {
+			continue
+		}
+		// Drop entries already past the longest failure-side window we could have
+		// applied (the quarantine cooldown) so we never resurrect a stale park.
+		if time.Since(rec.FailedAt) >= quarantineCooldownHours*time.Hour {
+			continue
+		}
+		if h.failedTasks != nil {
+			h.failedTasks[k] = rec.FailedAt
+		}
+		if h.consecutiveFailures != nil && rec.ConsecutiveFailures > 0 {
+			h.consecutiveFailures[k] = rec.ConsecutiveFailures
+		}
+	}
+	h.logger.Info("[contribute-ws] loaded failed tasks", "count", len(h.failedTasks))
+}
+
+func (h *ContributeWSHub) saveFailedTasks() {
+	h.completedMu.Lock()
+	saved := make(map[string]failedTaskRecord, len(h.failedTasks))
+	for k, t := range h.failedTasks {
+		rec := failedTaskRecord{FailedAt: t}
+		if h.consecutiveFailures != nil {
+			rec.ConsecutiveFailures = h.consecutiveFailures[k]
+		}
+		saved[k] = rec
+	}
+	h.completedMu.Unlock()
+	data, err := json.Marshal(saved)
+	if err != nil {
+		h.logger.Warn("[contribute-ws] failed tasks marshal failed", "error", err)
+		return
+	}
+	os.MkdirAll("/data/contributors", 0o755)
+	tmpPath := failedTasksFile + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		h.logger.Warn("[contribute-ws] failed tasks write failed", "error", err)
+		return
+	}
+	if err := os.Rename(tmpPath, failedTasksFile); err != nil {
+		h.logger.Warn("[contribute-ws] failed tasks rename failed", "error", err)
+	}
 }
 
 func (h *ContributeWSHub) loadCompletedTasks() {
@@ -395,8 +519,28 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 	if h.completedTaskPRURL != nil {
 		h.completedTaskPRURL[key] = prURL
 	}
+	// A completion clears any failure history for the issue (#2435): the
+	// consecutive-failure counter resets so a flaky-then-fixed issue does not
+	// carry a stale quarantine, and the short failure cooldown is superseded by
+	// the (longer) completion cooldown recorded just above.
+	failureCleared := false
+	if h.failedTasks != nil {
+		if _, ok := h.failedTasks[key]; ok {
+			delete(h.failedTasks, key)
+			failureCleared = true
+		}
+	}
+	if h.consecutiveFailures != nil {
+		if _, ok := h.consecutiveFailures[key]; ok {
+			delete(h.consecutiveFailures, key)
+			failureCleared = true
+		}
+	}
 	h.completedMu.Unlock()
 	h.saveCompletedTasks()
+	if failureCleared {
+		h.saveFailedTasks()
+	}
 }
 
 // cooldownForLocked returns the cooldown duration to apply to key. Callers must
@@ -427,6 +571,86 @@ func (h *ContributeWSHub) isTaskInCooldown(repo string, number int) bool {
 		return false
 	}
 	return true
+}
+
+// recordTaskFailure books a task_failed against an issue (#2435). It stamps the
+// short failure cooldown and advances the issue's consecutive-failure counter
+// (a permanent failure advances it by permanentFailureWeight rather than one),
+// so a reliably-failing issue crosses consecutiveFailureQuarantineThreshold and
+// earns the longer quarantine window instead of being handed straight back out.
+// The counter is reset on completion (see markTaskCompleted).
+func (h *ContributeWSHub) recordTaskFailure(repo string, number int, permanent bool) {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	weight := 1
+	if permanent {
+		weight = permanentFailureWeight
+	}
+	h.completedMu.Lock()
+	h.failedTasks[key] = time.Now()
+	h.consecutiveFailures[key] += weight
+	h.completedMu.Unlock()
+	h.saveFailedTasks()
+}
+
+// failureCooldownForLocked returns how long, from the last failure time, an
+// issue should be excluded from selection. It is the SHORT
+// failedTaskCooldownMinutes normally, or the LONGER quarantineCooldownHours once
+// the issue's consecutive-failure count has reached
+// consecutiveFailureQuarantineThreshold. Callers must hold completedMu.
+func (h *ContributeWSHub) failureCooldownForLocked(key string) time.Duration {
+	if h.consecutiveFailures[key] >= consecutiveFailureQuarantineThreshold {
+		return quarantineCooldownHours * time.Hour
+	}
+	return failedTaskCooldownMinutes * time.Minute
+}
+
+// isTaskInFailureCooldown reports whether an issue is currently excluded because
+// of a recent failure — either the short post-failure cooldown or the longer
+// quarantine (#2435). It self-heals in two stages so the failure-aware selection
+// backstop (recentFailureCount) still has something to work with just after the
+// short window lapses:
+//   - Once the APPLICABLE window (short cooldown, or quarantine) has elapsed the
+//     issue is admissible again → returns false.
+//   - The consecutive-failure COUNT is only cleared once the full quarantine
+//     window has elapsed. So an issue whose short cooldown just expired is
+//     admissible but still carries its failure history, letting selectTask
+//     deprioritise it behind never-failed peers rather than instantly restoring
+//     it to the head of the queue. The count also resets on completion.
+func (h *ContributeWSHub) isTaskInFailureCooldown(repo string, number int) bool {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	t, ok := h.failedTasks[key]
+	if !ok {
+		return false
+	}
+	// Keep the failure ledger for the full quarantine window (the longest window
+	// we could apply), then clear timestamp AND count together so stale history
+	// never lingers indefinitely. Retaining the timestamp past the short cooldown
+	// is what preserves the consecutive-failure count for the selection backstop.
+	if time.Since(t) > quarantineCooldownHours*time.Hour {
+		delete(h.failedTasks, key)
+		delete(h.consecutiveFailures, key)
+		return false
+	}
+	// Inside the quarantine window: excluded only while within the currently
+	// applicable cooldown (short cooldown, or the full quarantine once the count
+	// crosses the threshold). Past that, the issue is admissible again but its
+	// count remains on record — recentFailureCount reads it to deprioritise the
+	// issue behind never-failed peers.
+	return time.Since(t) <= h.failureCooldownForLocked(key)
+}
+
+// recentFailureCount returns the number of failures currently on record for an
+// issue (0 when none/expired). selectTask uses it as a stable tie-break so that,
+// among equally-admissible candidates, those without recent failures are offered
+// before those that have failed recently — guaranteeing forward progress even if
+// the failure cooldown has just elapsed (#2435 remedy 3 backstop).
+func (h *ContributeWSHub) recentFailureCount(repo string, number int) int {
+	key := fmt.Sprintf("%s#%d", repo, number)
+	h.completedMu.Lock()
+	defer h.completedMu.Unlock()
+	return h.consecutiveFailures[key]
 }
 
 func (h *ContributeWSHub) nextSeq() int {
@@ -743,7 +967,26 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				"role", contributor.role,
 			)
 			task := h.selectTask(contributor)
-			if task != nil {
+			switch {
+			case task == nil:
+				// No admissible work and no enforced refusal (e.g. suspended, no
+				// status yet, or an empty candidate set). Behaviour unchanged.
+				h.logger.Info("[contribute-ws] no tasks available",
+					"username", contributor.profile.GitHubUsername,
+				)
+			case task.Type == "task_unavailable":
+				// #2436 finding 1/2/3: an explicit negative-ack (mint failure,
+				// disabled tier, or concurrency limit) rather than silence. Send it
+				// so the contributor can diagnose instead of hanging forever.
+				if err := sendJSON(conn, *task); err != nil {
+					h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
+					return
+				}
+				h.logger.Info("[contribute-ws] task unavailable",
+					"username", contributor.profile.GitHubUsername,
+					"reason", task.Reason,
+				)
+			default:
 				if err := sendJSON(conn, *task); err != nil {
 					h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
 					return
@@ -755,10 +998,6 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"task", task.TaskID,
 					"repo", task.Repo,
 					"number", task.Number,
-				)
-			} else {
-				h.logger.Info("[contribute-ws] no tasks available",
-					"username", contributor.profile.GitHubUsername,
 				)
 			}
 
@@ -806,11 +1045,18 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					)
 					contributor.mu.Lock()
 					contributor.profile.TasksCompleted++
+					if msg.PRURL != "" {
+						contributor.profile.TasksWithPR++
+					}
 					contributor.profile.LastActive = time.Now().UTC().Format(time.RFC3339)
 					if completedTask != nil {
 						contributor.profile.LastCompletedTask = completedTask
 					}
-					if contributor.profile.TrustTier == "newcomer" && contributor.profile.TasksCompleted >= contributorAutoPromoteAt {
+					// Promote on completions that actually produced a pull
+					// request. Completion is self-reported, so counting bare
+					// task_complete messages would hand out contents:write and
+					// pulls:write for work that was never shown to exist.
+					if contributor.profile.TrustTier == "newcomer" && contributor.profile.TasksWithPR >= contributorAutoPromoteAt {
 						contributor.profile.TrustTier = "contributor"
 						h.logger.Info("[contribute-ws] auto-promoted", "username", contributor.profile.GitHubUsername)
 					}
@@ -828,11 +1074,20 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			if contributor != nil {
 				contributor.mu.Lock()
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
+				failedTask := contributor.currentTask
 				contributor.currentTask = nil
 				contributor.tokenMintedAt = time.Time{}
 				contributor.mu.Unlock()
 
 				if hasTask {
+					if failedTask != nil {
+						// #2435: record a short failure cooldown (and advance the
+						// consecutive-failure/quarantine counter) so a just-failed
+						// issue is not immediately re-admissible and handed straight
+						// back out ahead of the rest of the queue. A permanent failure
+						// counts more toward the quarantine threshold.
+						h.recordTaskFailure(failedTask.Repo, failedTask.Number, msg.Permanent)
+					}
 					h.addActivity(contributor.profile.GitHubUsername, "failed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
 					h.logger.Info("[contribute-ws] task failed",
 						"username", contributor.profile.GitHubUsername,
@@ -1026,6 +1281,52 @@ func (h *ContributeWSHub) mintScopedToken(tier string) (string, error) {
 	return "", nil
 }
 
+// taskUnavailableReason* are the machine-readable reasons carried on a
+// task_unavailable negative-ack. They let the relay (and operators reading the
+// log) tell "there is simply no admissible work right now" apart from "the hub
+// refused to assign work to this contributor" for a specific enforced reason.
+// See kubestellar/hive#2436.
+const (
+	// taskUnavailableTokenMintFailed: a scoped GitHub token could not be minted
+	// for the contributor's tier (e.g. the installation lacks the permission the
+	// tier requests), so no task_assign can be honestly issued. Previously this
+	// path returned nil and the contributor waited forever with no explanation.
+	taskUnavailableTokenMintFailed = "token_mint_failed"
+	// taskUnavailableTierDisabled: the contributor's TrustTier is listed in
+	// hub.disabled_tiers, so the operator has switched that tier off.
+	taskUnavailableTierDisabled = "tier_disabled"
+	// taskUnavailableConcurrencyLimit: assigning would exceed the tier's
+	// tier_limits.max_concurrent for this identity (counting every live
+	// connection this identity holds).
+	taskUnavailableConcurrencyLimit = "concurrency_limit"
+)
+
+// identityOf returns the stable key that groups a contributor's live
+// connections for per-identity concurrency accounting (#2436 finding 3). The
+// registered ContributorID is preferred; GitHubUsername is the fallback for
+// connections whose profile predates or lacks an ID. Two WebSocket connections
+// opened by the same registered contributor therefore share one identity.
+func identityOf(c *ContributorConnection) string {
+	if c == nil || c.profile == nil {
+		return ""
+	}
+	if c.profile.ContributorID != "" {
+		return c.profile.ContributorID
+	}
+	return c.profile.GitHubUsername
+}
+
+// taskUnavailable builds the explicit negative-ack the ready handler sends in
+// place of silence. It carries a machine-readable reason so the failure is
+// diagnosable rather than an indefinite hang (kubestellar/hive#2436, finding 1).
+func (h *ContributeWSHub) taskUnavailable(reason string) *WSMessage {
+	return &WSMessage{
+		Type:   "task_unavailable",
+		Seq:    h.nextSeq(),
+		Reason: reason,
+	}
+}
+
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.selectMu.Lock()
 	defer h.selectMu.Unlock()
@@ -1045,16 +1346,61 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		return nil
 	}
 
+	// #2436 finding 2: refuse to assign work to a contributor whose TrustTier is
+	// switched off via hub.disabled_tiers. This control was declared and
+	// admin-writable but never read, so an operator "disabling" a tier changed
+	// nothing. Send an explicit tier_disabled negative-ack rather than silently
+	// handing out work anyway.
+	tier := ""
+	if c.profile != nil {
+		tier = c.profile.TrustTier
+	}
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		for _, dt := range h.server.deps.Config.Hub.DisabledTiers {
+			if dt == tier {
+				h.logger.Warn("[contribute-ws] refusing task: tier disabled",
+					"username", identityOf(c), "tier", tier)
+				return h.taskUnavailable(taskUnavailableTierDisabled)
+			}
+		}
+	}
+
+	// activeIssues tracks issues already held by SOME live connection so we do
+	// not double-assign the same work item. identityHolds counts, per identity,
+	// how many tasks that identity currently holds across ALL of its live
+	// connections — the source of truth for the #2436 finding 3 concurrency gate
+	// (one identity opening several connections must not exceed MaxConcurrent).
 	activeIssues := make(map[string]bool)
+	identityHolds := make(map[string]int)
 	h.mu.RLock()
 	for _, conn := range h.connections {
 		conn.mu.Lock()
 		if conn.currentTask != nil {
 			activeIssues[fmt.Sprintf("%s#%d", conn.currentTask.Repo, conn.currentTask.Number)] = true
+			identityHolds[identityOf(conn)]++
 		}
 		conn.mu.Unlock()
 	}
 	h.mu.RUnlock()
+
+	// #2436 finding 3: enforce tier_limits.max_concurrent per identity. The
+	// config ships populated MaxConcurrent defaults, so an operator reasonably
+	// believes concurrency is capped; before this it was inert. A limit <= 0 is
+	// treated as "unlimited" (the "advisor" default is 0 and existing configs
+	// that never set the field must keep working). MaxPerHour / MaxPerDay remain
+	// TODO(#2436): they require per-identity rate counters that are not tracked
+	// today, so they are intentionally left unenforced rather than pretended —
+	// see the PR note. Only MaxConcurrent is wired here.
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		if limits, ok := h.server.deps.Config.Hub.TierLimits[tier]; ok && limits.MaxConcurrent > 0 {
+			if identityHolds[identityOf(c)] >= limits.MaxConcurrent {
+				h.logger.Warn("[contribute-ws] refusing task: concurrency limit reached",
+					"username", identityOf(c), "tier", tier,
+					"held", identityHolds[identityOf(c)], "max_concurrent", limits.MaxConcurrent)
+				return h.taskUnavailable(taskUnavailableConcurrencyLimit)
+			}
+		}
+	}
 
 	totalAvailable := 0
 	for _, repo := range status.Repos {
@@ -1112,6 +1458,13 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		url      string
 		labels   []string
 		isOwn    bool
+		// recentFailures is the issue's current consecutive-failure count (#2435).
+		// It is a stable tie-break in the ordering below: among equally-admissible
+		// candidates, fewer-recent-failures first. Issues in an active failure
+		// cooldown are already excluded above, so this only deprioritises an issue
+		// whose short cooldown just elapsed but which still has failure history —
+		// a backstop that keeps the queue moving even if the ledger is imperfect.
+		recentFailures int
 	}
 	var candidates []candidate
 
@@ -1148,6 +1501,12 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				continue
 			}
 			if h.isTaskInCooldown(repo.Full, number) {
+				continue
+			}
+			// #2435: skip an issue still inside its short post-failure cooldown or
+			// its longer quarantine. This is the primary livelock fix — a failing
+			// issue at the head of the scan is no longer instantly re-admissible.
+			if h.isTaskInFailureCooldown(repo.Full, number) {
 				continue
 			}
 			if activeIssues[fmt.Sprintf("%s#%d", repo.Full, number)] {
@@ -1199,6 +1558,9 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 				// username is unknown (empty), nothing is own → we keep today's
 				// ordering untouched.
 				isOwn: ownUsername != "" && strings.EqualFold(author, ownUsername),
+				// #2435: carry any lingering failure history so the ordering below
+				// can deprioritise a recently-failed issue within its bucket.
+				recentFailures: h.recentFailureCount(repo.Full, number),
 			})
 		}
 	}
@@ -1207,22 +1569,28 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		return nil
 	}
 
-	// Stable partition: own-work candidates first, in their original scan order;
-	// then everything else, also in original scan order. A stable sort keeps the
-	// established per-repo / creation ordering within each bucket, so when the
-	// contributor has no own work this is a no-op and behaviour is identical to
-	// the previous first-eligible pick.
-	ownFirst := make([]candidate, 0, len(candidates))
-	for _, cand := range candidates {
-		if cand.isOwn {
-			ownFirst = append(ownFirst, cand)
+	// Order the admissible set with a STABLE sort so the pick is deterministic
+	// (easy to reason about and to test — no randomness):
+	//   1. own-work first (#2390 — preserved unchanged);
+	//   2. then fewer recent failures first (#2435 remedy 3 backstop) — an issue
+	//      whose short failure cooldown has just elapsed but which still carries
+	//      failure history is deprioritised behind never-failed peers, so a
+	//      flaky issue can no longer monopolise the head of the queue even if the
+	//      ledger is imperfect;
+	//   3. otherwise the established per-repo / creation scan order is kept.
+	// When the contributor has no own work AND nothing has failed, this is a no-op
+	// and behaviour is identical to the previous first-eligible pick.
+	ownFirst := make([]candidate, len(candidates))
+	copy(ownFirst, candidates)
+	sort.SliceStable(ownFirst, func(i, j int) bool {
+		if ownFirst[i].isOwn != ownFirst[j].isOwn {
+			return ownFirst[i].isOwn // own work sorts ahead of non-own
 		}
-	}
-	for _, cand := range candidates {
-		if !cand.isOwn {
-			ownFirst = append(ownFirst, cand)
+		if ownFirst[i].recentFailures != ownFirst[j].recentFailures {
+			return ownFirst[i].recentFailures < ownFirst[j].recentFailures // fewer failures first
 		}
-	}
+		return false // equal keys → SliceStable preserves original scan order
+	})
 
 	chosen := ownFirst[0]
 	if chosen.isOwn {
@@ -1235,9 +1603,16 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// arms the refresh ticker for the token we hand out here.
 	ghToken, err := h.mintScopedToken(c.profile.TrustTier)
 	if err != nil {
-		h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
+		// #2436 finding 1: a mint failure previously returned nil, stranding the
+		// contributor with no message (the log even said "skipping task" while
+		// abandoning the whole selection). Send an explicit token_mint_failed
+		// negative-ack so the failure is diagnosable instead of an indefinite
+		// hang. We do not fall through to another candidate: the mint is keyed on
+		// the contributor's tier, not the candidate, so every candidate in this
+		// pass would fail identically. Preserve the existing Warn log.
+		h.logger.Warn("[contribute-ws] failed to mint scoped token — task unavailable",
 			"tier", c.profile.TrustTier, "error", err)
-		return nil
+		return h.taskUnavailable(taskUnavailableTokenMintFailed)
 	}
 
 	taskID := fmt.Sprintf("ct-%s-%d-%d", chosen.repoFull, chosen.number, time.Now().Unix())
