@@ -180,10 +180,11 @@ echo "[${INSTANCE}] Created PR #${PR_NUM}: ${PR_URL}"
 # Netlify validation. Waiting for deploy-preview caused chronic timeouts
 # and stale snapshot pileups.
 echo "[${INSTANCE}] Merging snapshot PR #${PR_NUM}..."
-if $REAL_GH pr merge "$PR_NUM" --repo "$DOCS_REPO_SLUG" --admin --squash --delete-branch 2>/dev/null; then
+# Never --admin: a plain squash lands when required checks are green;
+# otherwise queue auto-merge and let branch protection decide.
+if $REAL_GH pr merge "$PR_NUM" --repo "$DOCS_REPO_SLUG" --squash --delete-branch 2>/dev/null; then
   echo "[${INSTANCE}] Snapshot published via PR #${PR_NUM}."
 else
-  # --admin may fail if token lacks bypass permission; fall back to auto-merge
   $REAL_GH pr merge "$PR_NUM" --repo "$DOCS_REPO_SLUG" --squash --auto --delete-branch
   echo "[${INSTANCE}] Auto-merge enabled on PR #${PR_NUM}."
 fi
