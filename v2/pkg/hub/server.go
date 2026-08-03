@@ -394,6 +394,18 @@ func normalizeForgeHost(s string) (string, bool) {
 //	https://github.ibm.com/z-aiops-unite  -> ("github.ibm.com", "z-aiops-unite")
 //	github.ibm.com/z-aiops-unite          -> ("github.ibm.com", "z-aiops-unite")
 //	z-aiops-unite                         -> ("",               "z-aiops-unite")
+//	https://github.ibm.com                -> ("github.ibm.com", "")
+//	github.ibm.com                        -> ("github.ibm.com", "")
+//
+// The last two cases are the claim-path footgun this guards: a user who reads
+// "GitHub Organization" and pastes ONLY the forge host (no org segment) must
+// NOT have that hostname captured as the org. Before this, "github.ibm.com"
+// with no path fell through to the bare-name return and became org
+// "github.ibm.com" — the hive was then claimed against host-as-org, its vanity
+// URL minted from <host>-<repo>, and agents targeted github.ibm.com/<repo>.
+// Returning ("host", "") instead leaves the org empty, so the caller's
+// isValidName("") check rejects the paste with the "use the org name or its
+// URL" message rather than silently storing a broken project.
 func normalizeOrgRef(s string) (host, org string) {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "https://")
@@ -409,7 +421,33 @@ func normalizeOrgRef(s string) (host, org string) {
 	if len(parts) > 1 && strings.Contains(parts[0], ".") {
 		return parts[0], parts[1]
 	}
+	// A lone segment with no path that is itself a GitHub forge host is a host,
+	// not an org — the user pasted the forge URL into the org field and left the
+	// real org out. Recognise "github.<something>" (github.com, github.ibm.com,
+	// github.cisco.com, …) so the hostname is never mistaken for the org. A
+	// legitimate org that merely contains a dot ("my.org") does not start with
+	// "github." and is untouched.
+	if len(parts) == 1 && looksLikeGitHubForgeHost(parts[0]) {
+		return parts[0], ""
+	}
 	return "", parts[0]
+}
+
+// looksLikeGitHubForgeHost reports whether a bare label is a GitHub forge
+// hostname (github.com or a GitHub Enterprise host like github.ibm.com) rather
+// than an org name. GitHub Enterprise hosts are conventionally "github.<org
+// domain>", and the public host is "github.com"; both start with "github." and
+// carry at least two dot-separated labels. This is deliberately narrow: it must
+// never reclassify a real org that happens to contain a dot, so it keys on the
+// "github." prefix that only a forge host carries. Case-insensitive.
+func looksLikeGitHubForgeHost(label string) bool {
+	l := strings.ToLower(strings.TrimSpace(label))
+	if !strings.HasPrefix(l, "github.") {
+		return false
+	}
+	// "github." alone (a trailing-dot typo) is not a host; require a non-empty
+	// domain after the prefix, i.e. at least two labels total.
+	return len(strings.Split(l, ".")) >= minForgeHostLabels && !strings.HasSuffix(l, ".")
 }
 
 // normalizeRepoRef strips a GitHub URL or "org/repo" prefix down to the bare
