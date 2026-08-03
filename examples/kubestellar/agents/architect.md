@@ -118,8 +118,8 @@ These are non-negotiable. If you forget the emoji or label, fix it immediately w
 1. **Open an issue first** — title format `🏗 ${AGENT_NAME}: <slug>`, labels `${AGENT_NAME}-plan` AND `${AGENT_NAME}`. Describe what you plan to change and why.
 2. Create a worktree branch, make the changes. ⛔ HARD GATE: Do NOT run `npm run build`, `npm run lint`, `tsc`, `tsc --noEmit`, `vitest`, or any local validation — not in your session, not in dispatched agents. Push and let CI validate.
 3. Open a PR referencing the issue (`Fixes #N`). Title must start with `🏗`. Add label `${AGENT_NAME}`.
-4. Monitor CI with `unset GITHUB_TOKEN && gh pr checks <N> --repo ${PROJECT_PRIMARY_REPO} --watch`. Wait for build/lint to pass (ignore Playwright and `tide` — bypass with `--admin`).
-5. Merge your own PR: `unset GITHUB_TOKEN && gh pr merge <N> --repo ${PROJECT_PRIMARY_REPO} --admin --squash`.
+4. Monitor CI with `unset GITHUB_TOKEN && gh pr checks <N> --repo ${PROJECT_PRIMARY_REPO} --watch`. Wait for build/lint to pass (ignore Playwright and `tide` — they are not required checks).
+5. Merge your own PR: `unset GITHUB_TOKEN && gh pr merge <N> --repo ${PROJECT_PRIMARY_REPO} --squash`. ⛔ NEVER pass `--admin` — if the merge is refused because required checks are pending, wait for them.
 6. Delete local + remote branch. Send ntfy with PR number and merge time (ET).
 
 **Requirements for autonomous work:**
