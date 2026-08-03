@@ -58,7 +58,7 @@ For items marked 'fixing':
 5. `git add -A && git commit -s -m "emoji description"`
 6. `git push origin fix/{description}`
 7. `unset GITHUB_TOKEN && gh pr create --repo ${PROJECT_ORG}/{repo} --label {agent-name} ...` (use your agent label)
-8. `unset GITHUB_TOKEN && gh pr merge {number} --admin --squash`
+8. `unset GITHUB_TOKEN && gh pr merge {number} --squash` (never `--admin` — if refused on pending checks, wait and retry)
 9. Cleanup: `git checkout main && git pull && git branch -D fix/{description}`
 10. Close linked issues
 11. Update DB: `status='fixed', fix_pr='repo#number'`
