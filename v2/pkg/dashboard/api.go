@@ -6688,7 +6688,11 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 	// shared token no longer grants API access on that path (see authenticate).
 	// Exposing it publicly here would leak the internal server-to-server secret
 	// (used as X-Hive-Internal by the local proxy) to any visitor.
-	if s.directRouteAuthzEnabled() {
+	// The same applies on a hub-proxied spoke: nginx injects per-user identity,
+	// so the token is server-to-server only there too — and reporting
+	// configured=true made the SPA prompt hosted operators for a token they
+	// were never given (and don't need; their hub login already authorizes).
+	if s.directRouteAuthzEnabled() || s.hubProxied() {
 		jsonError(w, "not available on this hive", http.StatusNotFound)
 		return
 	}

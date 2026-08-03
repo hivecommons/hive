@@ -895,6 +895,14 @@ func (s *Server) directRouteAuthzEnabled() bool {
 		s.deps.Config.Dashboard.IsDirectRouteAuthzEnabled()
 }
 
+// hubProxied reports whether this spoke sits behind the hub's nginx, which
+// injects per-user X-Hive-User/X-Hive-Role identity headers. There the shared
+// dashboard token is a server-to-server credential only and must never be
+// requested from (or disclosed to) a browser.
+func (s *Server) hubProxied() bool {
+	return s.deps != nil && s.deps.Config != nil && s.deps.Config.Dashboard.HubProxied
+}
+
 // isPublicPath returns true for paths that should be accessible without
 // authentication even when DASHBOARD_AUTH_TOKEN is set. This covers health
 // checks, the snapshot preview, the contribute flow, and auth negotiation.

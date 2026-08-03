@@ -386,6 +386,26 @@ func TestHandleAuthToken_HiddenOnDirectRoute(t *testing.T) {
 	}
 }
 
+func TestHandleAuthToken_HiddenOnHubProxied(t *testing.T) {
+	// On a hub-proxied spoke identity comes from nginx-injected headers; the
+	// shared token is server-to-server only. Reporting configured=true here
+	// made the SPA prompt hosted operators to paste a token they were never
+	// given (and a leaked value would let read-role users escalate to writes).
+	s := newFullServer(t)
+	s.authToken = "shared-secret-token"
+	s.deps.Config.Dashboard.HubProxied = true
+	s.deps.Config.Dashboard.AuthorizedUsers = []string{"clubanderson:owner", "someone:read"}
+	req := httptest.NewRequest("GET", "/api/auth/token", nil)
+	w := httptest.NewRecorder()
+	s.handleAuthToken(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("auth token endpoint must 404 on hub-proxied spoke, got %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), s.authToken) {
+		t.Fatal("shared token must never be returned on a hub-proxied spoke")
+	}
+}
+
 func TestHandleAuthToken_AvailableWithoutAllowlist(t *testing.T) {
 	s := newFullServer(t)
 	s.authToken = "shared-secret-token"

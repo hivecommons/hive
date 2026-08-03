@@ -3254,6 +3254,16 @@
           } catch { _authConfigured = false; }
         }
         if (_authConfigured && !_authToken) {
+          // Never prompt a user who already has an authenticated identity —
+          // a hub login or device-flow session authorizes mutations on its
+          // own, and hosted operators are never given the shared token.
+          try {
+            const st = await _origFetch('/api/gh-user-auth/status');
+            if (st.ok) {
+              const d = await st.json();
+              if (d.logged_in) { _authConfigured = false; return null; }
+            }
+          } catch {}
           // Self-hosted hive with a token configured but none stored locally:
           // ask the operator to paste it once. It persists in localStorage.
           const entered = window.prompt('This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:');
