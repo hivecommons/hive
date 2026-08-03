@@ -637,6 +637,10 @@ func (s *Server) registerCoreRoutes() {
 	// second GitHub device-flow login. Public path (see isPublicPath) because
 	// the caller has no session yet — the token IS the credential.
 	s.mux.HandleFunc("GET /sso", s.handleSSO)
+	// /terminal → in-container ttyd, so the dashboard's "▶ terminal" links
+	// work even when the cluster route sends the whole host to this server
+	// (see registerTerminalProxy).
+	s.registerTerminalProxy()
 }
 
 func (s *Server) Start() error {
