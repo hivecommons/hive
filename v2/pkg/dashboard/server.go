@@ -187,6 +187,12 @@ type Server struct {
 	hubBanner   *HubBannerState
 
 	githubAppRecheckFn func() bool
+
+	// forgeAppInventoryFn supplies the Forge App tab's key inventory from
+	// cmd/hive (resolved active key path + per-app-id PVC keys, fingerprints
+	// only). Set once at startup via SetForgeAppInventoryFn; nil in tests and
+	// early boot, which the handler tolerates.
+	forgeAppInventoryFn func() ForgeAppInventory
 }
 
 // StatusPayload matches the JSON contract the dashboard frontend render() expects.

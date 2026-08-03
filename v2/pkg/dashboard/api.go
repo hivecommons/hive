@@ -141,6 +141,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// and hands back the correct per-forge install URL when it is not.
 	s.mux.HandleFunc("POST /api/config/governor/repos/check-access", s.handleGovernorRepoCheckAccess)
 	s.mux.HandleFunc("PUT /api/config/github", s.handleConfigGitHub)
+	// Read-only inventory for the Forge App tab: every App credential this
+	// spoke holds (active config + per-app-id PVC keys), fingerprints only.
+	s.mux.HandleFunc("GET /api/config/github/forge-apps", s.handleConfigGitHubForgeApps)
 
 	s.mux.HandleFunc("GET /api/agents", s.handleAgentsList)
 	s.mux.HandleFunc("POST /api/agents", s.handleAgentCreate)

@@ -7632,6 +7632,18 @@ const dashboardHTML = `<!DOCTYPE html>
     function ghAppIsOperatorSide(state) {
       return GH_APP_OPERATOR_STATES[String(state || '').trim()] === true;
     }
+    /* Popover label for a user-side App issue, from the classified state.
+       The blanket "permissions insufficient" wording is reserved for genuine
+       permission states (and for unclassified reports from older spokes);
+       the other states name their real cause so the hover stops sending an
+       admin to approve permissions when the installation_id is what's wrong. */
+    function ghAppPermIssueLabel(state) {
+      var s = String(state || '').trim();
+      if (s === 'wrong-installation') return 'wrong installation (installation_id points at another account)';
+      if (s === 'write-forbidden') return 'write forbidden (repo not in the App installation)';
+      if (s === 'no-app-assigned') return 'no App assigned yet';
+      return 'permissions insufficient';
+    }
 
     /* Labels for each journey stage, matching JourneyStage.String() on the hub. */
     var JOURNEY_STAGE_LABELS = {
@@ -8181,7 +8193,7 @@ const dashboardHTML = `<!DOCTYPE html>
           : '⚠ GitHub App: credentials not yet delivered by the hub (operator action)');
         st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel;
       }
-      else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: permissions insufficient'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
+      else if (h.githubAppRequired && h.githubAppPermIssue) { lines.push('✓ GitHub App installed'); lines.push('⚠ GitHub App: ' + ghAppPermIssueLabel(h.githubAppState)); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (h.githubAppRequired) { lines.push('✕ GitHub App not installed'); st = 'degraded'; c = colors.degraded; ic = icons.degraded; statusLabel = 'Degraded'; lines[0] = statusLabel; }
       else if (!h.githubAppRequired) { lines.push('✓ GitHub App: not in use'); }
       if (!checks.length) lines.push('No check data');

@@ -1819,6 +1819,26 @@ func main() {
 		},
 	})
 
+	// Forge App tab inventory: the resolved active key path and the per-app-id
+	// PVC keys live here in cmd/hive, so they are injected as a provider (the
+	// SetGitHubAppRecheckFn pattern). Fingerprints and paths only — the
+	// provider never touches key material.
+	dashSrv.SetForgeAppInventoryFn(func() dashboard.ForgeAppInventory {
+		held := heldPerAppIDKeyFingerprints()
+		keys := make([]dashboard.ForgeAppKey, 0, len(held))
+		for idStr, fp := range held {
+			keys = append(keys, dashboard.ForgeAppKey{
+				AppID:       idStr,
+				Path:        filepath.Join(spokeAppKeyDir, perAppIDKeyFilePrefix+idStr+perAppIDKeyFileSuffix),
+				Fingerprint: fp,
+			})
+		}
+		return dashboard.ForgeAppInventory{
+			ActiveKeyFile: resolveAppKeyFile(cfg.GitHub.KeyFile, os.Getenv("GH_APP_KEY_FILE"), cfg.GitHub.AppID),
+			HeldKeys:      keys,
+		}
+	})
+
 	dashSrv.SetGitHubAppRequired(githubAppRequired)
 	// Order matters: SetGitHubAppRequired(false) clears both fields, so the
 	// classified state is applied only after it, and only when a failure was

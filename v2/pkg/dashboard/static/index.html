@@ -13044,7 +13044,7 @@ function burnAreaChart() {
     // hub-synced user/role data. It sits next to Model Gateways because both
     // are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Access'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -13503,6 +13503,9 @@ function burnAreaChart() {
         if (tabId === 'Model Gateways') {
           loadGateways();
         }
+        // The Forge App tab renders a shell synchronously, then loads the
+        // credential inventory (fingerprints only) from the spoke.
+        if (tabId === 'Forge App') loadForgeApps();
       }
       // Keep the Save button's enabled state in lockstep with the repos/default
       // invariant on every render (requirement #4). Cheap and idempotent — a
@@ -13640,6 +13643,7 @@ function burnAreaChart() {
         case 'Sensing': return renderGovSensing(d.sensing || {});
         case 'Logging': return renderGovLogging(d.logging || {});
         case 'Hub': return renderGovHub(d.hub || {});
+        case 'Forge App': return renderGovForgeApp();
         case 'Model Gateways': return renderGovGateways();
         case GOVERNOR_BOB_TAB: return renderGovBob();
         case 'Variables': return renderGovVariables();
@@ -14119,6 +14123,143 @@ function burnAreaChart() {
 
     function gatewayKindMeta(kind) {
       return GATEWAY_KIND_META[kind] || GATEWAY_KIND_META.custom;
+    }
+
+    // ---- Forge App tab -----------------------------------------------------
+    // Inventory of every forge App credential this spoke holds: the active
+    // github config plus every per-app-id key file on the PVC. Fingerprints
+    // and paths ONLY — private key material never reaches this page. Only the
+    // config whose forge matches the forge this hive's repos live on is
+    // editable; everything else renders read-only.
+    function renderGovForgeApp() {
+      return `
+        <div style="font-size:0.82rem;color:var(--muted);margin-bottom:14px">
+          Every forge App credential this hive holds. The active config is editable only
+          when its forge matches the forge this hive's repos live on; everything else is
+          read-only. Private keys appear as fingerprints — key material never leaves the hive.
+        </div>
+        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>`;
+    }
+
+    async function loadForgeApps() {
+      const host = document.getElementById('forge-app-host');
+      try {
+        const res = await fetch('/api/config/github/forge-apps');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        renderForgeApps(await res.json());
+      } catch (e) {
+        if (host) host.innerHTML = `<div style="color:var(--red);font-size:0.8rem">Failed to load forge Apps: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function forgeAppRow(label, valueHtml) {
+      return `<div style="display:flex;gap:10px;font-size:0.78rem;padding:3px 0"><span style="min-width:140px;color:var(--muted);flex-shrink:0">${esc(label)}</span><span style="word-break:break-all">${valueHtml}</span></div>`;
+    }
+
+    function renderForgeApps(data) {
+      const host = document.getElementById('forge-app-host');
+      if (!host) return;
+      const a = data.active || {};
+      // The classified auth state is a debugging surface: show the wire token
+      // verbatim (not-installed / wrong-installation / key-invalid / ...).
+      const stateHtml = a.auth_state
+        ? `<code style="font-size:0.74rem;padding:1px 6px;border:1px solid ${a.auth_state === 'ok' ? 'var(--green)' : 'var(--yellow)'};border-radius:6px">${esc(a.auth_state)}</code>`
+        : '<span style="color:var(--muted)">— (not classified)</span>';
+      const editBadge = a.editable
+        ? '<span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid var(--green);color:var(--green)">editable</span>'
+        : `<span style="font-size:0.68rem;font-weight:600;padding:2px 8px;border-radius:10px;border:1px solid var(--border);color:var(--muted)">read-only — repos are on ${esc(data.repos_forge || 'github.com')}</span>`;
+      let html = `
+        <div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px;background:var(--surface)">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <span style="font-weight:600;font-size:0.9rem">Active config — ${esc(a.forge || 'github.com')}</span>
+            ${editBadge}
+          </div>
+          ${forgeAppRow('App ID', esc(String(a.app_id || 0)))}
+          ${forgeAppRow('App slug', esc(a.app_slug || '—'))}
+          ${forgeAppRow('API URL', esc(a.api_url || '—'))}
+          ${forgeAppRow('Base URL', esc(a.base_url || '—'))}
+          ${forgeAppRow('Installation ID', esc(String(a.installation_id || 0)))}
+          ${forgeAppRow('Key file', esc(a.key_file || '—'))}
+          ${forgeAppRow('Key fingerprint', a.key_fingerprint ? '<code style="font-size:0.74rem">' + esc(a.key_fingerprint) + '</code>' : '<span style="color:var(--muted)">— (no usable key)</span>')}
+          ${forgeAppRow('Auth state', stateHtml)}
+          ${a.editable ? forgeAppEditForm(a) : ''}
+        </div>`;
+      html += '<div style="font-weight:600;font-size:0.85rem;margin:14px 0 6px">Per-app-id keys on disk</div>';
+      const keys = data.held_keys || [];
+      if (!keys.length) {
+        html += '<div style="color:var(--muted);font-size:0.78rem">No per-app-id key files held on this hive.</div>';
+      } else {
+        html += keys.map(k => `
+          <div style="border:1px solid var(--border);border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:0.76rem;background:var(--surface)">
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <span style="font-weight:600">App ${esc(k.app_id)}</span>
+              <span style="font-size:0.66rem;font-weight:600;padding:1px 7px;border-radius:10px;border:1px solid var(--border);color:var(--muted)">read-only</span>
+            </div>
+            <div style="color:var(--muted);word-break:break-all;margin-top:4px">${esc(k.path)}</div>
+            <div style="margin-top:2px">fingerprint: <code style="font-size:0.72rem">${esc(k.fingerprint)}</code></div>
+          </div>`).join('');
+      }
+      host.innerHTML = html;
+    }
+
+    function forgeAppEditForm(a) {
+      const inputStyle = 'width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font-size:0.78rem;box-sizing:border-box';
+      return `
+        <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+          <div style="font-size:0.78rem;font-weight:600;margin-bottom:8px">Edit active config</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+            <label style="font-size:0.72rem;color:var(--muted)">App ID<input id="forge-app-appid" type="number" value="${esc(String(a.app_id || ''))}" style="${inputStyle}"></label>
+            <label style="font-size:0.72rem;color:var(--muted)">Installation ID<input id="forge-app-instid" type="number" value="${esc(String(a.installation_id || ''))}" style="${inputStyle}"></label>
+          </div>
+          <label style="font-size:0.72rem;color:var(--muted)">Key file path<input id="forge-app-keyfile" type="text" value="${esc(a.key_file || '')}" style="${inputStyle};margin-bottom:8px"></label>
+          <label style="font-size:0.72rem;color:var(--muted)">Private key (PEM — write-only, replaces the key file; never displayed back)<textarea id="forge-app-pem" rows="3" placeholder="-----BEGIN RSA PRIVATE KEY----- (leave empty to keep the current key)" style="${inputStyle};font-family:monospace;margin-bottom:8px"></textarea></label>
+          <button id="forge-app-save-btn" onclick="saveForgeApp()" style="padding:7px 16px;border:none;border-radius:6px;background:var(--cyan);color:var(--bg);cursor:pointer;font-weight:600;font-size:0.8rem">Save</button>
+        </div>`;
+    }
+
+    async function saveForgeApp() {
+      const btn = document.getElementById('forge-app-save-btn');
+      const numVal = id => {
+        const el = document.getElementById(id);
+        const v = (el && el.value || '').trim();
+        return v === '' ? null : parseInt(v, 10);
+      };
+      const appId = numVal('forge-app-appid');
+      const instId = numVal('forge-app-instid');
+      const keyFileEl = document.getElementById('forge-app-keyfile');
+      const pemEl = document.getElementById('forge-app-pem');
+      const keyFile = (keyFileEl && keyFileEl.value || '').trim();
+      const pem = (pemEl && pemEl.value || '').trim();
+      const body = {};
+      if (appId !== null) {
+        if (isNaN(appId) || appId <= 0) { showToast('App ID must be a positive number', 'error'); return; }
+        body.app_id = appId;
+      }
+      if (instId !== null) {
+        if (isNaN(instId) || instId < 0) { showToast('Installation ID must be a non-negative number', 'error'); return; }
+        body.installation_id = instId;
+      }
+      if (keyFile) body.key_file = keyFile;
+      if (pem) body.private_key = pem;
+      if (!Object.keys(body).length) { showToast('Nothing to save', 'error'); return; }
+      if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+      try {
+        // The existing config-github handler: persists, then live-reinits the
+        // GitHub client when the config becomes usable.
+        const res = await fetch('/api/config/github', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+        showToast(data.reinit === 'ok' ? 'Forge App config saved and reconnected' : 'Forge App config saved', 'success');
+        loadForgeApps();
+      } catch (e) {
+        showToast('Save failed: ' + e.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+      }
     }
 
     function renderGovGateways() {
