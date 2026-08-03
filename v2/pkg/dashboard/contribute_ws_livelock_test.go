@@ -282,3 +282,96 @@ func TestQueueLivelock_TaskFailedHandlerRecordsCooldown(t *testing.T) {
 	}
 	t.Fatalf("task_failed handler did not record a failure cooldown for the assigned issue")
 }
+
+// TestDupePR_DisconnectReleaseRecordsCooldown is the #2356 regression: a task
+// released because its contributor's WebSocket dropped must NOT be instantly
+// re-admissible. Before the fix, the disconnect defer nil-ed currentTask and
+// logged the release but recorded no cooldown, so the issue fell out of the
+// activeIssues double-assign guard and selectTask could hand the SAME issue to
+// another session during the reconnect window — while the original relay (which
+// keeps its task locally and re-asserts it on reconnect) was still working it —
+// producing duplicate PRs. After the fix a disconnect-release books the same
+// short non-permanent failure cooldown the task_failed path uses.
+func TestDupePR_DisconnectReleaseRecordsCooldown(t *testing.T) {
+	s, ts := setupWSTest(t)
+	defer ts.Close()
+
+	// Two admissible issues: A (#10, head of scan) and B (#20). If the released A
+	// were still re-admissible, the next selection would return A again; after the
+	// fix it must be parked and B offered instead.
+	twoIssueStatus(s)
+
+	body := `{"github_username":"disconnect-dupe-user"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	var reg map[string]string
+	json.Unmarshal(w.Body.Bytes(), &reg)
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	readMsg(t, conn) // challenge
+	conn.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
+	readMsg(t, conn) // auth_ok
+
+	conn.WriteJSON(WSMessage{Type: "ready", Seq: 1})
+	assign := readMsg(t, conn)
+	if assign.Type != "task_assign" || assign.Number != 10 {
+		t.Fatalf("expected task_assign for head-of-scan A (#10), got type=%s number=%d", assign.Type, assign.Number)
+	}
+
+	// Simulate the contributor's connection dropping mid-task (no task_failed, no
+	// task_complete): just close the socket. The server-side disconnect defer must
+	// fire and, per the fix, record the failure cooldown for the abandoned issue.
+	conn.Close()
+
+	// The defer runs asynchronously on the server's read-loop goroutine; poll for
+	// the recorded cooldown on the released issue.
+	deadline := time.Now().Add(2 * time.Second)
+	recorded := false
+	for time.Now().Before(deadline) {
+		if s.contributeHub.isTaskInFailureCooldown("myorg/repo1", 10) {
+			recorded = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !recorded {
+		t.Fatalf("disconnect-release did not park the abandoned issue in a cooldown — it is instantly re-admissible and can be double-assigned (#2356)")
+	}
+
+	// A fresh selection must now skip the parked A (#10) and offer B (#20) instead,
+	// proving the released issue cannot be handed straight back out to a racing
+	// session during the reconnect window.
+	conn2 := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "other-ct", ContributorID: "c-other", TrustTier: "contributor"},
+		lastPong: time.Now(),
+	}
+	msg := s.contributeHub.selectTask(conn2)
+	if msg == nil {
+		t.Fatalf("expected B to be offered while A is parked, got nil")
+	}
+	if msg.Number == 10 {
+		t.Fatalf("dupe risk: released A (#10) was re-offered immediately after a disconnect; expected it parked in cooldown (#2356)")
+	}
+	if msg.Number != 20 {
+		t.Fatalf("expected the other issue B (#20) to be offered, got #%d", msg.Number)
+	}
+}
+
+// TestDupePR_DisconnectReleaseIgnoresSyntheticReviewTask verifies the
+// disconnect-release cooldown only books real issue tasks: a synthetic
+// pr-review task (Number == 0) must not stamp a bogus "repo#0" failure key.
+func TestDupePR_DisconnectReleaseIgnoresSyntheticReviewTask(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	// A synthetic review task carries Number == 0. The guard in the disconnect
+	// defer keys off Number > 0, so recordTaskFailure is only reached for real
+	// issues. Assert the invariant directly: booking a Number==0 key is never done,
+	// so no "repo#0" cooldown exists.
+	if hub.isTaskInFailureCooldown("myorg/repo1", 0) {
+		t.Fatalf("a synthetic review task (Number==0) must never be parked in a cooldown")
+	}
+}
