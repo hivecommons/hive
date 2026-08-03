@@ -740,7 +740,26 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				"role", contributor.role,
 			)
 			task := h.selectTask(contributor)
-			if task != nil {
+			switch {
+			case task == nil:
+				// No admissible work and no enforced refusal (e.g. suspended, no
+				// status yet, or an empty candidate set). Behaviour unchanged.
+				h.logger.Info("[contribute-ws] no tasks available",
+					"username", contributor.profile.GitHubUsername,
+				)
+			case task.Type == "task_unavailable":
+				// #2436 finding 1/2/3: an explicit negative-ack (mint failure,
+				// disabled tier, or concurrency limit) rather than silence. Send it
+				// so the contributor can diagnose instead of hanging forever.
+				if err := sendJSON(conn, *task); err != nil {
+					h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
+					return
+				}
+				h.logger.Info("[contribute-ws] task unavailable",
+					"username", contributor.profile.GitHubUsername,
+					"reason", task.Reason,
+				)
+			default:
 				if err := sendJSON(conn, *task); err != nil {
 					h.logger.Warn("[contribute-ws] failed to send task_assign", "error", err)
 					return
@@ -752,10 +771,6 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"task", task.TaskID,
 					"repo", task.Repo,
 					"number", task.Number,
-				)
-			} else {
-				h.logger.Info("[contribute-ws] no tasks available",
-					"username", contributor.profile.GitHubUsername,
 				)
 			}
 
@@ -1023,6 +1038,52 @@ func (h *ContributeWSHub) mintScopedToken(tier string) (string, error) {
 	return "", nil
 }
 
+// taskUnavailableReason* are the machine-readable reasons carried on a
+// task_unavailable negative-ack. They let the relay (and operators reading the
+// log) tell "there is simply no admissible work right now" apart from "the hub
+// refused to assign work to this contributor" for a specific enforced reason.
+// See kubestellar/hive#2436.
+const (
+	// taskUnavailableTokenMintFailed: a scoped GitHub token could not be minted
+	// for the contributor's tier (e.g. the installation lacks the permission the
+	// tier requests), so no task_assign can be honestly issued. Previously this
+	// path returned nil and the contributor waited forever with no explanation.
+	taskUnavailableTokenMintFailed = "token_mint_failed"
+	// taskUnavailableTierDisabled: the contributor's TrustTier is listed in
+	// hub.disabled_tiers, so the operator has switched that tier off.
+	taskUnavailableTierDisabled = "tier_disabled"
+	// taskUnavailableConcurrencyLimit: assigning would exceed the tier's
+	// tier_limits.max_concurrent for this identity (counting every live
+	// connection this identity holds).
+	taskUnavailableConcurrencyLimit = "concurrency_limit"
+)
+
+// identityOf returns the stable key that groups a contributor's live
+// connections for per-identity concurrency accounting (#2436 finding 3). The
+// registered ContributorID is preferred; GitHubUsername is the fallback for
+// connections whose profile predates or lacks an ID. Two WebSocket connections
+// opened by the same registered contributor therefore share one identity.
+func identityOf(c *ContributorConnection) string {
+	if c == nil || c.profile == nil {
+		return ""
+	}
+	if c.profile.ContributorID != "" {
+		return c.profile.ContributorID
+	}
+	return c.profile.GitHubUsername
+}
+
+// taskUnavailable builds the explicit negative-ack the ready handler sends in
+// place of silence. It carries a machine-readable reason so the failure is
+// diagnosable rather than an indefinite hang (kubestellar/hive#2436, finding 1).
+func (h *ContributeWSHub) taskUnavailable(reason string) *WSMessage {
+	return &WSMessage{
+		Type:   "task_unavailable",
+		Seq:    h.nextSeq(),
+		Reason: reason,
+	}
+}
+
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.selectMu.Lock()
 	defer h.selectMu.Unlock()
@@ -1042,16 +1103,61 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		return nil
 	}
 
+	// #2436 finding 2: refuse to assign work to a contributor whose TrustTier is
+	// switched off via hub.disabled_tiers. This control was declared and
+	// admin-writable but never read, so an operator "disabling" a tier changed
+	// nothing. Send an explicit tier_disabled negative-ack rather than silently
+	// handing out work anyway.
+	tier := ""
+	if c.profile != nil {
+		tier = c.profile.TrustTier
+	}
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		for _, dt := range h.server.deps.Config.Hub.DisabledTiers {
+			if dt == tier {
+				h.logger.Warn("[contribute-ws] refusing task: tier disabled",
+					"username", identityOf(c), "tier", tier)
+				return h.taskUnavailable(taskUnavailableTierDisabled)
+			}
+		}
+	}
+
+	// activeIssues tracks issues already held by SOME live connection so we do
+	// not double-assign the same work item. identityHolds counts, per identity,
+	// how many tasks that identity currently holds across ALL of its live
+	// connections — the source of truth for the #2436 finding 3 concurrency gate
+	// (one identity opening several connections must not exceed MaxConcurrent).
 	activeIssues := make(map[string]bool)
+	identityHolds := make(map[string]int)
 	h.mu.RLock()
 	for _, conn := range h.connections {
 		conn.mu.Lock()
 		if conn.currentTask != nil {
 			activeIssues[fmt.Sprintf("%s#%d", conn.currentTask.Repo, conn.currentTask.Number)] = true
+			identityHolds[identityOf(conn)]++
 		}
 		conn.mu.Unlock()
 	}
 	h.mu.RUnlock()
+
+	// #2436 finding 3: enforce tier_limits.max_concurrent per identity. The
+	// config ships populated MaxConcurrent defaults, so an operator reasonably
+	// believes concurrency is capped; before this it was inert. A limit <= 0 is
+	// treated as "unlimited" (the "advisor" default is 0 and existing configs
+	// that never set the field must keep working). MaxPerHour / MaxPerDay remain
+	// TODO(#2436): they require per-identity rate counters that are not tracked
+	// today, so they are intentionally left unenforced rather than pretended —
+	// see the PR note. Only MaxConcurrent is wired here.
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		if limits, ok := h.server.deps.Config.Hub.TierLimits[tier]; ok && limits.MaxConcurrent > 0 {
+			if identityHolds[identityOf(c)] >= limits.MaxConcurrent {
+				h.logger.Warn("[contribute-ws] refusing task: concurrency limit reached",
+					"username", identityOf(c), "tier", tier,
+					"held", identityHolds[identityOf(c)], "max_concurrent", limits.MaxConcurrent)
+				return h.taskUnavailable(taskUnavailableConcurrencyLimit)
+			}
+		}
+	}
 
 	totalAvailable := 0
 	for _, repo := range status.Repos {
@@ -1232,9 +1338,16 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	// arms the refresh ticker for the token we hand out here.
 	ghToken, err := h.mintScopedToken(c.profile.TrustTier)
 	if err != nil {
-		h.logger.Warn("[contribute-ws] failed to mint scoped token — skipping task",
+		// #2436 finding 1: a mint failure previously returned nil, stranding the
+		// contributor with no message (the log even said "skipping task" while
+		// abandoning the whole selection). Send an explicit token_mint_failed
+		// negative-ack so the failure is diagnosable instead of an indefinite
+		// hang. We do not fall through to another candidate: the mint is keyed on
+		// the contributor's tier, not the candidate, so every candidate in this
+		// pass would fail identically. Preserve the existing Warn log.
+		h.logger.Warn("[contribute-ws] failed to mint scoped token — task unavailable",
 			"tier", c.profile.TrustTier, "error", err)
-		return nil
+		return h.taskUnavailable(taskUnavailableTokenMintFailed)
 	}
 
 	taskID := fmt.Sprintf("ct-%s-%d-%d", chosen.repoFull, chosen.number, time.Now().Unix())
