@@ -130,6 +130,52 @@ func TestTriggerAutoUpgradesRecoversStaleManualUpgrade(t *testing.T) {
 	}
 }
 
+// TestTriggerAutoUpgradesRecoversStaleDailyModeHiveHeldBySchedule pins the
+// #2496 half of the restructure: a daily-mode hive that already fired today is
+// held by the schedule gate ("already upgraded today") — but staleness
+// recovery is NOT a scheduled upgrade and must never be held by the daily
+// window. Before the restructure the schedule gate sat ahead of the
+// alreadyUpgrading branch, so a stuck upgrade on such a hive was not re-armed
+// until the next ET day.
+func TestTriggerAutoUpgradesRecoversStaleDailyModeHiveHeldBySchedule(t *testing.T) {
+	cleanup := helperSetupTempDirs(t)
+	defer cleanup()
+	installScriptedKubectl(t)
+
+	loc, err := autoUpgradeLocation()
+	if err != nil {
+		t.Fatalf("autoUpgradeLocation: %v", err)
+	}
+	today := time.Now().In(loc).Format(autoUpgradeDateFormat)
+
+	remote := ClusterConfig{ID: "remote", InCluster: false, KubeconfigPath: "/tmp/kc", Context: "ctx"}
+	saveSaaSHive(&SaaSHive{
+		ID: "daily-1", Owner: "alice", AutoUpgrade: true,
+		AutoUpgradeMode: AutoUpgradeModeDaily, AutoUpgradeLastFired: today,
+		Status: "running", ClusterID: "remote",
+	})
+	// No latest SHA cached: recovery keeps the latched target rather than
+	// advancing, which keeps the assertion on the re-arm itself.
+	resetSHACaches(t)
+
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, heartbeatUpgrade: make(map[string]string), clusters: map[string]ClusterConfig{"remote": remote}}
+	s.registry.Hives = []RegistryEntry{{
+		ID: "daily-1", GitBranch: "v2", GitHash: "old1234", Upgrading: true,
+		UpgradeTarget: "fc32ae4", UpgradeStartedAt: time.Now().Add(-30 * time.Minute),
+	}}
+
+	s.triggerAutoUpgrades()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if got := s.heartbeatUpgrade["daily-1"]; got != "fc32ae4" {
+		t.Errorf("stale upgrade on a daily-mode hive that already fired today must still be re-armed, heartbeatUpgrade = %q, want %q", got, "fc32ae4")
+	}
+	if !s.registry.Hives[0].Upgrading {
+		t.Error("recovery must keep the durable Upgrading latch until the spoke reports the target")
+	}
+}
+
 // TestTriggerAutoUpgradesNotStaleManualRepopulates covers the hub-restart case
 // before the stale threshold: a latched manual upgrade on a remote cluster is
 // re-populated into heartbeatUpgrade even when it is not yet stale, exactly as
