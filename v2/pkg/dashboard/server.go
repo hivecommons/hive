@@ -199,6 +199,13 @@ type StatusPayload struct {
 	Repos               []FrontendRepo         `json:"repos"`
 	Beads               FrontendBeads          `json:"beads"`
 	Health              map[string]any         `json:"health"`
+	// DeepHealth carries the spoke's own deep health checks (HealthSummary:
+	// ready, github_auth, agents, …) — the same checks the heartbeat reports
+	// to the hub. The dashboard's header Health pill renders from these, NOT
+	// from the shallow /api/health liveness signal or the repo-workflow
+	// Health map above, so the pill can never show "Health OK" while the
+	// spoke's own agents are down (#2465).
+	DeepHealth          map[string]any         `json:"deepHealth,omitempty"`
 	Budget              FrontendBudget         `json:"budget"`
 	CadenceMatrix       []FrontendCadence      `json:"cadenceMatrix"`
 	GHRateLimits        map[string]any         `json:"ghRateLimits"`
@@ -1017,6 +1024,17 @@ func (s *Server) UpdateStatus(status *StatusPayload) {
 	s.githubAppMu.RUnlock()
 
 	status.InferenceBackends = s.buildInferenceBackends()
+
+	// Deep checks travel inside the status payload so every dashboard surface
+	// (header pill included) renders the same truth the heartbeat sends the
+	// hub. Judged against the payload in hand: it becomes s.status moments
+	// from now, so "ready" must not fail merely because the first beat's
+	// payload has not been assigned yet. Computed before statusMu is taken
+	// below (healthSummaryFor must not run under it).
+	s.statusMu.RLock()
+	readyForDeep := s.ready
+	s.statusMu.RUnlock()
+	status.DeepHealth = s.healthSummaryFor(status, readyForDeep)
 
 	s.systemAlertsMu.RLock()
 	if len(s.systemAlerts) > 0 {
@@ -2001,6 +2019,20 @@ func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, last
 
 // HealthSummary returns a deep-health summary with individual check results for heartbeats.
 func (s *Server) HealthSummary() map[string]any {
+	s.statusMu.RLock()
+	status := s.status
+	ready := s.status != nil && s.ready
+	s.statusMu.RUnlock()
+	return s.healthSummaryFor(status, ready)
+}
+
+// healthSummaryFor computes the deep-health checks against an explicit status
+// payload and readiness verdict, so UpdateStatus can embed a snapshot judged
+// against the payload it is ABOUT to install — judging s.status there would
+// report a false "ready: fail" on the first beat after boot, before any
+// payload has been assigned. Callers must not hold statusMu (the readiness
+// and queue inputs are passed in instead of read here).
+func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]any {
 	type check struct {
 		Name   string `json:"name"`
 		Status string `json:"status"`
@@ -2011,9 +2043,6 @@ func (s *Server) HealthSummary() map[string]any {
 	warns := 0
 
 	// 1. Readiness
-	s.statusMu.RLock()
-	ready := s.status != nil && s.ready
-	s.statusMu.RUnlock()
 	if ready {
 		checks = append(checks, check{Name: "ready", Status: "pass"})
 	} else {
@@ -2150,15 +2179,13 @@ func (s *Server) HealthSummary() map[string]any {
 	}
 
 	// 7. Queue
-	s.statusMu.RLock()
-	if s.status != nil {
+	if status != nil {
 		total := 0
-		for _, repo := range s.status.Repos {
+		for _, repo := range status.Repos {
 			total += len(repo.ActionableIssues)
 		}
 		checks = append(checks, check{Name: "queue", Status: "pass", Detail: fmt.Sprintf("%d actionable", total)})
 	}
-	s.statusMu.RUnlock()
 
 	overall := "ok"
 	if fails > 2 {

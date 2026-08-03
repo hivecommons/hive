@@ -3603,12 +3603,15 @@
       const isOff = a.offByCadence === true;
       const isOnDemand = a.onDemand === true;
       const isPaused = a.paused === true && !isOff && !isOnDemand;
-      const isStopped = a.state === 'stopped';
+      // Down = process not alive ('stopped', 'failed', …) — anything but
+      // 'running'. Matching only 'stopped' let 'failed' agents render the
+      // green idle styling here (#2465).
+      const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
       const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
       const dotCls = isStopped ? 'stopped' : isOnDemand ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
 
       detail.className = 'oc-agent-detail active state-' + dotCls;
-      const stateLabel = isStopped ? 'stopped' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
+      const stateLabel = isStopped ? 'down' : isOnDemand ? 'on demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'working' : 'idle';
 
       const kickId = `oc-kick-${a.name}`;
       const prevInput = document.getElementById(kickId);
@@ -3862,10 +3865,16 @@
       const isOff = a.offByCadence === true;
       const isOnDemand = a.onDemand === true;
       const isPaused = a.paused === true && !isOff && !isOnDemand;
-      const isStopped = a.state === 'stopped';
-      const isRunning = a.busy === 'working' && !isPaused && !isOff && !isStopped;
+      // Down = the PROCESS is not alive ('stopped', 'failed', or never
+      // launched — anything but 'running'). The dot used to read only the
+      // 'stopped' state, so a failed/crash-looping agent fell through to the
+      // green 'idle' class while the deep "agents" health check reported it
+      // down (#2465). Match the deep check: non-running + non-paused = down,
+      // with paused/off/on-demand keeping their own styling.
+      const isDown = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
+      const isRunning = a.busy === 'working' && !isPaused && !isOff && !isDown;
       const isOnDemandIdle = isOnDemand && !isRunning;
-      const dotCls = isStopped ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
+      const dotCls = isDown ? 'stopped' : isOnDemandIdle ? 'on-demand' : isPaused ? 'paused' : isOff ? 'off' : isRunning ? 'running' : 'idle';
       const isActive = _ocSelectedAgent === a.name ? ' active' : '';
       const agentDesc = a.description || AGENT_DESCRIPTIONS[a.name] || '';
       const label = a.displayName || a.name;
@@ -5215,7 +5224,9 @@
         const isOff = a.offByCadence === true;
         const isOnDemand = a.onDemand === true;
         const isPaused = a.paused === true && !isOff && !isOnDemand;
-        const isStopped = a.state === 'stopped' && !isPaused && !isOff;
+        // Down = process not alive — anything but 'running'. 'stopped'-only
+        // matching rendered crash-looping ('failed') agents green (#2465).
+        const isStopped = a.state !== 'running' && !isPaused && !isOff && !isOnDemand;
         const STALE_MS = 1200000; // 20 minutes
         const isStale = a.summaryUpdated && !isPaused && a.busy === 'working' && (Date.now() - new Date(a.summaryUpdated).getTime()) > STALE_MS;
         let statusCls = '';
@@ -10605,7 +10616,21 @@ function burnAreaChart() {
         const CI_PASS_THRESHOLD = 70;
         const HEALTH_LABELS = _buildHealthLabels(data.agents || []);
         const failing = [];
+        const warning = [];
         const passing = [];
+        // Deep checks first — the spoke's own health (ready, github_auth,
+        // agents with "N down: names", …), the exact checks the heartbeat
+        // reports to the hub. These decide the pill's color: a pill that read
+        // only the repo-workflow map below showed "Health OK" while this
+        // spoke's own agents were down (#2465).
+        const deepChecks = Array.isArray((data.deepHealth || {}).checks) ? data.deepHealth.checks : [];
+        const deepFailNames = [];
+        for (const c of deepChecks) {
+          const line = c.detail ? `${c.name}: ${c.detail}` : c.name;
+          if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
+          else if (c.status === 'warn') warning.push(line);
+          else passing.push(line);
+        }
         for (const [k, v] of Object.entries(h)) {
           const label = HEALTH_LABELS[k] || k;
           if (k === 'ci') {
@@ -10621,9 +10646,17 @@ function burnAreaChart() {
         }
         const hoverLines = [];
         if (failing.length) hoverLines.push('FAILING:\n' + failing.map(f => '  ✗ ' + f).join('\n'));
+        if (warning.length) hoverLines.push('WARNINGS:\n' + warning.map(wl => '  ⚠ ' + wl).join('\n'));
         if (passing.length) hoverLines.push('PASSING:\n' + passing.map(p => '  ✓ ' + p).join('\n'));
         ocHealth.title = hoverLines.join('\n\n') || 'No health data';
-        if (failing.length > 0) {
+        if (deepFailNames.length > 0) {
+          // Any failing deep check ⇒ the spoke itself is degraded — same
+          // verdict the hub renders for this hive's row.
+          ocHealth.textContent = '● Degraded';
+          ocHealth.style.color = 'var(--red)';
+          ocHealth.style.background = 'var(--red-bg)';
+          ocHealth.style.borderColor = 'var(--red-border)';
+        } else if (failing.length > 0) {
           ocHealth.textContent = `● ${failing.length} Issue${failing.length > 1 ? 's' : ''}`;
           ocHealth.style.color = 'var(--red)';
           ocHealth.style.background = 'var(--red-bg)';
