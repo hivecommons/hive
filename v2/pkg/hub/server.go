@@ -29,8 +29,12 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
-// registryPath is the on-disk hub registry file. A var (not a const) so tests
-// can redirect it at a temp file; production keeps the default.
+// registryPath is the DEFAULT on-disk hub registry file. A var (not a const)
+// so tests can redirect it at a temp file before constructing a server;
+// production keeps the default. NewHubServer copies it into the per-instance
+// HubServer.registryPath at construction, and all production reads and writes
+// go through that field — never this global — so a saveLoop goroutine leaked
+// by one test's server can never race a later test reassigning this var.
 var registryPath = "/data/hub-registry.json"
 
 // hubBannersPath is the on-disk file where admin-sent banners are persisted so
@@ -591,11 +595,18 @@ type HeartbeatHealthEntry struct {
 }
 
 type HubServer struct {
-	mux          *http.ServeMux
-	registry     Registry
-	mu           sync.RWMutex
-	logger       *slog.Logger
-	saveCh       chan struct{}
+	mux      *http.ServeMux
+	registry Registry
+	mu       sync.RWMutex
+	logger   *slog.Logger
+	saveCh   chan struct{}
+	// registryPath is this server's on-disk registry file, captured from the
+	// package-level default at construction and immutable afterwards. It is a
+	// per-instance field (not a use-time read of the global) so the saveLoop
+	// goroutine — which outlives test servers, since nothing closes saveCh —
+	// only ever sees its own path and cannot race a test redirecting the
+	// global for the next server (the TestLoadRegistry -race failure).
+	registryPath string
 	hubGitHash   string
 	hubGitBranch string
 	hubSecret    string
@@ -852,6 +863,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		mux:                     http.NewServeMux(),
 		logger:                  logger,
 		saveCh:                  make(chan struct{}, 1),
+		registryPath:            registryPath,
 		hubGitHash:              gitHash,
 		hubGitBranch:            gitBranch,
 		hubSecret:               secret,
@@ -2293,6 +2305,20 @@ func (s *HubServer) removeRegistryEntry(id, by string) {
 	s.logger.Info("audit: registry entry removed", "id", id, "by", by)
 }
 
+// regPath returns this server's registry file path: the per-instance field
+// captured at construction, or — for servers built directly in tests as bare
+// &HubServer{...} literals without one — the package-level default. The
+// fallback cannot reintroduce the registryPath data race: only NewHubServer
+// starts a saveLoop goroutine (the sole reader that outlives its test), and
+// NewHubServer always sets the field, so the global is only ever read from a
+// test's own goroutine, synchronously with any test redirecting it.
+func (s *HubServer) regPath() string {
+	if s.registryPath != "" {
+		return s.registryPath
+	}
+	return registryPath
+}
+
 // saveRegistryNow marshals and writes the registry to disk immediately, via a
 // temp file plus atomic rename so a crash mid-write cannot truncate it.
 func (s *HubServer) saveRegistryNow() error {
@@ -2302,11 +2328,12 @@ func (s *HubServer) saveRegistryNow() error {
 	if err != nil {
 		return fmt.Errorf("marshal hub registry: %w", err)
 	}
-	tmpPath := registryPath + ".tmp"
+	path := s.regPath()
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return fmt.Errorf("write hub registry: %w", err)
 	}
-	if err := os.Rename(tmpPath, registryPath); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename hub registry: %w", err)
 	}
 	return nil
@@ -2464,7 +2491,7 @@ func (s *HubServer) serveStatic(path string) http.HandlerFunc {
 }
 
 func (s *HubServer) loadRegistry() {
-	data, err := os.ReadFile(registryPath)
+	data, err := os.ReadFile(s.regPath())
 	if err != nil {
 		s.logger.Info("no existing hub registry, starting fresh")
 		return
@@ -2535,12 +2562,12 @@ func (s *HubServer) saveLoop() {
 			s.logger.Warn("hub registry marshal failed", "error", err)
 			continue
 		}
-		tmpPath := registryPath + ".tmp"
+		tmpPath := s.registryPath + ".tmp"
 		if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 			s.logger.Warn("hub registry save failed", "path", tmpPath, "error", err)
 			continue
 		}
-		if err := os.Rename(tmpPath, registryPath); err != nil {
+		if err := os.Rename(tmpPath, s.registryPath); err != nil {
 			s.logger.Warn("hub registry rename failed", "error", err)
 		}
 	}
