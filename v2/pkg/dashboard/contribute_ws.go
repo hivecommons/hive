@@ -811,6 +811,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					"username", contributor.profile.GitHubUsername,
 					"task", abandonedTask.TaskID,
 				)
+				// #2356: a disconnect drops the issue out of activeIssues (the only
+				// double-assign guard) WITHOUT recording any cooldown, so selectTask
+				// could hand the SAME issue to another session in the brief reconnect
+				// window (BASE_RECONNECT_DELAY_MS..MAX_RECONNECT_DELAY_MS, i.e. 1s–60s)
+				// while the original relay — which keeps currentTask locally and
+				// re-asserts it via task_progress on reconnect — is still working it.
+				// Both sessions then reach "open a PR" and file duplicates. Mirror the
+				// task_failed path (#2435) and book the SHORT non-permanent failure
+				// cooldown so the issue is not instantly re-admissible. The short
+				// window comfortably outlasts the reconnect backoff, so the returning
+				// session re-asserts and resumes (repopulating activeIssues) before the
+				// cooldown lapses; a completion later resets the failure ledger. Only
+				// real issue tasks are booked — synthetic pr-review tasks carry
+				// Number == 0 and must not poison an issue key.
+				if abandonedTask.Number > 0 {
+					h.recordTaskFailure(abandonedTask.Repo, abandonedTask.Number, false)
+				}
 			}
 			h.mu.Lock()
 			delete(h.connections, connID)
