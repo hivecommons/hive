@@ -4945,6 +4945,16 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 
 	cfg := s.deps.Config
 
+	// saveConfig() silently no-ops when the config has no source path, so
+	// without this guard the handler would report "status":"updated" for a
+	// value that lives only in memory and is lost on the next restart (#2459).
+	// Refuse up front, before mutating anything, and name the cause.
+	if cfg.SourcePath == "" {
+		s.logger.Error("github config update rejected: config has no source path, save would be an in-memory no-op")
+		jsonError(w, "config not persisted: config has no source path, so the change would be lost on restart", http.StatusInternalServerError)
+		return
+	}
+
 	if body.PrivateKey != "" {
 		keyPath := body.KeyFile
 		if keyPath == "" {
@@ -4986,12 +4996,23 @@ func (s *Server) handleConfigGitHub(w http.ResponseWriter, r *http.Request) {
 		"key_file":        cfg.GitHub.KeyFile,
 	}
 
+	// Resolve the signing key the same way the boot and heartbeat-apply paths
+	// do, NOT from the raw config value: on hosted spokes the key is
+	// hub-delivered to the per-app-id path with key_file deliberately left
+	// empty, and gating reinit on cfg.GitHub.KeyFile alone made Set ID save the
+	// installation_id but never rebuild the client — banner never cleared,
+	// Re-check dead-ended on a nil client (#2459).
+	keyFile := cfg.GitHub.KeyFile
+	if s.deps.ResolveAppKeyFileFunc != nil {
+		keyFile = s.deps.ResolveAppKeyFileFunc(cfg.GitHub.KeyFile, cfg.GitHub.AppID)
+	}
+
 	// HasUsableApp() rejects the placeholder sentinel: reinitializing App auth
 	// against it would fail on every save and, before this guard, could not
 	// succeed no matter what installation_id the operator supplied.
-	if cfg.GitHub.HasUsableApp() && cfg.GitHub.KeyFile != "" {
+	if cfg.GitHub.HasUsableApp() && keyFile != "" {
 		if s.deps.ReinitGitHubFunc != nil {
-			if err := s.deps.ReinitGitHubFunc(cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.KeyFile); err != nil {
+			if err := s.deps.ReinitGitHubFunc(cfg.GitHub.AppID, cfg.GitHub.InstallationID, keyFile); err != nil {
 				s.logger.Error("github client reinit failed", "error", err)
 				result["reinit"] = "failed"
 				result["reinit_error"] = err.Error()

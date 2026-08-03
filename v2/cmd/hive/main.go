@@ -1796,6 +1796,13 @@ func main() {
 			}
 			return nil
 		},
+		// Same key resolution as boot (initGitHubAuth) and the heartbeat apply
+		// path: without it, the dashboard Set ID handler gated reinit on the
+		// raw key_file, which is deliberately empty on hub-delivered per-app-id
+		// keys (#2459).
+		ResolveAppKeyFileFunc: func(configured string, appID int64) string {
+			return resolveAppKeyFile(configured, os.Getenv("GH_APP_KEY_FILE"), appID)
+		},
 	})
 
 	dashSrv.SetGitHubAppRequired(githubAppRequired)
