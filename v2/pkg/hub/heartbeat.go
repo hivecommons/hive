@@ -316,6 +316,13 @@ type HeartbeatPayload struct {
 	// but restarted 35 times — is visible in My Hives instead of looking
 	// healthy. A short uptime that keeps resetting is the tell.
 	StartedAt string `json:"started_at,omitempty"`
+	// Reporter is the pod name (os.Hostname) of the spoke PROCESS that sent
+	// this beat. It exists because two spoke instances can report as the same
+	// hive_id — a stale ReplicaSet pod surviving a rollout, or an orphaned
+	// duplicate deployment — and their alternating states made the dashboard
+	// flip every beat with nothing naming the culprit. Empty means the spoke
+	// is too old to report it: UNKNOWN, never evidence of anything.
+	Reporter string `json:"reporter,omitempty"`
 	// AdvisoryLastPostedAt is when this spoke last SUCCESSFULLY posted/updated
 	// its advisory-digest issue (RFC3339). It is the mirror of StartedAt for the
 	// advisory path: the hub renders a "stale advisory" pill so a hive that
@@ -514,6 +521,10 @@ type StatusCollector func() *HeartbeatPayload
 
 // UpgradeCallback is called when the hub instructs this hive to upgrade
 // to a specific SHA via the heartbeat response.
+// RestartSpokeCallback handles a hub-requested rolling restart of this spoke
+// (HeartbeatResponse.RestartSpoke). The callback owns the uptime guard.
+type RestartSpokeCallback func()
+
 type UpgradeCallback func(targetSHA string)
 
 func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector, interval time.Duration, logger *slog.Logger, callbacks ...any) {
@@ -533,6 +544,7 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 	var onAuthorizedUsers AuthorizedUsersCallback
 	var onProjectConfig ProjectConfigCallback
 	var onGatewayConfig GatewayConfigCallback
+	var onRestartSpoke RestartSpokeCallback
 	for _, cb := range callbacks {
 		switch fn := cb.(type) {
 		case UpgradeCallback:
@@ -551,6 +563,8 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 			onProjectConfig = fn
 		case GatewayConfigCallback:
 			onGatewayConfig = fn
+		case RestartSpokeCallback:
+			onRestartSpoke = fn
 		}
 	}
 
@@ -593,6 +607,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		// creates/replaces the gateway.
 		if resp.PendingGateway != nil && onGatewayConfig != nil {
 			onGatewayConfig(resp.PendingGateway)
+		}
+		if resp.RestartSpoke && onRestartSpoke != nil {
+			onRestartSpoke()
 		}
 	}
 
@@ -991,7 +1008,16 @@ type HeartbeatResponse struct {
 	// ghcr.io/kubestellar/hive:<SwitchToTag> and restart. Used for branch
 	// switches on clusters the hub can't reach over kubectl — the spoke has
 	// in-cluster RBAC (hive-self-upgrade role) to patch its own deployment.
-	SwitchToTag     string                    `json:"switch_to_tag,omitempty"`
+	SwitchToTag string `json:"switch_to_tag,omitempty"`
+	// RestartSpoke instructs the spoke to rolling-restart its own deployment
+	// (RolloutRestartSelf) without changing the image. It is the remote kill
+	// switch for a duplicate spoke instance on a cluster the hub cannot reach:
+	// an upgrade can't help (the instance is already at the target SHA), only
+	// a restart sheds it. Delivered to every beat inside a bounded arm window
+	// so ALL instances reporting as this hive receive it; the spoke's own
+	// uptime guard keeps a freshly restarted process from acting on the same
+	// window twice.
+	RestartSpoke    bool                      `json:"restart_spoke,omitempty"`
 	GitHubAppConfig *HeartbeatGitHubAppConfig `json:"github_app_config,omitempty"`
 	HubBanner       *HubBanner                `json:"hub_banner,omitempty"`
 	IsPublic        *bool                     `json:"is_public,omitempty"`

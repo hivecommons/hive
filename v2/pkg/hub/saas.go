@@ -213,6 +213,7 @@ func (s *HubServer) registerSaaSRoutes() {
 	// switch-branch and auto-upgrade above.
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/forge", s.requireAuth(s.handleSwitchForge))
 	s.mux.HandleFunc("POST /api/saas/hives/{id}/reset-app", s.requireAuth(s.handleResetApp))
+	s.mux.HandleFunc("POST /api/saas/hives/{id}/restart-spoke", s.requireAuth(s.handleRestartSpoke))
 	s.mux.HandleFunc("GET /api/saas/hive-config/{hiveID}", s.requireAuth(s.handleProxyHiveConfig))
 	s.mux.HandleFunc("GET /api/saas/latest-sha", s.handleLatestSHA)
 	s.mux.HandleFunc("POST /api/saas/hub/upgrade", s.requireAdmin(s.handleHubSelfUpgrade))
@@ -11393,6 +11394,12 @@ const dashboardHTML = `<!DOCTYPE html>
            that App's installation_id after its identity is moved to the fleet
            App, so every field reads correct while freshly minted tokens 404. */
         if (_isAdmin && isHosted) menuItems.push('<div onclick="resetHiveApp(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Reset App</div>');
+        /* Restart Spoke rolling-restarts every instance reporting as this
+           hive. The case it exists for: two instances alternating as one hive
+           (conflictingReporters drift) on a cluster the hub cannot reach —
+           the heartbeat is the only channel, and a restart sheds the stale
+           instance while costing the healthy one a single rolling restart. */
+        if (_isAdmin && isHosted) menuItems.push('<div onclick="restartHiveSpoke(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" style="' + mi + '">Restart Spoke</div>');
         if (isLocal && h.role === 'owner') menuItems.push('<div onclick="removeLocalHive(\'' + esc(h.id) + '\')" style="' + mi + '">Remove</div>');
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
@@ -12322,6 +12329,22 @@ const dashboardHTML = `<!DOCTYPE html>
         if (typeof loadHives === 'function') loadHives();
       } catch (e) {
         alert('Reset failed: ' + e);
+      }
+    }
+
+    /* Restart Spoke: arms a rolling restart delivered to every spoke instance
+       reporting as this hive on their next heartbeats (bounded window). Used
+       to shed a stale duplicate instance the hub cannot delete directly. */
+    async function restartHiveSpoke(hiveId, hiveName) {
+      if (!confirm('Restart the spoke for "' + hiveName + '"?\n\nEvery instance reporting as this hive rolling-restarts on its next heartbeat (up to 5 minutes). The image and configuration are unchanged.')) return;
+      try {
+        var resp = await fetch('/api/saas/hives/' + encodeURIComponent(hiveId) + '/restart-spoke', {method: 'POST'});
+        var data = await resp.json().catch(function() { return {}; });
+        if (!resp.ok) { alert('Restart failed: ' + (data.error || resp.status)); return; }
+        alert('Spoke restart armed for "' + hiveName + '".\n\nInstances restart on their next heartbeat within the 5-minute window.');
+        if (typeof loadHives === 'function') loadHives();
+      } catch (e) {
+        alert('Restart failed: ' + e);
       }
     }
 

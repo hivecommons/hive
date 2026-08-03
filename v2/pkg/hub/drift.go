@@ -70,6 +70,10 @@ const (
 	// app-missing/app-perm-issue so operator work is never filed as an
 	// owner-facing adoption problem.
 	DriftKindAppCredsOperator = "app-creds-operator"
+	// DriftKindDuplicateSpoke: two spoke instances are alternating reports as
+	// this one hive, so every registry field flips with whichever spoke
+	// reported last.
+	DriftKindDuplicateSpoke = "duplicate-spoke"
 	// DriftKindAppIDPlaceholder marks a hive still authenticating as the
 	// placeholder App sentinel (config.PlaceholderAppID). Distinct from
 	// app-creds-operator because the fault is the app_id itself, not the key:
@@ -493,6 +497,18 @@ func computeDrift(h MyHiveEntry, norm fleetNorm, latestSHAs map[string]string, n
 			"This hive is authenticating as the placeholder App ID, which is not a real GitHub App — "+
 				"no installation ID or private key can make it work. The hub must assign the cluster's real "+
 				"github_app_id; the hive owner cannot fix this and should not be asked to")
+	}
+
+	// Two instances alternating as one hive poisons every other signal in
+	// this entry — each drift row below reflects whichever instance reported
+	// last, and the dashboard flips with them. Raised first and always (even
+	// on a placeholder): the fix is shedding the stale instance, and the hub
+	// has a delivered path for that (Restart Spoke arms RolloutRestartSelf on
+	// every instance via the heartbeat).
+	if h.ConflictingReporters != "" {
+		add(DriftKindDuplicateSpoke, DriftCritical,
+			"two spoke instances are reporting as this hive ("+h.ConflictingReporters+
+				") and their states alternate every beat — use Restart Spoke to shed the stale instance")
 	}
 
 	// A placeholder legitimately has no App, no agents and ACMM 0. Flagging it

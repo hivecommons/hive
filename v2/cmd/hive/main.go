@@ -665,6 +665,17 @@ func startDocsTokenRefresh(ctx context.Context, cfg *config.Config, appKeyFile s
 // short uptime that keeps resetting is the only visible tell.
 var processStartedAt = time.Now()
 
+// reporterName identifies this spoke process to the hub (HeartbeatPayload
+// Reporter). In-cluster the hostname IS the pod name; on failure it stays
+// empty, which the hub reads as "too old / cannot report", never as data.
+var reporterName, _ = os.Hostname()
+
+// spokeRestartMinUptime is how old this process must be before it acts on a
+// hub-delivered restart. The hub delivers the instruction to every beat in a
+// multi-minute window so all instances hear it; without this guard the
+// restarted process would come back inside the same window and restart again.
+const spokeRestartMinUptime = 10 * time.Minute
+
 func main() {
 	startTime := time.Now()
 	defaultConfig := "/etc/hive/hive.yaml"
@@ -2449,6 +2460,10 @@ func main() {
 				AIAuthor:          cfg.Project.AIAuthor,
 				AIAuthorEffective: cfg.EffectiveAIAuthor(),
 				StartedAt:         processStartedAt.UTC().Format(time.RFC3339),
+				// Reporter names THIS process (the pod) so the hub can tell two
+				// instances reporting as one hive apart — the pod name is the
+				// hostname inside the container.
+				Reporter: reporterName,
 				// Advisory-staleness signal (mirrors StartedAt/uptime). Report the
 				// last successful digest-post time only if the spoke has actually
 				// posted one — a zero time is left as an empty string so the hub
@@ -2601,7 +2616,23 @@ func main() {
 				// and then stops re-sending them.
 				GitHubAppKeysHeld: heldPerAppIDKeyFingerprints(),
 			}
-		}, heartbeatSendInterval, logger, hub.UpgradeCallback(func(targetSHA string) {
+		}, heartbeatSendInterval, logger, hub.RestartSpokeCallback(func() {
+			if up := time.Since(processStartedAt); up < spokeRestartMinUptime {
+				logger.Info("hub requested a spoke restart; ignoring — this process just started",
+					"uptime", up.Round(time.Second))
+				return
+			}
+			logger.Warn("hub requested a spoke restart — rolling this deployment",
+				"reporter", reporterName)
+			if err := hub.RolloutRestartSelf(logger); err != nil {
+				// Do NOT exit here: without deployment-patch RBAC an exit would
+				// restart onto the same state every delivery and look like a
+				// crash-loop. The error names the missing Role instead.
+				logger.Error("spoke restart failed: could not patch own Deployment",
+					"error", err,
+					"hint", "grant get/patch on deployments/hive in this namespace (hive-self-upgrade Role/RoleBinding)")
+			}
+		}), hub.UpgradeCallback(func(targetSHA string) {
 			const upgradeMarkerPath = "/data/upgrade-requested"
 
 			// attemptCount carries the number of PREVIOUS failed attempts for this

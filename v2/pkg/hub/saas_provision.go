@@ -545,6 +545,14 @@ type SaaSHive struct {
 	// delivery (see AppIdentityDelivered), so a lost beat is retried.
 	PendingAppConfig *PendingAppIdentity `json:"pending_app_config,omitempty"`
 
+	// RequestedRestartAt (RFC3339) arms a rolling restart of this hive's spoke,
+	// delivered on every heartbeat inside spokeRestartDeliveryWindow and then
+	// cleared. Durable on the hive record for the same reason as
+	// PendingAppConfig: an in-memory flag dies with a hub restart and a missed
+	// beat, and the whole point of this switch is reaching spokes the hub
+	// cannot touch any other way.
+	RequestedRestartAt string `json:"requested_restart_at,omitempty"`
+
 	Error           string                 `json:"error,omitempty"`
 	AutoUpgrade     bool                   `json:"auto_upgrade"`
 	IsPublic        bool                   `json:"is_public"`
