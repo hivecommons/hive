@@ -10406,6 +10406,56 @@ const dashboardHTML = `<!DOCTYPE html>
       renderHives(sortedDashHives(), true);
     }
 
+    /* subSort renders ONE inline, clickable sort control for a combined-column
+       header. A folded column (Maturity, Activity) hosts two or three sort keys,
+       so the whole <th> can no longer own a single onclick — each key gets its
+       own ⇅ span instead, keeping every folded sort reachable directly from the
+       header exactly as the standalone columns' ⇅ were.
+
+       key      — the sortDashHives sort key (a fixed literal, never user input);
+       label    — the visible ⇅ text (e.g. 'Prov ⇅');
+       titleRaw — the hover text, inserted VERBATIM into the title attribute to
+                  match how the original standalone headers embedded literals
+                  (some carry pre-encoded entities like &apos;). Callers pass
+                  trusted string constants only.
+
+       event.stopPropagation() so a sub-sort inside a <th> that ALSO has its own
+       onclick (Uptime hosts the Prov sub-sort) fires only its own key, not the
+       parent's. jsArg supplies the quotes around the key so an apostrophe could
+       never break out of the handler. */
+    function subSort(key, label, titleRaw) {
+      return '<span onclick="event.stopPropagation();sortDashHives(' + jsArg(key) + ')" ' +
+        'style="cursor:pointer;font-weight:400;color:var(--muted);margin-left:2px"' +
+        (titleRaw ? ' title="' + titleRaw + '"' : '') + '>' + label + '</span>';
+    }
+
+    /* stackHeader lays a combined column's header out on TWO lines instead of one
+       inline string: the title on line 1, its sub-sort ⇅ chips on line 2. The
+       inline form ("Uptime ⇅ Prov ⇅", "Activity Iss ⇅ PRs ⇅ Ctr ⇅") set each
+       folded column's width from the full concatenated string, which made the
+       fleet table far wider than it needed to be. Stacking makes the column width
+       track the widest SINGLE line instead.
+
+       .hive-table th sets white-space:nowrap, which would keep everything on one
+       line; a flex column overrides that for layout, and the chip row is allowed
+       to wrap (flex-wrap) so three chips fold onto a further line on a truly
+       narrow table rather than forcing the column wide. Colours come from the
+       existing --muted token and the inherited th colour, so both themes track.
+
+       titleHTML    — the line-1 content. May be plain text (e.g. 'Maturity') or
+                      an already-built clickable span; inserted VERBATIM, callers
+                      pass trusted markup only.
+       subSortsHTML — the line-2 content: one or more subSort() spans (each already
+                      carries its own onclick + event.stopPropagation()). Passed
+                      through unchanged, so every folded sort stays reachable and
+                      the stopPropagation contract is untouched. */
+    function stackHeader(titleHTML, subSortsHTML) {
+      return '<span style="display:inline-flex;flex-direction:column;align-items:center;gap:1px;line-height:1.15">' +
+        '<span style="white-space:nowrap">' + titleHTML + '</span>' +
+        '<span style="display:inline-flex;flex-wrap:wrap;justify-content:center;gap:2px;font-size:0.9em;color:var(--muted)">' +
+        subSortsHTML + '</span></span>';
+    }
+
     /* persistHiveSort records the operator's EXPLICIT sort choice. Written only
        from sortDashHives (a header click), never from loadHiveSortPrefs, so
        restoring a preference can't rewrite it and a first visit leaves the key
@@ -11347,6 +11397,16 @@ const dashboardHTML = `<!DOCTYPE html>
         if (isHosted && h.role === 'owner' && _clusterList && _clusterList.length > 1 && h.migrationStatus !== 'migrating') menuItems.push('<div onclick="openMigrateModal(\'' + esc(h.id) + '\',\'' + esc(h.clusterId || '') + '\')" style="' + mi + '">Move to cluster</div>');
         if (isHosted && h.role === 'owner') menuItems.push('<div style="border-top:1px solid #30363d;margin:4px 0"></div><div onclick="deleteHive(\'' + esc(h.id) + '\')" style="' + mi + ';color:#f85149">Delete</div>');
         var sha = h.gitHash || '';
+        /* Drift folded ONTO Version: config drift is overwhelmingly "this hive's
+           version/branch differs from the fleet", so the drift indicator reads as
+           a property of the Version cell rather than earning its own column. Only
+           emitted when there IS drift (driftOf().count > 0); driftBadge() returns
+           its own colored count pill with the full per-signal hover panel, so no
+           datum is lost — hover the dot for every drift reason exactly as before.
+           A clean hive shows nothing here, keeping the cell as tight as it was.
+           driftBadge carries its own hive-access-pop panel and NO title, so the
+           single-hover-panel invariant holds (it is a badge, not an inline face). */
+        var driftDot = driftOf(h).count > 0 ? driftBadge(h) : '';
         var versionCell = '';
         if (sha) {
           var branchName = h.gitBranch || 'v2';
@@ -11482,14 +11542,20 @@ const dashboardHTML = `<!DOCTYPE html>
              Lines 3 and 4 are omitted entirely when empty — a read-only viewer
              gets two lines, not four with two blanks. Every fragment below is
              embedded verbatim, so ids, handlers and tooltips are preserved. */
-          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status;
+          /* The drift dot rides on the SHA line, right of the current/behind
+             glyph: "what commit is this hive on, and does it match the fleet" is
+             one thought. It sets no extra line, so a drifting hive is no taller. */
+          var shaLine = '<span style="font-family:monospace;color:var(--muted)" title="' + escAttr(shaMsg) + '">' + esc(sha) + '</span>' + status + (driftDot ? ' ' + driftDot : '');
           versionCell = '<div style="' + STACKED_CELL_STYLE + '">' +
             '<div style="' + STACKED_LINE_STYLE + '">' + branch + '</div>' +
             '<div style="' + STACKED_LINE_STYLE + '">' + shaLine + '</div>' +
             (upgradeIcon ? '<div style="' + STACKED_LINE_STYLE + '">' + upgradeIcon + '</div>' : '') +
             (autoUpgradeCheck ? '<div style="' + STACKED_LINE_STYLE + '">' + autoUpgradeCheck + '</div>' : '') +
             '</div>';
-        } else { versionCell = '<span style="color:var(--muted)">—</span>'; }
+        /* No version reported, but drift can still exist (e.g. heartbeat-stale on a
+           spoke too old to report a SHA) — surface the dot beside the dash so
+           folding Drift into Version never hides a signal. */
+        } else { versionCell = '<span style="color:var(--muted)">—</span>' + (driftDot ? ' ' + driftDot : ''); }
         var pendingBadge = (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write'))
           ? '<span style="position:absolute;top:-2px;right:-2px;background:var(--blue);color:#fff;border-radius:50%;width:16px;height:16px;font-size:0.6rem;display:flex;align-items:center;justify-content:center;font-weight:700">' + h.pendingRequestCount + '</span>'
           : '';
@@ -11497,14 +11563,16 @@ const dashboardHTML = `<!DOCTYPE html>
         if (h.pendingRequestCount > 0 && (h.role === 'owner' || h.role === 'read-write')) {
           pendingPill = '<a href="#" onclick="togglePendingRow(\'' + esc(h.id) + '\');return false" style="display:inline-flex;align-items:center;gap:4px;padding:3px 10px;background:rgba(59,130,246,0.12);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;font-size:0.7rem;text-decoration:none;cursor:pointer;white-space:nowrap">&#x1F514; ' + h.pendingRequestCount + ' pending</a>';
         }
-        // 17 = the 13 original columns, plus Uptime, plus Drift, plus the
-        // bulk-select column, plus Journey, plus the thin Provisioned SORT column
-        // (date moved into the status hover; sortable header + empty placeholder
-        // cell remain), MINUS Public (visibility stacks under Location) and MINUS
-        // AI Author (folded into the Repos cell as its "as:" line). Counted
-        // against the <th> cells in the header and the <td> cells emitted below
-        // (bulkCheckboxCell contributes one).
-        var TOTAL_COLUMNS = 17;
+        // 12 columns after the 15-to-9 fold. The visible cells are: bulk-select,
+        // the ⋮ menu, Hive, Location, Uptime, Version, Repos, Maturity, Agents,
+        // Tokens, Mode, Activity. Four folds collapsed six columns:
+        //   PROV    → date lives in the status hover; sort rides the Uptime header
+        //   DRIFT   → dot on the Version cell (driftBadge, full hover preserved)
+        //   ACMM+JOURNEY  → one Maturity cell (both badges stacked, both sorts kept)
+        //   ISSUES+PRS+CONTRIB → one Activity cell (all 3 stats + sparklines, 3 sorts kept)
+        // Counted against the <th> cells in the header and the <td> cells emitted
+        // below (bulkCheckboxCell contributes one).
+        var TOTAL_COLUMNS = 12;
         /* Visibility moved OUT of its own column and under Location: "where
            does this hive run" and "who can see it" are both facts about the
            hive's placement, so they read as one cell, and folding them saves a
@@ -11611,37 +11679,45 @@ const dashboardHTML = `<!DOCTYPE html>
               '<div style="' + STACKED_LINE_STYLE + ';color:var(--muted)" title="GitHub identity this hive opens PRs/commits as (— = no GitHub App installed yet)">as: ' + esc(h.aiAuthorEffective || '—') + '</div>' +
             '</div>' +
           '</td>' +
-          '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
-          '<td>' + journeyBadge(h.journey) + '</td>' +
-          /* Drift sits immediately right of Journey: both answer "how healthy
-             is this hive's configuration", so they read as one pair rather
-             than being separated by nine metric columns. Header index and body
-             index are both 10 of 16 — keep them in lockstep. */
-          '<td style="white-space:nowrap;text-align:right">' + driftBadge(h) + '</td>' +
+          /* MATURITY: the ACMM level badge and the Journey status stacked into
+             ONE cell. Both answer "how far along is this hive's adoption" — the
+             ACMM level is where it IS, the journey is the next step it OWES — so
+             they read as one column instead of two. Each badge keeps its own
+             hover (acmmBadge's title explains the level, journeyBadge's the
+             stage), so no datum is lost; both sorts stay reachable from the
+             MATURITY header's two ⇅ controls (acmmLevel and journey). */
+          '<td>' +
+            '<div style="' + STACKED_CELL_STYLE + '">' +
+              '<div style="' + STACKED_LINE_STYLE + '">' + acmmBadge(h.acmmLevel) + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '">' + journeyBadge(h.journey) + '</div>' +
+            '</div>' +
+          '</td>' +
           '<td title="' + esc((h.agents || []).map(function(a){ var label = a.name + ' (' + a.state + ')'; if (a.mode === 'on_demand') label += ' — on demand'; return label; }).join('\n')) + '" style="cursor:' + ((h.agentCount || 0) > 0 ? 'help' : 'default') + '">' + (h.agentCount || 0) + '</td>' +
           '<td title="Cumulative tokens consumed, as of the last heartbeat" style="white-space:nowrap;cursor:help">' + fmtTokens(h.totalTokens24h || 0) + '</td>' +
           '<td>' + modeCell + '</td>' +
-          '<td>' + sparkline(h.issueHistory, '#f59e0b', 50, 14) + (h.actionableIssues || 0) + '</td>' +
-          '<td>' + sparkline(h.prHistory, '#3b82f6', 50, 14) + (h.actionablePRs || 0) + '</td>' +
-          '<td>' + (h.activeContributors || 0) + '</td>' +
-          /* Provisioned: the DATE moved into the status hover panel (healthBadge) —
-             it is reference metadata, not a live metric. This cell is intentionally
-             empty: the thin "Prov ⇅" header above still sorts the table by
-             registeredAt (a deliberately-kept feature), but the wide per-row date
-             no longer occupies the grid. hiveProvisionTime remains the source of
-             truth for both the hover line and the sort comparator. */
-          '<td></td>' +
+          /* ACTIVITY: Issues, PRs and Contributors — three mini-stats that were
+             three columns — stacked densely into ONE cell. Every number and both
+             sparklines survive verbatim; each line is labelled (I/PR/C) and
+             carries a native title so a folded value is never ambiguous. All
+             three sorts stay reachable from the ACTIVITY header's three ⇅
+             controls (actionableIssues, actionablePRs, activeContributors). */
+          '<td style="font-size:0.72rem">' +
+            '<div style="' + STACKED_CELL_STYLE + ';align-items:flex-start">' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="Actionable issues"><span style="color:var(--muted);min-width:24px;display:inline-block">Iss</span>' + sparkline(h.issueHistory, '#f59e0b', 40, 12) + (h.actionableIssues || 0) + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="Actionable PRs"><span style="color:var(--muted);min-width:24px;display:inline-block">PRs</span>' + sparkline(h.prHistory, '#3b82f6', 40, 12) + (h.actionablePRs || 0) + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="Active contributors"><span style="color:var(--muted);min-width:24px;display:inline-block">Ctr</span>' + (h.activeContributors || 0) + '</div>' +
+            '</div>' +
+          '</td>' +
           '</tr>' + pendingExpandRow;
       };
       /* Section-header row: a labeled separator spanning all columns, styled to
          match the table's muted uppercase heading treatment (see .hive-table th). */
       /* Count of <th> cells in the hive table header below. The section-header
          row spans all of them; a stale value would leave the separator short
-         and the table visibly ragged. Drift + bulk-select + Journey + a thin
-         Provisioned SORT column, minus Public (visibility stacked under Location)
-         and minus AI Author (folded into the Repos cell). Must stay equal to
+         and the table visibly ragged. 12 after the 15-to-9 fold (PROV, DRIFT,
+         ACMM/JOURNEY→Maturity, ISSUES/PRS/CONTRIB→Activity). Must stay equal to
          TOTAL_COLUMNS. */
-      var TOTAL_COLUMNS_HEADER = 17;
+      var TOTAL_COLUMNS_HEADER = 12;
       /* The header is a click target that expands/collapses its section. The
          caret mirrors aria-expanded so the affordance and the a11y state can
          never disagree. sectionKey also scopes the select-all checkbox to THIS
@@ -11776,7 +11852,23 @@ const dashboardHTML = `<!DOCTYPE html>
         /* Non-admin lists have no section headers, so the flat list's
            select-all lives in the table head instead. */
         '<th style="width:26px;text-align:center">' + (_isAdmin ? '' : bulkSectionCheckbox('all')) + '</th>' +
-        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer" title="Where this hive runs, and whether it is listed publicly">Location / Public ⇅</th><th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">Uptime ⇅</th><th>Version</th><th>Repos</th><th onclick="sortDashHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortDashHives(\'journey\')" style="cursor:pointer" title="Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level">Journey ⇅</th><th title="Configuration drift from the fleet norm — hover a value for the specific signals">Drift</th><th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortDashHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortDashHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortDashHives(\'activeContributors\')" style="cursor:pointer" title="Active contributors">Contrib ⇅</th><th onclick="sortDashHives(\'registeredAt\')" style="cursor:pointer" title="Sort by when this hive was first provisioned (the hub&apos;s first-seen time). The date itself now lives in the status hover.">Prov ⇅</th>' +
+        /* A combined-column header carries ONE sort control per folded field: the
+           header cell can no longer own a single onclick once it hosts two or three
+           sort keys, so each key gets its own inline clickable span. subSort() is
+           the shared helper; every folded sort therefore stays reachable directly
+           from the header, exactly as the standalone columns were. */
+        '<th></th><th onclick="sortDashHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortDashHives(\'clusterId\')" style="cursor:pointer;vertical-align:middle" title="Where this hive runs, and whether it is listed publicly">' + stackHeader('Location /', 'Public ⇅') + '</th>' +
+        /* Uptime hosts BOTH temporal sorts: live uptime (startedAt) and the folded
+           provision-date sort (registeredAt, the old "Prov ⇅"). The date itself now
+           lives in the status hover; only its sort trigger rides here. */
+        '<th onclick="sortDashHives(\'startedAt\')" style="cursor:pointer;vertical-align:middle" title="Process uptime since the last restart — a short value that keeps resetting means the pod is restarting">' + stackHeader('Uptime ⇅', subSort('registeredAt', 'Prov ⇅', 'Sort by when this hive was first provisioned (the hub&apos;s first-seen time). The date itself now lives in the status hover.')) + '</th>' +
+        '<th title="Version, branch and any configuration drift from the fleet norm — a coloured dot appears beside the commit when this hive drifts; hover it for the specific signals">Version</th><th>Repos</th>' +
+        /* MATURITY folds ACMM (where it is) and Journey (what it owes next); both
+           sorts survive as inline ⇅ controls. */
+        '<th style="vertical-align:middle" title="Adoption maturity: ACMM level and the next journey step">' + stackHeader('Maturity', subSort('acmmLevel', 'ACMM ⇅', 'Sort by ACMM level') + subSort('journey', 'Journey ⇅', 'Where this hive is on the adoption journey: install the GitHub App, assign a method/model (or run ClankeR, the contributor relay), then raise the ACMM level')) + '</th>' +
+        '<th onclick="sortDashHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortDashHives(\'totalTokens24h\')" style="cursor:pointer" title="Cumulative tokens consumed, as of the last heartbeat">Tokens ⇅</th><th onclick="sortDashHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th>' +
+        /* ACTIVITY folds Issues, PRs and Contrib; each keeps its own sort ⇅. */
+        '<th style="vertical-align:middle" title="Actionable issues, actionable PRs and active contributors">' + stackHeader('Activity', subSort('actionableIssues', 'Iss ⇅', 'Sort by actionable issues') + subSort('actionablePRs', 'PRs ⇅', 'Sort by actionable PRs') + subSort('activeContributors', 'Ctr ⇅', 'Sort by active contributors')) + '</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div>';
       /* Delegated, so binding once is enough no matter how often the table is
          re-rendered. The guard keeps repeated renders from stacking listeners. */

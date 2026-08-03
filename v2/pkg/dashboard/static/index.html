@@ -726,12 +726,24 @@
     .gh-idhint-btn[aria-expanded="true"] + .gh-idhint-pop { display: block; }
     .gh-idhint-pop .gh-idhint-lead { font-size: var(--fs-xs); color: var(--text); margin-bottom: 8px; line-height: 1.45; }
     .gh-idhint-pop .gh-idhint-foot { font-size: var(--fs-xs); color: var(--muted); margin-top: 8px; line-height: 1.45; }
-    /* The URL mock: a rendered address bar, not a screenshot. Scrolls inside
-       itself so a long org name cannot push the panel wider than the viewport. */
+    /* The URL mock: a rendered browser address bar, not a screenshot.
+       .gh-idhint-url is the pill-shaped chrome (rounded ends, lock glyph);
+       .gh-idhint-urltext is the scrollable URL row inside it, and the caret
+       callout sits below as its own line so it keeps pointing at the ID
+       segment even while the URL row scrolls horizontally. */
     .gh-idhint-url {
+      display: flex; align-items: center; gap: 7px;
+      background: var(--bg-soft); border: 1px solid var(--line-strong);
+      border-radius: 999px; padding: 6px 12px;
+    }
+    /* Lock glyph stands in for the browser's HTTPS padlock. Shrink-to-fit so
+       it never gets squeezed by the scrolling URL text next to it. */
+    .gh-idhint-url .seg-lock {
+      flex: 0 0 auto; color: var(--green); font-size: 0.72rem; opacity: 0.9;
+    }
+    .gh-idhint-urltext {
+      flex: 1 1 auto; min-width: 0;
       font-family: var(--font-mono); font-size: 0.66rem; line-height: 1.6;
-      background: var(--bg-soft); border: 1px solid var(--line);
-      border-radius: var(--radius-sm); padding: 7px 9px;
       color: var(--muted); overflow-x: auto; white-space: nowrap;
     }
     .gh-idhint-url .seg-host { color: var(--text); }
@@ -743,7 +755,13 @@
       border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent);
       border-radius: 3px; padding: 1px 4px;
     }
-    .gh-idhint-url .seg-caret { display: block; color: var(--amber); font-size: 0.6rem; }
+    /* Caret callout under the bar, pointing up at the ID segment. Own line
+       (not inside the scrolling pill) so it never gets clipped by
+       overflow-x when a long org name scrolls the URL row. */
+    .gh-idhint-caret {
+      display: block; color: var(--amber); font-size: 0.6rem;
+      font-family: var(--font-mono); margin-top: 4px; padding-left: 12px;
+    }
     .gh-app-perm-details { font-size: 0.8rem; margin-top: 6px; color: var(--text); }
     .gh-app-perm-details .perm-ok { color: var(--green); }
     .gh-app-perm-details .perm-missing { color: var(--red); font-weight: 600; }
@@ -5375,24 +5393,29 @@
       return org || INSTALL_ID_ORG_PLACEHOLDER;
     }
 
-    /* Builds the popover markup: a short lead, the mocked URL with the ID
-       segment highlighted and MASKED, and a footnote. Every interpolated value
-       is escaped — org and host originate from server config. */
+    /* Builds the popover markup: a short lead, a mocked browser address bar
+       (lock glyph + URL) with the ID segment highlighted and MASKED, a caret
+       callout pointing at it, and a footnote. Every interpolated value is
+       escaped — org and host originate from server config. */
     function ghAppInstallIdHintHtml(data) {
       var host = escapeHtml(ghAppHintHost(data));
       var org = escapeHtml(ghAppHintOrg());
       return '<span class="gh-idhint-lead">Your Installation ID is the <strong>last part of the URL</strong> '
-        + 'on your org’s installed-app settings page:</span>'
+        + 'in your browser’s address bar on your org’s installed-app settings page:</span>'
         + '<span class="gh-idhint-url">'
-        +   'https://<span class="seg-host">' + host + '</span>/organizations/'
-        +   org + '/settings/installations/'
-        +   '<span class="seg-id">' + INSTALL_ID_MASK + '</span>'
-        +   '<span class="seg-caret">' + new Array(INSTALL_ID_MASK_LENGTH + 1).join('↑')
-        +     ' this number</span>'
+        +   '<span class="seg-lock" aria-hidden="true">🔒</span>'
+        +   '<span class="gh-idhint-urltext">'
+        +     'https://<span class="seg-host">' + host + '</span>/organizations/'
+        +     org + '/settings/installations/'
+        +     '<span class="seg-id">' + INSTALL_ID_MASK + '</span>'
+        +   '</span>'
         + '</span>'
+        + '<span class="gh-idhint-caret">' + new Array(INSTALL_ID_MASK_LENGTH + 1).join('↑')
+        +   ' this number</span>'
         + '<span class="gh-idhint-foot">Open <strong>' + host + '</strong> → your org → '
         + 'Settings → GitHub Apps → the Hive app → <em>Configure</em>, then copy the digits '
-        + 'from the address bar. The circles above are a placeholder — they are not a real ID.</span>';
+        + 'shown in your browser’s address bar. The circles above are a placeholder — '
+        + 'they are not a real ID.</span>';
     }
 
     /* Refreshes the hint content for the hive's current host/org. Safe to call
