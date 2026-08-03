@@ -2038,10 +2038,44 @@ func (s *Server) RecordAdvisoryError(errMsg string) {
 // spoke has never posted one), the finding count that went out then, and the
 // most recent post error ("" when the last attempt succeeded). The heartbeat
 // builder reports these so the hub can flag a stale advisory digest.
+//
+// An inference-backend AUTH failure is folded into lastError so an advisory
+// digest that cannot be produced BECAUSE every inference call is 401'ing trips
+// the hub's staleness gate 3a IMMEDIATELY (with the auth cause) instead of
+// waiting 90 minutes for the last-post time to age out. This is deliberately
+// gated on the hive being an advisory PARTICIPANT — advisoryLastPostedAt
+// non-zero, i.e. it has successfully posted at least once — so a pure PR/merge
+// hive with no advisory agents (which never posts, so the hub reads it as
+// UNKNOWN) is never false-alarmed by an inference-auth blip on some other path.
+// A real advisory-post error already recorded takes precedence, since it is the
+// more specific cause; the inference-auth fold only fills an otherwise-empty
+// error. It self-clears the moment inference recovers, because the provider
+// stops reporting the signal.
 func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, lastError string) {
 	s.advisoryMu.RLock()
-	defer s.advisoryMu.RUnlock()
-	return s.advisoryLastPostedAt, s.advisoryLastFindings, s.advisoryLastError
+	postedAt, findings, errMsg := s.advisoryLastPostedAt, s.advisoryLastFindings, s.advisoryLastError
+	s.advisoryMu.RUnlock()
+
+	if errMsg == "" && !postedAt.IsZero() {
+		if infErr, _ := InferenceAuthError(); infErr != "" {
+			errMsg = infErr
+		}
+	}
+	return postedAt, findings, errMsg
+}
+
+// InferenceAuthState returns the spoke's current inference-backend auth-failure
+// signal — a non-empty, log-safe cause string and the time it first latched
+// while every inference call is being rejected (a stale gateway key), empty
+// otherwise. The heartbeat builder reports it as a DEDICATED field so the hub
+// can raise an "inference auth failing" alert whose ROOT cause an operator sees
+// directly, distinct from a GitHub-post advisory staleness. Unlike the
+// AdvisoryState fold, this is NOT gated on advisory participation: a hive whose
+// inference key is dead is broken whether or not it also posts advisories, and
+// the hub-side alert is the right place to surface that. Self-clears when
+// inference recovers.
+func (s *Server) InferenceAuthState() (errMsg string, since time.Time) {
+	return InferenceAuthError()
 }
 
 // HealthSummary returns a deep-health summary with individual check results for heartbeats.

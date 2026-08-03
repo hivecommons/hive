@@ -2214,6 +2214,12 @@ func main() {
 		// configured key is entitled to, learned by the proxy from a key-info
 		// probe or a "team not allowed" 403.
 		dashboard.SetEntitledModelsProvider(githubProxy.EntitledModels)
+		// Surface a stale/invalid inference gateway key (repeated 401s on every
+		// inference call) as a hive health signal: the proxy latches the failure
+		// after several consecutive rejections and clears it on the next success,
+		// and the heartbeat builder reports it to the hub (both as an immediate
+		// advisory-staleness cause and as a dedicated inference-auth alert).
+		dashboard.SetInferenceAuthProvider(githubProxy.InferenceAuthError)
 
 		// Wire the inference token sink so the translator records per-agent
 		// usage (from the gateway's OpenAI usage block) into the same metrics
@@ -2556,6 +2562,17 @@ func main() {
 				}(),
 				AdvisoryError: func() string {
 					_, _, errMsg := dashSrv.AdvisoryState()
+					return errMsg
+				}(),
+				// Inference-backend auth-failure signal (repeated 401s from a
+				// stale gateway key). Reported as its own field so the hub can
+				// raise a dedicated inference-auth alert whose ROOT cause an
+				// operator sees directly — distinct from the advisory-staleness
+				// pill AdvisoryError also trips. Empty when inference auth is
+				// healthy or the hive routes to no inference backend; self-clears
+				// on the next successful inference call.
+				InferenceAuthError: func() string {
+					errMsg, _ := dashSrv.InferenceAuthState()
 					return errMsg
 				}(),
 				Repos:       cfg.Project.Repos,
