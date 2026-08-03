@@ -182,17 +182,18 @@ func TestHoverPanelReusesSharedRoleColor(t *testing.T) {
 // section-header colspan and the pending-expand colspan all stay correct; a
 // stale count leaves the table visibly ragged.
 //
-// 17 = the columns left after the standalone Public column folded into Location
-// (visibility stacks beneath the location badge) and the AI Author column folded
-// into the Repos cell (its "as:" line); the Provisioned column survives as a thin
-// sort-only header (its date moved into the status hover panel).
+// 12 = the columns left after the 15-to-9 fold (PROV, DRIFT, ACMM+JOURNEY→Maturity,
+// ISSUES+PRS+CONTRIB→Activity), on top of the earlier Public→Location and
+// AI-Author→Repos folds. The inline access avatars still add NO column — they live
+// inside the existing name cell, so the header, section-header colspan and
+// pending-expand colspan all stay correct.
 // TestHiveTableColumnCountsAgree is the authority on this number: it counts the
 // emitted <th> and <td> cells rather than trusting a literal, so update it
 // first and follow it here.
 func TestHiveTableColumnCountUnchanged(t *testing.T) {
 	for _, snippet := range []string{
-		"var TOTAL_COLUMNS = 17;",
-		"var TOTAL_COLUMNS_HEADER = 17;",
+		"var TOTAL_COLUMNS = 12;",
+		"var TOTAL_COLUMNS_HEADER = 12;",
 	} {
 		if !strings.Contains(dashboardHTML, snippet) {
 			t.Errorf("dashboardHTML is missing %q — did the hive table gain or lose a column?", snippet)
