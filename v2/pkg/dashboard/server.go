@@ -2000,6 +2000,30 @@ func (s *Server) AdvisoryState() (lastPostedAt time.Time, lastFindings int, last
 }
 
 // HealthSummary returns a deep-health summary with individual check results for heartbeats.
+// agentCLIUnauthenticated reports whether an agent's CLI backend lacks working
+// credentials — the exact signal the agent panel uses to render its AUTH/Login
+// button: the pane poller saw a login prompt (proc.NeedsLogin), or the
+// shared-credential probe registered via SetBackendAuthProvider (wired to
+// agent.Manager.BackendAuthAvailable in main.go) reports the backend's auth
+// state as known-and-unavailable. Backend resolution mirrors buildAgents:
+// BackendOverride wins over the configured backend. For backends the probe
+// cannot introspect (known=false) this returns false — an unknown auth state
+// must not reclassify a genuinely crashed agent out of "down".
+func agentCLIUnauthenticated(proc *agent.AgentProcess, authFn func(backend string) (available, known bool)) bool {
+	if proc.NeedsLogin {
+		return true
+	}
+	if authFn == nil {
+		return false
+	}
+	backend := proc.Config.Backend
+	if proc.BackendOverride != "" {
+		backend = proc.BackendOverride
+	}
+	available, known := authFn(backend)
+	return known && !available
+}
+
 func (s *Server) HealthSummary() map[string]any {
 	type check struct {
 		Name   string `json:"name"`
@@ -2051,10 +2075,12 @@ func (s *Server) HealthSummary() map[string]any {
 		stalled := 0
 		unsubstituted := 0
 		down := 0
+		needLogin := 0
 		// The names behind the counts. "1 down" alone is unactionable — the
 		// operator's next question is always WHICH one, and the answer was
 		// dropped right here where it was known.
-		var downNames, stalledNames []string
+		var downNames, stalledNames, needLoginNames []string
+		authFn := getBackendAuthFn()
 		for name, proc := range s.deps.AgentMgr.AllStatuses() {
 			if proc.Paused {
 				paused++
@@ -2077,8 +2103,18 @@ func (s *Server) HealthSummary() map[string]any {
 					}
 				}
 			} else if !grace {
-				down++
-				downNames = append(downNames, name)
+				// A non-running agent whose CLI has no credentials is not
+				// crashed — it is waiting for a human to click Login on the
+				// agent panel. Bucket it separately so the operator reads an
+				// owner-actionable "need login" instead of chasing a "down"
+				// agent that will keep exiting until someone authenticates.
+				if agentCLIUnauthenticated(proc, authFn) {
+					needLogin++
+					needLoginNames = append(needLoginNames, name)
+				} else {
+					down++
+					downNames = append(downNames, name)
+				}
 			}
 		}
 		// Map iteration order is random; sorted names keep the detail line
@@ -2086,6 +2122,7 @@ func (s *Server) HealthSummary() map[string]any {
 		// is really the same agents in a different order.
 		sort.Strings(downNames)
 		sort.Strings(stalledNames)
+		sort.Strings(needLoginNames)
 		detail := fmt.Sprintf("%d running", running)
 		if paused > 0 {
 			detail += fmt.Sprintf(", %d paused", paused)
@@ -2093,8 +2130,14 @@ func (s *Server) HealthSummary() map[string]any {
 		if down > 0 {
 			detail += fmt.Sprintf(", %d down: %s", down, strings.Join(downNames, ", "))
 		}
+		if needLogin > 0 {
+			detail += fmt.Sprintf(", %d need login: %s", needLogin, strings.Join(needLoginNames, ", "))
+		}
 		st := "pass"
-		if down > 0 {
+		// need-login keeps the same fail semantics as down: the agent still
+		// cannot work, and the hub row must keep surfacing it until a human
+		// clicks Login — the detail line tells them which kind of broken it is.
+		if down > 0 || needLogin > 0 {
 			st = "fail"
 			fails++
 		}
