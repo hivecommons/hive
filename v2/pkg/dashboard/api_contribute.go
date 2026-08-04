@@ -968,21 +968,23 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
 </div>
 </div>
 </div>
 </div>
-<!-- Dedicated full-height DEV-LOG RAIL. Holds ONLY the Development log (moved here
-     out of the former right column). The rail edge carries a collapse toggle; when
+<!-- Dedicated full-height LIVE ACTIVITY RAIL. Holds ONLY the live activity feed
+     (moved here out of the former right column). Named "Live Activity" to match
+     the identically-sourced feed on the Onboarding tab (#2591 — was "Development
+     log", now consistent). The rail edge carries a collapse toggle; when
      collapsed the rail shrinks to a thin strip with a "show log" affordance and the
      main area reflows to fill the reclaimed width. The SSE feed, narrated lines,
      fade/slide-in animation, scrollback cap, empty state and the live status pill
      are unchanged — they were only relocated. aria-expanded on the toggle tracks
      the open/collapsed state for assistive tech. -->
-<aside class="ops-rail" id="ops-rail" aria-label="Development log">
+<aside class="ops-rail" id="ops-rail" aria-label="Live Activity">
 <button type="button" class="ops-rail-toggle" id="ops-rail-toggle" aria-expanded="true" aria-controls="ops-rail" title="Collapse log">
   <span class="ops-rail-chevron" aria-hidden="true">&rsaquo;</span>
   <span class="ops-rail-toggle-label">Log</span>
@@ -990,7 +992,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="ops-rail-inner">
 <div class="ops-rail-head">
   <span class="feed-dot"></span>
-  <h3>Development log</h3>
+  <h3>Live Activity</h3>
   <span class="ops-card-count" id="cc-log-count"></span>
   <span class="cc-live stale" id="cc-live-rail" title="Live feed status"><span class="cc-live-dot"></span><span id="cc-live-rail-label">connecting</span></span>
 </div>
@@ -1576,6 +1578,10 @@ function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
 
 function ccRenderQueue(flip){
   var el=document.getElementById('cc-queue');if(!el)return;
+  // Item count badge, same style as "My work"'s #work-count — kept in sync on
+  // every render (initial load, SSE queue push, poll fallback, drag-reorder).
+  var qc=document.getElementById('queue-count');
+  if(qc)qc.textContent=ccQueue.length+' ready';
   // flip=true (set only from the drag-drop handler) records each row's rect BEFORE
   // the rebuild so ccFlipPlay can glide displaced rows to their new slots instead of
   // a hard jump. Every other caller (initial load, SSE queue push, poll fallback)

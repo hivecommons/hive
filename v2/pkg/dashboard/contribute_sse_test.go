@@ -206,7 +206,7 @@ func TestCommandCenterMarkupRendered(t *testing.T) {
 		`/api/contribute/queue`,  // graceful poll fallback
 		`function ccTravel`,      // task-assign travel animation
 		`Ready-work queue`,       // queue heading
-		`Development log`,        // dev-log heading
+		`Live Activity`,          // rail heading (renamed, consistent with Onboarding)
 		`Your army`,              // army heading
 	} {
 		if !strings.Contains(body, want) {

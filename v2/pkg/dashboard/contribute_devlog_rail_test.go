@@ -46,7 +46,7 @@ func TestOpsDevlogRailMarkup(t *testing.T) {
 		`id="ops-rail"`,            // rail element (JS target)
 		`id="ops-rail-toggle"`,     // the collapse toggle/handle
 		`aria-controls="ops-rail"`, // toggle controls the rail (a11y)
-		`Development log`,          // dev-log heading (relocated, not removed)
+		`Live Activity`,            // rail heading — renamed for consistency with Onboarding (#2591)
 		`id="cc-log"`,              // the feed container itself
 		`Watching the hive`,        // the empty state, preserved
 	} {
