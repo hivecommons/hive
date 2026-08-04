@@ -101,12 +101,13 @@ func TestHandleLeaderboardPage(t *testing.T) {
 	w := httptest.NewRecorder()
 	srv.handleLeaderboardPage(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("code = %d", w.Code)
+	// The standalone page was folded into the /contribute Leaderboard tab.
+	// /leaderboard is now a deep-link shim that redirects to that tab.
+	if w.Code != http.StatusFound {
+		t.Errorf("code = %d, want 302 (redirect)", w.Code)
 	}
-	// Should return HTML
-	if !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
-		t.Errorf("content-type = %q", w.Header().Get("Content-Type"))
+	if loc := w.Header().Get("Location"); loc != "/contribute?tab=leaderboard" {
+		t.Errorf("Location = %q, want /contribute?tab=leaderboard", loc)
 	}
 }
 

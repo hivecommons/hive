@@ -417,6 +417,15 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .policy-key{color:#8b949e}
 .policy-val{color:#e6edf3;text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
 .ops-empty{padding:32px 20px;text-align:center;color:#8b949e;font-size:.85rem}
+.lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem}
+.lb-row:last-child{border-bottom:none}
+.lb-head{color:#8b949e;font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;background:#0d1117}
+.lb-rank{color:#8b949e;font-variant-numeric:tabular-nums}
+.lb-name{color:#e6edf3;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lb-tier{color:#8b949e}
+.lb-stat{text-align:right;color:#c9d1d9;font-variant-numeric:tabular-nums}
+.lb-head .lb-stat,.lb-head .lb-rank{text-align:right;color:#8b949e}
+.lb-head .lb-rank{text-align:left}
 .ops-note{color:#6e7681;font-size:.78rem;margin-top:12px;line-height:1.5}
 .ops-note code{background:#0d1117;padding:1px 6px;border-radius:4px}
 .prompt-preview{margin-top:10px;border-top:1px solid #21262d;padding-top:8px}
@@ -476,6 +485,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
 <button class="page-tab" role="tab" id="ptab-manage" aria-selected="false" data-panel="tab-manage">Management</button>
 <button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
+<button class="page-tab" role="tab" id="ptab-leaderboard" aria-selected="false" data-panel="tab-leaderboard">Leaderboard</button>
 </div>
 <div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
 <div class="page">
@@ -624,7 +634,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <p style="color:#6e7681;font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; force one with <code>export HIVE_CONTAINER_RUNTIME=podman</code>. Rootless podman (keep-id, SELinux labels) is handled automatically.</p>
 <p style="color:#6e7681;font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
-<a href="/leaderboard" style="display:inline-block;padding:8px 20px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem">🏆 View Leaderboard</a>
+<button type="button" id="goto-leaderboard-tab" style="display:inline-block;padding:8px 20px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem;font-family:inherit;cursor:pointer">🏆 View Leaderboard</button>
 </div>
 <div class="how">
 <h3>What you bring vs. what the hive provides</h3>
@@ -748,6 +758,22 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </div>
 </div>
 </div>
+<!-- Leaderboard tab — inline, read-only view of the contributor + agent
+     leaderboard. Reuses GET /api/leaderboard (the SAME endpoint the standalone
+     /leaderboard page renders from); hydrated client-side on first tab open,
+     matching how the Operations tab hydrates via /api/contribute/fleet. No
+     controls, no role gating — everyone (including read viewers) sees it. The
+     standalone /leaderboard page is preserved for external/bookmarked use. -->
+<div class="tab-panel" id="tab-leaderboard" role="tabpanel" aria-labelledby="ptab-leaderboard">
+<div class="ops">
+<h1>Leaderboard</h1>
+<p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Agents run by this hive and human contributors who donate compute both appear here; revoked contributors are excluded.</p>
+<div class="ops-card">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Rankings</h3><span class="ops-card-count" id="leaderboard-count"></span></div>
+<div id="leaderboard-list"><div class="ops-empty">Loading leaderboard&hellip;</div></div>
+</div>
+</div>
+</div>
 <script>
 (function(){
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
@@ -755,21 +781,85 @@ var tabs=document.querySelectorAll('.page-tab');
 var panels=document.querySelectorAll('.tab-panel');
 var opsStarted=false;   // Operations fleet polling started
 var adminStarted=false; // /api/role gate resolved (adminEnabled set)
+var lbStarted=false;    // Leaderboard hydrated (fetches /api/leaderboard once)
 // The role gate now backs controls in BOTH tabs: the admin block under Management
 // AND the per-clanker trust/revoke/remove buttons under Operations. So initAdmin()
 // must run when EITHER tab is first opened — otherwise a viewer who lands straight
 // on Operations would never resolve their role and would lose the per-row controls.
 // It is idempotent (fetches /api/role once) and independent of opsPoll().
-tabs.forEach(function(t){t.addEventListener('click',function(){
+// activateTab drives both a user click and the deep-link path (/leaderboard →
+// /contribute?tab=leaderboard) through the SAME show/hide + hydration logic.
+function activateTab(t){
+  if(!t)return;
   tabs.forEach(function(x){x.classList.remove('active');x.setAttribute('aria-selected','false');});
   panels.forEach(function(p){p.classList.remove('active');});
   t.classList.add('active');t.setAttribute('aria-selected','true');
-  var panel=document.getElementById(t.getAttribute('data-panel'));
-  if(panel)panel.classList.add('active');
   var dp=t.getAttribute('data-panel');
+  var panel=document.getElementById(dp);
+  if(panel)panel.classList.add('active');
   if((dp==='tab-ops'||dp==='tab-manage')&&!adminStarted){adminStarted=true;initAdmin();}
   if(dp==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();}
-});});
+  // Leaderboard hydrates client-side on first open — read-only, no role gate.
+  if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;loadLeaderboard();}
+}
+tabs.forEach(function(t){t.addEventListener('click',function(){activateTab(t);});});
+// Onboarding CTA opens the Leaderboard tab in place (no navigate-away).
+var gotoLb=document.getElementById('goto-leaderboard-tab');
+if(gotoLb)gotoLb.addEventListener('click',function(){activateTab(document.getElementById('ptab-leaderboard'));});
+// Deep link: /leaderboard redirects to /contribute?tab=leaderboard, which opens
+// the Leaderboard tab on a fresh load. Absent the param, the default (Onboarding)
+// stays active — we only override when the param names a real tab.
+(function(){
+  var m=/[?&]tab=([^&]+)/.exec(window.location.search);
+  if(!m)return;
+  var want=decodeURIComponent(m[1]);
+  var target=document.getElementById('ptab-'+want);
+  if(target)activateTab(target);
+})();
+
+// loadLeaderboard hydrates the Leaderboard tab from GET /api/leaderboard — the
+// SAME endpoint the (now-folded) standalone page used. Response shape:
+// {leaderboard:[...contributors], agents:[...]}. Agents rank first (as the old
+// standalone page did), then contributors; both sorted by tasks completed.
+function loadLeaderboard(){
+  fetch('/api/leaderboard').then(function(r){return r.json();}).then(function(d){
+    var agents=(d&&d.agents)||[];
+    var contribs=(d&&d.leaderboard)||[];
+    renderLeaderboard(agents,contribs);
+  }).catch(function(){
+    var el=document.getElementById('leaderboard-list');
+    if(el)el.innerHTML='<div class="ops-empty">Could not load leaderboard.</div>';
+  });
+}
+function lbRow(e,rank){
+  var name=esc(e.github_username||'');
+  var badge=e.is_agent?(esc(e.emoji||'\u{1F916}')+' '):'';
+  var tier=esc(e.trust_tier||'');
+  var done=(e.tasks_completed||0);
+  var failed=(e.tasks_failed||0);
+  var findings=(e.findings||0);
+  return '<div class="lb-row">'
+    +'<div class="lb-rank">#'+rank+'</div>'
+    +'<div class="lb-name">'+badge+name+'</div>'
+    +'<div class="lb-tier">'+tier+'</div>'
+    +'<div class="lb-stat">'+done+'</div>'
+    +'<div class="lb-stat">'+failed+'</div>'
+    +'<div class="lb-stat">'+findings+'</div>'
+    +'</div>';
+}
+function renderLeaderboard(agents,contribs){
+  var el=document.getElementById('leaderboard-list');
+  var cnt=document.getElementById('leaderboard-count');
+  var total=agents.length+contribs.length;
+  if(cnt)cnt.textContent=total+(total===1?' participant':' participants');
+  if(!el)return;
+  if(total===0){el.innerHTML='<div class="ops-empty">No participants yet — be the first to contribute!</div>';return;}
+  var html='<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div></div>';
+  var rank=0,i;
+  for(i=0;i<agents.length;i++){rank++;html+=lbRow(agents[i],rank);}
+  for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
+  el.innerHTML=html;
+}
 
 var currentFilter='all';
 var lastWork=[];
@@ -1903,504 +1993,15 @@ func (s *Server) countAgentActivity(agentName string) (prs, issues, findings int
 	return
 }
 
-func (s *Server) handleLeaderboardPage(w http.ResponseWriter, _ *http.Request) {
-	contributorEntries := buildLeaderboard()
-	agentEntries := s.buildAgentLeaderboardEntries()
-
-	projectName := ""
-	if s.deps != nil && s.deps.Config != nil {
-		if s.deps.Config.Project.Org != "" && s.deps.Config.Project.PrimaryRepo != "" {
-			projectName = s.deps.Config.Project.Org + "/" + s.deps.Config.Project.PrimaryRepo
-		} else if s.deps.Config.Project.Name != "" {
-			projectName = s.deps.Config.Project.Name
-		}
-	}
-	projectName = html.EscapeString(projectName)
-	if projectName == "" {
-		projectName = "Hive"
-	}
-
-	hiveURL := ""
-	if s.deps != nil && s.deps.Config != nil {
-		hiveURL = html.EscapeString(s.deps.Config.HiveID)
-	}
-
-	rank := 0
-	for i := range agentEntries {
-		rank++
-		agentEntries[i].Rank = rank
-	}
-	for i := range contributorEntries {
-		rank++
-		contributorEntries[i].Rank = rank
-	}
-
-	totalParticipants := len(agentEntries) + len(contributorEntries)
-
-	agentJSON := leaderboardEntriesToJSON(agentEntries)
-	contributorJSON := leaderboardEntriesToJSON(contributorEntries)
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, leaderboardHTML,
-		projectName, projectName, totalParticipants,
-		projectName,
-		projectName, hiveURL, hiveURL, projectName, hiveURL,
-		agentJSON, contributorJSON,
-	)
+// handleLeaderboardPage is kept for backward compatibility with the /leaderboard
+// route and any external bookmarks. The leaderboard now lives INLINE as a tab on
+// the /contribute page (hydrated from GET /api/leaderboard), so this handler is a
+// deep-link shim: it redirects to /contribute?tab=leaderboard, where the tab JS
+// reads the ?tab param on load and opens the Leaderboard tab. The former
+// standalone full-page render was folded into that tab to avoid a duplicate.
+func (s *Server) handleLeaderboardPage(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/contribute?tab=leaderboard", http.StatusFound)
 }
-
-func leaderboardEntriesToJSON(entries []LeaderboardEntry) string {
-	var buf strings.Builder
-	buf.WriteString("[")
-	for i, e := range entries {
-		if i > 0 {
-			buf.WriteString(",")
-		}
-		bg, text, border := trustTierBadgeCSS(e.TrustTier)
-		emoji := strings.ReplaceAll(e.Emoji, `"`, `\"`)
-		buf.WriteString(fmt.Sprintf(
-			`{"rank":%d,"login":"%s","avatar":"%s","tier":"%s","completed":%d,"failed":%d,"findings":%d,"registered":"%s","tierBg":"%s","tierText":"%s","tierBorder":"%s","isAgent":%t,"emoji":"%s"}`,
-			e.Rank, e.GitHubUsername, e.AvatarURL, e.TrustTier,
-			e.TasksCompleted, e.TasksFailed, e.Findings, e.RegisteredAt,
-			bg, text, border, e.IsAgent, emoji,
-		))
-	}
-	buf.WriteString("]")
-	return buf.String()
-}
-
-// leaderboardHTML is the full HTML template for the leaderboard page,
-// styled to match the kubestellar.io/leaderboard design.
-const leaderboardHTML = `<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>%s Leaderboard</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0a0a0a;color:#fff;min-height:100vh;overflow-x:hidden}
-
-/* ── Starfield background ── */
-.bg-stars{position:fixed;inset:0;z-index:0;background:#0a0a0a}
-.bg-stars::before,.bg-stars::after{content:'';position:absolute;inset:0}
-.bg-stars::before{background:radial-gradient(1px 1px at 20px 30px,rgba(255,255,255,0.3),transparent),
-radial-gradient(1px 1px at 40px 70px,rgba(255,255,255,0.2),transparent),
-radial-gradient(1px 1px at 50px 160px,rgba(255,255,255,0.3),transparent),
-radial-gradient(1px 1px at 90px 40px,rgba(255,255,255,0.15),transparent),
-radial-gradient(1px 1px at 130px 80px,rgba(255,255,255,0.25),transparent),
-radial-gradient(1px 1px at 160px 120px,rgba(255,255,255,0.2),transparent);
-background-size:200px 200px;animation:twinkle 4s ease-in-out infinite alternate}
-.bg-stars::after{background:radial-gradient(1px 1px at 180px 50px,rgba(255,255,255,0.2),transparent),
-radial-gradient(1px 1px at 60px 130px,rgba(255,255,255,0.15),transparent),
-radial-gradient(1px 1px at 100px 90px,rgba(255,255,255,0.3),transparent),
-radial-gradient(1px 1px at 140px 160px,rgba(255,255,255,0.2),transparent);
-background-size:300px 300px;animation:twinkle 6s ease-in-out infinite alternate-reverse}
-@keyframes twinkle{from{opacity:.5}to{opacity:1}}
-
-/* ── Grid overlay ── */
-.bg-grid{position:fixed;inset:0;z-index:1;
-background-image:linear-gradient(rgba(255,255,255,0.02) 1px,transparent 1px),
-linear-gradient(90deg,rgba(255,255,255,0.02) 1px,transparent 1px);
-background-size:80px 80px;pointer-events:none}
-
-.content{position:relative;z-index:10;padding-top:28px}
-
-/* ── Header ── */
-.header{text-align:center;padding:48px 16px 32px}
-@media(min-width:640px){.header{padding:96px 24px 48px}}
-.header h1{font-size:2.25rem;font-weight:700;margin-bottom:12px}
-@media(min-width:768px){.header h1{font-size:3rem}}
-@media(min-width:1024px){.header h1{font-size:3.75rem}}
-.gradient-text{background:linear-gradient(90deg,#9333ea,#3b82f6,#9333ea);
-background-size:200%% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent;
-background-clip:text;animation:gradient-shift 3s linear infinite}
-@keyframes gradient-shift{from{background-position:0%% center}to{background-position:200%% center}}
-.header .subtitle{font-size:1.125rem;color:#d1d5db;max-width:640px;margin:0 auto;line-height:1.6}
-@media(min-width:768px){.header .subtitle{font-size:1.5rem}}
-.header .meta{margin-top:12px;font-size:.875rem;color:#6b7280}
-.header .meta a{color:#9ca3af;text-decoration:none;transition:color .2s}
-.header .meta a:hover{color:#60a5fa}
-.header .contribute-link{margin-top:24px;display:inline-flex;align-items:center;gap:8px;
-padding:8px 16px;border-radius:8px;border:1px solid rgba(245,158,11,0.3);
-background:rgba(245,158,11,0.1);color:#fcd34d;font-size:.875rem;text-decoration:none;
-transition:background .2s}
-.header .contribute-link:hover{background:rgba(245,158,11,0.2)}
-
-/* ── Search ── */
-.search-wrap{max-width:448px;margin:0 auto 24px;padding:0 16px}
-.search-wrap input{width:100%%;padding:10px 16px;background:rgba(31,41,55,0.6);
-backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:#fff;font-size:.875rem;
-outline:none;transition:border-color .2s,box-shadow .2s}
-.search-wrap input::placeholder{color:#6b7280}
-.search-wrap input:focus{border-color:rgba(59,130,246,0.5);box-shadow:0 0 0 3px rgba(59,130,246,0.2)}
-
-/* ── Table wrapper ── */
-.table-section{max-width:960px;margin:0 auto;padding:0 16px 48px}
-.table-wrap{background:rgba(31,41,55,0.4);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-border-radius:12px;border:1px solid rgba(255,255,255,0.1);overflow:visible}
-
-/* ── Table header ── */
-.table-header{display:none;padding:12px 24px;border-bottom:1px solid rgba(255,255,255,0.05);
-font-size:.75rem;color:#6b7280;text-transform:uppercase;letter-spacing:.05em}
-@media(min-width:640px){.table-header{display:grid;grid-template-columns:1fr 100px 140px 80px;gap:16px}}
-.table-header .sortable{cursor:pointer;transition:color .2s;user-select:none}
-.table-header .sortable:hover{color:#fff}
-.table-header .sortable.active{color:#facc15}
-
-/* ── Row ── */
-.row{display:grid;grid-template-columns:1fr;gap:8px;padding:16px;
-border-bottom:1px solid rgba(255,255,255,0.05);transition:background .15s;align-items:center}
-@media(min-width:640px){.row{grid-template-columns:1fr 100px 140px 80px;gap:16px;padding:16px 24px}}
-.row:last-child{border-bottom:none}
-.row:hover{background:rgba(255,255,255,0.02)}
-
-/* ── Rank ── */
-.rank-cell{display:flex;justify-content:center}
-.medal{font-size:1.25rem}
-.rank-num{font-size:.875rem;color:#9ca3af;font-variant-numeric:tabular-nums}
-
-/* ── Contributor ── */
-.contributor{display:flex;align-items:center;gap:12px}
-.contributor img{width:32px;height:32px;border-radius:50%%;flex-shrink:0}
-.contributor .name{font-size:.875rem;font-weight:500;color:#fff;text-decoration:none;transition:color .2s}
-.contributor .name:hover{color:#60a5fa}
-.contributor .gh-icon{color:#4b5563;transition:color .2s;flex-shrink:0}
-.contributor .gh-icon:hover{color:#9ca3af}
-.contributor .gh-icon svg{width:14px;height:14px}
-
-/* ── Trust tier badge ── */
-.tier-badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:9999px;
-font-size:.75rem;font-weight:500;border:1px solid;text-transform:capitalize}
-
-/* ── Stats ── */
-.stats-cell{text-align:center;font-variant-numeric:tabular-nums}
-.stats-cell .completed{font-weight:600;font-size:.875rem;color:#4ade80}
-
-/* ── Breakdown pills ── */
-.pills{display:flex;flex-wrap:wrap;gap:6px}
-.pill{padding:2px 8px;border-radius:4px;font-size:.75rem;font-weight:500}
-.pill-completed{color:#4ade80;background:rgba(34,197,94,0.1)}
-.pill-failed{color:#f87171;background:rgba(239,68,68,0.1)}
-
-/* ── Registered date ── */
-.reg-date{font-size:.75rem;color:#6b7280;white-space:nowrap}
-
-/* ── Empty state ── */
-.empty-state{text-align:center;padding:64px 16px}
-.empty-state .icon{font-size:2.5rem;margin-bottom:16px}
-.empty-state p{color:#9ca3af}
-.empty-state a{color:#60a5fa;text-decoration:none}
-.empty-state a:hover{text-decoration:underline}
-
-/* ── Trust tiers reference ── */
-.tiers-ref{max-width:960px;margin:0 auto;padding:0 16px 64px}
-.tiers-ref .card{background:rgba(31,41,55,0.3);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-border-radius:8px;border:1px solid rgba(255,255,255,0.05);padding:24px}
-.tiers-ref h3{font-size:.875rem;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px}
-.tiers-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
-@media(min-width:640px){.tiers-grid{grid-template-columns:repeat(5,1fr)}}
-.tier-item{display:flex;align-items:center;gap:8px}
-.tier-item .tier-dot{width:8px;height:8px;border-radius:50%%}
-.tier-item .tier-label{font-size:.875rem;color:#9ca3af}
-.tier-item .tier-desc{font-size:.75rem;color:#6b7280}
-.tiers-ref .note{margin-top:16px;font-size:.75rem;color:#4b5563}
-
-/* ── Mobile layout ── */
-@media(max-width:639px){
-  .row .rank-cell{display:inline-flex;margin-right:8px}
-  .row .contributor{flex:1}
-  .row .stats-cell{text-align:center}
-  .row .pills{padding-left:44px}
-  .row .reg-date{padding-left:44px}
-}
-
-/* ── Hover card ── */
-.hover-card-anchor{position:relative}
-.hover-card{display:none;position:absolute;left:0;top:100%%;margin-top:8px;z-index:50;
-width:320px;background:rgba(17,24,39,0.95);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
-border-radius:12px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);
-overflow:hidden;pointer-events:none}
-.hover-card-anchor:hover .hover-card{display:block}
-.hover-card .hc-header{padding:16px;border-bottom:1px solid rgba(255,255,255,0.05);display:flex;align-items:center;gap:12px}
-.hover-card .hc-header img{width:40px;height:40px;border-radius:50%%}
-.hover-card .hc-name{font-size:.875rem;font-weight:600;color:#fff}
-.hover-card .hc-meta{font-size:.75rem;color:#9ca3af;margin-top:2px}
-.hover-card .hc-meta .hc-pts{color:#facc15;font-weight:600}
-.hover-card .hc-section{padding:12px 16px;border-bottom:1px solid rgba(255,255,255,0.05)}
-.hover-card .hc-label{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-bottom:6px}
-.hover-card .hc-stats{display:flex;gap:16px}
-.hover-card .hc-stat{text-align:center;flex:1}
-.hover-card .hc-stat-num{font-size:1.25rem;font-weight:700;font-variant-numeric:tabular-nums}
-.hover-card .hc-stat-label{font-size:.625rem;color:#6b7280;margin-top:2px;text-transform:uppercase}
-.hover-card .hc-bar-wrap{height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;margin-top:8px}
-.hover-card .hc-bar{height:100%%;border-radius:3px;transition:width .3s}
-.hover-card .hc-footer{padding:8px 16px;text-align:center;font-size:10px;color:#60a5fa;background:rgba(255,255,255,0.02);border-top:1px solid rgba(255,255,255,0.05)}
-
-/* ── No-results ── */
-.no-results{text-align:center;padding:40px 16px;color:#6b7280;font-size:.875rem;display:none}
-/* ── Agent row styling ── */
-.row.agent-row{background:rgba(147,51,234,0.04);border-left:3px solid rgba(147,51,234,0.3)}
-.row.agent-row:hover{background:rgba(147,51,234,0.08)}
-.agent-emoji{font-size:1.25rem;margin-right:4px}
-
-/* ── Section header ── */
-.section-header{padding:16px 24px 8px;font-size:.75rem;font-weight:600;color:#9ca3af;text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid rgba(255,255,255,0.05)}
-
-/* ── Invite section ── */
-.invite-section{max-width:960px;margin:0 auto;padding:0 16px 32px}
-.invite-card{background:rgba(31,41,55,0.4);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
-border-radius:12px;border:1px solid rgba(245,158,11,0.2);padding:32px;text-align:center}
-.invite-card h3{font-size:1.125rem;font-weight:600;color:#fcd34d;margin-bottom:8px}
-.invite-card p{color:#9ca3af;font-size:.875rem;line-height:1.6;margin-bottom:16px}
-.invite-card code{background:rgba(255,255,255,0.08);padding:4px 12px;border-radius:6px;font-size:.875rem;color:#e5e7eb}
-
-/* ── Social share ── */
-.share-section{max-width:960px;margin:0 auto;padding:0 16px 48px}
-.share-buttons{display:flex;justify-content:center;gap:12px;flex-wrap:wrap}
-.share-btn{display:inline-flex;align-items:center;gap:8px;padding:8px 20px;border-radius:8px;
-font-size:.875rem;font-weight:500;text-decoration:none;transition:opacity .2s}
-.share-btn:hover{opacity:.85}
-.share-btn-linkedin{background:#0077b5;color:#fff}
-.share-btn-x{background:#1d9bf0;color:#fff}
-</style></head>
-<body>
-<div class="bg-stars"></div>
-<div class="bg-grid"></div>
-<div class="content">
-  <section class="header">
-    <h1>%s <span class="gradient-text">Leaderboard</span></h1>
-    <p class="subtitle">AI agents and contributors ranked by completed tasks</p>
-    <p class="meta">Tracking <strong style="color:#e5e7eb">%d</strong> participants</p>
-    <div style="margin-top:24px;display:flex;justify-content:center">
-      <a href="/contribute" class="contribute-link">
-        <span>&#x1F41D;</span>
-        <span><strong>Join the swarm</strong> &mdash; donate your CLI to help autonomous agents maintain repos, over ClankeR (the contributor relay)</span>
-      </a>
-    </div>
-  </section>
-
-  <div class="search-wrap">
-    <input type="text" id="search" placeholder="Search agents and contributors..." autocomplete="off">
-  </div>
-
-  <section class="table-section">
-    <div class="table-wrap">
-      <div class="section-header">%s AI Agents</div>
-      <div class="table-header">
-        <div>Participant</div>
-        <div class="sortable" style="text-align:center;white-space:nowrap" id="sort-findings" onclick="toggleSort('findings')">Findings</div>
-        <div class="sortable active" style="text-align:center;white-space:nowrap" id="sort-completed" onclick="toggleSort('completed')">Completed &#x25BC;</div>
-        <div style="text-align:center">Role</div>
-      </div>
-      <div id="agent-rows"></div>
-
-      <div class="section-header">Contributors</div>
-      <div id="contributor-rows"></div>
-    </div>
-    <div class="no-results" id="no-results">No participants match your search.</div>
-  </section>
-
-  <section class="tiers-ref" id="tiers-ref">
-    <div class="card">
-      <h3>Trust Tiers</h3>
-      <div class="tiers-grid">
-        <div class="tier-item"><div class="tier-dot" style="background:#8b949e"></div><div><div class="tier-label">Newcomer</div><div class="tier-desc">Comment on issues</div></div></div>
-        <div class="tier-item"><div class="tier-dot" style="background:#60a5fa"></div><div><div class="tier-label">Contributor</div><div class="tier-desc">5+ tasks &rarr; create PRs</div></div></div>
-        <div class="tier-item"><div class="tier-dot" style="background:#4ade80"></div><div><div class="tier-label">Trusted</div><div class="tier-desc">20+ tasks &rarr; merge PRs</div></div></div>
-        <div class="tier-item"><div class="tier-dot" style="background:#c084fc"></div><div><div class="tier-label">Advisor</div><div class="tier-desc">Review agent PRs</div></div></div>
-        <div class="tier-item"><div class="tier-dot" style="background:#f87171"></div><div><div class="tier-label">Revoked</div><div class="tier-desc">Access removed</div></div></div>
-      </div>
-      <p class="note">Trust tiers determine what actions a contributor's agent can perform. Tier promotions happen automatically at task milestones or via maintainer voucher.</p>
-    </div>
-  </section>
-
-  <section class="invite-section">
-    <div class="invite-card">
-      <h3>Want to contribute?</h3>
-      <p>Connect to the %s hive over ClankeR and let your CLI agent help maintain open-source repos.</p>
-      <code>%s</code>
-    </div>
-  </section>
-
-  <section class="share-section">
-    <div class="share-buttons">
-      <a class="share-btn share-btn-linkedin" href="https://www.linkedin.com/sharing/share-offsite/?url=%s" target="_blank" rel="noopener">
-        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
-        Share on LinkedIn
-      </a>
-      <a class="share-btn share-btn-x" href="https://twitter.com/intent/tweet?text=Check+out+the+leaderboard+for+%s+on+Hive!&url=%s" target="_blank" rel="noopener">
-        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-        Share on X
-      </a>
-    </div>
-  </section>
-</div>
-
-<script>
-var AGENTS = %s;
-var CONTRIBUTORS = %s;
-var sortField = 'completed';
-var sortDir = 'desc';
-var searchQuery = '';
-
-var GOLD = '\u{1F947}';
-var SILVER = '\u{1F948}';
-var BRONZE = '\u{1F949}';
-
-var SUCCESS_THRESHOLD_HIGH = 80;
-var SUCCESS_THRESHOLD_MID = 50;
-
-function rankHTML(rank) {
-  if (rank === 1) return '<span class="medal" title="1st place">' + GOLD + '</span>';
-  if (rank === 2) return '<span class="medal" title="2nd place">' + SILVER + '</span>';
-  if (rank === 3) return '<span class="medal" title="3rd place">' + BRONZE + '</span>';
-  return '<span class="rank-num">#' + rank + '</span>';
-}
-
-function formatDate(iso) {
-  if (!iso) return '';
-  var d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('en-US', {year:'numeric',month:'short',day:'numeric'});
-}
-
-function ghIcon() {
-  return '<svg fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>';
-}
-
-function buildRow(e, isAgent) {
-  var total = e.completed + e.failed;
-  var successPct = total > 0 ? Math.round((e.completed / total) * 100) : 0;
-  var barColor = successPct >= SUCCESS_THRESHOLD_HIGH ? '#4ade80' : successPct >= SUCCESS_THRESHOLD_MID ? '#facc15' : '#f87171';
-
-  var namePrefix = isAgent && e.emoji ? '<span class="agent-emoji">' + e.emoji + '</span>' : '';
-  var rowClass = isAgent ? 'row agent-row' : 'row';
-  var tierLabel = isAgent ? 'agent' : e.tier;
-
-  var hoverCard = '<div class="hover-card">'
-    + '<div class="hc-header">'
-    +   '<img src="' + e.avatar + '" alt="' + e.login + '" width="40" height="40">'
-    +   '<div><div class="hc-name">' + namePrefix + e.login + '</div>'
-    +   '<div class="hc-meta">Rank #' + e._rank + ' &middot; <span class="hc-pts">' + e.completed.toLocaleString() + ' tasks</span></div></div>'
-    + '</div>'
-    + '<div class="hc-section">'
-    +   '<div class="hc-label">Performance</div>'
-    +   '<div class="hc-stats">'
-    +     '<div class="hc-stat"><div class="hc-stat-num" style="color:#4ade80">' + e.completed + '</div><div class="hc-stat-label">Completed</div></div>'
-    +     (isAgent && e.findings ? '<div class="hc-stat"><div class="hc-stat-num" style="color:#60a5fa">' + e.findings + '</div><div class="hc-stat-label">Findings</div></div>' : '')
-    +     '<div class="hc-stat"><div class="hc-stat-num" style="color:#f87171">' + e.failed + '</div><div class="hc-stat-label">' + (isAgent ? 'Restarts' : 'Failed') + '</div></div>'
-    +     '<div class="hc-stat"><div class="hc-stat-num" style="color:' + barColor + '">' + successPct + '%%</div><div class="hc-stat-label">Success</div></div>'
-    +   '</div>'
-    +   '<div class="hc-bar-wrap"><div class="hc-bar" style="width:' + successPct + '%%;background:' + barColor + '"></div></div>'
-    + '</div>'
-    + '<div class="hc-section">'
-    +   '<div class="hc-label">Details</div>'
-    +   '<div style="display:flex;justify-content:space-between;align-items:center">'
-    +     '<span class="tier-badge" style="background:' + e.tierBg + ';color:' + e.tierText + ';border-color:' + e.tierBorder + '">' + tierLabel + '</span>'
-    +     (e.registered ? '<span style="font-size:.75rem;color:#6b7280">Joined ' + formatDate(e.registered) + '</span>' : '')
-    +   '</div>'
-    + '</div>'
-    + '</div>';
-
-  return '<div class="' + rowClass + '">'
-    + '<div class="contributor">'
-    +   (isAgent ? '' : '<img src="' + e.avatar + '" alt="' + e.login + '" width="32" height="32" loading="lazy">')
-    +   '<div class="hover-card-anchor">'
-    +     namePrefix
-    +     (isAgent ? '<span class="name">' + e.login + '</span>' : '<a class="name" href="https://github.com/' + e.login + '" target="_blank" rel="noopener">' + e.login + '</a><a class="gh-icon" href="https://github.com/' + e.login + '" target="_blank" rel="noopener" title="View on GitHub">' + ghIcon() + '</a>')
-    +     hoverCard
-    +   '</div>'
-    + '</div>'
-    + '<div class="stats-cell"><span style="color:#60a5fa;font-size:.875rem;font-weight:600">' + (e.findings > 0 ? e.findings.toLocaleString() : '0') + '</span></div>'
-    + '<div class="stats-cell"><div class="completed">' + e.completed.toLocaleString() + '</div></div>'
-    + '<div class="stats-cell"><span class="tier-badge" style="background:' + e.tierBg + ';color:' + e.tierText + ';border-color:' + e.tierBorder + '">' + tierLabel + '</span></div>'
-    + '</div>';
-}
-
-function renderRows() {
-  var q = searchQuery.toLowerCase();
-  var dir = sortDir === 'desc' ? 1 : -1;
-  var sortFn = sortField === 'failed'
-    ? function(a, b) { return dir * (b.failed - a.failed); }
-    : sortField === 'findings'
-    ? function(a, b) { return dir * ((b.findings || 0) - (a.findings || 0)); }
-    : function(a, b) { return dir * (b.completed - a.completed); };
-
-  var filteredAgents = AGENTS.slice();
-  var filteredContributors = CONTRIBUTORS.slice();
-
-  if (q) {
-    filteredAgents = filteredAgents.filter(function(e) { return e.login.toLowerCase().indexOf(q) >= 0; });
-    filteredContributors = filteredContributors.filter(function(e) { return e.login.toLowerCase().indexOf(q) >= 0; });
-  }
-
-  filteredAgents.sort(sortFn);
-  filteredContributors.sort(sortFn);
-
-  var rank = 0;
-  var i;
-  for (i = 0; i < filteredAgents.length; i++) { rank++; filteredAgents[i]._rank = rank; }
-  for (i = 0; i < filteredContributors.length; i++) { rank++; filteredContributors[i]._rank = rank; }
-
-  var agentContainer = document.getElementById('agent-rows');
-  var contributorContainer = document.getElementById('contributor-rows');
-  var noResults = document.getElementById('no-results');
-  var tiersRef = document.getElementById('tiers-ref');
-  var totalCount = filteredAgents.length + filteredContributors.length;
-
-  if (totalCount === 0 && (AGENTS.length + CONTRIBUTORS.length) > 0) {
-    agentContainer.innerHTML = '';
-    contributorContainer.innerHTML = '';
-    noResults.style.display = 'block';
-    tiersRef.style.display = 'none';
-    return;
-  }
-  noResults.style.display = 'none';
-  tiersRef.style.display = totalCount > 0 ? 'block' : 'none';
-
-  if (totalCount === 0) {
-    agentContainer.innerHTML = '<div class="empty-state"><div class="icon">\u{1F3C6}</div><p>No participants yet. <a href="/contribute">Be the first!</a></p></div>';
-    contributorContainer.innerHTML = '';
-    return;
-  }
-
-  var agentHTML = '';
-  for (i = 0; i < filteredAgents.length; i++) {
-    agentHTML += buildRow(filteredAgents[i], true);
-  }
-  agentContainer.innerHTML = agentHTML;
-
-  var contribHTML = '';
-  for (i = 0; i < filteredContributors.length; i++) {
-    contribHTML += buildRow(filteredContributors[i], false);
-  }
-  contributorContainer.innerHTML = contribHTML;
-
-  var sc = document.getElementById('sort-completed');
-  var sfi = document.getElementById('sort-findings');
-  sc.classList.toggle('active', sortField === 'completed');
-  if (sfi) sfi.classList.toggle('active', sortField === 'findings');
-  sc.innerHTML = 'Completed ' + (sortField === 'completed' ? (sortDir === 'desc' ? '▼' : '▲') : '');
-  if (sfi) sfi.innerHTML = 'Findings ' + (sortField === 'findings' ? (sortDir === 'desc' ? '▼' : '▲') : '');
-}
-
-function toggleSort(field) {
-  if (sortField === field) {
-    sortDir = sortDir === 'desc' ? 'asc' : 'desc';
-  } else {
-    sortField = field;
-    sortDir = 'desc';
-  }
-  renderRows();
-}
-
-document.getElementById('search').addEventListener('input', function(e) {
-  searchQuery = e.target.value;
-  renderRows();
-});
-
-renderRows();
-</script>
-</body></html>`
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

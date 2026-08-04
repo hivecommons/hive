@@ -283,3 +283,86 @@ func TestGovernorHubSave_ReadViewerForbidden(t *testing.T) {
 		t.Error("read viewer mutated Config.Hub.ContributeSuspended through the filter-save endpoint")
 	}
 }
+
+// TestLeaderboardTabPublic_ControlsStayGated proves the invariant for the new
+// (4th) Leaderboard tab: the whole /contribute page — including the Leaderboard
+// tab and its /api/leaderboard data — is PUBLIC (isPublicPath exempts them), so
+// an unauthenticated/read viewer sees the leaderboard freely; but the Management
+// controls and the Operations per-clanker admin buttons stay gated behind the
+// /api/role check (client-side) and 403 on the mutation endpoints (server-side).
+// Adding the read-only Leaderboard tab must not weaken that boundary.
+func TestLeaderboardTabPublic_ControlsStayGated(t *testing.T) {
+	setupContributeEnv(t)
+	seedContributor(t, "alice", 7, 1)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	h := s.Handler()
+
+	// 1. /contribute is reachable with NO auth (public) and carries the
+	//    Leaderboard tab inline. The page renders through the full Handler(),
+	//    which runs the isPublicPath exemption — a 200 here proves it is public.
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("anonymous GET /contribute got %d, want 200 (page must be public)", w.Code)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`data-panel="tab-leaderboard"`, `id="tab-leaderboard"`,
+		`id="leaderboard-list"`, `function loadLeaderboard`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("public /contribute page missing Leaderboard tab markup %q", want)
+		}
+	}
+
+	// The admin controls block is still present in markup but gated CLIENT-side:
+	// it only ever enables for owner/read-write via /api/role. The Leaderboard tab
+	// must NOT be wired into that gate (it hydrates with no role check).
+	if !strings.Contains(body, `id="ops-admin"`) {
+		t.Error("admin controls markup missing (must remain, gated by /api/role)")
+	}
+	if !strings.Contains(body, `role!=='owner'&&role!=='read-write'`) {
+		t.Error("admin controls role gate (owner/read-write only) must remain intact")
+	}
+	// The Leaderboard hydration must be independent of the admin/role gate.
+	if strings.Contains(body, `dp==='tab-leaderboard'`) &&
+		!strings.Contains(body, `dp==='tab-leaderboard'&&!lbStarted`) {
+		t.Error("Leaderboard tab must hydrate without an admin/role gate")
+	}
+
+	// 2. /api/leaderboard (the tab's data source) is public — reachable with no auth.
+	apiReq := httptest.NewRequest(http.MethodGet, "/api/leaderboard", nil)
+	apiW := httptest.NewRecorder()
+	h.ServeHTTP(apiW, apiReq)
+	if apiW.Code != http.StatusOK {
+		t.Fatalf("anonymous GET /api/leaderboard got %d, want 200 (data must be public)", apiW.Code)
+	}
+	if !strings.Contains(apiW.Body.String(), "alice") {
+		t.Errorf("public /api/leaderboard should surface the seeded contributor; body: %s", apiW.Body.String())
+	}
+
+	// 3. The control mutation endpoints must STILL 403 a read viewer — the
+	//    boundary the UI hiding merely shadows, unchanged by this feature.
+	for _, tc := range contributorWriteCases() {
+		mReq := httptest.NewRequest(tc.method, tc.target, strings.NewReader(tc.body))
+		mReq.Header.Set("X-Hive-Role", "read")
+		mW := httptest.NewRecorder()
+		tc.invoke(s, mW, mReq)
+		if mW.Code != http.StatusForbidden {
+			t.Errorf("read viewer %s %s got %d, want 403 (control must stay gated)", tc.method, tc.target, mW.Code)
+		}
+	}
+	// And the Governor Hub filter-save endpoint (the Management admin controls'
+	// write path) must 403 a read viewer via roleEnforcement.
+	ghReq := httptest.NewRequest(http.MethodPut, "/api/config/governor/hub",
+		strings.NewReader(`{"contribute_suspended":true}`))
+	ghReq.Header.Set("Content-Type", "application/json")
+	ghReq.Header.Set("X-Hive-Role", "read")
+	ghW := httptest.NewRecorder()
+	h.ServeHTTP(ghW, ghReq)
+	if ghW.Code != http.StatusForbidden {
+		t.Errorf("read viewer PUT /api/config/governor/hub got %d, want 403", ghW.Code)
+	}
+}

@@ -183,26 +183,61 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 	}
 	body := w.Body.String()
 
-	// New tab chrome: THREE tabs now — Onboarding, Management, Operations.
+	// New tab chrome: FOUR tabs now — Onboarding, Management, Operations,
+	// Leaderboard (the leaderboard was folded in from its standalone page).
 	for _, want := range []string{
 		`class="page-tabs"`,
 		`data-panel="tab-onboarding"`,
 		`data-panel="tab-manage"`,
 		`data-panel="tab-ops"`,
+		`data-panel="tab-leaderboard"`,
 		`id="ptab-manage"`,
 		`id="ptab-ops"`,
+		`id="ptab-leaderboard"`,
 		`>Management<`,  // Management tab label (controls only)
 		`>Operations<`,  // Operations tab label (monitoring)
+		`>Leaderboard<`, // Leaderboard tab label (inline rankings)
 		`id="tab-manage"`,
 		`id="tab-ops"`,
+		`id="tab-leaderboard"`,
 		`Connected clankers`,
 		`id="work-list"`,
 		`/api/contribute/fleet`,
 		`opened`, // pipeline node
+		// Leaderboard tab is hydrated client-side from the reused API endpoint,
+		// through the same show/hide mechanism the Operations tab uses.
+		`/api/leaderboard`,
+		`id="leaderboard-list"`,
+		`function loadLeaderboard`,
+		`function renderLeaderboard`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("tab chrome missing %q", want)
 		}
+	}
+
+	// The old "View Leaderboard" link navigated AWAY to the standalone page.
+	// It must no longer be an <a href="/leaderboard"> — the leaderboard is now a
+	// tab on THIS page. (The /leaderboard route still exists as a redirect shim,
+	// referenced by the Leaderboard tab's descriptive copy, but the onboarding CTA
+	// must open the tab in place, not navigate away.)
+	if strings.Contains(body, `href="/leaderboard"`) {
+		t.Error(`navigate-away href="/leaderboard" link still present; leaderboard is now an inline tab`)
+	}
+	if !strings.Contains(body, `id="goto-leaderboard-tab"`) {
+		t.Error("onboarding CTA should be a button that opens the Leaderboard tab in place")
+	}
+
+	// The Leaderboard panel must render AFTER the Operations panel (it is the
+	// 4th tab), and its show/hide must run through the same tab JS — verify the
+	// hydration is wired on tab-leaderboard open without any admin/role gate.
+	iLbPanel := strings.Index(body, `id="tab-leaderboard"`)
+	iOpsPanel := strings.Index(body, `id="tab-ops"`)
+	if iLbPanel < 0 || iOpsPanel < 0 || !(iOpsPanel < iLbPanel) {
+		t.Errorf("Leaderboard panel must render after Operations: ops=%d leaderboard=%d", iOpsPanel, iLbPanel)
+	}
+	if !strings.Contains(body, `dp==='tab-leaderboard'&&!lbStarted`) {
+		t.Error("Leaderboard tab must hydrate on first open via the shared tab-switch JS")
 	}
 
 	// The single "Management & Operations" tab was split; that combined label
@@ -488,7 +523,13 @@ func TestLeaderboardAPISorted(t *testing.T) {
 	}
 }
 
-func TestLeaderboardPageHTML(t *testing.T) {
+// TestLeaderboardPageRedirect pins the deep-link shim behaviour: the standalone
+// leaderboard page was folded into the /contribute Leaderboard tab, so
+// GET /leaderboard now redirects to /contribute?tab=leaderboard (which the tab JS
+// reads on load to open the Leaderboard tab). Data still comes from the reused
+// /api/leaderboard endpoint (asserted by TestLeaderboardAPISorted), so the
+// redirect must hold regardless of whether any contributors exist.
+func TestLeaderboardPageRedirect(t *testing.T) {
 	setupContributeEnv(t)
 
 	seedContributor(t, "alice", 10, 2)
@@ -500,42 +541,18 @@ func TestLeaderboardPageHTML(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect, got %d: %s", w.Code, w.Body.String())
 	}
-
-	contentType := w.Header().Get("Content-Type")
-	if !strings.Contains(contentType, "text/html") {
-		t.Errorf("expected text/html content-type, got %s", contentType)
-	}
-
-	body := w.Body.String()
-	checks := map[string]string{
-		"gradient-text":        "animated gradient header text",
-		"Leaderboard":          "page heading",
-		"alice":                "contributor username",
-		"github.com/alice.png": "avatar URL",
-		"github.com/alice":     "GitHub profile link",
-		"search":               "search input",
-		"sort-completed":       "sortable completed column",
-		"Trust Tiers":          "trust tiers reference section",
-		"bg-stars":             "starfield background",
-		"var AGENTS":           "JavaScript agent entries data",
-		"var CONTRIBUTORS":     "JavaScript contributor entries data",
-		"toggleSort":           "sort toggle function",
-		"renderRows":           "row rendering function",
-		"hover-card":           "contributor hover card CSS",
-		"hc-header":            "hover card header",
-		"hc-bar":               "hover card success rate bar",
-	}
-	for needle, desc := range checks {
-		if !strings.Contains(body, needle) {
-			t.Errorf("page missing %s (looked for %q)", desc, needle)
-		}
+	if loc := w.Header().Get("Location"); loc != "/contribute?tab=leaderboard" {
+		t.Errorf("Location = %q, want /contribute?tab=leaderboard", loc)
 	}
 }
 
-func TestLeaderboardPageEmpty(t *testing.T) {
+// TestLeaderboardPageRedirectEmpty confirms the redirect holds with no
+// contributors seeded (the tab hydrates client-side, so there is no empty-state
+// server render to special-case any more).
+func TestLeaderboardPageRedirectEmpty(t *testing.T) {
 	setupContributeEnv(t)
 	s := NewServer(0, slog.Default())
 	s.registerContributeRoutes()
@@ -544,20 +561,11 @@ func TestLeaderboardPageEmpty(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", w.Code)
+	if w.Code != http.StatusFound {
+		t.Fatalf("expected 302 redirect, got %d", w.Code)
 	}
-
-	body := w.Body.String()
-	// Empty entries arrays should be passed to JS
-	if !strings.Contains(body, "var AGENTS = []") {
-		t.Error("empty page should pass empty AGENTS array")
-	}
-	if !strings.Contains(body, "var CONTRIBUTORS = []") {
-		t.Error("empty page should pass empty CONTRIBUTORS array")
-	}
-	if !strings.Contains(body, "/contribute") {
-		t.Error("empty page should link to /contribute")
+	if loc := w.Header().Get("Location"); loc != "/contribute?tab=leaderboard" {
+		t.Errorf("Location = %q, want /contribute?tab=leaderboard", loc)
 	}
 }
 
