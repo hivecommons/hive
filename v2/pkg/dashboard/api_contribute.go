@@ -134,6 +134,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
 	s.mux.HandleFunc("POST /api/contributors/{id}/revoke", s.handleContributorRevoke)
+	s.mux.HandleFunc("POST /api/contributors/{id}/requeue", s.handleContributorRequeue)
 	s.mux.HandleFunc("DELETE /api/contributors/{id}", s.handleContributorDelete)
 
 	s.mux.HandleFunc("GET /api/v1/", s.handleAPIv1)
@@ -756,6 +757,45 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
   .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-leaving,.cc-q-item.cc-q-flip,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
   .ops-rail,.ops-rail-inner,.ops-rail-chevron{transition:none!important}
 }
+/* #2548 Branded client entry points — a find-by-SIGHT tile grid above the CLI
+   selector. Each tile carries an inline SVG/glyph emblem so a contributor spots
+   their tool visually; clicking a tile just drives the existing #cli-select so
+   nothing about the copy-block logic changes. CSP-safe (inline assets only),
+   theme-consistent with the dark palette, reduced-motion safe. */
+.client-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:4px 0 20px}
+.client-tile{display:flex;align-items:center;gap:9px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:9px 11px;cursor:pointer;text-align:left;font-family:inherit;color:#e6edf3;font-size:.82rem;transition:border-color .15s,background .15s,transform .1s}
+.client-tile:hover{border-color:#58a6ff;background:#1b2230}
+.client-tile:active{transform:translateY(1px)}
+.client-tile:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
+.client-tile.sel{border-color:#58a6ff;background:rgba(88,166,255,.10);box-shadow:inset 0 0 0 1px rgba(88,166,255,.35)}
+.client-tile .ct-emblem{width:24px;height:24px;flex:0 0 24px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:#0d1117;overflow:hidden}
+.client-tile .ct-emblem svg{width:18px;height:18px;display:block}
+.client-tile .ct-name{font-weight:600;line-height:1.15;min-width:0}
+.client-tile .ct-name small{display:block;font-weight:400;color:#8b949e;font-size:.7rem}
+.client-tile .ct-parity{margin-left:auto;font-size:.62rem;color:#3fb950;border:1px solid rgba(63,185,80,.4);border-radius:999px;padding:1px 6px;white-space:nowrap}
+/* "Open in <tool>" onboarding affordance — deliberately understated and clearly a
+   SETUP helper, never a "contributing" surface. Only rendered for a client with a
+   real, vendor-documented deep-link scheme. */
+.openin-row{display:none;align-items:flex-start;gap:10px;background:#0d1117;border:1px solid #30363d;border-left:3px solid #d29922;border-radius:8px;padding:11px 14px;margin:0 0 16px}
+.openin-row.show{display:flex}
+.openin-row .oi-body{min-width:0;font-size:.8rem;color:#8b949e;line-height:1.4}
+.openin-row .oi-body strong{color:#e6edf3}
+.openin-link{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;background:#161b22;border:1px solid #30363d;border-radius:6px;color:#58a6ff;text-decoration:none;font-size:.8rem;padding:6px 12px;font-family:inherit;cursor:pointer}
+.openin-link:hover{border-color:#58a6ff}
+.openin-link svg{width:14px;height:14px}
+.oi-note{color:#d29922;font-weight:600}
+/* Customizable, copy-pasteable per-client PROMPT (kept in an editable block the
+   contributor can read/tweak, NOT compressed into a URL). Additive to the shell
+   command copy block above it. */
+.prompt-block{margin:18px 0 8px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px 16px 16px;position:relative}
+.prompt-block h4{margin:0 0 6px;font-size:.82rem;color:#e6edf3;font-weight:600}
+.prompt-block p.pb-sub{margin:0 0 10px;color:#8b949e;font-size:.76rem;line-height:1.4}
+.prompt-block textarea{width:100%%;min-height:118px;resize:vertical;background:#010409;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:10px 12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;line-height:1.5}
+.prompt-block textarea:focus{outline:none;border-color:#58a6ff}
+.pb-copy{position:absolute;top:10px;right:12px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.72rem;font-family:inherit}
+@media(prefers-reduced-motion:reduce){
+  .client-tile{transition:none!important}
+}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
@@ -775,6 +815,20 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 </div>
 <div class="steps">
 <h3>How it works</h3>
+<!-- #2548 Branded client entry points: a find-by-SIGHT tile grid. Rendered by
+     JS from the CLIENTS metadata (inline SVG emblems, all CSP-safe). Clicking a
+     tile drives the existing #cli-select below, so the copy-block logic is
+     unchanged. Falls back gracefully: the plain selector still works if JS is off. -->
+<p style="color:#8b949e;margin:0 0 8px;font-size:.9rem">Find your tool:</p>
+<div id="client-tiles" class="client-tiles" role="listbox" aria-label="Choose your CLI tool"></div>
+<!-- "Open in <tool>" ONBOARDING affordance. Only shown for a client with a real,
+     vendor-documented deep-link scheme. It opens a chat in the vendor's own app to
+     help you get set up — it does NOT connect that tool to this hive's contributor
+     relay. Labeled unambiguously as setup help, never as a contribution path. -->
+<div id="openin-row" class="openin-row">
+<div class="oi-body"><strong id="openin-title">Open in your tool</strong><br><span id="openin-desc"></span> <span class="oi-note">This is onboarding help &mdash; it opens a chat in the vendor&rsquo;s app to walk you through setup. It does NOT connect your tool to this hive; you still contribute by running the commands below.</span></div>
+<a id="openin-link" class="openin-link" href="#" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.5 3.5H3.5A1.5 1.5 0 0 0 2 5v7.5A1.5 1.5 0 0 0 3.5 14H11a1.5 1.5 0 0 0 1.5-1.5v-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M9.5 2.5H14v4.5M14 2.5 7.5 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg><span id="openin-label">Open in tool</span></a>
+</div>
 <div style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
 <label style="font-size:.9rem;color:#8b949e">OS:</label>
@@ -830,6 +884,16 @@ export HIVE_HUB=%s
 just contribute-setup claude
 just contribute-hive</pre>
 </div>
+<!-- #2548 Full, copy-pasteable, CUSTOMIZABLE prompt. The exact text a contributor
+     pastes into their own tool lives here in an editable block they can read and
+     tweak — deliberately NOT compressed into a deep-link URL. Prefilled per selected
+     client by the script below; edits are preserved until the client changes. -->
+<div class="prompt-block">
+<button type="button" id="prompt-copy" class="pb-copy">Copy</button>
+<h4>Prompt to paste into <span id="prompt-tool">your tool</span></h4>
+<p class="pb-sub">Optional. Paste this into <span id="prompt-tool2">your tool</span> and it will walk you through joining this hive on your machine. Edit it freely &mdash; it is yours to customize.</p>
+<textarea id="prompt-text" spellcheck="false" aria-label="Customizable onboarding prompt"></textarea>
+</div>
 <script>
 (function(){
 var osSel=document.getElementById('os-select');
@@ -884,6 +948,7 @@ cmds.textContent=tpl.replace('PREREQ',prereq).replace('INSTALL',install.replace(
 }else{
 cmds.textContent=containerTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
 }
+if(typeof syncBranded==='function')syncBranded();
 }
 osSel.addEventListener('change',update);
 sel.addEventListener('change',function(){modelInput.value='';update();});
@@ -904,6 +969,157 @@ btn.textContent=ok?'Copied!':'Select + Cmd+C';
 btn.style.background='#16a34a';
 setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},2000);
 });
+
+// ── #2548 Branded client entry points ──────────────────────────────────────
+// Per-client identity (inline SVG emblems, CSP-safe), first-class parity for
+// Claude / Copilot / Pi / Goose, a documented-only "Open in" deep-link, and a
+// customizable copy-paste prompt. All additive: the source of truth stays
+// #cli-select, and everything degrades gracefully if this block never runs.
+//
+// deeplink is populated ONLY where the vendor officially documents a scheme.
+// Today that is Claude alone (the claude:// desktop deep link, per Anthropic's
+// Help Center). We do NOT invent schemes for tools that don't document one.
+// A deep link opens a chat in the vendor's app to help with SETUP — it does
+// NOT connect the tool to this hive's relay, which is why the affordance is
+// labeled onboarding-not-contribution in the UI.
+var EMB={
+claude:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#d97757" d="M12 2 3.5 20h3.2l1.6-3.7h7.4L17.3 20h3.2L12 2Zm-2.4 11.2L12 7.6l2.4 5.6H9.6Z"/></svg>',
+copilot:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12.5" r="8" fill="none" stroke="#e6edf3" stroke-width="1.6"/><circle cx="9" cy="12" r="1.3" fill="#e6edf3"/><circle cx="15" cy="12" r="1.3" fill="#e6edf3"/><path d="M12 4.5V2M8 5l-1-2M16 5l1-2" stroke="#e6edf3" stroke-width="1.4" stroke-linecap="round"/></svg>',
+pi:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16" stroke="#7c93ff" stroke-width="2" stroke-linecap="round"/><path d="M9 8v10M15.5 8v7.5a2 2 0 0 0 2 2" stroke="#7c93ff" stroke-width="2" stroke-linecap="round"/></svg>',
+goose:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#3fb0ac" d="M6 14a6 6 0 0 1 6-6c1 0 1.6.9 1 1.7 2.5.4 4 2.4 4 5.1 0 .6-.5 1.2-1.2 1.2H8.5A2.5 2.5 0 0 1 6 13.5V14Z"/><circle cx="10.5" cy="10.8" r=".8" fill="#0d1117"/><path d="M13 9.7l2.4-1" stroke="#f0b429" stroke-width="1.4" stroke-linecap="round"/></svg>',
+litellm:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="#58a6ff" stroke-width="1.5"/><path d="M8 10l2 2-2 2M12.5 14h3.5" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+openrouter:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l3-4 3 8 3-4h3" fill="none" stroke="#8b5cf6" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+vllm:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l4 14 3-9 3 9 4-14" fill="none" stroke="#f0b429" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+'llm-d':'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="#4d9375" stroke-width="1.5"/><path d="M8 9h4a3 3 0 0 1 0 6H8V9Z" fill="none" stroke="#4d9375" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+bob:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="4" width="14" height="16" rx="2" fill="none" stroke="#1f70c1" stroke-width="1.5"/><path d="M9 8h3.5a2 2 0 0 1 0 4H9V8ZM9 12h4a2 2 0 0 1 0 4H9v-4Z" fill="none" stroke="#1f70c1" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+other:'<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2" fill="none" stroke="#8b949e" stroke-width="1.5"/><path d="M8 12h.01M12 12h.01M16 12h.01" stroke="#8b949e" stroke-width="2.2" stroke-linecap="round"/></svg>'
+};
+var CLIENTS={
+claude:{name:'Claude Code',tag:'Anthropic',peer:true,
+  deeplink:{label:'Open in Claude',
+    // claude:// desktop deep link (documented: support.claude.com "Open Claude
+    // Desktop with a link"). q= prefills the prompt for the user to review/send.
+    href:function(p){return 'claude://claude.ai/new?q='+encodeURIComponent(p);},
+    desc:'Opens Claude Desktop with a setup prompt prefilled.'}},
+copilot:{name:'GitHub Copilot',tag:'GitHub',peer:true},
+pi:{name:'Pi',tag:'pi.dev',peer:true},
+goose:{name:'Goose',tag:'Block (Ollama)',peer:true},
+litellm:{name:'LiteLLM',tag:'your proxy'},
+openrouter:{name:'OpenRouter',tag:'your key'},
+vllm:{name:'vLLM',tag:'self-hosted'},
+'llm-d':{name:'llm-d',tag:'self-hosted'},
+bob:{name:'Bob',tag:'IBM'},
+other:{name:'Other',tag:'host only'}
+};
+var tilesEl=document.getElementById('client-tiles');
+var oiRow=document.getElementById('openin-row');
+var oiLink=document.getElementById('openin-link');
+var oiLabel=document.getElementById('openin-label');
+var oiTitle=document.getElementById('openin-title');
+var oiDesc=document.getElementById('openin-desc');
+var promptText=document.getElementById('prompt-text');
+var promptTool=document.getElementById('prompt-tool');
+var promptTool2=document.getElementById('prompt-tool2');
+var promptEdited=false;   // once the user edits, don't clobber on same client
+var promptForClient='';   // which client the current prompt text was generated for
+function tileOrder(){
+  // Peers (Claude/Copilot/Pi/Goose) first, in select order, then the rest — so
+  // the first-class tools lead the grid rather than being afterthoughts.
+  var peers=[],rest=[];
+  for(var i=0;i<sel.options.length;i++){
+    var v=sel.options[i].value;var c=CLIENTS[v]||{name:v,tag:''};
+    (c.peer?peers:rest).push(v);
+  }
+  return peers.concat(rest);
+}
+function buildTiles(){
+  if(!tilesEl)return;
+  tilesEl.innerHTML=tileOrder().map(function(v){
+    var c=CLIENTS[v]||{name:v,tag:''};
+    var emb=EMB[v]||EMB.other;
+    var parity=c.peer?'<span class="ct-parity">First-class</span>':'';
+    return '<button type="button" class="client-tile" role="option" data-cli="'+v+'" aria-selected="false" title="'+c.name+'">'+
+      '<span class="ct-emblem">'+emb+'</span>'+
+      '<span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span>'+parity+'</button>';
+  }).join('');
+}
+function defaultPromptFor(v){
+  var c=CLIENTS[v]||{name:v};
+  return 'Help me contribute to this hive using '+c.name+' on my machine.\n'+
+    'The hive hub is: '+hubURL+'\n\n'+
+    'Please walk me through, step by step, using the official setup:\n'+
+    '  1. Install the prerequisites (just, gh) for my OS.\n'+
+    '  2. git clone -b v2 https://github.com/kubestellar/hive && cd hive\n'+
+    '  3. export HIVE_HUB='+hubURL+'\n'+
+    '  4. just contribute-setup '+v+'\n'+
+    '  5. just contribute-hive\n\n'+
+    'Explain what each step does before I run it, and stop if anything looks wrong.';
+}
+function syncBranded(){
+  var v=sel.value;
+  // Reflect selection on the tiles.
+  if(tilesEl){
+    var btns=tilesEl.querySelectorAll('.client-tile');
+    for(var i=0;i<btns.length;i++){
+      var on=btns[i].getAttribute('data-cli')===v;
+      btns[i].classList.toggle('sel',on);
+      btns[i].setAttribute('aria-selected',on?'true':'false');
+    }
+  }
+  var c=CLIENTS[v]||{name:v};
+  // Prompt block: (re)generate for a new client, preserve manual edits within one.
+  if(promptText){
+    if(promptForClient!==v||!promptEdited){
+      promptText.value=defaultPromptFor(v);
+      promptForClient=v;promptEdited=false;
+    }
+    if(promptTool)promptTool.textContent=c.name;
+    if(promptTool2)promptTool2.textContent=c.name;
+  }
+  // "Open in" affordance — only for a client that documents a deep-link scheme.
+  if(oiRow){
+    if(c.deeplink){
+      oiRow.classList.add('show');
+      oiTitle.textContent=c.deeplink.label;
+      oiLabel.textContent=c.deeplink.label;
+      oiDesc.textContent=c.deeplink.desc||'';
+      // Handoff carries the SAME editable prompt so the vendor chat opens on the
+      // exact setup text shown here — kept in sync, never a stale URL blob.
+      oiLink.setAttribute('href',c.deeplink.href((promptText&&promptText.value)||defaultPromptFor(v)));
+    }else{
+      oiRow.classList.remove('show');
+      oiLink.setAttribute('href','#');
+    }
+  }
+}
+if(tilesEl){
+  tilesEl.addEventListener('click',function(e){
+    var t=e.target.closest?e.target.closest('.client-tile'):null;
+    if(!t)return;
+    var v=t.getAttribute('data-cli');
+    if(v&&v!==sel.value){sel.value=v;modelInput.value='';}
+    update();  // drives the copy block + syncBranded()
+  });
+}
+if(promptText){
+  promptText.addEventListener('input',function(){promptEdited=true;
+    // keep the deep-link handoff in step with live edits
+    var c=CLIENTS[sel.value];if(c&&c.deeplink&&oiLink)oiLink.setAttribute('href',c.deeplink.href(promptText.value));
+  });
+}
+var pbCopy=document.getElementById('prompt-copy');
+if(pbCopy&&promptText){
+  pbCopy.addEventListener('click',function(){
+    promptText.focus();promptText.select();
+    var ok=false;try{ok=document.execCommand('copy')}catch(e){}
+    if(!ok&&navigator.clipboard){navigator.clipboard.writeText(promptText.value).catch(function(){});ok=true;}
+    pbCopy.textContent=ok?'Copied!':'Cmd+C';pbCopy.style.background='#16a34a';
+    setTimeout(function(){pbCopy.textContent='Copy';pbCopy.style.background='#238636'},2000);
+  });
+}
+buildTiles();
+update();  // initial paint: copy block + branded UI in sync from first load
+// ── end #2548 ───────────────────────────────────────────────────────────────
 })();
 </script>
 </div>
@@ -1611,8 +1827,22 @@ document.getElementById('clanker-list').addEventListener('click',function(e){
   var b=e.target;
   if(!adminEnabled||b.tagName!=='BUTTON')return;
   var role=b.getAttribute('data-role');
-  if(role!=='revoke'&&role!=='remove')return;
+  if(role!=='revoke'&&role!=='remove'&&role!=='requeue')return;
   var cid=b.getAttribute('data-cid'),user=b.getAttribute('data-user')||'this contributor';
+  if(role==='requeue'){
+    // #2568: manual requeue — release the in-flight task back to the ready queue.
+    // Explicitly NOT destructive to the contributor (no revoke/remove); the task is
+    // returned to the queue and booked for the same short cooldown as an auto-release,
+    // so it is not instantly re-handed to a stale worker. Uses the existing
+    // POST /api/contributors/{id}/requeue endpoint (owner/read-write only).
+    adminConfirm('Requeue '+user+'&rsquo;s task','Release the task '+user+' is currently holding back to the ready queue. Use this when a connected clanker is wedged (connected but not progressing). The task is booked for the same short cooldown as an automatic release, so it is not instantly re-assigned to a stale worker. This uses the existing POST /api/contributors/{id}/requeue endpoint.','Requeue',function(){
+      fetch('/api/contributors/'+encodeURIComponent(cid)+'/requeue',{method:'POST'})
+        .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+        .then(function(x){if(x.ok){toast('Task requeued for '+user,true);opsPoll();}else{toast((x.d&&x.d.error)||'Requeue failed',false);}})
+        .catch(function(){toast('Requeue failed',false);});
+    });
+    return;
+  }
   if(role==='revoke'){
     adminConfirm('Revoke '+user,'Set '+user+' to the revoked tier. Their agent stops receiving scoped tokens for new work. This uses the existing POST /api/contributors/{id}/revoke endpoint.','Revoke',function(){
       fetch('/api/contributors/'+encodeURIComponent(cid)+'/revoke',{method:'POST'})
@@ -1700,8 +1930,14 @@ function renderClankers(list){
       var opts=['newcomer','contributor','trusted','advisor'].map(function(t){
         return '<option value="'+t+'"'+(t===tier?' selected':'')+'>'+t+'</option>';
       }).join('');
+      // #2568: manual requeue is only meaningful while the clanker is HOLDING a
+      // task — an operator releases work they can see is wedged. Hidden when idle.
+      var requeueBtn=c.current_task
+        ?('<button type="button" class="admin-act" title="Release this clanker&rsquo;s in-flight task back to the ready queue (books the same short cooldown as an auto-release, so it is not instantly re-handed out)" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="requeue">Requeue task</button>')
+        :'';
       actions='<div class="admin-actions">'+
         '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
+        requeueBtn+
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
         '</div>';
@@ -2587,6 +2823,48 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 	_ = saveContributorProfile(p)
 	s.logger.Info("contributor revoked", "username", p.GitHubUsername)
 	jsonResponse(w, map[string]any{"ok": true})
+}
+
+// handleContributorRequeue is the operator MANUAL requeue / release action
+// (kubestellar/hive#2568, the tractable slice). It lets an owner/read-write operator
+// who can SEE a connected clanker is wedged — holding a task but not making progress —
+// release that task back to the ready queue. It is a CONTROL, so it is owner/read-
+// write ONLY, enforced server-side by requireContributorWrite (a read/anon caller
+// gets 403), exactly like trust/revoke/remove.
+//
+// It intentionally reuses the SAME release+cooldown machinery the automatic
+// disconnect-release (#2356/#2435) and ready-abandon (#2545) paths use — see
+// ContributeWSHub.RequeueContributorTask — so a manual requeue can NOT recreate the
+// duplicate-assignment race #2492/#2557 closed: the released issue books the same
+// short failure cooldown and is therefore not instantly re-handed to a stale worker.
+// It does NOT enforce wsTaskTimeout automatically (manual action only) and does NOT
+// implement the deferred renewable-lease / generation-token protocol (that is the
+// follow-up design half of #2568). Requeuing a contributor with no in-flight task is
+// a 404 (nothing to release) rather than a silent no-op.
+func (s *Server) handleContributorRequeue(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	id := r.PathValue("id")
+	p := findContributor(id)
+	if p == nil {
+		jsonError(w, "Contributor not found", http.StatusNotFound)
+		return
+	}
+	if s.contributeHub == nil {
+		jsonError(w, "Contributor relay is not available", http.StatusServiceUnavailable)
+		return
+	}
+	// Key the live release by the registered ContributorID (what the ops tab passes),
+	// matching how the hub tracks connections. GitHubUsername is only used for logs.
+	released := s.contributeHub.RequeueContributorTask(p.ContributorID)
+	if released == 0 {
+		jsonError(w, "That contributor has no in-flight task to requeue.", http.StatusNotFound)
+		return
+	}
+	s.auditFromRequest(r, "contributor_requeue", auditDetail("username", p.GitHubUsername), "")
+	s.logger.Info("contributor task requeued by operator", "username", p.GitHubUsername, "sessions_released", released)
+	jsonResponse(w, map[string]any{"ok": true, "released": released})
 }
 
 func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request) {

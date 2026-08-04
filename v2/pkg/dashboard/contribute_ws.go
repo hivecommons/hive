@@ -765,6 +765,93 @@ func (h *ContributeWSHub) recentFailureCount(repo string, number int) int {
 	return h.consecutiveFailures[key]
 }
 
+// RequeueContributorTask is the server side of the operator MANUAL requeue action
+// (kubestellar/hive#2568, the safe slice). An operator who can SEE that a connected
+// clanker is wedged — holding a task but not progressing — releases that task back
+// to the ready queue. It is deliberately the SAME release+cooldown path the
+// automatic disconnect (#2356/#2435) and ready-abandon (#2545) handlers already
+// use, so a manual requeue can NOT reintroduce the duplicate-assignment race #2492/
+// #2557 closed: for every session of contributorID that is currently holding a real
+// issue task we
+//
+//  1. clear currentTask (dropping the issue out of selectTask's activeIssues guard),
+//     and
+//  2. book the SAME short non-permanent failure cooldown via recordTaskFailure, so
+//     the just-released issue is NOT instantly re-admissible (and thus can't be
+//     handed straight back to a stale worker of the same identity), then
+//  3. push the EXISTING task_revoke message (already handled by contributor-relay.sh:
+//     it clears its local currentTask, stops progress reporting, and sends "ready")
+//     so the wedged relay stops cleanly and re-asks for work.
+//
+// It does NOT mint or rotate any token, does NOT change trust, and does NOT
+// implement the deferred lease/generation-token guarantee (a truly stale worker that
+// later reconnects and reports completion is out of scope for this slice — the
+// cooldown is the safe interim). Synthetic pr-review tasks carry Number == 0 and are
+// released without booking an issue-key cooldown, exactly like the disconnect path.
+//
+// It returns the number of held sessions that were released so the caller can 404 a
+// contributor that has no in-flight task (nothing to requeue) versus report success.
+func (h *ContributeWSHub) RequeueContributorTask(contributorID string) int {
+	if contributorID == "" {
+		return 0
+	}
+	// Collect the connections + their held tasks under the connection lock, but do
+	// the network send (task_revoke) OUTSIDE h.mu to avoid holding the hub lock
+	// across a socket write, mirroring how the other broadcast-ish paths behave.
+	type releaseTarget struct {
+		conn *ContributorConnection
+		task WSTaskAssign
+	}
+	var targets []releaseTarget
+	h.mu.RLock()
+	for _, c := range h.connections {
+		c.mu.Lock()
+		match := c.profile != nil && c.profile.ContributorID == contributorID && c.currentTask != nil
+		if match {
+			released := *c.currentTask
+			c.currentTask = nil
+			c.currentPrompt = ""
+			c.currentLabels = nil
+			c.tokenMintedAt = time.Time{}
+			targets = append(targets, releaseTarget{conn: c, task: released})
+		}
+		c.mu.Unlock()
+	}
+	h.mu.RUnlock()
+
+	for _, tgt := range targets {
+		// Book the SAME short cooldown the disconnect/ready-abandon paths book, so
+		// the released issue is not instantly re-offered. Only real issue tasks are
+		// booked; synthetic pr-review tasks (Number == 0) must not poison an issue key.
+		if tgt.task.Number > 0 {
+			h.recordTaskFailure(tgt.task.Repo, tgt.task.Number, false)
+		}
+		username := ""
+		if tgt.conn.profile != nil {
+			username = tgt.conn.profile.GitHubUsername
+		}
+		h.logger.Info("[contribute-ws] task requeued by operator",
+			"username", username,
+			"task", tgt.task.TaskID,
+			"repo", tgt.task.Repo,
+			"number", tgt.task.Number,
+		)
+		h.addActivity(username, "requeued by operator", tgt.conn.role, tgt.conn.cliBackend, tgt.conn.model, tgt.task.TaskID)
+		// Push the EXISTING task_revoke message so the relay stops cleanly and
+		// re-readies. Best-effort: if the socket is already gone the disconnect path
+		// has (or will) release it anyway; the cooldown above is already booked.
+		if tgt.conn.ws != nil {
+			_ = sendJSON(tgt.conn.ws, WSMessage{
+				Type:   "task_revoke",
+				Seq:    h.nextSeq(),
+				TaskID: tgt.task.TaskID,
+				Reason: "requeued by operator",
+			})
+		}
+	}
+	return len(targets)
+}
+
 func (h *ContributeWSHub) nextSeq() int {
 	h.mu.Lock()
 	h.seq++

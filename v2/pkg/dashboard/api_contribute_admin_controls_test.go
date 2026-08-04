@@ -145,6 +145,7 @@ func contributorWriteCases() []contributorWriteCase {
 	return []contributorWriteCase{
 		{"trust", (*Server).handleContributorTrust, http.MethodPut, "/api/contributors/alice/trust", `{"tier":"trusted"}`},
 		{"revoke", (*Server).handleContributorRevoke, http.MethodPost, "/api/contributors/alice/revoke", ``},
+		{"requeue", (*Server).handleContributorRequeue, http.MethodPost, "/api/contributors/alice/requeue", ``},
 		{"delete", (*Server).handleContributorDelete, http.MethodDelete, "/api/contributors/alice", ``},
 	}
 }
