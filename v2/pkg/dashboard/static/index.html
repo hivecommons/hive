@@ -5963,6 +5963,11 @@
       const prsSpark = sparkline('govPrs');
       const totalSpark = sparkline('govTotal');
       const issueCount = gov.issues || 0;
+      // Mode pressure = actionable issues + open PRs, matching the governor's
+      // computeMode input. The gauge previously read issues alone, so the
+      // needle sat at "2" in the idle band while the mode said surge.
+      const prCount = gov.prs || 0;
+      const govPressure = issueCount + prCount;
       const currentMode = gov.mode || 'idle';
       const modes = ['idle', 'quiet', 'busy', 'surge'];
 
@@ -5971,8 +5976,8 @@
       const CLASSIC_THRESH_QUIET = _gt.quiet ?? 2;
       const CLASSIC_THRESH_BUSY = _gt.busy ?? 10;
       const CLASSIC_THRESH_SURGE = _gt.surge ?? 20;
-      const maxQ = Math.max(CLASSIC_THRESH_SURGE + 10, issueCount + 5);
-      const pct = Math.min(issueCount / maxQ * 100, 100);
+      const maxQ = Math.max(CLASSIC_THRESH_SURGE + 10, govPressure + 5);
+      const pct = Math.min(govPressure / maxQ * 100, 100);
       const modeColors = { idle: 'var(--green)', quiet: 'var(--blue)', busy: 'var(--yellow)', surge: 'var(--red)' };
       const modeColor = modeColors[gov.mode] || 'var(--muted)';
 
@@ -6005,8 +6010,8 @@
         <div class="gov-title">Governor <button class="config-gear" onclick="openConfigDialog('governor')" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
         <div class="gov-grid">
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
-          <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived purely from the actionable-issue count against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
-          <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The queue depth that drives the governor mode. The sparkline shows its recent trend.&#10;&#10;HOW: Count of open GitHub issues across all monitored KubeStellar repos, MINUS any labeled hold / do-not-merge / wontfix / blocked. This is the exact number the mode gauge below reads."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
+          <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived from queue pressure — actionable issues + open PRs — against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
+          <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The issue half of the queue pressure that drives the governor mode (pressure = issues + open PRs). The sparkline shows its recent trend.&#10;&#10;HOW: Count of open GitHub issues across all monitored KubeStellar repos, MINUS any labeled hold / do-not-merge / wontfix / blocked."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
           <div class="gov-stat" title="PRS — open pull requests in flight.&#10;&#10;WHAT: How many PRs are currently open across the fleet. The sparkline shows the recent trend.&#10;&#10;HOW: Count of open pull requests across all monitored KubeStellar repos at the last scan (includes both agent-authored and human PRs; does not subtract held PRs)."><div class="label">PRs</div><div class="spark-row"><span class="val">${gov.prs}</span>${prsSpark}</div></div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
@@ -6032,11 +6037,11 @@
           <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" onclick="openConfigDialog('governor',null,'Thresholds')" title="Click to adjust governor thresholds">
-          <div class="temp-gauge-label"><span>Issues: ${issueCount}</span><span>max ${maxQ}</span></div>
+          <div class="temp-gauge-label"><span>Pressure: ${govPressure} (${issueCount} issues + ${prCount} PRs)</span><span>max ${maxQ}</span></div>
           <div class="temp-gauge-track" style="background:linear-gradient(to right, var(--green) 0%, var(--green) ${CLASSIC_THRESH_QUIET/maxQ*100}%, var(--blue) ${CLASSIC_THRESH_QUIET/maxQ*100}%, var(--blue) ${CLASSIC_THRESH_BUSY/maxQ*100}%, var(--yellow) ${CLASSIC_THRESH_BUSY/maxQ*100}%, var(--yellow) ${CLASSIC_THRESH_SURGE/maxQ*100}%, var(--red) ${CLASSIC_THRESH_SURGE/maxQ*100}%, var(--red) 100%)">
             <div class="temp-gauge-glow" style="width:100%"></div>
             <div class="temp-gauge-ticks"><span style="left:2%;-webkit-transform:translate(0,-50%);transform:translate(0,-50%)">0</span><span style="left:${CLASSIC_THRESH_QUIET/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_QUIET}</span><span style="left:${CLASSIC_THRESH_BUSY/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_BUSY}</span><span style="left:${CLASSIC_THRESH_SURGE/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_SURGE}</span><span style="left:98%;-webkit-transform:translate(-100%,-50%);transform:translate(-100%,-50%)">${maxQ}</span></div>
-            <div class="temp-gauge-needle" style="left:${pct}%" data-val="${issueCount}"></div>
+            <div class="temp-gauge-needle" style="left:${pct}%" data-val="${govPressure}"></div>
           </div>
           <div class="temp-gauge-labels">
             <span class="tl-idle" style="position:absolute;left:${CLASSIC_THRESH_QUIET / maxQ * 50}%;transform:translateX(-50%)">idle</span>
