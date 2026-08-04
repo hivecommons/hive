@@ -126,6 +126,42 @@ func TestContributeLanding(t *testing.T) {
 	if !bytes.Contains(w.Body.Bytes(), []byte("Contribute to")) {
 		t.Error("landing page missing expected content")
 	}
+
+	body := w.Body.Bytes()
+
+	// #2536/#2540a: Copilot must carry a real host-mode install command, not
+	// an empty data-host-install that falls through to a comment-only line.
+	if !bytes.Contains(body, []byte(`data-host-install="npm install -g @github/copilot`)) {
+		t.Error("copilot option missing a non-empty data-host-install")
+	}
+
+	// #2536: an OS selector must exist so install guidance isn't macOS-only,
+	// and macOS must remain the default selection with the unchanged
+	// brew-based prerequisite line.
+	if !bytes.Contains(body, []byte(`id="os-select"`)) {
+		t.Error("landing page missing OS selector")
+	}
+	if !bytes.Contains(body, []byte(`<option value="macos" selected>macOS</option>`)) {
+		t.Error("OS selector must default to macOS")
+	}
+	if !bytes.Contains(body, []byte("brew install just gh")) {
+		t.Error("macOS default prerequisite line (brew install just gh) missing")
+	}
+
+	// #2536/#2540b: the "don't see your CLI?" prefill link must not reference
+	// the non-existent "contribute" label — only "enhancement" exists.
+	if bytes.Contains(body, []byte("labels=contribute")) {
+		t.Error("CLI request link must not reference the non-existent 'contribute' label")
+	}
+	if !bytes.Contains(body, []byte("labels=enhancement")) {
+		t.Error("CLI request link missing labels=enhancement")
+	}
+
+	// #2536/#2540: the server-rendered (no-JS) fallback command block must be
+	// self-labeling as a default.
+	if !bytes.Contains(body, []byte("Default shown: macOS + Claude Code + containerized mode")) {
+		t.Error("server-rendered fallback command block missing default marker comment")
+	}
 }
 
 // TestContributeLandingHasOpsTab pins the additive tab chrome: the landing page
