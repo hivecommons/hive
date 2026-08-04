@@ -680,6 +680,119 @@ Until the dashboard "assign" flow lands, claiming is manual:
 
 ---
 
+## Mapping a namespace back to its hive (identity labels)
+
+A claimed placeholder's namespace **keeps its original placeholder name
+forever** — e.g. `hive-hosted-hosted-available-oke-01-placeholder-bb95` — even
+after the hub API's claim/assign flow gives the hive a real name and org.
+Kubernetes has no atomic namespace-rename primitive, and renaming would mean
+recreating every object inside it (including the PVC), so the namespace name
+is never changed. Historically this meant there was no way to look at a
+namespace on the cluster and tell which hive/org it belonged to without
+cross-referencing the hub registry and reverse-engineering the placeholder
+slug.
+
+Instead, the hub stamps **identity labels** and a **display-name annotation**
+onto the namespace itself, keeping it self-describing even though its name
+never changes:
+
+| Key | Kind | Holds |
+|---|---|---|
+| `hive.kubestellar.io/hive-name` | label | The hive's display name (`ProjectName`), **sanitized** to a valid RFC-1123 label value. |
+| `hive.kubestellar.io/org` | label | The hive's forge org, sanitized the same way. |
+| `hive.kubestellar.io/hive-id` | label | The hive's internal `hive_id`, sanitized the same way. |
+| `hive.kubestellar.io/display-name` | annotation | The **exact, unsanitized** hive name — the recoverable source of truth when the sanitized label value has been lossily transformed. |
+
+**Sanitization**: label values are lower-cased, restricted to `[a-z0-9.-]`
+(everything else — spaces, underscores, unicode, punctuation — is dropped
+outright rather than transliterated), trimmed of leading/trailing separators,
+and capped at 63 characters (the RFC-1123 label-value limit). So a hive named
+`"TradingAsBuddies"` gets the label value `tradingasbuddies`, while the
+`hive.kubestellar.io/display-name` annotation preserves the original
+`TradingAsBuddies` exactly. A field that sanitizes to empty (or wasn't set
+yet — e.g. a fresh placeholder with no real name/org) is **omitted** from the
+labels rather than written as an empty/invalid label.
+
+Given a hive name, find its namespace:
+
+```bash
+kubectl --context hive-oke get ns \
+  -l hive.kubestellar.io/hive-name=tradingasbuddies
+```
+
+Given a namespace, find the hive that owns it:
+
+```bash
+kubectl --context hive-oke get ns hive-hosted-hosted-available-oke-01-placeholder-bb95 \
+  -o jsonpath='{.metadata.annotations.hive\.kubestellar\.io/display-name}'
+# -> TradingAsBuddies
+```
+
+**When the labels/annotation are (re)written** — the hub calls the same
+`stampHostedNamespaceIdentity` helper at all three points a hive's identity is
+known or changes, so the namespace never goes stale:
+
+1. **Automatic provisioning** (`provisionHive`, Path A above) — stamps
+   whatever is known at namespace-creation time. For a freshly-created pool
+   placeholder this is often just `hive.kubestellar.io/hive-id`, since
+   `org`/`name` are still placeholder values at this point.
+2. **Claim** (`handleApproveProvision`) — the real name/org become known here
+   for the first time, so the labels/annotation are (re)written.
+3. **Assign / reassign** (`handleAssignHive`) — same, so a placeholder that
+   gets reassigned to a different owner has its namespace identity refreshed
+   too.
+
+The stamp is applied via idempotent `kubectl label`/`kubectl annotate
+--overwrite` (merged into whatever the namespace already carries, not
+replaced) and is **best-effort**: a failure to label (no `kubectl` on PATH, a
+transient API error) is logged and does not fail the claim/assign request —
+this is a cosmetic/operability nicety, not a required step for the hive to
+work.
+
+### Name-bearing vanity Route
+
+The same problem — a URL permanently encoding the placeholder slug — applies
+to the dashboard's public URL. The **assign** path (`handleAssignHive`) also
+creates an **additional** OpenShift Route whose host is derived from the
+hive's own display name, rather than the org/repo-derived host used
+previously:
+
+```
+<sanitized-hive-name>-<4-char-suffix>.<cluster-domain>
+```
+
+For example, a hive named `TradingAsBuddies` on a cluster with domain
+`apps.example.com` gets a Route host like
+`tradingasbuddies-a1b2.apps.example.com`, adopted as
+`https://tradingasbuddies-a1b2.apps.example.com`. The random suffix keeps two
+hives with similar/identical sanitized names from colliding on the same host.
+
+This is an **additional** Route, not a rename: the original Route (host
+derived from org/repo or the placeholder ID) is left completely alone, so any
+in-flight bookmark or callback against it keeps working. **The namespace
+itself is still never renamed or recreated** — only a second Route pointing at
+the same Service is added. If the hive has no display name set, the vanity
+host falls back to the previous org/repo-derived scheme.
+
+### Namespace shown in the dashboards
+
+The namespace is now surfaced in two read-only UI spots, so an operator or
+hive owner doesn't need `kubectl` at all to find it:
+
+- **Spoke dashboard → Hub tab.** The hive's own dashboard shows its
+  Kubernetes namespace next to the hub URL/name info. The spoke learns its own
+  namespace from the `POD_NAMESPACE` env var, set via the Kubernetes downward
+  API (`fieldRef: metadata.namespace`) on the hive Deployment — falling back to
+  a `NAMESPACE` env var, then to the in-cluster service-account namespace file,
+  if `POD_NAMESPACE` isn't set (e.g. a spoke provisioned before this env var
+  existed). The row is omitted entirely when none of the three resolve.
+- **Hub dashboard → per-spoke status hover.** Hovering a hive in the hub's
+  fleet view shows its namespace, computed client-side as `"hive-hosted-" +
+  <hive-id>` — the same convention the hub uses server-side — so it can never
+  disagree with the namespace the identity labels above are stamped on.
+
+---
+
 ## Deprovisioning
 
 ```bash
