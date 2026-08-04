@@ -463,6 +463,39 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .lb-stat{text-align:right;color:#c9d1d9;font-variant-numeric:tabular-nums}
 .lb-head .lb-stat,.lb-head .lb-rank{text-align:right;color:#8b949e}
 .lb-head .lb-rank{text-align:left}
+/* ── Subtle "ranked/alive" accent pass on Operations + Leaderboard (SUBTLE +
+   PROFESSIONAL — light watermarking only). Theme-aware: built entirely from the
+   existing dark palette (#161b22 card / #30363d border / #0d1117 deep). Every
+   accent is driven by REAL data (trust tier + real task counts); nothing is
+   fabricated. Readability first — text keeps full contrast; the tints are muted,
+   never neon. All motion respects the prefers-reduced-motion block below. ───── */
+/* Tier medallion / rank badge. One class per REAL trust tier; the per-tier tint is
+   a muted metal-ish accent (advisor/trusted = warmer gold-amber, contributor =
+   cooler steel, newcomer = neutral). Small pill with a tiny CSS-drawn medallion
+   dot — no external images (CSP forbids them), no glow. */
+.tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid #30363d;background:#0d1117;color:#8b949e;text-transform:capitalize;white-space:nowrap}
+.tier-badge::before{content:"";width:8px;height:8px;border-radius:50%%;background:currentColor;box-shadow:inset 0 0 0 1px rgba(1,4,9,.35);flex:none}
+.tier-badge.tier-advisor{border-color:rgba(210,169,85,.45);background:rgba(210,169,85,.10);color:#d0a955}
+.tier-badge.tier-trusted{border-color:rgba(201,162,39,.40);background:rgba(201,162,39,.08);color:#c9a94a}
+.tier-badge.tier-contributor{border-color:rgba(110,163,201,.38);background:rgba(110,163,201,.08);color:#6ea3c9}
+.tier-badge.tier-newcomer{border-color:#30363d;background:#0d1117;color:#8b949e}
+/* Restrained gradient header band on the accented cards. Very low-contrast wash
+   from the deep bg into the card colour — reads as a faint banner, not a loud
+   gradient; the bottom border keeps the head crisp. */
+.ops-card.card-accent>.ops-card-head{background:linear-gradient(180deg,#12161d 0%%,#161b22 100%%)}
+.ops-card.card-accent>.ops-card-head h3{letter-spacing:.01em}
+/* Bold-numeral stat emphasis: the primary "Done" numeral on the leaderboard and
+   the key ops counts get heavier weight + slightly larger tabular figures so the
+   number reads as the hero of the row without adding chrome. */
+.lb-row .lb-stat.lb-primary{color:#e6edf3;font-weight:700;font-size:.95rem}
+.lb-head .lb-stat.lb-primary{font-weight:600;font-size:.72rem;color:#8b949e}
+.tier-badge.tier-lb{padding:2px 8px 2px 5px;font-size:.66rem}
+/* Ops "your army" counts + card counts as bold numerals (tabular, no layout shift). */
+.cc-army b{font-weight:700;font-variant-numeric:tabular-nums}
+.ops-card-count.count-strong{color:#e6edf3;font-weight:700;font-variant-numeric:tabular-nums}
+/* Compact tier badge inline next to a connected clanker's identity. */
+.tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:.62rem;margin-left:6px;vertical-align:middle}
+.tier-badge.tier-inline::before{width:6px;height:6px}
 .ops-note{color:#6e7681;font-size:.78rem;margin-top:12px;line-height:1.5}
 .ops-note code{background:#0d1117;padding:1px 6px;border-radius:4px}
 .prompt-preview{margin-top:10px;border-top:1px solid #21262d;padding-top:8px}
@@ -641,8 +674,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
-<button class="page-tab" role="tab" id="ptab-manage" aria-selected="false" data-panel="tab-manage">Management</button>
 <button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
+<button class="page-tab" role="tab" id="ptab-manage" aria-selected="false" data-panel="tab-manage">Management</button>
 <button class="page-tab" role="tab" id="ptab-leaderboard" aria-selected="false" data-panel="tab-leaderboard">Leaderboard</button>
 </div>
 <div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
@@ -891,8 +924,8 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="ops-main">
 <div class="ops-grid">
 <div>
-<div class="ops-card">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count" id="clanker-count"></span></div>
+<div class="ops-card card-accent">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count count-strong" id="clanker-count"></span></div>
 <!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
 <div class="cc-army" id="cc-army">
   <span style="color:#e6edf3;font-weight:600">Your army</span>
@@ -934,7 +967,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </div>
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
-<div class="ops-card" style="margin-top:20px">
+<div class="ops-card card-accent" style="margin-top:20px">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
@@ -977,8 +1010,8 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="ops">
 <h1>Leaderboard</h1>
 <p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Agents run by this hive and human contributors who donate compute both appear here; revoked contributors are excluded.</p>
-<div class="ops-card">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Rankings</h3><span class="ops-card-count" id="leaderboard-count"></span></div>
+<div class="ops-card card-accent">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Rankings</h3><span class="ops-card-count count-strong" id="leaderboard-count"></span></div>
 <div id="leaderboard-list"><div class="ops-empty">Loading leaderboard&hellip;</div></div>
 </div>
 </div>
@@ -1108,18 +1141,31 @@ function loadLeaderboard(){
     if(el)el.innerHTML='<div class="ops-empty">Could not load leaderboard.</div>';
   });
 }
+// tierBadge renders a small tier medallion / rank badge from a REAL trust tier.
+// The four known tiers each get a muted metal-ish accent class; an unknown/blank
+// tier is treated as newcomer (neutral). extraCls lets callers request the compact
+// leaderboard/inline variants. Nothing here is fabricated — it is a pure visual
+// wrap around the tier string the leaderboard/fleet snapshot already carries.
+function tierBadge(tier,extraCls){
+  var known={newcomer:1,contributor:1,trusted:1,advisor:1};
+  var t=String(tier||'').toLowerCase();
+  if(!known[t])t='newcomer';
+  return '<span class="tier-badge tier-'+t+(extraCls?(' '+extraCls):'')+'">'+esc(t)+'</span>';
+}
 function lbRow(e,rank){
   var name=esc(e.github_username||'');
   var badge=e.is_agent?(esc(e.emoji||'\u{1F916}')+' '):'';
-  var tier=esc(e.trust_tier||'');
+  // Tier medallion driven by the REAL trust_tier the /api/leaderboard entry carries.
+  var tier=tierBadge(e.trust_tier,'tier-lb');
   var done=(e.tasks_completed||0);
   var failed=(e.tasks_failed||0);
   var findings=(e.findings||0);
+  // "Done" (tasks_completed) is the hero numeral — real count, just emphasised.
   return '<div class="lb-row">'
     +'<div class="lb-rank">#'+rank+'</div>'
     +'<div class="lb-name">'+badge+name+'</div>'
     +'<div class="lb-tier">'+tier+'</div>'
-    +'<div class="lb-stat">'+done+'</div>'
+    +'<div class="lb-stat lb-primary">'+done+'</div>'
     +'<div class="lb-stat">'+failed+'</div>'
     +'<div class="lb-stat">'+findings+'</div>'
     +'</div>';
@@ -1131,7 +1177,7 @@ function renderLeaderboard(agents,contribs){
   if(cnt)cnt.textContent=total+(total===1?' participant':' participants');
   if(!el)return;
   if(total===0){el.innerHTML='<div class="ops-empty">No participants yet — be the first to contribute!</div>';return;}
-  var html='<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div></div>';
+  var html='<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div></div>';
   var rank=0,i;
   for(i=0;i<agents.length;i++){rank++;html+=lbRow(agents[i],rank);}
   for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
@@ -1375,7 +1421,11 @@ function renderClankers(list){
   el.innerHTML=list.map(function(c){
     var user=c.github_username||c.contributor_id||'clanker';
     var av=c.github_username?'<img class="clanker-av" src="https://github.com/'+esc(c.github_username)+'.png" alt="">':'<span class="clanker-av"></span>';
-    var sub=[c.cli_backend,c.model,c.role,c.trust_tier].filter(Boolean).map(esc).join(' &middot; ');
+    // Trust tier is now surfaced as a compact medallion beside the identity (below),
+    // so drop it from the middot sub-line to avoid duplicating the same string.
+    var sub=[c.cli_backend,c.model,c.role].filter(Boolean).map(esc).join(' &middot; ');
+    // Small tier badge from this clanker's REAL trust_tier (defaults to newcomer).
+    var tierPill=tierBadge(c.trust_tier,'tier-inline');
     // #2546: when idle with a known reason, show "idle: no matching work" etc.
     var task=c.current_task
       ?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>')
@@ -1409,7 +1459,7 @@ function renderClankers(list){
     var isNew=key&&!ccKnownClankers[key];
     var rowCls='clanker-row'+(isNew?' cc-enter':'');
     return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
-      '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+'</div>'+
+      '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+tierPill+'</div>'+
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
