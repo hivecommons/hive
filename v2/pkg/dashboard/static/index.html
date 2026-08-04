@@ -3780,8 +3780,12 @@
         const OC_THRESH_QUIET = govThresh.quiet ?? 2;
         const OC_THRESH_BUSY = govThresh.busy ?? 10;
         const OC_THRESH_SURGE = govThresh.surge ?? 20;
-        const OC_GAUGE_MAX = Math.max(OC_THRESH_SURGE + 10, govActionable + 5);
-        const gaugePct = Math.min(govActionable / OC_GAUGE_MAX * 100, 100);
+        // Mode pressure = actionable issues + open PRs, matching the
+        // governor's computeMode input — an issues-only needle read "idle"
+        // while a 20+ PR backlog sat unmerged.
+        const govPressure = govActionable + govPrs;
+        const OC_GAUGE_MAX = Math.max(OC_THRESH_SURGE + 10, govPressure + 5);
+        const gaugePct = Math.min(govPressure / OC_GAUGE_MAX * 100, 100);
         govOuter.innerHTML = `
           <div class="gov-metric"><span class="gm-label">timer</span><span class="gm-val" style="color:var(--green)">${gov.active !== false ? '● active' : '○ off'}</span></div>
           <div class="gov-metric"><span class="gm-label">mode</span><span class="gm-val ${govModeClass}">${esc(gov.mode || '—')}</span></div>
@@ -3822,7 +3826,7 @@
             <div class="temp-gauge-track" style="background:linear-gradient(to right, var(--green) 0%, var(--green) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%, var(--blue) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%, var(--yellow) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) ${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%, var(--red) 100%)">
               <div class="temp-gauge-glow" style="width:100%"></div>
               <div class="temp-gauge-ticks"><span style="left:2%;-webkit-transform:translate(0,-50%);transform:translate(0,-50%)">0</span><span style="left:${OC_THRESH_QUIET/OC_GAUGE_MAX*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${OC_THRESH_QUIET}</span><span style="left:${OC_THRESH_BUSY/OC_GAUGE_MAX*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${OC_THRESH_BUSY}</span><span style="left:${OC_THRESH_SURGE/OC_GAUGE_MAX*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${OC_THRESH_SURGE}</span><span style="left:98%;-webkit-transform:translate(-100%,-50%);transform:translate(-100%,-50%)">${OC_GAUGE_MAX}</span></div>
-              <div class="temp-gauge-needle" style="left:${gaugePct}%" data-val="${govActionable}"></div>
+              <div class="temp-gauge-needle" style="left:${gaugePct}%" data-val="${govPressure}"></div>
             </div>
             <div class="temp-gauge-labels">
               <span class="tl-idle" style="position:absolute;left:${OC_THRESH_QUIET / OC_GAUGE_MAX * 50}%;transform:translateX(-50%)">idle</span>
