@@ -525,8 +525,9 @@ func TestLeaderboardAPISorted(t *testing.T) {
 
 // TestLeaderboardPageRedirect pins the deep-link shim behaviour: the standalone
 // leaderboard page was folded into the /contribute Leaderboard tab, so
-// GET /leaderboard now redirects to /contribute?tab=leaderboard (which the tab JS
-// reads on load to open the Leaderboard tab). Data still comes from the reused
+// GET /leaderboard now redirects to the canonical path-style tab URL
+// /contribute/leaderboard (which the tab JS reads from location.pathname on load
+// to open the Leaderboard tab). Data still comes from the reused
 // /api/leaderboard endpoint (asserted by TestLeaderboardAPISorted), so the
 // redirect must hold regardless of whether any contributors exist.
 func TestLeaderboardPageRedirect(t *testing.T) {
@@ -544,8 +545,8 @@ func TestLeaderboardPageRedirect(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Fatalf("expected 302 redirect, got %d: %s", w.Code, w.Body.String())
 	}
-	if loc := w.Header().Get("Location"); loc != "/contribute?tab=leaderboard" {
-		t.Errorf("Location = %q, want /contribute?tab=leaderboard", loc)
+	if loc := w.Header().Get("Location"); loc != "/contribute/leaderboard" {
+		t.Errorf("Location = %q, want /contribute/leaderboard", loc)
 	}
 }
 
@@ -564,8 +565,8 @@ func TestLeaderboardPageRedirectEmpty(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Fatalf("expected 302 redirect, got %d", w.Code)
 	}
-	if loc := w.Header().Get("Location"); loc != "/contribute?tab=leaderboard" {
-		t.Errorf("Location = %q, want /contribute?tab=leaderboard", loc)
+	if loc := w.Header().Get("Location"); loc != "/contribute/leaderboard" {
+		t.Errorf("Location = %q, want /contribute/leaderboard", loc)
 	}
 }
 
@@ -1001,5 +1002,93 @@ func TestBodySizeLimit(t *testing.T) {
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for huge body, got %d", w.Code)
+	}
+}
+
+// TestContributeTabPathServesLanding pins the path-style deep links introduced
+// with URL-addressable tabs: GET /contribute/<tab> must serve the SAME landing
+// HTML as /contribute (the client JS reads location.pathname on load and
+// activates the matching tab). Every accepted slug — clean names and legacy
+// short ids — must 200 with the page body, so Operations/Leaderboard hydrate on
+// direct load exactly as a click would (activateTab is the single choke point).
+func TestContributeTabPathServesLanding(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	paths := []string{
+		"/contribute",
+		"/contribute/onboarding",
+		"/contribute/management",
+		"/contribute/manage",
+		"/contribute/operations",
+		"/contribute/ops",
+		"/contribute/leaderboard",
+	}
+	for _, p := range paths {
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("GET %s: expected 200, got %d", p, w.Code)
+			continue
+		}
+		// The same landing page (not a redirect / empty body): the ClankeR
+		// heading and the tab strip must be present.
+		if !bytes.Contains(w.Body.Bytes(), []byte("Contribute to")) {
+			t.Errorf("GET %s: landing page content missing", p)
+		}
+		if !bytes.Contains(w.Body.Bytes(), []byte(`data-panel="tab-ops"`)) {
+			t.Errorf("GET %s: tab strip missing (page not fully rendered)", p)
+		}
+	}
+}
+
+// TestContributeTabURLWiring asserts the client-side URL-addressable-tab plumbing
+// is present in the served HTML: the path/param reader (tabFromLocation), the
+// address-bar reflection via history.pushState, the Back/Forward popstate handler,
+// and the friendly-name -> panel mapping. These are runtime behaviours we can't
+// execute in a Go test, so we pin their presence to guard against silent removal.
+func TestContributeTabURLWiring(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	for _, needle := range []string{
+		"function tabFromLocation",   // reads location.pathname + ?tab= on load
+		"history.pushState",          // address-bar reflection on tab switch
+		"popstate",                   // Back/Forward navigation
+		"'operations'",               // clean name accepted for Operations
+		"'management'",               // clean name accepted for Management
+		"/contribute/'+slug",         // path-style URL construction
+	} {
+		if !strings.Contains(body, needle) {
+			t.Errorf("served page missing tab-URL wiring: %q", needle)
+		}
+	}
+}
+
+// TestContributeSubpathsArePublic guards that the path-style tab URLs stay
+// anonymous-accessible: isPublicPath already prefixes /contribute/, but the tabs
+// depend on it, so pin it. A regression here would 401 shared/bookmarked tab URLs.
+func TestContributeSubpathsArePublic(t *testing.T) {
+	for _, p := range []string{
+		"/contribute",
+		"/contribute/onboarding",
+		"/contribute/management",
+		"/contribute/operations",
+		"/contribute/leaderboard",
+	} {
+		if !isPublicPath(p) {
+			t.Errorf("isPublicPath(%q) = false, want true (shared tab URLs must be public)", p)
+		}
 	}
 }

@@ -105,6 +105,12 @@ func (s *Server) BuildContributorPoolStatus() *ContributorPoolStatus {
 func (s *Server) registerContributeRoutes() {
 	s.contributeHub = NewContributeWSHub(s.logger, s)
 	s.mux.HandleFunc("GET /contribute", s.handleContributeLanding)
+	// Path-style deep links: /contribute/onboarding|management|operations|leaderboard
+	// (and the short id forms) all serve the SAME landing HTML — the client JS reads
+	// location.pathname and activates the matching tab. The {tab} segment is not used
+	// server-side; it exists so each tab is a real bookmarkable/shareable URL. Any
+	// /contribute/<tab> is already treated as public by isPublicPath (server.go).
+	s.mux.HandleFunc("GET /contribute/{tab}", s.handleContributeLanding)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.contributeHub.HandleWS)
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeRegister)
 	s.mux.HandleFunc("POST /api/contribute/reissue-token", s.handleContributeReissueToken)
@@ -408,12 +414,30 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .pill-passed{background:rgba(63,185,80,.12);color:#3fb950;border-color:rgba(63,185,80,.3)}
 .pill-blocked{background:rgba(248,81,73,.12);color:#f85149;border-color:rgba(248,81,73,.3)}
 .pill-idle{background:rgba(139,148,158,.12);color:#8b949e;border-color:rgba(139,148,158,.3)}
-.clanker-row{display:flex;align-items:center;gap:10px;padding:12px 20px;border-bottom:1px solid #21262d}
+/* #2574 (follow-up): the Connected-clankers card is a NARROW column. The old
+   layout put the multi-line identity text (.clanker-main) and the inline
+   controls (.admin-actions: tier dropdown + Revoke + Remove) in the SAME
+   align-items:center flex row with margin-left:auto. In the narrow column the
+   controls got vertically centered over the middle of the tall text block and
+   rendered ON TOP OF the "cli · model · role · on repo#N" lines. Fix: the row is
+   now a 3-column CSS grid — [dot][avatar][identity] on the top line — and the
+   trailing element (.admin-actions, or the non-admin .feed-time) is placed on its
+   OWN line spanning the full width BELOW the identity, so it never competes
+   horizontally with the multi-line text. Long repo paths in .clanker-sub wrap
+   (overflow-wrap:anywhere) rather than pushing into anything. align-items:start
+   keeps the dot/avatar top-aligned with the first text line. */
+.clanker-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:start;column-gap:10px;row-gap:8px;padding:12px 20px;border-bottom:1px solid #21262d}
+/* The trailing controls / timestamp: full-width line beneath the identity. It is
+   always the LAST grid child, so grid-column:1/-1 drops it below regardless of
+   whether it's .admin-actions or the .feed-time fallback. */
+.clanker-row>.admin-actions,.clanker-row>.feed-time{grid-column:1/-1}
 .clanker-av{width:28px;height:28px;border-radius:50%%;flex-shrink:0;background:#30363d}
-.clanker-main{flex:1;min-width:0}
+.clanker-main{min-width:0}
 .clanker-user{font-size:.88rem;color:#e6edf3;font-weight:500}
-.clanker-sub{font-size:.74rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.clanker-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex-shrink:0}
+.clanker-sub{font-size:.74rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;word-break:break-word}
+/* Row is align-items:start (grid), so nudge the small dot down to sit level with
+   the username's first line instead of the very top of the row. */
+.clanker-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex-shrink:0;margin-top:7px}
 .clanker-dot.stale{background:#8b949e}
 .pipeline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:14px 0}
 .pipe-node{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px 14px;font-size:.82rem;color:#e6edf3}
@@ -473,7 +497,10 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-save{margin-top:8px}
 .admin-save:disabled{opacity:.5;cursor:default}
 .admin-hr{border:none;border-top:1px solid #21262d;margin:16px 0}
-.admin-actions{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+/* No margin-left:auto — .admin-actions is now a full-width grid row beneath the
+   identity (see .clanker-row grid), left-aligned and wrapping if the buttons
+   don't fit the narrow column. */
+.admin-actions{display:flex;gap:6px;flex-wrap:wrap}
 .admin-act{background:#21262d;border:1px solid #30363d;color:#c9d1d9;font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
 .admin-act:hover{border-color:#8b949e}
 .admin-act.danger:hover{border-color:#f85149;color:#f85149}
@@ -880,7 +907,39 @@ var lbStarted=false;    // Leaderboard hydrated (fetches /api/leaderboard once)
 // It is idempotent (fetches /api/role once) and independent of opsPoll().
 // activateTab drives both a user click and the deep-link path (/leaderboard →
 // /contribute?tab=leaderboard) through the SAME show/hide + hydration logic.
-function activateTab(t){
+// Canonical URL scheme: each tab is a real, shareable path under /contribute.
+//   Onboarding  -> /contribute            (bare; the default landing)
+//   Management  -> /contribute/management
+//   Operations  -> /contribute/operations
+//   Leaderboard -> /contribute/leaderboard
+// PANEL_SLUG maps each panel id to its clean path slug; SLUG_PANEL maps every
+// accepted friendly name / short id BACK to a panel id, so both the clean name
+// (management/operations) and the legacy short id (manage/ops) deep-link, and
+// the pre-existing ?tab=leaderboard query form keeps working. Onboarding has no
+// slug: it lives at the bare /contribute.
+var PANEL_SLUG={'tab-manage':'management','tab-ops':'operations','tab-leaderboard':'leaderboard'};
+var SLUG_PANEL={
+  'onboarding':'tab-onboarding',
+  'management':'tab-manage','manage':'tab-manage',
+  'operations':'tab-ops','ops':'tab-ops',
+  'leaderboard':'tab-leaderboard'
+};
+// Resolve a friendly name / short id to the tab BUTTON element (id ptab-*), or
+// null if it names no real tab. panelToButtonId turns a data-panel value back
+// into its button id (tab-manage -> ptab-manage) — the buttons keep the short
+// suffix, so we strip the leading "tab-".
+function panelToButtonId(dp){return 'ptab-'+dp.replace(/^tab-/,'');}
+function buttonForName(name){
+  if(!name)return null;
+  var dp=SLUG_PANEL[name.toLowerCase()];
+  if(!dp)return null;
+  return document.getElementById(panelToButtonId(dp));
+}
+// activateTab shows/hides panels, fires lazy hydration, and (unless push===false)
+// reflects the active tab in the address bar via history.pushState — no reload.
+// popstate-driven activations pass push===false so Back/Forward do NOT push a new
+// history entry (which would create a loop / trap the user).
+function activateTab(t,push){
   if(!t)return;
   tabs.forEach(function(x){x.classList.remove('active');x.setAttribute('aria-selected','false');});
   panels.forEach(function(p){p.classList.remove('active');});
@@ -900,21 +959,46 @@ function activateTab(t){
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;loadLeaderboard();}
+  // Reflect the visible tab in the URL. pushState only — never a reload. Skipped
+  // when push===false (popstate replay) so we don't stack duplicate history entries.
+  if(push!==false&&window.history&&window.history.pushState){
+    var slug=PANEL_SLUG[dp];
+    var url=slug?('/contribute/'+slug):'/contribute';
+    if(url!==window.location.pathname){
+      try{window.history.pushState({tab:dp},'',url);}catch(e){/* pushState may throw on file:// etc. */}
+    }
+  }
 }
+// Click never needs to be told to push (default push===true).
 tabs.forEach(function(t){t.addEventListener('click',function(){activateTab(t);});});
 // Onboarding CTA opens the Leaderboard tab in place (no navigate-away).
 var gotoLb=document.getElementById('goto-leaderboard-tab');
 if(gotoLb)gotoLb.addEventListener('click',function(){activateTab(document.getElementById('ptab-leaderboard'));});
-// Deep link: /leaderboard redirects to /contribute?tab=leaderboard, which opens
-// the Leaderboard tab on a fresh load. Absent the param, the default (Onboarding)
-// stays active — we only override when the param names a real tab.
-(function(){
+// Deep link on load: prefer the path form (/contribute/<tab>), fall back to the
+// legacy ?tab=<name> query form (kept for back-compat with old bookmarks and the
+// /leaderboard shim). tabFromLocation returns the matching button or null.
+// Because we activate WITHOUT pushing here (the URL already IS the target), the
+// address bar is left exactly as the user arrived — no history churn on load.
+function tabFromLocation(){
+  var seg=/^\/contribute\/([^\/?#]+)/.exec(window.location.pathname);
+  if(seg){var b=buttonForName(decodeURIComponent(seg[1]));if(b)return b;}
   var m=/[?&]tab=([^&]+)/.exec(window.location.search);
-  if(!m)return;
-  var want=decodeURIComponent(m[1]);
-  var target=document.getElementById('ptab-'+want);
-  if(target)activateTab(target);
+  if(m){var b2=buttonForName(decodeURIComponent(m[1]));if(b2)return b2;}
+  return null;
+}
+(function(){
+  var target=tabFromLocation();
+  // Absent/unknown tab -> default (Onboarding) stays active. Activate without
+  // pushing so we never add a spurious history entry for the initial page.
+  if(target)activateTab(target,false);
 })();
+// Back/Forward: re-derive the tab from the (now-updated) location and activate it
+// WITHOUT pushing — popstate already moved history, a push here would loop. When
+// the path/param names no tab (e.g. Back to bare /contribute), fall to Onboarding.
+window.addEventListener('popstate',function(){
+  var target=tabFromLocation()||document.getElementById('ptab-onboarding');
+  activateTab(target,false);
+});
 
 // loadLeaderboard hydrates the Leaderboard tab from GET /api/leaderboard — the
 // SAME endpoint the (now-folded) standalone page used. Response shape:
@@ -2329,11 +2413,14 @@ func (s *Server) countAgentActivity(agentName string) (prs, issues, findings int
 // handleLeaderboardPage is kept for backward compatibility with the /leaderboard
 // route and any external bookmarks. The leaderboard now lives INLINE as a tab on
 // the /contribute page (hydrated from GET /api/leaderboard), so this handler is a
-// deep-link shim: it redirects to /contribute?tab=leaderboard, where the tab JS
-// reads the ?tab param on load and opens the Leaderboard tab. The former
-// standalone full-page render was folded into that tab to avoid a duplicate.
+// deep-link shim: it redirects to the canonical path-style tab URL
+// /contribute/leaderboard, where the tab JS reads location.pathname on load and
+// opens the Leaderboard tab. The former standalone full-page render was folded
+// into that tab to avoid a duplicate. (The legacy /contribute?tab=leaderboard
+// query form still works on load for back-compat, but the canonical shareable
+// URL is now the path form.)
 func (s *Server) handleLeaderboardPage(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/contribute?tab=leaderboard", http.StatusFound)
+	http.Redirect(w, r, "/contribute/leaderboard", http.StatusFound)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

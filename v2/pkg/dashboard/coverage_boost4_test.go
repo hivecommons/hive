@@ -106,8 +106,8 @@ func TestHandleLeaderboardPage(t *testing.T) {
 	if w.Code != http.StatusFound {
 		t.Errorf("code = %d, want 302 (redirect)", w.Code)
 	}
-	if loc := w.Header().Get("Location"); loc != "/contribute?tab=leaderboard" {
-		t.Errorf("Location = %q, want /contribute?tab=leaderboard", loc)
+	if loc := w.Header().Get("Location"); loc != "/contribute/leaderboard" {
+		t.Errorf("Location = %q, want /contribute/leaderboard", loc)
 	}
 }
 
