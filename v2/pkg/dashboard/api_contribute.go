@@ -111,6 +111,13 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/activity", s.handleContributeActivity)
 	s.mux.HandleFunc("GET /api/contribute/fleet", s.handleContributeFleet)
+	// Read-only live event stream for the Operations command center. Under the
+	// /api/contribute* prefix, so isPublicPath (server.go) makes it PUBLIC —
+	// anonymous viewers may subscribe to this read-only info. GET only.
+	s.mux.HandleFunc("GET /api/contribute/events", s.handleContributeEvents)
+	// Read-only ready-work QUEUE snapshot (the admissible issues waiting to be
+	// picked off). Also public; a JSON fallback for the SSE hello payload.
+	s.mux.HandleFunc("GET /api/contribute/queue", s.handleContributeQueue)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
@@ -480,6 +487,70 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-modal-btns button{font-size:.8rem;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;border:1px solid #30363d;background:#21262d;color:#c9d1d9}
 .admin-modal-btns button.confirm{background:#da3633;border-color:#f85149;color:#fff}
 .admin-note{color:#6e7681;font-size:.76rem;margin-top:10px;line-height:1.5}
+/* ── Operations command center — live SSE-driven queue / travel / dev-log /
+   achievements / army framing. Subtle-professional motion only; degrades to the
+   existing poll when SSE is unavailable. Additive, read-only. ─────────────── */
+.cc-live{display:inline-flex;align-items:center;gap:6px;font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:auto;border:1px solid rgba(63,185,80,.3);background:rgba(63,185,80,.1);color:#3fb950}
+.cc-live .cc-live-dot{width:7px;height:7px;border-radius:50%%;background:#3fb950;animation:pulse 2s infinite}
+.cc-live.stale{border-color:rgba(210,153,34,.3);background:rgba(210,153,34,.1);color:#d29922}
+.cc-live.stale .cc-live-dot{background:#d29922;animation:none}
+/* Army roster header line under the clanker card */
+.cc-army{display:flex;align-items:center;gap:14px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.78rem;color:#8b949e}
+.cc-army b{color:#e6edf3;font-weight:600}
+.cc-army-stat{display:inline-flex;align-items:center;gap:5px}
+.cc-army-stat .dot{width:7px;height:7px;border-radius:50%%}
+.cc-army-stat.working .dot{background:#58a6ff}
+.cc-army-stat.reviewing .dot{background:#d29922}
+.cc-army-stat.idle .dot{background:#8b949e}
+/* Clanker rows: enter pop-in / leave fade so the roster feels alive */
+@keyframes cc-popin{from{opacity:0;transform:translateY(-6px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes cc-fadeout{from{opacity:1}to{opacity:0;transform:translateX(8px)}}
+.clanker-row.cc-enter{animation:cc-popin .4s ease}
+.clanker-row.cc-leave{animation:cc-fadeout .5s ease forwards}
+/* A clanker actively receiving a travelling task pulses its border briefly */
+@keyframes cc-landing{0%%{box-shadow:0 0 0 0 rgba(88,166,255,.5)}100%%{box-shadow:0 0 0 6px rgba(88,166,255,0)}}
+.clanker-row.cc-landing{animation:cc-landing .8s ease}
+.clanker-status{font-size:.68rem;font-weight:600;padding:1px 7px;border-radius:999px;margin-left:6px;border:1px solid transparent}
+.clanker-status.working{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
+.clanker-status.reviewing{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
+.clanker-status.idle{background:rgba(139,148,158,.12);color:#8b949e;border-color:rgba(139,148,158,.3)}
+/* Ready-work QUEUE — the stack of issues waiting to be picked off */
+.cc-queue{max-height:340px;overflow-y:auto}
+.cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid #21262d;animation:cc-popin .35s ease;position:relative}
+.cc-q-item:first-child{background:rgba(88,166,255,.05)}
+.cc-q-idx{font-size:.7rem;color:#6e7681;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;flex-shrink:0;width:22px;text-align:right;padding-top:2px}
+.cc-q-body{flex:1;min-width:0}
+.cc-q-repo{font-size:.72rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.cc-q-title{font-size:.86rem;color:#e6edf3;margin:2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cc-q-labels{display:flex;flex-wrap:wrap;gap:4px}
+.cc-q-next{font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;flex-shrink:0;padding-top:2px}
+.cc-q-item.cc-leaving{animation:cc-fadeout .45s ease forwards}
+/* The travelling token that flies from the queue to a clanker on task_assign */
+.cc-token{position:fixed;z-index:1200;pointer-events:none;background:#1f6feb;color:#fff;font-size:.72rem;font-weight:600;padding:6px 12px;border-radius:999px;box-shadow:0 6px 20px rgba(31,111,235,.5);white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;transition:transform .9s cubic-bezier(.5,0,.2,1),opacity .9s ease;will-change:transform,opacity}
+/* Dev-log — a running chat log of the development */
+.cc-log{max-height:360px;overflow-y:auto;padding:4px 0}
+.cc-log-line{display:flex;align-items:flex-start;gap:10px;padding:8px 20px;font-size:.83rem;border-bottom:1px solid #1c2128;animation:cc-logline .45s ease}
+@keyframes cc-logline{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.cc-log-line:last-child{border-bottom:none}
+.cc-log-ic{flex-shrink:0}
+.cc-log-body{flex:1;min-width:0;color:#c9d1d9;line-height:1.45}
+.cc-log-body b{color:#e6edf3}
+.cc-log-body .who{color:#58a6ff;font-weight:600}
+.cc-log-body .ref{color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78rem}
+.cc-log-time{flex-shrink:0;color:#6e7681;font-size:.72rem;white-space:nowrap;padding-top:1px}
+/* Achievement pops — tasteful badge toast, top-right, debounced */
+.cc-ach-wrap{position:fixed;top:16px;right:16px;z-index:1150;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.cc-ach{display:flex;align-items:center;gap:10px;background:linear-gradient(135deg,#161b22,#1c2333);border:1px solid rgba(210,153,34,.4);border-radius:10px;padding:10px 14px;box-shadow:0 8px 28px rgba(1,4,9,.55);animation:cc-ach-in .4s ease;max-width:300px}
+@keyframes cc-ach-in{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+.cc-ach.cc-ach-out{animation:cc-ach-out .4s ease forwards}
+@keyframes cc-ach-out{to{opacity:0;transform:translateX(24px)}}
+.cc-ach-ic{font-size:1.3rem;flex-shrink:0}
+.cc-ach-txt{min-width:0}
+.cc-ach-h{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#d29922}
+.cc-ach-s{font-size:.82rem;color:#e6edf3;margin-top:1px}
+@media(prefers-reduced-motion:reduce){
+  .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-leaving,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
+}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
@@ -727,6 +798,13 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div>
 <div class="ops-card">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count" id="clanker-count"></span></div>
+<!-- Army roster header: live count + at-a-glance status split, fed by the fleet snapshot. -->
+<div class="cc-army" id="cc-army">
+  <span style="color:#e6edf3;font-weight:600">Your army</span>
+  <span class="cc-army-stat working"><span class="dot"></span><b id="cc-army-working">0</b>&nbsp;working</span>
+  <span class="cc-army-stat reviewing"><span class="dot"></span><b id="cc-army-reviewing">0</b>&nbsp;reviewing</span>
+  <span class="cc-army-stat idle"><span class="dot"></span><b id="cc-army-idle">0</b>&nbsp;idle</span>
+</div>
 <div id="clanker-list"><div class="ops-empty">Loading fleet&hellip;</div></div>
 </div>
 <div class="ops-card" style="margin-top:20px">
@@ -744,7 +822,20 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </div>
 </div>
 <div>
+<!-- Command center: the READY-WORK QUEUE (issues waiting to be picked off, top =
+     next up) and the live DEV-LOG (a running chat log of the development). Both are
+     fed by REAL events — the queue from ActionableIssues (the same set selectTask
+     offers from), the log from the ActivityEntry SSE stream. All read-only. -->
 <div class="ops-card">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
+</div>
+<div class="ops-card" style="margin-top:20px">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Development log</h3><span class="ops-card-count" id="cc-log-count"></span></div>
+<div class="cc-log" id="cc-log"><div class="ops-empty">Watching the hive&hellip;</div></div>
+</div>
+<div class="ops-card" style="margin-top:20px">
 <div class="ops-card-head"><h3>My work</h3><span class="ops-card-count" id="work-count"></span></div>
 <div class="ops-filters" role="tablist">
 <button class="ops-filter active" data-filter="all">All</button>
@@ -798,7 +889,7 @@ function activateTab(t){
   var panel=document.getElementById(dp);
   if(panel)panel.classList.add('active');
   if((dp==='tab-ops'||dp==='tab-manage')&&!adminStarted){adminStarted=true;initAdmin();}
-  if(dp==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();}
+  if(dp==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();ccStart();}
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;loadLeaderboard();}
 }
@@ -1107,11 +1198,39 @@ function renderClankers(list){
         '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
         '</div>';
     }
-    return '<div class="clanker-row"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
-      '<div class="clanker-main"><div class="clanker-user">'+esc(user)+'</div>'+
+    // #command-center: at-a-glance status pill (working / reviewing / idle) and a
+    // stable data-clanker key so the travel animation can target this row. "review"
+    // is inferred when the in-flight task carries a review-ish signal; otherwise a
+    // task in flight is "working" and no task is "idle".
+    var st=c.current_task?'working':'idle';
+    if(c.current_task&&/review|lgtm|approve/i.test((c.current_task.kind||'')+' '+(c.current_task.title||'')))st='reviewing';
+    var statusPill='<span class="clanker-status '+st+'">'+st+'</span>';
+    var key=(c.github_username||c.contributor_id||'').toLowerCase();
+    // Enter pop-in for a clanker we haven't seen in the previous render (army framing).
+    var isNew=key&&!ccKnownClankers[key];
+    var rowCls='clanker-row'+(isNew?' cc-enter':'');
+    return '<div class="'+rowCls+'" data-clanker="'+esc(key)+'"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
+      '<div class="clanker-main"><div class="clanker-user">'+esc(user)+statusPill+'</div>'+
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
+  // Update the "your army" roster header from the same list (army framing).
+  ccUpdateArmy(list);
+}
+// ccUpdateArmy summarises the fleet into working/reviewing/idle counts. Army framing
+// derived entirely from the live fleet snapshot — no fabricated numbers.
+function ccUpdateArmy(list){
+  var w=0,rv=0,idle=0;
+  (list||[]).forEach(function(c){
+    if(c.current_task){ if(/review|lgtm|approve/i.test((c.current_task.kind||'')+' '+(c.current_task.title||'')))rv++; else w++; }
+    else idle++;
+  });
+  var setTxt=function(id,v){var el=document.getElementById(id);if(el)el.textContent=v;};
+  setTxt('cc-army-working',w);setTxt('cc-army-reviewing',rv);setTxt('cc-army-idle',idle);
+  // Refresh the known-clanker set so the NEXT render only pops-in genuinely new
+  // arrivals (enter animation). ccKnownClankers is also read by the SSE join event.
+  var next={};(list||[]).forEach(function(c){var k=(c.github_username||c.contributor_id||'').toLowerCase();if(k)next[k]=true;});
+  ccKnownClankers=next;
 }
 
 function workMatchesFilter(w){
@@ -1180,6 +1299,179 @@ async function opsPoll(){
   }catch(e){}
   if(document.getElementById('tab-ops').classList.contains('active'))setTimeout(opsPoll,4000);
 }
+
+// ══ Operations command center: live SSE stream driving the ready-work queue, the
+//    task-assign travel animation, the dev-log narration, achievements, and army
+//    enter/leave motion. All from REAL events (ActivityEntry + ActionableIssues).
+//    Degrades gracefully: if EventSource is unsupported or the stream drops, we
+//    fall back to polling /api/contribute/queue so the tab still works. ═════════
+var ccStarted=false;
+var ccQueue=[];            // current ready-work items (top = next up)
+var ccLogLines=[];         // dev-log scrollback
+var ccLogCap=60;           // capped scrollback length
+var ccEs=null;             // EventSource handle
+var ccQueuePollTimer=null; // fallback poll timer
+var ccKnownClankers={};    // username -> true, for enter/leave detection
+var ccCompleteStreak={};   // username -> consecutive completes (achievement combos)
+var ccLastAch=0;           // debounce achievement pops
+
+function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
+
+function ccRenderQueue(){
+  var el=document.getElementById('cc-queue');if(!el)return;
+  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';return;}
+  el.innerHTML=ccQueue.map(function(q,i){
+    var labels=(q.labels&&q.labels.length)?('<div class="cc-q-labels">'+q.labels.slice(0,4).map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join('')+'</div>'):'';
+    var next=(i===0)?'<span class="cc-q-next">next up</span>':'';
+    return '<div class="cc-q-item" data-qkey="'+esc(ccQueueKey(q))+'"><span class="cc-q-idx">'+(i+1)+'</span>'+
+      '<div class="cc-q-body"><div class="cc-q-repo">'+esc(q.repo||'')+'#'+esc(q.number||'')+'</div>'+
+      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+'</div>';
+  }).join('');
+}
+function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
+  var el=document.getElementById('cc-live'),lbl=document.getElementById('cc-live-label');if(!el||!lbl)return;
+  if(state==='live'){el.classList.remove('stale');lbl.textContent='live';}
+  else if(state==='poll'){el.classList.add('stale');lbl.textContent='polling';}
+  else{el.classList.add('stale');lbl.textContent='connecting';}
+}
+
+// ── Dev-log narration: build a human-readable line from an ActivityEntry ───────
+function ccNarrate(e){
+  var icons={joined:'🟢',left:'⚪',"picked up":'🔧',completed:'✅',failed:'❌',promoted:'🎖️'};
+  var ic=icons[e.action]||'⚡';
+  var who='<span class="who">'+esc(e.username||'someone')+'</span>';
+  var ref=e.task?' <span class="ref">'+esc(e.task)+'</span>':'';
+  var body;
+  switch(e.action){
+    case 'joined': body=who+' entered the hive'+(e.cli?' <span class="ref">via '+esc(e.cli)+'</span>':''); break;
+    case 'left': body=who+' left the hive'; break;
+    case 'picked up': body=who+' grabbed'+ref; break;
+    case 'completed': body=who+' completed'+ref; break;
+    case 'failed': body=who+' hit a snag on'+ref; break;
+    case 'promoted': body=who+' was promoted to <b>'+esc(e.task||e.role||'contributor')+'</b>'; break;
+    default: body=who+' '+esc(e.action)+ref;
+  }
+  return {ic:ic,body:body,ts:e.timestamp};
+}
+function ccRenderLog(){
+  var el=document.getElementById('cc-log');if(!el)return;
+  var cnt=document.getElementById('cc-log-count');if(cnt)cnt.textContent=ccLogLines.length+(ccLogLines.length===1?' event':' events');
+  if(!ccLogLines.length){el.innerHTML='<div class="ops-empty">Watching the hive&hellip;</div>';return;}
+  // Newest at TOP (reads best for a live feed).
+  el.innerHTML=ccLogLines.slice().reverse().map(function(l){
+    var t='';try{var d=new Date(l.ts);if(!isNaN(d))t=d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}catch(e){}
+    return '<div class="cc-log-line"><span class="cc-log-ic">'+l.ic+'</span><div class="cc-log-body">'+l.body+'</div><span class="cc-log-time">'+esc(t)+'</span></div>';
+  }).join('');
+  el.scrollTop=0;
+}
+function ccPushLog(e){
+  ccLogLines.push(ccNarrate(e));
+  if(ccLogLines.length>ccLogCap)ccLogLines=ccLogLines.slice(ccLogLines.length-ccLogCap);
+  ccRenderLog();
+}
+
+// ── Achievements: derived from REAL streak/threshold logic in the event stream ──
+function ccAchievement(head,sub,ic){
+  var now=Date.now();if(now-ccLastAch<1200)return; // debounce so pops don't spam
+  ccLastAch=now;
+  var wrap=document.getElementById('cc-ach-wrap');if(!wrap)return;
+  var d=document.createElement('div');d.className='cc-ach';
+  d.innerHTML='<span class="cc-ach-ic">'+(ic||'🏆')+'</span><div class="cc-ach-txt"><div class="cc-ach-h">'+esc(head)+'</div><div class="cc-ach-s">'+sub+'</div></div>';
+  wrap.appendChild(d);
+  setTimeout(function(){d.classList.add('cc-ach-out');setTimeout(function(){d.remove();},420);},3600);
+}
+function ccMaybeAchieve(e){
+  if(e.action==='completed'){
+    var u=e.username||'?';
+    ccCompleteStreak[u]=(ccCompleteStreak[u]||0)+1;
+    var n=ccCompleteStreak[u];
+    if(n===3)ccAchievement('Triple combo','<span class="who">'+esc(u)+'</span> shipped 3 in a row','🔥');
+    else if(n>3&&n%%5===0)ccAchievement(n+'× streak','<span class="who">'+esc(u)+'</span> is on a roll','⚡');
+  } else if(e.action==='failed'){
+    if(e.username)ccCompleteStreak[e.username]=0; // a failure breaks the streak
+  } else if(e.action==='promoted'){
+    ccAchievement('Achievement unlocked','<span class="who">'+esc(e.username||'a clanker')+'</span> reached <b>'+esc(e.task||'contributor')+'</b>','🎖️');
+  }
+}
+
+// ── The travel animation: on "picked up", fly a token from the queue to the
+//    clanker that grabbed it, then remove the item from the queue. Robust when the
+//    exact queue item is not rendered (a generic token flies from the queue area).
+function ccTravel(e){
+  var key=(e.username||'').toLowerCase();
+  var target=document.querySelector('.clanker-row[data-clanker="'+(window.CSS&&CSS.escape?CSS.escape(key):key)+'"]');
+  // Source: the matching queue item if present, else the queue card itself.
+  var qEl=null;
+  if(e.task){var qk=String(e.task).replace(/\s+/g,'');
+    var items=document.querySelectorAll('#cc-queue .cc-q-item');
+    for(var i=0;i<items.length;i++){if(items[i].getAttribute('data-qkey')===e.task){qEl=items[i];break;}}
+  }
+  var src=qEl||document.getElementById('cc-queue');
+  if(src&&target&&!(window.matchMedia&&matchMedia('(prefers-reduced-motion:reduce)').matches)){
+    var a=src.getBoundingClientRect(),b=target.getBoundingClientRect();
+    var tok=document.createElement('div');tok.className='cc-token';
+    tok.textContent=e.task||'task';
+    tok.style.left=(a.left+12)+'px';tok.style.top=(a.top+8)+'px';
+    document.body.appendChild(tok);
+    var dx=(b.left+18)-(a.left+12),dy=(b.top+b.height/2)-(a.top+8);
+    requestAnimationFrame(function(){tok.style.transform='translate('+dx+'px,'+dy+'px) scale(.85)';tok.style.opacity='.2';});
+    setTimeout(function(){tok.remove();if(target){target.classList.add('cc-landing');setTimeout(function(){target.classList.remove('cc-landing');},820);}},960);
+  } else if(target){
+    target.classList.add('cc-landing');setTimeout(function(){target.classList.remove('cc-landing');},820);
+  }
+  // Drop the item from the local queue model with a leave animation.
+  if(qEl){qEl.classList.add('cc-leaving');}
+  if(e.task){ccQueue=ccQueue.filter(function(q){return ccQueueKey(q)!==e.task;});}
+  setTimeout(ccRenderQueue,480);
+}
+
+// ── Consume one activity event from the stream ─────────────────────────────────
+function ccOnActivity(e){
+  if(!e||!e.action)return;
+  ccPushLog(e);
+  ccMaybeAchieve(e);
+  if(e.action==='picked up')ccTravel(e);
+}
+
+// ── SSE lifecycle with graceful fallback ───────────────────────────────────────
+function ccHydrate(payload){
+  if(payload.queue){ccQueue=payload.queue.slice();ccRenderQueue();}
+  if(payload.replay&&payload.replay.length){
+    payload.replay.forEach(function(e){ccLogLines.push(ccNarrate(e));});
+    if(ccLogLines.length>ccLogCap)ccLogLines=ccLogLines.slice(ccLogLines.length-ccLogCap);
+    ccRenderLog();
+  }
+}
+function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
+  fetch('/api/contribute/queue').then(function(r){return r.json();}).then(function(d){
+    if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
+  }).catch(function(){});
+  ccQueuePollTimer=setTimeout(ccQueuePoll,6000);
+}
+function ccStopFallback(){if(ccQueuePollTimer){clearTimeout(ccQueuePollTimer);ccQueuePollTimer=null;}}
+function ccStart(){
+  if(ccStarted)return;ccStarted=true;
+  if(!('EventSource' in window)){ccSetLive('poll');ccQueuePoll();return;}
+  function connect(){
+    ccSetLive('connecting');
+    try{ccEs=new EventSource('/api/contribute/events');}catch(err){ccSetLive('poll');ccQueuePoll();return;}
+    ccEs.onopen=function(){ccSetLive('live');ccStopFallback();};
+    ccEs.onmessage=function(m){
+      try{var ev=JSON.parse(m.data);}catch(err){return;}
+      if(ev.type==='hello')ccHydrate(ev);
+      else if(ev.type==='activity'&&ev.activity)ccOnActivity(ev.activity);
+    };
+    ccEs.onerror=function(){
+      // Stream dropped. Show polling state, start the queue fallback, and let the
+      // browser's built-in EventSource auto-reconnect re-establish the live stream.
+      ccSetLive('poll');
+      if(!ccQueuePollTimer)ccQueuePoll();
+      // If the connection is fully closed (not merely reconnecting), rebuild it.
+      if(ccEs&&ccEs.readyState===2){try{ccEs.close();}catch(e){}ccEs=null;setTimeout(connect,4000);}
+    };
+  }
+  connect();
+}
 })();
 </script>
 <script>
@@ -1213,6 +1505,9 @@ poll();setInterval(poll,3000);
 </script>
 <!-- Themed confirm modal for the destructive admin actions (revoke / remove).
      The dashboard convention is a themed overlay, never native window.confirm. -->
+<!-- Command-center overlays: achievement pops (top-right) + the travelling-task
+     token layer. Fixed, pointer-events:none, purely presentational. -->
+<div class="cc-ach-wrap" id="cc-ach-wrap"></div>
 <div class="admin-modal-back" id="admin-confirm-back">
 <div class="admin-modal">
 <h4 id="admin-confirm-title">Confirm</h4>
@@ -1444,6 +1739,19 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 		"work":     snap.Work,
 		"policy":   s.buildContributeAdmissionPolicy(),
 	})
+}
+
+// handleContributeQueue serves the read-only ready-work QUEUE — the admissible
+// issues waiting to be picked off, derived from the SAME ActionableIssues set
+// selectTask offers from (see ReadyQueue). GET only, public, no side effects. It
+// is both a JSON fallback for browsers without EventSource and the same payload
+// the SSE "hello" frame carries, so the queue renders even if the stream drops.
+func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
+	queue := []ReadyQueueItem{}
+	if s.contributeHub != nil {
+		queue = s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
+	}
+	jsonResponse(w, map[string]any{"queue": queue})
 }
 
 // ── Contributor management ─────────────────────────────────────────────────

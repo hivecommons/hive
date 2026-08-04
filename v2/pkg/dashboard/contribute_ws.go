@@ -222,6 +222,11 @@ type ContributeWSHub struct {
 	// stays bounded. Guarded by rateMu.
 	assignmentTimes map[string][]time.Time
 	rateMu          sync.Mutex
+	// sse is the read-only Server-Sent-Events broadcast registry (contribute_sse.go).
+	// Every appended ActivityEntry is fanned out to subscribed dashboard browsers so
+	// the Operations "command center" renders live. It is purely additive: the fan-out
+	// is a NON-BLOCKING send, so it can never back-pressure this WS event path.
+	sse *sseRegistry
 }
 
 // rateLimitHourWindow and rateLimitDayWindow are the trailing (rolling) windows
@@ -298,6 +303,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		assignmentTimes:       make(map[string][]time.Time),
 		logger:                logger,
 		server:                server,
+		sse:                   newSSERegistry(),
 	}
 	hub.loadCompletedTasks()
 	hub.loadFailedTasks()
@@ -346,16 +352,16 @@ const activityDebounceSecs = 60
 
 func (h *ContributeWSHub) addActivity(username, action, role, cli, model, task string) {
 	h.activityMu.Lock()
-	defer h.activityMu.Unlock()
 	if len(h.activity) > 0 && (action == "joined" || action == "left") {
 		last := h.activity[len(h.activity)-1]
 		if last.Username == username && last.Action == action {
 			if t, err := time.Parse(time.RFC3339, last.Timestamp); err == nil && time.Since(t) < activityDebounceSecs*time.Second {
+				h.activityMu.Unlock()
 				return
 			}
 		}
 	}
-	h.activity = append(h.activity, ActivityEntry{
+	entry := ActivityEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Username:  username,
 		Action:    action,
@@ -363,11 +369,17 @@ func (h *ContributeWSHub) addActivity(username, action, role, cli, model, task s
 		CLI:       cli,
 		Model:     model,
 		Task:      task,
-	})
+	}
+	h.activity = append(h.activity, entry)
 	if len(h.activity) > maxActivityEntries {
 		h.activity = h.activity[len(h.activity)-maxActivityEntries:]
 	}
+	h.activityMu.Unlock()
 	go h.saveActivity()
+	// Fan the appended event out to any live SSE subscribers (Operations command
+	// center). Done AFTER releasing activityMu, and the fan-out itself is a
+	// non-blocking send, so a subscribed browser can never stall the WS path.
+	h.broadcastActivity(entry)
 }
 
 func (h *ContributeWSHub) RecentActivity() []ActivityEntry {
@@ -1366,11 +1378,24 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 					// Completion is self-reported, so counting bare task_complete
 					// messages — or unverified PR URLs — would hand out contents:write
 					// and pulls:write for work that was never shown to exist.
+					promoted := false
 					if contributor.profile.TrustTier == "newcomer" && contributor.profile.TasksWithPR >= contributorAutoPromoteAt {
 						contributor.profile.TrustTier = "contributor"
+						promoted = true
 						h.logger.Info("[contribute-ws] auto-promoted", "username", contributor.profile.GitHubUsername)
 					}
+					promotedUser := contributor.profile.GitHubUsername
+					promotedCLI := contributor.cliBackend
+					promotedModel := contributor.model
 					contributor.mu.Unlock()
+					// #2390-era command center: narrate the promotion as its own
+					// activity event so the Operations dev-log and achievement pops
+					// (contribute_sse.go broadcast) surface "promoted to contributor".
+					// Read-only signalling — it changes no control behaviour and is
+					// emitted only on the real newcomer -> contributor transition.
+					if promoted {
+						h.addActivity(promotedUser, "promoted", "contributor", promotedCLI, promotedModel, "contributor")
+					}
 					_ = saveContributorProfile(contributor.profile)
 				} else {
 					h.logger.Warn("[contribute-ws] task_complete for unassigned task ignored",

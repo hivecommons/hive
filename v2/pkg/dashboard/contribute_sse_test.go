@@ -1,0 +1,273 @@
+package dashboard
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+// ── Operations command center: SSE stream + ready-work queue ─────────────────
+//
+// These tests pin the READ-ONLY command-center backend:
+//   1. /api/contribute/events is PUBLIC (isPublicPath) and streams an appended
+//      ActivityEntry to a subscriber, then cleans the subscriber up on disconnect
+//      (no leaked subscriber/goroutine).
+//   2. ReadyQueue reflects the ActionableIssues set.
+//   3. The rendered /contribute page ships the command-center markup.
+//   4. The public-page / gated-controls invariant holds: an anonymous (read)
+//      viewer gets the stream + queue but 403 on the control endpoints.
+
+// TestSSEEventsIsPublic asserts the stream path is in isPublicPath so anonymous
+// viewers may subscribe — the whole clanker page is public, and this stream is
+// read-only info.
+func TestSSEEventsIsPublic(t *testing.T) {
+	for _, p := range []string{"/api/contribute/events", "/api/contribute/queue"} {
+		if !isPublicPath(p) {
+			t.Errorf("%s must be public (read-only viewers subscribe with no auth)", p)
+		}
+	}
+}
+
+// TestSSEStreamsAppendedActivity connects a subscriber, appends an activity event,
+// and asserts the event is streamed as an SSE "data:" frame. Then it cancels the
+// request context and asserts the subscriber is unregistered (leak-safe cleanup).
+func TestSSEStreamsAppendedActivity(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	hub := s.contributeHub
+
+	if got := hub.sse.count(); got != 0 {
+		t.Fatalf("expected 0 subscribers at start, got %d", got)
+	}
+
+	// httptest.ResponseRecorder implements http.Flusher, so the handler streams.
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		s.handleContributeEvents(rec, req)
+		close(done)
+	}()
+
+	// Wait for the handler to register its subscriber (it does so before blocking).
+	waitFor(t, func() bool { return hub.sse.count() == 1 }, "subscriber to register")
+
+	// Append a real activity event — this is the exact fan-in point join/leave/
+	// pick-up/complete all funnel through.
+	hub.addActivity("kylerankin", "picked up", "contributor", "claude", "sonnet", "projectbluefin/common#796")
+
+	// The event must reach the stream as an SSE data frame carrying the username.
+	waitFor(t, func() bool {
+		return strings.Contains(rec.Body.String(), "kylerankin") &&
+			strings.Contains(rec.Body.String(), "data:")
+	}, "activity event to stream to subscriber")
+
+	// Disconnect: cancelling the context must tear the handler down AND unregister
+	// the subscriber — no leak.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not return after context cancel (possible goroutine leak)")
+	}
+	if got := hub.sse.count(); got != 0 {
+		t.Fatalf("subscriber not cleaned up after disconnect: %d still registered (leak)", got)
+	}
+}
+
+// TestSSEHelloReplaysRecentActivity asserts a fresh subscriber gets a "hello" frame
+// so the page is not blank on load — recent activity is replayed.
+func TestSSEHelloReplaysRecentActivity(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	hub := s.contributeHub
+	hub.addActivity("castrojo", "completed", "trusted", "claude", "opus", "projectbluefin/common#707")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	go s.handleContributeEvents(rec, req)
+
+	waitFor(t, func() bool {
+		b := rec.Body.String()
+		return strings.Contains(b, `"type":"hello"`) && strings.Contains(b, "castrojo")
+	}, "hello frame with replayed activity")
+}
+
+// TestReadyQueueReflectsActionableIssues seeds a status with ActionableIssues and
+// asserts ReadyQueue surfaces them (repo/number/title), i.e. the queue read maps to
+// the real candidate set.
+func TestReadyQueueReflectsActionableIssues(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{
+			{
+				Name: "common", Full: "projectbluefin/common",
+				ActionableIssues: []any{
+					map[string]any{"number": float64(796), "title": "Fix the widget", "labels": []any{"bug"}},
+					map[string]any{"number": float64(707), "title": "Add docs", "labels": []any{}},
+				},
+			},
+		},
+	}
+	s.statusMu.Unlock()
+
+	q := s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
+	if len(q) != 2 {
+		t.Fatalf("expected 2 ready-queue items, got %d: %+v", len(q), q)
+	}
+	sortReadyQueue(q)
+	if q[0].Repo != "projectbluefin/common" || q[0].Number != 707 {
+		t.Errorf("unexpected first item: %+v", q[0])
+	}
+	if q[1].Number != 796 || q[1].Title != "Fix the widget" {
+		t.Errorf("unexpected second item: %+v", q[1])
+	}
+
+	// The public JSON queue endpoint returns the same set.
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/queue", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("queue endpoint: got %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "projectbluefin/common") {
+		t.Errorf("queue endpoint missing seeded repo: %s", rec.Body.String())
+	}
+}
+
+// TestReadyQueueExcludesInFlight asserts an issue already being worked is NOT shown
+// as "ready" (it is not waiting to be picked off) — mirroring selectTask.
+func TestReadyQueueExcludesInFlight(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	hub := s.contributeHub
+
+	s.statusMu.Lock()
+	s.status = &StatusPayload{
+		Repos: []FrontendRepo{{
+			Name: "common", Full: "projectbluefin/common",
+			ActionableIssues: []any{
+				map[string]any{"number": float64(796), "title": "Fix the widget"},
+			},
+		}},
+	}
+	s.statusMu.Unlock()
+
+	// Simulate the issue being in flight on a connected clanker.
+	hub.mu.Lock()
+	hub.connections["c1"] = &ContributorConnection{
+		currentTask: &WSTaskAssign{Repo: "projectbluefin/common", Number: 796},
+	}
+	hub.mu.Unlock()
+
+	q := hub.ReadyQueue(readyQueueDefaultLimit)
+	if len(q) != 0 {
+		t.Fatalf("in-flight issue should not be in the ready queue, got %+v", q)
+	}
+}
+
+// TestCommandCenterMarkupRendered asserts the /contribute page ships the
+// command-center markup (queue, dev-log, army framing, live pill, SSE wiring).
+func TestCommandCenterMarkupRendered(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`id="cc-queue"`,          // ready-work queue
+		`id="cc-log"`,            // dev-log narration
+		`id="cc-army"`,           // army framing
+		`id="cc-live"`,           // live/poll status pill
+		`id="cc-ach-wrap"`,       // achievement pops
+		`/api/contribute/events`, // SSE wiring
+		`EventSource`,            // stream client
+		`/api/contribute/queue`,  // graceful poll fallback
+		`function ccTravel`,      // task-assign travel animation
+		`Ready-work queue`,       // queue heading
+		`Development log`,        // dev-log heading
+		`Your army`,              // army heading
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered page missing command-center marker %q", want)
+		}
+	}
+	// The gated controls invariant: the per-clanker admin actions + role gate must
+	// still be present (command center did not weaken them).
+	for _, want := range []string{`initAdmin`, `/api/role`, `role!=='owner'&&role!=='read-write'`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rendered page lost the role gate marker %q (controls must stay gated)", want)
+		}
+	}
+}
+
+// TestCommandCenterPublicButControlsGated proves the invariant end-to-end through
+// the real Handler middleware chain: an anonymous "read" viewer can GET the stream
+// and the queue (public, read-only) but is 403'd on the control endpoints.
+func TestCommandCenterPublicButControlsGated(t *testing.T) {
+	setupContributeEnv(t)
+	if err := saveContributorProfile(&ContributorProfile{
+		GitHubUsername: "alice", ContributorID: "c-alice", TrustTier: "newcomer",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+	h := s.Handler()
+
+	// Read viewer CAN read the public queue endpoint (200).
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/queue", nil)
+	req.Header.Set("X-Hive-Role", "read")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("read viewer denied the public queue: got %d, want 200", rec.Code)
+	}
+
+	// Read viewer CANNOT drive a control endpoint (403).
+	req2 := httptest.NewRequest(http.MethodPost, "/api/contributors/c-alice/revoke", nil)
+	req2.Header.Set("X-Hive-Role", "read")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusForbidden {
+		t.Fatalf("read viewer was allowed a control endpoint: got %d, want 403", rec2.Code)
+	}
+	if p := findContributor("c-alice"); p == nil || p.TrustTier != "newcomer" {
+		t.Errorf("read viewer mutated a profile through a control endpoint: %+v", p)
+	}
+}
+
+// waitFor polls cond up to ~2s. Keeps the SSE tests free of fixed sleeps that would
+// be flaky under load while still bounding the wait.
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
