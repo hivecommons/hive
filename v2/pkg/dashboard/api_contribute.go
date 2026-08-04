@@ -592,8 +592,47 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-ach-txt{min-width:0}
 .cc-ach-h{font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#d29922}
 .cc-ach-s{font-size:.82rem;color:#e6edf3;margin-top:1px}
+/* ── Operations two-region shell: MAIN area + full-height DEV-LOG RAIL ──────────
+   The main area flexes to fill remaining width; the rail is a fixed-width panel
+   pinned to the tab's height. When the rail collapses it shrinks to a thin strip
+   and the main area reflows to reclaim the freed width. The width change is driven
+   by the rail's own flex-basis so main widening is automatic (no JS resize). */
+.ops-shell{display:flex;gap:20px;margin-top:24px;align-items:stretch}
+.ops-main{flex:1 1 auto;min-width:0}
+.ops-main .ops-grid{margin-top:0}
+/* The rail: a self-contained chat/notifications panel that runs the tab's height.
+   It sticks so the feed stays in view while the (taller) main area scrolls. */
+.ops-rail{flex:0 0 340px;position:sticky;top:0;align-self:flex-start;max-height:calc(100vh - 80px);
+  background:#161b22;border:1px solid #30363d;border-radius:12px;overflow:hidden;
+  display:flex;flex-direction:column;transition:flex-basis .28s ease}
+.ops-rail-inner{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;opacity:1;transition:opacity .2s ease}
+.ops-rail-head{padding:16px 20px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:10px;flex-shrink:0}
+.ops-rail-head h3{font-size:.95rem;color:#e6edf3;margin:0}
+.ops-rail .cc-log{flex:1 1 auto;max-height:none;min-height:0}
+/* The collapse toggle sits on the rail's leading edge (a slim handle). */
+.ops-rail-toggle{display:flex;align-items:center;gap:6px;width:100%%;background:#0d1117;border:none;
+  border-bottom:1px solid #30363d;color:#8b949e;font-family:inherit;font-size:.74rem;font-weight:600;
+  letter-spacing:.03em;text-transform:uppercase;padding:9px 14px;cursor:pointer;flex-shrink:0}
+.ops-rail-toggle:hover{color:#e6edf3;background:#161b22}
+.ops-rail-chevron{display:inline-block;font-size:1rem;line-height:1;transition:transform .28s ease}
+/* Collapsed: rail narrows to a strip; the toggle label + inner feed hide; the
+   chevron flips to point "open" (right) as a "show log" affordance. */
+.ops-rail.collapsed{flex-basis:44px}
+.ops-rail.collapsed .ops-rail-inner{opacity:0;pointer-events:none;height:0;overflow:hidden}
+.ops-rail.collapsed .ops-rail-toggle-label{display:none}
+.ops-rail.collapsed .ops-rail-toggle{justify-content:center;padding:9px 0}
+.ops-rail.collapsed .ops-rail-chevron{transform:rotate(180deg)}
+/* Narrow viewports: stack the rail BELOW the main area (full width) so the page
+   never scrolls horizontally. Collapse still works; it just hides the feed body. */
+@media(max-width:900px){
+  .ops-shell{flex-direction:column}
+  .ops-rail{flex-basis:auto;width:100%%;position:static;max-height:none}
+  .ops-rail .cc-log{max-height:360px}
+  .ops-rail.collapsed{flex-basis:auto}
+}
 @media(prefers-reduced-motion:reduce){
   .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-leaving,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
+  .ops-rail,.ops-rail-inner,.ops-rail-chevron{transition:none!important}
 }
 </style></head><body>
 <div class="page-tabs" role="tablist">
@@ -838,6 +877,14 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <h1>Operations</h1>
 <p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:#e6edf3">Management</strong> tab.</p>
 
+<!-- Two-region shell: a MAIN area (fleet / pipeline / queue / my-work) beside a
+     dedicated full-height DEV-LOG RAIL (chat/notifications-panel style). The rail is
+     collapsible; collapsing widens the main area to reclaim the space. Open by
+     default; the collapse state persists in localStorage (hive.ops.devlog.collapsed)
+     and is honoured on load. On narrow viewports the rail drops below the main area
+     (see the .ops-shell media query) so the page never scrolls horizontally. -->
+<div class="ops-shell" id="ops-shell">
+<div class="ops-main">
 <div class="ops-grid">
 <div>
 <div class="ops-card">
@@ -876,10 +923,6 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
 </div>
 <div class="ops-card" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Development log</h3><span class="ops-card-count" id="cc-log-count"></span></div>
-<div class="cc-log" id="cc-log"><div class="ops-empty">Watching the hive&hellip;</div></div>
-</div>
-<div class="ops-card" style="margin-top:20px">
 <div class="ops-card-head"><h3>My work</h3><span class="ops-card-count" id="work-count"></span></div>
 <div class="ops-filters" role="tablist">
 <button class="ops-filter active" data-filter="all">All</button>
@@ -890,6 +933,30 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 </div>
+</div>
+</div>
+<!-- Dedicated full-height DEV-LOG RAIL. Holds ONLY the Development log (moved here
+     out of the former right column). The rail edge carries a collapse toggle; when
+     collapsed the rail shrinks to a thin strip with a "show log" affordance and the
+     main area reflows to fill the reclaimed width. The SSE feed, narrated lines,
+     fade/slide-in animation, scrollback cap, empty state and the live status pill
+     are unchanged — they were only relocated. aria-expanded on the toggle tracks
+     the open/collapsed state for assistive tech. -->
+<aside class="ops-rail" id="ops-rail" aria-label="Development log">
+<button type="button" class="ops-rail-toggle" id="ops-rail-toggle" aria-expanded="true" aria-controls="ops-rail" title="Collapse log">
+  <span class="ops-rail-chevron" aria-hidden="true">&rsaquo;</span>
+  <span class="ops-rail-toggle-label">Log</span>
+</button>
+<div class="ops-rail-inner">
+<div class="ops-rail-head">
+  <span class="feed-dot"></span>
+  <h3>Development log</h3>
+  <span class="ops-card-count" id="cc-log-count"></span>
+  <span class="cc-live stale" id="cc-live-rail" title="Live feed status"><span class="cc-live-dot"></span><span id="cc-live-rail-label">connecting</span></span>
+</div>
+<div class="cc-log" id="cc-log"><div class="ops-empty">Watching the hive&hellip;</div></div>
+</div>
+</aside>
 </div>
 </div>
 </div>
@@ -973,6 +1040,9 @@ function activateTab(t,push){
   if(dp==='tab-ops'&&!opsStarted){opsStarted=true;
     try{opsPoll();}catch(e){console.error('opsPoll start failed',e);}
     try{ccStart();}catch(e){console.error('ccStart failed',e);}
+    // The dev-log rail collapse/persist wiring is independent too: a throw here must
+    // not abort fleet hydration or the SSE feed.
+    try{initOpsRail();}catch(e){console.error('initOpsRail failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;loadLeaderboard();}
@@ -1515,10 +1585,46 @@ function ccPersistQueueOrder(){
     .catch(function(){/* a read viewer would 403 here, but the UI never shows handles to them */});
 }
 function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
-  var el=document.getElementById('cc-live'),lbl=document.getElementById('cc-live-label');if(!el||!lbl)return;
-  if(state==='live'){el.classList.remove('stale');lbl.textContent='live';}
-  else if(state==='poll'){el.classList.add('stale');lbl.textContent='polling';}
-  else{el.classList.add('stale');lbl.textContent='connecting';}
+  // Drive BOTH the queue-head pill (#cc-live, unchanged) and the mirror pill that
+  // now lives in the dev-log rail head (#cc-live-rail). Same SSE stream feeds both;
+  // each is set independently so a missing node never blocks the other.
+  var text=state==='live'?'live':(state==='poll'?'polling':'connecting');
+  [['cc-live','cc-live-label'],['cc-live-rail','cc-live-rail-label']].forEach(function(ids){
+    var el=document.getElementById(ids[0]),lbl=document.getElementById(ids[1]);
+    if(!el||!lbl)return;
+    if(state==='live')el.classList.remove('stale');else el.classList.add('stale');
+    lbl.textContent=text;
+  });
+}
+
+// ── Dev-log RAIL collapse: open by default, persisted in localStorage ──────────
+// Key hive.ops.devlog.collapsed = '1' when the user last collapsed the rail, absent
+// otherwise. On first ever load the key is absent so the rail is EXPANDED. Guarded
+// against a throwing/blocked localStorage (private mode, quota) — the rail still
+// works, it just won't remember across loads.
+var OPS_RAIL_KEY='hive.ops.devlog.collapsed';
+var opsRailInit=false;
+function ccRailRead(){try{return localStorage.getItem(OPS_RAIL_KEY)==='1';}catch(e){return false;}}
+function ccRailWrite(collapsed){try{if(collapsed)localStorage.setItem(OPS_RAIL_KEY,'1');else localStorage.removeItem(OPS_RAIL_KEY);}catch(e){}}
+function ccRailApply(rail,btn,collapsed){
+  rail.classList.toggle('collapsed',collapsed);
+  if(btn){
+    btn.setAttribute('aria-expanded',collapsed?'false':'true');
+    btn.setAttribute('title',collapsed?'Show log':'Collapse log');
+  }
+}
+function initOpsRail(){
+  if(opsRailInit)return;
+  var rail=document.getElementById('ops-rail'),btn=document.getElementById('ops-rail-toggle');
+  if(!rail||!btn)return; // rail markup absent — nothing to wire
+  opsRailInit=true;
+  // Honour the remembered choice on load (default: expanded).
+  ccRailApply(rail,btn,ccRailRead());
+  btn.addEventListener('click',function(){
+    var collapsed=!rail.classList.contains('collapsed');
+    ccRailApply(rail,btn,collapsed);
+    ccRailWrite(collapsed);
+  });
 }
 
 // ── Dev-log narration: build a human-readable line from an ActivityEntry ───────
