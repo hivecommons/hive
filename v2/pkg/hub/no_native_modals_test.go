@@ -53,6 +53,64 @@ func TestNoNativeBrowserModals(t *testing.T) {
 	}
 }
 
+// TestAwaitHiveModalInAsyncFunction guards against using await hiveConfirm /
+// hiveNotify / hivePrompt in a non-async function.
+//
+// In strict-mode JavaScript, await in a non-async function is a SyntaxError.
+// In sloppy mode, await may be parsed as an identifier, silently discarding the
+// dialog result (e.g. making a confirmation dialog un-cancellable).
+//
+// The check finds every `await hiveConfirm/hiveNotify/hivePrompt` call, then
+// walks backward to find the enclosing function declaration and asserts it is
+// declared `async function`.
+func TestAwaitHiveModalInAsyncFunction(t *testing.T) {
+	awaitModal := regexp.MustCompile(`\bawait\s+(hiveConfirm|hiveNotify|hivePrompt)\s*\(`)
+	// Matches function declarations: named functions, methods, arrow assigned.
+	// We look for the nearest `function` keyword walking backward.
+	funcDecl := regexp.MustCompile(`\bfunction\b`)
+	asyncFunc := regexp.MustCompile(`\basync\s+function\b`)
+
+	lines := strings.Split(dashboardHTML, "\n")
+
+	var offenders []string
+	found := 0
+	for i, line := range lines {
+		if !awaitModal.MatchString(line) {
+			continue
+		}
+		found++
+
+		// Walk backward to find the enclosing function declaration.
+		foundFunc := false
+		for j := i; j >= 0; j-- {
+			if funcDecl.MatchString(lines[j]) {
+				foundFunc = true
+				if !asyncFunc.MatchString(lines[j]) {
+					offenders = append(offenders, "line "+strconv.Itoa(i+1)+
+						": await in non-async function (declared at line "+strconv.Itoa(j+1)+"): "+
+						truncate(strings.TrimSpace(line), 80))
+				}
+				break
+			}
+		}
+		if !foundFunc {
+			// No function keyword found at all — top-level await in a classic
+			// script (not a module) silently evaluates to the expression value.
+			offenders = append(offenders, "line "+strconv.Itoa(i+1)+
+				": await with no enclosing function: "+truncate(strings.TrimSpace(line), 80))
+		}
+	}
+
+	if found == 0 {
+		t.Fatal("no await hiveConfirm/hiveNotify/hivePrompt calls found — the guard scanned nothing")
+	}
+	if len(offenders) > 0 {
+		t.Errorf("await hiveConfirm/hiveNotify/hivePrompt used outside async function. "+
+			"The enclosing function must be declared 'async function' or the await is silently ignored:\n  %s",
+			strings.Join(offenders, "\n  "))
+	}
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
