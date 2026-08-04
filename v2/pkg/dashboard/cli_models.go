@@ -1,11 +1,14 @@
 package dashboard
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -85,6 +88,45 @@ const (
 	// copilotEditorVersion is sent as Editor-Version; the Copilot endpoints
 	// require a plausible editor identifier.
 	copilotEditorVersion = "vscode/1.99.0"
+
+	// copilotSDKHelperPath is where the image installs the Node helper that
+	// lists Copilot models through the official @github/copilot-sdk (source:
+	// bin/copilot-models.mjs, COPYed by v2/Dockerfile). The SDK spawns the
+	// pinned copilot CLI as a JSON-RPC server, so the probe rides the CLI's
+	// own stored auth and TLS handling — auth configurations the raw-HTTP
+	// probe below cannot reach (verified live against copilot CLI 1.0.59 in a
+	// hive pod: 25 models via stored device-flow auth behind the egress
+	// proxy). Absent outside the image, in which case the SDK probe is
+	// skipped instantly.
+	copilotSDKHelperPath = "/usr/local/bin/copilot-models.mjs"
+
+	// copilotSDKNodeBinary runs the helper. The helper is plain-Node ESM; it
+	// is invoked explicitly (not via shebang) so no exec bit is needed.
+	copilotSDKNodeBinary = "node"
+
+	// copilotSDKProbeTimeout bounds the helper exec. The helper enforces its
+	// OWN hard deadline (INTERNAL_TIMEOUT_MS = 15s in copilot-models.mjs);
+	// this sits slightly above it so the helper always gets to report its own
+	// error on stderr instead of being killed mid-flight.
+	copilotSDKProbeTimeout = 20 * time.Second
+
+	// copilotSDKAgentHome is the shared agent HOME the copilot CLI's stored
+	// device-flow auth lives under ($HOME/.copilot). Agents launch with
+	// HOME=/data/home (see agent.Manager; on hosted spokes /home/dev symlinks
+	// to it), so the helper is run with the same HOME when the directory
+	// exists — otherwise the server process's own HOME is left in place.
+	copilotSDKAgentHome = "/data/home"
+
+	// copilotSDKStderrLogLimit caps how much helper stderr is folded into the
+	// returned error (and thus a single log line) — enough to diagnose, never
+	// a dump. Helper stderr carries only error text, never tokens.
+	copilotSDKStderrLogLimit = 300
+
+	// copilotPolicyStateEnabled is the SDK policy.state value marking a model
+	// as usable by this account; models carrying any OTHER explicit state are
+	// excluded. Models with no policy at all are kept (the catalog omits
+	// policy for unrestricted models).
+	copilotPolicyStateEnabled = "enabled"
 
 	// copilotAutoModel is the Copilot auto-selection sentinel: `copilot --model
 	// auto` lets the Copilot CLI pick/adjust the optimal model per task instead
@@ -414,12 +456,32 @@ func cliStaticFallback(backend string) []string {
 
 // --- Copilot discovery ---
 
-// discoverCopilotModels lists the chat-capable models available to the stored
-// Copilot token. The api host is itself discovered per-account (public vs
-// enterprise). Best-effort: any failure returns fallback=true with an empty
-// list so the caller substitutes the static list.
+// discoverCopilotModels lists the models available to this hive's Copilot
+// auth. Hardened probe order:
+//
+//  1. the official-SDK helper (copilotSDKHelperPath) — the SDK drives the
+//     installed copilot CLI, so it rides the CLI's own auth resolution and
+//     TLS handling and works in configurations the raw-HTTP probe cannot
+//     reach (e.g. stored device-flow auth with no token surfaced here);
+//  2. the raw HTTP GET <copilot-api>/models probe with the stored token,
+//     where the api host is itself discovered per-account (public vs
+//     enterprise);
+//  3. any failure returns fallback=true with an empty list so the caller
+//     substitutes the static list.
+//
+// Successful results from either live probe feed the same cache/retention
+// machinery (see stabilize) via queryCLIModels.
 func (s *Server) discoverCopilotModels() cliModelResult {
 	token := s.copilotToken()
+
+	if models, err := s.probeCopilotModelsSDK(token); err != nil {
+		s.logger.Info("copilot SDK model discovery unavailable, falling back to HTTP probe", "err", err.Error())
+	} else if len(models) == 0 {
+		s.logger.Info("copilot SDK model discovery returned no models, falling back to HTTP probe")
+	} else {
+		return cliModelResult{models: dedupeModels(models), fallback: false}
+	}
+
 	if token == "" {
 		return cliModelResult{fallback: true}
 	}
@@ -433,11 +495,97 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	if err != nil || len(models) == 0 {
 		if err != nil {
 			// Do NOT log the token or full URL query; just the failure.
-			s.logger.Warn("copilot model discovery failed", "err", err.Error())
+			s.logger.Warn("copilot HTTP model discovery failed, serving static fallback", "err", err.Error())
 		}
 		return cliModelResult{fallback: true}
 	}
 	return cliModelResult{models: dedupeModels(models), fallback: false}
+}
+
+// runCopilotSDKHelper executes the SDK helper and returns its stdout. A
+// package-level seam (mirroring healthAgentStatuses) so unit tests can
+// substitute helper output without running node or the real CLI.
+var runCopilotSDKHelper = execCopilotSDKHelper
+
+// probeCopilotModelsSDK runs the SDK helper under its own timeout and parses
+// the resulting model ids. token may be empty — the CLI then resolves stored
+// device-flow auth on its own, which is exactly the hardening this path adds.
+func (s *Server) probeCopilotModelsSDK(token string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), copilotSDKProbeTimeout)
+	defer cancel()
+	out, err := runCopilotSDKHelper(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	return parseCopilotSDKModels(out)
+}
+
+// execCopilotSDKHelper is the real helper runner: `node copilot-models.mjs`
+// with the inherited environment plus the agent HOME (stored CLI auth) and,
+// when known, the device-flow token. Skips instantly when the helper is not
+// installed (dev machines, unit tests).
+func execCopilotSDKHelper(ctx context.Context, token string) ([]byte, error) {
+	if _, err := os.Stat(copilotSDKHelperPath); err != nil {
+		return nil, fmt.Errorf("sdk helper not installed: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, copilotSDKNodeBinary, copilotSDKHelperPath)
+	// os/exec documents that for duplicate keys the LAST value wins, so
+	// appending overrides the inherited values.
+	env := os.Environ()
+	if st, err := os.Stat(copilotSDKAgentHome); err == nil && st.IsDir() {
+		env = append(env, "HOME="+copilotSDKAgentHome)
+	}
+	if token != "" {
+		// The copilot CLI honors COPILOT_GITHUB_TOKEN; the device-flow token
+		// may exist only in the agent manager's memory. Secret — never logged.
+		env = append(env, "COPILOT_GITHUB_TOKEN="+token)
+	}
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > copilotSDKStderrLogLimit {
+			msg = msg[:copilotSDKStderrLogLimit]
+		}
+		return nil, fmt.Errorf("sdk helper: %w (stderr: %s)", err, msg)
+	}
+	return stdout.Bytes(), nil
+}
+
+// copilotSDKModel mirrors one entry of the helper's stdout JSON. The helper
+// also emits name/efforts/defaultEffort for future use; discovery only needs
+// the id and the policy gate today.
+type copilotSDKModel struct {
+	ID          string `json:"id"`
+	PolicyState string `json:"policyState"`
+}
+
+// parseCopilotSDKModels decodes the helper output ({"models":[...]}) and
+// returns usable model ids: models carrying an explicit policy state other
+// than "enabled" are excluded, as is the "auto" pseudo-entry — the dropdown
+// pipeline expects real catalog ids and re-appends the auto sentinel itself
+// via copilotAlwaysIncludeModels (matching the raw-HTTP probe, whose catalog
+// never returns "auto").
+func parseCopilotSDKModels(data []byte) ([]string, error) {
+	var body struct {
+		Models []copilotSDKModel `json:"models"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, fmt.Errorf("parse sdk helper output: %w", err)
+	}
+	var out []string
+	for _, m := range body.Models {
+		if m.ID == "" || m.ID == copilotAutoModel {
+			continue
+		}
+		if m.PolicyState != "" && m.PolicyState != copilotPolicyStateEnabled {
+			continue
+		}
+		out = append(out, m.ID)
+	}
+	return out, nil
 }
 
 // copilotToken resolves the Copilot GitHub OAuth token from the agent manager
