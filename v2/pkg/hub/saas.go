@@ -4111,25 +4111,6 @@ func (s *HubServer) rolloutRestartHive(cluster *ClusterConfig, hiveID string) bo
 func (s *HubServer) triggerAutoUpgrades() {
 	hives := listSaaSHives()
 	for _, h := range hives {
-		if !h.AutoUpgrade {
-			continue
-		}
-		// Scheduling gate. Instant-mode hives (and every legacy record, whose
-		// mode is empty) pass straight through, so this changes nothing for the
-		// existing fleet. Daily-mode hives are held until the first cycle at or
-		// after autoUpgradeDailyHour ET and released only once per ET day.
-		// Evaluated BEFORE any of the work below so a held hive costs nothing.
-		decision := shouldAutoUpgradeNow(h.AutoUpgradeMode, h.AutoUpgradeLastFired, time.Now())
-		if !decision.Allowed {
-			s.logger.Debug("auto-upgrade held by schedule",
-				"hive_id", h.ID, "mode", h.AutoUpgradeMode, "reason", decision.Reason)
-			continue
-		}
-		// Skip hives that are actively provisioning or in error state.
-		// Empty status means the hive predates the provisioning system — treat as eligible.
-		if h.Status == "provisioning" || h.Status == "error" {
-			continue
-		}
 		s.mu.RLock()
 		var currentSHA, branch, upgradeTarget string
 		var alreadyUpgrading bool
@@ -4145,10 +4126,18 @@ func (s *HubServer) triggerAutoUpgrades() {
 			}
 		}
 		s.mu.RUnlock()
+		if branch == "" {
+			branch = "v2"
+		}
 		if alreadyUpgrading {
-			if branch == "" {
-				branch = "v2"
-			}
+			// Latched-upgrade recovery runs for EVERY hive, deliberately BEFORE
+			// the AutoUpgrade gate below (#2476). The registry latch
+			// (Upgrading/UpgradeTarget/UpgradeStartedAt) is durable, but
+			// heartbeatUpgrade — the map that actually delivers the instruction
+			// — is in-memory; when this recovery lived behind
+			// `if !h.AutoUpgrade { continue }`, a hub restart orphaned every
+			// manually upgraded hive forever: latched "Upgrading" in the
+			// registry, zero instructions on the wire.
 			upgradeAge := time.Since(upgradeStartedAt)
 			// Zero UpgradeStartedAt means the timestamp was lost (heartbeats
 			// used to wipe it on rebuild) — treat as stale so already-stuck
@@ -4170,13 +4159,21 @@ func (s *HubServer) triggerAutoUpgrades() {
 				// target advances. Previously, when the target already equalled
 				// latest, this branch was skipped entirely and the hive stayed
 				// latched-upgrading forever behind an unreachable kubectl.
-				latestSHA := getLatestSHAForBranch(branch)
 				recoverTarget := upgradeTarget
-				if latestSHA != "" && latestSHA != upgradeTarget {
+				if h.AutoUpgrade {
+					// Target advancement is an auto-upgrade behaviour: those
+					// hives always chase latest. A manual upgrade keeps exactly
+					// the target that was requested — with AutoUpgrade off,
+					// silently delivering a newer build than the one the owner
+					// clicked would override their setting.
+					if latestSHA := getLatestSHAForBranch(branch); latestSHA != "" && latestSHA != upgradeTarget {
+						recoverTarget = latestSHA
+					}
+				}
+				if recoverTarget != upgradeTarget {
 					s.logger.Warn("advancing upgrade target for stale upgrade",
 						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
-						"old_target", upgradeTarget, "new_target", latestSHA)
-					recoverTarget = latestSHA
+						"old_target", upgradeTarget, "new_target", recoverTarget)
 				} else {
 					s.logger.Warn("re-arming heartbeat fallback for stale upgrade",
 						"hive", h.ID, "stale_minutes", int(upgradeAge.Minutes()),
@@ -4221,8 +4218,26 @@ func (s *HubServer) triggerAutoUpgrades() {
 				"hive", h.ID, "current", currentSHA)
 			continue
 		}
-		if branch == "" {
-			branch = "v2"
+		// Everything below STARTS a new upgrade, which only auto-upgrade hives
+		// opt into. The recovery above must stay ahead of this gate — see #2476.
+		if !h.AutoUpgrade {
+			continue
+		}
+		// Scheduling gate. Instant-mode hives (and every legacy record, whose
+		// mode is empty) pass straight through, so this changes nothing for the
+		// existing fleet. Daily-mode hives are held until the first cycle at or
+		// after autoUpgradeDailyHour ET and released only once per ET day.
+		// Evaluated BEFORE any of the work below so a held hive costs nothing.
+		decision := shouldAutoUpgradeNow(h.AutoUpgradeMode, h.AutoUpgradeLastFired, time.Now())
+		if !decision.Allowed {
+			s.logger.Debug("auto-upgrade held by schedule",
+				"hive_id", h.ID, "mode", h.AutoUpgradeMode, "reason", decision.Reason)
+			continue
+		}
+		// Skip hives that are actively provisioning or in error state.
+		// Empty status means the hive predates the provisioning system — treat as eligible.
+		if h.Status == "provisioning" || h.Status == "error" {
+			continue
 		}
 		if currentSHA == "" {
 			continue
@@ -7305,11 +7320,14 @@ const dashboardHTML = `<!DOCTYPE html>
       <div id="past-requests-body" style="display:none;overflow-x:auto"><div id="admin-request-history"></div></div>
     </div>
 
+    <!-- Usage renders ABOVE the attention strip on purpose: the strip's drift
+         pills filter the hive list, so the strip and the list it narrows must
+         sit directly adjacent with no unrelated card between them. -->
+    <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="hive-drift-summary" style="display:none"></div>
     <div id="fleet-alerts-panel" style="display:none"></div>
     <div id="hive-view-bar" style="display:none"></div>
     <div id="hive-filter-bar" style="display:none"></div>
-    <div id="usage-panel" style="display:none;margin-bottom:24px"></div>
     <div id="bulk-action-bar" style="display:none"></div>
     <div class="hive-layout">
       <div class="facet-shell" id="hive-facet-shell">
@@ -8394,13 +8412,36 @@ const dashboardHTML = `<!DOCTYPE html>
         s = s || {};
         var sc = DRIFT_SEVERITY_COLORS[s.severity] || DRIFT_SEVERITY_COLORS.info;
         var sevLabel = DRIFT_SEVERITY_LABELS[s.severity] || s.severity || 'Info';
+        /* First-seen: the server stamps when this (hive, kind) signal was
+           first observed and keeps it stable while the signal persists (see
+           stampDriftFirstSeen in drift.go). Rendered compactly ("since
+           3:42 PM" today, "since Jul 30, 3:42 PM" otherwise) with the full
+           absolute datetime as the title. An absent or unparseable stamp
+           (older hub, hand-built report) renders nothing rather than a
+           misleading "since Invalid Date". */
+        var since = '';
+        if (s.firstSeen) {
+          var fd = new Date(s.firstSeen);
+          if (!isNaN(fd.getTime())) {
+            var timeStr = fd.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+            var label = fd.toDateString() === new Date().toDateString()
+              ? timeStr
+              : fd.toLocaleDateString([], {month: 'short', day: 'numeric'}) + ', ' + timeStr;
+            since = '<div style="color:var(--muted);font-size:0.62rem;margin-top:2px" title="' +
+              esc(fd.toLocaleString()) + '">since ' + esc(label) + '</div>';
+          }
+        }
+        /* overflow-wrap on the reason: a signal can quote an unbroken token
+           (an image ref, a URL, a pod name) longer than the panel is wide,
+           and without a break opportunity it runs out of the dialog. */
         return '<div style="padding:4px 0;border-top:1px solid var(--border)">' +
           '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">' +
           '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + sc + ';flex:0 0 auto"></span>' +
           '<span style="color:' + sc + ';font-weight:600">' + esc(driftKindLabel(s.kind)) + '</span>' +
           '<span style="margin-left:auto;color:var(--muted);font-size:0.6rem;text-transform:uppercase;letter-spacing:0.04em">' + esc(sevLabel) + '</span>' +
           '</div>' +
-          '<div style="color:var(--muted);line-height:1.4">' + esc(s.reason || '') + '</div>' +
+          '<div style="color:var(--muted);line-height:1.4;overflow-wrap:anywhere;word-break:break-word">' + esc(s.reason || '') + '</div>' +
+          since +
           '</div>';
       }).join('');
 
@@ -8411,7 +8452,8 @@ const dashboardHTML = `<!DOCTYPE html>
         'color:' + c + ';background:rgba(255,255,255,0.04);border:1px solid ' + c + '">' + d.count + '</span>' +
         '<span class="hive-access-pop" style="display:none;position:absolute;right:0;top:calc(100% + 6px);z-index:60;' +
         'min-width:260px;max-width:380px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);' +
-        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;white-space:normal">' +
+        'background:var(--surface);box-shadow:0 6px 20px rgba(0,0,0,0.35);font-size:0.72rem;text-align:left;font-weight:400;' +
+        'white-space:normal;overflow-wrap:anywhere;word-break:break-word">' +
         '<span style="display:block;color:' + c + ';font-weight:600;margin-bottom:2px">' + esc(heading) + '</span>' +
         rows + '</span></span>';
     }
@@ -8695,6 +8737,14 @@ const dashboardHTML = `<!DOCTYPE html>
        It composes with the status chips by AND — the chips answer "which
        states", this answers "which specific misconfiguration". */
     var _dashDriftFilter = '';
+
+    /* Search text stashed away while a drift pill is selected, or null when no
+       stash is held. Clicking a pill clears the search box (a stale search
+       silently intersecting with the pill filter reads as hives having
+       disappeared) but remembers what was typed; deselecting the last pill
+       restores it. Typing WHILE a pill is active drops the stash — the new
+       text is what the user wants and must survive deselection. */
+    var _driftSearchStash = null;
 
     /* hiveMatchesDriftFilter answers whether a hive carries the selected drift
        kind. Guarded so a row with no drift report never throws. */
@@ -9289,6 +9339,9 @@ const dashboardHTML = `<!DOCTYPE html>
       _dashStatusFilters = {};
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
+      /* Everything is being cleared, search included — a search stashed at
+         drift-pill-selection time must not come back later. */
+      _driftSearchStash = null;
       _dashUpgradeFilter = '';
       _dashAdvisoryStaleFilter = false;
       _alertTypeFilter = '';
@@ -9702,6 +9755,10 @@ const dashboardHTML = `<!DOCTYPE html>
       var el = document.getElementById('hive-search');
       var next = el ? el.value : '';
       if (_hiveSearchTimer) clearTimeout(_hiveSearchTimer);
+      /* Typing while a drift pill is active supersedes the search stashed at
+         pill-selection time: drop the stash immediately (not in the debounce)
+         so a quick type-then-deselect cannot resurrect the old text. */
+      if (_dashDriftFilter) _driftSearchStash = null;
       _hiveSearchTimer = setTimeout(function() {
         _dashSearchQuery = next;
         renderHives(_allDashHives, true);
@@ -9712,6 +9769,9 @@ const dashboardHTML = `<!DOCTYPE html>
       var el = document.getElementById('hive-search');
       if (el) el.value = '';
       _dashSearchQuery = '';
+      /* An explicit Clear is a statement the user wants NO search — do not
+         resurrect a stashed one when the drift pills are later deselected. */
+      _driftSearchStash = null;
       renderHives(_allDashHives, true);
     }
 
@@ -10201,6 +10261,9 @@ const dashboardHTML = `<!DOCTYPE html>
          button look broken. */
       _dashFailingCheckFilter = '';
       _dashDriftFilter = '';
+      /* The drift filter is being force-cleared without going through
+         toggleDriftFilter, so drop any stashed search with it. */
+      _driftSearchStash = null;
       _dashUpgradeFilter = '';
       _dashAdvisoryStaleFilter = false;
       renderHives(_allDashHives, true);
@@ -10221,9 +10284,32 @@ const dashboardHTML = `<!DOCTYPE html>
     }
 
     /* toggleDriftFilter selects (or deselects) one drift kind in the fleet
-       exceptions summary. */
+       exceptions summary.
+
+       Pill selection also owns the search box: selecting the first pill
+       stashes and clears the search (so a stale search cannot silently
+       intersect with the pill filter), switching between pills keeps the
+       stash, and deselecting the last pill restores the stashed text —
+       unless the user typed a new search while a pill was active, in which
+       case the stash was dropped and their new text wins. */
     function toggleDriftFilter(kind) {
+      var prev = _dashDriftFilter;
       _dashDriftFilter = (_dashDriftFilter === kind) ? '' : kind;
+      var searchEl = document.getElementById('hive-search');
+      if (!prev && _dashDriftFilter) {
+        /* First pill selected: stash the search and clear it. */
+        _driftSearchStash = _dashSearchQuery;
+        _dashSearchQuery = '';
+        if (searchEl) searchEl.value = '';
+      } else if (prev && !_dashDriftFilter) {
+        /* Last pill deselected: restore the stashed search, if it is still
+           ours to restore. */
+        if (_driftSearchStash !== null) {
+          _dashSearchQuery = _driftSearchStash;
+          if (searchEl) searchEl.value = _dashSearchQuery;
+        }
+        _driftSearchStash = null;
+      }
       renderHives(_allDashHives, true);
     }
 

@@ -391,6 +391,68 @@ func TestBuildAgents(t *testing.T) {
 	}
 }
 
+// TestBuildAgents_OffByCadence verifies that an agent whose cadence for the
+// current governor mode is a non-kicking value ("pause"/"off") is flagged
+// OffByCadence, while a normally-scheduled agent is not. This is the signal the
+// dashboard uses to paint a hollow-green (alive-but-governor-off) dot for hives
+// stuck in a mode where every cadence is paused (e.g. SURGE).
+func TestBuildAgents_OffByCadence(t *testing.T) {
+	statuses := map[string]*agent.AgentProcess{
+		"scanner": {
+			Name:         "scanner",
+			Config:       config.AgentConfig{Backend: "claude"},
+			State:        agent.StateRunning,
+			OutputBuffer: agent.NewRingBuffer(10),
+		},
+		"quality": {
+			Name:         "quality",
+			Config:       config.AgentConfig{Backend: "claude"},
+			State:        agent.StateRunning,
+			OutputBuffer: agent.NewRingBuffer(10),
+		},
+		"brainstorm": {
+			Name:         "brainstorm",
+			Config:       config.AgentConfig{Backend: "claude", OnDemand: true},
+			State:        agent.StateRunning,
+			OutputBuffer: agent.NewRingBuffer(10),
+		},
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.AgentConfig{
+			"scanner":    {Backend: "claude", SortOrder: 10},
+			"quality":    {Backend: "claude", SortOrder: 20},
+			"brainstorm": {Backend: "claude", OnDemand: true, SortOrder: 30},
+		},
+		Governor: config.GovernorConfig{
+			Modes: map[string]config.ModeConfig{
+				// SURGE mode pauses scanner but keeps quality on a timer;
+				// brainstorm is paused too but is on-demand, so it must be excluded.
+				"surge": {Cadences: map[string]string{
+					"scanner":    "pause",
+					"quality":    "15m",
+					"brainstorm": "pause",
+				}},
+			},
+		},
+	}
+
+	agents := buildAgents(statuses, cfg, governor.State{Mode: governor.ModeSurge})
+	byName := map[string]FrontendAgent{}
+	for _, a := range agents {
+		byName[a.Name] = a
+	}
+
+	if !byName["scanner"].OffByCadence {
+		t.Error("scanner cadence=pause in surge: want OffByCadence=true")
+	}
+	if byName["quality"].OffByCadence {
+		t.Error("quality cadence=15m in surge: want OffByCadence=false")
+	}
+	if byName["brainstorm"].OffByCadence {
+		t.Error("brainstorm is on-demand: want OffByCadence=false even though cadence=pause")
+	}
+}
+
 func TestBuildFrontendStatus(t *testing.T) {
 	cfg := &config.Config{
 		Project: config.ProjectConfig{Org: "myorg", Repos: []string{"repo1"}},

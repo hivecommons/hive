@@ -36,6 +36,52 @@ func TestNoteReporterFlagsAlternation(t *testing.T) {
 	}
 }
 
+// Same-pod duplicate processes (#2496): the spoke reporter now carries the
+// PID ("pod/pid"), so two hive processes sharing ONE pod name alternate as
+// distinct identities and the conflict names the exact culprits. With the old
+// bare-hostname reporter both processes reported the identical string and this
+// detector stayed silent through 11+ alternating beats.
+func TestNoteReporterFlagsSamePodPIDAlternation(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+
+	s.noteReporter("h1", "pod-x/123")
+	s.noteReporter("h1", "pod-x/456")
+	s.noteReporter("h1", "pod-x/123")
+	got := s.noteReporter("h1", "pod-x/456")
+	if got == "" {
+		t.Fatal("same-pod PID alternation was not flagged — two processes in one pod would stay invisible")
+	}
+	if !strings.Contains(got, "pod-x/123") || !strings.Contains(got, "pod-x/456") {
+		t.Errorf("conflict does not name both processes precisely: %q", got)
+	}
+}
+
+// The ≥3-sender blind spot (#2496): with reporters ROTATING (A,B,C,A,B,C,…) a
+// beat almost never returns to the immediately preceding reporter, so a
+// prev-only comparison read every beat as a fresh handover and 4-5 concurrent
+// senders went completely undetected. A return to ANY recently seen reporter
+// must count as alternation, and the conflict must name every live sender.
+func TestNoteReporterFlagsThreeWayRotation(t *testing.T) {
+	s := &HubServer{logger: slog.Default()}
+	rotation := []string{"pod-x/101", "pod-x/202", "pod-x/303"}
+
+	var got string
+	const rounds = 3
+	for i := 0; i < rounds; i++ {
+		for _, r := range rotation {
+			got = s.noteReporter("h1", r)
+		}
+	}
+	if got == "" {
+		t.Fatal("three-way sender rotation was never flagged (the #2496 blind spot)")
+	}
+	for _, r := range rotation {
+		if !strings.Contains(got, r) {
+			t.Errorf("conflict %q does not name live sender %s", got, r)
+		}
+	}
+}
+
 func TestNoteReporterSilentOnRolloutAndUnknown(t *testing.T) {
 	s := &HubServer{logger: slog.Default()}
 

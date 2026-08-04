@@ -458,6 +458,16 @@ func (s *HubServer) attachMissingAppKeys(resp *HeartbeatResponse, payload *Heart
 		return
 	}
 
+	// Non-convergence back-off (#2496): this path re-delivers every beat while
+	// the spoke's GitHubAppKeysHeld never reflects the delivery — the exact
+	// hot loop observed from a broken same-pod duplicate sender. It shares the
+	// per-hive ledger with the primary reconcile, so key material of any kind
+	// stops riding every beat once the budget is exhausted.
+	if !s.allowAppKeyDelivery(payload.HiveID) {
+		return
+	}
+	s.noteAppKeyDelivered(payload.HiveID)
+
 	if resp.GitHubAppConfig == nil {
 		// No primary key change this beat — attach a bare carrier. AppID 0 and an
 		// empty PrivateKey both mean "leave the spoke's primary alone"; only the
@@ -1154,7 +1164,7 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 	// KEY. Sending 0 tells the spoke to leave its (already correct) installation
 	// ID alone — see the callback in cmd/hive.
 	const installationIDUnchanged = 0
-	return s.appKeyConfigForHeartbeat(
+	cfg := s.appKeyConfigForHeartbeat(
 		payload.HiveID,
 		clusterID,
 		payload.GitHubAppKeyFingerprint,
@@ -1165,4 +1175,24 @@ func (s *HubServer) appKeySyncForHeartbeat(payload *HeartbeatPayload) *Heartbeat
 		s.logger,
 		sh,
 	)
+	// Non-convergence back-off (#2496). The reconcile above is idempotent only
+	// when the spoke reflects deliveries; a broken sender that reports no
+	// fingerprint forever would otherwise pull key material every beat without
+	// bound. Track consecutive key deliveries and throttle past the budget —
+	// while a beat that needs no key from a spoke reporting a fingerprint is
+	// the convergence signal that resets the ledger.
+	if cfg == nil || cfg.PrivateKey == "" {
+		if strings.TrimSpace(payload.GitHubAppKeyFingerprint) != "" {
+			s.noteAppKeyConverged(payload.HiveID)
+		}
+		return cfg
+	}
+	if !s.allowAppKeyDelivery(payload.HiveID) {
+		// Suppressed this beat; the WARN in allowAppKeyDelivery names the hive
+		// when the throttled delivery does go out. Returning nil (rather than
+		// stripping the key) keeps the wire contract simple: nothing rides.
+		return nil
+	}
+	s.noteAppKeyDelivered(payload.HiveID)
+	return cfg
 }
