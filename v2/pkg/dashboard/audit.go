@@ -141,6 +141,11 @@ func (a *AuditLog) noteUserAction(user, ts string) {
 	if err != nil {
 		return
 	}
+	// Lazy init: several tests (and any future caller) construct AuditLog as a
+	// bare struct literal rather than through newAuditLog.
+	if a.lastAction == nil {
+		a.lastAction = make(map[string]time.Time)
+	}
 	prev, known := a.lastAction[user]
 	if !known && len(a.lastAction) >= auditMaxTrackedActionUsers {
 		return
