@@ -12984,7 +12984,6 @@ function burnAreaChart() {
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
-          html += ` <span style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Upgrading</span>`;
         } else if (_upgradeInProgress && v.hash === _upgradeTargetHash) {
           _upgradeInProgress = false;
           _upgradeTargetHash = null;
