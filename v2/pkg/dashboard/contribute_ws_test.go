@@ -236,8 +236,14 @@ func TestWSReady(t *testing.T) {
 	conn.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
 	readMsg(t, conn) // auth_ok
 
-	// Send ready — should not error (no tasks available is fine)
+	// Send ready. With no status snapshot the hub now replies with an explicit
+	// task_unavailable/hub_not_ready negative-ack instead of silence (#2546).
 	conn.WriteJSON(WSMessage{Type: "ready", Seq: 1})
+	na := readMsg(t, conn)
+	if na.Type != "task_unavailable" || na.Reason != taskUnavailableHubNotReady {
+		t.Fatalf("expected task_unavailable/%s after ready with no status, got type=%s reason=%s",
+			taskUnavailableHubNotReady, na.Type, na.Reason)
+	}
 
 	// Send ping to verify connection is still alive
 	conn.WriteJSON(WSMessage{Type: "ping", Seq: 99})
@@ -503,8 +509,15 @@ func TestWSRoleBasedReady(t *testing.T) {
 	})
 	readMsg(t, conn) // auth_ok
 
-	// Send ready — role-based contributors should not get task assignments
+	// Send ready. With no status snapshot the hub replies with an explicit
+	// task_unavailable/hub_not_ready negative-ack (#2546) rather than silence;
+	// role-based contributors still get no task_assign.
 	conn.WriteJSON(WSMessage{Type: "ready", Seq: 1})
+	na := readMsg(t, conn)
+	if na.Type != "task_unavailable" || na.Reason != taskUnavailableHubNotReady {
+		t.Fatalf("expected task_unavailable/%s after role-based ready, got type=%s reason=%s",
+			taskUnavailableHubNotReady, na.Type, na.Reason)
+	}
 
 	// Verify connection is still alive
 	conn.WriteJSON(WSMessage{Type: "ping", Seq: 99})

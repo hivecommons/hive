@@ -308,6 +308,28 @@ func (s *Server) handleContributeLanding(w http.ResponseWriter, r *http.Request)
 	}, host)
 	hubURL := fmt.Sprintf("%s://%s/contribute", wsProto, host)
 
+	// #2544: render the Contributor/Trusted trust-tier rows from the SAME constants
+	// the promotion code uses (contributorAutoPromoteAt / contributorTrustedAt) so
+	// the on-page numbers cannot drift from the code again, and word them to match
+	// what the code actually does:
+	//   - Auto-promotion (newcomer -> contributor) counts TasksWithPR — completions
+	//     that REPORTED A PR — not bare completed tasks (see contribute_ws.go
+	//     TasksWithPR >= contributorAutoPromoteAt). The old "5 completed tasks"
+	//     over-promised.
+	//   - "Trusted" is NOT auto-granted at 20: there is no code path that promotes
+	//     to trusted on a task count. It is set by an operator via
+	//     PUT /api/contributors/{id}/trust — the "maintainer voucher" in practice.
+	//     contributorTrustedAt is the documented guideline threshold, so we phrase
+	//     it as "~20 PR tasks, then granted by a maintainer" rather than implying an
+	//     automatic unlock. Trusted's scoped token adds checks:read on top of the
+	//     contributor scopes; the merge decision itself is still gated by the
+	//     project's /approve + lgtm automation, so we do not claim "Merge PRs".
+	tierTableRows := fmt.Sprintf(
+		`<tr><td>Contributor</td><td>%d tasks that produced a PR</td><td>Create PRs, push code</td></tr>`+
+			`<tr><td>Trusted</td><td>~%d PR tasks, then granted by a maintainer</td><td>Extra review scope (checks:read)</td></tr>`,
+		contributorAutoPromoteAt, contributorTrustedAt,
+	)
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Contribute to %s</title>
@@ -397,6 +419,14 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-empty{padding:32px 20px;text-align:center;color:#8b949e;font-size:.85rem}
 .ops-note{color:#6e7681;font-size:.78rem;margin-top:12px;line-height:1.5}
 .ops-note code{background:#0d1117;padding:1px 6px;border-radius:4px}
+.prompt-preview{margin-top:10px;border-top:1px solid #21262d;padding-top:8px}
+.prompt-preview summary{cursor:pointer;color:#58a6ff;font-size:.78rem;list-style:none}
+.prompt-preview summary::-webkit-details-marker{display:none}
+.prompt-preview summary::before{content:'\25B8 ';color:#8b949e}
+.prompt-preview[open] summary::before{content:'\25BE '}
+.prompt-labels{margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:4px}
+.prompt-text{margin-top:8px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto}
+.prompt-preview .ops-note{margin-top:8px}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
@@ -561,8 +591,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <table class="tier-table">
 <tr><th>Tier</th><th>Unlocked at</th><th>Can do</th></tr>
 <tr><td>Newcomer</td><td>Registration</td><td>Comment on issues</td></tr>
-<tr><td>Contributor</td><td>5 completed tasks</td><td>Create PRs, push code</td></tr>
-<tr><td>Trusted</td><td>20 tasks + maintainer voucher</td><td>Merge PRs</td></tr>
+%s
 <tr><td>Advisor</td><td>Registration</td><td>Review agent PRs</td></tr>
 </table>
 </div>
@@ -645,6 +674,14 @@ document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener(
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
 function rel(ts){if(!ts)return '';var d=new Date(ts);if(isNaN(d))return '';var s=Math.floor((Date.now()-d.getTime())/1000);if(s<60)return s+'s ago';var m=Math.floor(s/60);if(m<60)return m+'m ago';var h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago';}
 
+// #2546: human-readable label for the machine reason a clanker is idle. Keeps the
+// raw reason as a fallback so a new server-side reason still renders legibly.
+function idleReasonLabel(r){
+  var m={contribution_suspended:'contribution suspended',hub_not_ready:'hub not ready',
+    no_matching_work:'no matching work',token_mint_failed:'token mint failed',
+    tier_disabled:'tier disabled',concurrency_limit:'concurrency limit'};
+  return m[r]||String(r).replace(/_/g,' ');
+}
 function renderClankers(list){
   var el=document.getElementById('clanker-list');
   document.getElementById('clanker-count').textContent=(list.length)+(list.length===1?' connected':' connected');
@@ -653,7 +690,10 @@ function renderClankers(list){
     var user=c.github_username||c.contributor_id||'clanker';
     var av=c.github_username?'<img class="clanker-av" src="https://github.com/'+esc(c.github_username)+'.png" alt="">':'<span class="clanker-av"></span>';
     var sub=[c.cli_backend,c.model,c.role,c.trust_tier].filter(Boolean).map(esc).join(' &middot; ');
-    var task=c.current_task?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>'):'';
+    // #2546: when idle with a known reason, show "idle: no matching work" etc.
+    var task=c.current_task
+      ?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>')
+      :(c.idle_reason?('<div class="clanker-sub">idle: '+esc(idleReasonLabel(c.idle_reason))+'</div>'):'');
     return '<div class="clanker-row"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+'</div>'+
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+'</div>'+
@@ -684,9 +724,18 @@ function renderWork(list){
   el.innerHTML=shown.map(function(w){
     var who=w.github_username?('<span class="feed-role">'+esc(w.github_username)+'</span>'):'';
     var cli=w.cli_backend?(' &middot; '+esc(w.cli_backend)):'';
+    // #2539: read-only prompt preview. Show the exact prompt the agent runs plus
+    // task metadata (repo/number/title). The server never puts the github_token in
+    // prompt_preview, so this can never leak the credential.
+    var labels=(w.labels&&w.labels.length)?('<div class="prompt-labels">'+w.labels.map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join(' ')+'</div>'):'';
+    var preview=w.prompt_preview
+      ?('<details class="prompt-preview"><summary>Prompt preview</summary>'+labels+
+        '<pre class="prompt-text">'+esc(w.prompt_preview)+'</pre>'+
+        '<p class="ops-note">Read-only. This is the instruction the agent receives; the scoped GitHub token is delivered separately and is never shown here.</p></details>')
+      :'';
     return '<div class="work-item"><div class="work-repo">'+esc(w.repo||'')+(w.number?('#'+esc(w.number)):'')+'</div>'+
       '<div class="work-title">'+esc(w.title||'(untitled task)')+'</div>'+
-      '<div class="work-meta">'+statusPill(w.status)+who+cli+'</div></div>';
+      '<div class="work-meta">'+statusPill(w.status)+who+cli+'</div>'+preview+'</div>';
   }).join('');
 }
 function renderPolicy(p){
@@ -702,10 +751,11 @@ function renderPolicy(p){
     ['Skip assigned-to-others',p.skip_assigned_to_others?'yes':'no'],
     ['Disabled tiers',list(p.disabled_tiers)],
     ['Disabled repos',list(p.disabled_repos)],
-    ['Auto-promote at',esc(p.auto_promote_at)+' tasks &rarr; contributor'],
-    ['Trusted at',esc(p.trusted_at)+' tasks + maintainer voucher']
+    ['Auto-promote at',esc(p.auto_promote_at)+' tasks that produced a PR &rarr; contributor'],
+    ['Trusted at','~'+esc(p.trusted_at)+' PR tasks, then granted by a maintainer']
   ];
-  el.innerHTML=rows.map(function(r){return '<div class="policy-row"><span class="policy-key">'+r[0]+'</span><span class="policy-val">'+r[1]+'</span></div>';}).join('');
+  el.innerHTML=rows.map(function(r){return '<div class="policy-row"><span class="policy-key">'+r[0]+'</span><span class="policy-val">'+r[1]+'</span></div>';}).join('')+
+    '<p class="ops-note">Promotion counts completions that reported a pull request (not bare completed tasks). Auto-promotion only lifts newcomer &rarr; contributor; the trusted tier is granted by an operator, not unlocked automatically.</p>';
 }
 async function opsPoll(){
   try{
@@ -758,7 +808,7 @@ fetch('/api/version').then(function(r){return r.json()}).then(function(d){
   el.innerHTML=dot+' Hive v'+d.version+' ('+d.short+')' + (d.behind?' · <span style="color:#d29922">update available</span>':' · up to date');
 }).catch(function(){});
 </script>
-</body></html>`, projectName, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL)
+</body></html>`, projectName, projectName, len(profiles), tierBoxes.String(), hubURL, hubURL, tierTableRows)
 }
 
 // ── Registration ───────────────────────────────────────────────────────────

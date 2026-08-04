@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -248,6 +249,53 @@ func TestContributeFleet(t *testing.T) {
 	}
 	if resp.Policy.TrustedAt != contributorTrustedAt {
 		t.Errorf("trusted_at = %d, want %d", resp.Policy.TrustedAt, contributorTrustedAt)
+	}
+}
+
+// TestTrustTierTableMatchesConstants (#2544): the on-page trust-tier table must
+// describe what the promotion code actually does — auto-promotion counts tasks
+// that PRODUCED A PR (TasksWithPR), not bare completed tasks — and must render
+// its numbers from contributorAutoPromoteAt / contributorTrustedAt so the page
+// cannot drift from the code again. The old over-promising wording ("5 completed
+// tasks", "maintainer voucher" + "Merge PRs") must be gone.
+func TestTrustTierTableMatchesConstants(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	// A missing format arg would render as %!s(MISSING); the whole page must be
+	// clean (this also guards the spliced tier-table %s verb).
+	if strings.Contains(body, "%!") {
+		t.Fatalf("landing page has a format error (%%! present) — verb/arg mismatch")
+	}
+
+	// Corrected, constant-sourced wording is present.
+	wantAutoPromote := fmt.Sprintf("%d tasks that produced a PR", contributorAutoPromoteAt)
+	if !strings.Contains(body, wantAutoPromote) {
+		t.Errorf("tier table missing corrected contributor row %q", wantAutoPromote)
+	}
+	wantTrusted := fmt.Sprintf("~%d PR tasks, then granted by a maintainer", contributorTrustedAt)
+	if !strings.Contains(body, wantTrusted) {
+		t.Errorf("tier table missing corrected trusted row %q", wantTrusted)
+	}
+
+	// The old inaccurate wording must be gone.
+	for _, gone := range []string{
+		"5 completed tasks",
+		"20 tasks + maintainer voucher",
+		"<td>Merge PRs</td>",
+	} {
+		if strings.Contains(body, gone) {
+			t.Errorf("tier table still contains inaccurate wording %q", gone)
+		}
 	}
 }
 

@@ -73,7 +73,24 @@ type ContributorConnection struct {
 	// once wsTokenRefreshPeriod has elapsed, before the token expires. Zero when
 	// no task is active. See #2393 item 2.
 	tokenMintedAt time.Time
-	mu            sync.Mutex
+	// currentPrompt is the exact assignment prompt that was built for currentTask
+	// and shipped in its task_assign (#2539). It is stored so the read-only ops
+	// tab can PREVIEW the instruction the agent is running WITHOUT ever exposing
+	// the minted github_token that travelled in the same message. It never carries
+	// a credential — buildTaskPrompt is a pure function of task metadata. Zero when
+	// no task is active.
+	currentPrompt string
+	// currentLabels are the chosen issue's labels for currentTask (#2539), stored
+	// so the ops Task-panel preview can list them alongside the prompt. Metadata
+	// only — never a credential. Zero when no task is active.
+	currentLabels []string
+	// lastIdleReason is the most recent reason selectTask had no work to hand this
+	// connection (#2546): one of the taskUnavailable* reasons. It lets the ops tab
+	// show WHY a connected clanker is idle (suspended vs hub-not-ready vs
+	// no-matching-work vs an enforced refusal) instead of an indistinguishable
+	// silence. Cleared when a task is actually assigned. Purely diagnostic.
+	lastIdleReason string
+	mu             sync.Mutex
 }
 
 type WSMessage struct {
@@ -756,6 +773,17 @@ type FleetClanker struct {
 	LastActivity   string        `json:"last_activity,omitempty"`
 	Stale          bool          `json:"stale,omitempty"`
 	CurrentTask    *WSTaskAssign `json:"current_task,omitempty"`
+	// IdleReason is the machine-readable reason this clanker currently has no work
+	// (#2546): one of the taskUnavailable* reasons last sent to it. Empty when the
+	// clanker is actively working (CurrentTask set) or has never been refused. It
+	// lets the operator distinguish "idle: no_matching_work" from "idle:
+	// contribution_suspended" instead of an undifferentiated idle. Read-only.
+	IdleReason string `json:"idle_reason,omitempty"`
+	// PromptPreview is the exact assignment prompt built for CurrentTask (#2539),
+	// surfaced read-only so an operator can see the instruction the agent is
+	// running. It NEVER contains the minted github_token — the token travels on the
+	// task_assign WSMessage separately and is not stored here. Empty when idle.
+	PromptPreview string `json:"prompt_preview,omitempty"`
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -772,6 +800,13 @@ type FleetWorkItem struct {
 	GitHubUsername string `json:"github_username,omitempty"`
 	CLIBackend     string `json:"cli_backend,omitempty"`
 	Status         string `json:"status"`
+	// Labels are the chosen issue's labels (#2539), shown alongside the prompt
+	// preview in the ops Task panel. Metadata only.
+	Labels []string `json:"labels,omitempty"`
+	// PromptPreview is the exact prompt shipped for this work item (#2539),
+	// surfaced read-only in the ops Task panel so the instruction is legible
+	// before/as it runs. It NEVER contains the github_token. Empty if unknown.
+	PromptPreview string `json:"prompt_preview,omitempty"`
 }
 
 // FleetSnapshot is the read-only payload the Management & Operations tab hydrates
@@ -809,12 +844,27 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			fc.TrustTier = c.profile.TrustTier
 		}
 		var task *WSTaskAssign
+		var promptPreview string
+		var taskLabels []string
 		if c.currentTask != nil && !fc.Stale {
 			t := *c.currentTask
 			task = &t
+			// #2539: surface the stored prompt (never the token) for the active
+			// task so the ops tab can preview the instruction being run.
+			promptPreview = c.currentPrompt
+			if len(c.currentLabels) > 0 {
+				taskLabels = append([]string(nil), c.currentLabels...)
+			}
+		}
+		// #2546: when the clanker is NOT actively working, expose why it is idle so
+		// the operator sees "idle: no_matching_work" etc. Suppressed while a task is
+		// in flight (the reason, if any, is stale then).
+		if task == nil {
+			fc.IdleReason = c.lastIdleReason
 		}
 		c.mu.Unlock()
 		fc.CurrentTask = task
+		fc.PromptPreview = promptPreview
 		if task != nil {
 			snap.Work = append(snap.Work, FleetWorkItem{
 				TaskID:         task.TaskID,
@@ -826,6 +876,8 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 				GitHubUsername: fc.GitHubUsername,
 				CLIBackend:     fc.CLIBackend,
 				Status:         "in-progress",
+				Labels:         taskLabels,
+				PromptPreview:  promptPreview,
 			})
 		}
 		snap.Clankers = append(snap.Clankers, fc)
@@ -1108,15 +1160,23 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			task := h.selectTask(contributor)
 			switch {
 			case task == nil:
-				// No admissible work and no enforced refusal (e.g. suspended, no
-				// status yet, or an empty candidate set). Behaviour unchanged.
+				// Defensive backstop only: after #2436 and #2546 every selectTask
+				// path returns an explicit message, so this should not be reached.
+				// Kept so an unforeseen nil still fails safe (no send) rather than
+				// panicking.
 				h.logger.Info("[contribute-ws] no tasks available",
 					"username", contributor.profile.GitHubUsername,
 				)
 			case task.Type == "task_unavailable":
-				// #2436 finding 1/2/3: an explicit negative-ack (mint failure,
-				// disabled tier, or concurrency limit) rather than silence. Send it
-				// so the contributor can diagnose instead of hanging forever.
+				// An explicit negative-ack rather than silence. #2436 finding 1/2/3
+				// covers the enforced refusals (mint failure, disabled tier,
+				// concurrency limit); #2546 adds the three formerly-silent
+				// no-work-right-now reasons (contribution_suspended, hub_not_ready,
+				// no_matching_work). Record the reason on the connection so the ops
+				// tab can show WHY this clanker is idle, then send it.
+				contributor.mu.Lock()
+				contributor.lastIdleReason = task.Reason
+				contributor.mu.Unlock()
 				if err := sendJSON(conn, *task); err != nil {
 					h.logger.Warn("[contribute-ws] failed to send task_unavailable", "error", err)
 					return
@@ -1165,6 +1225,10 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				hasTask := contributor.currentTask != nil && contributor.currentTask.TaskID == msg.TaskID
 				completedTask := contributor.currentTask
 				contributor.currentTask = nil
+				// #2539: drop the previewable prompt with the task it belonged to so
+				// the ops tab does not show a stale instruction after completion.
+				contributor.currentPrompt = ""
+				contributor.currentLabels = nil
 				contributor.tokenMintedAt = time.Time{}
 				contributor.tmuxOutput = msg.TmuxOutput
 				contributor.mu.Unlock()
@@ -1438,6 +1502,27 @@ const (
 	// tier_limits.max_concurrent for this identity (counting every live
 	// connection this identity holds).
 	taskUnavailableConcurrencyLimit = "concurrency_limit"
+
+	// The reasons below (kubestellar/hive#2546) extend the same task_unavailable
+	// negative-ack to the three formerly-SILENT selectTask paths — each returned a
+	// bare nil, so an idle contributor could not tell "operator suspended us" from
+	// "hub is not ready yet" from "nothing matches right now". They are additive
+	// and wire-compatible: same message type/shape as #2436, only new reason
+	// strings. Unlike the #2436 reasons these are not enforced refusals — they mean
+	// "no work to hand you right now, and here is why".
+	//
+	// taskUnavailableContributionSuspended: the operator has turned the whole
+	// contribute queue off (hub.contribute_suspended). No contributor gets work
+	// until it is re-enabled.
+	taskUnavailableContributionSuspended = "contribution_suspended"
+	// taskUnavailableHubNotReady: the hub has no status snapshot yet (it has not
+	// finished its first enumeration, or has no server reference), so there is no
+	// candidate set to select from. Transient at startup.
+	taskUnavailableHubNotReady = "hub_not_ready"
+	// taskUnavailableNoMatchingWork: the hub is running and unsuspended but, after
+	// all filters (cooldown, disabled repos, allow/deny, skip-assigned, own-work),
+	// the candidate set is empty. There is simply nothing admissible to do now.
+	taskUnavailableNoMatchingWork = "no_matching_work"
 )
 
 // identityOf returns the stable key that groups a contributor's live
@@ -1466,15 +1551,56 @@ func (h *ContributeWSHub) taskUnavailable(reason string) *WSMessage {
 	}
 }
 
+// buildTaskPrompt constructs the exact assignment prompt sent to a contributor's
+// agent for a given issue. It is a PURE function of the task's public metadata
+// (repo / number / title) and deliberately contains NO credential: the scoped
+// github_token is attached to the task_assign WSMessage separately, so this text
+// is safe to preview read-only in the ops tab (#2539). selectTask ships whatever
+// this returns, and the ops preview reads the very same string back off the
+// connection, so "what is previewed" always matches "what runs".
+func buildTaskPrompt(repoFull string, number int, title string) string {
+	// The workspace contract (kubestellar/hive#2545): your tmux pane already
+	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
+	// launches the session with -c pointed there), but nothing had put a repo
+	// on disk there yet. The previous prompt's only repository instruction was
+	// 'gh repo fork ... --clone=false' — a fork WITHOUT a checkout — so an
+	// agent that followed it literally, or one that stalled before improvising
+	// its own clone, was left sitting in an empty directory while the
+	// assignment slot stayed held. Spell out an actual clone into that known
+	// directory so there is a concrete first step rather than an implied one.
+	return fmt.Sprintf(
+		"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
+			"You do NOT have push access to the upstream repo. "+
+			"Start by getting a real checkout on disk: "+
+			"'gh repo fork %s --clone=true --remote=true "+
+			"$HIVE_WORKSPACE_DIR/%s' (or, if that directory already has a clone "+
+			"from a prior task, 'cd' into it and 'git fetch' instead of "+
+			"re-forking). Then 'cd' into that checkout, read the issue, "+
+			"understand what's needed, and take action. "+
+			"Push your branch to your fork remote, then open a PR from your fork. "+
+			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
+		repoFull, repoFull, number, title, repoFull, repoFull,
+	)
+}
+
 func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.selectMu.Lock()
 	defer h.selectMu.Unlock()
 
 	if h.server == nil {
-		return nil
+		// No server reference — the hub cannot read status or config, so there is
+		// nothing to select from. Jorge flagged this path as arguably not
+		// contributor-visible; it is folded into hub_not_ready since it is the same
+		// "the hub cannot serve work yet" condition and giving it a reason is
+		// trivial and harmless (#2546).
+		return h.taskUnavailable(taskUnavailableHubNotReady)
 	}
 	if h.server.deps != nil && h.server.deps.Config != nil && h.server.deps.Config.Hub.ContributeSuspended {
-		return nil
+		// #2546: the operator suspended the whole contribute queue. Previously this
+		// returned a bare nil and the contributor waited in silence, unable to tell
+		// "suspended" from "misconfigured" from "wedged". Send an explicit
+		// contribution_suspended negative-ack so the idle state is legible.
+		return h.taskUnavailable(taskUnavailableContributionSuspended)
 	}
 
 	h.server.statusMu.RLock()
@@ -1482,7 +1608,10 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	h.server.statusMu.RUnlock()
 
 	if status == nil {
-		return nil
+		// #2546: no status snapshot yet (hub still warming up). Same wire-shape as
+		// above, distinct reason, so the contributor learns it is a transient
+		// not-ready state rather than a permanent refusal.
+		return h.taskUnavailable(taskUnavailableHubNotReady)
 	}
 
 	// #2436 finding 2: refuse to assign work to a contributor whose TrustTier is
@@ -1705,7 +1834,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	}
 
 	if len(candidates) == 0 {
-		return nil
+		// #2546: the hub is running and unsuspended but nothing is admissible right
+		// now (everything is in cooldown, filtered out, disabled, or already held).
+		// Previously a bare nil — indistinguishable on the wire from "suspended" or
+		// "hub not ready". Send an explicit no_matching_work negative-ack.
+		return h.taskUnavailable(taskUnavailableNoMatchingWork)
 	}
 
 	// Order the admissible set with a STABLE sort so the pick is deterministic
@@ -1756,28 +1889,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 
 	taskID := fmt.Sprintf("ct-%s-%d-%d", chosen.repoFull, chosen.number, time.Now().Unix())
 
-	// The workspace contract (kubestellar/hive#2545): your tmux pane already
-	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
-	// launches the session with -c pointed there), but nothing had put a repo
-	// on disk there yet. The previous prompt's only repository instruction was
-	// 'gh repo fork ... --clone=false' — a fork WITHOUT a checkout — so an
-	// agent that followed it literally, or one that stalled before improvising
-	// its own clone, was left sitting in an empty directory while the
-	// assignment slot stayed held. Spell out an actual clone into that known
-	// directory so there is a concrete first step rather than an implied one.
-	prompt := fmt.Sprintf(
-		"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
-			"You do NOT have push access to the upstream repo. "+
-			"Start by getting a real checkout on disk: "+
-			"'gh repo fork %s --clone=true --remote=true "+
-			"$HIVE_WORKSPACE_DIR/%s' (or, if that directory already has a clone "+
-			"from a prior task, 'cd' into it and 'git fetch' instead of "+
-			"re-forking). Then 'cd' into that checkout, read the issue, "+
-			"understand what's needed, and take action. "+
-			"Push your branch to your fork remote, then open a PR from your fork. "+
-			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
-		chosen.repoFull, chosen.repoFull, chosen.number, chosen.title, chosen.repoFull, chosen.repoFull,
-	)
+	// #2539: build the prompt through the shared, credential-free buildTaskPrompt
+	// so the exact text shipped in task_assign below can also be PREVIEWED
+	// read-only in the ops tab. The prompt is a pure function of task metadata —
+	// the minted github_token is attached to the WSMessage separately (never inside
+	// the prompt), so previewing the prompt can never leak the token. buildTaskPrompt
+	// itself carries the #2545 workspace-clone instruction (real checkout into
+	// $HIVE_WORKSPACE_DIR rather than a fork-only --clone=false).
+	prompt := buildTaskPrompt(chosen.repoFull, chosen.number, chosen.title)
 
 	c.mu.Lock()
 	c.currentTask = &WSTaskAssign{
@@ -1787,6 +1906,11 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		Number: chosen.number,
 		Title:  chosen.title,
 	}
+	// Store the prompt (never the token) so FleetSnapshot can preview it (#2539),
+	// and clear any stale idle reason now that this connection has real work.
+	c.currentPrompt = prompt
+	c.currentLabels = chosen.labels
+	c.lastIdleReason = ""
 	c.tokenMintedAt = time.Now()
 	c.mu.Unlock()
 
