@@ -889,7 +889,15 @@ function activateTab(t){
   var panel=document.getElementById(dp);
   if(panel)panel.classList.add('active');
   if((dp==='tab-ops'||dp==='tab-manage')&&!adminStarted){adminStarted=true;initAdmin();}
-  if(dp==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();ccStart();}
+  // opsPoll() (fleet/policy/work hydration) and ccStart() (the SSE command center)
+  // are INDEPENDENT: a throw in one must never prevent the other from running. The
+  // fleet panels predate the command center, so a command-center start failure must
+  // not leave Connected clankers / Pipeline & policy / My work stuck on "Loading…"
+  // (regression #2574). Each is guarded on its own.
+  if(dp==='tab-ops'&&!opsStarted){opsStarted=true;
+    try{opsPoll();}catch(e){console.error('opsPoll start failed',e);}
+    try{ccStart();}catch(e){console.error('ccStart failed',e);}
+  }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
   if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;loadLeaderboard();}
 }
@@ -1170,8 +1178,17 @@ function idleReasonLabel(r){
   return m[r]||String(r).replace(/_/g,' ');
 }
 function renderClankers(list){
+  list=list||[];
   var el=document.getElementById('clanker-list');
-  document.getElementById('clanker-count').textContent=(list.length)+(list.length===1?' connected':' connected');
+  var cnt=document.getElementById('clanker-count');
+  if(cnt)cnt.textContent=(list.length)+(list.length===1?' connected':' connected');
+  // Update the "your army" roster FIRST and independently of the row render. The
+  // roster (working/reviewing/idle) is derived from the same snapshot, so it must
+  // hydrate even if building an individual clanker row throws — otherwise a single
+  // malformed row leaves BOTH the list on "Loading…" AND the roster at 0/0/0
+  // (regression #2574: the exact live symptom). ccUpdateArmy is itself nil-safe.
+  ccUpdateArmy(list);
+  if(!el)return;
   if(!list.length){el.innerHTML='<div class="ops-empty">No clankers connected right now.</div>';return;}
   el.innerHTML=list.map(function(c){
     var user=c.github_username||c.contributor_id||'clanker';
@@ -1214,8 +1231,6 @@ function renderClankers(list){
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+'</div>'+
       (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
-  // Update the "your army" roster header from the same list (army framing).
-  ccUpdateArmy(list);
 }
 // ccUpdateArmy summarises the fleet into working/reviewing/idle counts. Army framing
 // derived entirely from the live fleet snapshot — no fabricated numbers.
@@ -1289,15 +1304,25 @@ function renderPolicy(p){
   el.innerHTML=rows.map(function(r){return '<div class="policy-row"><span class="policy-key">'+r[0]+'</span><span class="policy-val">'+r[1]+'</span></div>';}).join('')+
     '<p class="ops-note">Promotion counts completions that reported a pull request (not bare completed tasks). Auto-promotion only lifts newcomer &rarr; contributor; the trusted tier is granted by an operator, not unlocked automatically.</p>';
 }
+// safeRender runs one panel render in isolation: a throw in one panel must NOT
+// prevent the others from hydrating (regression #2574 left all three stuck when a
+// single render threw). Errors are logged, never silently swallowed.
+function safeRender(name,fn){try{fn();}catch(e){console.error('opsPoll render failed: '+name,e);}}
 async function opsPoll(){
   try{
     var res=await fetch('/api/contribute/fleet');
     var data=await res.json();
-    renderClankers(data.clankers||[]);
-    renderWork(data.work||[]);
-    renderPolicy(data.policy);
-  }catch(e){}
-  if(document.getElementById('tab-ops').classList.contains('active'))setTimeout(opsPoll,4000);
+    // Each panel renders independently — one failing does not block the others.
+    safeRender('clankers',function(){renderClankers((data&&data.clankers)||[]);});
+    safeRender('work',function(){renderWork((data&&data.work)||[]);});
+    safeRender('policy',function(){renderPolicy(data&&data.policy);});
+  }catch(e){
+    // fetch/parse failed — log so the "Loading…" placeholders are diagnosable, and
+    // fall through to reschedule so a transient failure self-heals on the next poll.
+    console.error('opsPoll fetch failed',e);
+  }
+  var tab=document.getElementById('tab-ops');
+  if(tab&&tab.classList.contains('active'))setTimeout(opsPoll,4000);
 }
 
 // ══ Operations command center: live SSE stream driving the ready-work queue, the
