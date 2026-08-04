@@ -1614,14 +1614,15 @@ func (m *Manager) watchForTrustPrompt(session string, ctx context.Context) {
 	}
 }
 
-// acmmLevelNames maps ACMM level numbers to human-readable names.
+// acmmLevelNames maps ACMM level numbers to human-readable names. Kept in
+// sync with the canonical pack definitions in v2/pkg/config/packs/level-*.yaml.
 var acmmLevelNames = map[int]string{
-	1: "Idea",
-	2: "Development",
-	3: "CI/CD",
-	4: "Managed",
-	5: "Guarded Autonomy",
-	6: "Full Autonomy",
+	1: "Inception",
+	2: "Advisory",
+	3: "Quality-Gated",
+	4: "Security-Aware",
+	5: "Semi-Autonomous",
+	6: "Fully Autonomous",
 }
 
 func (m *Manager) buildBootstrapPrompt(agent *AgentProcess) string {

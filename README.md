@@ -243,11 +243,11 @@ Hive uses an **AI-native Capability Maturity Model** (ACMM) with six levels that
 
 | Level | Name | Agents | What agents can do |
 |-------|------|--------|-------------------|
-| L1 | Assisted | 2 | Interactive advisor and project inception. Advisory beads only. |
-| L2 | Instructed | 5 | Observe and report findings as dashboard beads. No GitHub interaction. |
-| L3 | Measured | 6 | Quality agent opens issues and hold-gated PRs. Others remain advisory. |
-| L4 | Adaptive | 7 | All agents file issues. Quality, sec-check, and CI open hold-gated PRs. |
-| L5 | Semi-Automated | 9 | All agents open hold-gated PRs. Humans batch-review and approve. |
+| L1 | Inception (Assisted) | 2 | Interactive advisor and project inception. Advisory beads only. |
+| L2 | Advisory (Instructed) | 5 | Observe and report findings as dashboard beads. No GitHub interaction. |
+| L3 | Quality-Gated (Measured) | 6 | Quality agent opens issues and hold-gated PRs. Others remain advisory. |
+| L4 | Security-Aware (Adaptive) | 7 | All agents file issues. Quality, sec-check, and CI open hold-gated PRs. |
+| L5 | Semi-Autonomous (Semi-Automated) | 9 | All agents open hold-gated PRs. Humans batch-review and approve. |
 | L6 | Fully Autonomous | 10 | Agents open PRs and auto-merge on green CI. No hold label required. |
 
 Each level defines per-agent **policy modes**: advisory (observe only), measured (file issues), holdgated (PRs with hold label), or full (auto-merge). See `v2/docs/acmm-policy-matrix.md` for the full matrix.

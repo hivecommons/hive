@@ -879,7 +879,7 @@
         <div class="loop-step"><span>03</span><h3>Fix agent</h3><p style="font-size:.86rem">A specialized agent writes the fix in an isolated worktree, opens a PR.</p></div>
         <div class="loop-step"><span>04</span><h3>Coverage gate</h3><p style="font-size:.86rem">The deterministic pipeline gates the merge &mdash; build, lint, and a per-package coverage threshold. Roughly 1 in 7 agent PRs is rejected here.</p></div>
         <div class="loop-step"><span>05</span><h3>Review</h3><p style="font-size:.86rem">Reviewer agents check post-merge state, GA4 regressions, and invariant drift.</p></div>
-        <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">PRs merge on green CI at the autonomy level you allow. No human approval needed at L4+.</p></div>
+        <div class="loop-step"><span>06</span><h3>Merge</h3><p style="font-size:.86rem">PRs merge on green CI at the autonomy level you allow. No human approval needed at L6.</p></div>
         <div class="loop-step"><span>07</span><h3>Rerun</h3><p style="font-size:.86rem">The loop restarts. Security patches, dep updates, and test fixes happen continuously.</p></div>
       </div>
     </section>
@@ -937,7 +937,7 @@
           </div>
           <div class="install-step">
             <span>3</span>
-            <div><h3>Choose your autonomy level</h3><p style="font-size:.88rem">Pick an ACMM level from L1 Advisory to L6 Fully Autonomous. Start conservative, upgrade anytime.</p></div>
+            <div><h3>Choose your autonomy level</h3><p style="font-size:.88rem">Pick an ACMM level from L1 Inception to L6 Fully Autonomous. Start conservative, upgrade anytime.</p></div>
           </div>
           <div class="install-step">
             <span>4</span>
@@ -961,7 +961,7 @@
       <ul class="safety-list">
         <li>CI must pass before any PR merges. No exceptions at any ACMM level.</li>
         <li>Agents cannot push directly to main. All changes go through PRs with full audit trails.</li>
-        <li>You control the autonomy level. Start at L1 Advisory and upgrade when you&rsquo;re ready.</li>
+        <li>You control the autonomy level. Start at L1 Inception and upgrade when you&rsquo;re ready.</li>
         <li>Deterministic pipeline filters before LLMs. Build, lint, test, and policy checks gate every change.</li>
         <li>All agent actions are logged. Full transparency in the dashboard and GitHub activity.</li>
         <li>Hosted hives are isolated. Your code stays in your repos &mdash; the hive reads issues and opens PRs.</li>
@@ -1092,14 +1092,14 @@
     }
 
     function acmmBadge(level) {
-      var names = {1:'Idea',2:'Measured',3:'CI/CD',4:'Auto PR',5:'Self-Governing',6:'Fully Autonomous'};
+      var names = {1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
       var tips = {
-        1:'L1 Idea — Advisory only. Agents suggest but take no action.',
-        2:'L2 Measured — Agents can open issues to track findings.',
-        3:'L3 CI/CD — Agents open hold-gated PRs. CI must pass before merge.',
-        4:'L4 Auto PR — Agents open and merge PRs on green CI.',
-        5:'L5 Self-Governing — Full autonomy with budget controls.',
-        6:'L6 Fully Autonomous — Multi-loop orchestration, self-healing.'
+        1:'L1 Inception — Advisory only. Agents suggest but take no action.',
+        2:'L2 Advisory — Advisory beads only, no GitHub writes.',
+        3:'L3 Quality-Gated — Quality agent opens hold-gated test PRs. CI gates.',
+        4:'L4 Security-Aware — Agents open issues, sec-check joins. Still hold-gated.',
+        5:'L5 Semi-Autonomous — PRs carry a hold label, batch-reviewed by humans.',
+        6:'L6 Fully Autonomous — Auto-merge on green CI.'
       };
       return '<span class="acmm-badge acmm-' + level + '" title="' + esc(tips[level] || '') + '">L' + level + ' ' + esc(names[level] || '') + '</span>';
     }

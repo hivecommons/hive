@@ -1852,7 +1852,7 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 	//     downgraded live hives to L0 on the dashboard.
 	//   - For an unclaimed PLACEHOLDER (status: available), there is no
 	//     meaningful live level (the slot reports L0), so the INTENDED level from
-	//     meta ("L2 Instructed") is what should show, and it also gates the
+	//     meta ("L2 Advisory") is what should show, and it also gates the
 	//     "Assign" menu (provStatus === 'available').
 	// Rule: take the meta level only for placeholders, or as a fallback when the
 	// live registry level is 0 (unknown) but meta has a real one. Otherwise the
@@ -5539,7 +5539,7 @@ func (s *HubServer) handleRequestProvision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// A hive is never REQUESTED above L3 Measured. L4-L6 are real levels, but
+	// A hive is never REQUESTED above L3 Quality-Gated. L4-L6 are real levels, but
 	// they are reached after provisioning, from the hive's own dashboard, once
 	// the project has the coverage and CI history to justify them. The
 	// get-started wizard only offers L1-L3, but the wizard is one client: clamp
@@ -7726,7 +7726,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (accessModal && accessModal.style.display === 'flex') { accessModal.style.display = 'none'; }
     });
 
-    var ACMM_LABELS = {1:'L1 Assisted',2:'L2 Instructed',3:'L3 Measured',4:'L4 Adaptive',5:'L5 Semi-Automated',6:'L6 Autonomous'};
+    var ACMM_LABELS = {1:'L1 Inception',2:'L2 Advisory',3:'L3 Quality-Gated',4:'L4 Security-Aware',5:'L5 Semi-Autonomous',6:'L6 Fully Autonomous'};
     /* One-line "what this level actually does" per ACMM level, hoisted out of
        acmmBadge so the badge tooltip and the Request-a-Hive level picker read
        from the SAME strings. They used to be a local inside acmmBadge, and the
@@ -7734,7 +7734,7 @@ const dashboardHTML = `<!DOCTYPE html>
        plain wrong ("L3 CI/CD", "L4 Auto PR", "L6 Fully Autonomous") — L4 in
        particular is NOT fully autonomous, it opens hold-gated PRs for human
        review. Anything describing a level must use this object. */
-    var ACMM_TIPS = {1:'L1 Assisted — Advisory only.',2:'L2 Instructed — Advisory beads, no GitHub writes.',3:'L3 Measured — Hold-gated PRs, CI gates.',4:'L4 Adaptive — Agents open issues, sec-check.',5:'L5 Semi-Automated — PRs with hold label, batch review.',6:'L6 Autonomous — Auto-merge on green CI.'};
+    var ACMM_TIPS = {1:'L1 Inception — Advisory only.',2:'L2 Advisory — Advisory beads, no GitHub writes.',3:'L3 Quality-Gated — Hold-gated PRs, CI gates.',4:'L4 Security-Aware — Agents open issues, sec-check.',5:'L5 Semi-Autonomous — PRs with hold label, batch review.',6:'L6 Fully Autonomous — Auto-merge on green CI.'};
     /* The tip strings above lead with the level label; the picker renders the
        label separately, so strip the redundant "Lx Name — " prefix there. */
     function acmmTipDetail(level) {
@@ -15479,11 +15479,11 @@ const dashboardHTML = `<!DOCTYPE html>
         <div style="flex:1">
           <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:4px">ACMM Level</label>
           <select id="f-level" style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.85rem">
-            <option value="1">L1 — Assisted</option>
-            <option value="2">L2 — Instructed</option>
-            <option value="3" selected>L3 — CI/CD</option>
-            <option value="4">L4 — Auto PR</option>
-            <option value="5">L5 — Self-Governing</option>
+            <option value="1">L1 — Inception (Assisted)</option>
+            <option value="2">L2 — Advisory (Instructed)</option>
+            <option value="3" selected>L3 — Quality-Gated (Measured)</option>
+            <option value="4">L4 — Security-Aware (Adaptive)</option>
+            <option value="5">L5 — Semi-Autonomous (Semi-Automated)</option>
             <option value="6">L6 — Fully Autonomous</option>
           </select>
         </div>

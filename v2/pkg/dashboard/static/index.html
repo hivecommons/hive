@@ -2936,8 +2936,8 @@
         <p style="margin:0 0 8px"><strong>Change to L3 whenever you like — there is no gate.</strong> No quota, no checklist,
         no criteria that must go green first. The only criterion is your own judgement: <em>do you trust the advisory findings
         you have been reading?</em> That is what L2 is for. Once you believe the beads, you are ready.</p>
-        <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Instructed</em>) the only thing the hive touches in
-        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Measured</em>) introduces the <strong>quality agent</strong>, and
+        <p style="margin:0 0 8px"><strong>What changes:</strong> at L2 (<em>Advisory (Instructed)</em>) the only thing the hive touches in
+        GitHub is its own 🐝 Hive Advisory Report issue. L3 (<em>Quality-Gated (Measured)</em>) introduces the <strong>quality agent</strong>, and
         its job is building test cases — making your repo resilient to code changes from <em>any</em> contributor that would
         destabilise it, break it, or violate patterns you prefer. That is the next step in gaining trust: not more findings,
         but a safety net. Concretely, the quality agent may open GitHub issues
@@ -2966,15 +2966,15 @@
         below it. The end-to-end journey: <strong>L2 shows you what Hive would find; L3 builds the safety net that makes acting
         on those findings safe; L4–L6 progressively hand over more of the acting.</strong> Nothing is fully autonomous until L6:</p>
         <ul style="margin:0 0 16px;padding-left:20px">
-          <li><strong>L1 Assisted</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
-          <li><strong>L2 Instructed</strong> — the trust level. Advisory beads only; the sole GitHub write is the
+          <li><strong>L1 — Inception (Assisted)</strong> — advisory only; typically used to start a new feature with tools like speckit.</li>
+          <li><strong>L2 — Advisory (Instructed)</strong> — the trust level. Advisory beads only; the sole GitHub write is the
               🐝 Hive Advisory Report issue and its digest comment.</li>
-          <li><strong>L3 Measured</strong> — introduces the quality agent: hold-gated test-coverage PRs, CI gates. The
+          <li><strong>L3 — Quality-Gated (Measured)</strong> — introduces the quality agent: hold-gated test-coverage PRs, CI gates. The
               safeguard everything above depends on.</li>
-          <li><strong>L4 Adaptive</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
+          <li><strong>L4 — Security-Aware (Adaptive)</strong> — agents open issues, plus a security-check agent. Still <em>not</em> autonomous:
               issues and PRs remain hold-gated for human review.</li>
-          <li><strong>L5 Semi-Automated</strong> — PRs carry a hold label, reviewed in batches.</li>
-          <li><strong>L6 Autonomous</strong> — auto-merge once CI is green.</li>
+          <li><strong>L5 — Semi-Autonomous (Semi-Automated)</strong> — PRs carry a hold label, reviewed in batches.</li>
+          <li><strong>L6 — Fully Autonomous</strong> — auto-merge once CI is green.</li>
         </ul>
         <p style="margin:0 0 16px;color:var(--muted)">L4 and above become available after provisioning; newly created hives start in the L1–L3 range.</p>
 
@@ -12379,7 +12379,7 @@ function burnAreaChart() {
 
     // ACMM Evaluation
     const ACMM_EVAL_INTERVAL_MS = 3600000; // 1 hour
-    const ACMM_LEVEL_NAMES = {0:'Prerequisites',1:'Foundational',2:'Instructed',3:'Measured',4:'Adaptive',5:'Automated',6:'Autonomous'};
+    const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Fully Autonomous'};
     const ACMM_LEVEL_DESCRIPTIONS = {
       0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
       2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
@@ -12785,8 +12785,8 @@ function burnAreaChart() {
         2: 'Agents follow explicit instructions (CLAUDE.md, copilot-instructions) but require human initiation.',
         3: 'Observability in place — metrics, dashboards, and review rubrics track agent quality.',
         4: 'Self-tuning — agents adapt their behavior based on feedback loops and compliance checks.',
-        5: 'Fully automated — CI/CD triggers agents, auto-QA self-tunes, policies enforced as code.',
-        6: 'Autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
+        5: 'Semi-autonomous — CI/CD triggers agents, auto-QA self-tunes, policies enforced as code.',
+        6: 'Fully autonomous — multi-agent orchestration, auto issue generation, strategic oversight.'
       };
       const desc = opsDescriptions[d.operational_level] || 'Level not recognized.';
       acmmShowDialog('Operational Autonomy — L' + d.operational_level + ' ' + escapeHtml(name),
@@ -13490,7 +13490,7 @@ function burnAreaChart() {
       const errEl = document.getElementById('acmm-apply-error');
       errEl.style.display = 'none';
 
-      const levelNames = ['', 'Assisted', 'Instructed', 'Measured', 'Adaptive', 'Semi-Automated', 'Autonomous'];
+      const levelNames = ['', 'Inception', 'Advisory', 'Quality-Gated', 'Security-Aware', 'Semi-Autonomous', 'Fully Autonomous'];
       const name = levelNames[level] || 'Level ' + level;
       if (!(await hiveConfirm(`Preview ACMM Level ${level} (${name})?\n\nThis changes the dashboard display to show what this level looks like. Running agents are not affected — use Apply to create agents and change their state.`))) return;
 
@@ -13520,10 +13520,10 @@ function burnAreaChart() {
       }
     }
 
-    // Short "L3 Measured"-style label for an ACMM pack level. Shared by the
+    // Short "L3 Quality-Gated"-style label for an ACMM pack level. Shared by the
     // badges, the level dialog subtitle, and the Governor config General tab.
     function acmmLevelLabel(level) {
-      const levelNames = ['', 'L1 Assisted', 'L2 Instructed', 'L3 Measured', 'L4 Adaptive', 'L5 Semi-Automated', 'L6 Autonomous'];
+      const levelNames = ['', 'L1 Inception', 'L2 Advisory', 'L3 Quality-Gated', 'L4 Security-Aware', 'L5 Semi-Autonomous', 'L6 Fully Autonomous'];
       return levelNames[level] || 'L' + level;
     }
 
