@@ -12252,12 +12252,24 @@ const dashboardHTML = `<!DOCTYPE html>
        as a lie. */
     var UPGRADE_ELAPSED_SKEW_TOLERANCE_MS = 60 * 1000; // treat small negatives as 0
 
+    /* Go serialises a zero time.Time as "0001-01-01T00:00:00Z" and — because
+       json:"...,omitempty" does NOT omit a zero struct — the hub emits exactly
+       that string for a hive whose UpgradeStartedAt was never set or was reset.
+       Date.parse() accepts it happily, and now − year 0001 is ~17.7 MILLION
+       hours: the live "Upgrading 17755944h28m" wedge on ibm-alchemy. Any
+       upgradeStartedAt at or before this cutoff is not a real start time but a
+       lost/zero one, and the counter must be suppressed rather than rendered as
+       a two-thousand-year duration. 2020-01-01 predates the project itself, so
+       no genuine upgrade can legitimately fall before it. */
+    var UPGRADE_STARTED_MIN_SANE_MS = Date.UTC(2020, 0, 1); // any earlier start time is a lost/zero timestamp
+
     /* upgradeElapsedMs returns how long a hive has been upgrading, in ms, or
-       null when that cannot be known — a MISSING, EMPTY or UNPARSEABLE
-       upgradeStartedAt, or a negative elapsed beyond the skew tolerance.
-       Callers must render nothing on null; they must never render NaN, a
-       negative duration, or a fabricated "0s" that implies the upgrade just
-       started when in truth the timestamp was lost.
+       null when that cannot be known — a MISSING, EMPTY, UNPARSEABLE or
+       PRE-EPOCH (zero/lost) upgradeStartedAt, or a negative elapsed beyond the
+       skew tolerance. Callers must render nothing on null; they must never
+       render NaN, a negative duration, a two-thousand-year duration, or a
+       fabricated "0s" that implies the upgrade just started when in truth the
+       timestamp was lost.
 
        Note a real server behaviour this relies on: upgradeStartedAt is stamped
        ONLY where Upgrading is set true, so a hive that is merely QUEUED has no
@@ -12268,6 +12280,7 @@ const dashboardHTML = `<!DOCTYPE html>
       if (!started || typeof started !== 'string') return null;
       var t = Date.parse(started);
       if (isNaN(t)) return null; /* unparseable timestamp — show nothing, never NaN */
+      if (t < UPGRADE_STARTED_MIN_SANE_MS) return null; /* zero/lost start time (year 0001) — never a real "17.7M hour" upgrade */
       var elapsed = (typeof nowMs === 'number' ? nowMs : Date.now()) - t;
       if (elapsed < 0) {
         /* Clock skew. A small negative is the browser being marginally behind

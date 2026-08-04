@@ -90,10 +90,39 @@ func TestEvaluateOrphanedUpgrade(t *testing.T) {
 			orphaned: false,
 		},
 		{
-			name: "not orphaned: no start timestamp means no elapsed time to judge",
+			// The ibm-alchemy live wedge: Upgrading latched with a ZERO
+			// UpgradeStartedAt (0001-01-01), which the dashboard rendered as
+			// "Upgrading 17755944h28m". A zero start can never be a fresh upgrade
+			// (every set-site stamps time.Now()), so with a live spoke still on the
+			// old SHA it must be cleared, not left wedged forever.
+			name: "orphaned: zero start time with a live spoke on the old SHA (ibm-alchemy wedge)",
 			entry: RegistryEntry{
 				Upgrading:     true,
 				GitHash:       "c11643a",
+				UpgradeTarget: "fc32ae4",
+				LastHeartbeat: rfc3339(fixedSweepNow.Add(-30 * time.Second)),
+			},
+			orphaned: true,
+		},
+		{
+			// A zero start is still only cleared on the same liveness evidence as a
+			// real stale upgrade. Never heartbeated ⇒ we cannot prove the attempt is
+			// gone, so we do not clear even with a zero timestamp.
+			name: "not orphaned: zero start time but the spoke never heartbeated",
+			entry: RegistryEntry{
+				Upgrading:     true,
+				GitHash:       "c11643a",
+				UpgradeTarget: "fc32ae4",
+			},
+			orphaned: false,
+		},
+		{
+			// Zero start, alive, but the spoke already reports the target SHA: the
+			// heartbeat path clears it, this sweep must not race ahead.
+			name: "not orphaned: zero start time but the spoke already reports the target",
+			entry: RegistryEntry{
+				Upgrading:     true,
+				GitHash:       "fc32ae4",
 				UpgradeTarget: "fc32ae4",
 				LastHeartbeat: rfc3339(fixedSweepNow.Add(-30 * time.Second)),
 			},
@@ -251,5 +280,39 @@ func TestSweepBelowBudgetStillReArms(t *testing.T) {
 	}
 	if got := s.heartbeatUpgrade["first-orphan"]; got != "fc32ae4" {
 		t.Errorf("below the budget the upgrade must still be re-armed, got %q", got)
+	}
+}
+
+// TestSweepUnwedgesZeroStartTimestamp is the anti-regression test for the live
+// ibm-alchemy wedge: a hive latched Upgrading=true with a ZERO UpgradeStartedAt
+// (0001-01-01) was NEVER swept, because the old evaluateOrphanedUpgrade bailed
+// on IsZero() before it ever looked at liveness evidence. It stayed "Upgrading"
+// forever with a 17.7M-hour counter and blocked any fresh upgrade from being
+// recognised. The sweep must now clear such a hive (given a live spoke still on
+// the old SHA) and re-arm delivery so it can upgrade again.
+func TestSweepUnwedgesZeroStartTimestamp(t *testing.T) {
+	s := &HubServer{
+		logger:           slog.Default(),
+		heartbeatUpgrade: make(map[string]string),
+	}
+	s.registry.Hives = []RegistryEntry{{
+		ID:            "ibm-alchemy-wedged",
+		Upgrading:     true,
+		GitHash:       "c11643a",
+		UpgradeTarget: "fc32ae4",
+		LastHeartbeat: rfc3339(time.Now().Add(-30 * time.Second)),
+		// UpgradeStartedAt left zero on purpose — the wedge itself.
+	}}
+	if !s.registry.Hives[0].UpgradeStartedAt.IsZero() {
+		t.Fatal("precondition: the wedged hive must carry a zero UpgradeStartedAt")
+	}
+
+	s.sweepOrphanedUpgrades()
+
+	if s.registry.Hives[0].Upgrading {
+		t.Error("a zero-timestamp wedged upgrade must be cleared, not left latched forever")
+	}
+	if got := s.heartbeatUpgrade["ibm-alchemy-wedged"]; got != "fc32ae4" {
+		t.Errorf("the un-wedged hive must be re-armed for delivery, got %q", got)
 	}
 }
