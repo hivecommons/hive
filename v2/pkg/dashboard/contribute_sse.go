@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,8 +44,14 @@ const sseSubscriberBuffer = 32
 
 // readyQueueDefaultLimit is the default number of ready-work items surfaced in the
 // queue snapshot / SSE initial payload. It is the "top of the stack" an operator
-// watches get picked off; the full admissible set can be large, so we cap it.
-const readyQueueDefaultLimit = 25
+// watches get picked off. The full admissible set can be large (the hive routinely
+// has ~150+ actionable items), and the operator wants to SEE and REORDER a long
+// list, not just the top handful. So the cap is generous — high enough that the
+// whole realistic backlog is visible and draggable — but still bounded so a
+// pathological backlog can never blow out the JSON payload or the DOM. The queue
+// panel is a fixed-height scroll container (.cc-queue), so a long list scrolls
+// inside its card rather than stretching the page.
+const readyQueueDefaultLimit = 150
 
 // sseEvent is one framed message pushed to subscribers. Type distinguishes the
 // initial hydration payload (queue + replay) from subsequent single activity
@@ -244,12 +251,72 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 				URL:    url,
 				Labels: labels,
 			})
-			if len(out) >= limit {
-				return out
-			}
 		}
 	}
+
+	// Operator priority override (#queue-reorder): if the operator dragged items to
+	// the front on the Operations tab, offer those FIRST — in exactly the operator's
+	// order — and keep everything else in the established scan order behind them. A
+	// stable sort keyed on the priority index does this without disturbing the
+	// relative order of unpinned items. This only reorders OFFER PRIORITY: every item
+	// in `out` already passed the SAME admission / cooldown / disabled-repo /
+	// in-flight exclusions above, so a pinned issue that is no longer actionable was
+	// never collected and is simply absent (stale keys are skipped, not resurrected).
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		applyQueueOrder(out, h.server.deps.Config.Hub.ContributeQueueOrder)
+	}
+
+	// Cap AFTER ordering so the operator's pinned items are guaranteed to survive the
+	// truncation (they sort to the front), not be dropped by an arbitrary scan cut.
+	if len(out) > limit {
+		out = out[:limit]
+	}
 	return out
+}
+
+// queueOrderIndex builds a "owner/repo#number" -> priority-rank map from the
+// operator's ordered override list. Earlier entries rank lower (offered sooner).
+// Keys not present rank as "unpinned" for callers (they use a sentinel above the
+// map size). Returned map is nil-safe to range over when the override is empty.
+func queueOrderIndex(order []string) map[string]int {
+	if len(order) == 0 {
+		return nil
+	}
+	idx := make(map[string]int, len(order))
+	for i, key := range order {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		// First occurrence wins so a duplicated key keeps its earliest (highest)
+		// priority rather than being demoted by a later copy.
+		if _, seen := idx[key]; !seen {
+			idx[key] = i
+		}
+	}
+	return idx
+}
+
+// applyQueueOrder stably reorders items so any whose "repo#number" key appears in
+// the operator override sort to the front in the operator's order, with unpinned
+// items keeping their original relative (scan) order behind them. In place; no-op
+// when the override is empty.
+func applyQueueOrder(items []ReadyQueueItem, order []string) {
+	idx := queueOrderIndex(order)
+	if len(idx) == 0 {
+		return
+	}
+	// Unpinned items rank at len(idx) (all pinned ranks are < len(idx)), so they all
+	// sort behind every pinned item while SliceStable preserves their scan order.
+	rank := func(it ReadyQueueItem) int {
+		if r, ok := idx[fmt.Sprintf("%s#%d", it.Repo, it.Number)]; ok {
+			return r
+		}
+		return len(idx)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return rank(items[i]) < rank(items[j])
+	})
 }
 
 // activeIssueKeys returns the set of "repo#number" keys currently in flight across

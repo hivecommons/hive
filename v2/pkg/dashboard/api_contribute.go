@@ -12,7 +12,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -118,6 +120,10 @@ func (s *Server) registerContributeRoutes() {
 	// Read-only ready-work QUEUE snapshot (the admissible issues waiting to be
 	// picked off). Also public; a JSON fallback for the SSE hello payload.
 	s.mux.HandleFunc("GET /api/contribute/queue", s.handleContributeQueue)
+	// Operator priority override for the ready-work queue. Owner/read-write only —
+	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
+	// prefix is exempt from roleEnforcement's read-only block (see that helper).
+	s.mux.HandleFunc("PUT /api/contribute/queue/order", s.handleContributeQueueOrder)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
@@ -514,10 +520,21 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .clanker-status.working{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
 .clanker-status.reviewing{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
 .clanker-status.idle{background:rgba(139,148,158,.12);color:#8b949e;border-color:rgba(139,148,158,.3)}
-/* Ready-work QUEUE — the stack of issues waiting to be picked off */
-.cc-queue{max-height:340px;overflow-y:auto}
+/* Ready-work QUEUE — the stack of issues waiting to be picked off. A generous
+   max-height keeps a long backlog (up to ~150 items) scrolling inside the card
+   instead of stretching the page; the panel scrolls, the page does not. */
+.cc-queue{max-height:560px;overflow-y:auto}
 .cc-q-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid #21262d;animation:cc-popin .35s ease;position:relative}
 .cc-q-item:first-child{background:rgba(88,166,255,.05)}
+/* Drag handle (grab bar) — owner/read-write only. Hidden unless the queue root
+   carries .cc-q-draggable (set by initAdmin after /api/role). Reduced-motion and
+   pointer friendly. */
+.cc-q-grip{display:none;flex-shrink:0;width:16px;align-self:stretch;cursor:grab;color:#6e7681;font-size:.9rem;line-height:1;align-items:center;justify-content:center;user-select:none;touch-action:none}
+.cc-q-grip:hover{color:#c9d1d9}
+.cc-queue.cc-q-draggable .cc-q-grip{display:flex}
+.cc-queue.cc-q-draggable .cc-q-item{cursor:default}
+.cc-q-item.cc-q-dragging{opacity:.5;cursor:grabbing}
+.cc-q-item.cc-q-over{box-shadow:inset 0 2px 0 0 #58a6ff}
 .cc-q-idx{font-size:.7rem;color:#6e7681;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;flex-shrink:0;width:22px;text-align:right;padding-top:2px}
 .cc-q-body{flex:1;min-width:0}
 .cc-q-repo{font-size:.72rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
@@ -1167,6 +1184,10 @@ async function initAdmin(){
     adminHub=(cd&&cd.hub)?cd.hub:{};
   }catch(e){adminHub={};}
   renderAdminControls();
+  // The ready-work queue may have rendered before this role check resolved (SSE
+  // hello / poll fires immediately on tab open). Re-render now that adminEnabled is
+  // true so the grab bars appear for this owner/read-write viewer.
+  if(typeof ccRenderQueue==='function')ccRenderQueue();
 }
 
 // #2546: human-readable label for the machine reason a clanker is idle. Keeps the
@@ -1344,14 +1365,70 @@ function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
 
 function ccRenderQueue(){
   var el=document.getElementById('cc-queue');if(!el)return;
+  // Drag-reorder is an operator CONTROL: only owner/read-write viewers get grab
+  // bars. adminEnabled is set true by initAdmin ONLY after /api/role reports owner
+  // or read-write; a read/anon viewer never gets the handles and cannot reorder.
+  // The server enforces the same boundary independently (403 on the order endpoint).
+  el.classList.toggle('cc-q-draggable',!!adminEnabled);
   if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';return;}
   el.innerHTML=ccQueue.map(function(q,i){
-    var labels=(q.labels&&q.labels.length)?('<div class="cc-q-labels">'+q.labels.slice(0,4).map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join('')+'</div>'):'';
+    // Show ALL of the issue's gh labels as pills (the backend already carries the
+    // full label set). "My work" items render every label the same way, so the
+    // queue is consistent with them. esc() guards each label.
+    var labels=(q.labels&&q.labels.length)?('<div class="cc-q-labels">'+q.labels.map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join('')+'</div>'):'';
     var next=(i===0)?'<span class="cc-q-next">next up</span>':'';
-    return '<div class="cc-q-item" data-qkey="'+esc(ccQueueKey(q))+'"><span class="cc-q-idx">'+(i+1)+'</span>'+
+    // The grab bar is always in the DOM but only VISIBLE via CSS when the queue
+    // root carries .cc-q-draggable (owner/read-write). draggable is likewise gated
+    // so a read viewer's markup is inert. aria-hidden: purely a mouse/pointer affordance.
+    var grip=adminEnabled?'<span class="cc-q-grip" aria-hidden="true" title="Drag to reprioritise">&#x283F;</span>':'';
+    return '<div class="cc-q-item"'+(adminEnabled?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
       '<div class="cc-q-body"><div class="cc-q-repo">'+esc(q.repo||'')+'#'+esc(q.number||'')+'</div>'+
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+'</div>';
   }).join('');
+  if(adminEnabled)ccBindQueueDrag(el);
+}
+
+// ── Operator drag-reorder (grab bars) — owner/read-write only ──────────────────
+// Dependency-free HTML5 drag-and-drop. On drop it recomputes ccQueue from the new
+// DOM order, re-renders (so indices / "next up" update), and PERSISTS the order to
+// the authenticated endpoint. The persisted order becomes the offer-priority
+// override that ReadyQueue AND selectTask honour — but it only reorders OFFER
+// PRIORITY; the server still applies every admission/cooldown filter, so a pinned
+// issue that is filtered out or no longer actionable is skipped, never forced in.
+var ccDragKey=null; // qkey of the row currently being dragged
+function ccBindQueueDrag(root){
+  var items=root.querySelectorAll('.cc-q-item');
+  for(var i=0;i<items.length;i++){(function(it){
+    it.addEventListener('dragstart',function(e){
+      ccDragKey=it.getAttribute('data-qkey');it.classList.add('cc-q-dragging');
+      try{e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',ccDragKey);}catch(err){}
+    });
+    it.addEventListener('dragend',function(){it.classList.remove('cc-q-dragging');
+      var all=root.querySelectorAll('.cc-q-item');for(var k=0;k<all.length;k++)all[k].classList.remove('cc-q-over');});
+    it.addEventListener('dragover',function(e){e.preventDefault();try{e.dataTransfer.dropEffect='move';}catch(err){}it.classList.add('cc-q-over');});
+    it.addEventListener('dragleave',function(){it.classList.remove('cc-q-over');});
+    it.addEventListener('drop',function(e){
+      e.preventDefault();it.classList.remove('cc-q-over');
+      var from=ccDragKey,to=it.getAttribute('data-qkey');if(!from||from===to)return;
+      // Reorder the ccQueue model: pull the dragged item, insert it before the drop target.
+      var fromIdx=-1,toIdx=-1;
+      for(var a=0;a<ccQueue.length;a++){if(ccQueueKey(ccQueue[a])===from)fromIdx=a;if(ccQueueKey(ccQueue[a])===to)toIdx=a;}
+      if(fromIdx<0||toIdx<0)return;
+      var moved=ccQueue.splice(fromIdx,1)[0];
+      // After splice the target index may have shifted; recompute against the moved-out array.
+      toIdx=-1;for(var b=0;b<ccQueue.length;b++){if(ccQueueKey(ccQueue[b])===to){toIdx=b;break;}}
+      if(toIdx<0)toIdx=ccQueue.length;
+      ccQueue.splice(toIdx,0,moved);
+      ccRenderQueue();
+      ccPersistQueueOrder();
+    });
+  })(items[i]);}
+}
+function ccPersistQueueOrder(){
+  var order=ccQueue.map(ccQueueKey);
+  fetch('/api/contribute/queue/order',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:order})})
+    .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
+    .catch(function(){/* a read viewer would 403 here, but the UI never shows handles to them */});
 }
 function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
   var el=document.getElementById('cc-live'),lbl=document.getElementById('cc-live-label');if(!el||!lbl)return;
@@ -1777,6 +1854,66 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 		queue = s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
 	}
 	jsonResponse(w, map[string]any{"queue": queue})
+}
+
+// maxQueueOrderKeys caps how many priority keys the operator override may carry.
+// It is well above readyQueueDefaultLimit (the whole visible queue could be
+// pinned) yet bounds a pathological / hostile payload so it can neither bloat
+// hive.yaml nor slow the per-selectTask ordering lookup.
+const maxQueueOrderKeys = 512
+
+// queueOrderKeyPattern validates one "owner/repo#number" priority key. Keeping the
+// stored override to well-formed keys means a malformed entry can never match a
+// candidate (it would simply be a permanent no-op) and keeps hive.yaml clean.
+var queueOrderKeyPattern = regexp.MustCompile(`^[^\s/#]+/[^\s/#]+#[0-9]+$`)
+
+// handleContributeQueueOrder persists the OPERATOR PRIORITY OVERRIDE for the
+// ready-work queue — the ordered "owner/repo#number" list the operator produced by
+// dragging queue rows on the Operations tab. It is a CONTROL, so it is owner/read-
+// write ONLY, enforced server-side by requireContributorWrite (a read/anon caller
+// gets 403). It stores the order into Config.Hub.ContributeQueueOrder through the
+// SAME refreshAndPersist path the Governor Hub admission settings use, so it
+// survives restart. The override only changes OFFER PRIORITY: ReadyQueue and
+// selectTask both apply it AFTER their admission/cooldown/disabled/in-flight
+// exclusions, so a pinned issue that is filtered out or stale is skipped, never
+// resurrected. It never bypasses any filter.
+func (s *Server) handleContributeQueueOrder(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	var body struct {
+		Order []string `json:"order"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonError(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if len(body.Order) > maxQueueOrderKeys {
+		jsonError(w, "too many queue-order keys", http.StatusBadRequest)
+		return
+	}
+	// Sanitise: keep only well-formed, unique keys, preserving the operator's order.
+	// A malformed or duplicate key is dropped rather than rejected so a partially
+	// stale UI payload still persists the good keys.
+	seen := make(map[string]struct{}, len(body.Order))
+	cleaned := make([]string, 0, len(body.Order))
+	for _, k := range body.Order {
+		k = strings.TrimSpace(k)
+		if k == "" || !queueOrderKeyPattern.MatchString(k) {
+			continue
+		}
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		cleaned = append(cleaned, k)
+	}
+	s.deps.Config.Hub.ContributeQueueOrder = cleaned
+	s.auditFromRequest(r, "contribute_queue_order", auditDetail("keys", strconv.Itoa(len(cleaned))), "")
+	s.refreshAndPersist()
+	s.logger.Info("contribute queue order updated", "keys", len(cleaned))
+	jsonResponse(w, map[string]any{"ok": true, "order": cleaned})
 }
 
 // ── Contributor management ─────────────────────────────────────────────────

@@ -2062,8 +2062,33 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 		return h.taskUnavailable(taskUnavailableNoMatchingWork)
 	}
 
+	// Operator priority override (#queue-reorder): the ordered list of issue keys
+	// the operator dragged to the front of the ready-work queue on the Operations
+	// tab. It takes precedence over the default ordering below so a prioritised
+	// issue is OFFERED FIRST. It never bypasses admission: every entry in
+	// `candidates` already passed the SAME cooldown / failure / disabled-repo /
+	// filter / in-flight exclusions above, so a pinned-but-no-longer-actionable key
+	// simply never became a candidate (stale keys are skipped). Rank sentinel: a
+	// candidate NOT in the override ranks at len(override), so all pinned candidates
+	// sort ahead of all unpinned ones while their own relative order is the operator's.
+	var queueOrderIdx map[string]int
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		queueOrderIdx = queueOrderIndex(h.server.deps.Config.Hub.ContributeQueueOrder)
+	}
+	orderRank := func(c candidate) int {
+		if len(queueOrderIdx) == 0 {
+			return 0 // no override → every candidate ties, key is a no-op
+		}
+		if r, ok := queueOrderIdx[fmt.Sprintf("%s#%d", c.repoFull, c.number)]; ok {
+			return r
+		}
+		return len(queueOrderIdx)
+	}
+
 	// Order the admissible set with a STABLE sort so the pick is deterministic
 	// (easy to reason about and to test — no randomness):
+	//   0. operator priority override first (#queue-reorder) — pinned issues in the
+	//      operator's dragged order; a no-op when no override is set;
 	//   1. own-work first (#2390 — preserved unchanged);
 	//   2. then fewer recent failures first (#2435 remedy 3 backstop) — an issue
 	//      whose short failure cooldown has just elapsed but which still carries
@@ -2071,11 +2096,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	//      flaky issue can no longer monopolise the head of the queue even if the
 	//      ledger is imperfect;
 	//   3. otherwise the established per-repo / creation scan order is kept.
-	// When the contributor has no own work AND nothing has failed, this is a no-op
-	// and behaviour is identical to the previous first-eligible pick.
+	// When the contributor has no own work AND nothing has failed AND no override is
+	// set, this is a no-op and behaviour is identical to the previous first-eligible pick.
 	ownFirst := make([]candidate, len(candidates))
 	copy(ownFirst, candidates)
 	sort.SliceStable(ownFirst, func(i, j int) bool {
+		if ri, rj := orderRank(ownFirst[i]), orderRank(ownFirst[j]); ri != rj {
+			return ri < rj // operator-pinned (lower rank) sorts ahead
+		}
 		if ownFirst[i].isOwn != ownFirst[j].isOwn {
 			return ownFirst[i].isOwn // own work sorts ahead of non-own
 		}
