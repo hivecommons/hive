@@ -157,7 +157,9 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 	cutoff := time.Now().Add(-recentlyResolvedWindow)
 	for agentName, store := range stores {
 		seen := make(map[string]bool)
-		for _, b := range store.List(beads.ListFilter{}) {
+		items := store.List(beads.ListFilter{})
+		sortAdvisoryBeads(items)
+		for _, b := range items {
 			if !isAdvisoryBeadType(b.Type) {
 				continue
 			}
@@ -199,7 +201,10 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 		}
 	}
 	sort.Slice(resolved, func(i, j int) bool {
-		return resolved[i].ClosedAt.After(resolved[j].ClosedAt)
+		if !resolved[i].ClosedAt.Equal(resolved[j].ClosedAt) {
+			return resolved[i].ClosedAt.After(resolved[j].ClosedAt)
+		}
+		return resolvedFindingSortKey(resolved[i]) < resolvedFindingSortKey(resolved[j])
 	})
 	const maxRecentlyResolved = 100
 	if len(resolved) > maxRecentlyResolved {
@@ -212,6 +217,36 @@ func BuildDigestFromBeads(stores map[string]*beads.Store, mode string) *Digest {
 		TotalCount:       total,
 		RecentlyResolved: resolved,
 	}
+}
+
+// sortAdvisoryBeads preserves the existing one-open-finding-per-title digest
+// contract while making its representative deterministic. Store.List orders by
+// CreatedAt, but distinct beads imported in one batch can share that timestamp;
+// their map-derived tie order otherwise changes across process restarts.
+func sortAdvisoryBeads(items []*beads.Bead) {
+	sort.Slice(items, func(i, j int) bool {
+		left, right := items[i], items[j]
+		if !left.CreatedAt.Equal(right.CreatedAt.Time) {
+			return left.CreatedAt.Before(right.CreatedAt.Time)
+		}
+		return advisoryBeadSortKey(left) < advisoryBeadSortKey(right)
+	})
+}
+
+func advisoryBeadSortKey(b *beads.Bead) string {
+	return strings.Join([]string{
+		b.Title,
+		b.ExternalRef,
+		b.ID,
+		string(b.Type),
+		strconv.Itoa(int(b.Priority)),
+		b.Actor,
+		b.Notes,
+	}, "\x00")
+}
+
+func resolvedFindingSortKey(f ResolvedFinding) string {
+	return strings.Join([]string{f.Agent, f.Title, f.File}, "\x00")
 }
 
 func beadPriorityToSeverity(p beads.Priority) string {
