@@ -1,9 +1,11 @@
 package dashboard
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,9 +33,16 @@ import (
 //     endpoint and the Claude CLI has no non-interactive `claude models`
 //     command, so this is a maintained static list of CURRENT model ids
 //     (kept in sync with CLAUDE_CLI_MODELS in static/index.html).
-//   - goose:   provider-configured (Ollama/OpenAI/Anthropic/...). Without a
-//     stable machine-readable "list models for my provider" command, this
-//     returns a per-provider static list, or "default" when unconfigured.
+//   - goose:   provider-configured (Ollama/OpenAI/Anthropic/...). goose
+//     >= 1.37 ships an ACP (Agent Client Protocol) agent server (`goose acp`,
+//     JSON-RPC over stdio): initialize + session/new returns result.models
+//     {currentModelId, availableModels}, sourced from goose's provider
+//     inventory, which live-fetches the CONFIGURED provider's own models
+//     endpoint. goose resolves ALL provider credentials itself (keyring /
+//     secrets.yaml / env) — hive never reads goose secrets. Unconfigured or
+//     pre-1.37 goose omits the models key from the session/new result (the
+//     clean fallback signal); that, a missing binary, or any error falls
+//     back to a curated per-provider static list.
 //
 // Every discovery is BEST-EFFORT: a failed or absent probe falls back to a
 // current static list so a dropdown is never empty and never errors. Results
@@ -165,6 +174,53 @@ const (
 	// geminiGenerateMethod is the supportedGenerationMethods entry that marks
 	// a model as usable for chat/content generation (vs embeddings, etc.).
 	geminiGenerateMethod = "generateContent"
+
+	// --- Goose (ACP) ---
+
+	// gooseACPBinary and gooseACPSubcommand spawn goose's ACP agent server
+	// (`goose acp`, goose >= 1.37): JSON-RPC 2.0, newline-delimited, on stdio.
+	gooseACPBinary     = "goose"
+	gooseACPSubcommand = "acp"
+
+	// gooseACPProbeTimeout bounds the whole probe (spawn + initialize +
+	// session/new + session/close). Measured 0.39s locally against a live
+	// Ollama including process spawn; the headroom is for slow remote
+	// providers, whose models endpoint goose fetches inline.
+	gooseACPProbeTimeout = 10 * time.Second
+
+	// gooseACPProtocolVersion is the ACP protocol version sent in initialize.
+	// Verified against goose 1.37.0, which answers protocolVersion 1.
+	gooseACPProtocolVersion = 1
+
+	// gooseACPShutdownGrace is how long the probe waits for goose to exit on
+	// its own after stdin closes (letting it process the best-effort
+	// session/close) before killing it. The process is ALWAYS reaped either
+	// way; this only bounds how long a lingering goose can hold the probe.
+	gooseACPShutdownGrace = 2 * time.Second
+
+	// gooseACPClientName / gooseACPClientVersion identify this probe in the
+	// ACP initialize handshake's clientInfo.
+	gooseACPClientName    = "hive-model-probe"
+	gooseACPClientVersion = "1.0"
+
+	// gooseACPAgentHome is the shared agent HOME (see copilotSDKAgentHome —
+	// same directory, same rationale): goose reads its provider config from
+	// ~/.config/goose/config.yaml, so the probe must run under the HOME the
+	// agents use to see which provider is configured. Unlike codex, goose
+	// needs no isolated HOME. Side-effect: each probe writes a session (plus
+	// inventory rows) into goose's sessions.db under this HOME, which is why
+	// the probe sends session/close when done (see gooseACPExchange).
+	gooseACPAgentHome = "/data/home"
+
+	// gooseACPMaxLineBytes caps a single ACP stdout line. session/new results
+	// carry the full model inventory, which can exceed bufio.Scanner's 64 KiB
+	// default.
+	gooseACPMaxLineBytes = 1 << 20
+
+	// JSON-RPC request ids for the fixed probe sequence.
+	gooseACPInitializeID   = 1
+	gooseACPSessionNewID   = 2
+	gooseACPSessionCloseID = 3
 )
 
 // --- Static fallback lists (kept CURRENT — July 2026) ---
@@ -782,13 +838,81 @@ func parseGeminiModelsResponse(r io.Reader) ([]string, error) {
 
 // --- Goose discovery ---
 
-// discoverGooseModels returns models for goose's configured provider. Goose has
-// no stable machine-readable "list models for my configured provider" command
-// across providers, so this maps the configured provider (via GOOSE_PROVIDER /
-// GOOSE_MODEL env, honoring the pinned model) to a static per-provider list,
-// or "default" when unconfigured. Marked fallback=true since it is not a live
-// provider query.
+// errGooseBinaryMissing means goose is not on PATH — today's NORMAL on hosted
+// spokes (verified: goose is not installed in the hive pods), so it is an
+// expected fallback signal, not a logged failure.
+var errGooseBinaryMissing = errors.New("goose binary not on PATH")
+
+// errGooseModelsAbsent means session/new answered WITHOUT a models key: goose
+// is unconfigured (no provider) or predates 1.37. This is goose's clean
+// "nothing to discover" signal, so it too falls back silently.
+var errGooseModelsAbsent = errors.New("goose session/new returned no models (unconfigured or pre-1.37 goose)")
+
+// gooseACPModels is the parsed result.models of an ACP session/new response.
+type gooseACPModels struct {
+	// CurrentModelID is goose's active model (goose also lists it first in
+	// AvailableModels).
+	CurrentModelID string
+	// AvailableModels are the modelId values of result.models.availableModels.
+	AvailableModels []string
+}
+
+// runGooseACPProbe is the probe seam (mirroring runCopilotSDKHelper) so unit
+// tests can substitute canned inventories without a goose binary.
+var runGooseACPProbe = execGooseACPProbe
+
+// discoverGooseModels lists the models goose's CONFIGURED provider serves, by
+// driving `goose acp` (goose >= 1.37): initialize + session/new returns
+// result.models {currentModelId, availableModels}, backed by goose's
+// provider-inventory subsystem, which live-fetches the provider's own models
+// endpoint (verified end-to-end against a live Ollama: the exact /api/tags
+// inventory, ~0.4s round trip including process spawn).
+//
+// Design invariants:
+//
+//   - hive NEVER reads goose's provider credentials — goose resolves them
+//     itself (keyring / secrets.yaml / env). That is the whole advantage of
+//     this probe over probing providers directly, and it must stay that way.
+//   - GOOSE_PROVIDER / GOOSE_MODEL env (inherited by the spawned goose)
+//     override the config's active provider/model; a GOOSE_MODEL pin is also
+//     surfaced first in the served list.
+//   - For providers goose cannot (or is not configured to) refresh — e.g.
+//     ollama without OLLAMA_HOST — availableModels is goose's curated catalog
+//     rather than live inventory, with no distinguishing flag. Acceptable:
+//     still fresher than hive's static map. On a slow remote provider the
+//     FIRST call may serve catalog data with the refreshed inventory arriving
+//     on the next call; the stabilize() retention absorbs that churn.
+//   - Missing binary, absent models key, error, or timeout → empty result →
+//     the caller serves the curated per-provider static fallback below.
 func (s *Server) discoverGooseModels() cliModelResult {
+	ctx, cancel := context.WithTimeout(context.Background(), gooseACPProbeTimeout)
+	defer cancel()
+	inv, err := runGooseACPProbe(ctx)
+	if err == nil && inv != nil && len(inv.AvailableModels) > 0 {
+		// Pinned model first: an explicit GOOSE_MODEL env pin wins, else
+		// goose's own current model (which goose already orders first).
+		pinned := strings.TrimSpace(os.Getenv("GOOSE_MODEL"))
+		if pinned == "" {
+			pinned = inv.CurrentModelID
+		}
+		models := inv.AvailableModels
+		if pinned != "" {
+			models = append([]string{pinned}, models...)
+		}
+		return cliModelResult{models: dedupeModels(models), fallback: false}
+	}
+	if err != nil && !errors.Is(err, errGooseBinaryMissing) && !errors.Is(err, errGooseModelsAbsent) {
+		// Only our own error text — never session payloads, never secrets.
+		s.logger.Info("goose ACP model discovery unavailable, serving static fallback", "err", err.Error())
+	}
+	return gooseStaticProviderResult()
+}
+
+// gooseStaticProviderResult maps the configured provider (GOOSE_PROVIDER env)
+// to the curated static list, honoring a GOOSE_MODEL pin first, or ["default"]
+// when unconfigured. Always fallback=true: this is a curated list, not a live
+// enumeration of the provider's catalog.
+func gooseStaticProviderResult() cliModelResult {
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv("GOOSE_PROVIDER")))
 	var models []string
 	if list, ok := gooseProviderStaticModels[provider]; ok {
@@ -801,9 +925,204 @@ func (s *Server) discoverGooseModels() cliModelResult {
 	if len(models) == 0 {
 		models = []string{"default"}
 	}
-	// Always fallback=true: this is a curated per-provider list, not a live
-	// enumeration of the provider's catalog.
 	return cliModelResult{models: dedupeModels(models), fallback: true}
+}
+
+// execGooseACPProbe spawns `goose acp` and runs the fixed ACP exchange. The
+// probe runs under the shared agent HOME (gooseACPAgentHome) when it exists so
+// goose sees the agents' provider config; otherwise the server's own HOME is
+// left in place (dev machines). The spawned process is always reaped.
+func execGooseACPProbe(ctx context.Context) (*gooseACPModels, error) {
+	bin, err := exec.LookPath(gooseACPBinary)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", errGooseBinaryMissing, err.Error())
+	}
+	cmd := exec.CommandContext(ctx, bin, gooseACPSubcommand)
+	// os/exec documents that for duplicate keys the LAST value wins, so
+	// appending overrides the inherited HOME. GOOSE_PROVIDER / GOOSE_MODEL
+	// pass through via the inherited environment.
+	env := os.Environ()
+	cwd := os.TempDir()
+	if st, statErr := os.Stat(gooseACPAgentHome); statErr == nil && st.IsDir() {
+		env = append(env, "HOME="+gooseACPAgentHome)
+		cwd = gooseACPAgentHome
+	}
+	cmd.Env = env
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("goose acp stdin: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("goose acp stdout: %w", err)
+	}
+	// goose logs startup chatter on stderr; it is discarded, never parsed and
+	// never logged (it could echo config details).
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("goose acp start: %w", err)
+	}
+	inv, exchErr := gooseACPExchange(ctx, stdin, stdout, cwd)
+	// Closing stdin is the ACP server's shutdown signal (after it drains the
+	// best-effort session/close). Give it a short grace to exit on its own,
+	// then kill; either way Wait reaps the process. A nonzero exit after a
+	// successful exchange is irrelevant.
+	_ = stdin.Close()
+	waitDone := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(gooseACPShutdownGrace):
+		_ = cmd.Process.Kill()
+		<-waitDone
+	}
+	return inv, exchErr
+}
+
+// gooseACPRequest writes one newline-delimited JSON-RPC 2.0 request.
+func gooseACPRequest(w io.Writer, id int, method string, params any) error {
+	msg, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", method, err)
+	}
+	if _, err := w.Write(append(msg, '\n')); err != nil {
+		return fmt.Errorf("write %s: %w", method, err)
+	}
+	return nil
+}
+
+// gooseACPAwait reads newline-delimited JSON-RPC messages until the response
+// carrying the given id arrives, skipping notifications and agent-initiated
+// requests (anything carrying a method). Honors ctx.
+func gooseACPAwait(ctx context.Context, lines <-chan []byte, id int) (json.RawMessage, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("awaiting goose acp response %d: %w", id, ctx.Err())
+		case line, ok := <-lines:
+			if !ok {
+				return nil, fmt.Errorf("goose acp stream ended awaiting response %d", id)
+			}
+			var msg struct {
+				ID     *int            `json:"id"`
+				Method string          `json:"method"`
+				Result json.RawMessage `json:"result"`
+				Error  *struct {
+					Code    int    `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(line, &msg); err != nil {
+				continue // non-JSON chatter — skip, like notifications
+			}
+			if msg.Method != "" || msg.ID == nil || *msg.ID != id {
+				continue
+			}
+			if msg.Error != nil {
+				return nil, fmt.Errorf("goose acp error %d on request %d: %s", msg.Error.Code, id, msg.Error.Message)
+			}
+			return msg.Result, nil
+		}
+	}
+}
+
+// gooseACPExchange speaks the fixed probe sequence over an already-connected
+// stdio pair (factored off the process plumbing so tests can feed canned
+// responses through pipes):
+//
+//	initialize (protocolVersion 1) → session/new (cwd, no MCP servers) →
+//	parse result.models → best-effort session/close.
+//
+// session/close matters: every session/new persists a session (plus inventory
+// rows) into goose's sessions.db under the probe HOME, and closing the session
+// (the capability is advertised by goose 1.37) keeps repeated probes from
+// accumulating rows. Close failures are ignored — the inventory is already in
+// hand.
+func gooseACPExchange(ctx context.Context, w io.Writer, r io.Reader, cwd string) (*gooseACPModels, error) {
+	lines := make(chan []byte)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), gooseACPMaxLineBytes)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			select {
+			case lines <- []byte(line):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	initParams := map[string]any{
+		"protocolVersion": gooseACPProtocolVersion,
+		"clientCapabilities": map[string]any{
+			// The probe serves no filesystem to the agent.
+			"fs": map[string]bool{"readTextFile": false, "writeTextFile": false},
+		},
+		"clientInfo": map[string]string{"name": gooseACPClientName, "version": gooseACPClientVersion},
+	}
+	if err := gooseACPRequest(w, gooseACPInitializeID, "initialize", initParams); err != nil {
+		return nil, err
+	}
+	if _, err := gooseACPAwait(ctx, lines, gooseACPInitializeID); err != nil {
+		return nil, err
+	}
+
+	newParams := map[string]any{"cwd": cwd, "mcpServers": []any{}}
+	if err := gooseACPRequest(w, gooseACPSessionNewID, "session/new", newParams); err != nil {
+		return nil, err
+	}
+	result, err := gooseACPAwait(ctx, lines, gooseACPSessionNewID)
+	if err != nil {
+		return nil, err
+	}
+
+	var res struct {
+		SessionID string `json:"sessionId"`
+		Models    *struct {
+			CurrentModelID  string `json:"currentModelId"`
+			AvailableModels []struct {
+				ModelID string `json:"modelId"`
+			} `json:"availableModels"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(result, &res); err != nil {
+		return nil, fmt.Errorf("parse session/new result: %w", err)
+	}
+
+	// Best-effort session/close BEFORE returning, whether or not models were
+	// present — session/new persisted a session either way. Fire and forget:
+	// no await, and a write failure is ignored.
+	if res.SessionID != "" {
+		_ = gooseACPRequest(w, gooseACPSessionCloseID, "session/close", map[string]any{"sessionId": res.SessionID})
+	}
+
+	if res.Models == nil {
+		return nil, errGooseModelsAbsent
+	}
+	inv := &gooseACPModels{CurrentModelID: res.Models.CurrentModelID}
+	for _, m := range res.Models.AvailableModels {
+		if m.ModelID == "" {
+			continue
+		}
+		inv.AvailableModels = append(inv.AvailableModels, m.ModelID)
+	}
+	if len(inv.AvailableModels) == 0 {
+		return nil, errGooseModelsAbsent
+	}
+	return inv, nil
 }
 
 // --- helpers ---

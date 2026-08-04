@@ -160,6 +160,7 @@ func TestQueryCLIModels_GeminiFallbackNoKey(t *testing.T) {
 // TestQueryCLIModels_GooseUsesProvider verifies goose maps a configured
 // provider to its static list.
 func TestQueryCLIModels_GooseUsesProvider(t *testing.T) {
+	swapGooseProbe(t, gooseProbeMissing)
 	t.Setenv("GOOSE_PROVIDER", "anthropic")
 	t.Setenv("GOOSE_MODEL", "")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
@@ -173,6 +174,7 @@ func TestQueryCLIModels_GooseUsesProvider(t *testing.T) {
 }
 
 func TestQueryCLIModels_GooseUnconfigured(t *testing.T) {
+	swapGooseProbe(t, gooseProbeMissing)
 	t.Setenv("GOOSE_PROVIDER", "")
 	t.Setenv("GOOSE_MODEL", "")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
@@ -183,6 +185,7 @@ func TestQueryCLIModels_GooseUnconfigured(t *testing.T) {
 }
 
 func TestQueryCLIModels_GoosePinnedModelFirst(t *testing.T) {
+	swapGooseProbe(t, gooseProbeMissing)
 	t.Setenv("GOOSE_PROVIDER", "ollama")
 	t.Setenv("GOOSE_MODEL", "my-pinned-model")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
@@ -323,6 +326,7 @@ func TestCliStaticFallback_BobAutoOnly(t *testing.T) {
 // TestQueryCLIModels_BobDoesNotAffectOtherBackends guards against a regression
 // where adding bob narrows or empties another CLI backend's catalog.
 func TestQueryCLIModels_BobDoesNotAffectOtherBackends(t *testing.T) {
+	swapGooseProbe(t, gooseProbeMissing)
 	t.Setenv("COPILOT_GITHUB_TOKEN", "")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	for _, backend := range []string{"claude", "copilot", "gemini", "goose", "codex"} {
