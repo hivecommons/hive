@@ -3533,27 +3533,28 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// service-account-file fallback chain. Omitted (empty string)
 			// outside a cluster, which the Hub tab renders by skipping the
 			// line rather than showing a blank/"undefined" value.
-			"namespace":                        podNamespace(),
-			"url":                              cfg.Hub.URL,
-			"dashboard_url":                    cfg.Hub.DashboardURL,
-			"snapshot_url":                     cfg.Hub.SnapshotURL,
-			"is_public":                        cfg.Hub.IsPublic,
-			"auto_snapshot":                    cfg.Hub.AutoSnapshot,
-			"auto_upgrade":                     cfg.Hub.AutoUpgrade,
-			"snapshot_interval_min":            cfg.Hub.SnapshotIntervalMin,
-			"contribute_suspended":             cfg.Hub.ContributeSuspended,
-			"contribute_titles_mode":           cfg.Hub.ContributeTitlesMode,
-			"contribute_authors_mode":          cfg.Hub.ContributeAuthorsMode,
-			"contribute_labels_mode":           cfg.Hub.ContributeLabelsMode,
-			"contribute_allow_labels":          cfg.Hub.ContributeAllowLabels,
-			"contribute_deny_labels":           cfg.Hub.ContributeDenyLabels,
-			"contribute_deny_titles":           cfg.Hub.ContributeDenyTitles,
-			"contribute_deny_authors":          cfg.Hub.ContributeDenyAuthors,
-			"contribute_allow_models":          cfg.Hub.ContributeAllowModels,
-			"contribute_reject_unknown_models": cfg.Hub.ContributeRejectUnknownModels,
-			"disabled_repos":                   cfg.Hub.DisabledRepos,
-			"disabled_tiers":                   cfg.Hub.DisabledTiers,
-			"tier_limits":                      cfg.Hub.TierLimits,
+			"namespace":                          podNamespace(),
+			"url":                                cfg.Hub.URL,
+			"dashboard_url":                      cfg.Hub.DashboardURL,
+			"snapshot_url":                       cfg.Hub.SnapshotURL,
+			"is_public":                          cfg.Hub.IsPublic,
+			"auto_snapshot":                      cfg.Hub.AutoSnapshot,
+			"auto_upgrade":                       cfg.Hub.AutoUpgrade,
+			"snapshot_interval_min":              cfg.Hub.SnapshotIntervalMin,
+			"contribute_suspended":               cfg.Hub.ContributeSuspended,
+			"contribute_titles_mode":             cfg.Hub.ContributeTitlesMode,
+			"contribute_authors_mode":            cfg.Hub.ContributeAuthorsMode,
+			"contribute_labels_mode":             cfg.Hub.ContributeLabelsMode,
+			"contribute_allow_labels":            cfg.Hub.ContributeAllowLabels,
+			"contribute_deny_labels":             cfg.Hub.ContributeDenyLabels,
+			"contribute_deny_titles":             cfg.Hub.ContributeDenyTitles,
+			"contribute_deny_authors":            cfg.Hub.ContributeDenyAuthors,
+			"contribute_allow_models":            cfg.Hub.ContributeAllowModels,
+			"contribute_reject_unknown_models":   cfg.Hub.ContributeRejectUnknownModels,
+			"contribute_skip_assigned_to_others": cfg.Hub.ContributeSkipAssignedToOthers,
+			"disabled_repos":                     cfg.Hub.DisabledRepos,
+			"disabled_tiers":                     cfg.Hub.DisabledTiers,
+			"tier_limits":                        cfg.Hub.TierLimits,
 		},
 	})
 }
@@ -3899,26 +3900,27 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Enabled                       *bool                      `json:"enabled"`
-		URL                           string                     `json:"url"`
-		DashboardURL                  string                     `json:"dashboard_url"`
-		SnapshotURL                   string                     `json:"snapshot_url"`
-		IsPublic                      *bool                      `json:"is_public"`
-		AutoSnapshot                  *bool                      `json:"auto_snapshot"`
-		AutoUpgrade                   *bool                      `json:"auto_upgrade"`
-		ContributeSuspended           *bool                      `json:"contribute_suspended"`
-		ContributeTitlesMode          *string                    `json:"contribute_titles_mode"`
-		ContributeAuthorsMode         *string                    `json:"contribute_authors_mode"`
-		ContributeLabelsMode          *string                    `json:"contribute_labels_mode"`
-		ContributeAllowLabels         []string                   `json:"contribute_allow_labels"`
-		ContributeDenyLabels          []string                   `json:"contribute_deny_labels"`
-		ContributeDenyTitles          []string                   `json:"contribute_deny_titles"`
-		ContributeDenyAuthors         []string                   `json:"contribute_deny_authors"`
-		ContributeAllowModels         []string                   `json:"contribute_allow_models"`
-		ContributeRejectUnknownModels *bool                      `json:"contribute_reject_unknown_models"`
-		DisabledRepos                 []string                   `json:"disabled_repos"`
-		DisabledTiers                 []string                   `json:"disabled_tiers"`
-		TierLimits                    map[string]config.TierRate `json:"tier_limits"`
+		Enabled                        *bool                      `json:"enabled"`
+		URL                            string                     `json:"url"`
+		DashboardURL                   string                     `json:"dashboard_url"`
+		SnapshotURL                    string                     `json:"snapshot_url"`
+		IsPublic                       *bool                      `json:"is_public"`
+		AutoSnapshot                   *bool                      `json:"auto_snapshot"`
+		AutoUpgrade                    *bool                      `json:"auto_upgrade"`
+		ContributeSuspended            *bool                      `json:"contribute_suspended"`
+		ContributeTitlesMode           *string                    `json:"contribute_titles_mode"`
+		ContributeAuthorsMode          *string                    `json:"contribute_authors_mode"`
+		ContributeLabelsMode           *string                    `json:"contribute_labels_mode"`
+		ContributeAllowLabels          []string                   `json:"contribute_allow_labels"`
+		ContributeDenyLabels           []string                   `json:"contribute_deny_labels"`
+		ContributeDenyTitles           []string                   `json:"contribute_deny_titles"`
+		ContributeDenyAuthors          []string                   `json:"contribute_deny_authors"`
+		ContributeAllowModels          []string                   `json:"contribute_allow_models"`
+		ContributeRejectUnknownModels  *bool                      `json:"contribute_reject_unknown_models"`
+		ContributeSkipAssignedToOthers *bool                      `json:"contribute_skip_assigned_to_others"`
+		DisabledRepos                  []string                   `json:"disabled_repos"`
+		DisabledTiers                  []string                   `json:"disabled_tiers"`
+		TierLimits                     map[string]config.TierRate `json:"tier_limits"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -3973,6 +3975,9 @@ func (s *Server) handleGovernorHub(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ContributeRejectUnknownModels != nil {
 		cfg.Hub.ContributeRejectUnknownModels = *body.ContributeRejectUnknownModels
+	}
+	if body.ContributeSkipAssignedToOthers != nil {
+		cfg.Hub.ContributeSkipAssignedToOthers = *body.ContributeSkipAssignedToOthers
 	}
 	if body.DisabledRepos != nil {
 		cfg.Hub.DisabledRepos = body.DisabledRepos

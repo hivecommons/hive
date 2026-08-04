@@ -15033,6 +15033,11 @@ function burnAreaChart() {
           <span class="config-toggle-label" style="${hub.contribute_suspended ? 'color:var(--red);font-weight:600' : ''}">Suspend Contributions <span class="config-info">i<span class="config-tooltip">Temporarily stop assigning tasks to contributors. Connected contributors stay online but idle.</span></span></span>
         </div>
 
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${hub.contribute_skip_assigned_to_others ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="contribute_skip_assigned_to_others"></div>
+          <span class="config-toggle-label">Skip Issues Assigned to Others <span class="config-info">i<span class="config-tooltip">When on, the contribute queue never serves an issue that is already assigned to a different GitHub user, so contributors don't pick up work a maintainer has claimed. Mirrored on the /contribute Management &amp; Operations tab.</span></span></span>
+        </div>
+
         ${renderFilterWithMode({
           label: 'Titles', noun: 'title', unit: 'issue',
           modeKey: 'contribute_titles_mode', listKey: 'contribute_deny_titles',

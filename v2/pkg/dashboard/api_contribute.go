@@ -427,6 +427,50 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .prompt-labels{margin:8px 0 4px;display:flex;flex-wrap:wrap;gap:4px}
 .prompt-text{margin-top:8px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.75rem;color:#c9d1d9;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto}
 .prompt-preview .ops-note{margin-top:8px}
+/* #2534 Operator admin controls — mirror the Governor Hub config controls into the
+   Management & Operations tab. Owner/read-write only; a read viewer never sees them. */
+.ops-admin{display:none}
+.ops-admin.enabled{display:block}
+.admin-badge{font-size:.68rem;font-weight:600;padding:2px 8px;border-radius:999px;background:rgba(210,153,34,.12);color:#d29922;border:1px solid rgba(210,153,34,.3);margin-left:auto}
+.admin-body{padding:16px 20px}
+.admin-toggle{display:flex;align-items:center;gap:10px;padding:8px 0}
+.admin-switch{width:38px;height:20px;border-radius:999px;background:#30363d;position:relative;cursor:pointer;flex-shrink:0;transition:background .15s}
+.admin-switch::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%%;background:#e6edf3;transition:left .15s}
+.admin-switch.on{background:#1f6feb}
+.admin-switch.on.danger{background:#f85149}
+.admin-switch.on::after{left:20px}
+.admin-toggle-label{font-size:.85rem;color:#e6edf3}
+.admin-toggle-sub{font-size:.74rem;color:#8b949e}
+.admin-field{margin:14px 0}
+.admin-field>label{display:block;font-size:.78rem;color:#8b949e;margin-bottom:6px}
+.admin-modeseg{display:inline-flex;border:1px solid #30363d;border-radius:6px;overflow:hidden;margin-bottom:6px}
+.admin-modeseg button{background:#0d1117;border:none;color:#8b949e;font-size:.72rem;padding:3px 10px;cursor:pointer;font-family:inherit}
+.admin-modeseg button.on{background:#1f6feb;color:#fff}
+.admin-chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px}
+.admin-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:.72rem;background:rgba(139,148,158,.12);color:#c9d1d9;border:1px solid #30363d}
+.admin-chip .x{cursor:pointer;opacity:.7}
+.admin-chip .x:hover{opacity:1;color:#f85149}
+.admin-addrow{display:flex;gap:4px}
+.admin-addrow input{flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font-size:.78rem;padding:5px 8px;font-family:inherit}
+.admin-addrow button,.admin-save{background:#238636;border:1px solid #2ea043;color:#fff;font-size:.75rem;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:inherit}
+.admin-addrow button{background:#21262d;border-color:#30363d;color:#c9d1d9}
+.admin-save{margin-top:8px}
+.admin-save:disabled{opacity:.5;cursor:default}
+.admin-hr{border:none;border-top:1px solid #21262d;margin:16px 0}
+.admin-actions{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.admin-act{background:#21262d;border:1px solid #30363d;color:#c9d1d9;font-size:.7rem;padding:3px 9px;border-radius:6px;cursor:pointer;font-family:inherit}
+.admin-act:hover{border-color:#8b949e}
+.admin-act.danger:hover{border-color:#f85149;color:#f85149}
+.admin-act select{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;font-size:.7rem;border-radius:6px;padding:2px 4px;font-family:inherit}
+.admin-modal-back{display:none;position:fixed;inset:0;background:rgba(1,4,9,.7);z-index:1000;align-items:center;justify-content:center}
+.admin-modal-back.show{display:flex}
+.admin-modal{background:#161b22;border:1px solid #30363d;border-radius:12px;max-width:420px;width:90%%;padding:22px}
+.admin-modal h4{margin:0 0 8px;font-size:1rem;color:#e6edf3}
+.admin-modal p{font-size:.85rem;color:#8b949e;line-height:1.5;margin:0 0 18px}
+.admin-modal-btns{display:flex;gap:8px;justify-content:flex-end}
+.admin-modal-btns button{font-size:.8rem;padding:6px 14px;border-radius:6px;cursor:pointer;font-family:inherit;border:1px solid #30363d;background:#21262d;color:#c9d1d9}
+.admin-modal-btns button.confirm{background:#da3633;border-color:#f85149;color:#fff}
+.admin-note{color:#6e7681;font-size:.76rem;margin-top:10px;line-height:1.5}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
@@ -611,7 +655,48 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
 <div class="ops">
 <h1>Management &amp; Operations</h1>
-<p class="subtitle" style="font-size:.95rem">A read-only operations view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work &mdash; surfaced from what this hive already knows. No controls here mutate policy or the fleet.</p>
+<p class="subtitle" style="font-size:.95rem">An operations view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The read-only panels below surface what this hive already knows; operators with write access also get the admin controls, mirrored from the Governor Hub configuration.</p>
+
+<!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
+     reports owner or read-write. These mirror the Governor Hub config section
+     (Suspend Contributions + the admission filters) and write through the SAME
+     endpoint the Governor dialog uses (PUT /api/config/governor/hub), plus the
+     existing per-contributor endpoints. The Governor Hub tab stays the canonical
+     editor — this is a mirror for the clanker-ops context. -->
+<div class="ops-card ops-admin" id="ops-admin">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Operator admin controls</h3><span class="admin-badge" id="admin-role-badge"></span></div>
+<div class="admin-body">
+<p class="ops-note" style="margin-top:0">Mirrored from the Governor Hub configuration. Changes here write the same <code>Config.Hub.*</code> fields the Governor config dialog edits. Owner &amp; read-write only.</p>
+
+<div class="admin-toggle">
+<div class="admin-switch" id="admin-suspend-switch" data-key="contribute_suspended"></div>
+<div><div class="admin-toggle-label">Suspend contributions</div><div class="admin-toggle-sub">Stop assigning tasks. Connected clankers stay online but idle.</div></div>
+</div>
+<div class="admin-toggle">
+<div class="admin-switch" id="admin-skip-switch" data-key="contribute_skip_assigned_to_others"></div>
+<div><div class="admin-toggle-label">Skip issues assigned to others</div><div class="admin-toggle-sub">Never serve an issue already assigned to a different GitHub user.</div></div>
+</div>
+
+<hr class="admin-hr">
+<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Admission filters</h3>
+<p class="ops-note" style="margin-top:0">The queue-shaping levers. Deny (default) skips matches; Allow serves only matches.</p>
+
+<div class="admin-field" id="admin-filter-titles"></div>
+<div class="admin-field" id="admin-filter-authors"></div>
+<div class="admin-field" id="admin-filter-labels"></div>
+
+<div class="admin-field">
+<label>Allowed models <span style="color:#6e7681">— wildcards (*) and /regex/. Empty = allow all.</span></label>
+<div class="admin-chips" id="admin-allow-models"></div>
+<div class="admin-addrow"><input type="text" id="admin-allow-model-input" placeholder="e.g. claude-opus*, /gemini-\d/"><button type="button" id="admin-add-model">Add</button></div>
+<div class="admin-toggle" style="padding-top:8px"><div class="admin-switch" id="admin-reject-switch" data-key="contribute_reject_unknown_models"></div><div class="admin-toggle-sub">Reject unknown models at connect time (only when the allowlist is non-empty).</div></div>
+</div>
+
+<button type="button" class="admin-save" id="admin-save-btn" disabled>Save filters</button>
+<p class="admin-note" id="admin-save-hint">Suspend / skip toggles apply immediately. Filter edits apply on Save. Both persist through <code>PUT /api/config/governor/hub</code>.</p>
+</div>
+</div>
+
 <div class="ops-grid">
 <div>
 <div class="ops-card">
@@ -659,7 +744,7 @@ tabs.forEach(function(t){t.addEventListener('click',function(){
   t.classList.add('active');t.setAttribute('aria-selected','true');
   var panel=document.getElementById(t.getAttribute('data-panel'));
   if(panel)panel.classList.add('active');
-  if(t.getAttribute('data-panel')==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();}
+  if(t.getAttribute('data-panel')==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();initAdmin();}
 });});
 
 var currentFilter='all';
@@ -673,6 +758,203 @@ document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener(
 
 function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
 function rel(ts){if(!ts)return '';var d=new Date(ts);if(isNaN(d))return '';var s=Math.floor((Date.now()-d.getTime())/1000);if(s<60)return s+'s ago';var m=Math.floor(s/60);if(m<60)return m+'m ago';var h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago';}
+
+// ── #2534 Operator admin controls (mirror of the Governor Hub config) ──────────
+// adminEnabled gates everything: it is only ever set true after /api/role reports
+// owner or read-write. A read viewer never sees a control, and the server enforces
+// the same boundary independently (roleEnforcement blocks non-GET on
+// /api/config/governor/hub for read; requireContributorWrite blocks the
+// contributor endpoints), so hiding is UX, not the security boundary.
+var adminEnabled=false;
+var adminHub=null;      // last-loaded Config.Hub.* snapshot (contribute_* fields)
+var adminDirty=false;   // filter edits pending Save
+
+function toast(msg,ok){
+  var t=document.createElement('div');
+  t.textContent=msg;
+  t.style.cssText='position:fixed;bottom:24px;left:50%%;transform:translateX(-50%%);z-index:1100;padding:10px 18px;border-radius:8px;font-size:.85rem;color:#fff;background:'+(ok===false?'#da3633':'#238636')+';box-shadow:0 4px 16px rgba(1,4,9,.5)';
+  document.body.appendChild(t);
+  setTimeout(function(){t.style.opacity='0';t.style.transition='opacity .4s';setTimeout(function(){t.remove();},400);},2600);
+}
+
+// Themed confirm — never native window.confirm (dashboard house rule).
+var _confirmCb=null;
+function adminConfirm(title,msg,okLabel,cb){
+  document.getElementById('admin-confirm-title').textContent=title;
+  document.getElementById('admin-confirm-msg').textContent=msg;
+  var ok=document.getElementById('admin-confirm-ok');
+  ok.textContent=okLabel||'Confirm';
+  _confirmCb=cb;
+  document.getElementById('admin-confirm-back').classList.add('show');
+}
+document.getElementById('admin-confirm-cancel').addEventListener('click',function(){document.getElementById('admin-confirm-back').classList.remove('show');_confirmCb=null;});
+document.getElementById('admin-confirm-ok').addEventListener('click',function(){var cb=_confirmCb;document.getElementById('admin-confirm-back').classList.remove('show');_confirmCb=null;if(cb)cb();});
+
+// Persist a subset of Config.Hub.* through the SAME endpoint the Governor Hub
+// dialog uses. Only the passed keys are sent; the handler ignores omitted fields.
+async function adminSaveHub(patch,okMsg){
+  try{
+    var res=await fetch('/api/config/governor/hub',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)});
+    if(!res.ok){
+      var msg='Save failed ('+res.status+')';
+      try{var d=await res.json();if(d&&d.error)msg=d.error;}catch(e){}
+      toast(msg,false);return false;
+    }
+    toast(okMsg||'Saved',true);
+    return true;
+  }catch(e){toast('Save failed: '+(e&&e.message||'network error'),false);return false;}
+}
+
+function renderAdminFilter(fieldId,label,noun,modeKey,listKey){
+  var el=document.getElementById(fieldId);
+  if(!el||!adminHub)return;
+  var mode=(adminHub[modeKey]==='allow')?'allow':'deny';
+  var list=adminHub[listKey]||[];
+  var chips=list.map(function(v){
+    return '<span class="admin-chip">'+esc(v)+'<span class="x" data-list="'+listKey+'" data-val="'+esc(v)+'">&times;</span></span>';
+  }).join('');
+  el.innerHTML='<label>'+esc(label)+' filter</label>'+
+    '<div class="admin-modeseg" data-mode-key="'+modeKey+'">'+
+      '<button type="button" data-mode="deny"'+(mode==='deny'?' class="on"':'')+'>Deny</button>'+
+      '<button type="button" data-mode="allow"'+(mode==='allow'?' class="on"':'')+'>Allow</button>'+
+    '</div>'+
+    '<div class="admin-chips">'+(chips||'<span class="admin-toggle-sub">none</span>')+'</div>'+
+    '<div class="admin-addrow"><input type="text" data-add-list="'+listKey+'" placeholder="add '+esc(noun)+'&hellip;"><button type="button" data-add-list-btn="'+listKey+'">Add</button></div>';
+}
+
+function renderAdminModels(){
+  var el=document.getElementById('admin-allow-models');
+  if(!el||!adminHub)return;
+  var list=adminHub.contribute_allow_models||[];
+  el.innerHTML=list.length?list.map(function(v){
+    return '<span class="admin-chip">'+esc(v)+'<span class="x" data-list="contribute_allow_models" data-val="'+esc(v)+'">&times;</span></span>';
+  }).join(''):'<span class="admin-toggle-sub">all models accepted</span>';
+}
+
+function renderAdminControls(){
+  if(!adminEnabled||!adminHub)return;
+  // Immediate toggles.
+  document.getElementById('admin-suspend-switch').classList.toggle('on',!!adminHub.contribute_suspended);
+  document.getElementById('admin-suspend-switch').classList.toggle('danger',!!adminHub.contribute_suspended);
+  document.getElementById('admin-skip-switch').classList.toggle('on',!!adminHub.contribute_skip_assigned_to_others);
+  document.getElementById('admin-reject-switch').classList.toggle('on',!!adminHub.contribute_reject_unknown_models);
+  // Filters (mirror Governor Hub: titles/authors/labels + modes, allow-models).
+  renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','contribute_deny_titles');
+  renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','contribute_deny_authors');
+  renderAdminFilter('admin-filter-labels','Labels','label','contribute_labels_mode','contribute_deny_labels');
+  renderAdminModels();
+  var save=document.getElementById('admin-save-btn');
+  if(save)save.disabled=!adminDirty;
+}
+
+// Immediate-apply toggle (suspend / skip): flips config and persists at once,
+// like the Governor Hub toggle switches. Filters are the deferred-Save path.
+function bindImmediateToggle(id){
+  var sw=document.getElementById(id);
+  if(!sw)return;
+  sw.addEventListener('click',function(){
+    var key=sw.getAttribute('data-key');
+    var next=!(adminHub&&adminHub[key]);
+    var patch={};patch[key]=next;
+    adminSaveHub(patch,next?'Enabled '+key.replace(/_/g,' '):'Disabled '+key.replace(/_/g,' ')).then(function(ok){
+      if(ok){adminHub[key]=next;renderAdminControls();}
+    });
+  });
+}
+
+// Delegated handlers for the filter editors (mode switch, add, remove) — mark
+// dirty so nothing is sent until the operator clicks Save.
+document.getElementById('ops-admin').addEventListener('click',function(e){
+  var t=e.target;
+  var seg=t.closest?t.closest('.admin-modeseg button'):null;
+  if(seg){var mk=seg.parentNode.getAttribute('data-mode-key');adminHub[mk]=seg.getAttribute('data-mode');adminDirty=true;renderAdminControls();return;}
+  if(t.classList&&t.classList.contains('x')&&t.getAttribute('data-list')){
+    var lk=t.getAttribute('data-list'),val=t.getAttribute('data-val');
+    adminHub[lk]=(adminHub[lk]||[]).filter(function(v){return v!==val;});
+    adminDirty=true;renderAdminControls();return;
+  }
+  if(t.getAttribute&&t.getAttribute('data-add-list-btn')){
+    var lk2=t.getAttribute('data-add-list-btn');
+    var inp=document.querySelector('[data-add-list="'+lk2+'"]');
+    if(inp&&inp.value.trim()){adminHub[lk2]=(adminHub[lk2]||[]).concat([inp.value.trim()]);inp.value='';adminDirty=true;renderAdminControls();}
+    return;
+  }
+});
+
+document.getElementById('admin-add-model').addEventListener('click',function(){
+  var inp=document.getElementById('admin-allow-model-input');
+  if(inp&&inp.value.trim()){adminHub.contribute_allow_models=(adminHub.contribute_allow_models||[]).concat([inp.value.trim()]);inp.value='';adminDirty=true;renderAdminControls();}
+});
+
+document.getElementById('admin-save-btn').addEventListener('click',function(){
+  if(!adminDirty||!adminHub)return;
+  var patch={
+    contribute_titles_mode:adminHub.contribute_titles_mode||'deny',
+    contribute_authors_mode:adminHub.contribute_authors_mode||'deny',
+    contribute_labels_mode:adminHub.contribute_labels_mode||'deny',
+    contribute_deny_titles:adminHub.contribute_deny_titles||[],
+    contribute_deny_authors:adminHub.contribute_deny_authors||[],
+    contribute_deny_labels:adminHub.contribute_deny_labels||[],
+    contribute_allow_models:adminHub.contribute_allow_models||[]
+  };
+  adminSaveHub(patch,'Admission filters saved').then(function(ok){if(ok){adminDirty=false;renderAdminControls();}});
+});
+
+// Per-contributor actions (delegated on the clanker list). Each calls an EXISTING
+// endpoint; destructive ones go through the themed confirm.
+document.getElementById('clanker-list').addEventListener('change',function(e){
+  var sel=e.target;
+  if(!adminEnabled||sel.getAttribute('data-role')!=='tier')return;
+  var cid=sel.getAttribute('data-cid'),tier=sel.value;
+  fetch('/api/contributors/'+encodeURIComponent(cid)+'/trust',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier:tier})})
+    .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+    .then(function(x){if(x.ok){toast('Trust tier set to '+tier,true);opsPoll();}else{toast((x.d&&x.d.error)||'Failed to set tier',false);}})
+    .catch(function(){toast('Failed to set tier',false);});
+});
+document.getElementById('clanker-list').addEventListener('click',function(e){
+  var b=e.target;
+  if(!adminEnabled||b.tagName!=='BUTTON')return;
+  var role=b.getAttribute('data-role');
+  if(role!=='revoke'&&role!=='remove')return;
+  var cid=b.getAttribute('data-cid'),user=b.getAttribute('data-user')||'this contributor';
+  if(role==='revoke'){
+    adminConfirm('Revoke '+user,'Set '+user+' to the revoked tier. Their agent stops receiving scoped tokens for new work. This uses the existing POST /api/contributors/{id}/revoke endpoint.','Revoke',function(){
+      fetch('/api/contributors/'+encodeURIComponent(cid)+'/revoke',{method:'POST'})
+        .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+        .then(function(x){if(x.ok){toast(user+' revoked',true);opsPoll();}else{toast((x.d&&x.d.error)||'Revoke failed',false);}})
+        .catch(function(){toast('Revoke failed',false);});
+    });
+  }else{
+    adminConfirm('Remove '+user,'Permanently delete '+user+'&rsquo;s contributor profile from this hive. This uses the existing DELETE /api/contributors/{id} endpoint and cannot be undone.','Remove',function(){
+      fetch('/api/contributors/'+encodeURIComponent(cid),{method:'DELETE'})
+        .then(function(r){return r.json().then(function(d){return{ok:r.ok,d:d};});})
+        .then(function(x){if(x.ok){toast(user+' removed',true);opsPoll();}else{toast((x.d&&x.d.error)||'Remove failed',false);}})
+        .catch(function(){toast('Remove failed',false);});
+    });
+  }
+});
+
+// Gate: only owner / read-write get the controls. Mirrors the main dashboard,
+// which reads the viewer role from /api/role.
+async function initAdmin(){
+  var role='owner';
+  try{var r=await fetch('/api/role');var d=await r.json();if(d&&d.role)role=d.role;}catch(e){}
+  if(role!=='owner'&&role!=='read-write')return; // read viewer: controls stay hidden
+  adminEnabled=true;
+  var badge=document.getElementById('admin-role-badge');if(badge)badge.textContent=role;
+  document.getElementById('ops-admin').classList.add('enabled');
+  bindImmediateToggle('admin-suspend-switch');
+  bindImmediateToggle('admin-skip-switch');
+  bindImmediateToggle('admin-reject-switch');
+  try{
+    // The Governor config GET is what carries the hub.contribute_* fields the
+    // Governor Hub dialog edits (GET /api/config, by contrast, is a thin summary
+    // without them). Reading the same source keeps this mirror in lockstep.
+    var cr=await fetch('/api/config/governor');var cd=await cr.json();
+    adminHub=(cd&&cd.hub)?cd.hub:{};
+  }catch(e){adminHub={};}
+  renderAdminControls();
+}
 
 // #2546: human-readable label for the machine reason a clanker is idle. Keeps the
 // raw reason as a fallback so a new server-side reason still renders legibly.
@@ -694,10 +976,27 @@ function renderClankers(list){
     var task=c.current_task
       ?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>')
       :(c.idle_reason?('<div class="clanker-sub">idle: '+esc(idleReasonLabel(c.idle_reason))+'</div>'):'');
+    // #2534: owner/read-write get per-contributor admin actions wired to the
+    // EXISTING endpoints — set trust tier / promote (PUT /api/contributors/{id}/trust),
+    // revoke (POST .../revoke), remove (DELETE .../{id}). Hidden for read viewers.
+    // The contributor id (not the username) keys those endpoints.
+    var actions='';
+    if(adminEnabled&&c.contributor_id){
+      var cid=esc(c.contributor_id);
+      var tier=c.trust_tier||'newcomer';
+      var opts=['newcomer','contributor','trusted','advisor'].map(function(t){
+        return '<option value="'+t+'"'+(t===tier?' selected':'')+'>'+t+'</option>';
+      }).join('');
+      actions='<div class="admin-actions">'+
+        '<select class="admin-act" title="Set trust tier (maintainer voucher)" data-cid="'+cid+'" data-role="tier">'+opts+'</select>'+
+        '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="revoke">Revoke</button>'+
+        '<button type="button" class="admin-act danger" data-cid="'+cid+'" data-user="'+esc(user)+'" data-role="remove">Remove</button>'+
+        '</div>';
+    }
     return '<div class="clanker-row"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
       '<div class="clanker-main"><div class="clanker-user">'+esc(user)+'</div>'+
       '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+'</div>'+
-      '<span class="feed-time">'+esc(rel(c.connected_at))+'</span></div>';
+      (actions||('<span class="feed-time">'+esc(rel(c.connected_at))+'</span>'))+'</div>';
   }).join('');
 }
 
@@ -798,6 +1097,15 @@ if(f.innerHTML!==html){f.innerHTML=html;if(isNew)f.scrollTop=0;}
 }catch(e){}}
 poll();setInterval(poll,3000);
 </script>
+<!-- Themed confirm modal for the destructive admin actions (revoke / remove).
+     The dashboard convention is a themed overlay, never native window.confirm. -->
+<div class="admin-modal-back" id="admin-confirm-back">
+<div class="admin-modal">
+<h4 id="admin-confirm-title">Confirm</h4>
+<p id="admin-confirm-msg"></p>
+<div class="admin-modal-btns"><button type="button" id="admin-confirm-cancel">Cancel</button><button type="button" class="confirm" id="admin-confirm-ok">Confirm</button></div>
+</div>
+</div>
 <div style="margin-top:40px;padding:16px 0;border-top:1px solid #30363d;font-size:.75rem;color:#8b949e;display:flex;align-items:center;gap:8px">
   <span id="hive-version">loading...</span>
 </div>
@@ -1026,6 +1334,31 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 
 // ── Contributor management ─────────────────────────────────────────────────
 
+// requireContributorWrite enforces owner/read-write authorization on the
+// contributor mutation endpoints (trust/revoke/delete) that the Management &
+// Operations tab surfaces as admin controls.
+//
+// These handlers live under the /api/contributors/... path. That path shares
+// the "/api/contribute" prefix that roleEnforcement (server.go) intentionally
+// EXEMPTS from its blanket read-only block — that exemption exists so a signed-in
+// contributor can still register/onboard themselves. As a result the middleware
+// does NOT stop a "read" viewer from calling these mutation endpoints, so each
+// mutation handler must enforce the boundary itself. This mirrors the in-handler
+// role check used by handleConfigDownload / handleSelfUpgrade: read X-Hive-Role,
+// treat an absent header as owner (local/dev, no hub nginx), and reject "read".
+// UI hiding on the ops tab is UX; this is the security boundary.
+func (s *Server) requireContributorWrite(w http.ResponseWriter, r *http.Request) bool {
+	role := r.Header.Get("X-Hive-Role")
+	if role == "" {
+		role = "owner"
+	}
+	if role == "read" {
+		jsonError(w, "your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions.", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleContributorsList(w http.ResponseWriter, r *http.Request) {
 	profiles := listContributorProfiles()
 	var liveStates map[string]ContributorLiveState
@@ -1058,6 +1391,9 @@ func (s *Server) handleContributorGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	id := r.PathValue("id")
 	p := findContributor(id)
@@ -1087,6 +1423,9 @@ func (s *Server) handleContributorTrust(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	p := findContributor(id)
 	if p == nil {
@@ -1100,6 +1439,9 @@ func (s *Server) handleContributorRevoke(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	p := findContributor(id)
 	if p == nil {
