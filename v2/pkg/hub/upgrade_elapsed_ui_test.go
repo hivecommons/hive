@@ -42,6 +42,7 @@ func TestUpgradeElapsedUsesNamedConstants(t *testing.T) {
 		"var UPGRADE_ELAPSED_AMBER_MS =",
 		"var UPGRADE_ELAPSED_MIN_SHOW_MS =",
 		"var UPGRADE_ELAPSED_SKEW_TOLERANCE_MS =",
+		"var UPGRADE_STARTED_MIN_SANE_MS =",
 		"var UPGRADE_FACET_STUCK_MS =",
 	} {
 		if !strings.Contains(dashboardHTML, decl) {
@@ -59,6 +60,9 @@ func TestUpgradeElapsedHandlesUnknownStartTime(t *testing.T) {
 		"if (!started || typeof started !== 'string') return null;",
 		// Unparseable timestamp — Date.parse yields NaN.
 		"if (isNaN(t)) return null;",
+		// Zero / lost start time (Go's 0001-01-01) parses fine but is decades
+		// before the cutoff — the live "17755944h" wedge. Must be suppressed.
+		"if (t < UPGRADE_STARTED_MIN_SANE_MS) return null;",
 		// Negative elapsed from clock skew.
 		"if (elapsed < 0) {",
 		"if (elapsed > -UPGRADE_ELAPSED_SKEW_TOLERANCE_MS) return 0;",
@@ -74,6 +78,36 @@ func TestUpgradeElapsedHandlesUnknownStartTime(t *testing.T) {
 	if !strings.Contains(dashboardHTML,
 		"if (typeof ms !== 'number' || isNaN(ms) || ms < 0) return '';") {
 		t.Error("formatUpgradeElapsed must reject NaN and negative durations")
+	}
+}
+
+// TestUpgradeElapsedRejectsZeroStartTime is the anti-regression test for the
+// live ibm-alchemy wedge: hosted-ibm-alchemy-logg-ptoo showed
+// "Upgrading 17755944h28m". Its UpgradeStartedAt was Go's zero time, which
+// json:"...,omitempty" does NOT omit for a struct, so the hub emitted
+// "0001-01-01T00:00:00Z". Date.parse() accepts it and now − year 0001 is
+// ~17.7 million hours. upgradeElapsedMs must reject any start time before the
+// sane epoch (2020-01-01, which predates the project) so the counter is
+// suppressed instead of rendering a two-thousand-year duration.
+func TestUpgradeElapsedRejectsZeroStartTime(t *testing.T) {
+	// The cutoff must be anchored to a real date, not left as a bare 0 or a
+	// magic number, and it must sit before any plausible real upgrade yet after
+	// Go's zero year so the year-0001 emission falls below it.
+	if !strings.Contains(dashboardHTML, "var UPGRADE_STARTED_MIN_SANE_MS = Date.UTC(2020, 0, 1);") {
+		t.Error("UPGRADE_STARTED_MIN_SANE_MS must be Date.UTC(2020, 0, 1) — the sane-epoch cutoff " +
+			"that rejects Go's 0001-01-01 zero-time emission")
+	}
+	// The guard must run BEFORE the elapsed subtraction, so a pre-epoch stamp
+	// returns null rather than flowing into a giant positive duration.
+	body := dashboardHTML
+	guardAt := strings.Index(body, "if (t < UPGRADE_STARTED_MIN_SANE_MS) return null;")
+	elapsedAt := strings.Index(body, "var elapsed = (typeof nowMs === 'number' ? nowMs : Date.now()) - t;")
+	if guardAt < 0 || elapsedAt < 0 {
+		t.Fatalf("guard/elapsed lines not both found (guard=%d elapsed=%d)", guardAt, elapsedAt)
+	}
+	if guardAt > elapsedAt {
+		t.Error("the pre-epoch guard must precede the elapsed computation, " +
+			"or the year-0001 timestamp would still yield a 17.7M-hour duration")
 	}
 }
 

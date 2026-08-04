@@ -741,6 +741,111 @@ func (h *ContributeWSHub) RoleBreakdown() map[string]int {
 	return breakdown
 }
 
+// FleetClanker is a read-only view of one connected contributor ("clanker")
+// session as the operator-facing Management & Operations tab renders it. It
+// carries only what the contributor handshake already put on the wire plus the
+// live connection timing the hub already tracks — no secrets, no new state.
+type FleetClanker struct {
+	ContributorID  string        `json:"contributor_id"`
+	GitHubUsername string        `json:"github_username,omitempty"`
+	CLIBackend     string        `json:"cli_backend,omitempty"`
+	Model          string        `json:"model,omitempty"`
+	Role           string        `json:"role,omitempty"`
+	TrustTier      string        `json:"trust_tier,omitempty"`
+	ConnectedAt    string        `json:"connected_at,omitempty"`
+	LastActivity   string        `json:"last_activity,omitempty"`
+	Stale          bool          `json:"stale,omitempty"`
+	CurrentTask    *WSTaskAssign `json:"current_task,omitempty"`
+}
+
+// FleetWorkItem is a read-only view of one in-flight task the fleet is working,
+// surfaced the way the operator work-list lists items (repo / number / title /
+// who is on it / status). Derived entirely from live connection state — the hub
+// tracks currentTask per connection; nothing here is fabricated.
+type FleetWorkItem struct {
+	TaskID         string `json:"task_id"`
+	Kind           string `json:"kind,omitempty"`
+	Repo           string `json:"repo,omitempty"`
+	Number         int    `json:"number,omitempty"`
+	Title          string `json:"title,omitempty"`
+	ContributorID  string `json:"contributor_id,omitempty"`
+	GitHubUsername string `json:"github_username,omitempty"`
+	CLIBackend     string `json:"cli_backend,omitempty"`
+	Status         string `json:"status"`
+}
+
+// FleetSnapshot is the read-only payload the Management & Operations tab hydrates
+// from. Everything is derived from the hub's current live connections — it adds
+// no enforcement and mutates nothing.
+type FleetSnapshot struct {
+	Clankers []FleetClanker  `json:"clankers"`
+	Work     []FleetWorkItem `json:"work"`
+}
+
+// FleetSnapshot returns the current connected-clanker fleet and its in-flight
+// work, read-only, from the hub's live connection registry. A connection whose
+// last pong is older than wsHeartbeatTimeout is reported with Stale=true and its
+// in-flight task is treated as no longer active (matching LiveStates()).
+func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	snap := FleetSnapshot{
+		Clankers: make([]FleetClanker, 0, len(h.connections)),
+		Work:     make([]FleetWorkItem, 0),
+	}
+	for _, c := range h.connections {
+		c.mu.Lock()
+		fc := FleetClanker{
+			CLIBackend:   c.cliBackend,
+			Model:        c.model,
+			Role:         c.role,
+			ConnectedAt:  c.connectedAt.UTC().Format(time.RFC3339),
+			LastActivity: c.lastPong.UTC().Format(time.RFC3339),
+			Stale:        time.Since(c.lastPong) > wsHeartbeatTimeout,
+		}
+		if c.profile != nil {
+			fc.ContributorID = c.profile.ContributorID
+			fc.GitHubUsername = c.profile.GitHubUsername
+			fc.TrustTier = c.profile.TrustTier
+		}
+		var task *WSTaskAssign
+		if c.currentTask != nil && !fc.Stale {
+			t := *c.currentTask
+			task = &t
+		}
+		c.mu.Unlock()
+		fc.CurrentTask = task
+		if task != nil {
+			snap.Work = append(snap.Work, FleetWorkItem{
+				TaskID:         task.TaskID,
+				Kind:           task.Kind,
+				Repo:           task.Repo,
+				Number:         task.Number,
+				Title:          task.Title,
+				ContributorID:  fc.ContributorID,
+				GitHubUsername: fc.GitHubUsername,
+				CLIBackend:     fc.CLIBackend,
+				Status:         "in-progress",
+			})
+		}
+		snap.Clankers = append(snap.Clankers, fc)
+	}
+	// Deterministic order so the operator view is stable across polls.
+	sort.Slice(snap.Clankers, func(i, j int) bool {
+		if snap.Clankers[i].ConnectedAt != snap.Clankers[j].ConnectedAt {
+			return snap.Clankers[i].ConnectedAt < snap.Clankers[j].ConnectedAt
+		}
+		return snap.Clankers[i].ContributorID < snap.Clankers[j].ContributorID
+	})
+	sort.Slice(snap.Work, func(i, j int) bool {
+		if snap.Work[i].Repo != snap.Work[j].Repo {
+			return snap.Work[i].Repo < snap.Work[j].Repo
+		}
+		return snap.Work[i].Number < snap.Work[j].Number
+	})
+	return snap
+}
+
 func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

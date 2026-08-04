@@ -1,9 +1,41 @@
 #!/bin/bash
 # git-credential-hive.sh — Git credential helper that uses the GitHub App token.
 # Reads from the cached token file, refreshing if stale (>55 min old).
-# Install: git config --global credential.https://github.com.helper /usr/local/bin/git-credential-hive.sh
+#
+# Install (github.com): git config --global credential.https://github.com.helper /usr/local/bin/git-credential-hive.sh
+# Install (GHE):         git config --global credential.https://<ghe-host>.helper /usr/local/bin/git-credential-hive.sh
+#
+# GHE-aware host matching: git invokes credential helpers once per remote host
+# and feeds `protocol=...` / `host=...` (and optionally `path=...`) on stdin
+# for the `get` operation (see git-credential(1)). A helper that ignores this
+# and always answers "host=github.com" — as this script did before — silently
+# returns NO credential for any other host git actually asked about, and git
+# then falls through to an interactive prompt, which fails hard in a
+# non-interactive agent shell with "terminal prompts disabled". This version
+# echoes back whatever host git asked for (once it has confirmed a token
+# exists for it) instead of a hardcoded "github.com", so the same script and
+# the same underlying App-installation token work for github.com AND any
+# configured GitHub Enterprise host (e.g. github.ibm.com) — entrypoint.sh
+# wires the credential.helper entry for the hive's actual configured host
+# (github.HostLabel() in the Go config), so this script only ever gets
+# invoked for a host it is actually supposed to answer for.
 
 set -euo pipefail
+
+# ── Read git's credential request off stdin (protocol=... / host=... lines,
+# terminated by a blank line) so we can echo the SAME host back. Git passes
+# this on `get`; other ops (store/erase) are no-ops below and don't need it,
+# but reading it unconditionally is harmless and keeps the parsing in one
+# place. See git-credential(1) "Credential Helpers" for the wire format.
+REQUEST_PROTOCOL=""
+REQUESTED_HOST=""
+while IFS='=' read -r _cred_key _cred_val; do
+  [ -z "$_cred_key" ] && break
+  case "$_cred_key" in
+    protocol) REQUEST_PROTOCOL="$_cred_val" ;;
+    host) REQUESTED_HOST="$_cred_val" ;;
+  esac
+done
 
 # ── UID-based identity verification (defense-in-depth) ──
 # When running under a per-agent UID (>= 2001), derive the agent name from
@@ -101,11 +133,24 @@ TOKEN_ACCESS_LOG="/var/run/hive-metrics/token-access.jsonl"
 
 case "${1:-}" in
   get)
-    printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential"}\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${AGENT:-unknown}" "$(id -u)" \
+    # Only ever answer for https — this script has no business supplying a
+    # credential for git+ssh or any other protocol, on any host.
+    if [ -n "$REQUEST_PROTOCOL" ] && [ "$REQUEST_PROTOCOL" != "https" ]; then
+      exit 0
+    fi
+    printf '{"ts":"%s","agent":"%s","uid":%d,"op":"git-credential","host":"%s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${AGENT:-unknown}" "$(id -u)" "${REQUESTED_HOST:-unknown}" \
       >> "$TOKEN_ACCESS_LOG" 2>/dev/null || true
+    # Echo back the SAME host git asked about (github.com, github.ibm.com, or
+    # any other configured GitHub Enterprise host) rather than a hardcoded
+    # "github.com" — see the file header. entrypoint.sh only registers this
+    # helper for `credential.https://<configured-host>.helper`, so by the time
+    # git invokes it for `get`, REQUESTED_HOST is already the one host this
+    # hive is authorized to answer for. Falling back to "github.com" when git
+    # sends no host at all (older git, or a manual invocation) preserves the
+    # previous behavior for the public-GitHub case.
     echo "protocol=https"
-    echo "host=github.com"
+    echo "host=${REQUESTED_HOST:-github.com}"
     echo "username=x-access-token"
     echo "password=$TOKEN"
     ;;
