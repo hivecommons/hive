@@ -75,17 +75,18 @@ RUN ARCH=$(uname -m) && \
     chmod +x /opt/hive/bin/gh-real
 
 # --- Layer 3: GitHub Copilot CLI (frequent updates) ---
-# Pinned: 1.0.6x drops the Node.js fallback — the CLI becomes native-only,
-# and the Rust binary's embedded TLS stack rejects the MITM proxy CA.
-# 1.0.59 is the last version where removing the binary falls back to the
-# Node.js path, which respects NODE_EXTRA_CA_CERTS.
-ARG COPILOT_VERSION=1.0.59
+# Pinned for MITM-proxy compatibility. History: 1.0.6x went native-only with
+# a rustls/webpki-roots TLS stack that rejected the proxy's forged certs, so
+# the hive sat on 1.0.59 (last version whose Node.js fallback honored
+# NODE_EXTRA_CA_CERTS) with the native binary deleted. As of 1.0.78 the
+# platform package is a Node SEA again with an explicit NODE_EXTRA_CA_CERTS
+# handler (plus SSL_CERT_FILE/SSL_CERT_DIR), so the proxy CA is trusted
+# without any binary surgery. Do NOT re-add the old rm-the-binary hack: the
+# 1.0.78 npm wrapper only spawns the platform binary — deleting it now
+# breaks the CLI outright instead of triggering a fallback.
+ARG COPILOT_VERSION=1.0.78
 RUN npm install -g @github/copilot@${COPILOT_VERSION} && npm cache clean --force || \
     echo "WARN: GitHub Copilot CLI install failed — skipping"
-# Remove the native Rust binary so copilot falls back to the Node.js path.
-# The Rust binary embeds its own TLS stack (rustls + webpki-roots) which rejects
-# the MITM proxy's forged certificates. The Node.js path respects NODE_EXTRA_CA_CERTS.
-RUN rm -f /usr/local/lib/node_modules/@github/copilot/node_modules/@github/copilot-linux-*/copilot 2>/dev/null; true
 
 # --- Layer 7: Claude Code (most frequent updates) ---
 ARG CLAUDE_CODE_VERSION=latest
