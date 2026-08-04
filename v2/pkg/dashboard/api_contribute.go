@@ -2,8 +2,10 @@ package dashboard
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -20,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
+	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
 const (
@@ -27,7 +30,96 @@ const (
 	contributorAutoPromoteAt  = 5
 	contributorTrustedAt      = 20
 	defaultFederationRegistry = "/data/federation/registry.json"
+
+	// inviteTokenTTL bounds how long a trusted invite link stays valid (issue
+	// #2598). A trusted contributor mints a link; the invitee has this long to
+	// follow it and register. Long enough to share over email/chat, short enough
+	// that a leaked link stops working. Attribution — not access — so a generous
+	// window is fine.
+	inviteTokenTTL = 14 * 24 * time.Hour
+	// inviteSecretFile persists the per-instance HMAC secret used to sign invite
+	// tokens, so links survive a restart. Lives beside the contributor store.
+	inviteSecretFile = ".invite-secret"
+	// inviteSecretBytes is the length of the generated fallback signing secret.
+	inviteSecretBytes = 32
 )
+
+// inviteTrustTiers are the trust tiers permitted to mint an invite link. Only a
+// trusted or advisor contributor may invite; a newcomer/contributor/anonymous
+// viewer may not. Enforced server-side (handleContributeInvite) — UI hiding is
+// UX only.
+var inviteTrustTiers = map[string]bool{"trusted": true, "advisor": true}
+
+var (
+	inviteSecretOnce  sync.Once
+	inviteSecretCache []byte
+)
+
+// inviteSigningSecret returns the HMAC key used to sign/verify invite tokens.
+// It prefers the operator-configured HIVE_HUB_SECRET (already the cross-hive
+// shared secret) so invites are consistent across a federated deployment; if
+// that is unset it lazily generates and persists a per-instance random secret
+// beside the contributor store. Either way the secret never leaves the server —
+// the token the client sees is opaque.
+func inviteSigningSecret() []byte {
+	inviteSecretOnce.Do(func() {
+		if v := strings.TrimSpace(os.Getenv("HIVE_HUB_SECRET")); v != "" {
+			inviteSecretCache = []byte(v)
+			return
+		}
+		path := filepath.Join(getContributorsDir(), inviteSecretFile)
+		if data, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			inviteSecretCache = []byte(strings.TrimSpace(string(data)))
+			return
+		}
+		secret := randomHex(inviteSecretBytes)
+		ensureDir(getContributorsDir())
+		_ = os.WriteFile(path, []byte(secret), 0o600)
+		inviteSecretCache = []byte(secret)
+	})
+	return inviteSecretCache
+}
+
+// mintInviteToken builds an opaque, HMAC-signed invite token that carries the
+// inviter's GitHub username and an expiry. Format: base64url(inviter) "." expiry
+// "." base64url(hmac). The signature covers "inviter|expiry", so neither field
+// can be tampered with without invalidating the token.
+func mintInviteToken(inviter string, now time.Time) string {
+	exp := strconv.FormatInt(now.Add(inviteTokenTTL).Unix(), 10)
+	encInviter := base64.RawURLEncoding.EncodeToString([]byte(inviter))
+	mac := hmac.New(sha256.New, inviteSigningSecret())
+	mac.Write([]byte(encInviter + "|" + exp))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return encInviter + "." + exp + "." + sig
+}
+
+// verifyInviteToken checks an invite token's signature and expiry and returns
+// the inviter username. An empty string means the token is invalid, tampered,
+// or expired — the caller must treat that as "no attribution" (a plain
+// self-registration), never as an error.
+func verifyInviteToken(token string, now time.Time) string {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	const inviteTokenParts = 3
+	if len(parts) != inviteTokenParts {
+		return ""
+	}
+	encInviter, exp, sig := parts[0], parts[1], parts[2]
+	mac := hmac.New(sha256.New, inviteSigningSecret())
+	mac.Write([]byte(encInviter + "|" + exp))
+	want := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(sig), []byte(want)) {
+		return ""
+	}
+	expUnix, err := strconv.ParseInt(exp, 10, 64)
+	if err != nil || now.Unix() > expUnix {
+		return ""
+	}
+	inviter, err := base64.RawURLEncoding.DecodeString(encInviter)
+	if err != nil || !isValidUsername(string(inviter)) {
+		return ""
+	}
+	return string(inviter)
+}
 
 func getContributorsDir() string {
 	if v := os.Getenv("HIVE_CONTRIBUTORS_DIR"); v != "" {
@@ -53,8 +145,13 @@ type ContributorProfile struct {
 	CLIBackend        string `json:"cli_backend,omitempty"`
 	Model             string `json:"model,omitempty"`
 	AvatarURL         string `json:"avatar_url,omitempty"`
-	RegisteredAt      string `json:"registered_at"`
-	TasksCompleted    int    `json:"total_tasks_completed"`
+	// InvitedBy records the GitHub username of the TRUSTED/advisor contributor
+	// who invited this person via a trusted invite link (issue #2598). It is
+	// pure attribution: it never affects TrustTier (an invitee always joins as
+	// "newcomer"). Empty for self-registered contributors.
+	InvitedBy      string `json:"invited_by,omitempty"`
+	RegisteredAt   string `json:"registered_at"`
+	TasksCompleted int    `json:"total_tasks_completed"`
 	// TasksWithPR counts only completions that reported a pull request.
 	// Auto-promotion reads this rather than TasksCompleted, so write access is
 	// never granted for completions where nothing was shown to have shipped.
@@ -115,6 +212,12 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("GET /contribute/{tab}", s.handleContributeLanding)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.contributeHub.HandleWS)
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeRegister)
+	// Trusted invite link (issue #2598). A trusted/advisor contributor mints an
+	// attributed invite link here; the caller's identity is resolved server-side
+	// and their trust tier is verified IN-HANDLER (403 otherwise) — the /api/
+	// contribute prefix is exempt from roleEnforcement's read-only block, so the
+	// tier gate cannot be delegated to the middleware. UI hiding is UX only.
+	s.mux.HandleFunc("POST /api/contribute/invite", s.handleContributeInvite)
 	s.mux.HandleFunc("POST /api/contribute/reissue-token", s.handleContributeReissueToken)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/activity", s.handleContributeActivity)
@@ -796,6 +899,21 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 @media(prefers-reduced-motion:reduce){
   .client-tile{transition:none!important}
 }
+/* Trusted invite banner (issue #2598) — shown on onboarding when arriving via an
+   attributed invite link. Subtle, informational; makes clear the invitee joins
+   as a newcomer. */
+.invite-banner{margin:0 0 20px;padding:11px 15px;border:1px solid #388bfd55;border-radius:8px;background:#1c2f4a55;color:#c9d1d9;font-size:.85rem;line-height:1.45}
+.invite-banner b{color:#e6edf3}
+.invite-banner .invite-tier{color:#8b949e}
+/* Trusted "Invite someone" action inside the Me card (issue #2598). */
+.me-invite{margin-top:12px;padding-top:12px;border-top:1px solid #ffffff14}
+.me-invite__btn{display:inline-flex;align-items:center;gap:6px;background:#1f6feb;color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:.82rem;font-family:inherit;cursor:pointer}
+.me-invite__btn:hover{background:#388bfd}
+.me-invite__row{display:none;margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap}
+.me-invite__row.open{display:flex}
+.me-invite__link{flex:1 1 220px;min-width:0;background:#010409;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:7px 10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.76rem}
+.me-invite__copy{background:#238636;color:#fff;border:none;border-radius:6px;padding:7px 12px;font-size:.78rem;font-family:inherit;cursor:pointer}
+.me-invite__hint{width:100%%;margin-top:6px;color:#8b949e;font-size:.74rem;line-height:1.4}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
@@ -807,6 +925,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <div class="page">
 <div class="main">
 <h1>🐝 Contribute to %s</h1>
+<div id="invite-banner" class="invite-banner" hidden role="status"></div>
 <p class="subtitle">Donate your CLI + API tokens to help this project's AI agent swarm.</p>
 <p class="subtitle" style="font-size:.95rem;margin-top:-24px;margin-bottom:32px">Powered by <strong style="color:#e6edf3">ClankeR</strong>, the contributor relay &mdash; it hands tasks from this hive's backlog to the agent running on your machine. Your compute, their backlog.</p>
 <div class="stat-row">
@@ -1432,6 +1551,8 @@ function tabFromLocation(){
   // Absent/unknown tab -> default (Onboarding) stays active. Activate without
   // pushing so we never add a spurious history entry for the initial page.
   if(target)activateTab(target,false);
+  // Surface the trusted-invite banner if we arrived via ?invite=<token> (#2598).
+  try{initInviteBanner();}catch(e){console.error('initInviteBanner failed',e);}
 })();
 // Back/Forward: re-derive the tab from the (now-updated) location and activate it
 // WITHOUT pushing — popstate already moved history, a push here would loop. When
@@ -1611,6 +1732,74 @@ function meHivesRows(p){
   return out.join('');
 }
 
+// ── Trusted invite (issue #2598) ─────────────────────────────────────────────
+// Trust tiers permitted to invite. Kept in sync with the server's
+// inviteTrustTiers gate; the UI hiding here is UX only — the /api/contribute/
+// invite endpoint independently verifies the caller's tier and 403s otherwise.
+var INVITE_TIERS={trusted:true,advisor:true};
+
+// meInviteSection renders the "Invite someone to contribute" affordance ONLY for
+// a viewer whose real trust tier is trusted/advisor. Any other tier (newcomer /
+// contributor) — and anonymous viewers never reach renderMeCard — get nothing.
+function meInviteSection(p){
+  if(!p||!INVITE_TIERS[p.trust_tier])return '';
+  return '<div class="me-invite">'
+    +'<button type="button" class="me-invite__btn" id="me-invite-btn">✉️ Invite someone to contribute</button>'
+    +'<div class="me-invite__row" id="me-invite-row">'
+      +'<input type="text" class="me-invite__link" id="me-invite-link" readonly aria-label="Invite link" value="">'
+      +'<button type="button" class="me-invite__copy" id="me-invite-copy">Copy</button>'
+      +'<div class="me-invite__hint">Anyone who signs up through this link joins as a <b>newcomer</b>, credited to you. The link is trusted-only and expires.</div>'
+    +'</div>'
+  +'</div>';
+}
+
+// wireMeInvite hooks up the invite button: it asks the server to MINT a link
+// (which re-checks the caller's tier server-side), shows it, and offers copy.
+function wireMeInvite(){
+  var btn=document.getElementById('me-invite-btn');
+  if(!btn)return;
+  var row=document.getElementById('me-invite-row');
+  var input=document.getElementById('me-invite-link');
+  var copy=document.getElementById('me-invite-copy');
+  btn.addEventListener('click',function(){
+    btn.disabled=true;
+    fetch('/api/contribute/invite',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(res){
+        btn.disabled=false;
+        if(!res.ok||!res.j||!res.j.invite_url){toast((res.j&&res.j.error)||'Could not create invite link',false);return;}
+        input.value=res.j.invite_url;
+        row.classList.add('open');
+        input.focus();input.select();
+      }).catch(function(){btn.disabled=false;toast('Could not create invite link',false);});
+  });
+  if(copy)copy.addEventListener('click',function(){
+    if(!input.value)return;
+    input.select();
+    var done=function(){toast('Invite link copied',true);};
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(input.value).then(done,function(){try{document.execCommand('copy');done();}catch(e){}});}
+    else{try{document.execCommand('copy');done();}catch(e){}}
+  });
+}
+
+// initInviteBanner shows a subtle banner on the onboarding tab when the visitor
+// arrived via an attributed invite link (?invite=<token>). It is informational
+// only — the actual attribution is recorded server-side at registration. It
+// stashes the token so an in-page register flow can forward it; it makes clear
+// the invitee joins as a newcomer. No token is decoded client-side (opaque).
+function initInviteBanner(){
+  var banner=document.getElementById('invite-banner');
+  if(!banner)return;
+  var token='';
+  try{token=new URLSearchParams(window.location.search).get('invite')||'';}catch(e){token='';}
+  if(!token)return;
+  try{window.sessionStorage.setItem('hive.invite',token);}catch(e){}
+  banner.innerHTML='<b>You were invited to contribute.</b> Follow the setup below to join &mdash; '
+    +'you’ll come in as a <b>newcomer</b>, credited to whoever invited you. '
+    +'<span class="invite-tier">The invite records attribution only; it does not change your tier.</span>';
+  banner.hidden=false;
+}
+
 function renderMeCard(mount,p){
   var tier=p.trust_tier||'newcomer';
   var tierNice=tier.charAt(0).toUpperCase()+tier.slice(1);
@@ -1647,8 +1836,11 @@ function renderMeCard(mount,p){
     +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
     +'<span class="me-stylepick" title="Personalize your card — more customization coming">Profile style <select id="me-style-select" aria-label="Profile style (more customization coming)">'+styleOpts+'</select></span>'
   +'</div>'
+  +meInviteSection(p)
   +'</div></div>';
   mount.innerHTML=html;
+
+  wireMeInvite();
 
   var sel=document.getElementById('me-style-select');
   if(sel)sel.addEventListener('change',function(){
@@ -2527,6 +2719,10 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 	var req struct {
 		GitHubUsername string `json:"github_username"`
 		Force          bool   `json:"force"`
+		// Invite is an optional trusted invite token (issue #2598). When present
+		// and valid, the new profile records who invited them (InvitedBy). It
+		// NEVER changes the tier — an invitee always joins as "newcomer".
+		Invite string `json:"invite,omitempty"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2570,6 +2766,16 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 	}
 
 	profile, token := createContributorProfile(username)
+
+	// Attribution (issue #2598): if a valid trusted invite token accompanies the
+	// registration, record who invited them. This is attribution ONLY — the tier
+	// is still "newcomer" from createContributorProfile; an invite never elevates.
+	// A missing/expired/tampered token is silently ignored (plain self-register).
+	if inviter := verifyInviteToken(req.Invite, time.Now()); inviter != "" && inviter != username {
+		profile.InvitedBy = inviter
+		s.logger.Info("contributor registered via trusted invite", "username", username, "invited_by", inviter)
+	}
+
 	s.logger.Info("contributor registered", "username", username, "id", profile.ContributorID)
 
 	// Clear plaintext token from disk — only the hash is needed for auth
@@ -2580,6 +2786,78 @@ func (s *Server) handleContributeRegister(w http.ResponseWriter, r *http.Request
 		"contributor_id":     profile.ContributorID,
 		"registration_token": token,
 		"message":            "Registered successfully — save this token, it cannot be recovered",
+	})
+}
+
+// resolveViewerUsername returns the GitHub username of the logged-in caller as
+// the server sees it, mirroring handleGHUserAuthStatus: a per-user session first
+// (direct-route spokes), then the hub-injected X-Hive-User header (hub-proxied),
+// then the persisted owner token (single-owner spokes). Returns "" if the caller
+// is anonymous. This is the SERVER-SIDE identity — it is not client-supplied, so
+// the trust gate below cannot be spoofed by a request body.
+func (s *Server) resolveViewerUsername(r *http.Request) string {
+	if sess := s.sessionFromRequest(r); sess != nil {
+		return sess.Username
+	}
+	if hubUser := r.Header.Get("X-Hive-User"); hubUser != "" {
+		return hubUser
+	}
+	if s.directRouteAuthzEnabled() {
+		return ""
+	}
+	tokenData, err := os.ReadFile(userTokenPath)
+	if err != nil {
+		return ""
+	}
+	token := strings.TrimSpace(string(tokenData))
+	if token == "" {
+		return ""
+	}
+	user, err := github.ValidateToken(token, s.deps.Config.GitHub.OAuthAPIURL())
+	if err != nil {
+		return ""
+	}
+	return user.Login
+}
+
+// handleContributeInvite mints a trusted, attributed invite link (issue #2598).
+// It resolves the caller's identity server-side, loads their contributor
+// profile, and requires their trust tier to be trusted or advisor — a newcomer,
+// contributor, or anonymous caller gets 403. The returned token encodes the
+// inviter so that whoever registers via the link is attributed to them while
+// still joining as a plain newcomer (the register path never elevates tier).
+func (s *Server) handleContributeInvite(w http.ResponseWriter, r *http.Request) {
+	username := s.resolveViewerUsername(r)
+	if username == "" {
+		jsonError(w, "Sign in with GitHub to invite someone to contribute.", http.StatusUnauthorized)
+		return
+	}
+	profile, _ := loadContributorProfile(username)
+	if profile == nil {
+		jsonError(w, "You need a contributor profile on this hive before you can invite others.", http.StatusForbidden)
+		return
+	}
+	if !inviteTrustTiers[profile.TrustTier] {
+		jsonError(w, "Only trusted or advisor contributors can invite others. Keep shipping to earn trust.", http.StatusForbidden)
+		return
+	}
+
+	token := mintInviteToken(username, time.Now())
+	// Build a shareable /contribute onboarding link carrying the invite token.
+	// Same-origin only; the client just copies/shares it (no external fetch).
+	scheme := "https"
+	if r.TLS == nil && r.Header.Get("X-Forwarded-Proto") != "https" {
+		scheme = "http"
+	}
+	origin := scheme + "://" + r.Host
+	inviteURL := origin + "/contribute/onboarding?invite=" + token
+
+	s.logger.Info("trusted invite link minted", "inviter", username, "tier", profile.TrustTier)
+	jsonResponse(w, map[string]any{
+		"invite_url": inviteURL,
+		"invite":     token,
+		"inviter":    username,
+		"expires_in": int(inviteTokenTTL.Seconds()),
 	})
 }
 
