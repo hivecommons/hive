@@ -90,7 +90,13 @@ type ContributorConnection struct {
 	// no-matching-work vs an enforced refusal) instead of an indistinguishable
 	// silence. Cleared when a task is actually assigned. Purely diagnostic.
 	lastIdleReason string
-	mu             sync.Mutex
+	// capabilities is the client-declared runtime posture from auth_response
+	// (#2547 declare half): container runtime, OS/arch, agent/relay versions,
+	// credential type. Nil when the client declared nothing (an unversioned
+	// client). Stored read-only and surfaced on FleetClanker; NEVER used to route
+	// or gate work.
+	capabilities *ContributorCapabilities
+	mu           sync.Mutex
 }
 
 type WSMessage struct {
@@ -119,14 +125,33 @@ type WSMessage struct {
 	// contributor-default.json), so shipping the policy to the client would be
 	// advisory-only and risk drift. Left as omitempty so it never appears on the
 	// wire until a concrete client contract exists. (kubestellar/hive#2393 item 8.)
-	Restrictions   json.RawMessage `json:"restrictions,omitempty"`
-	Role           string          `json:"role,omitempty"`
-	ContribLabels  []string        `json:"contributor_labels,omitempty"`
-	Status         string          `json:"status,omitempty"`
-	Result         string          `json:"result,omitempty"`
-	Summary        string          `json:"summary,omitempty"`
-	TmuxOutput     []string        `json:"tmux_output,omitempty"`
-	AcceptedModels []string        `json:"accepted_models,omitempty"`
+	Restrictions json.RawMessage `json:"restrictions,omitempty"`
+	// Capabilities is the OPTIONAL client-declared runtime posture a contributor
+	// relay may report in its auth_response (kubestellar/hive#2547, declare half).
+	// It is additive and purely advisory: a client that omits it authenticates
+	// and runs exactly as before, and the hub NEVER routes or gates work on it —
+	// it is only stored and surfaced read-only. Distinct from the RESERVED,
+	// server-side-only Restrictions field above: Capabilities flows client→server
+	// as an honest self-report, Restrictions is a reservation that stays empty.
+	Capabilities *ContributorCapabilities `json:"capabilities,omitempty"`
+	// ProtocolVersion is the contributor-protocol version. On auth_ok it carries
+	// the version this HUB speaks (kubestellar/hive#2567) so a client can learn
+	// the deployed protocol level without probing; additive, old clients ignore
+	// it. It is also accepted on auth_response as the client's own reported
+	// version (stored via Capabilities.RelayProtocolVersion).
+	ProtocolVersion string `json:"protocol_version,omitempty"`
+	// ServerCapabilities is the set of message types / features this hub supports
+	// (kubestellar/hive#2567), advertised on auth_ok so a client can adapt without
+	// probing (e.g. token_refresh, task_unavailable_reasons). Additive; old
+	// clients ignore the unknown field.
+	ServerCapabilities []string `json:"server_capabilities,omitempty"`
+	Role               string   `json:"role,omitempty"`
+	ContribLabels      []string `json:"contributor_labels,omitempty"`
+	Status             string   `json:"status,omitempty"`
+	Result             string   `json:"result,omitempty"`
+	Summary            string   `json:"summary,omitempty"`
+	TmuxOutput         []string `json:"tmux_output,omitempty"`
+	AcceptedModels     []string `json:"accepted_models,omitempty"`
 	// PRURL is the pull request the agent opened for this task, reported on
 	// task_complete. It is best-effort: the relay fills it when it can spot a
 	// PR link in the agent's output, and it is empty when the agent went idle
@@ -882,6 +907,12 @@ type FleetClanker struct {
 	// running. It NEVER contains the minted github_token — the token travels on the
 	// task_assign WSMessage separately and is not stored here. Empty when idle.
 	PromptPreview string `json:"prompt_preview,omitempty"`
+	// Capabilities is the client-declared runtime posture from the handshake
+	// (#2547 declare half): container runtime, OS/arch, agent/relay versions,
+	// credential type. Nil when the client declared none (unversioned client).
+	// Surfaced read-only exactly like CLIBackend/Model/Role so the Operations tab
+	// COULD display it; it is NEVER used to route or gate work.
+	Capabilities *ContributorCapabilities `json:"capabilities,omitempty"`
 }
 
 // FleetWorkItem is a read-only view of one in-flight task the fleet is working,
@@ -935,6 +966,12 @@ func (h *ContributeWSHub) FleetSnapshot() FleetSnapshot {
 			ConnectedAt:  c.connectedAt.UTC().Format(time.RFC3339),
 			LastActivity: c.lastPong.UTC().Format(time.RFC3339),
 			Stale:        time.Since(c.lastPong) > wsHeartbeatTimeout,
+		}
+		// #2547: surface the client-declared capabilities read-only (a copy so the
+		// snapshot never aliases live connection state). Nil for unversioned clients.
+		if c.capabilities != nil {
+			capsCopy := *c.capabilities
+			fc.Capabilities = &capsCopy
 		}
 		if c.profile != nil {
 			fc.ContributorID = c.profile.ContributorID
@@ -1163,14 +1200,34 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = saveContributorProfile(profile)
 
+			// #2547 declare half: capture the client-declared capabilities, if any.
+			// A relay may report its runtime posture either as a nested
+			// "capabilities" object or (for a version-only client) just a top-level
+			// protocol_version; fold the latter in so it is surfaced consistently.
+			// Entirely optional — a client that sends neither leaves caps nil and is
+			// treated exactly as an unversioned client. Never routed/gated on.
+			var caps *ContributorCapabilities
+			declared := ContributorCapabilities{}
+			if msg.Capabilities != nil {
+				declared = *msg.Capabilities
+			}
+			if declared.RelayProtocolVersion == "" && msg.ProtocolVersion != "" {
+				declared.RelayProtocolVersion = msg.ProtocolVersion
+			}
+			if !declared.IsZero() {
+				c := declared
+				caps = &c
+			}
+
 			contributor = &ContributorConnection{
-				ws:          conn,
-				profile:     profile,
-				cliBackend:  msg.CLIBackend,
-				model:       msg.Model,
-				role:        msg.Role,
-				connectedAt: time.Now(),
-				lastPong:    time.Now(),
+				ws:           conn,
+				profile:      profile,
+				cliBackend:   msg.CLIBackend,
+				model:        msg.Model,
+				role:         msg.Role,
+				connectedAt:  time.Now(),
+				lastPong:     time.Now(),
+				capabilities: caps,
 			}
 
 			h.mu.Lock()
@@ -1198,6 +1255,11 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				TrustTier:     profile.TrustTier,
 				Permissions:   perms,
 				Role:          msg.Role,
+				// #2567: advertise the protocol version and the server capability
+				// set so a client can learn what this deployed hub supports without
+				// probing. Additive — an existing client ignores these unknown fields.
+				ProtocolVersion:    contributorProtocolVersion,
+				ServerCapabilities: serverCapabilities(),
 			}); err != nil {
 				h.logger.Warn("[contribute-ws] failed to send auth_ok", "username", profile.GitHubUsername, "error", err)
 				return

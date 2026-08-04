@@ -45,6 +45,13 @@ const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // (the old silent-nil behaviour) nor busy-loop the hub.
 const TASK_UNAVAILABLE_RETRY_MS = 30000;
 
+// RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
+// (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
+// optional — an older hub simply ignores it) and the hub advertises its own
+// version + capability set back on auth_ok. Keep in step with
+// contributorProtocolVersion in v2/pkg/dashboard/contribute_protocol.go.
+const RELAY_PROTOCOL_VERSION = '1.1';
+
 // Per-task CLI-crash retry budget. Issue #2203: a task whose CLI kept dying was
 // reassigned by the hub and failed identically forever (5+ times in ~20min),
 // starving that hub task slot. After MAX_TASK_CLI_RESTARTS crash-restarts for
@@ -90,6 +97,45 @@ function injectGhToken(token) {
 const CLI_READY_POLL_MS = 2000;
 const CLI_READY_TIMEOUT_MS = 600000;
 const CONTAINER_NAME = process.env.HIVE_CONTAINER_NAME || 'hive-contributor';
+
+// detectCapabilities builds the OPTIONAL, client-declared capability object the
+// relay reports in auth_response (kubestellar/hive#2547, declare half). Every
+// entry is a cheap, honest self-report the hub STORES + SURFACES read-only and
+// NEVER routes/gates on. It is best-effort: any probe that throws is simply
+// omitted, so a constrained environment still authenticates unchanged. Computed
+// once at startup and cached.
+let cachedCapabilities = null;
+function detectCapabilities() {
+  if (cachedCapabilities) return cachedCapabilities;
+  const caps = {
+    os: process.platform,
+    arch: process.arch,
+    relay_protocol_version: RELAY_PROTOCOL_VERSION,
+  };
+  // Container runtime: prefer docker, then podman, else none. `command -v` is a
+  // cheap presence check; failure just means the runtime is absent.
+  let runtime = 'none';
+  for (const rt of ['docker', 'podman']) {
+    try {
+      execSync(`command -v ${rt}`, { stdio: 'ignore' });
+      runtime = rt;
+      break;
+    } catch (_) { /* not installed */ }
+  }
+  caps.container_runtime = runtime;
+  // Credential type: the KIND of GitHub credential the relay authenticates with
+  // (never the credential itself). App-token cache present → "app"; an explicit
+  // GH_TOKEN/GITHUB_TOKEN in the environment → "pat"; otherwise leave unset.
+  try {
+    if (fs.existsSync(GH_TOKEN_CACHE)) {
+      caps.credential_type = 'app';
+    } else if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) {
+      caps.credential_type = 'pat';
+    }
+  } catch (_) { /* ignore */ }
+  cachedCapabilities = caps;
+  return caps;
+}
 
 // Backends that must NOT be given --model, mirroring contributor-agent.sh.
 // amazonq/goose take their model from config/env. bob is excluded because
@@ -713,11 +759,22 @@ function handleMessage(data) {
         registration_token: REG_TOKEN,
         cli_backend: BACKEND,
         model: MODEL,
+        // #2547 declare half + #2567: additive, optional self-report of runtime
+        // posture and protocol version. An older hub ignores these unknown fields.
+        protocol_version: RELAY_PROTOCOL_VERSION,
+        capabilities: detectCapabilities(),
       });
       break;
 
     case 'auth_ok':
       console.log(`Authenticated as ${msg.contributor_id} (tier: ${msg.trust_tier})`);
+      // #2567: the hub advertises its protocol version + capability set here. We
+      // log them (forward-compatible: unknown/absent fields are simply skipped)
+      // so a newer relay can adapt to what the deployed server supports instead
+      // of probing. No behaviour is gated on them today.
+      if (msg.protocol_version || (msg.server_capabilities && msg.server_capabilities.length)) {
+        console.log(`Hub protocol ${msg.protocol_version || 'unversioned'}; capabilities: ${(msg.server_capabilities || []).join(', ') || 'none'}`);
+      }
       reconnectDelay = BASE_RECONNECT_DELAY_MS;
       if (!currentTask) {
         send({ type: 'ready', seq: nextSeq() });

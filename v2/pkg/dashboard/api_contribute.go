@@ -2329,12 +2329,37 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	s.statusMu.RUnlock()
+	// #2567: identify WHICH surface answered. The Hub discovery front door and a
+	// selected spoke both serve this exact handler with disjoint-looking payloads
+	// and, until now, no discriminator — a wrong-base-URL request returned 200 and
+	// looked valid. Add a "surface" discriminator plus the protocol/api version and
+	// the served git SHA so a client can tell hub from spoke and a wrong URL fails
+	// LOUDLY (identifiable) instead of silently. All fields are ADDITIVE — existing
+	// consumers of the four fields above are unaffected. Also mirror the protocol
+	// version in a response header for cheap client-side checks.
+	w.Header().Set("X-Hive-Contribute-Protocol", contributorProtocolVersion)
 	jsonResponse(w, map[string]any{
 		"hub":                 "online",
 		"active_contributors": active,
 		"total_registered":    len(profiles),
 		"actionable_items":    actionable,
+		"surface":             s.contributeSurface(),
+		"api_version":         contributorProtocolVersion,
+		"served_sha":          versionShort,
 	})
+}
+
+// contributeSurface reports which contributor surface this deployment presents
+// so the /api/contribute/status response can discriminate the Hub discovery
+// front door from a selected spoke (#2567). A hive that sits behind the hub's
+// nginx auth-proxy (HubProxied) is a hosted SPOKE; otherwise it is the hub /
+// standalone discovery surface. Read-only; derived from existing config, adds no
+// new state or configuration.
+func (s *Server) contributeSurface() string {
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Dashboard.HubProxied {
+		return surfaceSpoke
+	}
+	return surfaceHub
 }
 
 func (s *Server) handleContributeActivity(w http.ResponseWriter, r *http.Request) {
