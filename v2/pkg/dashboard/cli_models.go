@@ -43,6 +43,10 @@ import (
 //     pre-1.37 goose omits the models key from the session/new result (the
 //     clean fallback signal); that, a missing binary, or any error falls
 //     back to a curated per-provider static list.
+//   - codex:   `codex app-server` (stdio JSON-RPC) answers model/list with
+//     the catalog BAKED INTO the installed CLI binary — per-CLI-version, not
+//     per-account (the per-account remote_models fetch was removed upstream),
+//     and fully unauthenticated. See cli_models_codex.go.
 //
 // Every discovery is BEST-EFFORT: a failed or absent probe falls back to a
 // current static list so a dropdown is never empty and never errors. Results
@@ -284,19 +288,26 @@ var copilotAlwaysIncludeModels = []string{
 // either does nothing or breaks inference.
 var bobStaticModels = []string{bobAutoModel}
 
-// codexStaticModels is the maintained list for the OpenAI Codex CLI. Codex only
-// accepts OpenAI models — Claude ids are rejected with a ChatGPT account
-// ("model is not supported when using Codex with a ChatGPT account"), so codex
-// must never fall through to the copilot list. Order mirrors `codex /model`
-// (sol is the default). Keep CURRENT with the Codex CLI's model set.
+// codexStaticModels is the fallback for the OpenAI Codex CLI, served when the
+// `codex app-server` model/list probe cannot run (binary absent — the case on
+// hosted spokes) or fails (see cli_models_codex.go). Codex only accepts OpenAI
+// models — Claude ids are rejected with a ChatGPT account ("model is not
+// supported when using Codex with a ChatGPT account"), so codex must never
+// fall through to the copilot list. The catalog is baked into the CLI binary
+// (per-CLI-version, not per-account); this snapshot matches codex 0.146.0:
+// visible ids in picker order (sol is the default), then the hidden ids —
+// hidden entries are still valid --model values (see orderCodexServedModels).
+// Keep in sync with CODEX_CLI_MODELS in static/index.html.
 var codexStaticModels = []string{
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
+	"gpt-5.2",
+	// Hidden in the 0.146.0 picker but still valid --model values.
 	"gpt-5.4",
 	"gpt-5.4-mini",
-	"gpt-5.3-codex-spark",
+	"codex-auto-review",
 }
 
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
@@ -456,9 +467,7 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		// No live source exists; the maintained static list is authoritative.
 		r = cliModelResult{models: dedupeModels(claudeStaticModels), fallback: false}
 	case "codex":
-		// No probe wired yet; the maintained static list is authoritative and
-		// OpenAI-only (Claude ids are rejected by Codex with a ChatGPT account).
-		r = cliModelResult{models: dedupeModels(codexStaticModels), fallback: false}
+		r = s.discoverCodexModels()
 	case bobBackendID:
 		// bob picks its own model and exposes no catalog, so there is nothing
 		// to discover. The single auto sentinel is authoritative (not a
