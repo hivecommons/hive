@@ -6,6 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -15,6 +19,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/dashboard"
+	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/hostedcontrol"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
 	"github.com/kubestellar/hive/v2/pkg/visualhive/normalservice"
@@ -49,6 +54,7 @@ func installDashboardLifecycleFakes(t *testing.T) {
 	originalTrigger := dashboardLifecycleTrigger
 	originalPlanRetirement := dashboardLifecyclePlanRetirement
 	originalRetireRepair := dashboardLifecycleRetireRepair
+	originalGitHubClient := dashboardLifecycleGitHubClient
 	originalStopNormalVisual := dashboardLifecycleStopNormalVisual
 	originalNormalBeadsDirs := append([]string(nil), dashboardLifecycleNormalBeadsDirs...)
 	t.Cleanup(func() {
@@ -56,9 +62,42 @@ func installDashboardLifecycleFakes(t *testing.T) {
 		dashboardLifecycleTrigger = originalTrigger
 		dashboardLifecyclePlanRetirement = originalPlanRetirement
 		dashboardLifecycleRetireRepair = originalRetireRepair
+		dashboardLifecycleGitHubClient = originalGitHubClient
 		dashboardLifecycleStopNormalVisual = originalStopNormalVisual
 		dashboardLifecycleNormalBeadsDirs = originalNormalBeadsDirs
 	})
+}
+
+func TestDashboardUninstalledReadsDoNotCreateRecoveryState(t *testing.T) {
+	parent := useTemporaryHostedHiveState(t)
+	stateRoot := filepath.Join(parent, "integrated")
+	installDashboardLifecycleFakes(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not installed", http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+	dashboardLifecycleGitHubClient = func(string) *hivegithub.Client {
+		return hivegithub.NewClient("owner-token", "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)), server.URL)
+	}
+
+	var selected string
+	for _, operation := range []string{"status", "doctor"} {
+		result, err := runDashboardIntegratedLifecycle(context.Background(), dashboard.IntegratedLifecycleRequest{
+			Repository: "owner/repository", Operation: operation,
+		}, "owner-token")
+		if err != nil || result["installed"] != false {
+			t.Fatalf("%s result=%v err=%v", operation, result, err)
+		}
+		got, _ := result["selected_state_dir"].(string)
+		if selected == "" {
+			selected = got
+		} else if got != selected {
+			t.Fatalf("uninstalled reads drifted from %q to %q", selected, got)
+		}
+		if _, statErr := os.Lstat(stateRoot); !os.IsNotExist(statErr) {
+			t.Fatalf("%s created read-only lifecycle state: %v", operation, statErr)
+		}
+	}
 }
 
 func TestDashboardRepairRetirementPlanApplyAndReplayBindExactProposal(t *testing.T) {

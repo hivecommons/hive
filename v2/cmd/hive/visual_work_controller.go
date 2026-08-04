@@ -73,7 +73,13 @@ func loadAuthoritativeVisualWorkContract() (integrated.Config, bool, error) {
 			return integrated.Config{}, exists, err
 		}
 	}
-	store, err := integrated.NewStore(filepath.Join(stateDir, "integrated"))
+	storeDir := filepath.Join(stateDir, "integrated")
+	if _, statErr := os.Lstat(storeDir); os.IsNotExist(statErr) {
+		return integrated.Config{}, false, nil
+	} else if statErr != nil {
+		return integrated.Config{}, false, fmt.Errorf("inspect authoritative Visual Hive state: %w", statErr)
+	}
+	store, err := integrated.NewStore(storeDir)
 	if err != nil {
 		return integrated.Config{}, false, err
 	}

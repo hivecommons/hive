@@ -130,15 +130,22 @@ func dashboardIntegratedUninstalledRead(ctx context.Context, request dashboard.I
 		"repository":     request.Repository, "installed": false, "production_ready": false,
 		"orphaned_setup": map[string]any{"detected": false, "recovery_available": false},
 	}
-	if store, storeErr := integrated.NewStore(filepath.Join(stateDir, "integrated")); storeErr == nil {
-		if intent, exists, intentErr := store.LoadUninstallIntent(); intentErr == nil && exists {
-			result["orphaned_setup"] = map[string]any{
-				"detected": true, "recovery_available": true, "finalization_available": true,
-				"phase": intent.Phase, "cleanup_branch": intent.Branch, "cleanup_commit_sha": intent.CleanupCommitSHA,
-				"pr_number": intent.PRNumber, "pr_url": intent.PRURL, "diff_digest": intent.DiffDigest,
+	// Status and doctor are read-only. NewStore creates its directory, which
+	// would turn a first uninstalled read into markerless repository state and
+	// make the next read select the "-managed" recovery sibling. Only open a
+	// recovery store after proving that it already exists.
+	storeDir := filepath.Join(stateDir, "integrated")
+	if _, statErr := os.Lstat(storeDir); statErr == nil {
+		if store, storeErr := integrated.NewStore(storeDir); storeErr == nil {
+			if intent, exists, intentErr := store.LoadUninstallIntent(); intentErr == nil && exists {
+				result["orphaned_setup"] = map[string]any{
+					"detected": true, "recovery_available": true, "finalization_available": true,
+					"phase": intent.Phase, "cleanup_branch": intent.Branch, "cleanup_commit_sha": intent.CleanupCommitSHA,
+					"pr_number": intent.PRNumber, "pr_url": intent.PRURL, "diff_digest": intent.DiffDigest,
+				}
+				augmentDashboardIntegratedRead(result, request.Repository, stateDir)
+				return result, nil
 			}
-			augmentDashboardIntegratedRead(result, request.Repository, stateDir)
-			return result, nil
 		}
 	}
 	plan, planErr := integrated.PlanOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{

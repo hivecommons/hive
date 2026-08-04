@@ -52,6 +52,20 @@ func TestLoadAuthoritativeVisualWorkContractTreatsEmptyScaffoldAsDormant(t *test
 	}
 }
 
+func TestLoadAuthoritativeVisualWorkContractDoesNotCreateExplicitState(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+
+	installed, exists, err := loadAuthoritativeVisualWorkContract()
+	if err != nil || exists || installed.Repository != "" {
+		t.Fatalf("uninstalled explicit state = %+v exists=%t err=%v", installed, exists, err)
+	}
+	entries, readErr := os.ReadDir(stateDir)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("read-only contract load created state: entries=%v err=%v", entries, readErr)
+	}
+}
+
 func TestLoadAuthoritativeVisualWorkContractRejectsNonemptyStateWithoutContract(t *testing.T) {
 	stateDir := t.TempDir()
 	integratedDir := filepath.Join(stateDir, "integrated")
