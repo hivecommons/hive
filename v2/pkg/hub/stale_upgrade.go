@@ -82,17 +82,25 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time) upgradeAttempt
 	if entry.UpgradeFailed {
 		return ev
 	}
-	// Without a start timestamp there is no elapsed time to reason about. The
-	// auto-upgrade recovery path treats a zero timestamp as stale, but that path
-	// re-arms delivery rather than clearing state; clearing on no evidence at
-	// all would risk dropping a genuinely fresh upgrade, so we decline.
-	if entry.UpgradeStartedAt.IsZero() {
-		return ev
-	}
-
-	ev.elapsed = now.Sub(entry.UpgradeStartedAt)
-	if ev.elapsed < orphanedUpgradeClearAfter {
-		return ev
+	// A zero UpgradeStartedAt with Upgrading still latched is not a fresh
+	// upgrade — every path that sets Upgrading=true stamps UpgradeStartedAt to
+	// time.Now() in the same breath (saas.go, saas_bulk.go), so a zero value can
+	// only mean the timestamp was lost or reset while the flag survived. That is
+	// the exact live wedge on ibm-alchemy: Upgrading=true, UpgradeStartedAt =
+	// 0001-01-01, which the dashboard rendered as "Upgrading 17755944h28m" and
+	// which no elapsed-based sweep can ever reach because there is no elapsed to
+	// measure. We must not simply return here (the previous behaviour, which is
+	// what let ibm-alchemy stay wedged forever); instead we skip the
+	// elapsed-time gate and fall through to the SAME liveness evidence used for a
+	// real stale upgrade. We still only clear when the spoke has demonstrably
+	// checked in since — and is not already on the target — so a genuinely
+	// fresh upgrade whose stamp merely lags a beat is never dropped.
+	zeroStart := entry.UpgradeStartedAt.IsZero()
+	if !zeroStart {
+		ev.elapsed = now.Sub(entry.UpgradeStartedAt)
+		if ev.elapsed < orphanedUpgradeClearAfter {
+			return ev
+		}
 	}
 
 	// Evidence: has the spoke checked in since we instructed the upgrade?
@@ -117,9 +125,17 @@ func evaluateOrphanedUpgrade(entry *RegistryEntry, now time.Time) upgradeAttempt
 	}
 
 	ev.orphaned = true
-	ev.reason = "spoke heartbeated " + roundedDuration(now.Sub(lastBeat)) +
-		" ago still running " + orDash(entry.GitHash) +
-		", no upgrade attempt in flight"
+	if zeroStart {
+		// No trustworthy start time to report an elapsed from — the flag itself is
+		// the corruption. Name that so the timeline reads honestly.
+		ev.reason = "upgrade latched with no start time (lost/zero UpgradeStartedAt); spoke heartbeated " +
+			roundedDuration(now.Sub(lastBeat)) + " ago still running " + orDash(entry.GitHash) +
+			", no upgrade attempt in flight"
+	} else {
+		ev.reason = "spoke heartbeated " + roundedDuration(now.Sub(lastBeat)) +
+			" ago still running " + orDash(entry.GitHash) +
+			", no upgrade attempt in flight"
+	}
 	return ev
 }
 

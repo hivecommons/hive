@@ -10,6 +10,8 @@ import (
 // TestCovD_QueryCLIModels drives queryCLIModels for every backend, exercising
 // the static-list, cache, and fallback branches (all offline).
 func TestCovD_QueryCLIModels(t *testing.T) {
+	swapGooseProbe(t, gooseProbeMissing)
+	withoutClaudeCredentials(t)
 	logger := testLoggerCovD()
 	s := NewServer(0, logger)
 
@@ -78,8 +80,11 @@ func TestCovD_DiscoverModelsNoCreds(t *testing.T) {
 	}
 }
 
-// TestCovD_DiscoverGooseModels covers env-driven goose discovery.
+// TestCovD_DiscoverGooseModels covers the env-driven goose static fallback
+// (probe seam pinned to "binary missing" so a locally installed goose cannot
+// make this nondeterministic).
 func TestCovD_DiscoverGooseModels(t *testing.T) {
+	swapGooseProbe(t, gooseProbeMissing)
 	logger := testLoggerCovD()
 	s := NewServer(0, logger)
 

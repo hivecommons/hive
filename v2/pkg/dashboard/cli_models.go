@@ -1,14 +1,22 @@
 package dashboard
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/claude"
 )
 
 // This file adds runtime model discovery for the CLI backends (copilot,
@@ -24,13 +32,31 @@ import (
 //     api.github.com/copilot_internal/user (endpoints.api). Verified live.
 //   - gemini:  GET generativelanguage.googleapis.com/v1beta/models with the
 //     configured Gemini API key. Live only when a key is configured.
-//   - claude:  Anthropic publishes no per-subscription "list my models"
-//     endpoint and the Claude CLI has no non-interactive `claude models`
-//     command, so this is a maintained static list of CURRENT model ids
-//     (kept in sync with CLAUDE_CLI_MODELS in static/index.html).
-//   - goose:   provider-configured (Ollama/OpenAI/Anthropic/...). Without a
-//     stable machine-readable "list models for my provider" command, this
-//     returns a per-provider static list, or "default" when unconfigured.
+//   - claude:  GET api.anthropic.com/v1/models. The endpoint accepts BOTH a
+//     standard Anthropic API key (x-api-key, preferred when ANTHROPIC_API_KEY
+//     is set) and the Claude Code subscription OAuth bearer token stored by
+//     the CLI in ~/.claude/.credentials.json (verified live: HTTP 200 with a
+//     subscription token). The OAuth token is short-lived (<1 day) and is
+//     refreshed ONLY when the claude CLI itself runs, so the prober re-reads
+//     the file on every probe, checks expiresAt BEFORE any HTTP call, and
+//     NEVER attempts a token refresh itself — rotating the token out from
+//     under the CLI would break its login (the hive inotify-watches
+//     ~/.claude/). Expired/absent credentials skip straight to the static
+//     fallback (kept in sync with CLAUDE_CLI_MODELS in static/index.html).
+//   - goose:   provider-configured (Ollama/OpenAI/Anthropic/...). goose
+//     >= 1.37 ships an ACP (Agent Client Protocol) agent server (`goose acp`,
+//     JSON-RPC over stdio): initialize + session/new returns result.models
+//     {currentModelId, availableModels}, sourced from goose's provider
+//     inventory, which live-fetches the CONFIGURED provider's own models
+//     endpoint. goose resolves ALL provider credentials itself (keyring /
+//     secrets.yaml / env) — hive never reads goose secrets. Unconfigured or
+//     pre-1.37 goose omits the models key from the session/new result (the
+//     clean fallback signal); that, a missing binary, or any error falls
+//     back to a curated per-provider static list.
+//   - codex:   `codex app-server` (stdio JSON-RPC) answers model/list with
+//     the catalog BAKED INTO the installed CLI binary — per-CLI-version, not
+//     per-account (the per-account remote_models fetch was removed upstream),
+//     and fully unauthenticated. See cli_models_codex.go.
 //
 // Every discovery is BEST-EFFORT: a failed or absent probe falls back to a
 // current static list so a dropdown is never empty and never errors. Results
@@ -86,6 +112,45 @@ const (
 	// require a plausible editor identifier.
 	copilotEditorVersion = "vscode/1.99.0"
 
+	// copilotSDKHelperPath is where the image installs the Node helper that
+	// lists Copilot models through the official @github/copilot-sdk (source:
+	// bin/copilot-models.mjs, COPYed by v2/Dockerfile). The SDK spawns the
+	// pinned copilot CLI as a JSON-RPC server, so the probe rides the CLI's
+	// own stored auth and TLS handling — auth configurations the raw-HTTP
+	// probe below cannot reach (verified live against copilot CLI 1.0.59 in a
+	// hive pod: 25 models via stored device-flow auth behind the egress
+	// proxy). Absent outside the image, in which case the SDK probe is
+	// skipped instantly.
+	copilotSDKHelperPath = "/usr/local/bin/copilot-models.mjs"
+
+	// copilotSDKNodeBinary runs the helper. The helper is plain-Node ESM; it
+	// is invoked explicitly (not via shebang) so no exec bit is needed.
+	copilotSDKNodeBinary = "node"
+
+	// copilotSDKProbeTimeout bounds the helper exec. The helper enforces its
+	// OWN hard deadline (INTERNAL_TIMEOUT_MS = 15s in copilot-models.mjs);
+	// this sits slightly above it so the helper always gets to report its own
+	// error on stderr instead of being killed mid-flight.
+	copilotSDKProbeTimeout = 20 * time.Second
+
+	// copilotSDKAgentHome is the shared agent HOME the copilot CLI's stored
+	// device-flow auth lives under ($HOME/.copilot). Agents launch with
+	// HOME=/data/home (see agent.Manager; on hosted spokes /home/dev symlinks
+	// to it), so the helper is run with the same HOME when the directory
+	// exists — otherwise the server process's own HOME is left in place.
+	copilotSDKAgentHome = "/data/home"
+
+	// copilotSDKStderrLogLimit caps how much helper stderr is folded into the
+	// returned error (and thus a single log line) — enough to diagnose, never
+	// a dump. Helper stderr carries only error text, never tokens.
+	copilotSDKStderrLogLimit = 300
+
+	// copilotPolicyStateEnabled is the SDK policy.state value marking a model
+	// as usable by this account; models carrying any OTHER explicit state are
+	// excluded. Models with no policy at all are kept (the catalog omits
+	// policy for unrestricted models).
+	copilotPolicyStateEnabled = "enabled"
+
 	// copilotAutoModel is the Copilot auto-selection sentinel: `copilot --model
 	// auto` lets the Copilot CLI pick/adjust the optimal model per task instead
 	// of pinning a concrete id. It is a valid --model VALUE (confirmed against
@@ -123,25 +188,104 @@ const (
 	// geminiGenerateMethod is the supportedGenerationMethods entry that marks
 	// a model as usable for chat/content generation (vs embeddings, etc.).
 	geminiGenerateMethod = "generateContent"
+
+	// --- Goose (ACP) ---
+
+	// gooseACPBinary and gooseACPSubcommand spawn goose's ACP agent server
+	// (`goose acp`, goose >= 1.37): JSON-RPC 2.0, newline-delimited, on stdio.
+	gooseACPBinary     = "goose"
+	gooseACPSubcommand = "acp"
+
+	// gooseACPProbeTimeout bounds the whole probe (spawn + initialize +
+	// session/new + session/close). Measured 0.39s locally against a live
+	// Ollama including process spawn; the headroom is for slow remote
+	// providers, whose models endpoint goose fetches inline.
+	gooseACPProbeTimeout = 10 * time.Second
+
+	// gooseACPProtocolVersion is the ACP protocol version sent in initialize.
+	// Verified against goose 1.37.0, which answers protocolVersion 1.
+	gooseACPProtocolVersion = 1
+
+	// gooseACPShutdownGrace is how long the probe waits for goose to exit on
+	// its own after stdin closes (letting it process the best-effort
+	// session/close) before killing it. The process is ALWAYS reaped either
+	// way; this only bounds how long a lingering goose can hold the probe.
+	gooseACPShutdownGrace = 2 * time.Second
+
+	// gooseACPClientName / gooseACPClientVersion identify this probe in the
+	// ACP initialize handshake's clientInfo.
+	gooseACPClientName    = "hive-model-probe"
+	gooseACPClientVersion = "1.0"
+
+	// gooseACPAgentHome is the shared agent HOME (see copilotSDKAgentHome —
+	// same directory, same rationale): goose reads its provider config from
+	// ~/.config/goose/config.yaml, so the probe must run under the HOME the
+	// agents use to see which provider is configured. Unlike codex, goose
+	// needs no isolated HOME. Side-effect: each probe writes a session (plus
+	// inventory rows) into goose's sessions.db under this HOME, which is why
+	// the probe sends session/close when done (see gooseACPExchange).
+	gooseACPAgentHome = "/data/home"
+
+	// gooseACPMaxLineBytes caps a single ACP stdout line. session/new results
+	// carry the full model inventory, which can exceed bufio.Scanner's 64 KiB
+	// default.
+	gooseACPMaxLineBytes = 1 << 20
+
+	// JSON-RPC request ids for the fixed probe sequence.
+	gooseACPInitializeID   = 1
+	gooseACPSessionNewID   = 2
+	gooseACPSessionCloseID = 3
+
+	// --- Claude (Anthropic) ---
+
+	// anthropicModelsURL lists the models available to the presented credential
+	// (API key or Claude Code subscription OAuth token — both accepted,
+	// verified live).
+	anthropicModelsURL = "https://api.anthropic.com/v1/models"
+
+	// anthropicModelsPageLimit is the ?limit= page size for /v1/models. Set to
+	// the API maximum so a single call covers the whole catalog (currently
+	// ~a dozen ids) without pagination.
+	anthropicModelsPageLimit = 1000
+
+	// anthropicAPIVersion is the required anthropic-version header value.
+	anthropicAPIVersion = "2023-06-01"
+
+	// anthropicOAuthBeta is the anthropic-beta value sent alongside a Claude
+	// Code subscription OAuth bearer token. Currently optional for /v1/models
+	// (verified live: 200 without it) but sent anyway for forward
+	// compatibility, mirroring what the Claude CLI sends.
+	anthropicOAuthBeta = "oauth-2025-04-20"
+
+	// claudeTokenExpirySkew is the safety margin subtracted from the stored
+	// token's expiresAt before use: a token within this window of expiring is
+	// treated as already expired so we never fire an HTTP call that a few
+	// seconds of clock skew or transit time would turn into a 401.
+	claudeTokenExpirySkew = 2 * time.Minute
 )
 
 // --- Static fallback lists (kept CURRENT — July 2026) ---
 
-// claudeStaticModels is the maintained fallback/authoritative list for the
-// Claude CLI. Anthropic exposes no "list my models" API and the CLI has no
-// non-interactive list command, so this list IS the source of truth. Keep it
+// claudeStaticModels is the fallback offered when the Claude models probe
+// cannot run (no API key and no fresh OAuth token in the CLI credentials
+// file) or fails. Live discovery via api.anthropic.com/v1/models is strongly
+// preferred; this is only a floor so the dropdown is never empty. Refreshed
+// 2026-08-03 from a live /v1/models response (11 ids, in API order). Keep it
 // in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
-// dated/versioned ids AND the bare aliases the CLI accepts are included.
+// ids AND the bare aliases the CLI accepts are included.
 var claudeStaticModels = []string{
+	"claude-opus-5",
+	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
-	"claude-opus-4-6",
-	"claude-sonnet-5",
 	"claude-sonnet-4-6",
-	"claude-sonnet-4-5",
-	"claude-haiku-4-5",
-	// Bare aliases the Claude CLI also accepts.
+	"claude-opus-4-6",
+	"claude-opus-4-5-20251101",
+	"claude-haiku-4-5-20251001",
+	"claude-sonnet-4-5-20250929",
+	"claude-opus-4-1-20250805",
+	// Bare aliases the Claude CLI also accepts (see claudeAlwaysIncludeModels).
 	"opus",
 	"sonnet",
 	"haiku",
@@ -180,25 +324,44 @@ var copilotAlwaysIncludeModels = []string{
 	copilotAutoModel,
 }
 
+// claudeAlwaysIncludeModels are ids that must ALWAYS be offered in the claude
+// dropdown, whether the served list came from live discovery or the static
+// fallback (mirrors copilotAlwaysIncludeModels). The Anthropic /v1/models
+// endpoint never returns the bare aliases, but they are valid `claude --model`
+// values, so they are appended to every served claude list — surviving both
+// paths and the dashboard's model auto-heal.
+var claudeAlwaysIncludeModels = []string{
+	"opus",
+	"sonnet",
+	"haiku",
+}
+
 // bobStaticModels is bob's complete model list: exactly one entry, the auto
 // sentinel. bob has no model catalog to discover and no usable --model flag
 // (see bobAutoModel), so offering anything else would invite a selection that
 // either does nothing or breaks inference.
 var bobStaticModels = []string{bobAutoModel}
 
-// codexStaticModels is the maintained list for the OpenAI Codex CLI. Codex only
-// accepts OpenAI models — Claude ids are rejected with a ChatGPT account
-// ("model is not supported when using Codex with a ChatGPT account"), so codex
-// must never fall through to the copilot list. Order mirrors `codex /model`
-// (sol is the default). Keep CURRENT with the Codex CLI's model set.
+// codexStaticModels is the fallback for the OpenAI Codex CLI, served when the
+// `codex app-server` model/list probe cannot run (binary absent — the case on
+// hosted spokes) or fails (see cli_models_codex.go). Codex only accepts OpenAI
+// models — Claude ids are rejected with a ChatGPT account ("model is not
+// supported when using Codex with a ChatGPT account"), so codex must never
+// fall through to the copilot list. The catalog is baked into the CLI binary
+// (per-CLI-version, not per-account); this snapshot matches codex 0.146.0:
+// visible ids in picker order (sol is the default), then the hidden ids —
+// hidden entries are still valid --model values (see orderCodexServedModels).
+// Keep in sync with CODEX_CLI_MODELS in static/index.html.
 var codexStaticModels = []string{
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
+	"gpt-5.2",
+	// Hidden in the 0.146.0 picker but still valid --model values.
 	"gpt-5.4",
 	"gpt-5.4-mini",
-	"gpt-5.3-codex-spark",
+	"codex-auto-review",
 }
 
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
@@ -355,12 +518,9 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	case "goose":
 		r = s.discoverGooseModels()
 	case "claude":
-		// No live source exists; the maintained static list is authoritative.
-		r = cliModelResult{models: dedupeModels(claudeStaticModels), fallback: false}
+		r = s.discoverClaudeModels()
 	case "codex":
-		// No probe wired yet; the maintained static list is authoritative and
-		// OpenAI-only (Claude ids are rejected by Codex with a ChatGPT account).
-		r = cliModelResult{models: dedupeModels(codexStaticModels), fallback: false}
+		r = s.discoverCodexModels()
 	case bobBackendID:
 		// bob picks its own model and exposes no catalog, so there is nothing
 		// to discover. The single auto sentinel is authoritative (not a
@@ -382,9 +542,12 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	}
 	// Applied after stabilization/fallback so the pinned ids survive BOTH
 	// paths: a live sample that omits a rollout-gated id and the static
-	// fallback list (see copilotAlwaysIncludeModels).
+	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels).
 	if backend == "copilot" {
 		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
+	}
+	if backend == "claude" {
+		r.models = dedupeModels(append(r.models, claudeAlwaysIncludeModels...))
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)
@@ -414,12 +577,32 @@ func cliStaticFallback(backend string) []string {
 
 // --- Copilot discovery ---
 
-// discoverCopilotModels lists the chat-capable models available to the stored
-// Copilot token. The api host is itself discovered per-account (public vs
-// enterprise). Best-effort: any failure returns fallback=true with an empty
-// list so the caller substitutes the static list.
+// discoverCopilotModels lists the models available to this hive's Copilot
+// auth. Hardened probe order:
+//
+//  1. the official-SDK helper (copilotSDKHelperPath) — the SDK drives the
+//     installed copilot CLI, so it rides the CLI's own auth resolution and
+//     TLS handling and works in configurations the raw-HTTP probe cannot
+//     reach (e.g. stored device-flow auth with no token surfaced here);
+//  2. the raw HTTP GET <copilot-api>/models probe with the stored token,
+//     where the api host is itself discovered per-account (public vs
+//     enterprise);
+//  3. any failure returns fallback=true with an empty list so the caller
+//     substitutes the static list.
+//
+// Successful results from either live probe feed the same cache/retention
+// machinery (see stabilize) via queryCLIModels.
 func (s *Server) discoverCopilotModels() cliModelResult {
 	token := s.copilotToken()
+
+	if models, err := s.probeCopilotModelsSDK(token); err != nil {
+		s.logger.Info("copilot SDK model discovery unavailable, falling back to HTTP probe", "err", err.Error())
+	} else if len(models) == 0 {
+		s.logger.Info("copilot SDK model discovery returned no models, falling back to HTTP probe")
+	} else {
+		return cliModelResult{models: dedupeModels(models), fallback: false}
+	}
+
 	if token == "" {
 		return cliModelResult{fallback: true}
 	}
@@ -433,11 +616,97 @@ func (s *Server) discoverCopilotModels() cliModelResult {
 	if err != nil || len(models) == 0 {
 		if err != nil {
 			// Do NOT log the token or full URL query; just the failure.
-			s.logger.Warn("copilot model discovery failed", "err", err.Error())
+			s.logger.Warn("copilot HTTP model discovery failed, serving static fallback", "err", err.Error())
 		}
 		return cliModelResult{fallback: true}
 	}
 	return cliModelResult{models: dedupeModels(models), fallback: false}
+}
+
+// runCopilotSDKHelper executes the SDK helper and returns its stdout. A
+// package-level seam (mirroring healthAgentStatuses) so unit tests can
+// substitute helper output without running node or the real CLI.
+var runCopilotSDKHelper = execCopilotSDKHelper
+
+// probeCopilotModelsSDK runs the SDK helper under its own timeout and parses
+// the resulting model ids. token may be empty — the CLI then resolves stored
+// device-flow auth on its own, which is exactly the hardening this path adds.
+func (s *Server) probeCopilotModelsSDK(token string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), copilotSDKProbeTimeout)
+	defer cancel()
+	out, err := runCopilotSDKHelper(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	return parseCopilotSDKModels(out)
+}
+
+// execCopilotSDKHelper is the real helper runner: `node copilot-models.mjs`
+// with the inherited environment plus the agent HOME (stored CLI auth) and,
+// when known, the device-flow token. Skips instantly when the helper is not
+// installed (dev machines, unit tests).
+func execCopilotSDKHelper(ctx context.Context, token string) ([]byte, error) {
+	if _, err := os.Stat(copilotSDKHelperPath); err != nil {
+		return nil, fmt.Errorf("sdk helper not installed: %w", err)
+	}
+	cmd := exec.CommandContext(ctx, copilotSDKNodeBinary, copilotSDKHelperPath)
+	// os/exec documents that for duplicate keys the LAST value wins, so
+	// appending overrides the inherited values.
+	env := os.Environ()
+	if st, err := os.Stat(copilotSDKAgentHome); err == nil && st.IsDir() {
+		env = append(env, "HOME="+copilotSDKAgentHome)
+	}
+	if token != "" {
+		// The copilot CLI honors COPILOT_GITHUB_TOKEN; the device-flow token
+		// may exist only in the agent manager's memory. Secret — never logged.
+		env = append(env, "COPILOT_GITHUB_TOKEN="+token)
+	}
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > copilotSDKStderrLogLimit {
+			msg = msg[:copilotSDKStderrLogLimit]
+		}
+		return nil, fmt.Errorf("sdk helper: %w (stderr: %s)", err, msg)
+	}
+	return stdout.Bytes(), nil
+}
+
+// copilotSDKModel mirrors one entry of the helper's stdout JSON. The helper
+// also emits name/efforts/defaultEffort for future use; discovery only needs
+// the id and the policy gate today.
+type copilotSDKModel struct {
+	ID          string `json:"id"`
+	PolicyState string `json:"policyState"`
+}
+
+// parseCopilotSDKModels decodes the helper output ({"models":[...]}) and
+// returns usable model ids: models carrying an explicit policy state other
+// than "enabled" are excluded, as is the "auto" pseudo-entry — the dropdown
+// pipeline expects real catalog ids and re-appends the auto sentinel itself
+// via copilotAlwaysIncludeModels (matching the raw-HTTP probe, whose catalog
+// never returns "auto").
+func parseCopilotSDKModels(data []byte) ([]string, error) {
+	var body struct {
+		Models []copilotSDKModel `json:"models"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, fmt.Errorf("parse sdk helper output: %w", err)
+	}
+	var out []string
+	for _, m := range body.Models {
+		if m.ID == "" || m.ID == copilotAutoModel {
+			continue
+		}
+		if m.PolicyState != "" && m.PolicyState != copilotPolicyStateEnabled {
+			continue
+		}
+		out = append(out, m.ID)
+	}
+	return out, nil
 }
 
 // copilotToken resolves the Copilot GitHub OAuth token from the agent manager
@@ -632,15 +901,236 @@ func parseGeminiModelsResponse(r io.Reader) ([]string, error) {
 	return out, nil
 }
 
+// --- Claude (Anthropic) discovery ---
+
+// claudePodCredentialsPath is a var (not a const) solely so tests can point it
+// at a temp file (mirroring sharedClaudeCredentialPath in pkg/agent). The
+// production value — the hosted-pod home — is never mutated at runtime.
+var claudePodCredentialsPath = claude.CredentialsPath
+
+// anthropicModelsEndpoint redirects the models call away from the real
+// Anthropic endpoint. TEST SEAM ONLY: it is never changed in production, where
+// every probe goes to anthropicModelsURL. It exists so discoverClaudeModels'
+// response handling (success, 401, malformed JSON) can be exercised against an
+// httptest server without a live API round trip.
+var anthropicModelsEndpoint = anthropicModelsURL
+
+// discoverClaudeModels lists the models available to the local Claude
+// credential by calling the Anthropic /v1/models endpoint. Credential
+// precedence: ANTHROPIC_API_KEY (x-api-key header), else the Claude Code
+// subscription OAuth access token from the CLI's credentials file
+// (Authorization: Bearer — accepted by the endpoint, verified live).
+// Best-effort: no credential, an expired token, or any HTTP/parse failure
+// returns fallback=true with an empty list so the caller substitutes the
+// static list. The stored token is NEVER refreshed here (see file header).
+func (s *Server) discoverClaudeModels() cliModelResult {
+	header, value, ok := claudeAPICredential()
+	if !ok {
+		// No API key and no fresh OAuth token. Skip the HTTP call entirely —
+		// on copilot-only spokes the credentials file can sit expired for
+		// weeks, and refreshing it is forbidden (it would rotate the token
+		// out from under the claude CLI's own login).
+		return cliModelResult{fallback: true}
+	}
+	models, err := fetchClaudeModels(anthropicModelsEndpoint, header, value)
+	if err != nil || len(models) == 0 {
+		if err != nil {
+			// Do NOT log the credential or response body; just the failure.
+			s.logger.Warn("claude model discovery failed", "err", err.Error())
+		}
+		return cliModelResult{fallback: true}
+	}
+	return cliModelResult{models: dedupeModels(models), fallback: false}
+}
+
+// claudeAPICredential resolves the credential for the Anthropic models call as
+// an (header name, header value) pair. ANTHROPIC_API_KEY wins when set; else
+// the freshest non-expired OAuth access token from the Claude CLI credentials
+// file is used as a bearer. ok=false means no usable credential. Secret —
+// never log the value.
+func claudeAPICredential() (header, value string, ok bool) {
+	if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
+		return "x-api-key", k, true
+	}
+	for _, path := range claudeCredentialCandidatePaths() {
+		if tok := readFreshClaudeToken(path); tok != "" {
+			return "Authorization", "Bearer " + tok, true
+		}
+	}
+	return "", "", false
+}
+
+// claudeCredentialCandidatePaths returns the credentials-file locations to
+// try, in order: the hosted-pod shared home (the same /data/home the agent
+// manager uses for agent homes), then $HOME/.claude/.credentials.json for
+// non-hosted spokes. Computed per call — never cached — because the claude
+// CLI rewrites the file whenever it runs and the probe must see the freshest
+// token.
+func claudeCredentialCandidatePaths() []string {
+	paths := []string{claudePodCredentialsPath}
+	if home := os.Getenv("HOME"); home != "" {
+		if p := filepath.Join(home, ".claude", ".credentials.json"); p != claudePodCredentialsPath {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// readFreshClaudeToken reads and parses one credentials file and returns its
+// OAuth access token ONLY if it is not expired (with claudeTokenExpirySkew of
+// margin). Absent file, malformed JSON, missing token, or an expired/expiring
+// token all return "" — the caller then falls back rather than firing a
+// doomed HTTP call. This deliberately does not reuse claude.ReadAccessToken,
+// which applies no skew margin.
+func readFreshClaudeToken(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var creds claude.Credentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return ""
+	}
+	o := creds.ClaudeAIOAuth
+	if o == nil || o.AccessToken == "" {
+		return ""
+	}
+	// expiresAt is a millisecond epoch; treat anything inside the skew window
+	// as already expired.
+	if o.ExpiresAt > 0 && time.UnixMilli(o.ExpiresAt).Before(time.Now().Add(claudeTokenExpirySkew)) {
+		return ""
+	}
+	return o.AccessToken
+}
+
+// fetchClaudeModels performs the GET <endpoint>?limit=N call and returns the
+// model ids. authHeader/authValue carry either the API key (x-api-key) or the
+// OAuth bearer (Authorization) — see claudeAPICredential.
+func fetchClaudeModels(modelsURL, authHeader, authValue string) ([]string, error) {
+	client := &http.Client{Timeout: cliModelQueryTimeout}
+	url := fmt.Sprintf("%s?limit=%d", modelsURL, anthropicModelsPageLimit)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set(authHeader, authValue)
+	req.Header.Set("anthropic-version", anthropicAPIVersion)
+	if authHeader == "Authorization" {
+		// OAuth (subscription-token) calls also send the oauth beta flag —
+		// currently optional for /v1/models, sent for forward compatibility.
+		req.Header.Set("anthropic-beta", anthropicOAuthBeta)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream returned %d", resp.StatusCode)
+	}
+	return parseClaudeModelsResponse(resp.Body)
+}
+
+// parseClaudeModelsResponse decodes the Anthropic /v1/models body and returns
+// the model ids. The response shape is:
+//
+//	{"data":[{"id":"claude-opus-5","type":"model",...}, ...]}
+func parseClaudeModelsResponse(r io.Reader) ([]string, error) {
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(r).Decode(&body); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range body.Data {
+		if m.ID == "" {
+			continue
+		}
+		out = append(out, m.ID)
+	}
+	return out, nil
+}
+
 // --- Goose discovery ---
 
-// discoverGooseModels returns models for goose's configured provider. Goose has
-// no stable machine-readable "list models for my configured provider" command
-// across providers, so this maps the configured provider (via GOOSE_PROVIDER /
-// GOOSE_MODEL env, honoring the pinned model) to a static per-provider list,
-// or "default" when unconfigured. Marked fallback=true since it is not a live
-// provider query.
+// errGooseBinaryMissing means goose is not on PATH — today's NORMAL on hosted
+// spokes (verified: goose is not installed in the hive pods), so it is an
+// expected fallback signal, not a logged failure.
+var errGooseBinaryMissing = errors.New("goose binary not on PATH")
+
+// errGooseModelsAbsent means session/new answered WITHOUT a models key: goose
+// is unconfigured (no provider) or predates 1.37. This is goose's clean
+// "nothing to discover" signal, so it too falls back silently.
+var errGooseModelsAbsent = errors.New("goose session/new returned no models (unconfigured or pre-1.37 goose)")
+
+// gooseACPModels is the parsed result.models of an ACP session/new response.
+type gooseACPModels struct {
+	// CurrentModelID is goose's active model (goose also lists it first in
+	// AvailableModels).
+	CurrentModelID string
+	// AvailableModels are the modelId values of result.models.availableModels.
+	AvailableModels []string
+}
+
+// runGooseACPProbe is the probe seam (mirroring runCopilotSDKHelper) so unit
+// tests can substitute canned inventories without a goose binary.
+var runGooseACPProbe = execGooseACPProbe
+
+// discoverGooseModels lists the models goose's CONFIGURED provider serves, by
+// driving `goose acp` (goose >= 1.37): initialize + session/new returns
+// result.models {currentModelId, availableModels}, backed by goose's
+// provider-inventory subsystem, which live-fetches the provider's own models
+// endpoint (verified end-to-end against a live Ollama: the exact /api/tags
+// inventory, ~0.4s round trip including process spawn).
+//
+// Design invariants:
+//
+//   - hive NEVER reads goose's provider credentials — goose resolves them
+//     itself (keyring / secrets.yaml / env). That is the whole advantage of
+//     this probe over probing providers directly, and it must stay that way.
+//   - GOOSE_PROVIDER / GOOSE_MODEL env (inherited by the spawned goose)
+//     override the config's active provider/model; a GOOSE_MODEL pin is also
+//     surfaced first in the served list.
+//   - For providers goose cannot (or is not configured to) refresh — e.g.
+//     ollama without OLLAMA_HOST — availableModels is goose's curated catalog
+//     rather than live inventory, with no distinguishing flag. Acceptable:
+//     still fresher than hive's static map. On a slow remote provider the
+//     FIRST call may serve catalog data with the refreshed inventory arriving
+//     on the next call; the stabilize() retention absorbs that churn.
+//   - Missing binary, absent models key, error, or timeout → empty result →
+//     the caller serves the curated per-provider static fallback below.
 func (s *Server) discoverGooseModels() cliModelResult {
+	ctx, cancel := context.WithTimeout(context.Background(), gooseACPProbeTimeout)
+	defer cancel()
+	inv, err := runGooseACPProbe(ctx)
+	if err == nil && inv != nil && len(inv.AvailableModels) > 0 {
+		// Pinned model first: an explicit GOOSE_MODEL env pin wins, else
+		// goose's own current model (which goose already orders first).
+		pinned := strings.TrimSpace(os.Getenv("GOOSE_MODEL"))
+		if pinned == "" {
+			pinned = inv.CurrentModelID
+		}
+		models := inv.AvailableModels
+		if pinned != "" {
+			models = append([]string{pinned}, models...)
+		}
+		return cliModelResult{models: dedupeModels(models), fallback: false}
+	}
+	if err != nil && !errors.Is(err, errGooseBinaryMissing) && !errors.Is(err, errGooseModelsAbsent) {
+		// Only our own error text — never session payloads, never secrets.
+		s.logger.Info("goose ACP model discovery unavailable, serving static fallback", "err", err.Error())
+	}
+	return gooseStaticProviderResult()
+}
+
+// gooseStaticProviderResult maps the configured provider (GOOSE_PROVIDER env)
+// to the curated static list, honoring a GOOSE_MODEL pin first, or ["default"]
+// when unconfigured. Always fallback=true: this is a curated list, not a live
+// enumeration of the provider's catalog.
+func gooseStaticProviderResult() cliModelResult {
 	provider := strings.ToLower(strings.TrimSpace(os.Getenv("GOOSE_PROVIDER")))
 	var models []string
 	if list, ok := gooseProviderStaticModels[provider]; ok {
@@ -653,9 +1143,204 @@ func (s *Server) discoverGooseModels() cliModelResult {
 	if len(models) == 0 {
 		models = []string{"default"}
 	}
-	// Always fallback=true: this is a curated per-provider list, not a live
-	// enumeration of the provider's catalog.
 	return cliModelResult{models: dedupeModels(models), fallback: true}
+}
+
+// execGooseACPProbe spawns `goose acp` and runs the fixed ACP exchange. The
+// probe runs under the shared agent HOME (gooseACPAgentHome) when it exists so
+// goose sees the agents' provider config; otherwise the server's own HOME is
+// left in place (dev machines). The spawned process is always reaped.
+func execGooseACPProbe(ctx context.Context) (*gooseACPModels, error) {
+	bin, err := exec.LookPath(gooseACPBinary)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", errGooseBinaryMissing, err.Error())
+	}
+	cmd := exec.CommandContext(ctx, bin, gooseACPSubcommand)
+	// os/exec documents that for duplicate keys the LAST value wins, so
+	// appending overrides the inherited HOME. GOOSE_PROVIDER / GOOSE_MODEL
+	// pass through via the inherited environment.
+	env := os.Environ()
+	cwd := os.TempDir()
+	if st, statErr := os.Stat(gooseACPAgentHome); statErr == nil && st.IsDir() {
+		env = append(env, "HOME="+gooseACPAgentHome)
+		cwd = gooseACPAgentHome
+	}
+	cmd.Env = env
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("goose acp stdin: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("goose acp stdout: %w", err)
+	}
+	// goose logs startup chatter on stderr; it is discarded, never parsed and
+	// never logged (it could echo config details).
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("goose acp start: %w", err)
+	}
+	inv, exchErr := gooseACPExchange(ctx, stdin, stdout, cwd)
+	// Closing stdin is the ACP server's shutdown signal (after it drains the
+	// best-effort session/close). Give it a short grace to exit on its own,
+	// then kill; either way Wait reaps the process. A nonzero exit after a
+	// successful exchange is irrelevant.
+	_ = stdin.Close()
+	waitDone := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(gooseACPShutdownGrace):
+		_ = cmd.Process.Kill()
+		<-waitDone
+	}
+	return inv, exchErr
+}
+
+// gooseACPRequest writes one newline-delimited JSON-RPC 2.0 request.
+func gooseACPRequest(w io.Writer, id int, method string, params any) error {
+	msg, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", method, err)
+	}
+	if _, err := w.Write(append(msg, '\n')); err != nil {
+		return fmt.Errorf("write %s: %w", method, err)
+	}
+	return nil
+}
+
+// gooseACPAwait reads newline-delimited JSON-RPC messages until the response
+// carrying the given id arrives, skipping notifications and agent-initiated
+// requests (anything carrying a method). Honors ctx.
+func gooseACPAwait(ctx context.Context, lines <-chan []byte, id int) (json.RawMessage, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("awaiting goose acp response %d: %w", id, ctx.Err())
+		case line, ok := <-lines:
+			if !ok {
+				return nil, fmt.Errorf("goose acp stream ended awaiting response %d", id)
+			}
+			var msg struct {
+				ID     *int            `json:"id"`
+				Method string          `json:"method"`
+				Result json.RawMessage `json:"result"`
+				Error  *struct {
+					Code    int    `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(line, &msg); err != nil {
+				continue // non-JSON chatter — skip, like notifications
+			}
+			if msg.Method != "" || msg.ID == nil || *msg.ID != id {
+				continue
+			}
+			if msg.Error != nil {
+				return nil, fmt.Errorf("goose acp error %d on request %d: %s", msg.Error.Code, id, msg.Error.Message)
+			}
+			return msg.Result, nil
+		}
+	}
+}
+
+// gooseACPExchange speaks the fixed probe sequence over an already-connected
+// stdio pair (factored off the process plumbing so tests can feed canned
+// responses through pipes):
+//
+//	initialize (protocolVersion 1) → session/new (cwd, no MCP servers) →
+//	parse result.models → best-effort session/close.
+//
+// session/close matters: every session/new persists a session (plus inventory
+// rows) into goose's sessions.db under the probe HOME, and closing the session
+// (the capability is advertised by goose 1.37) keeps repeated probes from
+// accumulating rows. Close failures are ignored — the inventory is already in
+// hand.
+func gooseACPExchange(ctx context.Context, w io.Writer, r io.Reader, cwd string) (*gooseACPModels, error) {
+	lines := make(chan []byte)
+	go func() {
+		defer close(lines)
+		sc := bufio.NewScanner(r)
+		sc.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), gooseACPMaxLineBytes)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			select {
+			case lines <- []byte(line):
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	initParams := map[string]any{
+		"protocolVersion": gooseACPProtocolVersion,
+		"clientCapabilities": map[string]any{
+			// The probe serves no filesystem to the agent.
+			"fs": map[string]bool{"readTextFile": false, "writeTextFile": false},
+		},
+		"clientInfo": map[string]string{"name": gooseACPClientName, "version": gooseACPClientVersion},
+	}
+	if err := gooseACPRequest(w, gooseACPInitializeID, "initialize", initParams); err != nil {
+		return nil, err
+	}
+	if _, err := gooseACPAwait(ctx, lines, gooseACPInitializeID); err != nil {
+		return nil, err
+	}
+
+	newParams := map[string]any{"cwd": cwd, "mcpServers": []any{}}
+	if err := gooseACPRequest(w, gooseACPSessionNewID, "session/new", newParams); err != nil {
+		return nil, err
+	}
+	result, err := gooseACPAwait(ctx, lines, gooseACPSessionNewID)
+	if err != nil {
+		return nil, err
+	}
+
+	var res struct {
+		SessionID string `json:"sessionId"`
+		Models    *struct {
+			CurrentModelID  string `json:"currentModelId"`
+			AvailableModels []struct {
+				ModelID string `json:"modelId"`
+			} `json:"availableModels"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(result, &res); err != nil {
+		return nil, fmt.Errorf("parse session/new result: %w", err)
+	}
+
+	// Best-effort session/close BEFORE returning, whether or not models were
+	// present — session/new persisted a session either way. Fire and forget:
+	// no await, and a write failure is ignored.
+	if res.SessionID != "" {
+		_ = gooseACPRequest(w, gooseACPSessionCloseID, "session/close", map[string]any{"sessionId": res.SessionID})
+	}
+
+	if res.Models == nil {
+		return nil, errGooseModelsAbsent
+	}
+	inv := &gooseACPModels{CurrentModelID: res.Models.CurrentModelID}
+	for _, m := range res.Models.AvailableModels {
+		if m.ModelID == "" {
+			continue
+		}
+		inv.AvailableModels = append(inv.AvailableModels, m.ModelID)
+	}
+	if len(inv.AvailableModels) == 0 {
+		return nil, errGooseModelsAbsent
+	}
+	return inv, nil
 }
 
 // --- helpers ---

@@ -357,10 +357,9 @@ func TestComputeFleetStatsSkipsRepolessHives(t *testing.T) {
 // into a temp dir, so recordFleetStatsLKG's requestSave cannot touch /data.
 func fleetStatsLKGTestServer(t *testing.T) *HubServer {
 	t.Helper()
-	old := registryPath
-	registryPath = t.TempDir() + "/reg.json"
-	t.Cleanup(func() { registryPath = old })
-	return &HubServer{logger: slog.Default()}
+	// Per-server field, not the registryPath global: mutating the global races
+	// leaked saveLoop goroutines from servers built by other tests.
+	return &HubServer{logger: slog.Default(), registryPath: t.TempDir() + "/reg.json"}
 }
 
 func decodeFleetStats(t *testing.T, s *HubServer) FleetStats {
@@ -535,7 +534,7 @@ func TestFleetStatsLKG_PersistsAcrossReload(t *testing.T) {
 		t.Fatalf("saveRegistryNow: %v", err)
 	}
 	var reloaded Registry
-	data, err := os.ReadFile(registryPath)
+	data, err := os.ReadFile(s.registryPath)
 	if err != nil {
 		t.Fatalf("read registry: %v", err)
 	}

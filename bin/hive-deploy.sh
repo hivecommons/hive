@@ -12,6 +12,19 @@ TIMESTAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 log() { echo "[$TIMESTAMP] $*" >> "$LOG" 2>/dev/null || true; }
 
+# Guard of last resort: this script does `cd "$HIVE_REPO"` followed by
+# `git checkout main --force` and `git reset --hard origin/main` (see the
+# recovery paths below). If HIVE_REPO_DIR were ever empty or "/" — which a
+# buggy derivation upstream in hive-config.sh could produce (see that file's
+# HIVE_REPO_DIR comment for the exact failure mode) — those commands would
+# operate on the filesystem root instead of a hive checkout. Refuse outright
+# rather than let a misconfigured HIVE_REPO_DIR anywhere upstream turn into a
+# destructive git operation on "/".
+if [ -z "$HIVE_REPO" ] || [ "$HIVE_REPO" = "/" ]; then
+  log "ERROR: HIVE_REPO_DIR resolved to '${HIVE_REPO}' — refusing to operate on it"
+  exit 1
+fi
+
 if [ ! -d "$HIVE_REPO/.git" ]; then
   log "ERROR: $HIVE_REPO is not a git repo"
   exit 1
