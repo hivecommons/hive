@@ -142,6 +142,12 @@ func (s *Server) registerContributeRoutes() {
 
 	s.mux.HandleFunc("GET /leaderboard", s.handleLeaderboardPage)
 	s.mux.HandleFunc("GET /api/leaderboard", s.handleLeaderboardAPI)
+	// Central per-user "Me" profile — a HUB endpoint returning one contributor's
+	// cross-hive profile (identity/tier/stats/milestones/hives/rank), aggregated
+	// from central hub data (contributor store + LeaderboardForHub + federation
+	// registry). Read-only; public via isPublicPath's /api/leaderboard prefix. The
+	// Leaderboard tab calls it to render the personal "Me" card. See me_profile.go.
+	s.mux.HandleFunc("GET /api/leaderboard/contributor/{username}", s.handleContributorProfile)
 
 	s.mux.HandleFunc("GET /api/hives", s.handleHivesList)
 	s.mux.HandleFunc("POST /api/hives/register", s.handleHivesRegister)
@@ -472,7 +478,10 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Tier medallion / rank badge. One class per REAL trust tier; the per-tier tint is
    a muted metal-ish accent (advisor/trusted = warmer gold-amber, contributor =
    cooler steel, newcomer = neutral). Small pill with a tiny CSS-drawn medallion
-   dot — no external images (CSP forbids them), no glow. */
+   dot — no external images (CSP forbids them), no glow. This is the CANONICAL
+   tier-badge family; the Me-card below reuses it rather than hand-rolling its own
+   tier-color helper, so leaderboard rows, ops cards, and the Me-card read as one
+   ranked family. */
 .tier-badge{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:600;line-height:1;padding:3px 8px 3px 6px;border-radius:999px;border:1px solid #30363d;background:#0d1117;color:#8b949e;text-transform:capitalize;white-space:nowrap}
 .tier-badge::before{content:"";width:8px;height:8px;border-radius:50%%;background:currentColor;box-shadow:inset 0 0 0 1px rgba(1,4,9,.35);flex:none}
 .tier-badge.tier-advisor{border-color:rgba(210,169,85,.45);background:rgba(210,169,85,.10);color:#d0a955}
@@ -486,7 +495,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-card.card-accent>.ops-card-head h3{letter-spacing:.01em}
 /* Bold-numeral stat emphasis: the primary "Done" numeral on the leaderboard and
    the key ops counts get heavier weight + slightly larger tabular figures so the
-   number reads as the hero of the row without adding chrome. */
+   number reads as the hero of the row without adding chrome. The Me-card's own
+   stat numerals reuse this same bold/tabular treatment via .lb-stat.lb-primary. */
 .lb-row .lb-stat.lb-primary{color:#e6edf3;font-weight:700;font-size:.95rem}
 .lb-head .lb-stat.lb-primary{font-weight:600;font-size:.72rem;color:#8b949e}
 .tier-badge.tier-lb{padding:2px 8px 2px 5px;font-size:.66rem}
@@ -496,6 +506,81 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 /* Compact tier badge inline next to a connected clanker's identity. */
 .tier-badge.tier-inline{padding:1px 6px 1px 4px;font-size:.62rem;margin-left:6px;vertical-align:middle}
 .tier-badge.tier-inline::before{width:6px;height:6px}
+/* Larger tier-badge variant used as the hero medallion on the personal Me-card
+   (see below) — same canonical tier colors/dot, just sized up for a hero slot. */
+.tier-badge.tier-hero{font-size:.78rem;padding:5px 12px 5px 8px}
+.tier-badge.tier-hero::before{width:10px;height:10px}
+/* ── Personal "Me" card ──────────────────────────────────────────────────────
+   A pride-forward personal accomplishment showcase pinned above the standings.
+   It reuses the SAME canonical ranked-surface primitives the leaderboard/ops
+   cards above use — .tier-badge (tier-hero variant) for the tier medallion and
+   the .lb-stat.lb-primary bold-numeral treatment for its stat grid — so the
+   Me-card, the leaderboard rows, and the ops cards read as ONE cohesive ranked
+   family rather than two parallel styling systems. Seven cosmetic style skins
+   (.me-card--style1..7) are palette/framing/density variations over the SAME
+   real data. Subtle and professional, reduced-motion safe. --me-accent drives
+   the per-tier accent wash (medallion ring, chips, stat numerals). */
+.me-card{position:relative;background:#161b22;border:1px solid #30363d;border-radius:14px;overflow:hidden;margin-bottom:20px;--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.14)}
+.me-card__band{position:relative;padding:20px 22px 18px;background:linear-gradient(135deg,var(--me-accent-soft),rgba(22,27,34,0) 70%%);border-bottom:1px solid #21262d}
+.me-card__toprow{display:flex;align-items:center;gap:16px}
+.me-medallion{position:relative;width:64px;height:64px;flex-shrink:0;border-radius:50%%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50%% 35%%,var(--me-accent-soft),#0d1117 78%%);border:2px solid var(--me-accent);box-shadow:0 0 0 4px rgba(1,4,9,.35)}
+.me-medallion img{width:52px;height:52px;border-radius:50%%;object-fit:cover;background:#30363d}
+/* The tier label under the avatar is the shared .tier-badge (tier-hero size),
+   pinned to the bottom edge of the medallion — NOT a bespoke pill. */
+.me-medallion .tier-badge{position:absolute;bottom:-10px;left:50%%;transform:translateX(-50%%)}
+.me-id{min-width:0;flex:1}
+.me-id__name{font-size:1.25rem;font-weight:700;color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.me-id__lead{font-size:.85rem;color:#8b949e;margin-top:2px}
+.me-id__lead b{color:var(--me-accent)}
+.me-rankpill{margin-left:auto;flex-shrink:0;text-align:center;background:#0d1117;border:1px solid #30363d;border-radius:12px;padding:8px 14px}
+.me-rankpill__num{font-size:1.25rem;font-weight:800;color:#e6edf3;font-variant-numeric:tabular-nums;line-height:1}
+.me-rankpill__lbl{font-size:.62rem;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;margin-top:3px}
+.me-card__body{padding:18px 22px 20px}
+.me-statgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.me-stat{background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:12px 8px;text-align:center}
+/* Stat numeral reuses the canonical bold/tabular "hero numeral" treatment
+   (same weight/tabular-nums as .lb-stat.lb-primary), tinted by --me-accent. */
+.me-stat .lb-stat.lb-primary{display:block;font-size:1.6rem;color:var(--me-accent);padding:0}
+.me-stat__lbl{font-size:.66rem;color:#8b949e;text-transform:uppercase;letter-spacing:.04em;margin-top:5px}
+.me-sec{margin-top:18px}
+.me-sec__title{font-size:.72rem;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:9px;display:flex;align-items:center;gap:8px}
+.me-sec__title .me-soon{font-size:.6rem;font-weight:600;color:#8b949e;border:1px solid #30363d;border-radius:999px;padding:1px 7px;text-transform:none;letter-spacing:0}
+.me-chips{display:flex;flex-wrap:wrap;gap:7px}
+.me-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:999px;font-size:.74rem;font-weight:600;border:1px solid transparent;background:#0d1117;color:#8b949e;border-color:#30363d}
+.me-chip--got{background:var(--me-accent-soft);color:var(--me-accent);border-color:var(--me-accent)}
+.me-chip--next{background:#0d1117;color:#c9d1d9;border-color:#30363d;border-style:dashed}
+.me-chip--badge{background:#0d1117;color:#8b949e;border-color:#30363d;border-style:dashed;opacity:.85}
+.me-hives{display:flex;flex-direction:column;gap:6px}
+.me-hive{display:flex;align-items:center;gap:8px;font-size:.82rem;color:#c9d1d9}
+.me-hive__rel{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:2px 7px;border-radius:6px;background:var(--me-accent-soft);color:var(--me-accent)}
+.me-hive__rel--owner{background:rgba(210,153,34,.16);color:#d29922}
+.me-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:18px;align-items:center}
+.me-share{display:inline-flex;align-items:center;gap:7px;padding:9px 16px;border-radius:10px;font-size:.85rem;font-weight:600;text-decoration:none;background:var(--me-accent);color:#0d1117;border:1px solid var(--me-accent);cursor:pointer;font-family:inherit}
+.me-share:hover{filter:brightness(1.08)}
+.me-share--ghost{background:transparent;color:var(--me-accent)}
+.me-stylepick{margin-left:auto;display:flex;align-items:center;gap:7px;font-size:.72rem;color:#8b949e}
+.me-stylepick select{background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:8px;padding:5px 8px;font-size:.78rem;font-family:inherit;cursor:pointer}
+.me-signin{background:#161b22;border:1px dashed #30363d;border-radius:14px;padding:22px;text-align:center;color:#8b949e;font-size:.9rem;margin-bottom:20px}
+.me-signin b{color:#e6edf3}
+/* ── The 7 profile-style skins (palette / framing / density variations) ────────
+   Each is a tasteful, readable, professional variant of the SAME card. They only
+   change accent palette, header treatment, medallion framing, and density —
+   never the data or the affordances. Default (style1) needs no override. */
+.me-card--style2{--me-accent:#3fb950;--me-accent-soft:rgba(63,185,80,.14)}
+.me-card--style3{--me-accent:#d29922;--me-accent-soft:rgba(210,153,34,.15)}
+.me-card--style4{--me-accent:#a371f7;--me-accent-soft:rgba(163,113,247,.15)}
+.me-card--style5{--me-accent:#8b949e;--me-accent-soft:rgba(139,148,158,.12)}     /* minimal / restrained */
+.me-card--style5 .me-card__band{background:#161b22}
+.me-card--style5 .me-medallion{background:#0d1117}
+.me-card--style6{--me-accent:#f778ba;--me-accent-soft:rgba(247,120,186,.14)}
+.me-card--style6 .me-card__band{background:linear-gradient(135deg,var(--me-accent-soft),rgba(22,27,34,0))}
+.me-card--style7{--me-accent:#58a6ff;--me-accent-soft:rgba(88,166,255,.18)}     /* roomy "ranked" */
+.me-card--style7 .me-card__band{padding:26px 24px 22px}
+.me-card--style7 .me-card__body{padding:22px 24px 24px}
+.me-card--style7 .me-medallion{width:74px;height:74px}
+.me-card--style7 .me-medallion img{width:60px;height:60px}
+@media(max-width:520px){.me-card__toprow{flex-wrap:wrap}.me-rankpill{margin-left:0}.me-statgrid{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.me-card *{transition:none!important;animation:none!important}}
 .ops-note{color:#6e7681;font-size:.78rem;margin-top:12px;line-height:1.5}
 .ops-note code{background:#0d1117;padding:1px 6px;border-radius:4px}
 .prompt-preview{margin-top:10px;border-top:1px solid #21262d;padding-top:8px}
@@ -1010,6 +1095,12 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <div class="ops">
 <h1>Leaderboard</h1>
 <p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Agents run by this hive and human contributors who donate compute both appear here; revoked contributors are excluded.</p>
+<!-- Personal "Me" card. Pinned ABOVE the full standings. Hydrated from the HUB
+     profile endpoint (/api/leaderboard/contributor/{username}) once we know the
+     logged-in username (from /api/gh-user-auth/status). For an anonymous / unknown
+     viewer it renders a subtle sign-in prompt instead of erroring. The full
+     standings still render below, unchanged. -->
+<div id="me-card-mount"></div>
 <div class="ops-card card-accent">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Rankings</h3><span class="ops-card-count count-strong" id="leaderboard-count"></span></div>
 <div id="leaderboard-list"><div class="ops-empty">Loading leaderboard&hellip;</div></div>
@@ -1085,7 +1176,12 @@ function activateTab(t,push){
     try{initOpsRail();}catch(e){console.error('initOpsRail failed',e);}
   }
   // Leaderboard hydrates client-side on first open — read-only, no role gate.
-  if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;loadLeaderboard();}
+  // The personal "Me" card loads alongside the standings; a throw in one must
+  // never block the other, so each is guarded independently.
+  if(dp==='tab-leaderboard'&&!lbStarted){lbStarted=true;
+    try{loadLeaderboard();}catch(e){console.error('loadLeaderboard failed',e);}
+    try{loadMeCard();}catch(e){console.error('loadMeCard failed',e);}
+  }
   // Reflect the visible tab in the URL. pushState only — never a reload. Skipped
   // when push===false (popstate replay) so we don't stack duplicate history entries.
   if(push!==false&&window.history&&window.history.pushState){
@@ -1182,6 +1278,167 @@ function renderLeaderboard(agents,contribs){
   for(i=0;i<agents.length;i++){rank++;html+=lbRow(agents[i],rank);}
   for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
   el.innerHTML=html;
+}
+
+// ── Personal "Me" card ───────────────────────────────────────────────────────
+// Resolve the logged-in username from the SAME identity source the page already
+// uses (/api/gh-user-auth/status), then fetch the CENTRAL hub profile endpoint
+// and render a pride-forward personal card pinned above the standings. Anonymous
+// or unknown viewers get a subtle sign-in prompt — never an error. All data is
+// real (tier / stats / milestones / hives / rank come straight from the hub).
+var ME_STYLE_KEY='hive.me.cardStyle';   // localStorage key for the chosen skin
+var ME_STYLE_COUNT=7;                    // number of profile-style skins offered
+var ME_STYLE_NAMES=['Signal blue','Verdant','Amber rank','Violet advisor','Minimal','Rose','Roomy ranked'];
+// Milestone id -> the Credly badge it WOULD map to once badges go live (Part C).
+// This is a static mapping surfaced as a "coming soon" placeholder — no external
+// call is made. See v2/docs/credly-badges.md for the real integration design.
+var ME_CREDLY_MAP={
+  'tier-contributor':'Contributor badge',
+  'tier-trusted':'Trusted badge',
+  'tier-advisor':'Advisor badge',
+  'tasks-25':'25-task milestone badge',
+  'tasks-100':'100-task milestone badge'
+};
+
+function meStyleClass(){
+  var n=parseInt(localStorage.getItem(ME_STYLE_KEY)||'1',10);
+  if(!(n>=1&&n<=ME_STYLE_COUNT))n=1;
+  return n;
+}
+
+function loadMeCard(){
+  var mount=document.getElementById('me-card-mount');
+  if(!mount)return;
+  fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
+    if(!auth||!auth.logged_in||!auth.username){renderMeSignIn(mount);return;}
+    var u=auth.username;
+    fetch('/api/leaderboard/contributor/'+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(p){
+      if(!p||!p.found){renderMeSignIn(mount,u);return;}
+      renderMeCard(mount,p);
+    }).catch(function(){renderMeSignIn(mount,u);});
+  }).catch(function(){renderMeSignIn(mount);});
+}
+
+// Anonymous / not-yet-a-contributor: a subtle prompt, not an error.
+function renderMeSignIn(mount,username){
+  var msg=username
+    ?('<b>'+esc(username)+'</b>, you don’t have a contributor profile on this hive yet. Ship a task to start your card.')
+    :'<b>Sign in</b> to see your personal contributor profile — your rank, milestones, and hives.';
+  mount.innerHTML='<div class="me-signin">'+msg+'</div>';
+}
+
+// Build the pre-filled, no-OAuth LinkedIn share URL from REAL achievement data.
+// It opens LinkedIn's share dialog pre-populated; no LinkedIn API, no credentials.
+function meLinkedInURL(p){
+  var tier=p.trust_tier?(p.trust_tier.charAt(0).toUpperCase()+p.trust_tier.slice(1)):'';
+  var prs=p.tasks_with_pr||0;
+  var org=(p.hives&&p.hives[0]&&p.hives[0].org)||'';
+  var text='I’ve shipped '+prs+' merged PR'+(prs===1?'':'s')
+    +(tier?(' as a '+tier+' contributor'):' as a contributor')
+    +(org?(' on '+org):'')+' via the Hive contributor program.';
+  return 'https://www.linkedin.com/sharing/share-offsite/?url='
+    +encodeURIComponent(window.location.origin+'/contribute/leaderboard')
+    +'&summary='+encodeURIComponent(text);
+}
+
+function meMilestoneChips(p){
+  var got=[],next='';
+  var ms=(p.milestones||[]);
+  for(var i=0;i<ms.length;i++){
+    if(ms[i].attained){
+      got.push('<span class="me-chip me-chip--got" title="'+esc(ms[i].detail||'')+'">'
+        +(ms[i].icon?esc(ms[i].icon)+' ':'')+esc(ms[i].label)+'</span>');
+    }
+  }
+  if(p.next_milestone){
+    var nm=p.next_milestone;
+    var toGo='';
+    // "X to go" progression cue, computed from the real threshold vs real count.
+    if(nm.id&&nm.id.indexOf('tasks-')===0){var gap=nm.value-(p.tasks_completed||0);if(gap>0)toGo=' — '+gap+' to go';}
+    else if(nm.id==='tier-contributor'){var g2=nm.value-(p.tasks_with_pr||0);if(g2>0)toGo=' — '+g2+' PR-tasks to go';}
+    else if(nm.id==='tier-trusted'){var g3=nm.value-(p.tasks_with_pr||0);if(g3>0)toGo=' — '+g3+' PR-tasks to go';}
+    next='<span class="me-chip me-chip--next" title="'+esc(nm.detail||'')+'">○ '+esc(nm.label)+esc(toGo)+'</span>';
+  }
+  if(!got.length&&!next)return '<span class="me-chip">No milestones yet — ship your first task</span>';
+  return got.join('')+next;
+}
+
+function meCredlyChips(p){
+  // Placeholder / "coming soon" mapping: which attained milestones WOULD yield
+  // which Credly badge. No external Credly call is made this round.
+  var out=[],seen={},ms=(p.milestones||[]);
+  for(var i=0;i<ms.length;i++){
+    if(ms[i].attained&&ME_CREDLY_MAP[ms[i].id]&&!seen[ms[i].id]){
+      seen[ms[i].id]=1;
+      out.push('<span class="me-chip me-chip--badge" title="Planned Credly badge (not yet issued)">◇ '+esc(ME_CREDLY_MAP[ms[i].id])+'</span>');
+    }
+  }
+  if(!out.length)out.push('<span class="me-chip me-chip--badge">Earn a tier or milestone to unlock a badge</span>');
+  return out.join('');
+}
+
+function meHivesRows(p){
+  var hs=(p.hives||[]);
+  if(!hs.length)return '<div class="me-hive">No federated hives registered yet.</div>';
+  var out=[];
+  for(var i=0;i<hs.length;i++){
+    var rel=hs[i].relationship||'contributor';
+    var relCls=(rel==='owner')?'me-hive__rel me-hive__rel--owner':'me-hive__rel';
+    var verb=(rel==='owner')?'Owner of':(rel==='member'?'Member of':'Contributing to');
+    var label=esc(hs[i].project_name||hs[i].org||hs[i].id||'hive');
+    out.push('<div class="me-hive"><span class="'+relCls+'">'+esc(rel)+'</span>'
+      +'<span>'+esc(verb)+' <b style="color:#e6edf3">'+label+'</b>'
+      +(hs[i].org?(' <span style="color:#8b949e">('+esc(hs[i].org)+')</span>'):'')+'</span></div>');
+  }
+  return out.join('');
+}
+
+function renderMeCard(mount,p){
+  var tier=p.trust_tier||'newcomer';
+  var tierNice=tier.charAt(0).toUpperCase()+tier.slice(1);
+  var rankTxt=(p.rank&&p.total)?('#'+p.rank):'—';
+  var rankSub=(p.rank&&p.total)?('of '+p.total):'unranked';
+  var avatar=p.avatar_url||('https://github.com/'+encodeURIComponent(p.github_username)+'.png');
+  var styleN=meStyleClass();
+  var lead='You’re a <b>'+esc(tierNice)+'</b> contributor'
+    +((p.rank&&p.total)?(' — ranked #'+p.rank+' of '+p.total+' on this hive'):'')+'.';
+
+  var styleOpts='';
+  for(var i=1;i<=ME_STYLE_COUNT;i++){
+    styleOpts+='<option value="'+i+'"'+(i===styleN?' selected':'')+'>'+esc(ME_STYLE_NAMES[i-1]||('Style '+i))+'</option>';
+  }
+
+  var html=''
+  +'<div class="me-card me-card--style'+styleN+'" id="me-card">'
+  +'<div class="me-card__band"><div class="me-card__toprow">'
+  +'<div class="me-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'">'+tierBadge(p.trust_tier,'tier-hero')+'</div>'
+  +'<div class="me-id"><div class="me-id__name">'+esc(p.github_username)+'</div><div class="me-id__lead">'+lead+'</div></div>'
+  +'<div class="me-rankpill"><div class="me-rankpill__num">'+esc(rankTxt)+'</div><div class="me-rankpill__lbl">'+esc(rankSub)+'</div></div>'
+  +'</div></div>'
+  +'<div class="me-card__body">'
+  +'<div class="me-statgrid">'
+    +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_completed||0)+'</div><div class="me-stat__lbl">Shipped</div></div>'
+    +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_with_pr||0)+'</div><div class="me-stat__lbl">With PR</div></div>'
+    +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_failed||0)+'</div><div class="me-stat__lbl">Failed</div></div>'
+  +'</div>'
+  +'<div class="me-sec"><div class="me-sec__title">Milestones unlocked</div><div class="me-chips">'+meMilestoneChips(p)+'</div></div>'
+  +'<div class="me-sec"><div class="me-sec__title">My hives</div><div class="me-hives">'+meHivesRows(p)+'</div></div>'
+  +'<div class="me-sec"><div class="me-sec__title">Badges <span class="me-soon">Credly · coming soon</span></div><div class="me-chips">'+meCredlyChips(p)+'</div>'
+    +'<div class="ops-note">Verifiable Credly badges are planned. Once live, each tier / milestone issues a badge with Credly’s own native LinkedIn share. See the design doc for setup.</div></div>'
+  +'<div class="me-actions">'
+    +'<a class="me-share" href="'+esc(meLinkedInURL(p))+'" target="_blank" rel="noopener noreferrer">\u{1F4E3} Share achievement on LinkedIn</a>'
+    +'<span class="me-stylepick" title="Personalize your card — more customization coming">Profile style <select id="me-style-select" aria-label="Profile style (more customization coming)">'+styleOpts+'</select></span>'
+  +'</div>'
+  +'</div></div>';
+  mount.innerHTML=html;
+
+  var sel=document.getElementById('me-style-select');
+  if(sel)sel.addEventListener('change',function(){
+    var v=parseInt(sel.value,10);if(!(v>=1&&v<=ME_STYLE_COUNT))v=1;
+    localStorage.setItem(ME_STYLE_KEY,String(v));
+    var card=document.getElementById('me-card');
+    if(card){for(var k=1;k<=ME_STYLE_COUNT;k++)card.classList.remove('me-card--style'+k);card.classList.add('me-card--style'+v);}
+  });
 }
 
 var currentFilter='all';
