@@ -1501,10 +1501,22 @@ async function adminSaveHub(patch,okMsg){
   }catch(e){toast('Save failed: '+(e&&e.message||'network error'),false);return false;}
 }
 
-function renderAdminFilter(fieldId,label,noun,modeKey,listKey){
+// renderAdminFilter renders one admission filter (Titles / Authors / Labels). The
+// CANONICAL list field is contribute_deny_<kind> — despite the "deny" in the name it
+// holds the filter's list in BOTH modes (the mode decides allow vs deny; see
+// config.go: the *DenyTitles/*DenyAuthors/*DenyLabels fields hold the LIST regardless
+// of mode, and the backend filter — LabelsFilterPasses/FilterPasses — reads ONLY that
+// field). So we bind to contribute_deny_<kind> in every mode. Hardcoding a mismatch —
+// an Allow-mode filter whose tags land in a field the backend never reads — was the
+// empty-queue bug: allow-mode ran against an empty effective list and admitted
+// NOTHING. kind is the plural noun ("titles"/"authors"/"labels").
+function adminFilterListKey(kind){return 'contribute_deny_'+kind;}
+function renderAdminFilter(fieldId,label,noun,modeKey,kind){
   var el=document.getElementById(fieldId);
   if(!el||!adminHub)return;
   var mode=(adminHub[modeKey]==='allow')?'allow':'deny';
+  // Bind to the CANONICAL list field the backend actually reads, in every mode.
+  var listKey=adminFilterListKey(kind);
   var list=adminHub[listKey]||[];
   var chips=list.map(function(v){
     return '<span class="admin-chip">'+esc(v)+'<span class="x" data-list="'+listKey+'" data-val="'+esc(v)+'">&times;</span></span>';
@@ -1535,9 +1547,9 @@ function renderAdminControls(){
   document.getElementById('admin-skip-switch').classList.toggle('on',!!adminHub.contribute_skip_assigned_to_others);
   document.getElementById('admin-reject-switch').classList.toggle('on',!!adminHub.contribute_reject_unknown_models);
   // Filters (mirror Governor Hub: titles/authors/labels + modes, allow-models).
-  renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','contribute_deny_titles');
-  renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','contribute_deny_authors');
-  renderAdminFilter('admin-filter-labels','Labels','label','contribute_labels_mode','contribute_deny_labels');
+  renderAdminFilter('admin-filter-titles','Titles','title','contribute_titles_mode','titles');
+  renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','authors');
+  renderAdminFilter('admin-filter-labels','Labels','label','contribute_labels_mode','labels');
   renderAdminModels();
   var save=document.getElementById('admin-save-btn');
   if(save)save.disabled=!adminDirty;
@@ -1584,6 +1596,12 @@ document.getElementById('admin-add-model').addEventListener('click',function(){
 
 document.getElementById('admin-save-btn').addEventListener('click',function(){
   if(!adminDirty||!adminHub)return;
+  // Persist the mode + the CANONICAL list field (contribute_deny_*) for each filter.
+  // The mode decides allow vs deny; the list lives in the deny-named field in BOTH
+  // modes (that is the only field the backend filter reads). Also clear the legacy
+  // allow_labels field so a stale migration remnant can never mask the real list
+  // (the empty-queue bug: an allow-mode filter with a lingering allow_labels value
+  // that the backend never reads). We send it explicitly emptied.
   var patch={
     contribute_titles_mode:adminHub.contribute_titles_mode||'deny',
     contribute_authors_mode:adminHub.contribute_authors_mode||'deny',
@@ -1591,6 +1609,7 @@ document.getElementById('admin-save-btn').addEventListener('click',function(){
     contribute_deny_titles:adminHub.contribute_deny_titles||[],
     contribute_deny_authors:adminHub.contribute_deny_authors||[],
     contribute_deny_labels:adminHub.contribute_deny_labels||[],
+    contribute_allow_labels:[],
     contribute_allow_models:adminHub.contribute_allow_models||[]
   };
   adminSaveHub(patch,'Admission filters saved').then(function(ok){if(ok){adminDirty=false;renderAdminControls();}});
@@ -1784,7 +1803,11 @@ function renderPolicy(p){
     ['Contribute queue',p.suspended?'<span class="pill pill-blocked">suspended</span>':'<span class="pill pill-passed">active</span>'],
     ['Title filter',esc(p.titles_mode||'deny')+': '+list(p.deny_titles)],
     ['Author filter',esc(p.authors_mode||'deny')+': '+list(p.deny_authors)],
-    ['Label filter',esc(p.labels_mode||'deny')+': '+list(p.labels_mode==='allow'?p.allow_labels:p.deny_labels)],
+    /* The canonical label list lives in deny_labels in BOTH modes (the mode name is
+       legacy; the backend filter reads deny_labels regardless of mode). Reading
+       allow_labels in allow-mode showed an empty list even when a real allow-list
+       was configured (the source of the "Allow: (nothing)" + empty-queue confusion). */
+    ['Label filter',esc(p.labels_mode||'deny')+': '+list(p.deny_labels)],
     ['Model allowlist',(p.reject_unknown_models?'strict &middot; ':'')+list(p.allow_models)],
     ['Skip assigned-to-others',p.skip_assigned_to_others?'yes':'no'],
     ['Disabled tiers',list(p.disabled_tiers)],
@@ -2094,21 +2117,79 @@ function ccTravel(e){
   setTimeout(ccRenderQueue,480);
 }
 
+// ── Shared activity store (resilient Live Activity rail) ───────────────────────
+// The rail used to depend SOLELY on the SSE stream, which returns nothing on hosted
+// spokes — so it sat on "Watching the hive…" forever even though /api/contribute/
+// activity (the source Onboarding's Live Activity uses) was full. We now seed + poll
+// the rail from that reliable endpoint and layer SSE on top for liveness, via a
+// shared deduped store. ccActivity is chronological (oldest→newest); ccActivitySeen
+// keys events by timestamp+username+action+task so an event arriving via BOTH poll
+// and SSE is counted once.
+var ccActivity=[];
+var ccActivitySeen={};
+var ccActivityCap=200;
+var ccActivityPollTimer=null;
+var ccSSEDelivered=false;
+function ccActivityKey(e){return (e.timestamp||'')+'|'+(e.username||'')+'|'+(e.action||'')+'|'+(e.task||'');}
+function ccIngestActivity(e){
+  if(!e||!e.action)return false;
+  var k=ccActivityKey(e);
+  if(ccActivitySeen[k])return false;
+  ccActivitySeen[k]=1;
+  ccActivity.push(e);
+  if(ccActivity.length>ccActivityCap){
+    var drop=ccActivity.splice(0,ccActivity.length-ccActivityCap);
+    for(var i=0;i<drop.length;i++)delete ccActivitySeen[ccActivityKey(drop[i])];
+  }
+  return true;
+}
+// Rebuild the rail scrollback from the shared store (newest ccLogCap entries),
+// narrated via the same ccNarrate live events use so the format matches.
+function ccRebuildLogFromActivity(){
+  var src=ccActivity.slice(Math.max(0,ccActivity.length-ccLogCap));
+  ccLogLines=src.map(ccNarrate);
+  ccRenderLog();
+}
+// Poll the reliable activity endpoint, ingest new entries, refresh the rail. This is
+// the resilience layer: the rail is NEVER blank when the endpoint has data, whether
+// or not SSE delivers. Reschedules while the Operations tab is open.
+function ccPollActivity(){
+  fetch('/api/contribute/activity').then(function(r){return r.json();}).then(function(d){
+    var list=(d&&d.activity)||[];
+    var added=false;
+    for(var i=0;i<list.length;i++){if(ccIngestActivity(list[i]))added=true;}
+    if(added)ccRebuildLogFromActivity();
+    else if(!ccLogLines.length&&ccActivity.length)ccRebuildLogFromActivity();
+    // Reflect REAL connectivity: if SSE has never delivered a frame, we are running
+    // on the polling fallback — say so rather than sitting on "connecting" forever.
+    if(!ccSSEDelivered)ccSetLive('poll');
+  }).catch(function(){/* transient; next poll self-heals */});
+  var tab=document.getElementById('tab-ops');
+  if(tab&&tab.classList.contains('active'))ccActivityPollTimer=setTimeout(ccPollActivity,6000);
+}
+
 // ── Consume one activity event from the stream ─────────────────────────────────
 function ccOnActivity(e){
   if(!e||!e.action)return;
-  ccPushLog(e);
-  ccMaybeAchieve(e);
-  if(e.action==='picked up')ccTravel(e);
+  ccSSEDelivered=true;
+  // Route SSE events through the SAME store so they dedupe against the poll and the
+  // rail stays consistent. Only a genuinely-new event narrates/animates.
+  if(ccIngestActivity(e)){
+    ccRebuildLogFromActivity();
+    ccMaybeAchieve(e);
+    if(e.action==='picked up')ccTravel(e);
+  }
 }
 
 // ── SSE lifecycle with graceful fallback ───────────────────────────────────────
 function ccHydrate(payload){
   if(payload.queue){ccQueue=payload.queue.slice();ccRenderQueue();}
   if(payload.replay&&payload.replay.length){
-    payload.replay.forEach(function(e){ccLogLines.push(ccNarrate(e));});
-    if(ccLogLines.length>ccLogCap)ccLogLines=ccLogLines.slice(ccLogLines.length-ccLogCap);
-    ccRenderLog();
+    // Route the SSE replay through the SHARED store so it dedupes against the poll
+    // seed (no double-count of events that arrive via both paths).
+    var added=false;
+    payload.replay.forEach(function(e){if(ccIngestActivity(e))added=true;});
+    if(added)ccRebuildLogFromActivity();
   }
 }
 function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
@@ -2120,6 +2201,11 @@ function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
 function ccStopFallback(){if(ccQueuePollTimer){clearTimeout(ccQueuePollTimer);ccQueuePollTimer=null;}}
 function ccStart(){
   if(ccStarted)return;ccStarted=true;
+  // Seed + poll the Live Activity rail from the RELIABLE polling endpoint (the same
+  // source Onboarding uses) so the rail shows the backlog immediately and stays
+  // current even when the SSE stream delivers nothing (hosted spokes). SSE, when it
+  // works, layers live updates on top via the shared, deduped activity store.
+  try{ccPollActivity();}catch(e){console.error('activity poll init failed',e);}
   if(!('EventSource' in window)){ccSetLive('poll');ccQueuePoll();return;}
   function connect(){
     ccSetLive('connecting');

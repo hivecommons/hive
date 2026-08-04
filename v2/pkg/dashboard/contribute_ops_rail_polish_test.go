@@ -68,16 +68,15 @@ func TestOpsRailHeadingIsLiveActivity(t *testing.T) {
 	}
 }
 
-// TestOpsRailRendersHelloReplay proves the rail's SSE hello handler
-// (ccHydrate) renders hello.replay entries into the log immediately, via the
-// same narration path (ccNarrate) new live events use, so the rail is never
-// blank on load when the hub has buffered activity. Runtime behavior of the
-// inline script is out of reach for a Go test (see TestOpsFleetHydrationIsResilient
-// for the established pattern); `node --check` on the extracted script covers
-// syntax/runtime correctness. This test pins the wiring: ccHydrate consumes
-// payload.replay, feeds each entry through ccNarrate into ccLogLines, and
-// re-renders via ccRenderLog — the same function that also renders live
-// ccPushLog events, so the format matches.
+// TestOpsRailRendersHelloReplay proves the rail's SSE hello handler (ccHydrate)
+// still feeds hello.replay into the rail log — now routed through the SHARED,
+// deduped activity store (ccIngestActivity) and rendered via the same narration
+// path (ccNarrate) + ccRenderLog. The rail's resilience (seed + poll from the
+// reliable /api/contribute/activity endpoint) is asserted separately in
+// TestOpsRailResilientFromActivityPoll; here we pin that the SSE hello path is
+// still wired and consistent with the shared store. Runtime behavior of the inline
+// script is out of reach for a Go test; node --check on the extracted script covers
+// syntax/runtime correctness.
 func TestOpsRailRendersHelloReplay(t *testing.T) {
 	body := renderContributePage(t)
 
@@ -92,13 +91,23 @@ func TestOpsRailRendersHelloReplay(t *testing.T) {
 	hydrateBody := body[hydrateStart : hydrateStart+hydrateEnd]
 
 	for _, want := range []string{
-		"payload.replay",  // reads the hello frame's ring-buffer field
-		"ccNarrate(e)",    // same narration fn live events use (format parity)
-		"ccLogLines.push", // feeds the rail's own log model, not a separate one
-		"ccRenderLog()",   // re-renders the rail log immediately (not deferred to the next live event)
+		"payload.replay",      // reads the hello frame's ring-buffer field
+		"ccIngestActivity(e)", // routes each replay entry through the shared, deduped store
 	} {
 		if !strings.Contains(hydrateBody, want) {
-			t.Errorf("ccHydrate does not replay hello.replay into the rail log: missing %q", want)
+			t.Errorf("ccHydrate does not replay hello.replay into the shared store: missing %q", want)
+		}
+	}
+	// The shared rebuild path must narrate via ccNarrate and re-render via ccRenderLog
+	// (format parity with live events), so the rail log is populated immediately.
+	rebuildStart := strings.Index(body, "function ccRebuildLogFromActivity(){")
+	if rebuildStart < 0 {
+		t.Fatal("ccRebuildLogFromActivity is missing — the shared rail rebuild path was removed")
+	}
+	rebuildBody := body[rebuildStart : rebuildStart+strings.Index(body[rebuildStart:], "\n}")]
+	for _, want := range []string{"ccNarrate", "ccRenderLog()"} {
+		if !strings.Contains(rebuildBody, want) {
+			t.Errorf("ccRebuildLogFromActivity does not narrate/render the rail log: missing %q", want)
 		}
 	}
 
@@ -115,6 +124,46 @@ func TestOpsRailRendersHelloReplay(t *testing.T) {
 	// the rail's only possible state).
 	if !strings.Contains(body, "if(!ccLogLines.length){el.innerHTML='<div class=\"ops-empty\">Watching the hive&hellip;</div>';return;}") {
 		t.Error("ccRenderLog no longer gates the empty state on ccLogLines being genuinely empty")
+	}
+}
+
+// TestOpsRailResilientFromActivityPoll proves the fix for the perpetually-empty
+// rail: it is seeded + kept current from the RELIABLE /api/contribute/activity
+// polling endpoint (the same source Onboarding's Live Activity uses), NOT solely
+// from the SSE stream which returns nothing on hosted spokes. So the rail shows the
+// backlog even when SSE never delivers, and it dedupes events that arrive via both.
+func TestOpsRailResilientFromActivityPoll(t *testing.T) {
+	body := renderContributePage(t)
+
+	// ccStart must kick off the activity poll (the seed + resilience layer).
+	if !strings.Contains(body, "ccPollActivity()") {
+		t.Error("ccStart does not seed/poll the rail from /api/contribute/activity — the rail can go blank when SSE is silent")
+	}
+	// The poll must fetch the reliable activity endpoint.
+	pollStart := strings.Index(body, "function ccPollActivity(){")
+	if pollStart < 0 {
+		t.Fatal("ccPollActivity is missing — the rail's polling resilience was removed")
+	}
+	pollBody := body[pollStart : pollStart+strings.Index(body[pollStart:], "\n}")]
+	if !strings.Contains(pollBody, "/api/contribute/activity") {
+		t.Error("ccPollActivity does not fetch /api/contribute/activity (the reliable source)")
+	}
+	// Dedupe: an event arriving via BOTH poll and SSE must be counted once. The
+	// store keys events by timestamp+username+action+task.
+	keyStart := strings.Index(body, "function ccActivityKey(e){")
+	if keyStart < 0 {
+		t.Fatal("ccActivityKey (dedupe key) is missing")
+	}
+	keyBody := body[keyStart : keyStart+strings.Index(body[keyStart:], "\n}")]
+	for _, want := range []string{"e.timestamp", "e.username", "e.action", "e.task"} {
+		if !strings.Contains(keyBody, want) {
+			t.Errorf("ccActivityKey does not dedupe on %q — double-counting is possible", want)
+		}
+	}
+	// SSE events must route through the SAME shared store (so they dedupe against the
+	// poll), not into a separate rail-only path.
+	if !strings.Contains(body, "ccSSEDelivered=true") || !strings.Contains(body, "if(ccIngestActivity(e)){") {
+		t.Error("SSE onActivity does not route through the shared deduped store")
 	}
 }
 
