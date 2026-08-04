@@ -1,5 +1,7 @@
 package hub
 
+import "strings"
+
 // Placeholder (unassigned pool) rows on the My Hives dashboard.
 //
 // An UNCLAIMED pool slot has no GitHub auth BY DESIGN — credentials only
@@ -13,15 +15,26 @@ package hub
 //
 // sanitizePlaceholderRows therefore rewrites each placeholder's spoke-reported
 // Health payload before it ships to the browser: checks whose non-passing
-// state IS the designed state of an unassigned slot — the auth-class family,
-// and the tokens check's zero-consumed warning (no project means no workload
-// to spend on); see placeholderDesignedCheckNote — are reclassified as "skip"
-// with a note saying why as their detail, and the
-// overall status / fails / warns are recomputed from the surviving checks
-// using the spoke's own thresholds. Genuine placeholder-applicable failures —
-// not ready, agents crash-looping, queue wedged — keep their status untouched
-// and still turn the row red, exactly as drift.go's rule 2 intends ("never
-// flag a placeholder for a claimed-hive concern", and never hide a real one).
+// state IS the designed state of an unassigned slot — the auth-class family;
+// the tokens check's zero-consumed warning (no project means no workload to
+// spend on); and the agents check when it fails ONLY because agents await the
+// owner's CLI login (see placeholderDesignedCheckNote and
+// agentsFailIsLoginPending) — are reclassified as "skip" with a note saying why
+// as their detail, and the overall status / fails / warns are recomputed from
+// the surviving checks using the spoke's own thresholds. Genuine
+// placeholder-applicable failures — not ready, agents CRASH-LOOPING (a "down:"
+// agent, distinct from a login-pending one), queue wedged — keep their status
+// untouched and still turn the row red, exactly as drift.go's rule 2 intends
+// ("never flag a placeholder for a claimed-hive concern", and never hide a real
+// one).
+//
+// The agents distinction is why the sanitizer inspects a check's detail, not
+// just its name: on an unclaimed slot, agents "0 running / paused / need login"
+// is the by-design unclaimed state (no owner has claimed the slot or run the
+// CLI login yet) — the exact analogue of github_auth being unconfigured by
+// design. But an agent that is genuinely "down:" (crash-looping / exiting) is a
+// real fault even on a placeholder, so only the login-pending shape is exempted;
+// anything ambiguous stays degrading.
 //
 // Which rows count as placeholders is decided by isPlaceholderEntry
 // (drift.go), the SAME predicate computeDrift and the alert evaluator use, so
@@ -43,19 +56,66 @@ const healthCheckTokens = "tokens"
 // detail on an unassigned row, for the same reason as placeholderAuthNote.
 const placeholderTokensNote = "Unassigned — no workload by design"
 
-// placeholderDesignedCheckNote reports whether a named check's non-passing
-// state is the DESIGNED state of an unassigned pool slot, and if so returns
-// the hover note that replaces its error detail. Everything else returns ""
-// and keeps its reported status: ready, agents, stall_detection,
-// template_vars, kick_refusal and queue failures are genuine faults even on a
-// placeholder (it runs a real spoke process), and governor/contribute only
-// ever report pass.
-func placeholderDesignedCheckNote(name string) string {
+// healthCheckAgents is the spoke's agent-liveness check (HealthSummary,
+// pkg/dashboard/server.go). It fails with a detail line like
+// "0 running, 1 paused, 4 need login: guide, quality, scanner, supervisor"
+// when agents are not doing work.
+const healthCheckAgents = "agents"
+
+// placeholderAgentsNote replaces the agents check's login-pending failure
+// detail on an unassigned row. On an UNCLAIMED slot, agents that are "0
+// running / paused / need login" are not broken — no owner has claimed the
+// slot or run the CLI login yet, so their idleness is the designed state,
+// exactly like github_auth being unconfigured by design.
+const placeholderAgentsNote = "Unassigned — agents await the owner's CLI login by design"
+
+// Agents-check detail markers. The spoke's HealthSummary composes the agents
+// detail line from named buckets (pkg/dashboard/server.go): "need login" for
+// an agent whose CLI is simply unauthenticated (owner-actionable), and "down:"
+// for an agent that is genuinely not running for any other reason
+// (crash-looping / exiting). We discriminate on these substrings rather than
+// re-deriving agent state the hub does not have.
+const (
+	// agentsDetailNeedLogin marks the login-pending bucket, whose detail reads
+	// "N need login: ..." (plural) or "1 needs login: ..." (singular). Both end
+	// in "login:", so matching that colon-terminated suffix catches both spellings
+	// without also matching the "down:" bucket.
+	agentsDetailNeedLogin = "login:"
+	// agentsDetailDown marks the crash/exit bucket ("N down: ..."). Its presence
+	// means at least one agent is genuinely broken, so the fail is NOT by-design
+	// even on a placeholder.
+	agentsDetailDown = "down:"
+)
+
+// agentsFailIsLoginPending reports whether a failing agents check is failing
+// ONLY because agents await the owner's CLI login — the by-design unclaimed
+// state of a pool slot — and not because any agent is genuinely down
+// (crash-looping / exiting). It requires positive evidence of the login-pending
+// bucket AND the absence of the "down:" crash bucket: a "down:" agent is a real
+// fault even on a placeholder, and a detail with neither marker (an unrecognised
+// shape) is treated as ambiguous and left degrading.
+func agentsFailIsLoginPending(detail string) bool {
+	return strings.Contains(detail, agentsDetailNeedLogin) &&
+		!strings.Contains(detail, agentsDetailDown)
+}
+
+// placeholderDesignedCheckNote reports whether a check's non-passing state is
+// the DESIGNED state of an unassigned pool slot, and if so returns the hover
+// note that replaces its error detail. It takes the check's detail because the
+// agents check is designed-state ONLY when its failure is login-pending
+// (agentsFailIsLoginPending); a crash-looping ("down:") agents check is a
+// genuine fault even on a placeholder. Everything else returns "" and keeps its
+// reported status: ready, stall_detection, template_vars, kick_refusal and
+// queue failures are genuine faults even on a placeholder (it runs a real spoke
+// process), and governor/contribute only ever report pass.
+func placeholderDesignedCheckNote(name, detail string) string {
 	switch {
 	case isAuthClassHealthCheck(name):
 		return placeholderAuthNote
 	case name == healthCheckTokens:
 		return placeholderTokensNote
+	case name == healthCheckAgents && agentsFailIsLoginPending(detail):
+		return placeholderAgentsNote
 	}
 	return ""
 }
@@ -99,9 +159,9 @@ func isFailingCheckStatus(st string) bool {
 
 // sanitizePlaceholderRows rewrites the Health payload of every UNASSIGNED
 // placeholder row in the My Hives result so designed-state check failures
-// (placeholderDesignedCheckNote: the auth-class family and the zero-consumed
-// tokens warning) no longer read as degradation, while every other failure
-// keeps its colour. Claimed hives pass through untouched. Called after
+// (placeholderDesignedCheckNote: the auth-class family, the zero-consumed
+// tokens warning, and a login-pending agents check) no longer read as
+// degradation, while every other failure keeps its colour. Claimed hives pass through untouched. Called after
 // enrichFromSaaSMeta has run on every row (provStatus must be present, or a
 // placeholder that has not yet reported it would be misread as claimed by
 // everything downstream of the org-prefix fallback).
@@ -150,7 +210,8 @@ func placeholderSanitizedHealth(health map[string]any) map[string]any {
 		}
 		name, _ := ck["name"].(string)
 		st, _ := ck["status"].(string)
-		if note := placeholderDesignedCheckNote(name); note != "" && isFailingCheckStatus(st) {
+		detail, _ := ck["detail"].(string)
+		if note := placeholderDesignedCheckNote(name, detail); note != "" && isFailingCheckStatus(st) {
 			neutralized++
 			replaced := make(map[string]any, len(ck)+1)
 			for k, val := range ck {

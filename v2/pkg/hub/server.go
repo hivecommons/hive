@@ -670,6 +670,12 @@ type HubServer struct {
 	// mutex for the same reason: touched on every beat.
 	statusFlipSeen map[string]*reporterFlipState
 	statusFlipMu   sync.Mutex
+	// appKeyDelivery tracks, per hive, consecutive GitHub App key deliveries
+	// that the spoke never reflected, so a broken reporter cannot pull key
+	// material onto the wire every beat forever (app_key_backoff.go, #2496).
+	// Own mutex for the reporterSeen reason: touched on every beat.
+	appKeyDelivery   map[string]*appKeyDeliveryState
+	appKeyDeliveryMu sync.Mutex
 	// heartbeatSwitchTag tracks hives that should switch their deployment
 	// image to a specific tag (branch switch) via heartbeat, for clusters
 	// the hub can't reach over kubectl. Cleared once the spoke reports it.
@@ -866,6 +872,10 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	}
 
 	s.loadRegistry()
+	// Rebuild the in-memory upgrade-delivery map from the durable registry
+	// BEFORE the server takes its first heartbeat, so a hub restart can never
+	// orphan an armed upgrade (#2476).
+	s.recoverArmedUpgrades()
 	s.loadHubBanners()
 	s.timeline.load()
 	if err := s.journey.load(time.Now()); err != nil {
@@ -1045,11 +1055,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// distinct reporters have ALTERNATED (A→B→A), so a normal rollout
 		// (A→B, B stays) never trips it.
 		ConflictingReporters: s.noteReporter(payload.HiveID, sanitizeField(payload.Reporter)),
-		// Advisory-staleness signal. Both are sanitized like every other
-		// spoke-reported string; an empty AdvisoryLastPostedAt is preserved as
-		// empty so the render/gate reads it as UNKNOWN rather than stale.
+		// Advisory-staleness signal. The timestamp is an identifier-shaped
+		// string; the error is prose (a sentence shown to a human), so it takes
+		// the prose sanitizer — html.EscapeString here plus the dashboard's own
+		// esc() double-escaped it into "&amp;amp;" artifacts. An empty
+		// AdvisoryLastPostedAt is preserved as empty so the render/gate reads
+		// it as UNKNOWN rather than stale.
 		AdvisoryLastPostedAt: sanitizeField(payload.AdvisoryLastPostedAt),
-		AdvisoryError:        sanitizeField(payload.AdvisoryError),
+		AdvisoryError:        sanitizeProseField(payload.AdvisoryError),
 		// Inference-backend auth-failure signal. Sanitized like every other
 		// spoke-reported string; empty is preserved as empty (no signal).
 		InferenceAuthError: sanitizeField(payload.InferenceAuthError),
@@ -1121,13 +1134,19 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			for i := range payload.Leaderboard {
 				payload.Leaderboard[i].HiveName = hiveName
 				payload.Leaderboard[i].GitHubUsername = sanitizeHeartbeatField(payload.Leaderboard[i].GitHubUsername)
-				payload.Leaderboard[i].CurrentTask = sanitizeHeartbeatField(payload.Leaderboard[i].CurrentTask)
+				// A task title is prose ("Fix the drift hover"), not an
+				// identifier — the strict sanitizer would strip its spaces.
+				payload.Leaderboard[i].CurrentTask = sanitizeProseField(payload.Leaderboard[i].CurrentTask)
 			}
 			return payload.Leaderboard
 		}(),
-		Online:                  true,
-		GitHubAppRequired:       payload.GitHubAppRequired,
-		GitHubAppPermIssue:      sanitizeHeartbeatField(payload.GitHubAppPermIssue),
+		Online:            true,
+		GitHubAppRequired: payload.GitHubAppRequired,
+		// GitHubAppPermIssue is a full sentence the drift hover renders
+		// verbatim ("The GitHub App is configured but has no installation.
+		// Install the app on your org to enable agents.") — the strict
+		// identifier sanitizer stripped every space out of it.
+		GitHubAppPermIssue:      sanitizeProseField(payload.GitHubAppPermIssue),
 		GitHubAppState:          sanitizeHeartbeatField(payload.GitHubAppState),
 		StatusFlipping:          s.noteStatusFlip(payload.HiveID, sanitizeHeartbeatField(payload.GitHubAppState)),
 		GitHubAppID:             payload.GitHubAppID,
@@ -1193,7 +1212,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if payload.UpgradeFailed {
 		entry.Upgrading = false
 		entry.UpgradeFailed = true
-		entry.UpgradeError = sanitizeHeartbeatField(payload.UpgradeError)
+		// An upgrade failure cause is a sentence, not an identifier.
+		entry.UpgradeError = sanitizeProseField(payload.UpgradeError)
 		entry.UpgradeFailedAt = time.Now()
 		s.mu.Lock()
 		delete(s.heartbeatUpgrade, payload.HiveID)
@@ -2456,6 +2476,48 @@ func (s *HubServer) loadRegistry() {
 	}
 }
 
+// recoverArmedUpgrades rebuilds s.heartbeatUpgrade — the in-memory map that
+// actually DELIVERS upgrade instructions on each heartbeat — from the durable
+// registry latch (Upgrading/UpgradeTarget), which survives a hub restart.
+//
+// Without this, a hub restart between arming an upgrade (handleUpgradeHive,
+// bulk upgrade, auto-upgrade fallback) and its completion silently dropped the
+// instruction: the registry kept saying "Upgrading" while the hub sent the
+// spoke nothing, forever, because the map died with the old process (#2476 —
+// four hives sat latched 15+ minutes with zero instructions after a hub
+// self-upgrade). The heartbeat path clears both the map entry and the registry
+// latch when the spoke reports the target SHA, so re-arming here is idempotent
+// and self-terminating.
+//
+// Called from NewHubServer immediately after loadRegistry; takes s.mu like
+// every other heartbeatUpgrade writer so it is also safe to invoke later.
+func (s *HubServer) recoverArmedUpgrades() {
+	type armed struct{ id, target string }
+	var recovered []armed
+	s.mu.Lock()
+	if s.heartbeatUpgrade == nil {
+		s.heartbeatUpgrade = make(map[string]string)
+	}
+	for i := range s.registry.Hives {
+		h := &s.registry.Hives[i]
+		if !h.Upgrading || h.UpgradeTarget == "" {
+			continue
+		}
+		// A recorded terminal failure must stay terminal — re-arming it would
+		// resurrect an upgrade the orphan sweep already gave up on and reported.
+		if h.UpgradeFailed {
+			continue
+		}
+		s.heartbeatUpgrade[h.ID] = h.UpgradeTarget
+		recovered = append(recovered, armed{id: h.ID, target: h.UpgradeTarget})
+	}
+	s.mu.Unlock()
+	for _, a := range recovered {
+		s.logger.Info("recovered armed upgrade from registry after restart",
+			"hive_id", a.id, "target", a.target)
+	}
+}
+
 func (s *HubServer) requestSave() {
 	select {
 	case s.saveCh <- struct{}{}:
@@ -2643,6 +2705,60 @@ func sanitizeHeartbeatField(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// maxProseFieldRunes bounds a sanitized prose field. Prose fields carry full
+// sentences (an App-permission diagnosis, an upgrade failure cause), so the cap
+// is generous — but a hostile or broken spoke must still not be able to bloat
+// the registry with megabytes of "detail".
+const maxProseFieldRunes = 500
+
+// sanitizeProseField sanitizes a spoke-reported HUMAN-READABLE string — a
+// sentence the dashboard renders verbatim to a person, such as
+// GitHubAppPermIssue, UpgradeError, AdvisoryError, a leaderboard task title, or
+// a health-check detail.
+//
+// This is DELIBERATELY separate from sanitizeHeartbeatField. That allowlist is
+// for identifiers (hive IDs, branches, owners, agent states) where a space is
+// never legal — but applied to prose it deletes every space and renders
+// "The GitHub App is configured but has no installation." as
+// "TheGitHubAppisconfiguredbuthasnoinstallation.", which is exactly the
+// mangling this variant exists to end. Identifiers keep the strict sanitizer;
+// only fields whose value is a sentence go through this one.
+//
+// What it keeps: letters, digits, spaces, and normal punctuation — the text
+// stays a readable sentence.
+//
+// What it still neutralizes:
+//   - '<', '>' and '&' are dropped, so no tag and no entity can ever be formed
+//     even if a future render path forgets to escape;
+//   - backticks are dropped (they are fenced-code/template metacharacters in
+//     every surface this text could be pasted into);
+//   - newlines, carriage returns and tabs become single spaces (these fields
+//     are one-line UI strings and log fields);
+//   - all other control characters (including ESC, so ANSI sequences cannot
+//     ride along) are dropped;
+//   - runs of whitespace collapse to one space and the result is trimmed;
+//   - length is capped at maxProseFieldRunes.
+func sanitizeProseField(s string) string {
+	var b strings.Builder
+	for _, c := range s {
+		switch {
+		case c == '\n' || c == '\r' || c == '\t':
+			b.WriteRune(' ')
+		case c < 0x20 || c == 0x7f:
+			// Other control characters (incl. ESC): dropped entirely.
+		case c == '<' || c == '>' || c == '&' || c == '`':
+			// HTML/markup-dangerous: dropped.
+		default:
+			b.WriteRune(c)
+		}
+	}
+	out := strings.Join(strings.Fields(b.String()), " ")
+	if runes := []rune(out); len(runes) > maxProseFieldRunes {
+		out = string(runes[:maxProseFieldRunes])
+	}
+	return out
 }
 
 // sanitizeImageRef sanitizes a container image reference reported by a spoke.
