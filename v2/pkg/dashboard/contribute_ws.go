@@ -204,7 +204,37 @@ type ContributeWSHub struct {
 	consecutiveFailures map[string]int
 	completedMu         sync.Mutex
 	selectMu            sync.Mutex
+	// assignmentTimes records, per contributor identity (identityOf), the wall-clock
+	// times of the task_assign messages that identity has been handed. It backs the
+	// #2436/#2566 per-tier rate gate: tier_limits.max_per_hour / max_per_day were
+	// admin-writable and displayed by the Management & Operations control-plane
+	// (#2562) as if authoritative, but selectTask enforced only max_concurrent, so
+	// the numbers an operator set were inert. We enforce them here by counting the
+	// timestamps in this ledger that fall inside a ROLLING 1-hour and 24-hour window
+	// ending "now" (a sliding window keyed off each assignment's timestamp, NOT a
+	// calendar-hour/calendar-day bucket that would reset on the clock). A slot frees
+	// exactly `rateLimitHourWindow` / `rateLimitDayWindow` after it was taken, so a
+	// contributor who hit max_per_hour can resume as soon as their oldest assignment
+	// in the trailing hour ages out. The counter is ASSIGNMENTS (each task handed
+	// out), mirroring max_concurrent's "tasks handed to this identity" semantics and
+	// the max_tasks_per_hour/day field naming; it is not gated on completion. Old
+	// entries beyond the day window are pruned on every recording pass so the map
+	// stays bounded. Guarded by rateMu.
+	assignmentTimes map[string][]time.Time
+	rateMu          sync.Mutex
 }
+
+// rateLimitHourWindow and rateLimitDayWindow are the trailing (rolling) windows
+// over which tier_limits.max_per_hour and max_per_day are counted (#2566). They
+// are sliding windows anchored on "now", not calendar buckets: a contributor's
+// assignment stops counting against the hourly cap exactly rateLimitHourWindow
+// after it was made, and against the daily cap after rateLimitDayWindow. This
+// matches the field names (per HOUR / per DAY) while avoiding a hard reset at the
+// top of the clock hour/day that would let a burst straddle the boundary.
+const (
+	rateLimitHourWindow = time.Hour
+	rateLimitDayWindow  = 24 * time.Hour
+)
 
 // completedTaskCooldownHours is the cooldown applied when a task completes
 // having actually shipped a pull request: real work landed, so we should not
@@ -265,6 +295,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		completedTaskPRURL:    make(map[string]string),
 		failedTasks:           make(map[string]time.Time),
 		consecutiveFailures:   make(map[string]int),
+		assignmentTimes:       make(map[string][]time.Time),
 		logger:                logger,
 		server:                server,
 	}
@@ -1502,6 +1533,16 @@ const (
 	// tier_limits.max_concurrent for this identity (counting every live
 	// connection this identity holds).
 	taskUnavailableConcurrencyLimit = "concurrency_limit"
+	// taskUnavailableHourlyLimit / taskUnavailableDailyLimit (#2566): assigning
+	// would exceed the tier's tier_limits.max_per_hour / max_per_day for this
+	// identity, counting the assignments handed out inside the trailing
+	// rateLimitHourWindow / rateLimitDayWindow. These mirror the enforced-refusal
+	// shape of taskUnavailableConcurrencyLimit (#2436) and the tier_disabled gate:
+	// the fields were admin-writable and displayed by the #2562 control-plane but
+	// previously left as TODO(#2436) and never enforced, so the displayed caps were
+	// inert. A contributor at or over the cap now learns exactly which window it hit.
+	taskUnavailableHourlyLimit = "hourly_limit"
+	taskUnavailableDailyLimit  = "daily_limit"
 
 	// The reasons below (kubestellar/hive#2546) extend the same task_unavailable
 	// negative-ack to the three formerly-SILENT selectTask paths — each returned a
@@ -1538,6 +1579,61 @@ func identityOf(c *ContributorConnection) string {
 		return c.profile.ContributorID
 	}
 	return c.profile.GitHubUsername
+}
+
+// rateWindowCounts returns how many task assignments the given identity has been
+// handed inside the trailing hour and day windows ending at `now`. It prunes any
+// timestamps older than the day window (the widest of the two) as a side effect so
+// assignmentTimes stays bounded to at most a day of history per identity. Caller
+// must NOT hold rateMu; this method takes it. See assignmentTimes / #2566 for the
+// rolling-window semantics.
+func (h *ContributeWSHub) rateWindowCounts(identity string, now time.Time) (hour, day int) {
+	if identity == "" {
+		return 0, 0
+	}
+	dayCutoff := now.Add(-rateLimitDayWindow)
+	hourCutoff := now.Add(-rateLimitHourWindow)
+
+	h.rateMu.Lock()
+	defer h.rateMu.Unlock()
+
+	times := h.assignmentTimes[identity]
+	kept := times[:0]
+	for _, t := range times {
+		if t.Before(dayCutoff) {
+			// Older than the widest window — it can never count again; drop it.
+			continue
+		}
+		kept = append(kept, t)
+		day++
+		if !t.Before(hourCutoff) {
+			hour++
+		}
+	}
+	if len(kept) == 0 {
+		delete(h.assignmentTimes, identity)
+	} else {
+		h.assignmentTimes[identity] = kept
+	}
+	return hour, day
+}
+
+// recordAssignment appends an assignment timestamp for the identity. Called once
+// per task_assign actually shipped, so the rate windows count tasks HANDED OUT
+// (matching max_concurrent's semantics and the max_tasks_per_hour/day naming), not
+// completions. Caller must NOT hold rateMu. See #2566.
+func (h *ContributeWSHub) recordAssignment(identity string, at time.Time) {
+	if identity == "" {
+		return
+	}
+	h.rateMu.Lock()
+	if h.assignmentTimes == nil {
+		// The constructor initializes this map; a hub built as a bare struct literal
+		// (some tests, defensive) would otherwise panic on append to a nil map.
+		h.assignmentTimes = make(map[string][]time.Time)
+	}
+	h.assignmentTimes[identity] = append(h.assignmentTimes[identity], at)
+	h.rateMu.Unlock()
 }
 
 // taskUnavailable builds the explicit negative-ack the ready handler sends in
@@ -1651,21 +1747,45 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	}
 	h.mu.RUnlock()
 
-	// #2436 finding 3: enforce tier_limits.max_concurrent per identity. The
-	// config ships populated MaxConcurrent defaults, so an operator reasonably
-	// believes concurrency is capped; before this it was inert. A limit <= 0 is
-	// treated as "unlimited" (the "advisor" default is 0 and existing configs
-	// that never set the field must keep working). MaxPerHour / MaxPerDay remain
-	// TODO(#2436): they require per-identity rate counters that are not tracked
-	// today, so they are intentionally left unenforced rather than pretended —
-	// see the PR note. Only MaxConcurrent is wired here.
+	// #2436 finding 3 / #2566: enforce tier_limits per identity. The config ships
+	// populated MaxConcurrent/MaxPerHour/MaxPerDay defaults, so an operator
+	// reasonably believes concurrency AND rate are capped — and since #2562 the
+	// Management & Operations control-plane DISPLAYS all three as if authoritative.
+	// Before this, only MaxConcurrent was enforced; MaxPerHour / MaxPerDay were left
+	// as TODO(#2436) and never read, so the hourly/daily numbers an operator set (or
+	// saw in the control-plane) were inert. All three are now enforced here.
+	//
+	// A limit <= 0 is treated as "unlimited" for every field (the "advisor" default
+	// is 0 across the board, and existing configs that never set a field must keep
+	// working). MaxConcurrent counts tasks currently HELD (identityHolds, from the
+	// live-connection scan above); MaxPerHour / MaxPerDay count tasks ASSIGNED inside
+	// the trailing rateLimitHourWindow / rateLimitDayWindow (rolling windows, see
+	// assignmentTimes). Concurrency is checked first as the tightest, most immediate
+	// gate; the rate windows are checked next so a contributor learns exactly which
+	// cap they hit. The daily assignment is recorded only once a task is actually
+	// shipped, at the task_assign site below.
 	if h.server.deps != nil && h.server.deps.Config != nil {
-		if limits, ok := h.server.deps.Config.Hub.TierLimits[tier]; ok && limits.MaxConcurrent > 0 {
-			if identityHolds[identityOf(c)] >= limits.MaxConcurrent {
+		if limits, ok := h.server.deps.Config.Hub.TierLimits[tier]; ok {
+			if limits.MaxConcurrent > 0 && identityHolds[identityOf(c)] >= limits.MaxConcurrent {
 				h.logger.Warn("[contribute-ws] refusing task: concurrency limit reached",
 					"username", identityOf(c), "tier", tier,
 					"held", identityHolds[identityOf(c)], "max_concurrent", limits.MaxConcurrent)
 				return h.taskUnavailable(taskUnavailableConcurrencyLimit)
+			}
+			if limits.MaxPerHour > 0 || limits.MaxPerDay > 0 {
+				hourCount, dayCount := h.rateWindowCounts(identityOf(c), time.Now())
+				if limits.MaxPerHour > 0 && hourCount >= limits.MaxPerHour {
+					h.logger.Warn("[contribute-ws] refusing task: hourly rate limit reached",
+						"username", identityOf(c), "tier", tier,
+						"assigned_last_hour", hourCount, "max_per_hour", limits.MaxPerHour)
+					return h.taskUnavailable(taskUnavailableHourlyLimit)
+				}
+				if limits.MaxPerDay > 0 && dayCount >= limits.MaxPerDay {
+					h.logger.Warn("[contribute-ws] refusing task: daily rate limit reached",
+						"username", identityOf(c), "tier", tier,
+						"assigned_last_day", dayCount, "max_per_day", limits.MaxPerDay)
+					return h.taskUnavailable(taskUnavailableDailyLimit)
+				}
 			}
 		}
 	}
@@ -1913,6 +2033,14 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 	c.lastIdleReason = ""
 	c.tokenMintedAt = time.Now()
 	c.mu.Unlock()
+
+	// #2566: record this assignment against the identity's rolling hourly/daily
+	// windows so the next selectTask enforces tier_limits.max_per_hour /
+	// max_per_day. Recorded here — after the task is committed to the connection
+	// and we are certain a task_assign will ship — so a refused pass (which returns
+	// early above) never consumes a slot. Uses the same identity key as the
+	// concurrency gate.
+	h.recordAssignment(identityOf(c), time.Now())
 
 	return &WSMessage{
 		Type:           "task_assign",
