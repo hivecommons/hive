@@ -14958,7 +14958,23 @@ function burnAreaChart() {
       const titlesMode = (hub.contribute_titles_mode === 'allow') ? 'allow' : 'deny';
       const authorsMode = (hub.contribute_authors_mode === 'allow') ? 'allow' : 'deny';
       const labelsMode = (hub.contribute_labels_mode === 'allow') ? 'allow' : 'deny';
+      // Read-only, runtime-derived — never sent back on save (markDirty is
+      // never wired to this field). See podNamespace() in
+      // pkg/dashboard/pod_namespace.go for how the hub API resolved it
+      // (POD_NAMESPACE downward-API env, else NAMESPACE, else the
+      // service-account namespace file). Omitted entirely when unknown
+      // (running outside a cluster, or an old spoke build with no
+      // POD_NAMESPACE wired) rather than showing a blank/"undefined" line —
+      // this is the spoke-side complement to the hive.kubestellar.io/*
+      // namespace labels the hub stamps onto this same namespace at
+      // provision/claim/assign time.
+      const namespaceRow = hub.namespace ? `
+        <div class="config-field">
+          <label>Namespace <span class="config-info">i<span class="config-tooltip">The Kubernetes namespace this hive's pod is running in. Unlike the hive's name/org, this never changes after the namespace is first created — see the hive.kubestellar.io/* labels on it for an operator-facing way to map it back to this hive.</span></span></label>
+          <input type="text" value="${esc(hub.namespace)}" readonly disabled style="opacity:0.7">
+        </div>` : '';
       return `
+        ${namespaceRow}
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="enabled"></div>
           <span class="config-toggle-label">Hub Enabled <span class="config-info">i<span class="config-tooltip">Register this hive with the central hub at hive.kubestellar.io so it appears in the public registry.</span></span></span>

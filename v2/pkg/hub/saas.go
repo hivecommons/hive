@@ -5720,6 +5720,14 @@ func (s *HubServer) handleApproveProvision(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Entry point 2/3 for namespace identity: this is the moment a placeholder
+	// gets a real owner/org — the hive's identity is known here for the first
+	// time, so the namespace's labels/annotations MUST be (re)written now
+	// rather than left holding whatever provisionHive stamped at pool-creation
+	// time (typically just hive_id). Best-effort — see
+	// stampHostedNamespaceIdentity's doc comment.
+	stampHostedNamespaceIdentity(s.clusterForHive(h), hostedNamespaceForHive(h), h.ProjectName, h.Org, h.ID, s.logger)
+
 	// Ensure the user record exists, grant them owner access, and count this
 	// owned hive against a quota.
 	//
@@ -6480,7 +6488,21 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 	// registry's dashboardUrl becomes the vanity URL and stays that way.
 	if h.VanityURL == "" {
 		if cluster := s.clusterForHive(h); cluster != nil && cluster.Domain != "" {
-			vanityHost := generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
+			// Option B (namespace-identity operability): prefer a host built
+			// from the hive's OWN display name (h.ProjectName /
+			// body.ProjectName) when one is set — "TradingAsBuddies" reads as
+			// the hive an operator actually asked for, where
+			// "hosted-acme-repo-*" only reads as org/repo. Falls back to the
+			// existing org/repo-derived host (generateHiveID) when no display
+			// name is set, so a hive claimed without one behaves exactly as
+			// before. Both schemes share the same suffix length and the same
+			// "no route until makeVanityHostServable succeeds" adoption rule
+			// below — this only changes what the label PORTION of the host
+			// says, never the get-or-create/idempotency semantics.
+			vanityHost := hiveNameVanityHost(h.ProjectName, cluster.Domain)
+			if vanityHost == "" {
+				vanityHost = generateHiveID(body.Org, primaryRepo) + "." + cluster.Domain
+			}
 			// Make the vanity host servable, then adopt it. Nothing else creates a
 			// route for this host: provisioning templates a single DashboardHost, so
 			// a vanity URL minted here resolves to no backend and every hub link to
@@ -6520,6 +6542,14 @@ func (s *HubServer) handleAssignHive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"failed to save hive assignment"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Entry point 3/3 for namespace identity: the (re)assignment path. A
+	// claimed placeholder can be reassigned to a different owner/org later
+	// (or an admin can assign directly, bypassing the approve-provision flow
+	// entirely), so the namespace's labels/annotations must be refreshed here
+	// too — same rationale as handleApproveProvision above. Best-effort — see
+	// stampHostedNamespaceIdentity's doc comment.
+	stampHostedNamespaceIdentity(s.clusterForHive(h), hostedNamespaceForHive(h), h.ProjectName, h.Org, h.ID, s.logger)
 
 	// Grant the assignee owner access. handleAccessList builds a hive's access
 	// list by scanning every user record for Hives[hiveID], NOT from h.Owner —
@@ -8275,6 +8305,22 @@ const dashboardHTML = `<!DOCTYPE html>
       // "is registeredAt usable"; an em dash, never 'Invalid Date', when not.
       if (hiveProvisionTime(h) !== null) {
         lines.push('— provisioned ' + fmtUserTS(h.registeredAt));
+      }
+      // Kubernetes namespace. A hosted hive's namespace is the deterministic
+      // "hive-hosted-<id>" (see hostedNamespaceForHive in
+      // pkg/hub/hosted_namespace_identity.go) and — unlike the hive's
+      // name/org — NEVER changes after a claim: the namespace this hive was
+      // first provisioned into keeps its original (often placeholder) name
+      // forever, because Kubernetes has no atomic namespace rename. Surfacing
+      // it here is what lets an operator map "some namespace on the cluster"
+      // back to "this hive" without cross-referencing the registry by hand —
+      // exactly the gap the hive.kubestellar.io/* namespace labels close from
+      // the cluster side. Computed client-side (not a separate stored field)
+      // so it can never drift from the one place the namespace name is
+      // decided; omitted for a non-hosted row, which has no such namespace.
+      var hns = hiveNamespace(h);
+      if (hns) {
+        lines.push('Namespace: ' + hns);
       }
       var access = h.access || [];
       var dotMarkup = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + c + '"></span>' +
@@ -11191,6 +11237,19 @@ const dashboardHTML = `<!DOCTYPE html>
     function isPlaceholderHive(h) {
       if (!h) return false;
       return h.provStatus === 'available' || (!!h.org && h.org.indexOf('available-') === 0);
+    }
+
+    /* hiveNamespace returns the Kubernetes namespace a hosted hive's spoke
+       runs in, or '' for a non-hosted (local) hive, which has no such
+       namespace. Mirrors hostedNamespaceForHive in
+       pkg/hub/hosted_namespace_identity.go — "hive-hosted-" + id — computed
+       here rather than shipped as its own field so it can never disagree
+       with the one place (server-side) that decides the namespace name. */
+    function hiveNamespace(h) {
+      if (!h || !h.id) return '';
+      var isHosted = h.hiveType === 'hosted' || h.id.indexOf('hosted-') === 0 || h.id.indexOf('saas-') === 0;
+      if (!isHosted) return '';
+      return 'hive-hosted-' + h.id;
     }
 
     /* ---------- Bulk multi-select actions ----------
