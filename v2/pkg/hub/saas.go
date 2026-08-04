@@ -8419,6 +8419,7 @@ const dashboardHTML = `<!DOCTYPE html>
       'app-id-placeholder': 'Placeholder App ID (operator)',
       'health-degraded': 'Health degraded',
       'upgrade-stuck':   'Upgrade stuck',
+      'upgrading':       'Upgrading',
       'acmm-unset':      'ACMM level unset',
       'no-agents':       'No agents running',
       'duplicate-spoke': 'Duplicate spoke instances',
