@@ -88,12 +88,32 @@ func TestAvatarLinkDegradesWithoutUsername(t *testing.T) {
 	}
 }
 
-// TestAvatarOnErrorFallbackKept asserts the 404-avatar fallback survived the
-// move into an anchor. A broken-image glyph inside a link reads as a dead
-// control, which is worse than the gap it replaced.
-func TestAvatarOnErrorFallbackKept(t *testing.T) {
-	if !strings.Contains(dashboardHTML, `onerror="this.style.visibility=\'hidden\'"`) {
-		t.Error("avatarImg no longer hides a broken avatar image")
+// TestAvatarOnErrorFallsBackToInitials asserts a failed avatar load swaps to a
+// same-size initials avatar instead of hiding the image. github.com/<login>.png
+// returns 403 when the request is unauthenticated or rate-limited, which is
+// common for a hub visited without an active GitHub session; the old
+// visibility:hidden onerror left the face's box empty, which — inside the
+// "logged in now" live-ring wrapper — rendered as an empty dashed ring with
+// nobody home. The fallback must also disarm onerror (this.onerror=null)
+// before swapping so a bad fallback source can never loop.
+func TestAvatarOnErrorFallsBackToInitials(t *testing.T) {
+	if strings.Contains(dashboardHTML, `onerror="this.style.visibility=\'hidden\'"`) {
+		t.Error("avatarImg still hides a broken avatar image instead of falling back")
+	}
+	if !strings.Contains(dashboardHTML, `onerror="this.onerror=null;this.src=`) {
+		t.Error("avatarImg no longer disarms onerror before swapping to the fallback")
+	}
+	if !strings.Contains(dashboardHTML, "function avatarInitialsSVG(username, px)") {
+		t.Error("avatarInitialsSVG helper is missing — the initials fallback must be a shared, testable function")
+	}
+	if !strings.Contains(dashboardHTML, "data:image/svg+xml;charset=UTF-8,") {
+		t.Error("avatarInitialsSVG no longer builds a CSP-safe data: URI fallback")
+	}
+	// The nav-bar avatar (viewer's own face, built from the auth payload's
+	// avatar_url rather than through avatarImg) must get the same treatment —
+	// it is the other avatar builder that duplicated the hide-on-error pattern.
+	if !strings.Contains(dashboardHTML, "avatarInitialsSVG(data.login, NAV_AVATAR_PX)") {
+		t.Error("nav-bar avatar no longer falls back to initials on load failure")
 	}
 }
 

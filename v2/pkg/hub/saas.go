@@ -7517,11 +7517,46 @@ const dashboardHTML = `<!DOCTYPE html>
 
     /* Round avatar <img> for a github.com login, at the given rendered size in
        CSS pixels. Requests 2x from GitHub so the face stays sharp on HiDPI.
-       onerror hides a 404 avatar rather than leaving a broken-image glyph — an
-       especially important detail now that the image sits inside a link, where
-       a broken icon would read as a dead control. extraStyle appends to the
-       inline style (borders, flex sizing) and defaults to nothing. */
+       github.com/<login>.png is a redirect to GitHub's CDN and returns 403 when
+       the request is unauthenticated or rate-limited — common for a hub visited
+       by a browser without an active GitHub session. onerror used to just hide
+       the broken image (visibility:hidden), which left the face's OWN size/shape
+       box empty; inside a live-ring wrapper that reads as an empty dashed ring
+       with nobody home. onerror now swaps to a same-size, same-shape initials
+       avatar instead, so a failed load never leaves a hole. this.onerror=null
+       before the swap stops a data: URI (which cannot itself 403) from ever
+       re-triggering onerror and looping. extraStyle appends to the inline style
+       (borders, flex sizing) and defaults to nothing. */
     var AVATAR_HIDPI_SCALE = 2;
+    /* avatarInitialsSVG builds a self-contained data: URI — no network request,
+       so it always renders and is exempt from the CSP's img-src allowance for
+       https: (the CSP already allows img-src data:, so no policy change is
+       needed). The background color is deterministic from the username (a
+       simple string hash into a fixed hue set) so the same person gets the same
+       color every time rather than a random one on every failed load. */
+    var AVATAR_FALLBACK_HUES = [0, 25, 50, 145, 175, 200, 230, 260, 290, 330];
+    function avatarInitials(username) {
+      var clean = String(username || '').replace(/[^A-Za-z0-9]/g, '');
+      if (!clean) return '?';
+      return clean.length === 1 ? clean.charAt(0).toUpperCase() : (clean.charAt(0) + clean.charAt(clean.length - 1)).toUpperCase();
+    }
+    function avatarFallbackHue(username) {
+      var s = String(username || '');
+      var hash = 0;
+      for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+      return AVATAR_FALLBACK_HUES[hash % AVATAR_FALLBACK_HUES.length];
+    }
+    function avatarInitialsSVG(username, px) {
+      var initials = avatarInitials(username);
+      var hue = avatarFallbackHue(username);
+      var r = px / 2;
+      var fontSize = Math.round(px * 0.42);
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + px + '" height="' + px + '" viewBox="0 0 ' + px + ' ' + px + '">' +
+        '<circle cx="' + r + '" cy="' + r + '" r="' + r + '" fill="hsl(' + hue + ',45%,32%)"/>' +
+        '<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="system-ui,sans-serif" ' +
+        'font-size="' + fontSize + '" font-weight="600" fill="#fff">' + initials + '</text></svg>';
+      return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+    }
     /* A user LOGGED INTO THEIR HIVE right now gets a thick green dashed ring, so
        "who is active this moment" reads at a glance wherever a face appears. The
        border is drawn on a wrapper (a border on the round <img> itself would clip
@@ -7535,7 +7570,7 @@ const dashboardHTML = `<!DOCTYPE html>
       var img = '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
         'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' +
         (extraStyle || '') + '" ' +
-        'onerror="this.style.visibility=\'hidden\'">';
+        'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(username, px)) + '">';
       if (isUserLive(username)) {
         // Concentric green dashed ring. The wrapper is a fixed square exactly the
         // face's size plus the ring gap+width on every side (px + 2*(gap+border)),
@@ -7564,6 +7599,7 @@ const dashboardHTML = `<!DOCTYPE html>
     var PANEL_ACCESS_AVATAR_PX = 18;   /* rows inside the status-dot hover panel */
     var LIST_AVATAR_PX = 20;           /* compact request/access lists */
     var TABLE_AVATAR_PX = 24;          /* admin Users table + provision cards */
+    var NAV_AVATAR_PX = 28;            /* top nav viewer avatar; mirrors .nav-avatar CSS */
 
     // ghRepoURL builds the URL for an org/repo on the RIGHT GitHub instance.
     // Hives are not all on public github.com: a provision request carries a
@@ -8612,12 +8648,14 @@ const dashboardHTML = `<!DOCTYPE html>
           /* The viewer's own face links to their own profile, like every other
              face in the dashboard. avatar_url comes from the auth payload (it is
              GitHub's CDN URL, not derivable from the login), so this one builds
-             its <img> directly rather than via avatarImg — but the anchor and
-             the role tooltip are the shared ones. */
+             its <img> directly rather than via avatarImg — but the anchor, the
+             role tooltip, and the initials fallback on load failure are shared.
+             NAV_AVATAR_PX mirrors the .nav-avatar CSS rule's fixed 28px size, so
+             the fallback SVG matches the box it is replacing. */
           document.getElementById('nav-user').innerHTML =
             avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
               '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
-              'onerror="this.style.visibility=\'hidden\'">') +
+              'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">') +
             '<span style="font-size:0.85rem">' + esc(data.login) + '</span>' +
             '<span style="font-size:0.65rem;color:var(--muted);margin-left:6px">' + roleText + '</span>';
         }
