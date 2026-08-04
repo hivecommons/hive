@@ -26,6 +26,15 @@ import (
 
 const defaultLookbackHours = 24
 
+// Cadence sentinel values: a per-mode cadence set to one of these means the
+// governor will not kick the agent on a timer in that mode. Kept as named
+// constants so the offByCadence detection and computeNextKick agree on the
+// exact spellings the config layer emits.
+const (
+	cadencePause = "pause"
+	cadenceOff   = "off"
+)
+
 // SetProxyViolationsProvider registers a function that returns per-agent
 // proxy violation counts, called during status builds.
 func SetProxyViolationsProvider(fn func() map[string]int) {
@@ -240,6 +249,17 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 		}
 		nextKick := computeNextKick(proc.LastKick, cadence)
 
+		// offByCadence: the agent's cadence for the CURRENT governor mode is a
+		// non-kicking value ("pause"/"off"), so the governor will never kick it
+		// even though the process itself may be perfectly healthy. This is how
+		// a hive stuck in SURGE (where surge:{scanner:pause,...}) leaves every
+		// agent alive-but-off. The dashboard surfaces this as a hollow-green
+		// dot so operators do not mistake a governor-paused agent for a running
+		// one. On-demand agents are excluded — they are intentionally not on a
+		// cadence and carry their own on-demand styling.
+		offByCadence := (cadence == cadencePause || cadence == cadenceOff) &&
+			!proc.Config.OnDemand && !onDemandSet[name]
+
 		pinnedCli := proc.PinnedCLI != "" || proc.Config.CLIPinned
 		pinnedModel := proc.PinnedModel != ""
 
@@ -288,6 +308,7 @@ func buildAgents(statuses map[string]*agent.AgentProcess, cfg *config.Config, go
 			PausedAt:      formatOptionalTime(proc.PausedAt),
 			PausedReason:  proc.PausedReason,
 			PausedTrigger: proc.PausedTrigger,
+			OffByCadence:  offByCadence,
 			CLI:           cli,
 			Model:         model,
 			Cadence:       cadence,

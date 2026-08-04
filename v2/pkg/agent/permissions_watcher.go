@@ -25,7 +25,26 @@ const (
 
 	// FilePerms is the minimum permission bits required on files (u+rw, g+rw).
 	FilePerms = 0o660
+
+	// bobStateDirGroupRWX is `g+rwx` — the bits a bob state directory (.bob)
+	// must grant the shared `node` group so an agent UID can create, replace and
+	// traverse the files bob persists there (settings, installation_id, the
+	// .bob-errors/ logger target). A dir-owning hive-<agent> user commonly
+	// creates these 0755 (owner rwx, group r-x), which leaves the group without
+	// write and makes bob log "error saving your latest settings changes" and
+	// "Failed to initialize logger" while running degraded. The watcher ORs
+	// these bits in to bring such a dir to at least 0770 without ever narrowing
+	// the owner or other bits it already has.
+	bobStateDirGroupRWX os.FileMode = 0o070
 )
+
+// bobStateDirBase is the directory name bob uses for both its shared-HOME state
+// (/data/home/.bob) and its per-agent workdir state (/data/agents/<name>/.bob).
+// The watcher recognizes an entry as a bob state dir by this basename so it can
+// self-heal the group-write bit the general fixEntry guard would otherwise skip
+// (those dirs are owned by hive-<agent>, not DevUID). Kept in sync with
+// config.BobStateDirName without importing config here to avoid a cycle.
+const bobStateDirBase = ".bob"
 
 // WatchedHomeDirs are the subdirectories under the shared home and data
 // volume that tools (Copilot, Claude, etc.) or init containers frequently
@@ -178,6 +197,21 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 		}
 	}
 
+	// bob state dirs (.bob) are the one class of directory the watcher must
+	// widen even though they are owned by a hive-<agent> UID rather than
+	// DevUID: bob runs as that agent's UID through the shared `node` group, so
+	// a 0755 dir leaves the group without write and bob logs "error saving your
+	// latest settings changes" / "Failed to initialize logger" and runs
+	// degraded. verifyBobStateDirsWritable only DETECTS this; here we actually
+	// fix it, on every tick and at startup, so the fleet self-heals instead of
+	// staying degraded until an operator hand-chmods the pod. Handled before
+	// the general owner guard below precisely because that guard would skip
+	// these non-DevUID dirs. Only the group r/w/x bits are added — owner and
+	// other bits are preserved — so an already-770 dir is left untouched.
+	if fi.IsDir() && filepath.Base(path) == bobStateDirBase {
+		fixBobStateDirGroupWrite(path, fi.Mode(), logger)
+	}
+
 	// Only fix permissions on files we own or just chowned.
 	// Skipping files owned by other users avoids "operation not permitted"
 	// spam when agents create files as their own users.
@@ -221,4 +255,45 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 			}
 		}
 	}
+}
+
+// fixBobStateDirGroupWrite ensures a bob state directory (.bob) grants the
+// shared `node` group read+write+execute, so an agent UID reaching it through
+// that group can persist bob's settings, installation_id and .bob-errors/
+// logger target. It ORs bobStateDirGroupRWX into whatever the dir already has —
+// never narrowing owner or other bits — so a dir that is already group-writable
+// (>= 0770) is left byte-identical and the watcher stays idempotent.
+//
+// This is the remediation that verifyBobStateDirsWritable only ever DETECTED:
+// production .bob dirs are created 0755 (r-x for the group) by their
+// hive-<agent> owner, which is why bob logged "error saving your latest
+// settings changes" / "Failed to initialize logger" fleet-wide and ran
+// degraded. The chmod runs on every watcher tick and at startup, so the fix
+// self-heals rather than requiring a hand-chmod on the pod.
+//
+// Safe and non-fatal: a chmod we are not permitted to perform (EPERM — we are
+// neither the owner nor privileged) is logged and swallowed, exactly like the
+// watcher's other chmod/chown arms, so it never blocks or panics.
+func fixBobStateDirGroupWrite(path string, mode os.FileMode, logger *slog.Logger) {
+	perm := mode.Perm()
+	// Nothing to do when the group already has all of r/w/x — this keeps an
+	// already-remediated (>= 0770) dir untouched and the walk idempotent.
+	if perm&bobStateDirGroupRWX == bobStateDirGroupRWX {
+		return
+	}
+	newPerm := perm | bobStateDirGroupRWX
+	if err := os.Chmod(path, newPerm); err != nil {
+		logger.Error("permissions watcher: chmod bob state dir failed; bob will keep reporting 'error saving your latest settings changes' and run degraded",
+			"path", path,
+			"old_mode", perm.String(),
+			"want_mode", newPerm.String(),
+			"error", err,
+		)
+		return
+	}
+	logger.Info("permissions watcher: fixed bob state dir permissions",
+		"path", path,
+		"old_mode", perm.String(),
+		"new_mode", newPerm.String(),
+	)
 }
