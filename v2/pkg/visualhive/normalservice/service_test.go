@@ -482,6 +482,98 @@ func TestNormalServiceConsumedNoDispatchLedgerBypassesPullRequestObserver(t *tes
 	}
 }
 
+func TestNormalServiceReplacementRetainsCadenceUntilTrigger(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.intake.dispatch = nil
+	stateDir := t.TempDir()
+	now := time.Date(2026, time.August, 4, 14, 0, 0, 0, time.UTC)
+	first := fixture.serviceAt(t, stateDir, fixture.verifier)
+	first.options.Now = func() time.Time { return now }
+	if err := first.RunCycle(context.Background()); !errors.Is(err, ErrNoDispatch) {
+		t.Fatalf("initial cycle error = %v, want idle", err)
+	}
+
+	// Model a replacement container with the same persistent state. Automatic
+	// startup must not fetch/dispatch again merely because the process changed.
+	replacement := fixture.serviceAt(t, stateDir, fixture.verifier)
+	replacement.options.PollInterval = time.Hour
+	replacement.options.Now = func() time.Time { return now.Add(time.Minute) }
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		replacement.Run(runCtx)
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	if fixture.source.fetches != 1 {
+		cancel()
+		t.Fatalf("replacement startup repeated the completed workflow: fetches=%d", fixture.source.fetches)
+	}
+
+	// A supported explicit trigger remains immediate and uses the same lease
+	// epoch; it does not require waiting for the inherited cadence deadline.
+	triggerCtx, triggerCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer triggerCancel()
+	if err := replacement.Trigger(triggerCtx); !errors.Is(err, ErrNoDispatch) {
+		cancel()
+		t.Fatalf("replacement trigger result = %v, want idle", err)
+	}
+	if fixture.source.fetches != 2 {
+		cancel()
+		t.Fatalf("explicit trigger did not run exactly one workflow: fetches=%d", fixture.source.fetches)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement service did not stop")
+	}
+}
+
+func TestNormalServiceReplacementRunsWhenInheritedCadenceExpires(t *testing.T) {
+	fixture := newServiceFixture(t)
+	fixture.intake.dispatch = nil
+	stateDir := t.TempDir()
+	now := time.Date(2026, time.August, 4, 14, 0, 0, 0, time.UTC)
+	first := fixture.serviceAt(t, stateDir, fixture.verifier)
+	first.options.Now = func() time.Time { return now }
+	if err := first.RunCycle(context.Background()); !errors.Is(err, ErrNoDispatch) {
+		t.Fatalf("initial cycle error = %v, want idle", err)
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	completed := make(chan error, 1)
+	replacement := fixture.serviceAt(t, stateDir, fixture.verifier)
+	replacement.options.PollInterval = 50 * time.Millisecond
+	replacement.options.Now = func() time.Time { return now }
+	replacement.options.OnCycle = func(err error) {
+		completed <- err
+		cancel()
+	}
+	done := make(chan struct{})
+	go func() {
+		replacement.Run(runCtx)
+		close(done)
+	}()
+	select {
+	case err := <-completed:
+		if !errors.Is(err, ErrNoDispatch) {
+			t.Fatalf("expired cadence cycle error = %v, want idle", err)
+		}
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("replacement did not run after the inherited cadence expired")
+	}
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("replacement service did not stop")
+	}
+	if fixture.source.fetches != 2 {
+		t.Fatalf("expired cadence ran an inexact number of workflows: fetches=%d", fixture.source.fetches)
+	}
+}
+
 func TestNormalServiceLeaseContentionDoesNotRunCycleUntilOwnership(t *testing.T) {
 	fixture := newServiceFixture(t)
 	fixture.intake.dispatch = nil
@@ -1114,6 +1206,9 @@ func TestNormalServiceRejectsCorruptLedgerStateMachineBeforeSideEffects(t *testi
 		"workflow key": func(ledger *workLedger) { ledger.WorkflowKey = strings.Repeat("0", 64) },
 		"consumed without checkpoint": func(ledger *workLedger) {
 			ledger.Consumed = true
+		},
+		"completion time without consumed workflow": func(ledger *workLedger) {
+			ledger.CycleCompletedAt = time.Date(2026, time.August, 4, 14, 0, 0, 0, time.UTC)
 		},
 		"PR without order": func(ledger *workLedger) {
 			ledger.SourceExternalRef = "visual-hive://owner/repo/finding"
