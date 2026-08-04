@@ -380,6 +380,152 @@ func TestMyHivesPlaceholderRowShipsGreenHealth(t *testing.T) {
 	}
 }
 
+// An UNASSIGNED placeholder whose agents check fails only because agents await
+// the owner's CLI login ("0 running, N paused, M need login: ...") is the pool
+// working as designed — no owner has claimed the slot or run the CLI login yet,
+// exactly like github_auth being unconfigured by design. The row must ship
+// GREEN with the agents check reclassified to skip and the login-pending note.
+// This is the live available-oke-12 case.
+func TestPlaceholderRowGreenWhenAgentsAwaitLogin(t *testing.T) {
+	e := placeholderEntryWithHealth(map[string]any{
+		"status": "degraded",
+		"fails":  1,
+		"warns":  0,
+		"checks": []any{
+			map[string]any{"name": "ready", "status": "pass"},
+			map[string]any{"name": "github_auth", "status": "fail", "detail": "no GitHub auth configured"},
+			map[string]any{"name": healthCheckAgents, "status": "fail", "detail": "0 running, 1 paused, 4 need login: guide, quality, scanner, supervisor"},
+		},
+	})
+
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusOK {
+		t.Fatalf("placeholder with login-pending agents: status = %q, want %q", st, healthStatusOK)
+	}
+	if fails, _ := got["fails"].(int); fails != 0 {
+		t.Errorf("fails = %v, want 0 — a login-pending agents check must not degrade a placeholder", got["fails"])
+	}
+	st, detail := checkStatusByName(t, got, healthCheckAgents)
+	if st != healthCheckStatusSkip {
+		t.Errorf("agents status = %q, want %q", st, healthCheckStatusSkip)
+	}
+	if detail != placeholderAgentsNote {
+		t.Errorf("agents detail = %q, want the login-pending note %q", detail, placeholderAgentsNote)
+	}
+}
+
+// A placeholder whose agents are genuinely DOWN (crash-looping / exiting, the
+// "down:" bucket) is a real fault even on an unassigned slot: the agents check
+// must NOT be exempted and the row must stay degraded. This preserves the
+// original intent — only the by-design login-pending shape is greened.
+func TestPlaceholderRowStaysDegradedWhenAgentsCrashLoop(t *testing.T) {
+	e := placeholderEntryWithHealth(map[string]any{
+		"status": "degraded",
+		"fails":  1,
+		"warns":  0,
+		"checks": []any{
+			map[string]any{"name": "ready", "status": "pass"},
+			map[string]any{"name": "github_auth", "status": "fail", "detail": "no GitHub auth configured"},
+			map[string]any{"name": healthCheckAgents, "status": "fail", "detail": "0 running, 2 down: scanner, supervisor"},
+		},
+	})
+
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusDegraded {
+		t.Fatalf("placeholder with crash-looping agents: status = %q, want %q — down agents are a real fault", st, healthStatusDegraded)
+	}
+	if st, _ := checkStatusByName(t, got, healthCheckAgents); st != healthCheckStatusFail {
+		t.Errorf("agents status = %q, want fail — crash-looping agents keep their status even on a placeholder", st)
+	}
+	// The auth check alongside is still exempted, so the ONLY thing degrading
+	// the row is the genuine agents failure.
+	if fails, _ := got["fails"].(int); fails != 1 {
+		t.Errorf("fails = %v, want 1 — only the genuine agents failure counts", got["fails"])
+	}
+}
+
+// A placeholder with agents both DOWN and needing login: the presence of a
+// "down:" agent makes the whole agents fail genuine — the exemption requires
+// positive evidence that NO agent is actually broken. The row stays degraded.
+func TestPlaceholderAgentsDownAndLoginStaysDegraded(t *testing.T) {
+	e := placeholderEntryWithHealth(map[string]any{
+		"status": "degraded",
+		"checks": []any{
+			map[string]any{"name": healthCheckAgents, "status": "fail", "detail": "0 running, 1 down: crashed, 2 need login: needy-a, needy-b"},
+		},
+	})
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusDegraded {
+		t.Fatalf("status = %q, want %q — a down agent alongside login-pending ones is still a real fault", st, healthStatusDegraded)
+	}
+	if st, _ := checkStatusByName(t, got, healthCheckAgents); st != healthCheckStatusFail {
+		t.Errorf("agents status = %q, want fail", st)
+	}
+}
+
+// The SAME login-pending agents failure on a CLAIMED hive is a real signal (an
+// owner-actionable "log in your CLI" prompt) and must pass through untouched:
+// the exemption applies ONLY to placeholders.
+func TestClaimedRowKeepsLoginPendingAgentsFail(t *testing.T) {
+	e := MyHiveEntry{RegistryEntry: RegistryEntry{
+		ID:     "claimed-3",
+		Org:    "acme",
+		Online: true,
+		Health: map[string]any{
+			"status": "degraded",
+			"checks": []any{
+				map[string]any{"name": healthCheckAgents, "status": "fail", "detail": "0 running, 1 needs login: supervisor"},
+			},
+		},
+	}}
+	e.ProvStatus = "active"
+
+	rows := []MyHiveEntry{e}
+	sanitizePlaceholderRows(rows)
+	got := rows[0].Health
+
+	if st := healthStatusOf(got); st != healthStatusDegraded {
+		t.Fatalf("claimed hive status = %q, want %q — the agents exemption must not leak past placeholders", st, healthStatusDegraded)
+	}
+	if st, detail := checkStatusByName(t, got, healthCheckAgents); st != healthCheckStatusFail || !strings.Contains(detail, "needs login") {
+		t.Errorf("claimed hive agents shipped as %q/%q, want fail with the login detail untouched", st, detail)
+	}
+}
+
+// agentsFailIsLoginPending is the discrimination at the heart of the fix:
+// login-pending detail (need/needs login, no "down:") is by-design; anything
+// with a "down:" crash marker, or an unrecognised shape with neither marker, is
+// left degrading.
+func TestAgentsFailIsLoginPending(t *testing.T) {
+	cases := []struct {
+		detail string
+		want   bool
+	}{
+		{"0 running, 1 paused, 4 need login: guide, quality, scanner, supervisor", true},
+		{"0 running, 1 needs login: supervisor", true},
+		{"1 running, 1 needs login: wedged", true},
+		{"0 running, 2 down: scanner, supervisor", false},
+		{"0 running, 1 down: crashed, 2 need login: needy-a, needy-b", false},
+		{"0 running, 1 down: crashed", false},
+		{"3 running", false}, // no login-pending evidence → not exempt
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := agentsFailIsLoginPending(c.detail); got != c.want {
+			t.Errorf("agentsFailIsLoginPending(%q) = %v, want %v", c.detail, got, c.want)
+		}
+	}
+}
+
 // The dashboard's own placeholder handling: healthBadge must carry the
 // unassigned line instead of forcing App-degraded, and hiveStatusFlags must
 // mirror the same placeholder guard so dot and chip agree. String-anchored on

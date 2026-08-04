@@ -339,12 +339,18 @@ type HeartbeatPayload struct {
 	// but restarted 35 times — is visible in My Hives instead of looking
 	// healthy. A short uptime that keeps resetting is the tell.
 	StartedAt string `json:"started_at,omitempty"`
-	// Reporter is the pod name (os.Hostname) of the spoke PROCESS that sent
-	// this beat. It exists because two spoke instances can report as the same
-	// hive_id — a stale ReplicaSet pod surviving a rollout, or an orphaned
-	// duplicate deployment — and their alternating states made the dashboard
-	// flip every beat with nothing naming the culprit. Empty means the spoke
-	// is too old to report it: UNKNOWN, never evidence of anything.
+	// Reporter identifies the spoke PROCESS that sent this beat as
+	// "<pod-name>/<pid>" (hostname/PID; older spokes send the bare hostname).
+	// It exists because two spoke instances can report as the same hive_id —
+	// a stale ReplicaSet pod surviving a rollout, an orphaned duplicate
+	// deployment, or (#2453/#2496) a SECOND PROCESS in the same pod — and
+	// their alternating states made the dashboard flip every beat with
+	// nothing naming the culprit. The PID suffix is what makes the same-pod
+	// case visible: two processes in one pod share a hostname, so a bare pod
+	// name kept the hub's duplicate-spoke detector silent while the registry
+	// churned. The hub treats the whole string as an opaque identity, so old
+	// and new formats interoperate. Empty means the spoke is too old to
+	// report it: UNKNOWN, never evidence of anything.
 	Reporter string `json:"reporter,omitempty"`
 	// AdvisoryLastPostedAt is when this spoke last SUCCESSFULLY posted/updated
 	// its advisory-digest issue (RFC3339). It is the mirror of StartedAt for the
