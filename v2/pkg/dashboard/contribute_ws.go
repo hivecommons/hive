@@ -1074,12 +1074,32 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			contributor.mu.Lock()
 			abandoned := contributor.currentTask
+			contributor.currentTask = nil
+			contributor.tokenMintedAt = time.Time{}
 			contributor.mu.Unlock()
 			if abandoned != nil {
 				h.logger.Warn("[contribute-ws] task abandoned without completion",
 					"username", contributor.profile.GitHubUsername,
 					"abandoned_task", abandoned.TaskID,
 				)
+				// kubestellar/hive#2545: a contributor that sends "ready" while
+				// still holding a task (e.g. the relay's own MAX_TASK_DURATION_MS
+				// watchdog gives up and requeues, or an agent that never actually
+				// started work asks for something new) used to leave currentTask
+				// set and booked no cooldown at all — worse than the disconnect
+				// path immediately above (#2356/#2435), which does both. That left
+				// the abandoned issue permanently out of activeIssues circulation
+				// for the life of the connection: no PR, no failure record, no
+				// re-offer, just a silently held slot. Clear currentTask (above)
+				// so selectTask's activeIssues scan releases the issue, and mirror
+				// the disconnect/task_failed paths by booking the SAME short
+				// non-permanent failure cooldown, so the just-abandoned issue is
+				// not instantly handed straight back to the same contributor in
+				// the very selectTask call below. Synthetic pr-review tasks carry
+				// Number == 0 and must not poison an issue key.
+				if abandoned.Number > 0 {
+					h.recordTaskFailure(abandoned.Repo, abandoned.Number, false)
+				}
 			}
 			h.logger.Info("[contribute-ws] ready for work",
 				"username", contributor.profile.GitHubUsername,
@@ -1736,15 +1756,27 @@ func (h *ContributeWSHub) selectTask(c *ContributorConnection) *WSMessage {
 
 	taskID := fmt.Sprintf("ct-%s-%d-%d", chosen.repoFull, chosen.number, time.Now().Unix())
 
+	// The workspace contract (kubestellar/hive#2545): your tmux pane already
+	// starts rooted in $HIVE_WORKSPACE_DIR (contributor-agent.sh creates it and
+	// launches the session with -c pointed there), but nothing had put a repo
+	// on disk there yet. The previous prompt's only repository instruction was
+	// 'gh repo fork ... --clone=false' — a fork WITHOUT a checkout — so an
+	// agent that followed it literally, or one that stalled before improvising
+	// its own clone, was left sitting in an empty directory while the
+	// assignment slot stayed held. Spell out an actual clone into that known
+	// directory so there is a concrete first step rather than an implied one.
 	prompt := fmt.Sprintf(
 		"You are a contributor to the %s hive. Work on issue %s#%d: \"%s\". "+
-			"Read the issue, understand what's needed, and take action. "+
 			"You do NOT have push access to the upstream repo. "+
-			"Fork it first with 'gh repo fork %s --clone=false', "+
-			"add the fork as a remote, push your branch there, "+
-			"then open a PR from your fork. "+
+			"Start by getting a real checkout on disk: "+
+			"'gh repo fork %s --clone=true --remote=true "+
+			"$HIVE_WORKSPACE_DIR/%s' (or, if that directory already has a clone "+
+			"from a prior task, 'cd' into it and 'git fetch' instead of "+
+			"re-forking). Then 'cd' into that checkout, read the issue, "+
+			"understand what's needed, and take action. "+
+			"Push your branch to your fork remote, then open a PR from your fork. "+
 			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN').",
-		chosen.repoFull, chosen.repoFull, chosen.number, chosen.title, chosen.repoFull,
+		chosen.repoFull, chosen.repoFull, chosen.number, chosen.title, chosen.repoFull, chosen.repoFull,
 	)
 
 	c.mu.Lock()
