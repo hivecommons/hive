@@ -19,25 +19,25 @@ import (
 func TestLoadRegistry(t *testing.T) {
 	dir := t.TempDir()
 
-	// Missing file -> starts fresh, no error.
-	old := registryPath
-	registryPath = filepath.Join(dir, "missing.json")
-	defer func() { registryPath = old }()
-	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
+	// Missing file -> starts fresh, no error. The path is a per-server field,
+	// NOT the registryPath global: writing the global here raced the leaked
+	// saveLoop goroutines of servers built by earlier tests (nothing closes
+	// saveCh), which read it at use time before the field existed.
+	s := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, registryPath: filepath.Join(dir, "missing.json")}
 	s.loadRegistry()
 
 	// Valid file -> loads hives.
-	registryPath = filepath.Join(dir, "reg.json")
-	os.WriteFile(registryPath, []byte(`{"hives":[{"id":"h1"},{"id":"h2"}]}`), 0o644)
-	s2 := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
+	regFile := filepath.Join(dir, "reg.json")
+	os.WriteFile(regFile, []byte(`{"hives":[{"id":"h1"},{"id":"h2"}]}`), 0o644)
+	s2 := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, registryPath: regFile}
 	s2.loadRegistry()
 	if len(s2.registry.Hives) != 2 {
 		t.Errorf("expected 2 hives loaded, got %d", len(s2.registry.Hives))
 	}
 
 	// Bad JSON -> logged, registry left empty.
-	os.WriteFile(registryPath, []byte(`{not json`), 0o644)
-	s3 := &HubServer{logger: slog.Default(), hubSecret: testHubSecret}
+	os.WriteFile(regFile, []byte(`{not json`), 0o644)
+	s3 := &HubServer{logger: slog.Default(), hubSecret: testHubSecret, registryPath: regFile}
 	s3.loadRegistry()
 	if len(s3.registry.Hives) != 0 {
 		t.Errorf("bad JSON should leave registry empty, got %d", len(s3.registry.Hives))

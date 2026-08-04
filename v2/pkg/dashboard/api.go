@@ -3653,7 +3653,15 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"litellm":    litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory": trajectorySectionResponse(&cfg.Governor),
 		"hub": map[string]interface{}{
-			"enabled":                          cfg.Hub.Enabled,
+			"enabled": cfg.Hub.Enabled,
+			// namespace is read-only, runtime-derived display info (never
+			// persisted to hive.yaml, never accepted back on save) — the
+			// Kubernetes namespace this pod is actually running in. See
+			// podNamespace's doc comment for the POD_NAMESPACE/NAMESPACE/
+			// service-account-file fallback chain. Omitted (empty string)
+			// outside a cluster, which the Hub tab renders by skipping the
+			// line rather than showing a blank/"undefined" value.
+			"namespace":                        podNamespace(),
 			"url":                              cfg.Hub.URL,
 			"dashboard_url":                    cfg.Hub.DashboardURL,
 			"snapshot_url":                     cfg.Hub.SnapshotURL,

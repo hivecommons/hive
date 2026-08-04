@@ -17,7 +17,43 @@
 #   GH_APP_ID, GH_APP_INSTALLATION_ID, GH_APP_KEY_FILE,
 #   HIVE_GITHUB_TOKEN (auto-generated if GitHub App is configured), GH_TOKEN
 
-HIVE_REPO_DIR="${HIVE_REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd || echo /tmp/hive)}"
+# HIVE_REPO_DIR is meant to name the hive git checkout this script lives
+# under (e.g. /tmp/hive when this file is at /tmp/hive/bin/hive-config.sh,
+# used by hive-deploy.sh to `cd` in and `git pull`). In production this file
+# is COPIED (not checked out) to /usr/local/bin/hive-config.sh (see
+# v2/Dockerfile), so "one directory up from where this script lives" is
+# /usr/local — never a real hive checkout — and the naive derivation below
+# was WRONG for every deployed container even before considering the failure
+# mode below.
+#
+# It gets actively dangerous, not just wrong, when ${BASH_SOURCE[0]} is empty
+# — which happens when this file is sourced from a context where the
+# BASH_SOURCE array isn't populated as expected (e.g. `sh` rather than
+# `bash`, or certain non-interactive sourcing paths). `dirname ""` returns
+# ".", so `cd "./.." ` resolves relative to whatever the CALLER's cwd
+# happened to be at sourcing time. entrypoint.sh sources this file (as root,
+# before any `cd`) while the process's cwd can be "/" — so this silently
+# resolved to "/" rather than falling through to the "echo /tmp/hive"
+# fallback the original author intended (that fallback only fires if the
+# `cd` itself fails; `cd /..` succeeds — it just lands on "/"). This is the
+# root cause of a live guide-agent failure: HIVE_REPO_DIR=/ leaked into the
+# agent's shell env, and guide's own workspace (/data/agents/guide/workspace)
+# stayed empty because nothing sane can clone into "/".
+#
+# Fix: never derive from BASH_SOURCE at all. An explicit HIVE_REPO_DIR (env
+# override, e.g. for local dev running bin/ scripts straight from a git
+# checkout) always wins; otherwise default to a real, known-safe path.
+# hive-deploy.sh is the only real consumer and already treats HIVE_REPO_DIR
+# as "the hive git checkout to `git pull` in", so /tmp/hive (its own
+# pre-existing fallback default) is the correct unconditional default here.
+HIVE_REPO_DIR="${HIVE_REPO_DIR:-/tmp/hive}"
+# Guard of last resort: whatever produced this value (env override included),
+# an empty string or "/" can never be a valid HIVE_REPO_DIR — using either as
+# a clone/work/`cd` target is always a misconfiguration, never intentional.
+if [ -z "$HIVE_REPO_DIR" ] || [ "$HIVE_REPO_DIR" = "/" ]; then
+  echo "[hive-config.sh] WARNING: HIVE_REPO_DIR resolved to '${HIVE_REPO_DIR}' — refusing to use it, falling back to /tmp/hive" >&2
+  HIVE_REPO_DIR="/tmp/hive"
+fi
 export HIVE_REPO_DIR
 
 _HIVE_CONFIG="${HIVE_PROJECT_CONFIG:-/etc/hive/hive-project.yaml}"

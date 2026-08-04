@@ -5924,6 +5924,11 @@
       const prsSpark = sparkline('govPrs');
       const totalSpark = sparkline('govTotal');
       const issueCount = gov.issues || 0;
+      // Mode pressure = actionable issues + open PRs, matching the governor's
+      // computeMode input. The gauge previously read issues alone, so the
+      // needle sat at "2" in the idle band while the mode said surge.
+      const prCount = gov.prs || 0;
+      const govPressure = issueCount + prCount;
       const currentMode = gov.mode || 'idle';
       const modes = ['idle', 'quiet', 'busy', 'surge'];
 
@@ -5932,8 +5937,8 @@
       const CLASSIC_THRESH_QUIET = _gt.quiet ?? 2;
       const CLASSIC_THRESH_BUSY = _gt.busy ?? 10;
       const CLASSIC_THRESH_SURGE = _gt.surge ?? 20;
-      const maxQ = Math.max(CLASSIC_THRESH_SURGE + 10, issueCount + 5);
-      const pct = Math.min(issueCount / maxQ * 100, 100);
+      const maxQ = Math.max(CLASSIC_THRESH_SURGE + 10, govPressure + 5);
+      const pct = Math.min(govPressure / maxQ * 100, 100);
       const modeColors = { idle: 'var(--green)', quiet: 'var(--blue)', busy: 'var(--yellow)', surge: 'var(--red)' };
       const modeColor = modeColors[gov.mode] || 'var(--muted)';
 
@@ -5966,8 +5971,8 @@
         <div class="gov-title">Governor <button class="config-gear" onclick="openConfigDialog('governor')" title="Open Governor configuration — manage agents, thresholds, budget, notifications, health checks, and sensing patterns">⚙️</button></div>
         <div class="gov-grid">
           <div class="gov-stat" title="TIMER — is the governor's evaluation loop alive?&#10;&#10;WHAT: The governor re-evaluates mode and kicks due agents on a fixed cadence. This shows whether that loop is running.&#10;&#10;HOW: 'active' if the governor reported a heartbeat within its expected interval; 'starting' during boot before the first tick; 'DEAD' if no heartbeat has arrived — agents will NOT be kicked automatically until it recovers."><div class="label">timer</div><div class="val ${cls}">${gov.active ? '● active' : (isStarting ? '⏳ starting' : '⚠ DEAD')}</div></div>
-          <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived purely from the actionable-issue count against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
-          <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The queue depth that drives the governor mode. The sparkline shows its recent trend.&#10;&#10;HOW: Count of open GitHub issues across all monitored KubeStellar repos, MINUS any labeled hold / do-not-merge / wontfix / blocked. This is the exact number the mode gauge below reads."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
+          <div class="gov-stat" title="MODE — the governor's current activity level.&#10;&#10;WHAT: Sets how aggressively agents are scheduled. idle → quiet → busy → surge, each with faster cadences.&#10;&#10;HOW: Derived from queue pressure — actionable issues + open PRs — against the thresholds shown on the gauge below: 0–${CLASSIC_THRESH_QUIET-1}=idle, ${CLASSIC_THRESH_QUIET}–${CLASSIC_THRESH_BUSY-1}=quiet, ${CLASSIC_THRESH_BUSY}–${CLASSIC_THRESH_SURGE-1}=busy, ≥${CLASSIC_THRESH_SURGE}=surge. Thresholds are configurable in Governor settings."><div class="label">mode</div><div class="val" style="color:${modeColor}">${escapeHtml(gov.mode)}</div></div>
+          <div class="gov-stat" title="ACTIONABLE ISSUES — open work the agents can pick up.&#10;&#10;WHAT: The issue half of the queue pressure that drives the governor mode (pressure = issues + open PRs). The sparkline shows its recent trend.&#10;&#10;HOW: Count of open GitHub issues across all monitored KubeStellar repos, MINUS any labeled hold / do-not-merge / wontfix / blocked."><div class="label">actionable issues</div><div class="spark-row"><span class="val">${issueCount}</span>${issuesSpark}</div></div>
           <div class="gov-stat" title="PRS — open pull requests in flight.&#10;&#10;WHAT: How many PRs are currently open across the fleet. The sparkline shows the recent trend.&#10;&#10;HOW: Count of open pull requests across all monitored KubeStellar repos at the last scan (includes both agent-authored and human PRs; does not subtract held PRs)."><div class="label">PRs</div><div class="spark-row"><span class="val">${gov.prs}</span>${prsSpark}</div></div>
           <div class="gov-stat" title="${itmTitle}"><div class="label">MTTR</div><div class="spark-row"><span class="val">${formatFixTime(itmMedian)}</span>${itmSpark}</div></div>
           <div class="gov-stat" title="${holdTooltip}"><div class="label">on hold</div><div class="spark-row"><span class="val">${holdTotal}</span>${holdSpark}</div></div>
@@ -5975,11 +5980,11 @@
           <div class="gov-stat" title="PR AUTHOR — the GitHub identity this hive's agents open PRs and push commits as.&#10;&#10;WHAT: Either the configured project.ai_author, or the GitHub App bot ('<slug>[bot]') when the hive runs in App-authored mode.&#10;&#10;HOW: Reported by the spoke as ai_author_effective. A '[bot]' value means PRs are authored by the App installation, not a personal account."><div class="label">PR author</div><div class="val">${escapeHtml(window._aiAuthor || '—')}</div></div>
         </div>
         <div class="temp-gauge" style="cursor:pointer" onclick="openConfigDialog('governor',null,'Thresholds')" title="Click to adjust governor thresholds">
-          <div class="temp-gauge-label"><span>Issues: ${issueCount}</span><span>max ${maxQ}</span></div>
+          <div class="temp-gauge-label"><span>Pressure: ${govPressure} (${issueCount} issues + ${prCount} PRs)</span><span>max ${maxQ}</span></div>
           <div class="temp-gauge-track" style="background:linear-gradient(to right, var(--green) 0%, var(--green) ${CLASSIC_THRESH_QUIET/maxQ*100}%, var(--blue) ${CLASSIC_THRESH_QUIET/maxQ*100}%, var(--blue) ${CLASSIC_THRESH_BUSY/maxQ*100}%, var(--yellow) ${CLASSIC_THRESH_BUSY/maxQ*100}%, var(--yellow) ${CLASSIC_THRESH_SURGE/maxQ*100}%, var(--red) ${CLASSIC_THRESH_SURGE/maxQ*100}%, var(--red) 100%)">
             <div class="temp-gauge-glow" style="width:100%"></div>
             <div class="temp-gauge-ticks"><span style="left:2%;-webkit-transform:translate(0,-50%);transform:translate(0,-50%)">0</span><span style="left:${CLASSIC_THRESH_QUIET/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_QUIET}</span><span style="left:${CLASSIC_THRESH_BUSY/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_BUSY}</span><span style="left:${CLASSIC_THRESH_SURGE/maxQ*100}%;-webkit-transform:translate(-50%,-50%);transform:translate(-50%,-50%)">${CLASSIC_THRESH_SURGE}</span><span style="left:98%;-webkit-transform:translate(-100%,-50%);transform:translate(-100%,-50%)">${maxQ}</span></div>
-            <div class="temp-gauge-needle" style="left:${pct}%" data-val="${issueCount}"></div>
+            <div class="temp-gauge-needle" style="left:${pct}%" data-val="${govPressure}"></div>
           </div>
           <div class="temp-gauge-labels">
             <span class="tl-idle" style="position:absolute;left:${CLASSIC_THRESH_QUIET / maxQ * 50}%;transform:translateX(-50%)">idle</span>
@@ -6341,14 +6346,26 @@
           .filter(name => name && !KNOWN_BACKENDS.includes(name));
       } catch (e) { /* keep prior list; dropdowns fall back to KNOWN_BACKENDS */ }
     }
+    // Fallback list only — the server now discovers claude models live via
+    // GET api.anthropic.com/v1/models (see claudeStaticModels in
+    // pkg/dashboard/cli_models.go; keep the two lists in sync). Refreshed
+    // 2026-08-03 from a live /v1/models response, in API order, plus the bare
+    // aliases the claude CLI accepts as --model values.
     const CLAUDE_CLI_MODELS = [
+      { value: 'claude-opus-5', label: 'Opus 5' },
+      { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+      { value: 'claude-fable-5', label: 'Fable 5' },
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
       { value: 'claude-opus-4-7', label: 'Opus 4.7' },
-      { value: 'claude-opus-4-6', label: 'Opus 4.6' },
       { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-      { value: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
-      { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-      { value: 'claude-fable-5', label: 'Fable 5' },
+      { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+      { value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' },
+      { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+      { value: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5' },
+      { value: 'claude-opus-4-1-20250805', label: 'Opus 4.1' },
+      { value: 'opus', label: 'Opus (alias)' },
+      { value: 'sonnet', label: 'Sonnet (alias)' },
+      { value: 'haiku', label: 'Haiku (alias)' },
     ];
     const COPILOT_CLI_MODELS = [
       // Auto sentinel: `copilot --model auto` lets the Copilot CLI pick/adjust
@@ -6367,15 +6384,21 @@
     // Codex (OpenAI CLI) exposes its own OpenAI-only models. Claude models are
     // rejected by Codex with a ChatGPT account ("model is not supported when
     // using Codex with a ChatGPT account"), so codex must NOT fall through to
-    // the copilot list. Order mirrors `codex /model` (sol is the default).
+    // the copilot list. The server discovers the live catalog via
+    // `codex app-server` model/list (per-CLI-version, baked into the binary);
+    // this is only the pre-discovery fallback. Snapshot of codex 0.146.0:
+    // visible ids in picker order (sol is the default), then hidden ids —
+    // hidden entries are still valid --model values. Keep in sync with
+    // codexStaticModels in cli_models.go.
     const CODEX_CLI_MODELS = [
       { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
       { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
       { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
       { value: 'gpt-5.5', label: 'GPT-5.5' },
+      { value: 'gpt-5.2', label: 'GPT-5.2' },
       { value: 'gpt-5.4', label: 'GPT-5.4' },
       { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-      { value: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
+      { value: 'codex-auto-review', label: 'Codex Auto Review' },
     ];
     // bob (IBM bobshell) selects its own model and has NO usable --model flag:
     // launching `bob --model <concrete-id>` makes every prompt die with
@@ -12961,7 +12984,6 @@ function burnAreaChart() {
         if (v.dirty) html += ' <span class="git-dirty">*</span>';
         if (_upgradeInProgress && v.hash !== _upgradeTargetHash) {
           html += ` <span class="git-behind" title="Upgrading to ${escapeHtml(v.latestShort || '?')}">⬆ upgrading</span>`;
-          html += ` <span style="display:inline-block;padding:3px 10px;background:var(--surface);border:1px solid var(--border);border-radius:4px;font-size:0.7rem;margin-left:6px;white-space:nowrap;opacity:0.8"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-right:4px"></span>Upgrading</span>`;
         } else if (_upgradeInProgress && v.hash === _upgradeTargetHash) {
           _upgradeInProgress = false;
           _upgradeTargetHash = null;
@@ -14958,7 +14980,23 @@ function burnAreaChart() {
       const titlesMode = (hub.contribute_titles_mode === 'allow') ? 'allow' : 'deny';
       const authorsMode = (hub.contribute_authors_mode === 'allow') ? 'allow' : 'deny';
       const labelsMode = (hub.contribute_labels_mode === 'allow') ? 'allow' : 'deny';
+      // Read-only, runtime-derived — never sent back on save (markDirty is
+      // never wired to this field). See podNamespace() in
+      // pkg/dashboard/pod_namespace.go for how the hub API resolved it
+      // (POD_NAMESPACE downward-API env, else NAMESPACE, else the
+      // service-account namespace file). Omitted entirely when unknown
+      // (running outside a cluster, or an old spoke build with no
+      // POD_NAMESPACE wired) rather than showing a blank/"undefined" line —
+      // this is the spoke-side complement to the hive.kubestellar.io/*
+      // namespace labels the hub stamps onto this same namespace at
+      // provision/claim/assign time.
+      const namespaceRow = hub.namespace ? `
+        <div class="config-field">
+          <label>Namespace <span class="config-info">i<span class="config-tooltip">The Kubernetes namespace this hive's pod is running in. Unlike the hive's name/org, this never changes after the namespace is first created — see the hive.kubestellar.io/* labels on it for an operator-facing way to map it back to this hive.</span></span></label>
+          <input type="text" value="${esc(hub.namespace)}" readonly disabled style="opacity:0.7">
+        </div>` : '';
       return `
+        ${namespaceRow}
         <div class="config-toggle">
           <div class="config-toggle-switch ${hub.enabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="hub" data-key="enabled"></div>
           <span class="config-toggle-label">Hub Enabled <span class="config-info">i<span class="config-tooltip">Register this hive with the central hub at hive.kubestellar.io so it appears in the public registry.</span></span></span>
