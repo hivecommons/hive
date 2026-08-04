@@ -569,6 +569,10 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-labels{display:flex;flex-wrap:wrap;gap:4px}
 .cc-q-next{font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;flex-shrink:0;padding-top:2px}
 .cc-q-item.cc-leaving{animation:cc-fadeout .45s ease forwards}
+/* FLIP glide for operator drag-reorder: items that changed slot are given an
+   inverse transform (see ccFlipQueue) then eased back to translateY(0). Subtle —
+   an SRE ops tool, not a game — so no bounce/overshoot, just a smooth glide. */
+.cc-q-item.cc-q-flip{transition:transform .26s ease}
 /* The travelling token that flies from the queue to a clanker on task_assign */
 .cc-token{position:fixed;z-index:1200;pointer-events:none;background:#1f6feb;color:#fff;font-size:.72rem;font-weight:600;padding:6px 12px;border-radius:999px;box-shadow:0 6px 20px rgba(31,111,235,.5);white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;transition:transform .9s cubic-bezier(.5,0,.2,1),opacity .9s ease;will-change:transform,opacity}
 /* Dev-log — a running chat log of the development */
@@ -631,7 +635,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
   .ops-rail.collapsed{flex-basis:auto}
 }
 @media(prefers-reduced-motion:reduce){
-  .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-leaving,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
+  .clanker-row.cc-enter,.clanker-row.cc-leave,.clanker-row.cc-landing,.cc-q-item,.cc-q-item.cc-leaving,.cc-q-item.cc-q-flip,.cc-log-line,.cc-ach,.cc-token{animation:none!important;transition:none!important}
   .ops-rail,.ops-rail-inner,.ops-rail-chevron{transition:none!important}
 }
 </style></head><body>
@@ -913,16 +917,14 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </div>
 </div>
 <div>
-<!-- Command center: the READY-WORK QUEUE (issues waiting to be picked off, top =
-     next up) and the live DEV-LOG (a running chat log of the development). Both are
-     fed by REAL events — the queue from ActionableIssues (the same set selectTask
-     offers from), the log from the ActivityEntry SSE stream. All read-only. -->
+<!-- Command center: MY WORK (this operator's in-flight items) stacked above the
+     READY-WORK QUEUE (issues waiting to be picked off, top = next up), and the live
+     DEV-LOG (a running chat log of the development, now in the rail). Both panels
+     are fed by REAL events — the queue from ActionableIssues (the same set
+     selectTask offers from), My work from the fleet snapshot. All read-only except
+     the queue's owner/read-write drag-reorder. Panel order: My work first, then
+     Ready-work queue — a pure vertical swap, no id/behavior change. -->
 <div class="ops-card">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
-<div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
-<p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
-</div>
-<div class="ops-card" style="margin-top:20px">
 <div class="ops-card-head"><h3>My work</h3><span class="ops-card-count" id="work-count"></span></div>
 <div class="ops-filters" role="tablist">
 <button class="ops-filter active" data-filter="all">All</button>
@@ -931,6 +933,11 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <button class="ops-filter" data-filter="done">Done</button>
 </div>
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
+</div>
+<div class="ops-card" style="margin-top:20px">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
 </div>
 </div>
 </div>
@@ -1517,8 +1524,14 @@ var ccLastAch=0;           // debounce achievement pops
 
 function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
 
-function ccRenderQueue(){
+function ccRenderQueue(flip){
   var el=document.getElementById('cc-queue');if(!el)return;
+  // flip=true (set only from the drag-drop handler) records each row's rect BEFORE
+  // the rebuild so ccFlipPlay can glide displaced rows to their new slots instead of
+  // a hard jump. Every other caller (initial load, SSE queue push, poll fallback)
+  // omits it and gets the plain re-render — no glide on data refreshes, only on the
+  // operator's own drag.
+  var first=flip?ccFlipFirst(el):null;
   // Drag-reorder is an operator CONTROL: only owner/read-write viewers get grab
   // bars. adminEnabled is set true by initAdmin ONLY after /api/role reports owner
   // or read-write; a read/anon viewer never gets the handles and cannot reorder.
@@ -1540,6 +1553,7 @@ function ccRenderQueue(){
       '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+'</div>';
   }).join('');
   if(adminEnabled)ccBindQueueDrag(el);
+  if(first)ccFlipPlay(el,first);
 }
 
 // ── Operator drag-reorder (grab bars) — owner/read-write only ──────────────────
@@ -1573,10 +1587,60 @@ function ccBindQueueDrag(root){
       toIdx=-1;for(var b=0;b<ccQueue.length;b++){if(ccQueueKey(ccQueue[b])===to){toIdx=b;break;}}
       if(toIdx<0)toIdx=ccQueue.length;
       ccQueue.splice(toIdx,0,moved);
-      ccRenderQueue();
+      ccRenderQueue(true); // FLIP: glide displaced items to their new slots instead of a hard jump.
       ccPersistQueueOrder();
     });
   })(items[i]);}
+}
+// ── FLIP animation for drag-reorder (First-Last-Invert-Play) ───────────────────
+// Dependency-free: record each row's bounding rect BEFORE the re-render (First),
+// let ccRenderQueue() rebuild the DOM in the new order, then read each row's rect
+// AFTER (Last). For every row keyed the same before/after that actually moved,
+// apply an inverse translateY so it appears at its old spot, then transition it to
+// translateY(0) — a smooth glide, not a snap. Reads are batched before writes to
+// avoid layout thrash. Rows that did not move (delta 0) are left alone. Skipped
+// entirely under prefers-reduced-motion, matching the rest of this page's motion.
+function ccFlipFirst(root){
+  var first={};
+  var items=root.querySelectorAll('.cc-q-item');
+  for(var i=0;i<items.length;i++){
+    var k=items[i].getAttribute('data-qkey');
+    if(k)first[k]=items[i].getBoundingClientRect().top;
+  }
+  return first;
+}
+function ccFlipPlay(root,first){
+  if(window.matchMedia&&matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+  var items=root.querySelectorAll('.cc-q-item');
+  // Batch reads (Last) before any writes (Invert), then batch writes, then batch
+  // the rAF that clears the inversion — no interleaved read/write layout thrash.
+  var moves=[];
+  for(var i=0;i<items.length;i++){
+    var it=items[i],k=it.getAttribute('data-qkey');
+    if(!k||!(k in first))continue;
+    var last=it.getBoundingClientRect().top;
+    var delta=first[k]-last;
+    if(Math.abs(delta)<1)continue; // didn't move (or scrolled out of view symmetrically) — no-op
+    moves.push([it,delta]);
+  }
+  if(!moves.length)return;
+  for(var m=0;m<moves.length;m++){
+    moves[m][0].style.transition='none';
+    moves[m][0].style.transform='translateY('+moves[m][1]+'px)';
+  }
+  // Force one reflow so the inverted position is committed before we animate to 0.
+  void root.offsetHeight;
+  requestAnimationFrame(function(){
+    for(var n=0;n<moves.length;n++){
+      var el=moves[n][0];
+      el.classList.add('cc-q-flip');
+      el.style.transition='';
+      el.style.transform='';
+    }
+    setTimeout(function(){
+      for(var p=0;p<moves.length;p++)moves[p][0].classList.remove('cc-q-flip');
+    },300); // matches .cc-q-flip transition duration (260ms) + a small margin
+  });
 }
 function ccPersistQueueOrder(){
   var order=ccQueue.map(ccQueueKey);
