@@ -99,6 +99,19 @@ ARG COPILOT_SDK_VERSION=1.0.8
 RUN npm install -g @github/copilot-sdk@${COPILOT_SDK_VERSION} && npm cache clean --force || \
     echo "WARN: GitHub Copilot SDK install failed — skipping"
 
+# --- Layer 4: OpenAI Codex CLI (pinned; backend: codex + live model discovery) ---
+# Pinned for reproducibility; version matches v2/Dockerfile.contributor —
+# keep the two pins in sync. @openai/codex resolves a platform-specific
+# native binary (@openai/codex-<platform>) via optionalDependencies, so a
+# plain npm install serves both linux/amd64 and linux/arm64.
+# Tolerant of failure like the copilot layer: if codex is absent, the
+# dashboard's codex model discovery (`codex app-server` model/list — pure
+# local stdio, no network, unaffected by the proxy CA) falls back to the
+# static list, and non-codex backends are unaffected.
+ARG CODEX_VERSION=0.146.0
+RUN npm install -g @openai/codex@${CODEX_VERSION} && npm cache clean --force || \
+    echo "WARN: OpenAI Codex CLI install failed — skipping"
+
 # --- Layer 7: Claude Code (most frequent updates) ---
 ARG CLAUDE_CODE_VERSION=latest
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && npm cache clean --force
