@@ -83,6 +83,23 @@ type SaaSUser struct {
 	// sum of inter-beat intervals, so it is accurate to roughly the beat interval,
 	// not to the second.
 	SessionSeconds int64 `json:"session_seconds,omitempty"`
+	// EngagedSeconds is the honest subset of SessionSeconds: time accumulated
+	// only on beats where the user's browser reported ENGAGED presence — tab
+	// visible AND input within the idle window (heartbeat EngagedSessionUsers).
+	// An idle open tab grows SessionSeconds but never this. omitempty, and
+	// absent on records that predate the field or whose spokes don't report
+	// presence yet — absence means NO DATA, never "provably unengaged".
+	EngagedSeconds int64 `json:"engaged_seconds,omitempty"`
+	// LastEngagedAt is the RFC3339 time of the most recent beat that credited
+	// EngagedSeconds — when a human was last actually behind this user's
+	// session. Feeds the `active` status tier. Same absence semantics as
+	// EngagedSeconds.
+	LastEngagedAt string `json:"last_engaged_at,omitempty"`
+	// LastActionAt is the RFC3339 time of the user's most recent REAL audited
+	// action on any of their hives (config save, agent restart, ACMM change,
+	// login, …), folded hub-ward from the spoke audit logs (heartbeat
+	// UserLastActions) keeping the per-user maximum. Same absence semantics.
+	LastActionAt string `json:"last_action_at,omitempty"`
 }
 
 // Length caps for the admin-editable contact fields. These are free text
@@ -529,11 +546,34 @@ func (s *HubServer) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	users := listAllSaaSUsers()
+	// status_tier is computed HUB-side (it needs the hub's live/engaged
+	// presence view and the tier windows) so the dashboard renders and sorts a
+	// server-decided classification instead of re-deriving policy in JS.
+	// See userStatusTier for the tier rules.
+	live := make(map[string]bool)
+	for _, name := range s.liveHiveUsernames() {
+		live[name] = true
+	}
+	engaged := make(map[string]bool)
+	for _, name := range s.engagedHiveUsernames() {
+		engaged[name] = true
+	}
+	now := time.Now()
+	type adminUserView struct {
+		SaaSUser
+		StatusTier string `json:"status_tier"`
+	}
+	views := make([]adminUserView, 0, len(users))
 	for i := range users {
 		users[i].EncryptedToken = ""
+		name := users[i].GitHubUsername
+		views = append(views, adminUserView{
+			SaaSUser:   users[i],
+			StatusTier: userStatusTier(&users[i], live[name], engaged[name], now),
+		})
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"users": users})
+	json.NewEncoder(w).Encode(map[string]any{"users": views})
 }
 
 // handleAdminUpdateUser applies a partial admin edit to one hub user record.
@@ -2183,6 +2223,9 @@ func (s *HubServer) handleMyHives(w http.ResponseWriter, r *http.Request) {
 		// treatment. Presence data about other users → admin-only, same as the
 		// engagement stats it complements.
 		resp["live_hive_users"] = s.liveHiveUsernames()
+		// The honest subset of live_hive_users: users whose browser reported
+		// focused, recent-input presence. live minus engaged = idle open tabs.
+		resp["live_engaged_users"] = s.engagedHiveUsernames()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -4621,6 +4664,10 @@ type HiveAccessEntry struct {
 	// with no stats round-trips as today's handle — role tooltip.
 	LoginCount     int   `json:"login_count,omitempty"`
 	SessionSeconds int64 `json:"session_seconds,omitempty"`
+	// Honest engagement signals (see SaaSUser for semantics) — admin-only like
+	// the stats above, and omitempty/absent for records without data yet.
+	EngagedSeconds int64  `json:"engaged_seconds,omitempty"`
+	LastActionAt   string `json:"last_action_at,omitempty"`
 }
 
 // accessForHive returns who can sign in to a hive, newest-role-agnostic and
@@ -4646,6 +4693,8 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 				entry.Notes = u.Notes
 				entry.LoginCount = u.LoginCount
 				entry.SessionSeconds = u.SessionSeconds
+				entry.EngagedSeconds = u.EngagedSeconds
+				entry.LastActionAt = u.LastActionAt
 			}
 			access = append(access, entry)
 		}
@@ -7891,6 +7940,8 @@ const dashboardHTML = `<!DOCTYPE html>
       // Engagement stats (admin-only; absent → these lines are simply skipped).
       if (a.login_count) lines.push('Logins: ' + a.login_count);
       if (a.session_seconds) lines.push('Time in hive: ' + fmtHours(a.session_seconds));
+      if (a.engaged_seconds) lines.push('Engaged time: ' + fmtHours(a.engaged_seconds));
+      if (a.last_action_at) lines.push('Last real action: ' + fmtUserTS(a.last_action_at));
       var act = userTaskActivity(uname);
       if (act.done || act.failed) lines.push('Tasks: ' + act.done + ' done / ' + act.failed + ' failed');
       // The lifecycle verdict, from the same helper the admin card uses. It reads
@@ -7899,7 +7950,7 @@ const dashboardHTML = `<!DOCTYPE html>
       // the ACMM-graduation refinement is unavailable here. Shown only when there
       // is some signal to classify (any stat present), so a bare face stays bare.
       if (a.login_count || a.session_seconds || act.done) {
-        var verdict = userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0}, act, []);
+        var verdict = userVerdict({login_count: a.login_count || 0, session_seconds: a.session_seconds || 0, engaged_seconds: a.engaged_seconds || 0, last_action_at: a.last_action_at || ''}, act, []);
         if (verdict && verdict.label) lines.push(verdict.label);
       }
       return lines.join('\n');
@@ -11003,6 +11054,7 @@ const dashboardHTML = `<!DOCTYPE html>
            the green-dashed avatar border. A Set of lowercased usernames so the
            avatar lookup is case-insensitive, matching GitHub handle semantics. */
         _liveHiveUsers = new Set((data.live_hive_users || []).map(function(n) { return String(n).toLowerCase(); }));
+        _liveEngagedUsers = new Set((data.live_engaged_users || []).map(function(n) { return String(n).toLowerCase(); }));
         /* Alerts ride along on the same payload — see handleMyHives. Normalise
            to the empty summary so every consumer can iterate without guarding. */
         _fleetAlerts = data.alerts || EMPTY_ALERT_SUMMARY;
@@ -13818,6 +13870,9 @@ const dashboardHTML = `<!DOCTYPE html>
     /* Lowercased usernames with a live hive session right now (admin payload).
        Drives the green-dashed avatar border via avatarImg. Empty for non-admins. */
     var _liveHiveUsers = new Set();
+    /* The honest subset of _liveHiveUsers: focused tab + recent input, per the
+       spokes' presence reports. live minus engaged = idle open tabs. */
+    var _liveEngagedUsers = new Set();
     var _userSortKey = 'created_at', _userSortAsc = false;
 
     /* --- Collapsible "Hub Admin — Users" section ---
@@ -13918,8 +13973,8 @@ const dashboardHTML = `<!DOCTYPE html>
           va = Object.keys(a.hives || {}).filter(function(h) { return regIds.has(h); }).length;
           vb = Object.keys(b.hives || {}).filter(function(h) { return regIds.has(h); }).length;
         } else if (key === 'status') {
-          va = a.blocked ? 1 : 0;
-          vb = b.blocked ? 1 : 0;
+          va = userTierRank(a);
+          vb = userTierRank(b);
         } else {
           va = a[key] || ''; vb = b[key] || '';
         }
@@ -14502,9 +14557,45 @@ const dashboardHTML = `<!DOCTYPE html>
        journey snooze/nudge, de-provision) — it changes no state. All inputs are
        admin-only (this table is requireAdmin, and leaderboard is scrubbed for
        non-admins server-side). */
-    var USERSTAT_ACTIVE_LOGIN_MIN = 3;        // logins that count as "engaged"
-    var USERSTAT_ACTIVE_HOURS_MIN = 1;        // hive-hours that count as "engaged"
+    var USERSTAT_ACTIVE_LOGIN_MIN = 3;        // legacy fallback: logins that count as "engaged"
+    var USERSTAT_ACTIVE_HOURS_MIN = 1;        // hive-hours (engaged when available) that count as "engaged"
     var USERSTAT_SECS_PER_HOUR = 3600;
+    var USERSTAT_ACTIVE_WINDOW_MS = 7 * 24 * 3600 * 1000;  // mirrors engagementActiveWindow (7 days) hub-side
+    var USERSTAT_DORMANT_HOURS_MAX = 0.25;    // under this much hive time still reads as "basically none"
+
+    /* Status tier presentation. The tier ITSELF (u.status_tier) is computed
+       hub-side by userStatusTier from the honest signals - last audited real
+       action, focus-engaged presence, live/engaged-now sets - so this map only
+       styles and explains it. Keys mirror the Go tier constants. */
+    var USER_TIER_META = {
+      live:    {color: 'var(--green)', weight: 700, tip: 'Connected right now AND engaged: tab focused with input in the last minute.'},
+      active:  {color: 'var(--green)', weight: 600, tip: 'A real audited action or focus-engaged time within the last 7 days.'},
+      idle:    {color: 'var(--amber)', weight: 600, tip: 'Has logins/sessions - often just an open tab - but nothing real within the last 7 days.'},
+      dormant: {color: 'var(--muted)', weight: 600, tip: 'No signal at all (no login, session, or action) within the last 30 days.'},
+      never:   {color: 'var(--muted)', weight: 400, tip: 'Never completed a hub login.'},
+      blocked: {color: 'var(--red)',   weight: 600, tip: 'Blocked by an admin - cannot sign in. Unblock to restore access.'}
+    };
+    /* Sort order for the Status column: most engaged first on ascending. */
+    var USER_TIER_RANK = {live: 0, active: 1, idle: 2, dormant: 3, never: 4, blocked: 5};
+
+    /* userTier resolves a user's tier with a fallback for a payload that
+       predates status_tier (or a mid-rollout hub): blocked stays blocked and
+       everyone else reads as idle - the honest default when we cannot prove
+       engagement - never as "active". */
+    function userTier(u) {
+      return u.status_tier || (u.blocked ? 'blocked' : 'idle');
+    }
+    function userTierRank(u) {
+      var r = USER_TIER_RANK[userTier(u)];
+      return (r == null) ? USER_TIER_RANK.idle : r;
+    }
+    function statusTierBadge(u) {
+      var tier = userTier(u);
+      var meta = USER_TIER_META[tier] || USER_TIER_META.idle;
+      var label = (tier === 'blocked') ? 'BLOCKED' : tier;
+      return '<span title="' + escAttr(meta.tip) + '" style="color:' + meta.color +
+        ';font-weight:' + meta.weight + ';cursor:help">' + esc(label) + '</span>';
+    }
 
     /* userTaskActivity sums this user's per-hive leaderboard entries across every
        hive in _hiveRegistry, matching on github_username. leaderboard is present
@@ -14548,11 +14639,25 @@ const dashboardHTML = `<!DOCTYPE html>
     function userVerdict(u, act, hives) {
       var logins = u.login_count || 0;
       var hours = (u.session_seconds || 0) / USERSTAT_SECS_PER_HOUR;
+      /* Honest signals, when the record has them: engaged_seconds accrues only
+         while the tab was focused with recent input, and last_action_at is the
+         newest audit-logged real action. Records that predate these fields (or
+         whose spokes do not report presence yet) have NEITHER - for them fall
+         back to the old open-tab inputs rather than treating absence as
+         zero-engagement-now. */
+      var engagedHours = (u.engaged_seconds || 0) / USERSTAT_SECS_PER_HOUR;
+      var lastActionMs = u.last_action_at ? Date.parse(u.last_action_at) : NaN;
+      var actedRecently = !isNaN(lastActionMs) && (Date.now() - lastActionMs) <= USERSTAT_ACTIVE_WINDOW_MS;
+      var hasHonestData = !!(u.engaged_seconds || u.last_action_at);
       var anyDeprovision = hives.some(function(h) { return h.journey && h.journey.severity === 'deprovision-warning'; });
       var anyEarlyStage = hives.some(function(h) { return h.journey && (h.journey.stage === 'github-app' || h.journey.stage === 'method-model'); });
       var anyRestingACMM = hives.some(function(h) { return h.journey && h.journey.stage === 'acmm-level'; });
-      var engaged = logins >= USERSTAT_ACTIVE_LOGIN_MIN && hours >= USERSTAT_ACTIVE_HOURS_MIN;
-      var dormant = hives.length > 0 && logins <= 1 && hours < 0.25 && act.done === 0;
+      var engaged = hasHonestData
+        ? (actedRecently || engagedHours >= USERSTAT_ACTIVE_HOURS_MIN)
+        : (logins >= USERSTAT_ACTIVE_LOGIN_MIN && hours >= USERSTAT_ACTIVE_HOURS_MIN);
+      var dormant = hives.length > 0 && act.done === 0 && (hasHonestData
+        ? (!actedRecently && engagedHours < USERSTAT_DORMANT_HOURS_MAX)
+        : (logins <= 1 && hours < USERSTAT_DORMANT_HOURS_MAX));
 
       if (dormant || anyDeprovision) {
         return {key: 'at-risk', label: 'At risk — pressure or de-provision', color: 'var(--red)',
@@ -14589,9 +14694,20 @@ const dashboardHTML = `<!DOCTYPE html>
       var liveDot = act.activeNow
         ? '<span title="active on a task now" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-left:6px;vertical-align:middle"></span>'
         : '';
+      /* "Time in hive" is the legacy open-tab total; the two rows after it are
+         the honest signals - focus-engaged time and the last audit-logged real
+         action - so an admin reading the card sees exactly why the tier is
+         what it is. Presence distinguishes "engaged now" from a merely-open
+         idle tab (the old signal's blind spot). */
+      var unameLower = String(u.github_username || '').toLowerCase();
+      var presenceNow = (_liveEngagedUsers && _liveEngagedUsers.has(unameLower)) ? 'engaged now'
+        : ((_liveHiveUsers && _liveHiveUsers.has(unameLower)) ? 'tab open (idle)' : '—');
       var stats =
         row('Hub logins', esc(String(u.login_count || 0)) + (u.last_login ? ' <span style="color:var(--muted)">(last ' + esc(fmtUserTS(u.last_login)) + ')</span>' : '')) +
         row('Time in hive', esc(fmtHours(u.session_seconds))) +
+        row('Engaged time', esc(fmtHours(u.engaged_seconds))) +
+        row('Last real action', esc(u.last_action_at ? fmtUserTS(u.last_action_at) : '—')) +
+        row('Presence', esc(presenceNow)) +
         row('Joined', esc(fmtUserTS(u.created_at))) +
         row('Tasks', esc(String(act.done)) + ' done / ' + esc(String(act.failed)) + ' failed' + liveDot);
 
@@ -14635,7 +14751,11 @@ const dashboardHTML = `<!DOCTYPE html>
       _lastUsersJSON = sig;
       if (!users.length) { document.getElementById('users-container').innerHTML = '<div class="loading">No users found</div>'; return; }
       var rows = users.map(function(u) {
-        var blocked = u.blocked ? '<span style="color:var(--red);font-weight:600">BLOCKED</span>' : '<span style="color:var(--green)">active</span>';
+        /* Engagement tier, hub-computed (see statusTierBadge / userStatusTier).
+           The old cell rendered "active" for EVERY non-blocked user - an idle
+           open tab, a never-logged-in user, and a daily driver all looked the
+           same. */
+        var statusCell = statusTierBadge(u);
         var avatar = linkedAvatar(u.github_username, TABLE_AVATAR_PX,
           u.github_username + ' — GitHub profile', 'margin-right:6px');
         var isAdmin = u.github_username === 'clubanderson';
@@ -14688,7 +14808,7 @@ const dashboardHTML = `<!DOCTYPE html>
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.created_at)) + '</td>' +
           '<td style="font-size:0.75rem;color:var(--muted)">' + esc(fmtUserTS(u.last_login)) + '</td>' +
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
-          '<td>' + blocked + '</td>' +
+          '<td>' + statusCell + '</td>' +
           '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:4px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span style="color:var(--muted)">0</span>') + '</td>' +
           '<td>' + (isAdmin ? '' : '<button onclick="updateUser(\'' + esc(u.github_username) + '\',{blocked:' + (!u.blocked) + '})" style="padding:3px 10px;background:' + (u.blocked ? 'var(--green)' : 'var(--amber)') + ';color:' + (u.blocked ? '#fff' : '#1a1a1a') + ';border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">' + (u.blocked ? 'Unblock' : 'Block') + '</button> <button onclick="deleteUser(\'' + esc(u.github_username) + '\',' + hiveCount + ')" style="padding:3px 10px;background:#b02a2a;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.7rem">Delete</button>') + '</td>' +

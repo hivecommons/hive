@@ -2781,6 +2781,13 @@ func main() {
 				// per-user "time in hive". Bare usernames only — never session
 				// ids/tokens (ActiveSessionUsernames guarantees this).
 				ActiveSessionUsers: dashSrv.ActiveSessionUsernames(),
+				// The honest subset of the above: users whose browser reported
+				// focused, recent-input presence (see dashboard/presence.go).
+				// An idle open tab appears in ActiveSessionUsers but not here.
+				EngagedSessionUsers: dashSrv.EngagedSessionUsernames(),
+				// Per-user last audit-logged real action, so the hub can tell
+				// users who DO things from users who merely stay logged in.
+				UserLastActions: dashSrv.UserLastActions(),
 				Owner: func() string {
 					if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
 						tok := strings.TrimSpace(string(td))

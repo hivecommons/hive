@@ -18956,6 +18956,50 @@ function burnAreaChart() {
 
     connect();
 
+    // Focus-aware presence reporting. An open tab is NOT engagement: the spoke
+    // only learns "a human is actually here" from these pings, which fire on a
+    // fixed cadence and ONLY while the tab is visible AND input (mouse/key/
+    // scroll/touch) happened within the idle window. No ping = idle — there is
+    // no explicit idle message. The spoke's engaged set rides the heartbeat to
+    // the hub, which accumulates honest engaged_seconds next to the legacy
+    // open-tab session_seconds. Failures are swallowed: presence is advisory
+    // and must never surface an error to the user.
+    (function initPresenceReporting() {
+      var PRESENCE_PING_MS = 30000;           // engaged-ping cadence; must match presencePingIntervalSecs (presence.go)
+      var PRESENCE_IDLE_WINDOW_MS = 60000;    // no input for this long => idle, stop pinging
+      var PRESENCE_INPUT_THROTTLE_MS = 5000;  // rate-limit input bookkeeping (mousemove fires constantly)
+      var _presenceLastInput = Date.now();
+      function notePresenceInput() {
+        var now = Date.now();
+        if (now - _presenceLastInput >= PRESENCE_INPUT_THROTTLE_MS) _presenceLastInput = now;
+      }
+      ['mousemove', 'mousedown', 'keydown', 'scroll', 'wheel', 'touchstart'].forEach(function(ev) {
+        window.addEventListener(ev, notePresenceInput, { passive: true, capture: true });
+      });
+      function presenceEngaged() {
+        return document.visibilityState === 'visible' &&
+          (Date.now() - _presenceLastInput) < PRESENCE_IDLE_WINDOW_MS;
+      }
+      function sendPresencePing() {
+        if (!presenceEngaged()) return;
+        fetch('/api/presence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ engaged: true })
+        }).catch(function() {});
+      }
+      document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+          // Returning to the tab is itself input — restart the idle clock and
+          // report immediately so presence recovers without waiting a cadence.
+          _presenceLastInput = Date.now();
+          sendPresencePing();
+        }
+      });
+      setInterval(sendPresencePing, PRESENCE_PING_MS);
+      sendPresencePing();
+    })();
+
     // Deferred initialization — non-critical fetches staggered after first paint.
     // Each entry returns a promise so anchor scrolling can wait for layout to settle.
     const DEFERRED_INIT_DELAY_MS = 1500;
