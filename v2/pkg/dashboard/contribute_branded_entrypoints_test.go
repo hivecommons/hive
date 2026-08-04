@@ -33,15 +33,19 @@ func TestBrandedEntryPoints_IdentityAndParity(t *testing.T) {
 		}
 	}
 
-	// Parity: each of the four first-class clients must be marked peer:true in the
-	// CLIENTS table so it leads the grid with a First-class badge, not as an afterthought.
-	for _, peer := range []string{`claude:{name:'Claude Code'`, `copilot:{name:'GitHub Copilot'`, `pi:{name:'Pi'`, `goose:{name:'Goose'`} {
+	// Parity: each of the SIX first-class clients must be marked peer:true in the
+	// CLIENTS table so it leads the grid with a First-class badge, not as an
+	// afterthought (LiteLLM + OpenRouter joined Claude/Copilot/Pi/Goose).
+	for _, peer := range []string{
+		`claude:{name:'Claude Code'`, `copilot:{name:'GitHub Copilot'`, `pi:{name:'Pi'`,
+		`goose:{name:'Goose'`, `litellm:{name:'LiteLLM'`, `openrouter:{name:'OpenRouter'`,
+	} {
 		if !strings.Contains(body, peer) {
 			t.Errorf("missing first-class client entry %q", peer)
 		}
 	}
-	if strings.Count(body, "peer:true") < 4 {
-		t.Errorf("expected >=4 peer:true (Claude/Copilot/Pi/Goose first-class), got %d", strings.Count(body, "peer:true"))
+	if strings.Count(body, "peer:true") < 6 {
+		t.Errorf("expected >=6 peer:true (Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter first-class), got %d", strings.Count(body, "peer:true"))
 	}
 
 	// Emblems must be inline SVG (CSP-safe) — no external <img> smuggled into a tile.

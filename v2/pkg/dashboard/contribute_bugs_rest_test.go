@@ -130,6 +130,47 @@ func TestMeCardRankAmongContributorsOnly(t *testing.T) {
 	}
 }
 
+// TestClientTileFirstClassBadgeNoOverlap proves the "First-class" badge sits in its
+// OWN layout slot (a sibling block on its own line via .ct-body flex column), NOT
+// absolutely positioned over the tile name/subtitle — so it can't overlap the tool
+// name or vendor subtitle at narrow tile widths (#2602 tiles overlapped). Also proves
+// the first-class set now includes LiteLLM + OpenRouter (six peers).
+func TestClientTileFirstClassBadgeNoOverlap(t *testing.T) {
+	body := renderContributePage(t)
+
+	// The badge lives inside .ct-body (the name+badge column), not floated over text.
+	if !strings.Contains(body, `'<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span>'+parity+'</span></button>'`) {
+		t.Error("First-class badge is not inside the .ct-body layout slot (may overlap the name)")
+	}
+	// .ct-body is a flex COLUMN so the badge stacks below the name; .ct-parity is NOT
+	// absolutely positioned and no longer uses margin-left:auto to sit on the name row.
+	if !strings.Contains(body, ".client-tile .ct-body{display:flex;flex-direction:column;") {
+		t.Error(".ct-body is not a flex column (badge would not get its own line)")
+	}
+	if strings.Contains(body, ".client-tile .ct-parity{position:absolute") {
+		t.Error("First-class badge is absolutely positioned over the tile text (overlap)")
+	}
+	if strings.Contains(body, ".client-tile .ct-parity{margin-left:auto;") {
+		t.Error("First-class badge still uses margin-left:auto (shares the name's row → overlap)")
+	}
+
+	// The first-class set is now six: LiteLLM + OpenRouter joined the original four.
+	for _, peer := range []string{"litellm:{name:'LiteLLM',tag:'your proxy',peer:true}", "openrouter:{name:'OpenRouter',tag:'your key',peer:true}"} {
+		if !strings.Contains(body, peer) {
+			t.Errorf("expected new first-class client marked peer:true: %q", peer)
+		}
+	}
+	if strings.Count(body, "peer:true") < 6 {
+		t.Errorf("expected 6 first-class (peer:true) clients, got %d", strings.Count(body, "peer:true"))
+	}
+	// The remaining tiles stay non-first-class.
+	for _, nonPeer := range []string{"vllm:{name:'vLLM'", "'llm-d':{name:'llm-d'", "bob:{name:'Bob'", "other:{name:'Other'"} {
+		if !strings.Contains(body, nonPeer) {
+			t.Errorf("non-first-class tile missing/renamed: %q", nonPeer)
+		}
+	}
+}
+
 // TestManagementMirrorsReposAndTierLimits proves the Management tab mirrors the
 // Governor Hub "Repos for Contribute" toggles + "Tier access & rate limits" rows,
 // writing through the existing PUT /api/config/governor/hub (no new endpoint).

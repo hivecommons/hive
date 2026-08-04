@@ -786,7 +786,7 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    nothing about the copy-block logic changes. CSP-safe (inline assets only),
    theme-consistent with the dark palette, reduced-motion safe. */
 .client-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:8px;margin:4px 0 20px}
-.client-tile{display:flex;align-items:center;gap:9px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:9px 11px;cursor:pointer;text-align:left;font-family:inherit;color:#e6edf3;font-size:.82rem;transition:border-color .15s,background .15s,transform .1s}
+.client-tile{display:flex;align-items:flex-start;gap:9px;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:9px 11px;cursor:pointer;text-align:left;font-family:inherit;color:#e6edf3;font-size:.82rem;transition:border-color .15s,background .15s,transform .1s}
 .client-tile:hover{border-color:#58a6ff;background:#1b2230}
 .client-tile:active{transform:translateY(1px)}
 .client-tile:focus-visible{outline:2px solid #58a6ff;outline-offset:2px}
@@ -795,7 +795,11 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .client-tile .ct-emblem svg{width:18px;height:18px;display:block}
 .client-tile .ct-name{font-weight:600;line-height:1.15;min-width:0}
 .client-tile .ct-name small{display:block;font-weight:400;color:#8b949e;font-size:.7rem}
-.client-tile .ct-parity{margin-left:auto;font-size:.62rem;color:#3fb950;border:1px solid rgba(63,185,80,.4);border-radius:999px;padding:1px 6px;white-space:nowrap}
+/* Name + First-class badge stack vertically: the badge gets its OWN line below the
+   name/subtitle so it never overlaps them (the #2602 tiles overlapped at narrow
+   widths). min-width:0 keeps the name ellipsising instead of shoving the badge. */
+.client-tile .ct-body{display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
+.client-tile .ct-parity{align-self:flex-start;font-size:.62rem;color:#3fb950;border:1px solid rgba(63,185,80,.4);border-radius:999px;padding:1px 6px;white-space:nowrap}
 /* "Open in <tool>" onboarding affordance — deliberately understated and clearly a
    SETUP helper, never a "contributing" surface. Only rendered for a client with a
    real, vendor-documented deep-link scheme. */
@@ -1027,8 +1031,8 @@ claude:{name:'Claude Code',tag:'Anthropic',peer:true,
 copilot:{name:'GitHub Copilot',tag:'GitHub',peer:true},
 pi:{name:'Pi',tag:'pi.dev',peer:true},
 goose:{name:'Goose',tag:'Block (Ollama)',peer:true},
-litellm:{name:'LiteLLM',tag:'your proxy'},
-openrouter:{name:'OpenRouter',tag:'your key'},
+litellm:{name:'LiteLLM',tag:'your proxy',peer:true},
+openrouter:{name:'OpenRouter',tag:'your key',peer:true},
 vllm:{name:'vLLM',tag:'self-hosted'},
 'llm-d':{name:'llm-d',tag:'self-hosted'},
 bob:{name:'Bob',tag:'IBM'},
@@ -1046,8 +1050,8 @@ var promptTool2=document.getElementById('prompt-tool2');
 var promptEdited=false;   // once the user edits, don't clobber on same client
 var promptForClient='';   // which client the current prompt text was generated for
 function tileOrder(){
-  // Peers (Claude/Copilot/Pi/Goose) first, in select order, then the rest — so
-  // the first-class tools lead the grid rather than being afterthoughts.
+  // Peers (Claude/Copilot/Pi/Goose/LiteLLM/OpenRouter) first, in select order, then
+  // the rest — so the first-class tools lead the grid rather than being afterthoughts.
   var peers=[],rest=[];
   for(var i=0;i<sel.options.length;i++){
     var v=sel.options[i].value;var c=CLIENTS[v]||{name:v,tag:''};
@@ -1060,10 +1064,13 @@ function buildTiles(){
   tilesEl.innerHTML=tileOrder().map(function(v){
     var c=CLIENTS[v]||{name:v,tag:''};
     var emb=EMB[v]||EMB.other;
+    // First-class badge sits on its OWN line BELOW the name/subtitle (a sibling
+    // block in a flex column), never absolutely positioned over the text — so it
+    // can't overlap the tool name or the vendor subtitle at narrow tile widths.
     var parity=c.peer?'<span class="ct-parity">First-class</span>':'';
     return '<button type="button" class="client-tile" role="option" data-cli="'+v+'" aria-selected="false" title="'+c.name+'">'+
       '<span class="ct-emblem">'+emb+'</span>'+
-      '<span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span>'+parity+'</button>';
+      '<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span>'+parity+'</span></button>';
   }).join('');
 }
 function defaultPromptFor(v){
