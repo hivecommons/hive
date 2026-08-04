@@ -226,15 +226,23 @@ func (s *Server) BuildContributorProfile(username string) ContributorProfileResp
 	resp.TasksFailed = p.TasksFailed
 	resp.RegisteredAt = p.RegisteredAt
 
-	// Rank + total from the SAME ordering the public leaderboard uses.
+	// Rank + total among CONTRIBUTORS ONLY (#2601): the public Rankings now exclude
+	// the hive's own internal agents, so the Me-card rank/total must match that
+	// contributor-only set (otherwise "#9 of 10" would count bots). We re-rank the
+	// non-agent entries in their existing (tasks-completed) order and read this
+	// user's position within that filtered list.
 	entries := s.LeaderboardForHub()
-	resp.Total = len(entries)
+	contribRank := 0
 	for _, e := range entries {
-		if !e.IsAgent && e.GitHubUsername == username {
-			resp.Rank = e.Rank
-			break
+		if e.IsAgent {
+			continue
+		}
+		contribRank++
+		if e.GitHubUsername == username {
+			resp.Rank = contribRank
 		}
 	}
+	resp.Total = contribRank
 
 	resp.Milestones, resp.NextMilestone = buildMilestones(p)
 	resp.Hives = buildContributorHives(username)

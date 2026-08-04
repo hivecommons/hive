@@ -463,6 +463,10 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .ops-empty{padding:32px 20px;text-align:center;color:#8b949e;font-size:.85rem}
 .lb-row{display:grid;grid-template-columns:56px 1fr 120px 70px 70px 80px;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d;font-size:.85rem}
 .lb-row:last-child{border-bottom:none}
+/* Subtle self-highlight for the logged-in viewer's own row: a faint tint + a left
+   accent border, professional not loud. Readability preserved. */
+.lb-row--me{background:rgba(31,111,235,.09);box-shadow:inset 3px 0 0 0 #1f6feb}
+.lb-you{display:inline-block;margin-left:8px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff;background:rgba(31,111,235,.14);border:1px solid rgba(31,111,235,.3);border-radius:999px;padding:1px 7px;vertical-align:middle}
 .lb-head{color:#8b949e;font-weight:600;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;background:#0d1117}
 .lb-rank{color:#8b949e;font-variant-numeric:tabular-nums}
 .lb-name{color:#e6edf3;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -526,9 +530,11 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .me-card__toprow{display:flex;align-items:center;gap:16px}
 .me-medallion{position:relative;width:64px;height:64px;flex-shrink:0;border-radius:50%%;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50%% 35%%,var(--me-accent-soft),#0d1117 78%%);border:2px solid var(--me-accent);box-shadow:0 0 0 4px rgba(1,4,9,.35)}
 .me-medallion img{width:52px;height:52px;border-radius:50%%;object-fit:cover;background:#30363d}
-/* The tier label under the avatar is the shared .tier-badge (tier-hero size),
-   pinned to the bottom edge of the medallion — NOT a bespoke pill. */
-.me-medallion .tier-badge{position:absolute;bottom:-10px;left:50%%;transform:translateX(-50%%)}
+/* #2595 fix: the tier badge now lives in its OWN layout slot beside the name
+   (.me-id__tier), NOT absolutely positioned over the avatar — so the "Contributor"
+   / "Trusted" / "Newcomer" pill can never overlap the avatar image. */
+.me-id__tier{margin:4px 0 2px}
+.me-id__tier .tier-badge{position:static;transform:none}
 .me-id{min-width:0;flex:1}
 .me-id__name{font-size:1.25rem;font-weight:700;color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .me-id__lead{font-size:.85rem;color:#8b949e;margin-top:2px}
@@ -622,6 +628,23 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .admin-save{margin-top:8px}
 .admin-save:disabled{opacity:.5;cursor:default}
 .admin-hr{border:none;border-top:1px solid #21262d;margin:16px 0}
+/* Repos-for-Contribute enable toggles + Tier rate-limit rows (Management mirror of
+   the Governor Hub sections). Subtle, matching the rest of the admin controls. */
+.admin-repos{display:flex;flex-wrap:wrap;gap:8px}
+.admin-repo{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid #30363d;border-radius:8px;background:#0d1117}
+.admin-repo .admin-switch{width:32px;height:18px}
+.admin-repo .admin-switch::after{width:14px;height:14px}
+.admin-repo .admin-switch.on::after{left:16px}
+.admin-repo__name{font-size:.76rem;color:#c9d1d9;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.admin-tier{display:grid;grid-template-columns:1fr repeat(3,64px);align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #21262d}
+.admin-tier:last-child{border-bottom:none}
+.admin-tier__head{display:flex;align-items:center;gap:8px;min-width:0}
+.admin-tier__name{font-size:.8rem;color:#e6edf3;text-transform:capitalize}
+.admin-tier input{width:100%%;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.78rem;padding:4px 6px;outline:none;text-align:right}
+.admin-tier input:focus{border-color:#1f6feb}
+.admin-tier input:disabled{opacity:.45}
+.admin-tier__col{font-size:.62rem;color:#6e7681;text-align:right;text-transform:uppercase;letter-spacing:.03em}
+.admin-tier--head{border-bottom:1px solid #30363d;padding-bottom:4px}
 /* No margin-left:auto — .admin-actions is now a full-width grid row beneath the
    identity (see .clanker-row grid), left-aligned and wrapping if the buttons
    don't fit the narrow column. */
@@ -1199,6 +1222,16 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="admin-toggle" style="padding-top:8px"><div class="admin-switch" id="admin-reject-switch" data-key="contribute_reject_unknown_models"></div><div class="admin-toggle-sub">Reject unknown models at connect time (only when the allowlist is non-empty).</div></div>
 </div>
 
+<hr class="admin-hr">
+<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Repos for Contribute</h3>
+<p class="ops-note" style="margin-top:0">Which repos feed the contribute queue. A repo is enabled unless toggled off. Mirrors the Governor Hub repo list; persists as <code>disabled_repos</code>.</p>
+<div id="admin-repos"></div>
+
+<hr class="admin-hr">
+<h3 style="font-size:.9rem;color:#e6edf3;margin:0 0 4px">Tier access &amp; rate limits</h3>
+<p class="ops-note" style="margin-top:0">Per-tier managed-queue limits. Enable/disable a tier and set tasks per hour / per day / concurrent. 0 means unlimited. Persists as <code>tier_limits</code> + <code>disabled_tiers</code>.</p>
+<div id="admin-tiers"></div>
+
 <button type="button" class="admin-save" id="admin-save-btn" disabled>Save filters</button>
 <p class="admin-note" id="admin-save-hint">Suspend / skip toggles apply immediately. Filter edits apply on Save. Both persist through <code>PUT /api/config/governor/hub</code>.</p>
 </div>
@@ -1312,7 +1345,7 @@ update();  // initial paint: copy block + branded UI in sync from first load
 <div class="tab-panel" id="tab-leaderboard" role="tabpanel" aria-labelledby="ptab-leaderboard">
 <div class="ops">
 <h1>Leaderboard</h1>
-<p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Agents run by this hive and human contributors who donate compute both appear here; revoked contributors are excluded.</p>
+<p class="subtitle" style="font-size:.95rem">Ranked by tasks completed. Human contributors and donated-compute contributors appear here; the hive&rsquo;s own internal agents and revoked contributors are excluded.</p>
 <!-- Personal "Me" card. Pinned ABOVE the full standings. Hydrated from the HUB
      profile endpoint (/api/leaderboard/contributor/{username}) once we know the
      logged-in username (from /api/gh-user-auth/status). For an anonymous / unknown
@@ -1447,9 +1480,11 @@ window.addEventListener('popstate',function(){
 // standalone page did), then contributors; both sorted by tasks completed.
 function loadLeaderboard(){
   fetch('/api/leaderboard').then(function(r){return r.json();}).then(function(d){
-    var agents=(d&&d.agents)||[];
+    // #2601: the Rankings show CONTRIBUTORS only — the hive's own internal agents
+    // (scanner/supervisor/quality/… returned in d.agents) are filtered OUT so real
+    // human + donated-compute contributors are not buried under the bots.
     var contribs=(d&&d.leaderboard)||[];
-    renderLeaderboard(agents,contribs);
+    renderLeaderboard(contribs);
   }).catch(function(){
     var el=document.getElementById('leaderboard-list');
     if(el)el.innerHTML='<div class="ops-empty">Could not load leaderboard.</div>';
@@ -1466,34 +1501,51 @@ function tierBadge(tier,extraCls){
   if(!known[t])t='newcomer';
   return '<span class="tier-badge tier-'+t+(extraCls?(' '+extraCls):'')+'">'+esc(t)+'</span>';
 }
+// ccMeUsername is the logged-in viewer's GitHub username (resolved once from
+// /api/gh-user-auth/status, the SAME source the Me card uses). Empty when anonymous.
+// Used to SUBTLY highlight the viewer's own row in the Rankings list.
+var ccMeUsername='';
 function lbRow(e,rank){
-  var name=esc(e.github_username||'');
+  var uname=e.github_username||'';
+  var name=esc(uname);
   var badge=e.is_agent?(esc(e.emoji||'\u{1F916}')+' '):'';
   // Tier medallion driven by the REAL trust_tier the /api/leaderboard entry carries.
   var tier=tierBadge(e.trust_tier,'tier-lb');
   var done=(e.tasks_completed||0);
   var failed=(e.tasks_failed||0);
   var findings=(e.findings||0);
+  // Subtle self-highlight: the viewer's OWN row (username match, case-insensitive,
+  // humans only — never an agent) gets .lb-row--me + a small "you" chip. Anonymous
+  // viewers match nothing, so no row is highlighted.
+  var isMe=(!e.is_agent&&ccMeUsername&&uname&&uname.toLowerCase()===ccMeUsername.toLowerCase());
+  var youChip=isMe?' <span class="lb-you">you</span>':'';
   // "Done" (tasks_completed) is the hero numeral — real count, just emphasised.
-  return '<div class="lb-row">'
+  return '<div class="lb-row'+(isMe?' lb-row--me':'')+'">'
     +'<div class="lb-rank">#'+rank+'</div>'
-    +'<div class="lb-name">'+badge+name+'</div>'
+    +'<div class="lb-name">'+badge+name+youChip+'</div>'
     +'<div class="lb-tier">'+tier+'</div>'
     +'<div class="lb-stat lb-primary">'+done+'</div>'
     +'<div class="lb-stat">'+failed+'</div>'
     +'<div class="lb-stat">'+findings+'</div>'
     +'</div>';
 }
-function renderLeaderboard(agents,contribs){
+var lbLastData=null; // cache the last standings so a late username resolve can re-mark the me-row
+// renderLeaderboard renders the Rankings from CONTRIBUTORS ONLY (#2601). The hive's
+// own internal agents are excluded so real human + donated-compute contributors are
+// not buried under the bots. Defensive: any is_agent entry that somehow reaches here
+// is filtered out, so ranks are computed among contributors alone (the Me-card rank,
+// which comes from the SAME contributor-only buildLeaderboard(), stays consistent).
+function renderLeaderboard(contribs){
+  contribs=(contribs||[]).filter(function(e){return !e.is_agent;});
+  lbLastData={contribs:contribs};
   var el=document.getElementById('leaderboard-list');
   var cnt=document.getElementById('leaderboard-count');
-  var total=agents.length+contribs.length;
-  if(cnt)cnt.textContent=total+(total===1?' participant':' participants');
+  var total=contribs.length;
+  if(cnt)cnt.textContent=total+(total===1?' contributor':' contributors');
   if(!el)return;
-  if(total===0){el.innerHTML='<div class="ops-empty">No participants yet — be the first to contribute!</div>';return;}
+  if(total===0){el.innerHTML='<div class="ops-empty">No contributors yet — be the first to contribute!</div>';return;}
   var html='<div class="lb-head lb-row"><div class="lb-rank">#</div><div class="lb-name">Contributor</div><div class="lb-tier">Tier</div><div class="lb-stat lb-primary">Done</div><div class="lb-stat">Failed</div><div class="lb-stat">Findings</div></div>';
   var rank=0,i;
-  for(i=0;i<agents.length;i++){rank++;html+=lbRow(agents[i],rank);}
   for(i=0;i<contribs.length;i++){rank++;html+=lbRow(contribs[i],rank);}
   el.innerHTML=html;
 }
@@ -1530,6 +1582,9 @@ function loadMeCard(){
   fetch('/api/gh-user-auth/status').then(function(r){return r.json();}).then(function(auth){
     if(!auth||!auth.logged_in||!auth.username){renderMeSignIn(mount);return;}
     var u=auth.username;
+    // Remember the viewer's username so the Rankings list can highlight their own
+    // row. If the standings already rendered (race), re-render to apply the mark.
+    if(ccMeUsername!==u){ccMeUsername=u;if(typeof lbLastData!=='undefined'&&lbLastData){try{renderLeaderboard(lbLastData.contribs);}catch(e){}}}
     fetch('/api/leaderboard/contributor/'+encodeURIComponent(u)).then(function(r){return r.json();}).then(function(p){
       if(!p||!p.found){renderMeSignIn(mount,u);return;}
       renderMeCard(mount,p);
@@ -1629,8 +1684,10 @@ function renderMeCard(mount,p){
   var html=''
   +'<div class="me-card me-card--style'+styleN+'" id="me-card">'
   +'<div class="me-card__band"><div class="me-card__toprow">'
-  +'<div class="me-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'">'+tierBadge(p.trust_tier,'tier-hero')+'</div>'
-  +'<div class="me-id"><div class="me-id__name">'+esc(p.github_username)+'</div><div class="me-id__lead">'+lead+'</div></div>'
+  +'<div class="me-medallion"><img src="'+esc(avatar)+'" alt="" onerror="this.style.visibility=\'hidden\'"></div>'
+  +'<div class="me-id"><div class="me-id__name">'+esc(p.github_username)+'</div>'
+    +'<div class="me-id__tier">'+tierBadge(p.trust_tier,'tier-hero')+'</div>'
+    +'<div class="me-id__lead">'+lead+'</div></div>'
   +'<div class="me-rankpill"><div class="me-rankpill__num">'+esc(rankTxt)+'</div><div class="me-rankpill__lbl">'+esc(rankSub)+'</div></div>'
   +'</div></div>'
   +'<div class="me-card__body">'
@@ -1755,6 +1812,47 @@ function renderAdminModels(){
   }).join(''):'<span class="admin-toggle-sub">all models accepted</span>';
 }
 
+// ── Repos-for-Contribute enable toggles (Governor Hub mirror) ──────────────────
+// A repo is ENABLED unless it appears in disabled_repos. The toggle edits the
+// disabled_repos list (the field the backend + Governor Hub both use). available_
+// repos comes from the config GET (the live repo set). Owner/RW only (gated by the
+// enclosing admin controls); persists via the same PUT as the other filters.
+var ADMIN_TIER_ORDER=['newcomer','contributor','trusted','advisor'];
+function renderAdminRepos(){
+  var el=document.getElementById('admin-repos');
+  if(!el||!adminHub)return;
+  var repos=adminHub.available_repos||[];
+  var disabled=adminHub.disabled_repos||[];
+  if(!repos.length){el.innerHTML='<span class="admin-toggle-sub">No repos known yet — they appear once the hive syncs its backlog.</span>';return;}
+  el.innerHTML='<div class="admin-repos">'+repos.map(function(r){
+    var off=disabled.indexOf(r)>=0;
+    return '<span class="admin-repo"><span class="admin-switch'+(off?'':' on')+'" data-repo="'+esc(r)+'"></span><span class="admin-repo__name">'+esc(r)+'</span></span>';
+  }).join('')+'</div>';
+}
+// ── Tier access & rate limits (Governor Hub mirror) ────────────────────────────
+// Per-tier enable toggle + max_per_hour / max_per_day / max_concurrent. Enable maps
+// to disabled_tiers (a tier is enabled unless listed there); the numerics map to
+// tier_limits[tier]. Both persist via the same PUT.
+function renderAdminTierLimits(){
+  var el=document.getElementById('admin-tiers');
+  if(!el||!adminHub)return;
+  var limits=adminHub.tier_limits||{};
+  var disabled=adminHub.disabled_tiers||[];
+  var head='<div class="admin-tier admin-tier--head"><span class="admin-tier__col" style="text-align:left">Tier</span><span class="admin-tier__col">Per&nbsp;hr</span><span class="admin-tier__col">Per&nbsp;day</span><span class="admin-tier__col">Concurr.</span></div>';
+  el.innerHTML=head+ADMIN_TIER_ORDER.map(function(t){
+    var lim=limits[t]||{};
+    var off=disabled.indexOf(t)>=0;
+    var h=(lim.max_per_hour||0),d=(lim.max_per_day||0),c=(lim.max_concurrent||0);
+    var dis=off?' disabled':'';
+    return '<div class="admin-tier">'+
+      '<div class="admin-tier__head"><span class="admin-switch'+(off?'':' on')+'" data-tier="'+esc(t)+'"></span><span class="admin-tier__name">'+esc(t)+'</span></div>'+
+      '<input type="number" min="0" value="'+h+'" data-tier-field="max_per_hour" data-tier="'+esc(t)+'"'+dis+' aria-label="'+esc(t)+' max per hour">'+
+      '<input type="number" min="0" value="'+d+'" data-tier-field="max_per_day" data-tier="'+esc(t)+'"'+dis+' aria-label="'+esc(t)+' max per day">'+
+      '<input type="number" min="0" value="'+c+'" data-tier-field="max_concurrent" data-tier="'+esc(t)+'"'+dis+' aria-label="'+esc(t)+' max concurrent">'+
+    '</div>';
+  }).join('');
+}
+
 function renderAdminControls(){
   if(!adminEnabled||!adminHub)return;
   // Immediate toggles.
@@ -1767,6 +1865,8 @@ function renderAdminControls(){
   renderAdminFilter('admin-filter-authors','Authors','author','contribute_authors_mode','authors');
   renderAdminFilter('admin-filter-labels','Labels','label','contribute_labels_mode','labels');
   renderAdminModels();
+  renderAdminRepos();
+  renderAdminTierLimits();
   var save=document.getElementById('admin-save-btn');
   if(save)save.disabled=!adminDirty;
 }
@@ -1803,6 +1903,34 @@ document.getElementById('ops-admin').addEventListener('click',function(e){
     if(inp&&inp.value.trim()){adminHub[lk2]=(adminHub[lk2]||[]).concat([inp.value.trim()]);inp.value='';adminDirty=true;renderAdminControls();}
     return;
   }
+  // Repo enable toggle: flip membership in disabled_repos (enabled == NOT listed).
+  if(t.getAttribute&&t.getAttribute('data-repo')!==null&&t.classList&&t.classList.contains('admin-switch')){
+    var repo=t.getAttribute('data-repo');
+    var dr=(adminHub.disabled_repos||[]).slice();
+    var ri=dr.indexOf(repo);
+    if(ri>=0)dr.splice(ri,1);else dr.push(repo); // toggling ON removes from disabled
+    adminHub.disabled_repos=dr;adminDirty=true;renderAdminControls();return;
+  }
+  // Tier enable toggle: flip membership in disabled_tiers (enabled == NOT listed).
+  if(t.getAttribute&&t.getAttribute('data-tier')!==null&&t.classList&&t.classList.contains('admin-switch')){
+    var tier=t.getAttribute('data-tier');
+    var dt=(adminHub.disabled_tiers||[]).slice();
+    var ti=dt.indexOf(tier);
+    if(ti>=0)dt.splice(ti,1);else dt.push(tier);
+    adminHub.disabled_tiers=dt;adminDirty=true;renderAdminControls();return;
+  }
+});
+// Tier rate-limit numeric edits: update tier_limits[tier][field] and mark dirty. A
+// separate 'input' handler (numbers change on input, not click). Non-negative ints;
+// blank/NaN coerces to 0 (== unlimited), matching the backend's "<=0 = unlimited".
+document.getElementById('ops-admin').addEventListener('input',function(e){
+  var t=e.target;
+  if(!t.getAttribute||t.getAttribute('data-tier-field')===null||!adminHub)return;
+  var tier=t.getAttribute('data-tier'),field=t.getAttribute('data-tier-field');
+  var v=parseInt(t.value,10);if(isNaN(v)||v<0)v=0;
+  var tl=adminHub.tier_limits||{};if(!tl[tier])tl[tier]={};
+  tl[tier][field]=v;adminHub.tier_limits=tl;adminDirty=true;
+  var save=document.getElementById('admin-save-btn');if(save)save.disabled=false;
 });
 
 document.getElementById('admin-add-model').addEventListener('click',function(){
@@ -1826,9 +1954,14 @@ document.getElementById('admin-save-btn').addEventListener('click',function(){
     contribute_deny_authors:adminHub.contribute_deny_authors||[],
     contribute_deny_labels:adminHub.contribute_deny_labels||[],
     contribute_allow_labels:[],
-    contribute_allow_models:adminHub.contribute_allow_models||[]
+    contribute_allow_models:adminHub.contribute_allow_models||[],
+    // Governor Hub mirror sections (#2562 parity): repos-for-contribute (as the
+    // disabled_repos exclusion list) + per-tier access & rate limits.
+    disabled_repos:adminHub.disabled_repos||[],
+    disabled_tiers:adminHub.disabled_tiers||[],
+    tier_limits:adminHub.tier_limits||{}
   };
-  adminSaveHub(patch,'Admission filters saved').then(function(ok){if(ok){adminDirty=false;renderAdminControls();}});
+  adminSaveHub(patch,'Admission &amp; hub settings saved').then(function(ok){if(ok){adminDirty=false;renderAdminControls();}});
 });
 
 // Per-contributor actions (delegated on the clanker list). Each calls an EXISTING
@@ -2010,10 +2143,21 @@ function statusPill(s){
 }
 function renderWork(list){
   lastWork=list;
-  var shown=list.filter(workMatchesFilter);
+  // "Done" is special: the fleet work array holds ONLY in-flight tasks, so a naive
+  // status filter is always empty. Instead, source "Done" from the completed activity
+  // events (the real completion history). All/Active/Review keep filtering the
+  // in-flight list as before.
+  var shown;
+  if(currentFilter==='done'){shown=(typeof ccCompletedWorkItems==='function')?ccCompletedWorkItems(30):[];}
+  else{shown=list.filter(workMatchesFilter);}
   document.getElementById('work-count').textContent=shown.length+(shown.length===1?' item':' items');
   var el=document.getElementById('work-list');
-  if(!shown.length){el.innerHTML='<div class="ops-empty">No work items in flight'+(currentFilter!=='all'?' for this filter.':'.')+'</div>';return;}
+  if(!shown.length){
+    var msg=(currentFilter==='done')
+      ?'No completed tasks yet — finished work will appear here.'
+      :('No work items in flight'+(currentFilter!=='all'?' for this filter.':'.'));
+    el.innerHTML='<div class="ops-empty">'+msg+'</div>';return;
+  }
   el.innerHTML=shown.map(function(w){
     var who=w.github_username?('<span class="feed-role">'+esc(w.github_username)+'</span>'):'';
     var cli=w.cli_backend?(' &middot; '+esc(w.cli_backend)):'';
@@ -2386,6 +2530,25 @@ function ccRebuildLogFromActivity(){
   ccLogLines=src.map(ccNarrate);
   ccRenderLog();
 }
+// ccCompletedWorkItems derives "Done" My-work rows from the completed activity events
+// in the shared store: the fleet work array holds ONLY in-flight tasks, so the "Done"
+// filter was always empty. Newest first, capped, deduped by task. Each row mirrors the
+// in-flight row shape so renderWork can display it.
+function ccCompletedWorkItems(cap){
+  var out=[],seen={};
+  for(var i=ccActivity.length-1;i>=0&&out.length<(cap||30);i--){
+    var e=ccActivity[i];
+    if(!e||e.action!=='completed')continue;
+    var task=e.task||'';
+    if(task&&seen[task])continue;if(task)seen[task]=1;
+    var repo=task,number='';
+    var h=task.lastIndexOf('#');
+    if(h>=0){repo=task.slice(0,h);number=task.slice(h+1);}
+    out.push({repo:repo,number:number,title:task||'(completed task)',status:'done',
+      github_username:e.username||'',cli_backend:e.cli||'',_ts:e.timestamp});
+  }
+  return out;
+}
 // Poll the reliable activity endpoint, ingest new entries, refresh the rail. This is
 // the resilience layer: the rail is NEVER blank when the endpoint has data, whether
 // or not SSE delivers. Reschedules while the Operations tab is open.
@@ -2396,6 +2559,8 @@ function ccPollActivity(){
     for(var i=0;i<list.length;i++){if(ccIngestActivity(list[i]))added=true;}
     if(added)ccRebuildLogFromActivity();
     else if(!ccLogLines.length&&ccActivity.length)ccRebuildLogFromActivity();
+    // Keep the "Done" My-work view current from the (now-updated) completed events.
+    if(added&&currentFilter==='done')renderWork(lastWork);
     // Reflect REAL connectivity: if SSE has never delivered a frame, we are running
     // on the polling fallback — say so rather than sitting on "connecting" forever.
     if(!ccSSEDelivered)ccSetLive('poll');
@@ -2414,6 +2579,7 @@ function ccOnActivity(e){
     ccRebuildLogFromActivity();
     ccMaybeAchieve(e);
     if(e.action==='picked up')ccTravel(e);
+    if(currentFilter==='done')renderWork(lastWork);
   }
 }
 
@@ -2425,7 +2591,7 @@ function ccHydrate(payload){
     // seed (no double-count of events that arrive via both paths).
     var added=false;
     payload.replay.forEach(function(e){if(ccIngestActivity(e))added=true;});
-    if(added)ccRebuildLogFromActivity();
+    if(added){ccRebuildLogFromActivity();if(currentFilter==='done')renderWork(lastWork);}
   }
 }
 function ccQueuePoll(){ // fallback when SSE is down: refresh queue only

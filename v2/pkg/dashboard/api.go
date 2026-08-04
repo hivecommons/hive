@@ -3562,8 +3562,41 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			"disabled_repos":                     cfg.Hub.DisabledRepos,
 			"disabled_tiers":                     cfg.Hub.DisabledTiers,
 			"tier_limits":                        cfg.Hub.TierLimits,
+			// available_repos is the READ-ONLY list of repo full-names the hive knows
+			// about (from the live status snapshot), so the Management tab can render
+			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
+			// list. A repo is ENABLED unless it appears in disabled_repos.
+			"available_repos": s.contributeAvailableRepos(),
 		},
 	})
+}
+
+// contributeAvailableRepos returns the sorted, de-duplicated set of repo full-names
+// the hive currently knows about (from the status snapshot). Read-only; used to
+// render the "Repos for Contribute" enable toggles in the Management tab mirror.
+func (s *Server) contributeAvailableRepos() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	s.statusMu.RLock()
+	if s.status != nil {
+		for _, repo := range s.status.Repos {
+			name := repo.Full
+			if name == "" {
+				name = repo.Name
+			}
+			if name == "" {
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, name)
+		}
+	}
+	s.statusMu.RUnlock()
+	sort.Strings(out)
+	return out
 }
 
 func (s *Server) handleGovernorSensing(w http.ResponseWriter, r *http.Request) {
