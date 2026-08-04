@@ -6,10 +6,10 @@ Track and advance the project's test maturity through ACMM levels.
 
 | Level | Name | Has Tests | Has CI | Coverage Config | TDD Markers | Test Mode |
 |-------|------|-----------|--------|----------------|-------------|-----------|
-| 1 | Idea | No | No | No | No | suggest |
-| 2 | Development | Yes | No | No | No | suggest |
-| 3 | CI/CD | Yes | Yes | Yes | No | gate |
-| 4 | Full Auto | Yes | Yes | Yes | Yes | tdd |
+| 1 | Inception | No | No | No | No | suggest |
+| 2 | Advisory | Yes | No | No | No | suggest |
+| 3 | Quality-Gated | Yes | Yes | Yes | No | gate |
+| 4 | Security-Aware | Yes | Yes | Yes | Yes | tdd |
 
 ## Advancing from Level 1 to Level 2
 

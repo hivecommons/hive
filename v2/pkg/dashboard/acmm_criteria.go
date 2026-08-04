@@ -4,22 +4,25 @@ package dashboard
 // checked against a repository via file-existence detection.
 type ACMMCriterion struct {
 	ID       string
-	Source   string   // "acmm" or "aef"
-	Level    int      // 0, 2, 3, 4, 5, 6
+	Source   string // "acmm" or "aef"
+	Level    int    // 0, 2, 3, 4, 5, 6
 	Category string
 	Name     string
 	Patterns []string // file paths to check (pass if ANY exists)
 }
 
-// acmmLevelNames maps numeric ACMM levels to human-readable names.
+// acmmLevelNames maps numeric ACMM levels to human-readable names. Levels
+// 1-6 mirror the canonical pack names in v2/pkg/config/packs/level-*.yaml.
+// Level 0 is not a level of its own: it means the repo has not yet met the
+// prerequisites for L1.
 var acmmLevelNames = map[int]string{
-	0: "Prerequisites",
-	1: "Foundational",
-	2: "Instructed",
-	3: "Measured",
-	4: "Adaptive",
-	5: "Automated",
-	6: "Autonomous",
+	0: "Prerequisites not met",
+	1: "Inception",
+	2: "Advisory",
+	3: "Quality-Gated",
+	4: "Security-Aware",
+	5: "Semi-Autonomous",
+	6: "Fully Autonomous",
 }
 
 // universalCriteria contains the 43 repo-universal ACMM criteria ported
@@ -46,7 +49,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:prereq-coverage-gate", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Coverage gate",
 		Patterns: []string{"codecov.yml", ".codecov.yml", ".github/workflows/coverage-gate.yml", "coverage.yml", ".coverage-thresholds.json"}},
 
-	// ── L2 Instructed (8) ──
+	// ── L2 Advisory (8) ──
 	{ID: "acmm:claude-md", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "CLAUDE.md instruction file",
 		Patterns: []string{"CLAUDE.md", ".claude/CLAUDE.md"}},
 	{ID: "acmm:copilot-instructions", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "Copilot instructions",
@@ -64,7 +67,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:correction-capture", Source: "acmm", Level: 2, Category: "learning", Name: "Correction capture",
 		Patterns: []string{".claude/memory/", ".memory/", "corrections.jsonl"}},
 
-	// ── L3 Measured (8) ──
+	// ── L3 Quality-Gated (8) ──
 	{ID: "acmm:pr-acceptance-metric", Source: "acmm", Level: 3, Category: "feedback-loop", Name: "PR acceptance metric",
 		Patterns: []string{"scripts/build-accm-history.mjs", ".github/workflows/accm-history-update.yml", "scripts/pr-metrics.mjs", ".github/workflows/pr-metrics.yml", "docs/metrics.md"}},
 	{ID: "acmm:pr-review-rubric", Source: "acmm", Level: 3, Category: "feedback-loop", Name: "PR review rubric",
@@ -82,7 +85,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:structural-gates", Source: "acmm", Level: 3, Category: "traceability", Name: "Structural gates",
 		Patterns: []string{".claude/settings.json"}},
 
-	// ── L4 Adaptive (9) ──
+	// ── L4 Security-Aware (9) ──
 	{ID: "acmm:auto-qa-tuning", Source: "acmm", Level: 4, Category: "self-tuning", Name: "Auto-QA self-tuning",
 		Patterns: []string{".github/auto-qa-tuning.json", ".github/workflows/auto-qa.yml", "scripts/auto-qa-tuner.mjs"}},
 	{ID: "acmm:nightly-compliance", Source: "acmm", Level: 4, Category: "feedback-loop", Name: "Nightly compliance",
@@ -102,7 +105,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:cross-session-knowledge", Source: "acmm", Level: 4, Category: "learning", Name: "Cross-session knowledge",
 		Patterns: []string{"knowledge.jsonl", ".knowledge/", "docs/reflections/"}},
 
-	// ── L5 Automated (5) ──
+	// ── L5 Semi-Autonomous (5) ──
 	{ID: "acmm:github-actions-ai", Source: "acmm", Level: 5, Category: "feedback-loop", Name: "GitHub Actions AI integration",
 		Patterns: []string{".github/workflows/claude.yml", ".github/workflows/claude-code-review.yml"}},
 	{ID: "acmm:auto-qa-self-tuning", Source: "acmm", Level: 5, Category: "self-tuning", Name: "Auto-QA with self-tuning",
@@ -114,7 +117,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:reflection-log", Source: "acmm", Level: 5, Category: "feedback-loop", Name: "Reflection log",
 		Patterns: []string{".claude/reflections/", "memory/", ".memory/", "docs/reflections/", "REFLECTIONS.md"}},
 
-	// ── L6 Autonomous (6 acmm) ──
+	// ── L6 Fully Autonomous (6 acmm) ──
 	{ID: "acmm:auto-issue-gen", Source: "acmm", Level: 6, Category: "autonomy", Name: "Auto issue generation",
 		Patterns: []string{".github/workflows/auto-issues.yml", ".github/workflows/auto-issue.yml", ".github/workflows/issue-gen.yml", ".github/workflows/auto-generate-issues.yml", "scripts/generate-issues.mjs"}},
 	{ID: "acmm:multi-agent-orchestration", Source: "acmm", Level: 6, Category: "autonomy", Name: "Multi-agent orchestration",

@@ -133,15 +133,15 @@ func TestCovK2_SelectTask(t *testing.T) {
 		lastPong: time.Now(),
 	}
 
-	// No status yet → nil.
-	if msg := hub.selectTask(conn); msg != nil {
-		t.Fatalf("expected nil task with no status")
+	// No status yet → explicit hub_not_ready negative-ack (#2546).
+	if msg := hub.selectTask(conn); msg == nil || msg.Reason != taskUnavailableHubNotReady {
+		t.Fatalf("expected task_unavailable/%s with no status, got %+v", taskUnavailableHubNotReady, msg)
 	}
 
-	// Suspended contribute → nil.
+	// Suspended contribute → explicit contribution_suspended negative-ack (#2546).
 	s.deps.Config.Hub.ContributeSuspended = true
-	if msg := hub.selectTask(conn); msg != nil {
-		t.Fatalf("expected nil task when contribute suspended")
+	if msg := hub.selectTask(conn); msg == nil || msg.Reason != taskUnavailableContributionSuspended {
+		t.Fatalf("expected task_unavailable/%s when suspended, got %+v", taskUnavailableContributionSuspended, msg)
 	}
 	s.deps.Config.Hub.ContributeSuspended = false
 
@@ -177,8 +177,9 @@ func TestCovK2_SelectTask(t *testing.T) {
 	// is skipped (activeIssues), and after marking it complete it's in cooldown.
 	hub.markTaskCompleted("myorg/repo1", 7, "https://github.com/myorg/repo1/pull/9")
 	conn.currentTask = nil
-	if msg := hub.selectTask(conn); msg != nil {
-		t.Fatalf("expected nil task (cooldown) but got %+v", msg)
+	// The sole candidate is now in cooldown → empty candidate set → no_matching_work (#2546).
+	if msg := hub.selectTask(conn); msg == nil || msg.Reason != taskUnavailableNoMatchingWork {
+		t.Fatalf("expected task_unavailable/%s (cooldown) but got %+v", taskUnavailableNoMatchingWork, msg)
 	}
 }
 

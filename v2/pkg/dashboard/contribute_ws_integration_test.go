@@ -330,6 +330,15 @@ func TestIntegration_SelectTask_PromotionRequiresPR(t *testing.T) {
 	s, ts := setupWSTest(t)
 	defer ts.Close()
 
+	// #2565: TasksWithPR / promotion now require the reported PR to be VERIFIED
+	// server-side (exists, base repo == assignment repo, author == contributor).
+	// Install a GitHub mock that returns, for any pulls lookup, a PR in
+	// myorg/repo1 authored by "promotion-user" so the PR-shipping loop below can
+	// legitimately advance TasksWithPR. Without this the reported URL stays
+	// unverified and (correctly) earns no trust credit — which is what the
+	// wrong-author/wrong-repo/error tests assert instead.
+	s.deps = verifyDepsFor(t, "myorg", "repo1", "promotion-user")
+
 	body := `{"github_username":"promotion-user"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

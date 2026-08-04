@@ -65,8 +65,11 @@ func TestCovK2_LeaderboardRoutes(t *testing.T) {
 	covK2SeedProfiles(t)
 	s := covK2ContribServer(t)
 
-	if rec := doGet(s, "/leaderboard"); rec.Code != http.StatusOK {
-		t.Fatalf("leaderboard page: %d", rec.Code)
+	// /leaderboard is now a deep-link shim that redirects to the /contribute
+	// Leaderboard tab (the standalone page was folded in). The /api/leaderboard
+	// data endpoint is unchanged and still serves the tab.
+	if rec := doGet(s, "/leaderboard"); rec.Code != http.StatusFound {
+		t.Fatalf("leaderboard page: %d, want 302 redirect", rec.Code)
 	}
 	if rec := doGet(s, "/api/leaderboard"); rec.Code != http.StatusOK {
 		t.Fatalf("leaderboard API: %d", rec.Code)

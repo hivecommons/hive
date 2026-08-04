@@ -224,11 +224,11 @@ type acmmLevelInfo struct {
 // acmmLevels maps a level number to its name and a one-line summary of what
 // moving there entails. Kept in sync with v2/pkg/config/packs/level-*.yaml.
 var acmmLevels = map[int]acmmLevelInfo{
-	1: {"Assisted", "an interactive brainstorm agent turns ideas into structured facts and scaffolding, with every action human-approved"},
-	2: {"Instructed", "five agents (supervisor, scanner, quality, guide, brainstorm) publish advisory findings to your dashboard and a tracking issue — still no GitHub writes"},
-	3: {"Measured", "the quality agent starts opening issues and hold-gated PRs about testing gaps, and ci-maintainer joins to watch build health — nothing merges without you"},
-	4: {"Adaptive", "every agent files GitHub issues in its lane (bugs, docs gaps, workflow breakage) and a sec-check agent joins for vulnerabilities — issues only, still no PRs"},
-	5: {"Semi-Automated", "agents open pull requests as well as issues, all carrying a 'hold' label for you to batch-review, and architect plus strategist join — the system proposes, you dispose"},
+	1: {"Inception", "an interactive brainstorm agent turns ideas into structured facts and scaffolding, with every action human-approved"},
+	2: {"Advisory", "five agents (supervisor, scanner, quality, guide, brainstorm) publish advisory findings to your dashboard and a tracking issue — still no GitHub writes"},
+	3: {"Quality-Gated", "the quality agent starts opening issues and hold-gated PRs about testing gaps, and ci-maintainer joins to watch build health — nothing merges without you"},
+	4: {"Security-Aware", "every agent files GitHub issues in its lane (bugs, docs gaps, workflow breakage) and a sec-check agent joins for vulnerabilities — issues only, still no PRs"},
+	5: {"Semi-Autonomous", "agents open pull requests as well as issues, all carrying a 'hold' label for you to batch-review, and architect plus strategist join — the system proposes, you dispose"},
 	6: {"Fully Autonomous", "agents open issues, raise PRs, and auto-merge them on green CI with no hold label, plus an outreach agent for community work — the highest trust setting"},
 }
 
@@ -236,7 +236,7 @@ var acmmLevels = map[int]acmmLevelInfo{
 // graduate to, so it gets no ACMM nudge at all.
 const maxACMMLevel = 6
 
-// acmmLevelLabel renders a level as "L3 Measured", falling back to a bare
+// acmmLevelLabel renders a level as "L3 Quality-Gated", falling back to a bare
 // "L3" for any level outside the known table so copy never reads "L9 <nil>".
 func acmmLevelLabel(level int) string {
 	if info, ok := acmmLevels[level]; ok {

@@ -43,7 +43,7 @@ func TestCreditActiveSessionTime(t *testing.T) {
 			t.Fatal(err)
 		}
 		prev := &RegistryEntry{LastHeartbeat: realAgo(120 * time.Second)}
-		s.creditActiveSessionTime(prev, true, []string{"alice"})
+		s.creditActiveSessionTime(prev, true, []string{"alice"}, nil)
 		got := loadSaaSUser("alice").SessionSeconds
 		if got < 110 || got > 130 {
 			t.Errorf("SessionSeconds = %d, want ~120", got)
@@ -54,7 +54,7 @@ func TestCreditActiveSessionTime(t *testing.T) {
 		useTempUserDir(t)
 		saveSaaSUser(&SaaSUser{GitHubUsername: "alice"})
 		prev := &RegistryEntry{LastHeartbeat: realAgo(3 * time.Hour)}
-		s.creditActiveSessionTime(prev, true, []string{"alice"})
+		s.creditActiveSessionTime(prev, true, []string{"alice"}, nil)
 		got := loadSaaSUser("alice").SessionSeconds
 		if got != int64(maxSessionCreditSecs) {
 			t.Errorf("SessionSeconds = %d, want clamp %d (not the full 3h)", got, int64(maxSessionCreditSecs))
@@ -66,7 +66,7 @@ func TestCreditActiveSessionTime(t *testing.T) {
 		saveSaaSUser(&SaaSUser{GitHubUsername: "alice"})
 		saveSaaSUser(&SaaSUser{GitHubUsername: "bob"})
 		prev := &RegistryEntry{LastHeartbeat: realAgo(120 * time.Second)}
-		s.creditActiveSessionTime(prev, true, []string{"alice", "bob", "ghost"})
+		s.creditActiveSessionTime(prev, true, []string{"alice", "bob", "ghost"}, nil)
 		if loadSaaSUser("alice").SessionSeconds < 110 || loadSaaSUser("bob").SessionSeconds < 110 {
 			t.Error("both known users must be credited")
 		}
@@ -78,7 +78,7 @@ func TestCreditActiveSessionTime(t *testing.T) {
 	t.Run("first-ever beat credits nothing", func(t *testing.T) {
 		useTempUserDir(t)
 		saveSaaSUser(&SaaSUser{GitHubUsername: "alice"})
-		s.creditActiveSessionTime(nil, false, []string{"alice"})
+		s.creditActiveSessionTime(nil, false, []string{"alice"}, nil)
 		if got := loadSaaSUser("alice").SessionSeconds; got != 0 {
 			t.Errorf("no prior beat must credit 0, got %d", got)
 		}
@@ -88,7 +88,7 @@ func TestCreditActiveSessionTime(t *testing.T) {
 		useTempUserDir(t)
 		saveSaaSUser(&SaaSUser{GitHubUsername: "alice"})
 		prev := &RegistryEntry{LastHeartbeat: time.Now().UTC().Format(time.RFC3339)}
-		s.creditActiveSessionTime(prev, true, []string{"alice"})
+		s.creditActiveSessionTime(prev, true, []string{"alice"}, nil)
 		if got := loadSaaSUser("alice").SessionSeconds; got > 1 {
 			t.Errorf("elapsed ~0 must credit ~0, got %d", got)
 		}
@@ -98,7 +98,7 @@ func TestCreditActiveSessionTime(t *testing.T) {
 		useTempUserDir(t)
 		prev := &RegistryEntry{LastHeartbeat: realAgo(120 * time.Second)}
 		// Must not panic or create anything for a bad name.
-		s.creditActiveSessionTime(prev, true, []string{"../etc/passwd", ""})
+		s.creditActiveSessionTime(prev, true, []string{"../etc/passwd", ""}, nil)
 	})
 }
 

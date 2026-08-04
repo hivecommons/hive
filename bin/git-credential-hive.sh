@@ -80,6 +80,7 @@ if [ -n "$AGENT_MODE" ]; then
   case "$AGENT_MODE" in
     NO_GITHUB|ADVISORY|ISSUES_ONLY)
       echo "⛔ git push blocked: ${AGENT} is in ${AGENT_MODE} mode" >&2
+      echo "⛔ TERMINAL: this block is mode-enforced and retrying can NEVER succeed. Do NOT retry, loop, or seek workarounds. Record your intended change as an advisory finding (bd create / [FINDING]) and end this task." >&2
       exit 1
       ;;
   esac
@@ -89,10 +90,12 @@ else
   if [ -n "$AGENT" ] && [ "$ACMM" -gt 0 ]; then
     if [ "$ACMM" -lt 3 ]; then
       echo "⛔ git push blocked: ACMM L${ACMM} agents are advisory-only" >&2
+      echo "⛔ TERMINAL: this block is mode-enforced and retrying can NEVER succeed. Do NOT retry, loop, or seek workarounds. Record your intended change as an advisory finding (bd create / [FINDING]) and end this task." >&2
       exit 1
     fi
     if [ "$ACMM" -eq 3 ] && [ "$AGENT" != "quality" ]; then
       echo "⛔ git push blocked: only quality agent can push at ACMM L3" >&2
+      echo "⛔ TERMINAL: this block is mode-enforced and retrying can NEVER succeed. Do NOT retry, loop, or seek workarounds. Record your intended change as an advisory finding (bd create / [FINDING]) and end this task." >&2
       exit 1
     fi
   fi

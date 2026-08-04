@@ -143,6 +143,12 @@ type Server struct {
 
 	audit *AuditLog
 
+	// presenceEngagedAt maps a username to the last time their browser
+	// reported ENGAGED presence (tab visible + recent input; see presence.go).
+	// Lazily initialized under presenceMu, freshness-pruned on read.
+	presenceMu        sync.Mutex
+	presenceEngagedAt map[string]time.Time
+
 	// promptHistory stores the fully-expanded kick prompts delivered to each
 	// agent, so an owner can review what their agents were actually told.
 	promptHistory *PromptHistory

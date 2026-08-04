@@ -1,7 +1,7 @@
 level: 1
-name: Assisted
+name: Inception
 description: >
-  Project inception. An interactive brainstorm agent turns raw ideas into
+  Project inception (formerly "Assisted"). An interactive brainstorm agent turns raw ideas into
   structured KB facts and project scaffolding. A guide agent audits
   documentation. Supports greenfield (new project from an idea) and
   brownfield (existing repo enrichment). All actions require human

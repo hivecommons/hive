@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -186,7 +187,18 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
-	res, err := c.CreatePR(ctx, req.Repo, req.Head, req.Base, req.Title, req.Body)
+	// Invocation-attribution trail (attribution.go): resolve what the hive
+	// invoked for this agent, append the visible trailer to the PR body when
+	// the toggle is on, and — below, on success — record the audit entry
+	// unconditionally. This choke point covers every agent regardless of CLI,
+	// because the proxy hard-denies direct POST /pulls.
+	meta := c.attributionMeta(req.Agent)
+	body := req.Body
+	if c.attributionTrailerOn() {
+		body = AppendTrailer(body, meta)
+	}
+
+	res, err := c.CreatePR(ctx, req.Repo, req.Head, req.Base, req.Title, body)
 	resp := PRResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	if err != nil {
 		// Leave the request in place so the next tick retries (transient API
@@ -202,6 +214,16 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	resp.Number = res.Number
 	resp.URL = res.URL
 	resp.AlreadyExisted = res.AlreadyExisted
+	// Audit the creation UNCONDITIONALLY (not gated by the trailer toggle) —
+	// this is the durable answer to "which backend/model produced this PR?".
+	// A reused PR is recorded too (reused=true): the watcher may be
+	// re-processing a request that partially succeeded, and the invocation
+	// that produced the branch is the same.
+	c.recordCreationAudit(AuditActionAgentPRCreated, meta,
+		"repo", req.Repo,
+		"number", strconv.Itoa(res.Number),
+		"url", res.URL,
+		"reused", strconv.FormatBool(res.AlreadyExisted))
 	c.writePRResult(path, resp)
 	// Success (or reuse of an existing PR) — consume the request so it isn't
 	// reprocessed.

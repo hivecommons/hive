@@ -1,6 +1,6 @@
 level: 5
-name: Semi-Automated
-description: 'Multi-loop feedback. Agents open issues AND pull requests. All agent
+name: Semi-Autonomous
+description: 'Multi-loop feedback (formerly ''Semi-Automated''). Agents open issues AND pull requests. All agent
   PRs get a ''hold'' label automatically — humans batch-review and approve. Adds architect
   (+architect) for RFCs and strategist (+strategist) for cross-agent coordination.
   Eight agents total. The system proposes; it does not merge autonomously.

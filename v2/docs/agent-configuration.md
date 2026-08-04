@@ -202,11 +202,11 @@ You don't have to design a roster. Hive ships six **ACMM packs** (`level-1.yaml`
 
 | Level | Name | Posture |
 |---|---|---|
-| L1 | Assisted | inception: brainstorm + guide, everything conversational |
-| L2 | Instructed | advisory beads only; agents observe, humans act |
-| L3 | Measured | quality opens issues and hold-gated test PRs; the rest stay advisory |
-| L4 | Adaptive | all agents open issues — no PRs yet |
-| L5 | Semi-Automated | issues **and** hold-gated PRs; humans batch-approve |
+| L1 | Inception (Assisted) | inception: brainstorm + guide, everything conversational |
+| L2 | Advisory (Instructed) | advisory beads only; agents observe, humans act |
+| L3 | Quality-Gated (Measured) | quality opens issues and hold-gated test PRs; the rest stay advisory |
+| L4 | Security-Aware (Adaptive) | all agents open issues — no PRs yet |
+| L5 | Semi-Autonomous (Semi-Automated) | issues **and** hold-gated PRs; humans batch-approve |
 | L6 | Fully Autonomous | auto-merge on green CI, no hold label |
 
 Applying a level **reconciles the whole roster**, not just the diff: missing agents are created (as overlay files in `/data/agent-configs/`), existing agents are merged — pack values fill blanks, but your explicit `backend:`, `model:`, and `enabled: false` always win — and the level's `kick_template` and `mode` are updated so the agent's *policy* matches the level. A failed agent doesn't abort the rest; the level is only recorded as cleanly applied when every agent reconciled.

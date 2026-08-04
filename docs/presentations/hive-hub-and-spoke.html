@@ -101,11 +101,11 @@ blockquote{border-left:3px solid #f0a030;padding-left:16px;margin:16px 0;font-st
 <p style="margin-bottom:16px">The <span class="accent">ACMM Proxy</span> sits between agents and GitHub, enforcing level constraints and preventing rogue behavior.</p>
 <table>
 <tr><th>Level</th><th>Name</th><th>Agents</th><th>Allowed Actions</th></tr>
-<tr><td class="accent" style="font-weight:600">L1</td><td>Assisted</td><td>2</td><td>Advisory only. Guide + Brainstorm.</td></tr>
-<tr><td class="accent" style="font-weight:600">L2</td><td>Instructed</td><td>5</td><td>Advisory beads on dashboard. No GitHub writes.</td></tr>
-<tr><td class="accent" style="font-weight:600">L3</td><td>Measured</td><td>6</td><td>Quality opens hold-gated PRs. CI gates begin.</td></tr>
-<tr><td class="accent" style="font-weight:600">L4</td><td>Adaptive</td><td>7</td><td>Agents open issues. Sec-check joins.</td></tr>
-<tr><td class="accent" style="font-weight:600">L5</td><td>Semi-Automated</td><td>9</td><td>PRs with <code>hold</code> label. Human batch-review.</td></tr>
+<tr><td class="accent" style="font-weight:600">L1</td><td>Inception</td><td>2</td><td>Advisory only. Guide + Brainstorm.</td></tr>
+<tr><td class="accent" style="font-weight:600">L2</td><td>Advisory</td><td>5</td><td>Advisory beads on dashboard. No GitHub writes.</td></tr>
+<tr><td class="accent" style="font-weight:600">L3</td><td>Quality-Gated</td><td>6</td><td>Quality opens hold-gated PRs. CI gates begin.</td></tr>
+<tr><td class="accent" style="font-weight:600">L4</td><td>Security-Aware</td><td>7</td><td>Agents open issues. Sec-check joins.</td></tr>
+<tr><td class="accent" style="font-weight:600">L5</td><td>Semi-Autonomous</td><td>9</td><td>PRs with <code>hold</code> label. Human batch-review.</td></tr>
 <tr><td class="accent" style="font-weight:600">L6</td><td>Autonomous</td><td>10</td><td>Auto-merge on green CI. Full fleet.</td></tr>
 </table>
 <p style="margin-top:16px">Agents cannot bypass their level - the proxy blocks unauthorized PRs, issues, and merges.</p>

@@ -1,0 +1,36 @@
+name: Podman Rootless Contract
+
+# Static contract check for the rootless-Podman handling in Justfile's
+# contribute-hive recipe (#2535 Option C — CI seam, not a live rootless run).
+# See v2/docs/podman-rootless-ci.md for what this covers and what a future
+# live-runner test would add. Does NOT change the runtime auto-detect
+# default (Option A is explicitly deferred pending broader coverage).
+
+on:
+  push:
+    branches:
+      - v2
+    paths:
+      - 'Justfile'
+      - 'v2/scripts/check-podman-contract.sh'
+      - 'v2/docs/podman-rootless-ci.md'
+  pull_request:
+    branches:
+      - v2
+    paths:
+      - 'Justfile'
+      - 'v2/scripts/check-podman-contract.sh'
+      - 'v2/docs/podman-rootless-ci.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run rootless-Podman static contract check
+        run: bash v2/scripts/check-podman-contract.sh Justfile

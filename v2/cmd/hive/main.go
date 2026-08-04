@@ -1049,6 +1049,20 @@ func main() {
 			" has no installation for this org — install it (the spoke adopts the installation automatically)"
 	}
 
+	// Invocation-attribution trail (pkg/github/attribution.go): stamp hive-
+	// created PRs/issues with what the hive invoked, and audit every such
+	// creation. Wired in stages as dependencies come up: the trailer gate now
+	// (cfg exists, and the advisory-issue ensure just below must respect the
+	// toggle), the per-agent resolver after the agent manager exists, and the
+	// audit sink after the dashboard server exists. cfg is the live pointer
+	// (the config watcher swaps contents in place), so the toggle is read
+	// fresh per creation — a dashboard flip takes effect immediately.
+	if ghClient != nil {
+		ghClient.SetAttributionHooks(github.AttributionHooks{
+			TrailerEnabled: func() bool { return cfg.Governor.AttributionTrailerEnabled() },
+		})
+	}
+
 	// Find or create the pinned advisory issue. Any level can have advisory
 	// agents whose findings should be posted to this issue.
 	advisoryIssues := map[string]int{}
@@ -1168,6 +1182,30 @@ func main() {
 	// as, and requests simply accumulate rather than opening under a wrong
 	// identity. ghClient uses the App installation token (see ghAuth wiring).
 	if ghClient != nil && cfg.GitHub.HasUsableApp() {
+		// Attribution resolver: effective backend/model from the manager
+		// (runtime overrides included), falling back to the configured values
+		// for an agent the manager does not know; tool version resolved
+		// lazily per backend and cached. Only launch descriptors flow here —
+		// never tokens, keys, or prompt content.
+		ghClient.SetAttributionResolver(func(agentName string) github.InvocationMeta {
+			backend, model, known := agentMgr.InvocationMetadata(agentName)
+			if !known {
+				if ac, inCfg := cfg.Agents[agentName]; inCfg {
+					backend, model = ac.Backend, ac.Model
+				}
+			}
+			tool, toolVersion := github.ResolveToolVersion(backend)
+			return github.InvocationMeta{
+				Agent:   agentName,
+				Backend: backend,
+				// bob self-selects (no catalog): requested model is honestly
+				// "auto" — see github.RequestedModel for the known follow-up
+				// on discovering bob's internal routing.
+				Model:       github.RequestedModel(backend, model),
+				Tool:        tool,
+				ToolVersion: toolVersion,
+			}
+		})
 		// authz enforces the SAME per-agent ACMM write-gate + forge-resistance as
 		// the direct `gh pr create` path — the request-file route grants no extra
 		// privilege. A denied request is quarantined, never opened.
@@ -1344,6 +1382,17 @@ func main() {
 	// bug on direct-route spokes. /data is the CephFS PVC (same place cost/fact
 	// history persist).
 	dashSrv.EnableSessionPersistence("/data/dashboard-sessions.json")
+
+	// Attribution audit sink: every hive-mediated PR/issue creation lands in
+	// the dashboard audit log (audit.jsonl + ring) UNCONDITIONALLY — the
+	// trailer toggle never gates this. Creations before this point (the
+	// startup advisory-issue ensure) fall back to the hive log inside
+	// recordCreationAudit, so no creation goes unrecorded.
+	if ghClient != nil {
+		ghClient.SetAttributionAudit(func(action, detail, agent string) {
+			dashSrv.AuditLog("system", action, detail, agent)
+		})
+	}
 
 	// Seed token sparkline history now that the dashboard server exists
 	if len(pendingTokenSeed) > 0 {
@@ -2732,6 +2781,13 @@ func main() {
 				// per-user "time in hive". Bare usernames only — never session
 				// ids/tokens (ActiveSessionUsernames guarantees this).
 				ActiveSessionUsers: dashSrv.ActiveSessionUsernames(),
+				// The honest subset of the above: users whose browser reported
+				// focused, recent-input presence (see dashboard/presence.go).
+				// An idle open tab appears in ActiveSessionUsers but not here.
+				EngagedSessionUsers: dashSrv.EngagedSessionUsernames(),
+				// Per-user last audit-logged real action, so the hub can tell
+				// users who DO things from users who merely stay logged in.
+				UserLastActions: dashSrv.UserLastActions(),
 				Owner: func() string {
 					if td, err := os.ReadFile("/data/gh-user-token"); err == nil {
 						tok := strings.TrimSpace(string(td))

@@ -200,14 +200,21 @@ func TestComputeDriftSignals(t *testing.T) {
 			wantReasonHas: "v2-latest",
 		},
 		{
-			name: "upgrade in flight but still within the timeout is not drift",
+			name: "upgrade actively in flight raises the informational upgrading signal",
 			mutate: func(h *MyHiveEntry) {
 				h.Upgrading = true
 				h.UpgradeTarget = "v2-latest"
 				h.UpgradeStartedAt = driftNow.Add(-1 * time.Minute)
 			},
+			wantKind:      DriftKindUpgrading,
+			wantSev:       DriftInfo,
+			wantReasonHas: "v2-latest",
 		},
 		{
+			// The exactly-one-signal assertion below doubles as the guard that
+			// a stuck or stamp-less upgrade never ALSO reads as "upgrading":
+			// the two upgrade-stuck cases in this table would fail with two
+			// signals if the new kind leaked past the staleness bound.
 			name: "upgrade with no recorded start time is a warning",
 			mutate: func(h *MyHiveEntry) {
 				h.Upgrading = true
@@ -215,6 +222,19 @@ func TestComputeDriftSignals(t *testing.T) {
 			wantKind:      DriftKindUpgradeStuck,
 			wantSev:       DriftWarn,
 			wantReasonHas: "no recorded start time",
+		},
+		{
+			// A reported failure is terminal, not in-flight: even if the
+			// Upgrading flag and a fresh stamp linger on the row, a hive that
+			// failed its upgrade must not show as making progress.
+			name: "failed upgrade is not 'upgrading'",
+			mutate: func(h *MyHiveEntry) {
+				h.Upgrading = true
+				h.UpgradeTarget = "v2-latest"
+				h.UpgradeStartedAt = driftNow.Add(-1 * time.Minute)
+				h.UpgradeFailed = true
+				h.UpgradeFailedAt = driftNow.Add(-30 * time.Second)
+			},
 		},
 		{
 			name: "acmm unset on a claimed hive",
@@ -358,6 +378,78 @@ func TestComputeDriftStillFlagsPlaceholderUniversalSignals(t *testing.T) {
 	}
 	if _, ok := byKind[DriftKindPinnedImage]; !ok {
 		t.Errorf("pinned image must be flagged on placeholders too: %+v", got.Signals)
+	}
+}
+
+// While a hive is ACTIVELY upgrading, its version-behind and branch-mismatch
+// signals are suppressed: mid-upgrade drift from the fleet is the expected
+// state the upgrade exists to resolve, and the whole point of the "Upgrading"
+// pill is separating "being fixed" from "needs attention". The moment the
+// upgrade goes stuck (past staleUpgradeTimeout) the suppression lifts and the
+// relative drift is flagged again.
+func TestComputeDriftUpgradingSuppressesFleetRelativeSignals(t *testing.T) {
+	norm := computeFleetNorm(normFleet())
+	latest := map[string]string{"v2": "abc1234"}
+
+	// Baseline: the same divergences WITHOUT an upgrade in flight do flag, so
+	// the suppression assertions below cannot pass vacuously.
+	behind := healthyEntry("behind")
+	behind.GitHash = "0000fff"
+	if got := driftKindsOf(computeDrift(behind, norm, latest, driftNow)); got[DriftKindVersionBehind] == (DriftSignal{}) {
+		t.Fatalf("test setup: expected version-behind without an upgrade, got %+v", got)
+	}
+	offBranch := healthyEntry("off-branch")
+	offBranch.GitBranch = "v3"
+	if got := driftKindsOf(computeDrift(offBranch, norm, latest, driftNow)); got[DriftKindBranchMismatch] == (DriftSignal{}) {
+		t.Fatalf("test setup: expected branch-mismatch without an upgrade, got %+v", got)
+	}
+
+	// Same divergences with an ACTIVE upgrade: only "upgrading" fires.
+	for _, tc := range []struct {
+		name       string
+		mutate     func(*MyHiveEntry)
+		suppressed string
+	}{
+		{"version-behind suppressed mid-upgrade", func(h *MyHiveEntry) { h.GitHash = "0000fff" }, DriftKindVersionBehind},
+		{"branch-mismatch suppressed mid-upgrade", func(h *MyHiveEntry) { h.GitBranch = "v3" }, DriftKindBranchMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := healthyEntry("subject")
+			tc.mutate(&h)
+			h.Upgrading = true
+			h.UpgradeTarget = "v2-latest"
+			h.UpgradeStartedAt = driftNow.Add(-1 * time.Minute)
+
+			got := computeDrift(h, norm, latest, driftNow)
+			byKind := driftKindsOf(got)
+			if _, ok := byKind[tc.suppressed]; ok {
+				t.Errorf("%s must be suppressed while actively upgrading: %+v", tc.suppressed, got.Signals)
+			}
+			if _, ok := byKind[DriftKindUpgrading]; !ok {
+				t.Errorf("expected the upgrading signal, got %+v", got.Signals)
+			}
+			if len(got.Signals) != 1 {
+				t.Errorf("expected exactly the upgrading signal, got %+v", got.Signals)
+			}
+		})
+	}
+
+	// A STUCK upgrade does not suppress: past the bound the hive is back to
+	// "needs attention", relative drift included.
+	stuck := healthyEntry("stuck")
+	stuck.GitHash = "0000fff"
+	stuck.Upgrading = true
+	stuck.UpgradeTarget = "v2-latest"
+	stuck.UpgradeStartedAt = driftNow.Add(-2 * time.Hour)
+	byKind := driftKindsOf(computeDrift(stuck, norm, latest, driftNow))
+	if _, ok := byKind[DriftKindUpgradeStuck]; !ok {
+		t.Errorf("expected upgrade-stuck on a wedged upgrade, got %+v", byKind)
+	}
+	if _, ok := byKind[DriftKindVersionBehind]; !ok {
+		t.Errorf("a stuck upgrade must not keep suppressing version-behind, got %+v", byKind)
+	}
+	if _, ok := byKind[DriftKindUpgrading]; ok {
+		t.Errorf("a stuck upgrade must not read as 'upgrading', got %+v", byKind)
 	}
 }
 

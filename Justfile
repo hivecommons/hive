@@ -1,7 +1,14 @@
 # Justfile — KubeStellar Hive contributor commands, for ClankeR (the contributor relay)
 #
 # Install just: brew install just (macOS) or cargo install just
-# Usage: just contribute-setup claude && just contribute-hive
+# Usage: just contribute-check claude (optional, read-only preflight) && \
+#        just contribute-setup claude && just contribute-hive
+#
+# Ordering (#2543): contribute-setup runs the backend-CLI preflight FIRST —
+# before the GH token is written to disk and before hub registration — so a
+# machine that isn't ready fails before it costs a credential write or a
+# contributor slot. `just contribute-check <cli>` runs the same preflight
+# standalone, any time, with zero side effects.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
@@ -9,7 +16,9 @@ hive_image := env("HIVE_CONTRIBUTOR_IMAGE", "ghcr.io/kubestellar/hive-contributo
 hive_hub := env("HIVE_HUB", "wss://hive.kubestellar.io/contribute")
 config_dir := env("HOME") + "/.config/hive"
 # Container runtime for containerized mode. Empty = auto-detect (docker, then
-# podman). Set HIVE_CONTAINER_RUNTIME=podman to force podman.
+# podman — Docker wins on discovery order, not isolation posture; see the
+# posture note above the detect logic in contribute-hive, and #2535).
+# Set HIVE_CONTAINER_RUNTIME=podman to force rootless podman, or =docker.
 container_runtime := env("HIVE_CONTAINER_RUNTIME", "")
 
 # Show available commands
@@ -31,137 +40,16 @@ check-version skip="false":
     fi
     echo "✓ Up to date (${LOCAL})"
 
-# One-time setup: register with hub + authenticate GitHub + authenticate CLI
-contribute-setup backend="claude": check-version
+# Read-only preflight: is this machine ready to contribute? Checks the
+# agent backend CLI (the thing most likely to fail) BEFORE any credential is
+# written to disk or a contributor slot is registered with the hub. Safe to
+# run as many times as you like — it writes nothing.
+# Usage: just contribute-check claude
+[private]
+contribute-check-backend backend="claude":
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ "{{hive_hub}}" == "wss://hive.kubestellar.io/contribute" ]]; then
-      echo "HIVE_HUB not set — looking up your hives..."
-      echo ""
-      _TOKEN=$(gh auth token 2>/dev/null || echo "")
-      HIVE_LIST=""
-      if [[ -n "$_TOKEN" ]]; then
-        MY_HIVES=$(curl -sf -H "Authorization: Bearer ${_TOKEN}" "https://hive.kubestellar.io/api/saas/my-hives" 2>/dev/null || echo "")
-        if [[ -n "$MY_HIVES" ]]; then
-          HIVE_LIST=$(echo "$MY_HIVES" | jq -r '.hives[]? // .[] | "\(.id)|\(.name // .project_name)"' 2>/dev/null)
-        fi
-      fi
-      if [[ -z "$HIVE_LIST" ]]; then
-        HIVES_JSON=$(curl -sf "https://hive.kubestellar.io/api/registry" 2>/dev/null) || {
-          echo "ERROR: Could not reach hive.kubestellar.io"
-          echo "Set HIVE_HUB manually: export HIVE_HUB=wss://<hive>/contribute"
-          exit 1
-        }
-        HIVE_LIST=$(echo "$HIVES_JSON" | jq -r '.hives[] | select(.online==true) | "\(.id)|\(.name)"' 2>/dev/null)
-      fi
-      if [[ -z "$HIVE_LIST" ]]; then
-        echo "No hives available. Check https://hive.kubestellar.io"
-        exit 1
-      fi
-      echo "Your hives:"
-      echo ""
-      i=1
-      declare -a HIVE_IDS
-      while IFS='|' read -r hid hname; do
-        HIVE_IDS+=("$hid")
-        printf "  %d) %s (%s)\n" "$i" "$hname" "$hid"
-        i=$((i+1))
-      done <<< "$HIVE_LIST"
-      echo ""
-      read -p "Select a hive [1-$((i-1))]: " CHOICE
-      if [[ -z "$CHOICE" || "$CHOICE" -lt 1 || "$CHOICE" -gt $((i-1)) ]] 2>/dev/null; then
-        echo "Invalid selection."
-        exit 1
-      fi
-      SELECTED="${HIVE_IDS[$((CHOICE-1))]}"
-      if [[ "$SELECTED" == hosted-* ]]; then
-        export HIVE_HUB="wss://${SELECTED}.hive.kubestellar.io/contribute"
-      else
-        DASH_URL=$(echo "$HIVES_JSON" | jq -r --arg id "$SELECTED" '.hives[] | select(.id==$id) | .dashboardUrl' 2>/dev/null || echo "")
-        if [[ -n "$DASH_URL" ]]; then
-          DASH_URL=$(echo "$DASH_URL" | sed 's|^http://|ws://|;s|^https://|wss://|')
-          export HIVE_HUB="${DASH_URL}/contribute"
-        else
-          export HIVE_HUB="wss://${SELECTED}.hive.kubestellar.io/contribute"
-        fi
-      fi
-      echo ""
-      echo "Selected: ${HIVE_HUB}"
-      echo "TIP: Next time, run: export HIVE_HUB=${HIVE_HUB}"
-      echo ""
-    fi
-    mkdir -p "{{config_dir}}"
-    echo "=== Hive Contributor Setup (ClankeR) ==="
-    echo ""
-
-    # ── Step 1: GitHub authentication ──
-    echo "── Step 1/3: GitHub Authentication ──"
-    if ! command -v gh &>/dev/null; then
-      echo "ERROR: gh CLI not found. Install: brew install gh"
-      exit 1
-    fi
-    if gh auth status &>/dev/null; then
-      GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
-      echo "Already authenticated as: ${GH_USER}"
-    else
-      echo "Logging into GitHub..."
-      gh auth login --web --scopes "repo,read:org"
-      GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
-      echo "Authenticated as: ${GH_USER}"
-    fi
-    GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
-    if [[ -n "$GH_TOKEN" ]]; then
-      echo "GH_TOKEN=${GH_TOKEN}" > "{{config_dir}}/gh-auth.env"
-      chmod 600 "{{config_dir}}/gh-auth.env"
-    fi
-    echo ""
-
-    # ── Step 2: Register with hive hub ──
-    echo "── Step 2/3: Hive Registration ──"
-    _HUB="${HIVE_HUB:-{{hive_hub}}}"
-    HUB_HTTP=$(echo "$_HUB" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
-    RESPONSE=$(curl -sf --max-time 15 -X POST "${HUB_HTTP}/api/contribute/register" \
-      -H "Content-Type: application/json" \
-      -H "Authorization: Bearer ${GH_TOKEN}" \
-      -d "{\"github_username\": \"${GH_USER}\"}" 2>/dev/null) || {
-        echo "ERROR: Registration failed. Is the hub running at ${HUB_HTTP}?"
-        echo "  Check: curl -sf ${HUB_HTTP}/api/contribute/status"
-        exit 1
-    }
-    if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
-      echo "ERROR: Hub returned invalid response: ${RESPONSE:0:200}"
-      exit 1
-    fi
-    TOKEN=$(echo "$RESPONSE" | jq -r '.registration_token')
-    CID=$(echo "$RESPONSE" | jq -r '.contributor_id')
-    MSG=$(echo "$RESPONSE" | jq -r '.message')
-    if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
-      if echo "$MSG" | grep -qi "already registered"; then
-        if [[ -f "{{config_dir}}/contributor.env" ]]; then
-          source "{{config_dir}}/contributor.env"
-          echo "Already registered — ${GH_USER} (${CONTRIBUTOR_ID:-unknown})"
-        else
-          echo "ERROR: Already registered but no local config found."
-          exit 1
-        fi
-      else
-        echo "ERROR: ${MSG:-No token received}"
-        exit 1
-      fi
-    else
-      cat > "{{config_dir}}/contributor.env" <<EOF
-    HIVE_REGISTRATION_TOKEN=${TOKEN}
-    HIVE_HUB=${_HUB}
-    CONTRIBUTOR_ID=${CID}
-    CONTRIBUTOR_USERNAME=${GH_USER}
-    AGENT_BACKEND={{backend}}
-    EOF
-    fi
-    echo "${MSG} — ${GH_USER} (${CID})"
-    echo ""
-
-    # ── Step 3: CLI authentication ──
-    echo "── Step 3/3: {{backend}} CLI Authentication ──"
+    echo "── Preflight: {{backend}} CLI ──"
     case "{{backend}}" in
       claude)
         if ! command -v claude &>/dev/null; then
@@ -175,7 +63,7 @@ contribute-setup backend="claude": check-version
           echo "Claude Code needs authentication."
           echo "Run:  claude"
           echo "Then type /login and follow the prompts."
-          echo "Once logged in, exit Claude (Ctrl+C) and re-run this setup."
+          echo "Once logged in, exit Claude (Ctrl+C) and re-run this check."
           exit 1
         fi
         ;;
@@ -189,7 +77,7 @@ contribute-setup backend="claude": check-version
         ;;
       gemini)
         if command -v gemini &>/dev/null; then
-          gemini auth login 2>/dev/null || echo "Gemini login complete (or already authenticated)"
+          echo "Gemini CLI detected — run 'gemini auth login' if not already authenticated."
         else
           echo "ERROR: Gemini CLI not installed."
           exit 1
@@ -264,6 +152,155 @@ contribute-setup backend="claude": check-version
         exit 1
         ;;
     esac
+    echo "✓ {{backend}} preflight passed."
+
+# Read-only preflight you can run standalone, any time, before setup — checks
+# the agent backend CLI without writing a credential or registering with the
+# hub. Run this FIRST if you're not sure your machine is ready.
+# Usage: just contribute-check claude
+contribute-check backend="claude": (contribute-check-backend backend)
+    @echo ""
+    @echo "✓ Machine looks ready for 'just contribute-setup {{backend}}'."
+
+# One-time setup: register with hub + authenticate GitHub + authenticate CLI
+# Ordering note (#2543): the backend-readiness preflight runs FIRST, before
+# any credential is written to disk or a contributor slot is registered —
+# so a machine that isn't ready fails before it costs a GH token write or a
+# hub registration. check-version still gates everything (it already did).
+contribute-setup backend="claude": check-version (contribute-check-backend backend)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "{{hive_hub}}" == "wss://hive.kubestellar.io/contribute" ]]; then
+      echo "HIVE_HUB not set — looking up your hives..."
+      echo ""
+      _TOKEN=$(gh auth token 2>/dev/null || echo "")
+      HIVE_LIST=""
+      if [[ -n "$_TOKEN" ]]; then
+        MY_HIVES=$(curl -sf -H "Authorization: Bearer ${_TOKEN}" "https://hive.kubestellar.io/api/saas/my-hives" 2>/dev/null || echo "")
+        if [[ -n "$MY_HIVES" ]]; then
+          HIVE_LIST=$(echo "$MY_HIVES" | jq -r '.hives[]? // .[] | "\(.id)|\(.name // .project_name)"' 2>/dev/null)
+        fi
+      fi
+      if [[ -z "$HIVE_LIST" ]]; then
+        HIVES_JSON=$(curl -sf "https://hive.kubestellar.io/api/registry" 2>/dev/null) || {
+          echo "ERROR: Could not reach hive.kubestellar.io"
+          echo "Set HIVE_HUB manually: export HIVE_HUB=wss://<hive>/contribute"
+          exit 1
+        }
+        HIVE_LIST=$(echo "$HIVES_JSON" | jq -r '.hives[] | select(.online==true) | "\(.id)|\(.name)"' 2>/dev/null)
+      fi
+      if [[ -z "$HIVE_LIST" ]]; then
+        echo "No hives available. Check https://hive.kubestellar.io"
+        exit 1
+      fi
+      echo "Your hives:"
+      echo ""
+      i=1
+      declare -a HIVE_IDS
+      while IFS='|' read -r hid hname; do
+        HIVE_IDS+=("$hid")
+        printf "  %d) %s (%s)\n" "$i" "$hname" "$hid"
+        i=$((i+1))
+      done <<< "$HIVE_LIST"
+      echo ""
+      read -p "Select a hive [1-$((i-1))]: " CHOICE
+      if [[ -z "$CHOICE" || "$CHOICE" -lt 1 || "$CHOICE" -gt $((i-1)) ]] 2>/dev/null; then
+        echo "Invalid selection."
+        exit 1
+      fi
+      SELECTED="${HIVE_IDS[$((CHOICE-1))]}"
+      if [[ "$SELECTED" == hosted-* ]]; then
+        export HIVE_HUB="wss://${SELECTED}.hive.kubestellar.io/contribute"
+      else
+        DASH_URL=$(echo "$HIVES_JSON" | jq -r --arg id "$SELECTED" '.hives[] | select(.id==$id) | .dashboardUrl' 2>/dev/null || echo "")
+        if [[ -n "$DASH_URL" ]]; then
+          DASH_URL=$(echo "$DASH_URL" | sed 's|^http://|ws://|;s|^https://|wss://|')
+          export HIVE_HUB="${DASH_URL}/contribute"
+        else
+          export HIVE_HUB="wss://${SELECTED}.hive.kubestellar.io/contribute"
+        fi
+      fi
+      echo ""
+      echo "Selected: ${HIVE_HUB}"
+      echo "TIP: Next time, run: export HIVE_HUB=${HIVE_HUB}"
+      echo ""
+    fi
+    mkdir -p "{{config_dir}}"
+    echo "=== Hive Contributor Setup (ClankeR) ==="
+    echo "✓ Preflight passed — {{backend}} CLI is ready. Proceeding to credential + registration."
+    echo ""
+
+    # ── Step 1: GitHub authentication ──
+    echo "── Step 1/2: GitHub Authentication ──"
+    if ! command -v gh &>/dev/null; then
+      echo "ERROR: gh CLI not found. Install: brew install gh"
+      exit 1
+    fi
+    if gh auth status &>/dev/null; then
+      GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+      echo "Already authenticated as: ${GH_USER}"
+    else
+      echo "Logging into GitHub..."
+      gh auth login --web --scopes "repo,read:org"
+      GH_USER=$(gh api user --jq '.login' 2>/dev/null || echo "")
+      echo "Authenticated as: ${GH_USER}"
+    fi
+    GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+    if [[ -n "$GH_TOKEN" ]]; then
+      echo "GH_TOKEN=${GH_TOKEN}" > "{{config_dir}}/gh-auth.env"
+      chmod 600 "{{config_dir}}/gh-auth.env"
+    fi
+    echo ""
+
+    # ── Step 2: Register with hive hub ──
+    echo "── Step 2/2: Hive Registration ──"
+    _HUB="${HIVE_HUB:-{{hive_hub}}}"
+    HUB_HTTP=$(echo "$_HUB" | sed 's|^wss://|https://|;s|^ws://|http://|;s|/contribute$||')
+    RESPONSE=$(curl -sf --max-time 15 -X POST "${HUB_HTTP}/api/contribute/register" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer ${GH_TOKEN}" \
+      -d "{\"github_username\": \"${GH_USER}\"}" 2>/dev/null) || {
+        echo "ERROR: Registration failed. Is the hub running at ${HUB_HTTP}?"
+        echo "  Check: curl -sf ${HUB_HTTP}/api/contribute/status"
+        exit 1
+    }
+    if ! echo "$RESPONSE" | jq empty 2>/dev/null; then
+      echo "ERROR: Hub returned invalid response: ${RESPONSE:0:200}"
+      exit 1
+    fi
+    TOKEN=$(echo "$RESPONSE" | jq -r '.registration_token')
+    CID=$(echo "$RESPONSE" | jq -r '.contributor_id')
+    MSG=$(echo "$RESPONSE" | jq -r '.message')
+    if [[ -z "$TOKEN" || "$TOKEN" == "null" ]]; then
+      if echo "$MSG" | grep -qi "already registered"; then
+        if [[ -f "{{config_dir}}/contributor.env" ]]; then
+          source "{{config_dir}}/contributor.env"
+          echo "Already registered — ${GH_USER} (${CONTRIBUTOR_ID:-unknown})"
+        else
+          echo "ERROR: Already registered but no local config found."
+          exit 1
+        fi
+      else
+        echo "ERROR: ${MSG:-No token received}"
+        exit 1
+      fi
+    else
+      cat > "{{config_dir}}/contributor.env" <<EOF
+    HIVE_REGISTRATION_TOKEN=${TOKEN}
+    HIVE_HUB=${_HUB}
+    CONTRIBUTOR_ID=${CID}
+    CONTRIBUTOR_USERNAME=${GH_USER}
+    AGENT_BACKEND={{backend}}
+    EOF
+    fi
+    echo "${MSG} — ${GH_USER} (${CID})"
+    echo ""
+
+    # ── {{backend}} CLI readiness was already verified in the preflight
+    # above, before the credential was written and before this registration
+    # ran (see #2543). Nothing left to check here — just finalize backend-
+    # specific local state.
+    echo "✓ {{backend}} CLI: verified during preflight."
 
     # Persist the LiteLLM endpoint (never the API key) for later runs
     if [[ "{{backend}}" == "litellm" && -f "{{config_dir}}/contributor.env" ]]; then
@@ -291,7 +328,8 @@ contribute-setup backend="claude": check-version
 # Usage: just contribute-hive              (container, default CLI from setup)
 #        just contribute-hive copilot      (container, copilot backend)
 #        just contribute-hive claude local  (native mode, claude)
-# Runtime: auto-detects docker then podman; force with HIVE_CONTAINER_RUNTIME=podman
+# Runtime: auto-detects docker then podman (discovery order, not posture —
+# see v2/docs/podman-rootless-ci.md); force with HIVE_CONTAINER_RUNTIME=podman
 contribute-hive backend="" mode="docker": check-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -428,6 +466,18 @@ contribute-hive backend="" mode="docker": check-version
       # docker, else podman. Podman gets --userns=keep-id (rootless UID
       # mapping so the container's dev user can read the mounted configs)
       # and SELinux-friendly volume labels (,Z).
+      #
+      # Posture (#2535, Option B — this is a documentation note, the
+      # detect order below is UNCHANGED): when both engines are present,
+      # Docker wins by discovery order, not by isolation posture. Docker's
+      # daemon here runs rootful — docker-group membership is effectively
+      # root on the host. Podman here runs rootless, in a user namespace.
+      # A contributor who wants rootless-by-default should set
+      # HIVE_CONTAINER_RUNTIME=podman explicitly; the page selector does
+      # the same. Rootless Podman handling is exercised by hand, not yet
+      # by CI — see v2/docs/podman-rootless-ci.md (#2535 Option C) for the
+      # test-intent seam. We are deliberately NOT re-ordering this detect
+      # to prefer Podman (that's Option A) until that CI coverage exists.
       RUNTIME="{{container_runtime}}"
       if [[ -z "$RUNTIME" ]]; then
         if command -v docker >/dev/null 2>&1; then RUNTIME=docker
