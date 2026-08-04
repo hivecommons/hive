@@ -51,6 +51,7 @@ type Config struct {
 	Ioscan     IoscanConfig     `yaml:"ioscan,omitempty" json:"ioscan,omitempty"`
 	Classifier ClassifierConfig `yaml:"classifier,omitempty" json:"classifier,omitempty"`
 	Planning   PlanningConfig   `yaml:"planning,omitempty" json:"planning,omitempty"`
+	Escalation EscalationConfig `yaml:"escalation,omitempty" json:"escalation,omitempty"`
 
 	// RemovedAgents are agent names an operator deliberately deleted. It is a
 	// TOMBSTONE list, and it exists because deletion had no durable record
@@ -3573,4 +3574,29 @@ func LabelsFilterPasses(labels []string, list []string, mode string) bool {
 		}
 		return true
 	}
+}
+
+// EscalationConfig tunes the fix-loop circuit breaker (pkg/escalation): after
+// Threshold distinct failed fix attempts on the same agent-authored PR, the
+// hub stops dispatching further fixes and escalates to a human with the raw
+// CI failure evidence.
+type EscalationConfig struct {
+	// Disabled turns the breaker off entirely (the zero value keeps it on —
+	// escalation is a safety net and must be opt-out, not opt-in).
+	Disabled bool `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+	// Threshold is the distinct-red-attempt count that triggers escalation.
+	// Zero means DefaultEscalationThreshold.
+	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+}
+
+// DefaultEscalationThreshold matches escalation.DefaultThreshold; duplicated
+// here (a constant, checked by test) to avoid a config→escalation import.
+const DefaultEscalationThreshold = 3
+
+// EffectiveThreshold resolves the configured threshold with its default.
+func (e EscalationConfig) EffectiveThreshold() int {
+	if e.Threshold > 0 {
+		return e.Threshold
+	}
+	return DefaultEscalationThreshold
 }

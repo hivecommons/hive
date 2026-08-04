@@ -785,6 +785,31 @@ ${_PRS_INLINE}"
   [ "$_ENUM_SLA" -gt 0 ] 2>/dev/null && _WORK_LIST="${_WORK_LIST}
 ⚠️ ${_ENUM_SLA} SLA VIOLATIONS (>30 min)"
 fi
+_FAILING_FILE="/var/run/hive-metrics/ci-failing.json"
+_FAILING_INLINE=""
+_ESCALATED_INLINE=""
+if [ -f "$_FAILING_FILE" ]; then
+  _FAILING_INLINE=$(python3 -c "
+import json
+d = json.load(open('$_FAILING_FILE'))
+for p in d.get('ci_failing', []):
+    if p.get('escalated'):
+        continue
+    checks = ','.join(p.get('failing_checks', [])[:4])
+    print(f\"  {p['repo']}#{p['number']} [{checks}] {p['title'][:60]}\")
+    ex = (p.get('excerpt') or '').strip()
+    if ex:
+        for line in ex.split(chr(10))[:3]:
+            print(f\"      ERROR: {line[:180]}\")
+" 2>/dev/null || echo "")
+  _ESCALATED_INLINE=$(python3 -c "
+import json
+d = json.load(open('$_FAILING_FILE'))
+for p in d.get('ci_failing', []):
+    if p.get('escalated'):
+        print(f\"  {p['repo']}#{p['number']} {p['title'][:60]}\")
+" 2>/dev/null || echo "")
+fi
 _MERGE_INLINE=""
 if [ -f "$_MERGE_FILE" ]; then
   _MERGE_COUNT=$(python3 -c "import json; print(json.load(open('$_MERGE_FILE')).get('count',0))" 2>/dev/null || echo 0)
@@ -817,7 +842,7 @@ fi
 SCANNER_MSG="[agent:scanner] [KICK] git pull /tmp/hive. ${_SCANNER_POLICY_INSTR}
 ${_GH_AUTH_INSTR}
 YOUR WORK LIST (pre-filtered — hold/ADOPTERS/drafts excluded, classified):
-${_WORK_LIST}${_CLUSTER_SECTION}${_MERGE_INLINE}
+${_WORK_LIST}${_CLUSTER_SECTION}${_MERGE_INLINE}$([ -n "$_FAILING_INLINE" ] && printf '\nCI-FAILING PRs (fix these — the ERROR lines are the RAW CI evidence, start from them, do NOT guess):\n%s' "$_FAILING_INLINE")$([ -n "$_ESCALATED_INLINE" ] && printf '\n🛑 ESCALATED (fix loop breaker tripped — do NOT open or push more fix PRs for these; a human owns them until the needs-human label is removed):\n%s' "$_ESCALATED_INLINE")
 ⛔ NEVER run gh issue list, gh pr list, gh search issues, or gh search prs — the work list above is your ONLY source. You may use gh issue view, gh pr view, gh pr merge, gh pr create on individual items.
 ⛔ NEVER post @copilot or @claude comments on issues. NEVER use gh issue comment to dispatch work. NEVER assign copilot-swe-agent[bot]. Posting @copilot comments does nothing and wastes cycles.
 ⛔ MERGE DISCIPLINE: You may ONLY merge PRs listed in the MERGE-READY section above. If no MERGE-READY section exists, merge NOTHING. NEVER merge a PR you created in this session — it must pass CI first and appear in a future kick's MERGE-READY list. Before merging, run 'gh pr checks <number> --repo <repo>' and verify every line shows 'pass' (ignore 'tide'). If ANY check is 'fail' or 'pending', do NOT merge — wait for the next kick.

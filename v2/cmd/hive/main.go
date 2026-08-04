@@ -36,6 +36,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/dashboard"
 	"github.com/kubestellar/hive/v2/pkg/defsrc"
 	"github.com/kubestellar/hive/v2/pkg/discord"
+	"github.com/kubestellar/hive/v2/pkg/escalation"
 	"github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/governor"
 	"github.com/kubestellar/hive/v2/pkg/hub"
@@ -4178,7 +4179,9 @@ func runEvalCycle(
 	// bounded ring in one cycle, and no I/O happens on this path.
 	recordEnumeratedIssues(dashSrv, actionable)
 
-	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, logger)
+	escalatedPRs := runEscalationSweep(ctx, cfg, ghClient, actionable, notifier, logger)
+
+	writeMergeEligible(actionable, actionable.Hold, cfg.Project.Org, escalatedPRs, logger)
 
 	shaResult, shaErr := ghClient.EnforceSHAHold(ctx, github.SHAHoldConfig{
 		PrimaryRepo:     cfg.Project.PrimaryRepo,
@@ -4953,6 +4956,106 @@ func persistState(agentMgr *agent.Manager, gov *governor.Governor, cfg *config.C
 	}
 }
 
+var (
+	escalationStoreOnce sync.Once
+	escalationStore     *escalation.Store
+)
+
+const escalationLedgerPath = "/data/metrics/fix-streaks.json"
+
+// runEscalationSweep folds this enumeration pass into the fix-loop breaker
+// ledger and fires the one-time escalation actions (evidence comment +
+// needs-human label + ntfy) for any agent-authored PR that just crossed the
+// threshold of distinct failed fix attempts. Returns the full set of
+// escalated PR keys so the work-list writers can flag them. Deterministic by
+// design: no agent judgment is involved in counting, evidence, or the
+// stop-order. Human-authored PRs are never escalated.
+func runEscalationSweep(
+	ctx context.Context,
+	cfg *config.Config,
+	ghClient *github.Client,
+	actionable *github.ActionableResult,
+	notifier *notify.Notifier,
+	logger *slog.Logger,
+) map[string]bool {
+	escalated := map[string]bool{}
+	if cfg.Escalation.Disabled || ghClient == nil || actionable == nil {
+		return escalated
+	}
+	escalationStoreOnce.Do(func() {
+		escalationStore = escalation.Load(escalationLedgerPath)
+	})
+
+	fullRepo := func(repo string) string {
+		if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
+			return cfg.Project.Org + "/" + repo
+		}
+		return repo
+	}
+	isAgentAuthor := func(author string) bool {
+		return author == cfg.Project.AIAuthor || strings.HasSuffix(author, "[bot]")
+	}
+
+	var obs []escalation.Observation
+	type prMeta struct{ checks []string }
+	meta := map[string]prMeta{}
+	for _, pr := range actionable.PRs.Items {
+		if !isAgentAuthor(pr.Author) {
+			continue
+		}
+		repo := fullRepo(pr.Repo)
+		obs = append(obs, escalation.Observation{
+			Repo:    repo,
+			Number:  pr.Number,
+			HeadSHA: pr.HeadSHA,
+			Red:     pr.CIStatus == "failure",
+			Excerpt: pr.CIFailureExcerpt,
+		})
+		meta[escalation.Key(repo, pr.Number)] = prMeta{checks: pr.FailingChecks}
+	}
+	results := escalationStore.Sweep(obs, cfg.Escalation.EffectiveThreshold())
+
+	for _, o := range obs {
+		key := escalation.Key(o.Repo, o.Number)
+		r, ok := results[key]
+		if !ok {
+			continue
+		}
+		if r.Escalated {
+			escalated[key] = true
+		}
+		if !r.NewlyEscala {
+			continue
+		}
+		escalated[key] = true
+		excerpt := o.Excerpt
+		if excerpt == "" {
+			excerpt = escalationStore.Excerpt(o.Repo, o.Number)
+		}
+		body := escalation.CommentBody(r.Attempts, meta[key].checks, excerpt)
+		if err := ghClient.CreateIssueComment(ctx, o.Repo, o.Number, body); err != nil {
+			// Retry next pass rather than marking escalated with no comment:
+			// the whole point is that the evidence reaches a human.
+			logger.Warn("escalation comment failed; will retry next pass",
+				"repo", o.Repo, "pr", o.Number, "error", err)
+			continue
+		}
+		if err := ghClient.AddLabels(ctx, o.Repo, o.Number, []string{escalation.NeedsHumanLabel}); err != nil {
+			logger.Warn("escalation label failed", "repo", o.Repo, "pr", o.Number, "error", err)
+		}
+		escalationStore.MarkEscalated(o.Repo, o.Number)
+		logger.Info("fix loop escalated to human",
+			"repo", o.Repo, "pr", o.Number, "attempts", r.Attempts,
+			"failing_checks", strings.Join(meta[key].checks, ","))
+		if notifier != nil {
+			notifier.Send("Fix loop escalated",
+				fmt.Sprintf("%s#%d red on %d fix attempts — needs a human (see PR comment for the raw error)", o.Repo, o.Number, r.Attempts),
+				notify.PriorityHigh)
+		}
+	}
+	return escalated
+}
+
 const mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 const ciFailingPath = "/var/run/hive-metrics/ci-failing.json"
 
@@ -5020,7 +5123,7 @@ func applyDuplicatePRGuard(
 	github.ApplyDuplicatePRGuard(ctx, ghClient, claimLedger, hiveIdentity(cfg), actionable, logger)
 }
 
-func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, logger *slog.Logger) {
+func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldResult, org string, escalatedPRs map[string]bool, logger *slog.Logger) {
 	holdSet := make(map[string]bool)
 	for _, h := range hold.Items {
 		key := fmt.Sprintf("%s/%d", h.Repo, h.Number)
@@ -5046,6 +5149,14 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		Title   string `json:"title"`
 		Author  string `json:"author"`
 		HeadSHA string `json:"head_sha,omitempty"`
+		// FailingChecks + Excerpt carry the raw CI evidence into the kick
+		// work list so fix agents see the actual error, not just "red".
+		FailingChecks []string `json:"failing_checks,omitempty"`
+		Excerpt       string   `json:"excerpt,omitempty"`
+		// Escalated marks PRs past the fix-loop breaker threshold: kick
+		// builders list them separately and agents must NOT dispatch more
+		// fix work for them.
+		Escalated bool `json:"escalated,omitempty"`
 	}
 
 	var eligible []eligiblePR
@@ -5065,11 +5176,14 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 
 		if pr.CIStatus == "failure" {
 			failing = append(failing, failingPR{
-				Number:  pr.Number,
-				Repo:    fullRepo,
-				Title:   pr.Title,
-				Author:  pr.Author,
-				HeadSHA: pr.HeadSHA,
+				Number:        pr.Number,
+				Repo:          fullRepo,
+				Title:         pr.Title,
+				Author:        pr.Author,
+				HeadSHA:       pr.HeadSHA,
+				FailingChecks: pr.FailingChecks,
+				Excerpt:       pr.CIFailureExcerpt,
+				Escalated:     escalatedPRs[escalation.Key(fullRepo, pr.Number)],
 			})
 			continue
 		}

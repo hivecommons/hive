@@ -93,6 +93,13 @@ type PullRequest struct {
 	Mergeable Mergeable `json:"mergeable"`
 	CIStatus  string    `json:"ci_status"`
 	HeadSHA   string    `json:"head_sha,omitempty"`
+	// FailingChecks names the completed check runs whose conclusion was
+	// failure/action_required. CIFailureExcerpt carries the raw error lines
+	// pulled from those runs' annotations — the evidence a fix agent (or an
+	// escalation comment) needs; "CI failed" alone left agents guessing for
+	// four days in the 2026-08 seedMission incident.
+	FailingChecks    []string `json:"failing_checks,omitempty"`
+	CIFailureExcerpt string   `json:"ci_failure_excerpt,omitempty"`
 }
 
 // Mergeable is a tri-state mergeability verdict for a pull request.
@@ -528,6 +535,8 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		hasFail := false
 		allDone := true
 		ciChecksFound := 0
+		var failingNames []string
+		var failingIDs []int64
 		for _, cr := range checkRuns.CheckRuns {
 			if cr.GetName() == "tide" {
 				continue
@@ -540,6 +549,8 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			conclusion := cr.GetConclusion()
 			if conclusion == "failure" || conclusion == "action_required" {
 				hasFail = true
+				failingNames = append(failingNames, cr.GetName())
+				failingIDs = append(failingIDs, cr.GetID())
 			}
 		}
 		if ciChecksFound == 0 {
@@ -549,12 +560,105 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		switch {
 		case hasFail:
 			prs[i].CIStatus = ciStatusFailure
+			prs[i].FailingChecks = failingNames
+			prs[i].CIFailureExcerpt = c.fetchFailureExcerpt(ctx, owner, repoName, failingIDs, failingNames)
 		case allDone:
 			prs[i].CIStatus = ciStatusSuccess
 		default:
 			prs[i].CIStatus = ciStatusPending
 		}
 	}
+}
+
+// Bounds for fetchFailureExcerpt: annotations are fetched for at most
+// excerptMaxRuns failing check runs, keeping at most excerptMaxLines lines and
+// excerptMaxChars characters total. Enough to carry a stack of real errors
+// into a kick prompt without flooding it.
+const (
+	excerptMaxRuns  = 2
+	excerptMaxLines = 8
+	excerptMaxChars = 900
+)
+
+// fetchFailureExcerpt pulls the raw error lines from the annotations of the
+// given failing check runs. Annotations capture workflow ##[error] lines (test
+// failures, compile errors), which is exactly the evidence fix agents never
+// see from a bare "CI failed" status. Works on GitHub and GHE through the
+// client's configured API base; on errors it degrades to "" — the excerpt is
+// an enrichment, never a gate.
+func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, runIDs []int64, runNames []string) string {
+	var lines []string
+	total := 0
+	seen := map[string]bool{}
+	for idx, id := range runIDs {
+		if idx >= excerptMaxRuns || len(lines) >= excerptMaxLines {
+			break
+		}
+		anns, _, err := c.client.Checks.ListCheckRunAnnotations(ctx, owner, repo, id, &gh.ListOptions{PerPage: 20})
+		if err != nil {
+			continue
+		}
+		name := ""
+		if idx < len(runNames) {
+			name = runNames[idx]
+		}
+		for _, a := range anns {
+			level := a.GetAnnotationLevel()
+			if level != "failure" && level != "warning" {
+				continue
+			}
+			msg := strings.TrimSpace(a.GetMessage())
+			if msg == "" || seen[msg] {
+				continue
+			}
+			seen[msg] = true
+			line := msg
+			if name != "" {
+				line = name + ": " + msg
+			}
+			if nl := strings.IndexByte(line, '\n'); nl > 0 {
+				line = line[:nl]
+			}
+			if len(line) > 300 {
+				line = line[:300]
+			}
+			if total+len(line) > excerptMaxChars {
+				return strings.Join(lines, "\n")
+			}
+			lines = append(lines, line)
+			total += len(line)
+			if len(lines) >= excerptMaxLines {
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// CreateIssueComment posts a comment on an issue or PR. The signature mirrors
+// forge.Forge.CreateIssueComment so escalation callers can swap in a neutral
+// forge adapter on non-GitHub hives without changing call sites.
+func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
+}
+
+// AddLabels adds labels to an issue or PR (no-op for an empty list), mirroring
+// forge.Forge.AddLabels for the same swap-in reason as CreateIssueComment.
+func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	if len(labels) == 0 {
+		return nil
+	}
+	owner, repoName := c.splitRepo(repo)
+	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
+	return err
 }
 
 func extractLabels(labels []*gh.Label) []string {
