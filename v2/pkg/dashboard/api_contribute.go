@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/beads"
+	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/github"
 )
 
@@ -229,6 +230,15 @@ func (s *Server) registerContributeRoutes() {
 	// Read-only ready-work QUEUE snapshot (the admissible issues waiting to be
 	// picked off). Also public; a JSON fallback for the SSE hello payload.
 	s.mux.HandleFunc("GET /api/contribute/queue", s.handleContributeQueue)
+	// Read-only OPPORTUNISTIC WORK list (#2592): a small, curated set of admissible
+	// issues NOT already at the front of the ready queue, ranked by a light recency
+	// heat proxy. Public like the other /api/contribute* reads; cheap to compute.
+	s.mux.HandleFunc("GET /api/contribute/opportunistic", s.handleContributeOpportunistic)
+	// Read-only HIVE LIMITS (#2595): the per-tier managed-queue rate limits + the
+	// viewer's own daily usage when we can identify them. Public read; the "you"
+	// block is resolved server-side from the session / X-Hive-User header (never a
+	// client-supplied username) so a viewer only ever sees their OWN usage.
+	s.mux.HandleFunc("GET /api/contribute/limits", s.handleContributeLimits)
 	// Operator priority override for the ready-work queue. Owner/read-write only —
 	// enforced IN-HANDLER via requireContributorWrite because the /api/contribute
 	// prefix is exempt from roleEnforcement's read-only block (see that helper).
@@ -818,6 +828,89 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
    inverse transform (see ccFlipQueue) then eased back to translateY(0). Subtle —
    an SRE ops tool, not a game — so no bounce/overshoot, just a smooth glide. */
 .cc-q-item.cc-q-flip{transition:transform .26s ease}
+/* ── Playlist-style queue controls (#2592 power-up) — Apple-Music register ──────
+   A clean search field on the queue card and a subtle per-row "⋯" menu with
+   move-to-top / move-to-position actions. Deliberately sober (an SRE ops tool):
+   muted greys, the page's blue accent only on focus/hover, no game-y flourish.
+   The search bar is read-only filtering so it shows for everyone; the per-row
+   ACTIONS live inside the row menu, which is only rendered for owner/read-write. */
+.cc-q-search{display:flex;align-items:center;gap:8px;padding:10px 20px;border-bottom:1px solid #21262d}
+.cc-q-search-ic{color:#6e7681;font-size:.85rem;flex-shrink:0;line-height:1}
+.cc-q-search input{flex:1;min-width:0;background:#0d1117;border:1px solid #30363d;border-radius:7px;color:#e6edf3;font:inherit;font-size:.82rem;padding:6px 10px;outline:none;transition:border-color .15s,box-shadow .15s}
+.cc-q-search input::placeholder{color:#6e7681}
+.cc-q-search input:focus{border-color:#1f6feb;box-shadow:0 0 0 3px rgba(31,111,235,.25)}
+.cc-q-search-clear{background:none;border:none;color:#6e7681;cursor:pointer;font-size:1rem;line-height:1;padding:2px 4px;display:none}
+.cc-q-search.has-text .cc-q-search-clear{display:inline-flex}
+.cc-q-search-clear:hover{color:#c9d1d9}
+.cc-q-filternote{padding:6px 20px;font-size:.72rem;color:#6e7681;border-bottom:1px solid #21262d}
+/* Per-row "⋯" context affordance — owner/read-write only (rendered only when
+   adminEnabled). Sits at the row's trailing edge, quiet until hover/open. */
+.cc-q-menu-wrap{position:relative;flex-shrink:0;margin-left:auto;align-self:center}
+.cc-q-menu-btn{background:none;border:none;color:#6e7681;cursor:pointer;font-size:1rem;line-height:1;padding:4px 6px;border-radius:6px}
+.cc-q-menu-btn:hover,.cc-q-menu-btn[aria-expanded=true]{color:#e6edf3;background:#21262d}
+.cc-q-menu{position:absolute;top:100%%;right:0;z-index:40;min-width:190px;background:#161b22;border:1px solid #30363d;border-radius:10px;box-shadow:0 8px 28px rgba(1,4,9,.55);padding:6px;display:none}
+.cc-q-menu.open{display:block}
+.cc-q-menu button.cc-q-act{display:flex;align-items:center;gap:8px;width:100%%;background:none;border:none;color:#c9d1d9;font:inherit;font-size:.82rem;text-align:left;padding:7px 9px;border-radius:6px;cursor:pointer}
+.cc-q-menu button.cc-q-act:hover{background:#21262d;color:#e6edf3}
+.cc-q-menu-ic{color:#6e7681;flex-shrink:0;width:16px;text-align:center}
+.cc-q-menu-sep{height:1px;background:#21262d;margin:5px 2px}
+.cc-q-moverow{display:flex;align-items:center;gap:6px;padding:7px 9px}
+.cc-q-moverow label{font-size:.78rem;color:#8b949e;flex:1}
+.cc-q-moverow input{width:56px;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.8rem;padding:4px 6px;outline:none}
+.cc-q-moverow input:focus{border-color:#1f6feb}
+.cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
+.cc-q-moverow button:hover{background:#388bfd}
+/* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
+   quiet: no loud "recommended!" chrome, just a short curated list with a subtle
+   heat dot and an unobtrusive "add to queue" affordance (owner/read-write only). */
+.opp-list{padding:2px 0}
+.opp-item{display:flex;align-items:flex-start;gap:10px;padding:11px 20px;border-bottom:1px solid #21262d}
+.opp-item:last-child{border-bottom:none}
+.opp-heat{flex-shrink:0;width:8px;height:8px;border-radius:50%%;margin-top:5px;background:#3fb950;box-shadow:0 0 0 3px rgba(63,185,80,.14)}
+.opp-heat.warm{background:#d29922;box-shadow:0 0 0 3px rgba(210,153,34,.14)}
+.opp-heat.cool{background:#6e7681;box-shadow:none}
+.opp-body{flex:1;min-width:0}
+.opp-repo{font-size:.72rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.opp-title{font-size:.86rem;color:#e6edf3;margin:2px 0 3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.opp-reason{font-size:.7rem;color:#6e7681}
+.opp-add{flex-shrink:0;align-self:center;background:none;border:1px solid #30363d;color:#c9d1d9;font:inherit;font-size:.74rem;font-weight:600;padding:5px 11px;border-radius:7px;cursor:pointer;transition:border-color .15s,color .15s,background .15s}
+.opp-add:hover{border-color:#1f6feb;color:#fff;background:rgba(31,111,235,.15)}
+.opp-add:disabled{opacity:.55;cursor:default;border-color:#30363d;color:#8b949e;background:none}
+/* ── End-of-queue + hive-settings (#2595) — turn a short queue into an intentional,
+   reassuring moment: a calm "all caught up" marker, the managed-queue rate limits
+   presented readably, and the viewer's own daily quota. Sober, ranked-family styling. */
+.cc-q-end{padding:18px 20px 6px;text-align:center}
+.cc-q-end-badge{display:inline-flex;align-items:center;gap:8px;font-size:.82rem;color:#8b949e;background:#0d1117;border:1px solid #21262d;border-radius:999px;padding:7px 16px}
+.cc-q-end-badge .cc-q-end-ic{color:#3fb950;font-size:.95rem;line-height:1}
+.hive-settings{margin:14px 20px 4px;background:#0d1117;border:1px solid #21262d;border-radius:10px;padding:14px 16px}
+.hive-settings h4{margin:0 0 4px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#8b949e}
+.hive-settings p.hs-lead{margin:0 0 10px;font-size:.82rem;color:#c9d1d9;line-height:1.5}
+.hs-tiers{display:flex;flex-wrap:wrap;gap:8px}
+.hs-tier{flex:1 1 130px;min-width:120px;background:#161b22;border:1px solid #30363d;border-radius:8px;padding:9px 11px}
+.hs-tier__name{font-size:.72rem;font-weight:600;text-transform:capitalize;color:#e6edf3;display:flex;align-items:center;gap:6px}
+.hs-tier__lim{font-size:.74rem;color:#8b949e;margin-top:3px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.hs-tier.is-you{border-color:#1f6feb;box-shadow:0 0 0 2px rgba(31,111,235,.18)}
+.hs-tier__youtag{font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#58a6ff}
+/* Daily quota widget — a slim progress meter, calm. Used at end-of-queue AND on
+   the Me card. Fill width is set inline from the REAL used/limit ratio. */
+.quota{margin-top:12px}
+.quota__head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:6px}
+.quota__lbl{font-size:.76rem;color:#8b949e}
+.quota__val{font-size:.82rem;color:#e6edf3;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.quota__bar{height:7px;border-radius:999px;background:#21262d;overflow:hidden}
+.quota__fill{height:100%%;border-radius:999px;background:linear-gradient(90deg,#1f6feb,#388bfd);transition:width .4s ease}
+.quota__fill.near{background:linear-gradient(90deg,#d29922,#e3b341)}
+.quota__fill.full{background:linear-gradient(90deg,#f85149,#ff7b72)}
+.quota__sub{font-size:.7rem;color:#6e7681;margin-top:5px}
+/* Me-card quota variant — sits inside a me-sec, so it inherits the card padding. */
+.me-quota .quota__lbl{color:#8b949e}
+@media(prefers-reduced-motion:reduce){.quota__fill{transition:none!important}}
+/* "File an issue on this page" link (#2594) — a subtle footer affordance present
+   on every tab. Quiet grey, matches the sober dashboard chrome; an outbound link. */
+.cc-page-foot{padding:26px 48px 34px;border-top:1px solid #21262d;margin-top:28px;display:flex;justify-content:center}
+.cc-report-link{display:inline-flex;align-items:center;gap:7px;color:#8b949e;font-size:.8rem;text-decoration:none;border:1px solid #30363d;border-radius:8px;padding:7px 14px;transition:color .15s,border-color .15s,background .15s}
+.cc-report-link:hover{color:#e6edf3;border-color:#484f58;background:#161b22}
+.cc-report-link .cc-report-ic{font-size:.9rem;line-height:1}
 /* The travelling token that flies from the queue to a clanker on task_assign */
 .cc-token{position:fixed;z-index:1200;pointer-events:none;background:#1f6feb;color:#fff;font-size:.72rem;font-weight:600;padding:6px 12px;border-radius:999px;box-shadow:0 6px 20px rgba(31,111,235,.5);white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;transition:transform .9s cubic-bezier(.5,0,.2,1),opacity .9s ease;will-change:transform,opacity}
 /* Dev-log — a running chat log of the development */
@@ -1429,8 +1522,30 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
 <div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<!-- Playlist-style SEARCH (#2592). A pure VIEW filter over the loaded queue
+     (repo / number / title / label, case-insensitive, live) — it never changes
+     the persisted order, only what is shown. Read-only, so visible to everyone. -->
+<div class="cc-q-search" id="cc-q-search-wrap">
+  <span class="cc-q-search-ic" aria-hidden="true">&#x1F50D;</span>
+  <input type="text" id="cc-q-search" placeholder="Filter queue by repo, number, title, or label&hellip;" aria-label="Filter the ready-work queue" autocomplete="off" spellcheck="false">
+  <button type="button" class="cc-q-search-clear" id="cc-q-search-clear" aria-label="Clear filter" title="Clear filter">&times;</button>
+</div>
+<div class="cc-q-filternote" id="cc-q-filternote" style="display:none"></div>
 <div class="cc-queue" id="cc-queue"><div class="ops-empty">Loading queue&hellip;</div></div>
+<!-- End-of-queue block (#2595): a calm "all caught up" marker + the hive's managed
+     rate-limit settings + the viewer's daily quota. Rendered by ccRenderQueueEnd()
+     only when the FULL queue is shown (no active filter). Hidden until hydrated. -->
+<div id="cc-q-end" style="display:none"></div>
 <p class="ops-note" style="padding:10px 20px 14px;margin:0">The stack of admissible issues waiting to be picked off &mdash; top is next up. When a clanker grabs one you&rsquo;ll see it fly from here to that clanker. Derived from this hive&rsquo;s actionable backlog; read-only.</p>
+</div>
+<!-- Opportunistic Work (#2592): a small, CALM discovery panel of admissible
+     issues NOT already at the top of the queue, ranked by a light recency heat
+     proxy. Read-only for everyone; the per-item "add to queue" pins it into the
+     operator order (owner/read-write only, rendered only when adminEnabled). -->
+<div class="ops-card" id="opp-card" style="margin-top:20px">
+<div class="ops-card-head"><h3>Opportunistic work</h3><span class="ops-card-count" id="opp-count"></span></div>
+<div class="opp-list" id="opp-list"><div class="ops-empty">Looking for fresh work&hellip;</div></div>
+<p class="ops-note" style="padding:10px 20px 14px;margin:0">A light, calm read of fresh, actionable issues beyond what&rsquo;s already lined up &mdash; surfaced by recency, not a heavy recommender. Owner/read-write operators can add one to the queue; it becomes offer-priority only and still obeys every admission filter.</p>
 </div>
 </div>
 </div>
@@ -1484,6 +1599,19 @@ update();  // initial paint: copy block + branded UI in sync from first load
 </div>
 </div>
 </div>
+<!-- "File an issue on this page" (#2594). A subtle footer present on EVERY tab.
+     Just an outbound link (CSP-safe, no fetch) to GitHub's new-issue form, pre-
+     filled TAB-AWARE with which /contribute surface and the current URL so the
+     maintainer knows exactly where the report is about. href is (re)built in JS on
+     load + tab change; a static fallback href points at the bare new-issue form so
+     the link works even if JS never runs. Public — everyone can file an issue. -->
+<footer class="cc-page-foot">
+  <a id="cc-report-link" class="cc-report-link" target="_blank" rel="noopener noreferrer"
+     href="https://github.com/kubestellar/hive/issues/new?labels=enhancement">
+    <span class="cc-report-ic" aria-hidden="true">&#x1F41B;</span>
+    <span>Report an issue with this page</span>
+  </a>
+</footer>
 <script>
 (function(){
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
@@ -1568,6 +1696,27 @@ function activateTab(t,push){
       try{window.history.pushState({tab:dp},'',url);}catch(e){/* pushState may throw on file:// etc. */}
     }
   }
+  // Keep the "file an issue" link TAB-AWARE: refresh its prefill so the report names
+  // the surface the user is now on. Guarded — a missing link never blocks tab logic.
+  try{ccUpdateReportLink(dp);}catch(e){}
+}
+// ── "File an issue on this page" (#2594) ───────────────────────────────────────
+// Build a github.com/kubestellar/hive/issues/new URL pre-filled with WHICH tab the
+// report is about + the current page URL, so the maintainer knows the exact
+// surface. Uses ONLY the existing enhancement label (never a non-existent
+// "contribute" label — the #2536/#2540 regression). Rebuilt on load + every tab
+// change. Pure link building; no fetch, CSP-safe.
+var REPORT_TAB_NAME={'tab-onboarding':'onboarding','tab-ops':'operations','tab-manage':'management','tab-leaderboard':'leaderboard'};
+function ccUpdateReportLink(dp){
+  var a=document.getElementById('cc-report-link');if(!a)return;
+  var tabName=REPORT_TAB_NAME[dp]||'onboarding';
+  var title='contribute: '+tabName+' — ';
+  var href='';try{href=window.location.href;}catch(e){href='';}
+  var body='Reporting an issue with the /contribute page.\n\nPage/tab: '+tabName+'\nURL: '+href+'\n\n---\n\nWhat happened / what would you like to see?\n';
+  var url='https://github.com/kubestellar/hive/issues/new?labels=enhancement'+
+    '&title='+encodeURIComponent(title)+
+    '&body='+encodeURIComponent(body);
+  a.setAttribute('href',url);
 }
 // Click never needs to be told to push (default push===true).
 tabs.forEach(function(t){t.addEventListener('click',function(){activateTab(t);});});
@@ -1593,6 +1742,9 @@ function tabFromLocation(){
   if(target)activateTab(target,false);
   // Surface the trusted-invite banner if we arrived via ?invite=<token> (#2598).
   try{initInviteBanner();}catch(e){console.error('initInviteBanner failed',e);}
+  // Build the tab-aware "file an issue" link on load even when we DON'T activate
+  // (bare /contribute = onboarding, no activateTab call). Guarded.
+  try{ccUpdateReportLink((target&&target.getAttribute('data-panel'))||'tab-onboarding');}catch(e){}
 })();
 // Back/Forward: re-derive the tab from the (now-updated) location and activate it
 // WITHOUT pushing — popstate already moved history, a push here would loop. When
@@ -1892,6 +2044,7 @@ function renderMeCard(mount,p){
     +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_with_pr||0)+'</div><div class="me-stat__lbl">With PR</div></div>'
     +'<div class="me-stat"><div class="lb-stat lb-primary">'+(p.tasks_failed||0)+'</div><div class="me-stat__lbl">Failed</div></div>'
   +'</div>'
+  +'<div class="me-sec"><div class="me-sec__title">Daily quota</div><div class="me-quota-wrap" id="me-quota-slot"><div class="ops-note" style="margin:0">Loading your quota&hellip;</div></div></div>'
   +'<div class="me-sec"><div class="me-sec__title">Milestones unlocked</div><div class="me-chips">'+meMilestoneChips(p)+'</div></div>'
   +'<div class="me-sec"><div class="me-sec__title">My hives</div><div class="me-hives">'+meHivesRows(p)+'</div></div>'
   +'<div class="me-sec"><div class="me-sec__title">Badges <span class="me-soon">Credly · coming soon</span></div><div class="me-chips">'+meCredlyChips(p)+'</div>'
@@ -1905,6 +2058,10 @@ function renderMeCard(mount,p){
   mount.innerHTML=html;
 
   wireMeInvite();
+  // #2595 daily-quota widget on the Me card: hydrate from the shared limits read
+  // (viewer's real used_day vs their tier's max_per_day). Load lazily if not cached.
+  if(typeof ccLimits!=='undefined'&&ccLimits!==null){try{ccRenderMeQuota();}catch(e){}}
+  else if(typeof ccLoadLimits==='function'){try{ccLoadLimits();}catch(e){}}
 
   var sel=document.getElementById('me-style-select');
   if(sel)sel.addEventListener('change',function(){
@@ -2435,40 +2592,163 @@ var ccLastAch=0;           // debounce achievement pops
 
 function ccQueueKey(q){return (q.repo||'')+'#'+(q.number||'');}
 
+// ccQueueSearch is the current VIEW filter text (lower-cased). It changes only what
+// is SHOWN — never the persisted order. Empty = show all. The reorder ACTIONS below
+// always operate on the FULL ccQueue by qkey, so acting on a filtered row moves the
+// RIGHT item in the real order, not the filtered index.
+var ccQueueSearch='';
+// ccQueueMatches: does an item pass the current search? Case-insensitive over repo,
+// number, title and every label — the fields the row shows.
+function ccQueueMatches(q){
+  if(!ccQueueSearch)return true;
+  var hay=((q.repo||'')+' #'+(q.number||'')+' '+(q.title||'')+' '+((q.labels||[]).join(' '))).toLowerCase();
+  return hay.indexOf(ccQueueSearch)>=0;
+}
 function ccRenderQueue(flip){
   var el=document.getElementById('cc-queue');if(!el)return;
   // Item count badge, same style as "My work"'s #work-count — kept in sync on
   // every render (initial load, SSE queue push, poll fallback, drag-reorder).
   var qc=document.getElementById('queue-count');
   if(qc)qc.textContent=ccQueue.length+' ready';
-  // flip=true (set only from the drag-drop handler) records each row's rect BEFORE
-  // the rebuild so ccFlipPlay can glide displaced rows to their new slots instead of
-  // a hard jump. Every other caller (initial load, SSE queue push, poll fallback)
-  // omits it and gets the plain re-render — no glide on data refreshes, only on the
-  // operator's own drag.
+  // flip=true (set only from the drag-drop / move handlers) records each row's rect
+  // BEFORE the rebuild so ccFlipPlay can glide displaced rows to their new slots
+  // instead of a hard jump. Every other caller (initial load, SSE queue push, poll
+  // fallback) omits it and gets the plain re-render — glide only on operator moves.
   var first=flip?ccFlipFirst(el):null;
   // Drag-reorder is an operator CONTROL: only owner/read-write viewers get grab
   // bars. adminEnabled is set true by initAdmin ONLY after /api/role reports owner
   // or read-write; a read/anon viewer never gets the handles and cannot reorder.
   // The server enforces the same boundary independently (403 on the order endpoint).
   el.classList.toggle('cc-q-draggable',!!adminEnabled);
-  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';return;}
+  if(!ccQueue.length){el.innerHTML='<div class="ops-empty">No work waiting &mdash; the backlog is clear or everything is in flight.</div>';ccUpdateFilterNote(0,0);return;}
+  var shown=0,total=ccQueue.length;
+  // Render over the FULL model, tagging each row with its TRUE position (i) so the
+  // shown index and the move-to menu reflect the real queue position even while a
+  // search filter hides other rows. Filtered-out rows are simply skipped from the
+  // HTML — the model is untouched, so a subsequent action still targets the right
+  // qkey in the full order. Drag-reorder is DISABLED while a filter is active (a
+  // drag over a partial list would be ambiguous); the ⋯ menu is the filtered path.
+  var filtering=!!ccQueueSearch;
   el.innerHTML=ccQueue.map(function(q,i){
+    if(!ccQueueMatches(q))return '';
+    shown++;
     // Show ALL of the issue's gh labels as pills (the backend already carries the
     // full label set). "My work" items render every label the same way, so the
     // queue is consistent with them. esc() guards each label.
     var labels=(q.labels&&q.labels.length)?('<div class="cc-q-labels">'+q.labels.map(function(l){return '<span class="pill pill-idle">'+esc(l)+'</span>';}).join('')+'</div>'):'';
     var next=(i===0)?'<span class="cc-q-next">next up</span>':'';
     // The grab bar is always in the DOM but only VISIBLE via CSS when the queue
-    // root carries .cc-q-draggable (owner/read-write). draggable is likewise gated
-    // so a read viewer's markup is inert. aria-hidden: purely a mouse/pointer affordance.
+    // root carries .cc-q-draggable (owner/read-write). draggable is disabled while a
+    // filter is active so a partial-list drop can't misplace an item. aria-hidden:
+    // purely a mouse/pointer affordance.
+    var canDrag=adminEnabled&&!filtering;
     var grip=adminEnabled?'<span class="cc-q-grip" aria-hidden="true" title="Drag to reprioritise">&#x283F;</span>':'';
-    return '<div class="cc-q-item"'+(adminEnabled?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
+    // Per-row "⋯" context menu — Apple-Music style. Owner/read-write ONLY (rendered
+    // only when adminEnabled). Carries move-to-top + move-to-position, both keyed on
+    // this row's qkey so they act on the right item in the FULL order.
+    var menu=adminEnabled?ccQueueMenuHTML(ccQueueKey(q),i,total):'';
+    return '<div class="cc-q-item"'+(canDrag?' draggable="true"':'')+' data-qkey="'+esc(ccQueueKey(q))+'">'+grip+'<span class="cc-q-idx">'+(i+1)+'</span>'+
       '<div class="cc-q-body"><div class="cc-q-repo">'+esc(q.repo||'')+'#'+esc(q.number||'')+'</div>'+
-      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+'</div>';
+      '<div class="cc-q-title" title="'+esc(q.title||'')+'">'+esc(q.title||'(untitled)')+'</div>'+labels+'</div>'+next+menu+'</div>';
   }).join('');
-  if(adminEnabled)ccBindQueueDrag(el);
+  if(filtering&&shown===0){el.innerHTML='<div class="ops-empty">No queued items match &ldquo;'+esc(ccQueueSearch)+'&rdquo;.</div>';}
+  ccUpdateFilterNote(shown,total);
+  // Drag binding only when NOT filtering (a partial list would drop ambiguously).
+  if(adminEnabled&&!filtering)ccBindQueueDrag(el);
+  if(adminEnabled)ccBindQueueMenus(el);
   if(first)ccFlipPlay(el,first);
+  // End-of-queue block (#2595): the "all caught up" marker + hive settings + quota.
+  // Only when the full list is shown (a filtered view isn't "the end of the queue").
+  ccRenderQueueEnd(!filtering);
+}
+// ccQueueMenuHTML renders the per-row ⋯ menu markup (owner/read-write only). pos is
+// the row's ZERO-based position in the full queue; total is the queue length. The
+// move-to-position input is pre-filled with the row's current 1-based position.
+function ccQueueMenuHTML(key,pos,total){
+  var atTop=(pos===0);
+  return '<span class="cc-q-menu-wrap">'+
+    '<button type="button" class="cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
+    '<div class="cc-q-menu" role="menu">'+
+      '<button type="button" class="cc-q-act" role="menuitem" data-act="top" data-qkey="'+esc(key)+'"'+(atTop?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B06;</span>Move to top</button>'+
+      '<div class="cc-q-menu-sep"></div>'+
+      '<div class="cc-q-moverow">'+
+        '<label for="mv-'+esc(key)+'">Move to&nbsp;#</label>'+
+        '<input type="number" id="mv-'+esc(key)+'" min="1" max="'+total+'" value="'+(pos+1)+'" data-qkey="'+esc(key)+'" aria-label="Target position">'+
+        '<button type="button" class="cc-q-act-go" data-qkey="'+esc(key)+'">Go</button>'+
+      '</div>'+
+    '</div>'+
+  '</span>';
+}
+// ccUpdateFilterNote shows a small "showing N of M" line while a filter is active,
+// and hides it when the filter is clear. Purely informational.
+function ccUpdateFilterNote(shown,total){
+  var n=document.getElementById('cc-q-filternote');if(!n)return;
+  if(!ccQueueSearch){n.style.display='none';n.textContent='';return;}
+  n.style.display='';
+  n.textContent='Showing '+shown+' of '+total+' — filter is a view only; the queue order is unchanged.';
+}
+// ── Per-row ⋯ menu wiring (owner/read-write only) ──────────────────────────────
+// A single open menu at a time; clicking the ⋯ toggles it, clicking elsewhere or
+// pressing Escape closes it. Actions read data-qkey so they target the right item
+// in the FULL ccQueue regardless of any active search filter.
+function ccCloseQueueMenus(){
+  var open=document.querySelectorAll('.cc-q-menu.open');
+  for(var i=0;i<open.length;i++)open[i].classList.remove('open');
+  var btns=document.querySelectorAll('.cc-q-menu-btn[aria-expanded=true]');
+  for(var j=0;j<btns.length;j++)btns[j].setAttribute('aria-expanded','false');
+}
+function ccBindQueueMenus(root){
+  var btns=root.querySelectorAll('.cc-q-menu-btn');
+  for(var i=0;i<btns.length;i++){(function(btn){
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      var menu=btn.parentNode.querySelector('.cc-q-menu');
+      var isOpen=menu.classList.contains('open');
+      ccCloseQueueMenus();
+      if(!isOpen){menu.classList.add('open');btn.setAttribute('aria-expanded','true');}
+    });
+  })(btns[i]);}
+  var acts=root.querySelectorAll('.cc-q-act[data-act=top]');
+  for(var a=0;a<acts.length;a++){(function(act){
+    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccMoveToTop(act.getAttribute('data-qkey'));});
+  })(acts[a]);}
+  var gos=root.querySelectorAll('.cc-q-act-go');
+  for(var g=0;g<gos.length;g++){(function(go){
+    var key=go.getAttribute('data-qkey');
+    var input=root.querySelector('#mv-'+cssEscId(key));
+    function apply(){ccCloseQueueMenus();ccMoveToPosition(key,input?parseInt(input.value,10):NaN);}
+    go.addEventListener('click',function(e){e.stopPropagation();apply();});
+    if(input)input.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();apply();}});
+  })(gos[g]);}
+}
+// cssEscId escapes a qkey for use in a querySelector id lookup (the key contains
+// '/' and '#'). Prefer CSS.escape when present; fall back to a manual escape.
+function cssEscId(id){
+  var raw='mv-'+id;
+  if(window.CSS&&CSS.escape)return CSS.escape(raw);
+  return raw.replace(/([^a-zA-Z0-9_-])/g,'\\$1');
+}
+// ── Move-to-top / move-to-position (playlist actions) ──────────────────────────
+// Both operate on the FULL ccQueue by qkey (never the filtered index), reorder the
+// model, re-render with the FLIP glide, and persist the SAME ContributeQueueOrder
+// via the existing PUT endpoint — so all four controls (drag, search+act, top,
+// position) write the one authoritative order and only change OFFER PRIORITY.
+function ccQueueIndexOf(key){
+  for(var i=0;i<ccQueue.length;i++){if(ccQueueKey(ccQueue[i])===key)return i;}
+  return -1;
+}
+function ccMoveToTop(key){ccMoveToPosition(key,1);}
+function ccMoveToPosition(key,n){
+  var from=ccQueueIndexOf(key);if(from<0)return;
+  // Validate N (1..len). Clamp rather than reject so an out-of-range value lands at
+  // the nearest valid edge instead of silently no-op'ing.
+  if(isNaN(n))return;
+  if(n<1)n=1;if(n>ccQueue.length)n=ccQueue.length;
+  var to=n-1;if(to===from)return;
+  var moved=ccQueue.splice(from,1)[0];
+  ccQueue.splice(to,0,moved);
+  ccRenderQueue(true); // FLIP glide so the row visibly travels to its new slot.
+  ccPersistQueueOrder();
 }
 
 // ── Operator drag-reorder (grab bars) — owner/read-write only ──────────────────
@@ -2807,6 +3087,11 @@ function ccStart(){
   // current even when the SSE stream delivers nothing (hosted spokes). SSE, when it
   // works, layers live updates on top via the shared, deduped activity store.
   try{ccPollActivity();}catch(e){console.error('activity poll init failed',e);}
+  // Wire the playlist-style search filter and start the (light) opportunistic-work
+  // poll. Both are independent of the SSE lifecycle: a throw here must not block the
+  // live queue stream, so each is guarded.
+  try{ccInitQueueSearch();}catch(e){console.error('queue search init failed',e);}
+  try{ccStartOpportunistic();}catch(e){console.error('opportunistic init failed',e);}
   if(!('EventSource' in window)){ccSetLive('poll');ccQueuePoll();return;}
   function connect(){
     ccSetLive('connecting');
@@ -2828,6 +3113,200 @@ function ccStart(){
   }
   connect();
 }
+// ── Playlist SEARCH wiring (#2592) ─────────────────────────────────────────────
+// Live, case-insensitive VIEW filter. Updates ccQueueSearch and re-renders; it does
+// NOT touch ccQueue's order, so clearing restores the full list unchanged. Guarded
+// so a missing node never throws.
+function ccInitQueueSearch(){
+  var input=document.getElementById('cc-q-search');
+  var wrap=document.getElementById('cc-q-search-wrap');
+  var clear=document.getElementById('cc-q-search-clear');
+  if(!input)return;
+  input.addEventListener('input',function(){
+    ccQueueSearch=input.value.trim().toLowerCase();
+    if(wrap)wrap.classList.toggle('has-text',!!input.value);
+    ccRenderQueue();
+  });
+  if(clear)clear.addEventListener('click',function(){
+    input.value='';ccQueueSearch='';if(wrap)wrap.classList.remove('has-text');
+    ccRenderQueue();input.focus();
+  });
+  // Escape clears the filter (and closes any open row menu).
+  input.addEventListener('keydown',function(e){if(e.key==='Escape'&&input.value){input.value='';ccQueueSearch='';if(wrap)wrap.classList.remove('has-text');ccRenderQueue();}});
+}
+
+// ── Opportunistic Work (#2592): fetch, render, add-to-queue ─────────────────────
+// A light poll of the read-only discovery endpoint. Calm cadence (30s) — this is a
+// chill panel, not a live ticker. Each item's "add to queue" pins it to the FRONT
+// of ContributeQueueOrder via the SAME PUT endpoint the queue controls use; if the
+// item is not currently admissible the server simply won't offer it, and we surface
+// that gracefully rather than pretending it's queued.
+var ccOppItems=[];
+var ccOppTimer=null;
+function ccStartOpportunistic(){
+  ccOppPoll();
+}
+function ccOppPoll(){
+  fetch('/api/contribute/opportunistic').then(function(r){return r.json();}).then(function(d){
+    ccOppItems=(d&&d.opportunistic)||[];
+    ccRenderOpportunistic();
+  }).catch(function(){/* leave the last render; a transient failure self-heals next poll */});
+  var tab=document.getElementById('tab-ops');
+  if(tab&&tab.classList.contains('active'))ccOppTimer=setTimeout(ccOppPoll,30000);
+}
+// heatClass buckets the light heat score into a calm 3-step dot (hot/warm/cool).
+// Thresholds are gentle — this is a mood indicator, not a precise gauge.
+function ccOppHeatClass(h){h=h||0;if(h>=6)return '';if(h>=3)return 'warm';return 'cool';}
+function ccRenderOpportunistic(){
+  var el=document.getElementById('opp-list');if(!el)return;
+  var cnt=document.getElementById('opp-count');
+  if(cnt)cnt.textContent=ccOppItems.length?(ccOppItems.length+' found'):'';
+  if(!ccOppItems.length){el.innerHTML='<div class="ops-empty">Nothing fresh to surface right now &mdash; the backlog is quiet.</div>';return;}
+  el.innerHTML=ccOppItems.map(function(o){
+    var key=(o.repo||'')+'#'+(o.number||'');
+    var reason=o.reason?('<div class="opp-reason">'+esc(o.reason)+'</div>'):'';
+    // "Add to queue" is an owner/read-write ACTION — rendered only when adminEnabled.
+    // A read/anon viewer sees the item but no add control (server also 403s the PUT).
+    var add=adminEnabled?('<button type="button" class="opp-add" data-oppkey="'+esc(key)+'" title="Add to the top of the ready-work queue">Add to queue</button>'):'';
+    return '<div class="opp-item">'+
+      '<span class="opp-heat '+ccOppHeatClass(o.heat)+'" aria-hidden="true"></span>'+
+      '<div class="opp-body"><div class="opp-repo">'+esc(key)+'</div>'+
+      '<div class="opp-title" title="'+esc(o.title||'')+'">'+esc(o.title||'(untitled)')+'</div>'+reason+'</div>'+
+      add+'</div>';
+  }).join('');
+  if(adminEnabled)ccBindOppAdd(el);
+}
+function ccBindOppAdd(root){
+  var btns=root.querySelectorAll('.opp-add');
+  for(var i=0;i<btns.length;i++){(function(btn){
+    btn.addEventListener('click',function(){ccOppAddToQueue(btn.getAttribute('data-oppkey'),btn);});
+  })(btns[i]);}
+}
+// ccOppAddToQueue pins an opportunistic item to the FRONT of the persisted order.
+// It builds the new order = [key, ...existing order minus key] and PUTs it through
+// the same endpoint. On success it nudges the queue to refresh so the item appears
+// (if admissible). If the item is not currently admissible it won't show in the
+// queue — we tell the operator so rather than implying it was force-queued.
+function ccOppAddToQueue(key,btn){
+  if(!key)return;
+  // Current authoritative order = the live queue's keys (the server stores exactly
+  // this on every reorder). Prepend the new key, drop any existing copy.
+  var order=[key];
+  for(var i=0;i<ccQueue.length;i++){var k=ccQueueKey(ccQueue[i]);if(k!==key)order.push(k);}
+  if(btn){btn.disabled=true;btn.textContent='Adding…';}
+  fetch('/api/contribute/queue/order',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({order:order})})
+    .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
+    .then(function(){
+      // Refresh the queue snapshot so a now-admissible item surfaces at the top.
+      return fetch('/api/contribute/queue').then(function(r){return r.json();});
+    })
+    .then(function(d){
+      if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}
+      var inQueue=ccQueueIndexOf(key)>=0;
+      if(btn){
+        if(inQueue){btn.textContent='Added ✓';}
+        // Admissible-but-filtered: pinned in the order, but not offered right now.
+        else{btn.textContent='Pinned (not admissible yet)';btn.title='Pinned to the queue order, but this item is not admissible right now (cooldown/filter/in-flight), so it is not offered. It will surface when it becomes admissible.';}
+      }
+    })
+    .catch(function(){if(btn){btn.disabled=false;btn.textContent='Add to queue';}});
+}
+
+// ── Hive settings / rate limits + daily quota (#2595) ──────────────────────────
+// A read of the managed-queue's per-tier rate limits + the viewer's own daily
+// usage. Cached after first load (limits change rarely); the me-card and the
+// end-of-queue block both render from it. Public read — everyone sees the tier
+// table; the "you" quota block appears only when the viewer is identified.
+var ccLimits=null;
+function ccLoadLimits(cb){
+  fetch('/api/contribute/limits').then(function(r){return r.json();}).then(function(d){
+    ccLimits=d||{};
+    if(cb)try{cb();}catch(e){}
+    // Refresh any already-rendered surfaces now that we have the data.
+    try{ccRenderQueueEnd(!ccQueueSearch);}catch(e){}
+    try{ccRenderMeQuota();}catch(e){}
+  }).catch(function(){/* leave ccLimits null; surfaces degrade quietly */});
+}
+// tierLabel — capitalised tier name for display.
+function ccTierLabel(t){t=String(t||'');return t?(t.charAt(0).toUpperCase()+t.slice(1)):'';}
+// limNum renders a limit value, showing "unlimited" for the 0 (== no cap) sentinel.
+function ccLimNum(n){n=n||0;return n>0?String(n):'unlimited';}
+// ccLimitsLead builds the human-friendly "managed queue" sentence from real tiers.
+function ccLimitsLead(){
+  if(!ccLimits||!ccLimits.tiers||!ccLimits.tiers.length)return '';
+  var by={};ccLimits.tiers.forEach(function(t){by[t.tier]=t;});
+  var parts=[];
+  ['newcomer','contributor','trusted'].forEach(function(name){
+    if(by[name]&&by[name].max_per_hour>0)parts.push(ccTierLabel(name)+'s get '+by[name].max_per_hour+'/hour');
+  });
+  if(!parts.length)return 'This hive runs a managed queue with trust-based rate limits.';
+  return 'This hive runs a managed queue: '+parts.join(', ')+' — rate limits scale with your trust tier, so it stays fair, not spammy.';
+}
+// ccTierTableHTML renders the per-tier limit cards, highlighting the viewer's tier.
+function ccTierTableHTML(){
+  if(!ccLimits||!ccLimits.tiers||!ccLimits.tiers.length)return '';
+  var youTier=(ccLimits.you&&ccLimits.you.tier)||'';
+  return '<div class="hs-tiers">'+ccLimits.tiers.map(function(t){
+    var isYou=(t.tier===youTier);
+    return '<div class="hs-tier'+(isYou?' is-you':'')+'">'+
+      '<div class="hs-tier__name">'+esc(ccTierLabel(t.tier))+(isYou?' <span class="hs-tier__youtag">you</span>':'')+'</div>'+
+      '<div class="hs-tier__lim">'+ccLimNum(t.max_per_hour)+'/hr · '+ccLimNum(t.max_per_day)+'/day</div>'+
+    '</div>';
+  }).join('')+'</div>';
+}
+// ccQuotaHTML renders the daily-quota meter from the viewer's REAL used_day count
+// vs their tier's max_per_day. variant: '' (end-of-queue) or 'me-quota' (me-card).
+// Returns '' when we have no identified viewer or no daily cap (unlimited tiers).
+function ccQuotaHTML(variant){
+  var you=ccLimits&&ccLimits.you;
+  if(!you)return '';
+  var max=you.max_per_day||0;
+  var used=(typeof you.used_day==='number')?you.used_day:0;
+  if(max<=0){
+    // Unlimited tier — no meter, just an honest note.
+    return '<div class="quota '+(variant||'')+'"><div class="quota__head"><span class="quota__lbl">Your daily usage ('+esc(ccTierLabel(you.tier))+')</span><span class="quota__val">'+used+' today · no daily cap</span></div></div>';
+  }
+  var pct=Math.max(0,Math.min(100,Math.round(used/max*100)));
+  var cls=pct>=100?'full':(pct>=80?'near':'');
+  var remaining=Math.max(0,max-used);
+  return '<div class="quota '+(variant||'')+'">'+
+    '<div class="quota__head"><span class="quota__lbl">Your daily quota ('+esc(ccTierLabel(you.tier))+' set)</span><span class="quota__val">'+used+' / '+max+' tasks</span></div>'+
+    '<div class="quota__bar"><div class="quota__fill '+cls+'" style="width:'+pct+'%%"></div></div>'+
+    '<div class="quota__sub">'+(remaining>0?(remaining+' left in your allowance today.'):'You&rsquo;ve used your daily allowance — it refreshes on a rolling 24h window.')+'</div>'+
+  '</div>';
+}
+// ccRenderQueueEnd paints the end-of-queue block (#2595). show=false (a filter is
+// active) hides it — a partial view isn't "the end". Loads limits lazily on first
+// need. The block always includes the calm "caught up" marker + hive settings;
+// the quota meter is added only for an identified viewer.
+function ccRenderQueueEnd(show){
+  var el=document.getElementById('cc-q-end');if(!el)return;
+  if(!show){el.style.display='none';return;}
+  if(ccLimits===null){ccLoadLimits();/* will re-call on load */}
+  el.style.display='';
+  var caughtUp='<div class="cc-q-end"><span class="cc-q-end-badge"><span class="cc-q-end-ic" aria-hidden="true">&#x2713;</span>End of queue reached &mdash; you&rsquo;re all caught up</span></div>';
+  var settings='';
+  if(ccLimits&&ccLimits.tiers&&ccLimits.tiers.length){
+    settings='<div class="hive-settings"><h4>Managed queue &amp; rate limits</h4>'+
+      '<p class="hs-lead">'+esc(ccLimitsLead())+'</p>'+
+      ccTierTableHTML()+
+      ccQuotaHTML('')+
+    '</div>';
+  }
+  el.innerHTML=caughtUp+settings;
+}
+// ccRenderMeQuota injects the daily-quota widget into the Me card (#2595) if the
+// card is mounted and we have the viewer's quota. Idempotent — replaces any prior
+// widget. Called after the me-card renders and after limits load.
+function ccRenderMeQuota(){
+  var slot=document.getElementById('me-quota-slot');if(!slot)return;
+  var html=ccQuotaHTML('me-quota');
+  slot.innerHTML=html||'<div class="ops-note" style="margin:0">Ship a task to start tracking your daily quota.</div>';
+}
+
+// ── Global menu-dismiss: click outside or Escape closes any open row menu ───────
+document.addEventListener('click',function(){ccCloseQueueMenus();});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')ccCloseQueueMenus();});
 })();
 </script>
 <script>
@@ -3219,6 +3698,99 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 		queue = s.contributeHub.ReadyQueue(readyQueueDefaultLimit)
 	}
 	jsonResponse(w, map[string]any{"queue": queue})
+}
+
+// handleContributeOpportunistic serves the read-only OPPORTUNISTIC WORK list
+// (#2592): a small, curated set of admissible issues surfaced by a light recency
+// heat proxy (see OpportunisticWork). GET only, PUBLIC (the /api/contribute prefix
+// is exempt from the read-only block, and this is a read with no side effects), so
+// anonymous viewers can SEE the discovery list. The "add to queue" ACTION goes
+// through the existing owner/read-write queue-order endpoint, not this read.
+func (s *Server) handleContributeOpportunistic(w http.ResponseWriter, r *http.Request) {
+	items := []OpportunisticItem{}
+	if s.contributeHub != nil {
+		items = s.contributeHub.OpportunisticWork(opportunisticDefaultLimit)
+	}
+	jsonResponse(w, map[string]any{"opportunistic": items})
+}
+
+// tierLimitView is one tier's managed-queue caps, rendered readably by the UI.
+type tierLimitView struct {
+	Tier          string `json:"tier"`
+	MaxPerHour    int    `json:"max_per_hour"`
+	MaxPerDay     int    `json:"max_per_day"`
+	MaxConcurrent int    `json:"max_concurrent"`
+}
+
+// limitsTierOrder is the trust progression, so the UI lists tiers newcomer→advisor
+// rather than in Go map iteration order (non-deterministic).
+var limitsTierOrder = []string{"newcomer", "contributor", "trusted", "advisor"}
+
+// handleContributeLimits serves the hive's per-tier rate limits (#2595) plus the
+// VIEWER's own daily/hourly usage when we can identify them. This makes the managed
+// queue's trust-based rate limiting visible and reassuring — real config values only
+// (Config.Hub.TierLimits, enforced in selectTask). GET only, PUBLIC (read, no side
+// effects). The "you" block is resolved server-side from the session / X-Hive-User
+// header — never a client param — so a viewer only ever sees their OWN usage; an
+// anonymous viewer gets the tier table with no "you" block.
+func (s *Server) handleContributeLimits(w http.ResponseWriter, r *http.Request) {
+	var tiers []tierLimitView
+	limitMap := map[string]config.TierRate{}
+	if s.deps != nil && s.deps.Config != nil && s.deps.Config.Hub.TierLimits != nil {
+		limitMap = s.deps.Config.Hub.TierLimits
+	}
+	for _, t := range limitsTierOrder {
+		if tr, ok := limitMap[t]; ok {
+			tiers = append(tiers, tierLimitView{Tier: t, MaxPerHour: tr.MaxPerHour, MaxPerDay: tr.MaxPerDay, MaxConcurrent: tr.MaxConcurrent})
+		}
+	}
+	for name, tr := range limitMap {
+		known := false
+		for _, t := range limitsTierOrder {
+			if t == name {
+				known = true
+				break
+			}
+		}
+		if !known {
+			tiers = append(tiers, tierLimitView{Tier: name, MaxPerHour: tr.MaxPerHour, MaxPerDay: tr.MaxPerDay, MaxConcurrent: tr.MaxConcurrent})
+		}
+	}
+
+	resp := map[string]any{"tiers": tiers}
+
+	username := ""
+	if sess := s.sessionFromRequest(r); sess != nil {
+		username = sess.Username
+	} else if hu := r.Header.Get("X-Hive-User"); hu != "" {
+		username = hu
+	}
+	if username != "" {
+		profile := findContributor(username)
+		tier := "newcomer"
+		identity := username
+		if profile != nil {
+			if profile.TrustTier != "" {
+				tier = profile.TrustTier
+			}
+			if profile.ContributorID != "" {
+				identity = profile.ContributorID
+			}
+		}
+		you := map[string]any{"username": username, "tier": tier}
+		if s.contributeHub != nil {
+			hour, day := s.contributeHub.rateWindowCounts(identity, time.Now())
+			you["used_hour"] = hour
+			you["used_day"] = day
+		}
+		if tr, ok := limitMap[tier]; ok {
+			you["max_per_hour"] = tr.MaxPerHour
+			you["max_per_day"] = tr.MaxPerDay
+			you["max_concurrent"] = tr.MaxConcurrent
+		}
+		resp["you"] = you
+	}
+	jsonResponse(w, resp)
 }
 
 // maxQueueOrderKeys caps how many priority keys the operator override may carry.
