@@ -49,6 +49,9 @@ func loadCurrentVisualWorkContract(normal *config.Config) (integrated.Config, bo
 }
 
 func loadAuthoritativeVisualWorkContract() (integrated.Config, bool, error) {
+	if err := validateHostedIntegratedStateRoot(); err != nil {
+		return integrated.Config{}, false, err
+	}
 	stateDir := strings.TrimSpace(os.Getenv("HIVE_STATE_DIR"))
 	exists := stateDir != ""
 	var err error

@@ -171,6 +171,21 @@ func (manager *normalVisualRuntimeManager) Ensure(_ context.Context) (bool, erro
 	return true, nil
 }
 
+// ActiveBinding reports the one in-process Visual Hive runtime without
+// attempting reconciliation. Hosted preflight uses this read-only view to
+// prove that setup will not overlap an already-owned controller.
+func (manager *normalVisualRuntimeManager) ActiveBinding() (normalVisualRuntimeBinding, bool) {
+	if manager == nil {
+		return normalVisualRuntimeBinding{}, false
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.active == nil {
+		return normalVisualRuntimeBinding{}, false
+	}
+	return manager.active.Binding(), true
+}
+
 func (manager *normalVisualRuntimeManager) Trigger(ctx context.Context) error {
 	active, err := manager.Ensure(ctx)
 	if err != nil {

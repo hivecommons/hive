@@ -455,7 +455,8 @@ func TestDashboardLifecycleFinalizationReceiptDoesNotRecreateDeletedState(t *tes
 	}
 	plan := strings.Repeat("f", 64)
 	calls := 0
-	result, err := runDashboardLifecycleMutation(stateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
+	ledgerStateDir := dashboardLifecycleLedgerStateDir(stateDir, "uninstall-finalize")
+	result, err := runDashboardLifecycleMutation(ledgerStateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
 		calls++
 		if err := os.RemoveAll(stateDir); err != nil {
 			return nil, err
@@ -468,7 +469,7 @@ func TestDashboardLifecycleFinalizationReceiptDoesNotRecreateDeletedState(t *tes
 	if _, err := os.Stat(stateDir); !os.IsNotExist(err) {
 		t.Fatalf("finalization receipt recreated deleted state: err=%v", err)
 	}
-	replay, err := runDashboardLifecycleMutation(stateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
+	replay, err := runDashboardLifecycleMutation(ledgerStateDir, "uninstall-cycle-a-finalize-001", "uninstall-finalize", plan, func() (map[string]any, error) {
 		calls++
 		return nil, errors.New("replayed finalization")
 	})

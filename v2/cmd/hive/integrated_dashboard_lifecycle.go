@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -17,7 +18,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kubestellar/hive/v2/pkg/config"
 	"github.com/kubestellar/hive/v2/pkg/dashboard"
+	hivegithub "github.com/kubestellar/hive/v2/pkg/github"
 	"github.com/kubestellar/hive/v2/pkg/integrated"
 	"github.com/kubestellar/hive/v2/pkg/visualhive/normalservice"
 )
@@ -25,10 +28,13 @@ import (
 const dashboardLifecycleLedgerSchema = "hive.dashboard-integrated-requests.v1"
 
 var (
-	dashboardLifecycleCLIRunner        = runDashboardLifecycleCLI
-	dashboardLifecycleTrigger          = triggerDashboardVisualCycle
-	dashboardLifecyclePlanRetirement   = planDashboardRepairRetirement
-	dashboardLifecycleRetireRepair     = retireDashboardRepair
+	dashboardLifecycleCLIRunner      = runDashboardLifecycleCLI
+	dashboardLifecycleTrigger        = triggerDashboardVisualCycle
+	dashboardLifecyclePlanRetirement = planDashboardRepairRetirement
+	dashboardLifecycleRetireRepair   = retireDashboardRepair
+	dashboardLifecycleGitHubClient   = func(token string) *hivegithub.Client {
+		return hivegithub.NewClient(token, "", nil, slog.New(slog.NewTextHandler(io.Discard, nil)), "")
+	}
 	dashboardLifecycleStopNormalVisual func(context.Context) error
 	dashboardLifecycleNormalBeadsDirs  []string
 	dashboardLifecycleMu               sync.Mutex
@@ -52,11 +58,27 @@ type dashboardLifecycleRequestRecord struct {
 
 func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	stateDir := ""
+	if request.Operation == "status" || request.Operation == "doctor" {
+		if _, exists, contractErr := loadAuthoritativeVisualWorkContract(); contractErr == nil && !exists {
+			return dashboardIntegratedUninstalledRead(ctx, request, token)
+		}
+	}
+	if request.Action == "setup-reset" || request.Action == "setup-reset-finalize" {
+		var err error
+		stateDir, err = dashboardSetupResetStateDir(request.Repository)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if request.Operation == "control-apply" {
 		candidateStateDir, candidateErr := dashboardSetupStateDir(request.Repository)
+		if request.Action == "setup-reset" || request.Action == "setup-reset-finalize" {
+			candidateStateDir, candidateErr = dashboardSetupResetStateDir(request.Repository)
+		}
 		if candidateErr == nil {
+			ledgerStateDir := dashboardLifecycleLedgerStateDir(candidateStateDir, request.Action)
 			replay, terminal, recoverStale, replayErr := replayDashboardLifecycleMutation(
-				candidateStateDir, request.RequestID, request.Action, request.ExpectedPlanSHA256,
+				ledgerStateDir, request.RequestID, request.Action, request.ExpectedPlanSHA256,
 			)
 			if replayErr != nil || terminal {
 				return replay, replayErr
@@ -78,6 +100,9 @@ func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.Inte
 		result, _, runErr := dashboardLifecycleCLIRunner(ctx, []string{
 			request.Operation, "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
 		}, token, request.Operation == "doctor")
+		if result != nil {
+			augmentDashboardIntegratedRead(result, request.Repository, stateDir)
+		}
 		return result, runErr
 	case "baseline-plan":
 		result, _, runErr := dashboardLifecycleCLIRunner(ctx, []string{
@@ -92,6 +117,75 @@ func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.Inte
 		return runDashboardIntegratedControl(ctx, stateDir, request, token)
 	default:
 		return nil, fmt.Errorf("unsupported integrated dashboard operation %q", request.Operation)
+	}
+}
+
+func dashboardIntegratedUninstalledRead(ctx context.Context, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
+	stateDir, err := dashboardSetupResetStateDir(request.Repository)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{
+		"schema_version": "hive.dashboard-integrated-" + request.Operation + ".v1",
+		"repository":     request.Repository, "installed": false, "production_ready": false,
+		"orphaned_setup": map[string]any{"detected": false, "recovery_available": false},
+	}
+	if store, storeErr := integrated.NewStore(filepath.Join(stateDir, "integrated")); storeErr == nil {
+		if intent, exists, intentErr := store.LoadUninstallIntent(); intentErr == nil && exists {
+			result["orphaned_setup"] = map[string]any{
+				"detected": true, "recovery_available": true, "finalization_available": true,
+				"phase": intent.Phase, "cleanup_branch": intent.Branch, "cleanup_commit_sha": intent.CleanupCommitSHA,
+				"pr_number": intent.PRNumber, "pr_url": intent.PRURL, "diff_digest": intent.DiffDigest,
+			}
+			augmentDashboardIntegratedRead(result, request.Repository, stateDir)
+			return result, nil
+		}
+	}
+	plan, planErr := integrated.PlanOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{
+		Repository: request.Repository, StateDir: stateDir, GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
+	})
+	if planErr == nil {
+		result["orphaned_setup"] = map[string]any{
+			"detected": true, "recovery_available": true, "setup_pr_number": plan.SetupPRNumber,
+			"setup_pr_url": plan.SetupPRURL, "current_head_sha": plan.CurrentHeadSHA, "plan_sha256": plan.PlanSHA256,
+		}
+	} else {
+		digest := sha256.Sum256([]byte(planErr.Error()))
+		result["orphaned_setup"] = map[string]any{
+			"detected": false, "recovery_available": false, "inspection_reference": hex.EncodeToString(digest[:])[:12],
+		}
+	}
+	augmentDashboardIntegratedRead(result, request.Repository, stateDir)
+	return result, nil
+}
+
+func augmentDashboardIntegratedRead(result map[string]any, repository, stateDir string) {
+	result["selected_state_root"] = filepath.Clean(integratedStateRoot())
+	result["selected_state_dir"] = filepath.Clean(stateDir)
+	validation := map[string]any{
+		"hosted": config.IsKubernetesPod() && strings.TrimSpace(os.Getenv("HIVE_ID")) != "",
+		"valid":  true,
+	}
+	if err := validateHostedIntegratedStateRoot(); err != nil {
+		digest := sha256.Sum256([]byte(err.Error()))
+		validation["valid"] = false
+		validation["error_reference"] = hex.EncodeToString(digest[:])[:12]
+	}
+	result["persistence_validation"] = validation
+	if receipt, exists, err := loadDashboardPreflightReceipt(repository); err == nil && exists {
+		result["hosted_preflight"] = map[string]any{
+			"ready": receipt.ExpiresAt.After(dashboardPreflightNow()), "binding_sha256": receipt.BindingSHA256,
+			"state_root": receipt.StateRoot, "visual_hive_ref": receipt.VisualHiveRef,
+			"tested_at": receipt.TestedAt, "expires_at": receipt.ExpiresAt,
+		}
+	} else if err != nil {
+		digest := sha256.Sum256([]byte(err.Error()))
+		result["hosted_preflight"] = map[string]any{"ready": false, "error_reference": hex.EncodeToString(digest[:])[:12]}
+	} else {
+		result["hosted_preflight"] = map[string]any{"ready": false}
+	}
+	if _, exists := result["orphaned_setup"]; !exists {
+		result["orphaned_setup"] = map[string]any{"detected": false, "recovery_available": false}
 	}
 }
 
@@ -125,6 +219,9 @@ func dashboardIntegratedStateDir(repository, action string) (string, error) {
 func dashboardIntegratedControlPlan(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
 	if request.Action == "" {
 		return nil, errors.New("integrated control plan requires an exact action")
+	}
+	if request.Action == "setup-reset" || request.Action == "setup-reset-finalize" {
+		return dashboardOrphanedSetupResetPlan(ctx, stateDir, request, token)
 	}
 	status, _, err := dashboardLifecycleCLIRunner(ctx, []string{
 		"status", "--state-dir", stateDir, "--json", "--github-token-env", "HIVE_GITHUB_TOKEN",
@@ -212,8 +309,9 @@ func dashboardStableControlStatus(status map[string]any) map[string]any {
 }
 
 func runDashboardIntegratedControl(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
+	ledgerStateDir := dashboardLifecycleLedgerStateDir(stateDir, request.Action)
 	replay, terminal, recoverStale, err := replayDashboardLifecycleMutation(
-		stateDir, request.RequestID, request.Action, request.ExpectedPlanSHA256,
+		ledgerStateDir, request.RequestID, request.Action, request.ExpectedPlanSHA256,
 	)
 	if err != nil || terminal {
 		return replay, err
@@ -237,7 +335,7 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 			authorizedRetirement = &value
 		}
 	}
-	return runDashboardLifecycleMutation(stateDir, request.RequestID, request.Action, planSHA256, func() (map[string]any, error) {
+	return runDashboardLifecycleMutation(ledgerStateDir, request.RequestID, request.Action, planSHA256, func() (map[string]any, error) {
 		switch request.Action {
 		case "trigger":
 			triggerErr := dashboardLifecycleTrigger(ctx)
@@ -306,10 +404,111 @@ func runDashboardIntegratedControl(ctx context.Context, stateDir string, request
 				result = reconcileDashboardSetupRuntime(ctx, result)
 			}
 			return result, runErr
+		case "setup-reset":
+			result, resetErr := integrated.PrepareOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{
+				Repository: request.Repository, StateDir: stateDir, GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
+			}, request.ExpectedPlanSHA256)
+			if resetErr != nil {
+				return nil, resetErr
+			}
+			encoded, encodeErr := json.Marshal(result)
+			if encodeErr != nil {
+				return nil, encodeErr
+			}
+			var response map[string]any
+			if err := json.Unmarshal(encoded, &response); err != nil {
+				return nil, err
+			}
+			response["schema_version"] = "hive.dashboard-orphaned-setup-reset.v1"
+			response["request_id"] = request.RequestID
+			return response, nil
+		case "setup-reset-finalize":
+			result, finalizeErr := integrated.RunManagement(ctx, integrated.ManagementOptions{
+				Operation: integrated.OperationUninstall, StateDir: stateDir, DeleteState: true,
+				GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
+			})
+			if finalizeErr != nil {
+				return nil, finalizeErr
+			}
+			if !result.StateDeleted || !result.CleanupVerified {
+				return nil, errors.New("orphaned setup reset finalization did not prove exact cleanup and state deletion")
+			}
+			if err := removeDashboardPreflightReceipt(request.Repository); err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"schema_version": "hive.dashboard-orphaned-setup-reset-finalize.v1", "repository": request.Repository,
+				"request_id": request.RequestID, "cleanup_verified": true, "state_deleted": true,
+			}, nil
 		default:
 			return nil, fmt.Errorf("unsupported integrated control action %q", request.Action)
 		}
 	})
+}
+
+func dashboardSetupResetStateDir(repository string) (string, error) {
+	stateDir, err := dashboardSetupStateDir(repository)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(stateDir, "recovery", "orphaned-setup-reset"), nil
+}
+
+// Finalization deletes its operational state directory. Its request receipt
+// must live in a persistent sibling so saving the completed receipt cannot
+// silently recreate the state that was just proven deleted.
+func dashboardLifecycleLedgerStateDir(stateDir, action string) string {
+	switch action {
+	case "uninstall-finalize", "setup-reset-finalize":
+		return filepath.Clean(stateDir) + ".dashboard-finalization"
+	default:
+		return stateDir
+	}
+}
+
+func dashboardOrphanedSetupResetPlan(ctx context.Context, stateDir string, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
+	if request.Action == "setup-reset-finalize" {
+		store, storeErr := integrated.NewStore(filepath.Join(stateDir, "integrated"))
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		intent, exists, intentErr := store.LoadUninstallIntent()
+		if intentErr != nil || !exists {
+			if intentErr == nil {
+				intentErr = errors.New("no exact setup-reset cleanup is pending")
+			}
+			return nil, intentErr
+		}
+		binding := map[string]any{
+			"schema_version": "hive.dashboard-orphaned-setup-reset-finalize-plan.v1", "repository": request.Repository,
+			"operation": request.Action, "request_id": request.RequestID, "cleanup_branch": intent.Branch,
+			"cleanup_commit_sha": intent.CleanupCommitSHA, "pr_number": intent.PRNumber, "diff_digest": intent.DiffDigest,
+		}
+		data, marshalErr := json.Marshal(binding)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		digest := sha256.Sum256(data)
+		binding["plan_sha256"] = hex.EncodeToString(digest[:])
+		return binding, nil
+	}
+	plan, err := integrated.PlanOrphanedSetupReset(ctx, integrated.OrphanSetupResetOptions{
+		Repository: request.Repository, StateDir: stateDir, GitHub: dashboardLifecycleGitHubClient(token), GitTransportToken: token,
+	})
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return nil, err
+	}
+	var response map[string]any
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, err
+	}
+	response["operation"] = request.Action
+	response["request_id"] = request.RequestID
+	return response, nil
 }
 
 func planDashboardRepairRetirement(ctx context.Context) (normalservice.RepairRetirementPlan, error) {

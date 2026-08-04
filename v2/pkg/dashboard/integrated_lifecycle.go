@@ -183,9 +183,9 @@ func (s *Server) handleIntegratedControl(w http.ResponseWriter, r *http.Request,
 
 func validateIntegratedControlRequest(request integratedControlRequest, apply bool) error {
 	switch request.Operation {
-	case "trigger", "pause", "resume", "repair-retire", "uninstall", "uninstall-finalize", "uninstall-cancel":
+	case "trigger", "pause", "resume", "repair-retire", "uninstall", "uninstall-finalize", "uninstall-cancel", "setup-reset", "setup-reset-finalize":
 	default:
-		return errors.New("operation must be trigger, pause, resume, repair-retire, uninstall, uninstall-finalize, or uninstall-cancel")
+		return errors.New("operation must be trigger, pause, resume, repair-retire, uninstall, uninstall-finalize, uninstall-cancel, setup-reset, or setup-reset-finalize")
 	}
 	if !integratedRequestIDPattern.MatchString(request.RequestID) {
 		return errors.New("request_id must be 8-128 characters using letters, digits, dot, underscore, colon, or hyphen")

@@ -22,6 +22,11 @@ import (
 var dashboardSetupCLIRunner = runDashboardSetupCLI
 
 func runDashboardIntegratedSetup(ctx context.Context, request dashboard.IntegratedSetupRequest, token string) (map[string]any, error) {
+	if request.ExpectedPlanSHA256 != "" {
+		if err := requireDashboardPreflightReceipt(ctx, request); err != nil {
+			return nil, err
+		}
+	}
 	baseArgs := []string{
 		"setup", "--json",
 		"--repo", request.Repository,
