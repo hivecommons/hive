@@ -18,7 +18,8 @@ import (
 )
 
 func TestRunDashboardIntegratedPreflightBindsPersistentRuntimeAndModel(t *testing.T) {
-	useTemporaryHostedHiveState(t)
+	parent := useTemporaryHostedHiveState(t)
+	t.Setenv("HIVE_STATE_DIR", filepath.Join(parent, "integrated", "repos", "owner-repository"))
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/repos/owner/repository" {
 			http.Error(writer, `{"message":"not found"}`, http.StatusNotFound)
@@ -68,6 +69,21 @@ func TestRunDashboardIntegratedPreflightBindsPersistentRuntimeAndModel(t *testin
 	if stateErr != nil || err != nil || !exists || receipt.ProviderModel != "gpt-5.6-sol" || receipt.StateRoot != expectedState ||
 		receipt.HiveCommit != strings.Repeat("1", 40) || receipt.ImageDigest != "sha256:"+strings.Repeat("6", 64) {
 		t.Fatalf("preflight receipt=%+v exists=%t err=%v", receipt, exists, err)
+	}
+	entries, err := os.ReadDir(expectedState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("hosted preflight contaminated fresh repository state: %+v", entries)
+	}
+	receiptPath, err := dashboardPreflightReceiptPath(integratedStateRoot(), "owner/repository")
+	if err != nil {
+		t.Fatal(err)
+	}
+	relativeToState, relativeErr := filepath.Rel(expectedState, receiptPath)
+	if relativeErr == nil && relativeToState != ".." && !strings.HasPrefix(relativeToState, ".."+string(filepath.Separator)) && !filepath.IsAbs(relativeToState) {
+		t.Fatalf("hosted preflight receipt remained inside repository state: %q", receiptPath)
 	}
 }
 

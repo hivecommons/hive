@@ -335,13 +335,25 @@ func preflightMaxActiveIssues(request dashboard.IntegratedPreflightRequest) int 
 	return *request.MaxActiveIssues
 }
 
-func dashboardPreflightReceiptPath(root, repository string) string {
-	digest := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(repository))))
-	return filepath.Join(root, "preflight", hex.EncodeToString(digest[:8])+".json")
+func dashboardPreflightReceiptPath(root, repository string) (string, error) {
+	ledgerPath, err := dashboardLifecycleLedgerPath(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve hosted readiness preflight receipt: %w", err)
+	}
+	stateKey := strings.TrimSuffix(filepath.Base(ledgerPath), filepath.Ext(ledgerPath))
+	repositoryDigest := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(repository))))
+	return filepath.Join(
+		filepath.Dir(ledgerPath),
+		"preflight",
+		stateKey+"-"+hex.EncodeToString(repositoryDigest[:8])+".json",
+	), nil
 }
 
 func saveDashboardPreflightReceipt(root string, receipt dashboardPreflightReceipt) error {
-	path := dashboardPreflightReceiptPath(root, receipt.Repository)
+	path, err := dashboardPreflightReceiptPath(root, receipt.Repository)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create integrated preflight receipt directory: %w", err)
 	}
@@ -378,7 +390,10 @@ func saveDashboardPreflightReceipt(root string, receipt dashboardPreflightReceip
 }
 
 func removeDashboardPreflightReceipt(repository string) error {
-	path := dashboardPreflightReceiptPath(integratedStateRoot(), repository)
+	path, pathErr := dashboardPreflightReceiptPath(integratedStateRoot(), repository)
+	if pathErr != nil {
+		return pathErr
+	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("retire hosted readiness preflight receipt: %w", err)
 	}
@@ -386,7 +401,10 @@ func removeDashboardPreflightReceipt(repository string) error {
 }
 
 func loadDashboardPreflightReceipt(repository string) (dashboardPreflightReceipt, bool, error) {
-	path := dashboardPreflightReceiptPath(integratedStateRoot(), repository)
+	path, pathErr := dashboardPreflightReceiptPath(integratedStateRoot(), repository)
+	if pathErr != nil {
+		return dashboardPreflightReceipt{}, false, pathErr
+	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return dashboardPreflightReceipt{}, false, nil
@@ -412,7 +430,10 @@ func requireDashboardPreflightReceipt(ctx context.Context, request dashboard.Int
 	if !(config.IsKubernetesPod() && strings.TrimSpace(os.Getenv("HIVE_ID")) != "") {
 		return nil
 	}
-	path := dashboardPreflightReceiptPath(integratedStateRoot(), request.Repository)
+	path, pathErr := dashboardPreflightReceiptPath(integratedStateRoot(), request.Repository)
+	if pathErr != nil {
+		return pathErr
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("hosted setup requires a successful readiness preflight: %w", err)
