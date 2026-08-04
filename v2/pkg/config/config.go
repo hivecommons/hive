@@ -587,6 +587,25 @@ type GovernorConfig struct {
 	// gateway named "litellm" is synthesized from the legacy LiteLLM block above
 	// so existing hives keep working with zero config change. See ResolveGateway.
 	Gateways []GatewayConfig `yaml:"gateways"`
+	// AttributionTrailer controls the VISIBLE invocation-attribution line
+	// ("— hive: agent=… backend=… model=…") appended at creation time to the
+	// body of PRs the hive opens for agents (the PR-request watcher) and issues
+	// the hive itself creates. It is a *bool so absent (nil) is distinct from an
+	// explicit false: default is ON (see AttributionTrailerEnabled), matching
+	// the github.app_authored_prs convention. It gates ONLY the visible trailer
+	// — the audit-log entry for every such creation is written unconditionally,
+	// so turning this off never removes the operator's ability to answer "which
+	// backend/model produced this PR?".
+	AttributionTrailer *bool `yaml:"attribution_trailer,omitempty"`
+}
+
+// AttributionTrailerEnabled reports whether the visible attribution trailer on
+// hive-created PRs/issues is on for this hive. Default ON: a hive that says
+// nothing gets the trailer; set `governor.attribution_trailer: false` to hide
+// it. The audit-log entry for each creation is unconditional and is NOT gated
+// by this.
+func (g *GovernorConfig) AttributionTrailerEnabled() bool {
+	return g.AttributionTrailer == nil || *g.AttributionTrailer
 }
 
 // GatewayConfig is one named, OpenAI-compatible model gateway. A hive may

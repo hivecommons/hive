@@ -117,6 +117,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("PUT /api/config/governor/notifications", s.handleGovernorNotifications)
 	s.mux.HandleFunc("PUT /api/config/governor/health", s.handleGovernorHealth)
 	s.mux.HandleFunc("PUT /api/config/governor/logging", s.handleGovernorLogging)
+	s.mux.HandleFunc("PUT /api/config/governor/attribution", s.handleGovernorAttribution)
 	s.mux.HandleFunc("PUT /api/config/governor/hub", s.handleGovernorHub)
 	s.mux.HandleFunc("PUT /api/config/governor/litellm", s.handleGovernorLiteLLM)
 	s.mux.HandleFunc("PUT /api/config/governor/trajectory", s.handleGovernorTrajectory)
@@ -3524,6 +3525,11 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		},
 		"litellm":    litellmSectionResponse(&cfg.Governor.LiteLLM),
 		"trajectory": trajectorySectionResponse(&cfg.Governor),
+		"attribution": map[string]interface{}{
+			// Effective value (default ON when unset) — the UI renders the
+			// switch from this, so an untouched hive shows it on.
+			"attributionTrailer": cfg.Governor.AttributionTrailerEnabled(),
+		},
 		"hub": map[string]interface{}{
 			"enabled": cfg.Hub.Enabled,
 			// namespace is read-only, runtime-derived display info (never
@@ -3894,6 +3900,30 @@ func (s *Server) handleGovernorLogging(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to persist config after logging update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_logging", auditDetail("section", "logging"), "")
+	s.refreshAndPersist()
+	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// handleGovernorAttribution updates the hive-wide attribution-trailer toggle.
+// One boolean, applied to ALL agents (no per-agent granularity): it gates ONLY
+// the visible "— hive: …" trailer appended to hive-created PRs and issues.
+// The audit-log entry for every such creation is written unconditionally, so
+// turning the trailer off never loses the invocation record.
+func (s *Server) handleGovernorAttribution(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AttributionTrailer *bool `json:"attributionTrailer"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if body.AttributionTrailer != nil {
+		s.deps.Config.Governor.AttributionTrailer = body.AttributionTrailer
+	}
+	if err := s.saveConfig(); err != nil {
+		s.logger.Error("failed to persist config after attribution update", "error", err)
+	}
+	s.auditFromRequest(r, "config_governor_attribution", auditDetail("section", "attribution"), "")
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
 }

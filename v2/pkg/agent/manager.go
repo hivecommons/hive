@@ -26,11 +26,11 @@ import (
 type ProcessState string
 
 const (
-	StateIdle     ProcessState = "idle"
-	StateRunning  ProcessState = "running"
-	StateStopped  ProcessState = "stopped"
-	StateFailed   ProcessState = "failed"
-	StatePaused   ProcessState = "paused"
+	StateIdle    ProcessState = "idle"
+	StateRunning ProcessState = "running"
+	StateStopped ProcessState = "stopped"
+	StateFailed  ProcessState = "failed"
+	StatePaused  ProcessState = "paused"
 )
 
 type KickRecord struct {
@@ -49,40 +49,40 @@ const (
 )
 
 type AgentProcess struct {
-	Name            string
-	ID              string
-	Config          config.AgentConfig
-	State           ProcessState
-	PID             int
-	UID             int
-	StartedAt       *time.Time
-	LastKick        *time.Time
-	Paused          bool
-	PausedAt        time.Time
-	PausedReason    string
-	PausedTrigger   string
-	PinnedCLI       string
-	PinnedModel     string
-	ModelOverride   string
-	BackendOverride string
-	RestartCount    int
-	OutputBuffer    *RingBuffer
-	lastPaneCapture []string
-	paneMu          sync.RWMutex
-	KickHistory     []KickRecord
-	LastKickMessage    string
-	KickRefused        bool
-	KickRefusalReason  string
-	LaunchedMode       AgentMode
-	HasLaunched     bool
-	tmuxSession     string
-	tmuxSocket      string
-	cancel context.CancelFunc
-	forceRelaunch       bool
-	BootstrapOverride   string // when set, replaces buildBootstrapPrompt output
-	LastError           string // captured from bare copilot diagnostic launch
-	lastTokenRestart    time.Time // cooldown for auto-restart after token detection
-	NeedsLogin          bool   // true when pane shows a login prompt
+	Name              string
+	ID                string
+	Config            config.AgentConfig
+	State             ProcessState
+	PID               int
+	UID               int
+	StartedAt         *time.Time
+	LastKick          *time.Time
+	Paused            bool
+	PausedAt          time.Time
+	PausedReason      string
+	PausedTrigger     string
+	PinnedCLI         string
+	PinnedModel       string
+	ModelOverride     string
+	BackendOverride   string
+	RestartCount      int
+	OutputBuffer      *RingBuffer
+	lastPaneCapture   []string
+	paneMu            sync.RWMutex
+	KickHistory       []KickRecord
+	LastKickMessage   string
+	KickRefused       bool
+	KickRefusalReason string
+	LaunchedMode      AgentMode
+	HasLaunched       bool
+	tmuxSession       string
+	tmuxSocket        string
+	cancel            context.CancelFunc
+	forceRelaunch     bool
+	BootstrapOverride string    // when set, replaces buildBootstrapPrompt output
+	LastError         string    // captured from bare copilot diagnostic launch
+	lastTokenRestart  time.Time // cooldown for auto-restart after token detection
+	NeedsLogin        bool      // true when pane shows a login prompt
 	// LastPaneChange is when the agent's tmux pane content last CHANGED, as
 	// observed by the 3s pane poller. It is the spoke's only evidence of an
 	// agent actually doing something: State says what the manager intends,
@@ -91,17 +91,17 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange      time.Time
-	consentSeenAt       time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss  time.Time // watcher: cooldown for re-running dismissInferencePrompts
-	lastInferKickAt     time.Time // stall watchdog: when the last kick was delivered to an inference agent
-	lastInferKickPane   string    // stall watchdog: hash of the visible pane just after kick delivery
-	stallNudgeSent      bool      // stall watchdog: at most one nudge per kick
-	StallNudges         int       // total post-kick stall nudges sent (surfaced to the dashboard)
-	launchGen           int       // increments per launch; stale deliverStartupKick goroutines check it and drop
-	lastInferKickMarks  int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
-	actionNudgeSent     bool      // no-action watchdog: at most one action nudge per kick
-	ActionNudges        int       // total prose-only-response action nudges sent (surfaced to the dashboard)
+	LastPaneChange     time.Time
+	consentSeenAt      time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	lastInferKickAt    time.Time // stall watchdog: when the last kick was delivered to an inference agent
+	lastInferKickPane  string    // stall watchdog: hash of the visible pane just after kick delivery
+	stallNudgeSent     bool      // stall watchdog: at most one nudge per kick
+	StallNudges        int       // total post-kick stall nudges sent (surfaced to the dashboard)
+	launchGen          int       // increments per launch; stale deliverStartupKick goroutines check it and drop
+	lastInferKickMarks int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	actionNudgeSent    bool      // no-action watchdog: at most one action nudge per kick
+	ActionNudges       int       // total prose-only-response action nudges sent (surfaced to the dashboard)
 
 	// awaitingBobKey marks an agent that launchInTmux parked in StateFailed
 	// for the single, fully-recoverable reason "bob backend with no API key".
@@ -529,11 +529,11 @@ func NewManager(agents map[string]config.AgentConfig, logger *slog.Logger, proje
 			}
 		}
 		m.agents[name] = &AgentProcess{
-			Name:         name,
-			ID:           agentID,
-			Config:       cfg,
-			State:        StateStopped,
-			UID:          agentUID,
+			Name:   name,
+			ID:     agentID,
+			Config: cfg,
+			State:  StateStopped,
+			UID:    agentUID,
 			// Restore a persisted operator pause so a restart/upgrade
 			// doesn't silently un-pause the agent.
 			Paused:       cfg.Paused,
@@ -929,7 +929,6 @@ func paneShowsConsentScreen(pane string) bool {
 	}
 	return false
 }
-
 
 // backendDefersStartupKick reports whether a backend's bootstrap prompt is
 // delivered AFTER the CLI is ready (deliverStartupKick) instead of being
@@ -1702,7 +1701,6 @@ func (m *Manager) findACMMFragments() []string {
 	return files
 }
 
-
 func (m *Manager) buildProjectPreamble(agent *AgentProcess) string {
 	p := m.project
 	if p.Org == "" || len(p.Repos) == 0 {
@@ -2066,7 +2064,6 @@ func findOverlap(prev, curr []string) int {
 	}
 	return -1
 }
-
 
 // paneShowsInputPrompt reports whether the pane content shows a CLI input
 // prompt that is ready to accept a kick.
@@ -3301,13 +3298,13 @@ func (m *Manager) tmuxSendKeysForAgent(agent *AgentProcess, keys ...string) {
 }
 
 const (
-	clearBeforeKickDelay  = 2 * time.Second
-	enterCount            = 3
-	enterDelay            = 300 * time.Millisecond
-	textToEnterDelay      = 1 * time.Second
-	chunkSize             = 400
-	chunkDelay            = 1 * time.Second
-	staleCheckDelay       = 1 * time.Second
+	clearBeforeKickDelay    = 2 * time.Second
+	enterCount              = 3
+	enterDelay              = 300 * time.Millisecond
+	textToEnterDelay        = 1 * time.Second
+	chunkSize               = 400
+	chunkDelay              = 1 * time.Second
+	staleCheckDelay         = 1 * time.Second
 	cliReadyPollInterval    = 2 * time.Second
 	cliReadyTimeout         = 60 * time.Second
 	inputPromptPollInterval = 2 * time.Second
@@ -3959,8 +3956,8 @@ func (m *Manager) fixSharedConfigPerms(agent *AgentProcess) {
 }
 
 const (
-	claudeInferenceSettingsPath  = "/tmp/.claude-inference-settings.json"
-	claudeInferenceHomePrefix = "/tmp/.claude-inference-home-"
+	claudeInferenceSettingsPath = "/tmp/.claude-inference-settings.json"
+	claudeInferenceHomePrefix   = "/tmp/.claude-inference-home-"
 )
 
 // inferenceHomePath returns the per-agent inference HOME directory.
@@ -4017,11 +4014,11 @@ const bobBackend = "bob"
 //     by `["debug",...,"auth-method"].forEach(c=>t.hide(c))`. Verified by
 //     running the real 1.0.6 bundle: `--help` is 67 lines with 0 matches for
 //     auth-method, yet the parser distinguishes it from a typo —
-//       $ bob --definitely-not-a-flag x -p hi
-//       Unknown arguments: definitely-not-a-flag, definitelyNotAFlag
-//       $ bob --auth-method bogus-value -p hi
-//       Invalid values: Argument: auth-method, Given: "bogus-value",
-//                       Choices: "sso", "api-key"
+//     $ bob --definitely-not-a-flag x -p hi
+//     Unknown arguments: definitely-not-a-flag, definitelyNotAFlag
+//     $ bob --auth-method bogus-value -p hi
+//     Invalid values: Argument: auth-method, Given: "bogus-value",
+//     Choices: "sso", "api-key"
 //     while `--auth-method api-key` is accepted silently. An unknown flag under
 //     yargs .strict() would have errored, so the option is live.
 //
@@ -4534,6 +4531,27 @@ func (m *Manager) AuthorizePROpen(agentName string, fileUID int) error {
 			agentName, m.agentMode(agent).String())
 	}
 	return nil
+}
+
+// InvocationMetadata reports the effective backend and model the hive invokes
+// for the named agent, accounting for runtime overrides — the launch-time
+// truth the invocation-attribution trail records (see pkg/github/attribution
+// .go). ok=false when the agent is unknown to the manager (the caller then
+// falls back to static config). Read-only under RLock; called from the
+// PR-request watcher goroutine, never from the launch path.
+func (m *Manager) InvocationMetadata(agentName string) (backend, model string, ok bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	agent, exists := m.agents[agentName]
+	if !exists {
+		return "", "", false
+	}
+	backend = effectiveBackend(agent)
+	model = agent.Config.Model
+	if agent.ModelOverride != "" {
+		model = agent.ModelOverride
+	}
+	return backend, model, true
 }
 
 // filteredEnv returns os.Environ() with write-capable tokens removed for advisory agents.

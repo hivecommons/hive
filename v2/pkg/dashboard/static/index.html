@@ -16301,6 +16301,8 @@ function burnAreaChart() {
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
       const currentACMMLevel = (window._lastStatus || {}).acmmLevel || 0;
+      const attrib = (_configState.data || {}).attribution || {};
+      const attribOn = attrib.attributionTrailer !== false; // default on
       const traj = (_configState.data || {}).trajectory || {};
       const trajOn = traj.enabled !== false; // default on
       const trajReady = traj.reviewerReady === true;
@@ -16330,6 +16332,10 @@ function burnAreaChart() {
             <button class="btn" onclick="closeConfigDialog();openACMMDialog()" title="Open the ACMM maturity level selector">Change&hellip;</button>
           </div>
           <span style="font-size:0.65rem;color:var(--muted);margin-top:4px;display:block">Each level applies a curated agent pack. Change&hellip; opens the level selector.</span>
+        </div>
+        <div class="config-toggle" style="margin-top:14px">
+          <div class="config-toggle-switch ${attribOn ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="attribution" data-key="attributionTrailer"></div>
+          <span class="config-toggle-label">Attribution Trailer <span class="config-info">i<span class="config-tooltip">Append attribution trailer (agent, backend, model) to agent-created PRs and issues &mdash; audit log always records regardless. Hive-wide: one setting for all agents.</span></span></span>
         </div>
         <div class="config-field" style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
