@@ -553,6 +553,12 @@ func TestWSAutoPromotionRequiresReportedPR(t *testing.T) {
 	s, ts := setupWSTest(t)
 	defer ts.Close()
 
+	// #2565: PR-backed promotion now requires server-side verification. Install a
+	// GitHub mock answering the pulls lookup with a PR in acme/widgets authored by
+	// "promote-user", matching the completions this test reports, so the verified
+	// path can legitimately grant credit + promotion.
+	s.deps = verifyDepsFor(t, "acme", "widgets", "promote-user")
+
 	body := `{"github_username":"promote-user"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

@@ -557,6 +557,61 @@ func (h *ContributeWSHub) markTaskCompleted(repo string, number int, prURL strin
 	}
 }
 
+// verifyReportedPR checks a client-reported PR URL against GitHub server-side
+// before the hub trusts it for the LONG cooldown or for trust credit
+// (kubestellar/hive#2565). The contributor relay scrapes a PR URL from tmux
+// output and reports it on task_complete, preferring the assigned repo but
+// falling back to the FIRST PR URL mentioned anywhere in the output — so the
+// field is entirely client-supplied and, on its own, must not drive the 168h
+// cooldown or newcomer→contributor promotion. #2437 raised the bar (PR required)
+// but left this hole open because PRURL stayed unverified.
+//
+// It returns true only when the reported PR (1) exists, (2) has a BASE repo
+// matching the assignment's repo, and (3) is authored by the connected
+// contributor. Any other outcome — no URL reported, unparseable URL, wrong repo,
+// wrong author, or a GitHub API error — returns false, and the completion is
+// treated as an unverified/no-PR completion (short cooldown, no trust credit).
+//
+// Degradation is deliberate and safe: on a GitHub error (rate limit, transient,
+// 404, or no client configured) we fail CLOSED on TRUST (no promotion credit)
+// but never crash the completion handler or strand the contributor — the issue
+// still gets the short anti-duplicate cooldown and the contributor keeps its
+// TasksCompleted credit; only the PR-gated rewards are withheld. The reason is
+// always logged for audit. We do not retry here: a completion is a single
+// user-driven event, the relay can re-report on a later completion, and a
+// blocking retry would hold the hub read loop.
+func (h *ContributeWSHub) verifyReportedPR(assignedRepo, prURL, contributorUsername string) bool {
+	if prURL == "" {
+		return false
+	}
+	if h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		// No GitHub client (hive booted without credentials, or a bare test hub):
+		// we cannot verify, so we must not grant trust. Degrade to unverified.
+		h.logger.Warn("[contribute-ws] PR verification skipped: no github client",
+			"repo", assignedRepo, "pr_url", prURL, "username", contributorUsername)
+		return false
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	res := h.server.deps.GHClient.VerifyReportedPR(ctx, assignedRepo, prURL, contributorUsername)
+	if res.Verified {
+		h.logger.Info("[contribute-ws] reported PR verified",
+			"repo", assignedRepo, "pr_url", prURL, "username", contributorUsername,
+			"author", res.Author, "base_repo", res.BaseRepo)
+		return true
+	}
+	// Distinguish a clean negative from an API error only in the log; both
+	// downgrade to unverified.
+	logArgs := []any{"repo", assignedRepo, "pr_url", prURL, "username", contributorUsername, "reason", res.Reason}
+	if res.Err != nil {
+		logArgs = append(logArgs, "error", res.Err.Error())
+	}
+	h.logger.Warn("[contribute-ws] reported PR NOT verified — treating completion as no-PR", logArgs...)
+	return false
+}
+
 // cooldownForLocked returns the cooldown duration to apply to key. Callers must
 // already hold completedMu. When no per-task override was recorded (older
 // on-disk entries, or hubs built directly in tests) it falls back to the full
@@ -1234,31 +1289,52 @@ func (h *ContributeWSHub) HandleWS(w http.ResponseWriter, r *http.Request) {
 				contributor.mu.Unlock()
 
 				if hasTask {
+					// #2565: the reported PR URL is client-supplied (tmux-scraped by
+					// the relay), so before it drives the LONG cooldown OR trust credit
+					// we verify it server-side against GitHub — it must exist, have a
+					// base repo matching THIS assignment, and be authored by this
+					// contributor. Anything else (no URL, wrong repo/author, API error)
+					// downgrades to an unverified/no-PR completion: the short cooldown
+					// and no trust credit. This closes the hole #2437 left open (the
+					// bar was "a PR was reported", still trusting an unverified field).
+					// verifiedPR is the ONLY value allowed to unlock the PR-gated
+					// rewards below; the raw msg.PRURL is never trusted directly again.
+					verifiedPR := ""
+					if completedTask != nil && h.verifyReportedPR(completedTask.Repo, msg.PRURL, contributor.profile.GitHubUsername) {
+						verifiedPR = msg.PRURL
+					}
 					if completedTask != nil {
-						// #2393 item 7: keep the full week-long cooldown only when a
-						// PR was actually reported; an idle-but-no-PR completion gets
-						// the short cooldown so the issue is not locked for a week.
-						h.markTaskCompleted(completedTask.Repo, completedTask.Number, msg.PRURL)
+						// #2393 item 7 + #2565: the full week-long cooldown is applied
+						// only for a VERIFIED PR; an unverified or no-PR completion gets
+						// the short cooldown so the issue is not locked for a week (and,
+						// per #2492/#2557, still gets a non-zero cooldown so it is not
+						// instantly re-offered in a tight loop).
+						h.markTaskCompleted(completedTask.Repo, completedTask.Number, verifiedPR)
 					}
 					h.addActivity(contributor.profile.GitHubUsername, "completed", contributor.role, contributor.cliBackend, contributor.model, msg.TaskID)
 					h.logger.Info("[contribute-ws] task complete",
 						"username", contributor.profile.GitHubUsername,
 						"task", msg.TaskID,
 						"result", msg.Result,
+						"pr_verified", verifiedPR != "",
 					)
 					contributor.mu.Lock()
 					contributor.profile.TasksCompleted++
-					if msg.PRURL != "" {
+					// Trust credit is gated on the VERIFIED PR, not the reported one:
+					// counting the raw self-reported field would hand out
+					// contents:write / pulls:write for a PR that was never shown to
+					// exist, belongs to another repo, or was authored by someone else.
+					if verifiedPR != "" {
 						contributor.profile.TasksWithPR++
 					}
 					contributor.profile.LastActive = time.Now().UTC().Format(time.RFC3339)
 					if completedTask != nil {
 						contributor.profile.LastCompletedTask = completedTask
 					}
-					// Promote on completions that actually produced a pull
-					// request. Completion is self-reported, so counting bare
-					// task_complete messages would hand out contents:write and
-					// pulls:write for work that was never shown to exist.
+					// Promote on completions that produced a VERIFIED pull request.
+					// Completion is self-reported, so counting bare task_complete
+					// messages — or unverified PR URLs — would hand out contents:write
+					// and pulls:write for work that was never shown to exist.
 					if contributor.profile.TrustTier == "newcomer" && contributor.profile.TasksWithPR >= contributorAutoPromoteAt {
 						contributor.profile.TrustTier = "contributor"
 						h.logger.Info("[contribute-ws] auto-promoted", "username", contributor.profile.GitHubUsername)
