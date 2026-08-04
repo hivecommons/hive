@@ -1512,6 +1512,15 @@ func provisionHive(h *SaaSHive, req *CreateHiveRequest, cluster *ClusterConfig, 
 		return fmt.Errorf("provisioning failed — check hub logs for details")
 	}
 
+	// Entry point 1/3 for namespace identity: stamp what's known at creation
+	// time. For a freshly-created pool placeholder this is often just the
+	// hive_id (h.Owner/h.Org are still the admin/placeholder values) — the
+	// claim (handleApproveProvision) and assign (handleAssignHive) paths
+	// overwrite these once the real owner/org are known. See
+	// hosted_namespace_identity.go for why the namespace itself is never
+	// renamed and must instead be kept self-describing via labels.
+	stampHostedNamespaceIdentity(cluster, data["Namespace"].(string), h.ProjectName, h.Org, h.ID, logger)
+
 	logger.Info("audit: saas hive provisioned", "hive_id", h.ID, "owner", h.Owner, "org", h.Org, "cluster", cluster.ID)
 	return nil
 }
@@ -2182,6 +2191,17 @@ spec:
               key: dashboard-token
         - name: HIVE_ID
           value: "{{.ID}}"
+        # POD_NAMESPACE via the downward API — the spoke's OWN authoritative
+        # source for the namespace it runs in. Provisioning already computes
+        # this namespace (see .Namespace above) to create it, but the pod
+        # cannot read the template's own values at runtime, and re-deriving
+        # "hive-hosted-"+HIVE_ID client-side would silently break the day
+        # that convention changes. The downward API can never disagree with
+        # reality: it is the API server's own answer, not a guess.
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         - name: HIVE_LEVEL
           value: "{{.ACMMLevel}}"
         - name: HIVE_HUB_URL

@@ -128,6 +128,93 @@ func TestContributeLanding(t *testing.T) {
 	}
 }
 
+// TestContributeLandingHasOpsTab pins the additive tab chrome: the landing page
+// must now render the Onboarding / Management & Operations tab bar, the new ops
+// panel, AND still carry the existing onboarding content unchanged.
+func TestContributeLandingHasOpsTab(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/contribute", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	// New tab chrome.
+	for _, want := range []string{
+		`class="page-tabs"`,
+		`data-panel="tab-onboarding"`,
+		`data-panel="tab-ops"`,
+		`Management &amp; Operations`,
+		`id="tab-ops"`,
+		`Connected clankers`,
+		`id="work-list"`,
+		`/api/contribute/fleet`,
+		`opened`, // pipeline node
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("ops tab chrome missing %q", want)
+		}
+	}
+
+	// Existing onboarding content must still be present and unchanged.
+	for _, want := range []string{
+		`id="cli-select"`,
+		`id="mode-select"`,
+		`id="runtime-select"`,
+		`How it works`,
+		`Powered by <strong style="color:#e6edf3">ClankeR</strong>`,
+		`Trust tiers`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("onboarding content missing %q (must remain unchanged)", want)
+		}
+	}
+}
+
+// TestContributeFleet pins the read-only fleet endpoint JSON shape.
+func TestContributeFleet(t *testing.T) {
+	setupContributeEnv(t)
+	s := NewServer(0, slog.Default())
+	s.registerContributeRoutes()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/contribute/fleet", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Clankers []FleetClanker            `json:"clankers"`
+		Work     []FleetWorkItem           `json:"work"`
+		Policy   ContributeAdmissionPolicy `json:"policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	// With no connections the fleet is empty but the keys must be present arrays.
+	if resp.Clankers == nil {
+		t.Error("clankers should be a non-nil array")
+	}
+	if resp.Work == nil {
+		t.Error("work should be a non-nil array")
+	}
+	// Policy always exposes the promotion thresholds sourced from constants.
+	if resp.Policy.AutoPromoteAt != contributorAutoPromoteAt {
+		t.Errorf("auto_promote_at = %d, want %d", resp.Policy.AutoPromoteAt, contributorAutoPromoteAt)
+	}
+	if resp.Policy.TrustedAt != contributorTrustedAt {
+		t.Errorf("trusted_at = %d, want %d", resp.Policy.TrustedAt, contributorTrustedAt)
+	}
+}
+
 func TestContributorNotFound(t *testing.T) {
 	setupContributeEnv(t)
 	s := NewServer(0, slog.Default())
@@ -311,22 +398,22 @@ func TestLeaderboardPageHTML(t *testing.T) {
 
 	body := w.Body.String()
 	checks := map[string]string{
-		"gradient-text":       "animated gradient header text",
-		"Leaderboard":         "page heading",
-		"alice":               "contributor username",
+		"gradient-text":        "animated gradient header text",
+		"Leaderboard":          "page heading",
+		"alice":                "contributor username",
 		"github.com/alice.png": "avatar URL",
-		"github.com/alice":    "GitHub profile link",
-		"search":              "search input",
-		"sort-completed":      "sortable completed column",
-		"Trust Tiers":         "trust tiers reference section",
-		"bg-stars":            "starfield background",
-		"var AGENTS":          "JavaScript agent entries data",
-		"var CONTRIBUTORS":    "JavaScript contributor entries data",
-		"toggleSort":          "sort toggle function",
-		"renderRows":          "row rendering function",
-		"hover-card":          "contributor hover card CSS",
-		"hc-header":           "hover card header",
-		"hc-bar":              "hover card success rate bar",
+		"github.com/alice":     "GitHub profile link",
+		"search":               "search input",
+		"sort-completed":       "sortable completed column",
+		"Trust Tiers":          "trust tiers reference section",
+		"bg-stars":             "starfield background",
+		"var AGENTS":           "JavaScript agent entries data",
+		"var CONTRIBUTORS":     "JavaScript contributor entries data",
+		"toggleSort":           "sort toggle function",
+		"renderRows":           "row rendering function",
+		"hover-card":           "contributor hover card CSS",
+		"hc-header":            "hover card header",
+		"hc-bar":               "hover card success rate bar",
 	}
 	for needle, desc := range checks {
 		if !strings.Contains(body, needle) {

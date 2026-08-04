@@ -21,10 +21,10 @@ import (
 )
 
 const (
-	defaultContributorsDir     = "/data/contributors"
-	contributorAutoPromoteAt   = 5
-	contributorTrustedAt       = 20
-	defaultFederationRegistry  = "/data/federation/registry.json"
+	defaultContributorsDir    = "/data/contributors"
+	contributorAutoPromoteAt  = 5
+	contributorTrustedAt      = 20
+	defaultFederationRegistry = "/data/federation/registry.json"
 )
 
 func getContributorsDir() string {
@@ -42,40 +42,40 @@ func getFederationRegistryPath() string {
 }
 
 type ContributorProfile struct {
-	GitHubUsername      string                `json:"github_username"`
-	ContributorID      string                `json:"contributor_id"`
-	RegistrationToken  string                `json:"registration_token"`
-	TokenPlain         string                `json:"registration_token_plain,omitempty"`
-	TrustTier          string                `json:"trust_tier"`
-	PreferredRole      string                `json:"preferred_role,omitempty"`
-	CLIBackend         string                `json:"cli_backend,omitempty"`
-	Model              string                `json:"model,omitempty"`
-	AvatarURL          string                `json:"avatar_url,omitempty"`
-	RegisteredAt       string                `json:"registered_at"`
-	TasksCompleted     int                   `json:"total_tasks_completed"`
+	GitHubUsername    string `json:"github_username"`
+	ContributorID     string `json:"contributor_id"`
+	RegistrationToken string `json:"registration_token"`
+	TokenPlain        string `json:"registration_token_plain,omitempty"`
+	TrustTier         string `json:"trust_tier"`
+	PreferredRole     string `json:"preferred_role,omitempty"`
+	CLIBackend        string `json:"cli_backend,omitempty"`
+	Model             string `json:"model,omitempty"`
+	AvatarURL         string `json:"avatar_url,omitempty"`
+	RegisteredAt      string `json:"registered_at"`
+	TasksCompleted    int    `json:"total_tasks_completed"`
 	// TasksWithPR counts only completions that reported a pull request.
 	// Auto-promotion reads this rather than TasksCompleted, so write access is
 	// never granted for completions where nothing was shown to have shipped.
-	TasksWithPR        int                   `json:"total_tasks_completed_with_pr"`
-	TasksFailed        int                   `json:"total_tasks_failed"`
-	LastActive         string                `json:"last_active,omitempty"`
-	LastCompletedTask  *WSTaskAssign         `json:"last_completed_task,omitempty"`
-	RateLimits         ContributorRateLimits `json:"rate_limits"`
-	Active             bool                  `json:"active,omitempty"`
-	CurrentTask        *WSTaskAssign         `json:"current_task,omitempty"`
-	ActiveTasks        []WSTaskAssign        `json:"active_tasks,omitempty"`
-	Sessions           int                   `json:"sessions,omitempty"`
+	TasksWithPR       int                   `json:"total_tasks_completed_with_pr"`
+	TasksFailed       int                   `json:"total_tasks_failed"`
+	LastActive        string                `json:"last_active,omitempty"`
+	LastCompletedTask *WSTaskAssign         `json:"last_completed_task,omitempty"`
+	RateLimits        ContributorRateLimits `json:"rate_limits"`
+	Active            bool                  `json:"active,omitempty"`
+	CurrentTask       *WSTaskAssign         `json:"current_task,omitempty"`
+	ActiveTasks       []WSTaskAssign        `json:"active_tasks,omitempty"`
+	Sessions          int                   `json:"sessions,omitempty"`
 }
 
 type ContributorRateLimits struct {
-	MaxConcurrent  int `json:"max_concurrent_tasks"`
-	MaxPerHour     int `json:"max_tasks_per_hour"`
-	MaxPerDay      int `json:"max_tasks_per_day"`
+	MaxConcurrent int `json:"max_concurrent_tasks"`
+	MaxPerHour    int `json:"max_tasks_per_hour"`
+	MaxPerDay     int `json:"max_tasks_per_day"`
 }
 
 type ContributorPool struct {
-	Active     int                     `json:"active"`
-	Registered int                     `json:"registered"`
+	Active     int `json:"active"`
+	Registered int `json:"registered"`
 	mu         sync.RWMutex
 }
 
@@ -110,6 +110,7 @@ func (s *Server) registerContributeRoutes() {
 	s.mux.HandleFunc("POST /api/contribute/reissue-token", s.handleContributeReissueToken)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/activity", s.handleContributeActivity)
+	s.mux.HandleFunc("GET /api/contribute/fleet", s.handleContributeFleet)
 	s.mux.HandleFunc("GET /api/contributors", s.handleContributorsList)
 	s.mux.HandleFunc("GET /api/contributors/{id}", s.handleContributorGet)
 	s.mux.HandleFunc("PUT /api/contributors/{id}/trust", s.handleContributorTrust)
@@ -204,7 +205,7 @@ func createContributorProfile(username string) (*ContributorProfile, string) {
 	cid := "c-" + randomHex(6)
 	token := randomHex(32)
 	p := &ContributorProfile{
-		GitHubUsername:     username,
+		GitHubUsername:    username,
 		ContributorID:     cid,
 		RegistrationToken: sha256Hex(token),
 		TokenPlain:        token,
@@ -347,7 +348,61 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 .feed-cli{color:#8b949e;font-size:.8rem}
 .feed-empty{padding:40px 20px;text-align:center;color:#8b949e;font-size:.85rem}
 @media(max-width:768px){.page{flex-direction:column}.sidebar{border-left:none;border-top:1px solid #30363d;max-width:none;max-height:300px}}
+/* Management & Operations tab chrome — additive, does not touch onboarding content */
+.page-tabs{display:flex;gap:2px;background:#161b22;border-bottom:1px solid #30363d;padding:0 48px}
+.page-tab{background:none;border:none;color:#8b949e;font-size:.95rem;font-weight:500;padding:14px 20px;cursor:pointer;border-bottom:2px solid transparent;font-family:inherit}
+.page-tab:hover{color:#e6edf3}
+.page-tab.active{color:#e6edf3;border-bottom-color:#58a6ff}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.ops{padding:40px 48px;overflow-y:auto}
+.ops h1{font-size:1.7rem;margin-bottom:6px}
+.ops-grid{display:grid;grid-template-columns:340px 1fr;gap:20px;margin-top:24px}
+@media(max-width:900px){.ops-grid{grid-template-columns:1fr}}
+.ops-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:0;overflow:hidden}
+.ops-card-head{padding:16px 20px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:10px}
+.ops-card-head h3{font-size:.95rem;color:#e6edf3;margin:0}
+.ops-card-count{font-size:.75rem;color:#8b949e;margin-left:auto}
+.ops-filters{display:flex;gap:4px;padding:12px 20px;border-bottom:1px solid #21262d;flex-wrap:wrap}
+.ops-filter{background:#0d1117;border:1px solid #30363d;color:#8b949e;font-size:.78rem;padding:4px 12px;border-radius:999px;cursor:pointer;font-family:inherit}
+.ops-filter.active{background:#1f6feb;border-color:#1f6feb;color:#fff}
+.work-list{max-height:520px;overflow-y:auto}
+.work-item{padding:14px 20px;border-bottom:1px solid #21262d;cursor:pointer}
+.work-item:hover{background:rgba(88,166,255,.04)}
+.work-item.selected{background:rgba(88,166,255,.08)}
+.work-repo{font-size:.75rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.work-title{font-size:.9rem;color:#e6edf3;margin:2px 0 6px}
+.work-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:.75rem;color:#8b949e}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:.7rem;font-weight:600;border:1px solid transparent}
+.pill-progress{background:rgba(88,166,255,.12);color:#58a6ff;border-color:rgba(88,166,255,.3)}
+.pill-review{background:rgba(210,153,34,.12);color:#d29922;border-color:rgba(210,153,34,.3)}
+.pill-passed{background:rgba(63,185,80,.12);color:#3fb950;border-color:rgba(63,185,80,.3)}
+.pill-blocked{background:rgba(248,81,73,.12);color:#f85149;border-color:rgba(248,81,73,.3)}
+.pill-idle{background:rgba(139,148,158,.12);color:#8b949e;border-color:rgba(139,148,158,.3)}
+.clanker-row{display:flex;align-items:center;gap:10px;padding:12px 20px;border-bottom:1px solid #21262d}
+.clanker-av{width:28px;height:28px;border-radius:50%%;flex-shrink:0;background:#30363d}
+.clanker-main{flex:1;min-width:0}
+.clanker-user{font-size:.88rem;color:#e6edf3;font-weight:500}
+.clanker-sub{font-size:.74rem;color:#8b949e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.clanker-dot{width:8px;height:8px;border-radius:50%%;background:#3fb950;flex-shrink:0}
+.clanker-dot.stale{background:#8b949e}
+.pipeline{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:14px 0}
+.pipe-node{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:8px 14px;font-size:.82rem;color:#e6edf3}
+.pipe-node .lgtm{color:#3fb950;font-size:.72rem}
+.pipe-arrow{color:#8b949e}
+.policy-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #21262d;font-size:.85rem}
+.policy-row:last-child{border-bottom:none}
+.policy-key{color:#8b949e}
+.policy-val{color:#e6edf3;text-align:right;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-word}
+.ops-empty{padding:32px 20px;text-align:center;color:#8b949e;font-size:.85rem}
+.ops-note{color:#6e7681;font-size:.78rem;margin-top:12px;line-height:1.5}
+.ops-note code{background:#0d1117;padding:1px 6px;border-radius:4px}
 </style></head><body>
+<div class="page-tabs" role="tablist">
+<button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
+<button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Management &amp; Operations</button>
+</div>
+<div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
 <div class="page">
 <div class="main">
 <h1>🐝 Contribute to %s</h1>
@@ -502,6 +557,147 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </div>
 </div>
 </div>
+</div>
+<div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
+<div class="ops">
+<h1>Management &amp; Operations</h1>
+<p class="subtitle" style="font-size:.95rem">A read-only operations view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work &mdash; surfaced from what this hive already knows. No controls here mutate policy or the fleet.</p>
+<div class="ops-grid">
+<div>
+<div class="ops-card">
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Connected clankers</h3><span class="ops-card-count" id="clanker-count"></span></div>
+<div id="clanker-list"><div class="ops-empty">Loading fleet&hellip;</div></div>
+</div>
+<div class="ops-card" style="margin-top:20px">
+<div class="ops-card-head"><h3>Pipeline &amp; policy</h3></div>
+<div style="padding:16px 20px">
+<div class="pipeline">
+<span class="pipe-node">opened</span><span class="pipe-arrow">&rarr;</span>
+<span class="pipe-node">review <span class="lgtm">[lgtm]</span></span><span class="pipe-arrow">&rarr;</span>
+<span class="pipe-node">approved</span><span class="pipe-arrow">&rarr;</span>
+<span class="pipe-node">merged</span>
+</div>
+<div id="policy-body"><div class="ops-empty">Loading policy&hellip;</div></div>
+<p class="ops-note">Merge automation advances a PR when CI is green and a maintainer signals <code>/approve</code> or <code>lgtm</code>; a <code>do-not-merge</code> label blocks it. This panel displays the configured admission posture &mdash; it does not change it.</p>
+</div>
+</div>
+</div>
+<div>
+<div class="ops-card">
+<div class="ops-card-head"><h3>My work</h3><span class="ops-card-count" id="work-count"></span></div>
+<div class="ops-filters" role="tablist">
+<button class="ops-filter active" data-filter="all">All</button>
+<button class="ops-filter" data-filter="active">Active</button>
+<button class="ops-filter" data-filter="review">Review requests</button>
+<button class="ops-filter" data-filter="done">Done</button>
+</div>
+<div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<script>
+(function(){
+// Tab switching for the /contribute page. Additive: leaves onboarding intact.
+var tabs=document.querySelectorAll('.page-tab');
+var panels=document.querySelectorAll('.tab-panel');
+var opsStarted=false;
+tabs.forEach(function(t){t.addEventListener('click',function(){
+  tabs.forEach(function(x){x.classList.remove('active');x.setAttribute('aria-selected','false');});
+  panels.forEach(function(p){p.classList.remove('active');});
+  t.classList.add('active');t.setAttribute('aria-selected','true');
+  var panel=document.getElementById(t.getAttribute('data-panel'));
+  if(panel)panel.classList.add('active');
+  if(t.getAttribute('data-panel')==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();}
+});});
+
+var currentFilter='all';
+var lastWork=[];
+document.querySelectorAll('.ops-filter').forEach(function(f){f.addEventListener('click',function(){
+  document.querySelectorAll('.ops-filter').forEach(function(x){x.classList.remove('active');});
+  f.classList.add('active');
+  currentFilter=f.getAttribute('data-filter');
+  renderWork(lastWork);
+});});
+
+function esc(s){var d=document.createElement('div');d.textContent=(s==null?'':String(s));return d.innerHTML;}
+function rel(ts){if(!ts)return '';var d=new Date(ts);if(isNaN(d))return '';var s=Math.floor((Date.now()-d.getTime())/1000);if(s<60)return s+'s ago';var m=Math.floor(s/60);if(m<60)return m+'m ago';var h=Math.floor(m/60);if(h<24)return h+'h ago';return Math.floor(h/24)+'d ago';}
+
+function renderClankers(list){
+  var el=document.getElementById('clanker-list');
+  document.getElementById('clanker-count').textContent=(list.length)+(list.length===1?' connected':' connected');
+  if(!list.length){el.innerHTML='<div class="ops-empty">No clankers connected right now.</div>';return;}
+  el.innerHTML=list.map(function(c){
+    var user=c.github_username||c.contributor_id||'clanker';
+    var av=c.github_username?'<img class="clanker-av" src="https://github.com/'+esc(c.github_username)+'.png" alt="">':'<span class="clanker-av"></span>';
+    var sub=[c.cli_backend,c.model,c.role,c.trust_tier].filter(Boolean).map(esc).join(' &middot; ');
+    var task=c.current_task?('<div class="clanker-sub">on '+esc(c.current_task.repo)+'#'+esc(c.current_task.number)+'</div>'):'';
+    return '<div class="clanker-row"><span class="clanker-dot'+(c.stale?' stale':'')+'"></span>'+av+
+      '<div class="clanker-main"><div class="clanker-user">'+esc(user)+'</div>'+
+      '<div class="clanker-sub">'+(sub||'&mdash;')+'</div>'+task+'</div>'+
+      '<span class="feed-time">'+esc(rel(c.connected_at))+'</span></div>';
+  }).join('');
+}
+
+function workMatchesFilter(w){
+  if(currentFilter==='all')return true;
+  if(currentFilter==='active')return w.status==='in-progress';
+  if(currentFilter==='review')return w.status==='review';
+  if(currentFilter==='done')return w.status==='done';
+  return true;
+}
+function statusPill(s){
+  if(s==='in-progress')return '<span class="pill pill-progress">in-progress</span>';
+  if(s==='review')return '<span class="pill pill-review">review</span>';
+  if(s==='done')return '<span class="pill pill-passed">done</span>';
+  if(s==='blocked')return '<span class="pill pill-blocked">blocked</span>';
+  return '<span class="pill pill-idle">'+esc(s)+'</span>';
+}
+function renderWork(list){
+  lastWork=list;
+  var shown=list.filter(workMatchesFilter);
+  document.getElementById('work-count').textContent=shown.length+(shown.length===1?' item':' items');
+  var el=document.getElementById('work-list');
+  if(!shown.length){el.innerHTML='<div class="ops-empty">No work items in flight'+(currentFilter!=='all'?' for this filter.':'.')+'</div>';return;}
+  el.innerHTML=shown.map(function(w){
+    var who=w.github_username?('<span class="feed-role">'+esc(w.github_username)+'</span>'):'';
+    var cli=w.cli_backend?(' &middot; '+esc(w.cli_backend)):'';
+    return '<div class="work-item"><div class="work-repo">'+esc(w.repo||'')+(w.number?('#'+esc(w.number)):'')+'</div>'+
+      '<div class="work-title">'+esc(w.title||'(untitled task)')+'</div>'+
+      '<div class="work-meta">'+statusPill(w.status)+who+cli+'</div></div>';
+  }).join('');
+}
+function renderPolicy(p){
+  var el=document.getElementById('policy-body');
+  if(!p){el.innerHTML='<div class="ops-empty">Policy unavailable.</div>';return;}
+  function list(a){return (a&&a.length)?a.map(esc).join(', '):'&mdash;';}
+  var rows=[
+    ['Contribute queue',p.suspended?'<span class="pill pill-blocked">suspended</span>':'<span class="pill pill-passed">active</span>'],
+    ['Title filter',esc(p.titles_mode||'deny')+': '+list(p.deny_titles)],
+    ['Author filter',esc(p.authors_mode||'deny')+': '+list(p.deny_authors)],
+    ['Label filter',esc(p.labels_mode||'deny')+': '+list(p.labels_mode==='allow'?p.allow_labels:p.deny_labels)],
+    ['Model allowlist',(p.reject_unknown_models?'strict &middot; ':'')+list(p.allow_models)],
+    ['Skip assigned-to-others',p.skip_assigned_to_others?'yes':'no'],
+    ['Disabled tiers',list(p.disabled_tiers)],
+    ['Disabled repos',list(p.disabled_repos)],
+    ['Auto-promote at',esc(p.auto_promote_at)+' tasks &rarr; contributor'],
+    ['Trusted at',esc(p.trusted_at)+' tasks + maintainer voucher']
+  ];
+  el.innerHTML=rows.map(function(r){return '<div class="policy-row"><span class="policy-key">'+r[0]+'</span><span class="policy-val">'+r[1]+'</span></div>';}).join('');
+}
+async function opsPoll(){
+  try{
+    var res=await fetch('/api/contribute/fleet');
+    var data=await res.json();
+    renderClankers(data.clankers||[]);
+    renderWork(data.work||[]);
+    renderPolicy(data.policy);
+  }catch(e){}
+  if(document.getElementById('tab-ops').classList.contains('active'))setTimeout(opsPoll,4000);
+}
+})();
+</script>
 <script>
 let prevCount=0;
 async function poll(){try{
@@ -677,7 +873,7 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 	}
 	s.statusMu.RUnlock()
 	jsonResponse(w, map[string]any{
-		"hub":                  "online",
+		"hub":                 "online",
 		"active_contributors": active,
 		"total_registered":    len(profiles),
 		"actionable_items":    actionable,
@@ -690,6 +886,71 @@ func (s *Server) handleContributeActivity(w http.ResponseWriter, r *http.Request
 		return
 	}
 	jsonResponse(w, map[string]any{"activity": s.contributeHub.RecentActivity()})
+}
+
+// ContributeAdmissionPolicy is a read-only summary of the merge/automation
+// posture and the contributor admission filters that ALREADY exist server-side.
+// It is surfaced to the Management & Operations tab so an operator can read what
+// is configured; it adds no controls and changes nothing.
+type ContributeAdmissionPolicy struct {
+	Suspended            bool     `json:"suspended"`
+	TitlesMode           string   `json:"titles_mode,omitempty"`
+	AuthorsMode          string   `json:"authors_mode,omitempty"`
+	LabelsMode           string   `json:"labels_mode,omitempty"`
+	DenyTitles           []string `json:"deny_titles,omitempty"`
+	DenyAuthors          []string `json:"deny_authors,omitempty"`
+	DenyLabels           []string `json:"deny_labels,omitempty"`
+	AllowLabels          []string `json:"allow_labels,omitempty"`
+	AllowModels          []string `json:"allow_models,omitempty"`
+	RejectUnknownModels  bool     `json:"reject_unknown_models"`
+	SkipAssignedToOthers bool     `json:"skip_assigned_to_others"`
+	DisabledTiers        []string `json:"disabled_tiers,omitempty"`
+	DisabledRepos        []string `json:"disabled_repos,omitempty"`
+	AutoPromoteAt        int      `json:"auto_promote_at"`
+	TrustedAt            int      `json:"trusted_at"`
+}
+
+// buildContributeAdmissionPolicy reads the configured contributor admission
+// posture from the hub config. It never mutates config and returns a zero-value
+// policy when config is unavailable.
+func (s *Server) buildContributeAdmissionPolicy() ContributeAdmissionPolicy {
+	p := ContributeAdmissionPolicy{
+		AutoPromoteAt: contributorAutoPromoteAt,
+		TrustedAt:     contributorTrustedAt,
+	}
+	if s.deps == nil || s.deps.Config == nil {
+		return p
+	}
+	h := s.deps.Config.Hub
+	p.Suspended = h.ContributeSuspended
+	p.TitlesMode = h.ContributeTitlesMode
+	p.AuthorsMode = h.ContributeAuthorsMode
+	p.LabelsMode = h.ContributeLabelsMode
+	p.DenyTitles = h.ContributeDenyTitles
+	p.DenyAuthors = h.ContributeDenyAuthors
+	p.DenyLabels = h.ContributeDenyLabels
+	p.AllowLabels = h.ContributeAllowLabels
+	p.AllowModels = h.ContributeAllowModels
+	p.RejectUnknownModels = h.ContributeRejectUnknownModels
+	p.SkipAssignedToOthers = h.ContributeSkipAssignedToOthers
+	p.DisabledTiers = h.DisabledTiers
+	p.DisabledRepos = h.DisabledRepos
+	return p
+}
+
+// handleContributeFleet serves the read-only fleet/work/policy snapshot that the
+// Management & Operations tab hydrates. GET only, no side effects: it surfaces
+// the hub's live connection state and the already-configured admission policy.
+func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
+	snap := FleetSnapshot{Clankers: []FleetClanker{}, Work: []FleetWorkItem{}}
+	if s.contributeHub != nil {
+		snap = s.contributeHub.FleetSnapshot()
+	}
+	jsonResponse(w, map[string]any{
+		"clankers": snap.Clankers,
+		"work":     snap.Work,
+		"policy":   s.buildContributeAdmissionPolicy(),
+	})
 }
 
 // ── Contributor management ─────────────────────────────────────────────────
@@ -784,7 +1045,6 @@ func (s *Server) handleContributorDelete(w http.ResponseWriter, r *http.Request)
 }
 
 // ── Federation registry ────────────────────────────────────────────────────
-
 
 type FederationRegistry struct {
 	Hives []FederationHive `json:"hives"`
@@ -1028,8 +1288,8 @@ func (s *Server) handleLeaderboardAPI(w http.ResponseWriter, _ *http.Request) {
 	contributors := buildLeaderboard()
 	agents := s.buildAgentLeaderboardEntries()
 	jsonResponse(w, map[string]any{
-		"leaderboard":  contributors,
-		"agents":       agents,
+		"leaderboard": contributors,
+		"agents":      agents,
 	})
 }
 
@@ -1164,8 +1424,8 @@ func (s *Server) buildAgentLeaderboardEntries() []LeaderboardEntry {
 
 		entries = append(entries, LeaderboardEntry{
 			GitHubUsername: name,
-			AvatarURL:     fmt.Sprintf(agentAvatarURLTemplate, name),
-			TrustTier:     agentTierLabel,
+			AvatarURL:      fmt.Sprintf(agentAvatarURLTemplate, name),
+			TrustTier:      agentTierLabel,
 			TasksCompleted: tasksCompleted,
 			TasksFailed:    proc.RestartCount,
 			Findings:       totalFindings,
@@ -2080,4 +2340,3 @@ a{color:#58a6ff}
 
 </body></html>`, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL, baseURL)
 }
-
