@@ -143,7 +143,12 @@ func (g *Governor) Evaluate(queueIssues, queuePRs, queueHold, slaViolations int)
 	g.state.SLAViolations = slaViolations
 	g.state.LastEval = time.Now()
 
-	newMode := g.computeMode(queueIssues)
+	// Queue pressure is actionable issues PLUS open PRs. Issues alone let the
+	// governor idle while a large PR backlog sat unmerged (observed 2026-08-03:
+	// 23 open PRs, 1 actionable issue → idle cadence → merge sweeps too rare
+	// to drain the queue). Held items stay excluded — they are waiting on a
+	// human by definition and faster kicks cannot move them.
+	newMode := g.computeMode(queueIssues + queuePRs)
 	modeChanged := newMode != g.state.Mode
 	if modeChanged {
 		g.logger.Info("governor mode change",

@@ -149,6 +149,30 @@ func TestEvaluate_ReturnsCorrectMode(t *testing.T) {
 	}
 }
 
+func TestEvaluate_OpenPRsCountTowardModePressure(t *testing.T) {
+	// Mode pressure is issues + open PRs. Issues alone let the governor idle
+	// while a large PR backlog sat unmerged (2026-08-03: 23 open PRs, 1
+	// actionable issue → idle cadence → merge sweeps too rare to drain).
+	cfg, agents := standardConfig("scanner")
+	g := New(cfg, agents, testLogger())
+
+	g.Evaluate(1, 15, 0, 0)
+	if s := g.GetState(); s.Mode != ModeBusy {
+		t.Errorf("expected BUSY with issues=1 prs=15 (pressure 16), got %s", s.Mode)
+	}
+
+	g.Evaluate(0, 25, 0, 0)
+	if s := g.GetState(); s.Mode != ModeSurge {
+		t.Errorf("expected SURGE with issues=0 prs=25 (pressure 25), got %s", s.Mode)
+	}
+
+	// Held items must NOT add pressure — they are waiting on a human.
+	g.Evaluate(0, 0, 30, 0)
+	if s := g.GetState(); s.Mode != ModeIdle {
+		t.Errorf("expected IDLE with only held items queued, got %s", s.Mode)
+	}
+}
+
 func TestEvaluate_UpdatesQueueFields(t *testing.T) {
 	cfg, agents := standardConfig()
 	g := New(cfg, agents, testLogger())
