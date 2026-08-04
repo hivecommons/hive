@@ -11,6 +11,7 @@ import (
 // the static-list, cache, and fallback branches (all offline).
 func TestCovD_QueryCLIModels(t *testing.T) {
 	swapGooseProbe(t, gooseProbeMissing)
+	withoutClaudeCredentials(t)
 	logger := testLoggerCovD()
 	s := NewServer(0, logger)
 

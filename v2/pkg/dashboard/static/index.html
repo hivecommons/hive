@@ -6346,14 +6346,26 @@
           .filter(name => name && !KNOWN_BACKENDS.includes(name));
       } catch (e) { /* keep prior list; dropdowns fall back to KNOWN_BACKENDS */ }
     }
+    // Fallback list only — the server now discovers claude models live via
+    // GET api.anthropic.com/v1/models (see claudeStaticModels in
+    // pkg/dashboard/cli_models.go; keep the two lists in sync). Refreshed
+    // 2026-08-03 from a live /v1/models response, in API order, plus the bare
+    // aliases the claude CLI accepts as --model values.
     const CLAUDE_CLI_MODELS = [
+      { value: 'claude-opus-5', label: 'Opus 5' },
+      { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+      { value: 'claude-fable-5', label: 'Fable 5' },
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
       { value: 'claude-opus-4-7', label: 'Opus 4.7' },
-      { value: 'claude-opus-4-6', label: 'Opus 4.6' },
       { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-      { value: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
-      { value: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-      { value: 'claude-fable-5', label: 'Fable 5' },
+      { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+      { value: 'claude-opus-4-5-20251101', label: 'Opus 4.5' },
+      { value: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+      { value: 'claude-sonnet-4-5-20250929', label: 'Sonnet 4.5' },
+      { value: 'claude-opus-4-1-20250805', label: 'Opus 4.1' },
+      { value: 'opus', label: 'Opus (alias)' },
+      { value: 'sonnet', label: 'Sonnet (alias)' },
+      { value: 'haiku', label: 'Haiku (alias)' },
     ];
     const COPILOT_CLI_MODELS = [
       // Auto sentinel: `copilot --model auto` lets the Copilot CLI pick/adjust

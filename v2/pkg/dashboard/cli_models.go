@@ -11,9 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/kubestellar/hive/v2/pkg/claude"
 )
 
 // This file adds runtime model discovery for the CLI backends (copilot,
@@ -29,10 +32,17 @@ import (
 //     api.github.com/copilot_internal/user (endpoints.api). Verified live.
 //   - gemini:  GET generativelanguage.googleapis.com/v1beta/models with the
 //     configured Gemini API key. Live only when a key is configured.
-//   - claude:  Anthropic publishes no per-subscription "list my models"
-//     endpoint and the Claude CLI has no non-interactive `claude models`
-//     command, so this is a maintained static list of CURRENT model ids
-//     (kept in sync with CLAUDE_CLI_MODELS in static/index.html).
+//   - claude:  GET api.anthropic.com/v1/models. The endpoint accepts BOTH a
+//     standard Anthropic API key (x-api-key, preferred when ANTHROPIC_API_KEY
+//     is set) and the Claude Code subscription OAuth bearer token stored by
+//     the CLI in ~/.claude/.credentials.json (verified live: HTTP 200 with a
+//     subscription token). The OAuth token is short-lived (<1 day) and is
+//     refreshed ONLY when the claude CLI itself runs, so the prober re-reads
+//     the file on every probe, checks expiresAt BEFORE any HTTP call, and
+//     NEVER attempts a token refresh itself — rotating the token out from
+//     under the CLI would break its login (the hive inotify-watches
+//     ~/.claude/). Expired/absent credentials skip straight to the static
+//     fallback (kept in sync with CLAUDE_CLI_MODELS in static/index.html).
 //   - goose:   provider-configured (Ollama/OpenAI/Anthropic/...). goose
 //     >= 1.37 ships an ACP (Agent Client Protocol) agent server (`goose acp`,
 //     JSON-RPC over stdio): initialize + session/new returns result.models
@@ -221,25 +231,57 @@ const (
 	gooseACPInitializeID   = 1
 	gooseACPSessionNewID   = 2
 	gooseACPSessionCloseID = 3
+
+	// --- Claude (Anthropic) ---
+
+	// anthropicModelsURL lists the models available to the presented credential
+	// (API key or Claude Code subscription OAuth token — both accepted,
+	// verified live).
+	anthropicModelsURL = "https://api.anthropic.com/v1/models"
+
+	// anthropicModelsPageLimit is the ?limit= page size for /v1/models. Set to
+	// the API maximum so a single call covers the whole catalog (currently
+	// ~a dozen ids) without pagination.
+	anthropicModelsPageLimit = 1000
+
+	// anthropicAPIVersion is the required anthropic-version header value.
+	anthropicAPIVersion = "2023-06-01"
+
+	// anthropicOAuthBeta is the anthropic-beta value sent alongside a Claude
+	// Code subscription OAuth bearer token. Currently optional for /v1/models
+	// (verified live: 200 without it) but sent anyway for forward
+	// compatibility, mirroring what the Claude CLI sends.
+	anthropicOAuthBeta = "oauth-2025-04-20"
+
+	// claudeTokenExpirySkew is the safety margin subtracted from the stored
+	// token's expiresAt before use: a token within this window of expiring is
+	// treated as already expired so we never fire an HTTP call that a few
+	// seconds of clock skew or transit time would turn into a 401.
+	claudeTokenExpirySkew = 2 * time.Minute
 )
 
 // --- Static fallback lists (kept CURRENT — July 2026) ---
 
-// claudeStaticModels is the maintained fallback/authoritative list for the
-// Claude CLI. Anthropic exposes no "list my models" API and the CLI has no
-// non-interactive list command, so this list IS the source of truth. Keep it
+// claudeStaticModels is the fallback offered when the Claude models probe
+// cannot run (no API key and no fresh OAuth token in the CLI credentials
+// file) or fails. Live discovery via api.anthropic.com/v1/models is strongly
+// preferred; this is only a floor so the dropdown is never empty. Refreshed
+// 2026-08-03 from a live /v1/models response (11 ids, in API order). Keep it
 // in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
-// dated/versioned ids AND the bare aliases the CLI accepts are included.
+// ids AND the bare aliases the CLI accepts are included.
 var claudeStaticModels = []string{
+	"claude-opus-5",
+	"claude-sonnet-5",
 	"claude-fable-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
-	"claude-opus-4-6",
-	"claude-sonnet-5",
 	"claude-sonnet-4-6",
-	"claude-sonnet-4-5",
-	"claude-haiku-4-5",
-	// Bare aliases the Claude CLI also accepts.
+	"claude-opus-4-6",
+	"claude-opus-4-5-20251101",
+	"claude-haiku-4-5-20251001",
+	"claude-sonnet-4-5-20250929",
+	"claude-opus-4-1-20250805",
+	// Bare aliases the Claude CLI also accepts (see claudeAlwaysIncludeModels).
 	"opus",
 	"sonnet",
 	"haiku",
@@ -276,6 +318,18 @@ var copilotAlwaysIncludeModels = []string{
 	// Auto-select sentinel — never returned by the /models catalog, but a valid
 	// launch value, so it must always be offered and must survive auto-heal.
 	copilotAutoModel,
+}
+
+// claudeAlwaysIncludeModels are ids that must ALWAYS be offered in the claude
+// dropdown, whether the served list came from live discovery or the static
+// fallback (mirrors copilotAlwaysIncludeModels). The Anthropic /v1/models
+// endpoint never returns the bare aliases, but they are valid `claude --model`
+// values, so they are appended to every served claude list — surviving both
+// paths and the dashboard's model auto-heal.
+var claudeAlwaysIncludeModels = []string{
+	"opus",
+	"sonnet",
+	"haiku",
 }
 
 // bobStaticModels is bob's complete model list: exactly one entry, the auto
@@ -453,8 +507,7 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	case "goose":
 		r = s.discoverGooseModels()
 	case "claude":
-		// No live source exists; the maintained static list is authoritative.
-		r = cliModelResult{models: dedupeModels(claudeStaticModels), fallback: false}
+		r = s.discoverClaudeModels()
 	case "codex":
 		// No probe wired yet; the maintained static list is authoritative and
 		// OpenAI-only (Claude ids are rejected by Codex with a ChatGPT account).
@@ -480,9 +533,12 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	}
 	// Applied after stabilization/fallback so the pinned ids survive BOTH
 	// paths: a live sample that omits a rollout-gated id and the static
-	// fallback list (see copilotAlwaysIncludeModels).
+	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels).
 	if backend == "copilot" {
 		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
+	}
+	if backend == "claude" {
+		r.models = dedupeModels(append(r.models, claudeAlwaysIncludeModels...))
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)
@@ -832,6 +888,159 @@ func parseGeminiModelsResponse(r io.Reader) ([]string, error) {
 			continue
 		}
 		out = append(out, strings.TrimPrefix(m.Name, "models/"))
+	}
+	return out, nil
+}
+
+// --- Claude (Anthropic) discovery ---
+
+// claudePodCredentialsPath is a var (not a const) solely so tests can point it
+// at a temp file (mirroring sharedClaudeCredentialPath in pkg/agent). The
+// production value — the hosted-pod home — is never mutated at runtime.
+var claudePodCredentialsPath = claude.CredentialsPath
+
+// anthropicModelsEndpoint redirects the models call away from the real
+// Anthropic endpoint. TEST SEAM ONLY: it is never changed in production, where
+// every probe goes to anthropicModelsURL. It exists so discoverClaudeModels'
+// response handling (success, 401, malformed JSON) can be exercised against an
+// httptest server without a live API round trip.
+var anthropicModelsEndpoint = anthropicModelsURL
+
+// discoverClaudeModels lists the models available to the local Claude
+// credential by calling the Anthropic /v1/models endpoint. Credential
+// precedence: ANTHROPIC_API_KEY (x-api-key header), else the Claude Code
+// subscription OAuth access token from the CLI's credentials file
+// (Authorization: Bearer — accepted by the endpoint, verified live).
+// Best-effort: no credential, an expired token, or any HTTP/parse failure
+// returns fallback=true with an empty list so the caller substitutes the
+// static list. The stored token is NEVER refreshed here (see file header).
+func (s *Server) discoverClaudeModels() cliModelResult {
+	header, value, ok := claudeAPICredential()
+	if !ok {
+		// No API key and no fresh OAuth token. Skip the HTTP call entirely —
+		// on copilot-only spokes the credentials file can sit expired for
+		// weeks, and refreshing it is forbidden (it would rotate the token
+		// out from under the claude CLI's own login).
+		return cliModelResult{fallback: true}
+	}
+	models, err := fetchClaudeModels(anthropicModelsEndpoint, header, value)
+	if err != nil || len(models) == 0 {
+		if err != nil {
+			// Do NOT log the credential or response body; just the failure.
+			s.logger.Warn("claude model discovery failed", "err", err.Error())
+		}
+		return cliModelResult{fallback: true}
+	}
+	return cliModelResult{models: dedupeModels(models), fallback: false}
+}
+
+// claudeAPICredential resolves the credential for the Anthropic models call as
+// an (header name, header value) pair. ANTHROPIC_API_KEY wins when set; else
+// the freshest non-expired OAuth access token from the Claude CLI credentials
+// file is used as a bearer. ok=false means no usable credential. Secret —
+// never log the value.
+func claudeAPICredential() (header, value string, ok bool) {
+	if k := os.Getenv("ANTHROPIC_API_KEY"); k != "" {
+		return "x-api-key", k, true
+	}
+	for _, path := range claudeCredentialCandidatePaths() {
+		if tok := readFreshClaudeToken(path); tok != "" {
+			return "Authorization", "Bearer " + tok, true
+		}
+	}
+	return "", "", false
+}
+
+// claudeCredentialCandidatePaths returns the credentials-file locations to
+// try, in order: the hosted-pod shared home (the same /data/home the agent
+// manager uses for agent homes), then $HOME/.claude/.credentials.json for
+// non-hosted spokes. Computed per call — never cached — because the claude
+// CLI rewrites the file whenever it runs and the probe must see the freshest
+// token.
+func claudeCredentialCandidatePaths() []string {
+	paths := []string{claudePodCredentialsPath}
+	if home := os.Getenv("HOME"); home != "" {
+		if p := filepath.Join(home, ".claude", ".credentials.json"); p != claudePodCredentialsPath {
+			paths = append(paths, p)
+		}
+	}
+	return paths
+}
+
+// readFreshClaudeToken reads and parses one credentials file and returns its
+// OAuth access token ONLY if it is not expired (with claudeTokenExpirySkew of
+// margin). Absent file, malformed JSON, missing token, or an expired/expiring
+// token all return "" — the caller then falls back rather than firing a
+// doomed HTTP call. This deliberately does not reuse claude.ReadAccessToken,
+// which applies no skew margin.
+func readFreshClaudeToken(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var creds claude.Credentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return ""
+	}
+	o := creds.ClaudeAIOAuth
+	if o == nil || o.AccessToken == "" {
+		return ""
+	}
+	// expiresAt is a millisecond epoch; treat anything inside the skew window
+	// as already expired.
+	if o.ExpiresAt > 0 && time.UnixMilli(o.ExpiresAt).Before(time.Now().Add(claudeTokenExpirySkew)) {
+		return ""
+	}
+	return o.AccessToken
+}
+
+// fetchClaudeModels performs the GET <endpoint>?limit=N call and returns the
+// model ids. authHeader/authValue carry either the API key (x-api-key) or the
+// OAuth bearer (Authorization) — see claudeAPICredential.
+func fetchClaudeModels(modelsURL, authHeader, authValue string) ([]string, error) {
+	client := &http.Client{Timeout: cliModelQueryTimeout}
+	url := fmt.Sprintf("%s?limit=%d", modelsURL, anthropicModelsPageLimit)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set(authHeader, authValue)
+	req.Header.Set("anthropic-version", anthropicAPIVersion)
+	if authHeader == "Authorization" {
+		// OAuth (subscription-token) calls also send the oauth beta flag —
+		// currently optional for /v1/models, sent for forward compatibility.
+		req.Header.Set("anthropic-beta", anthropicOAuthBeta)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream returned %d", resp.StatusCode)
+	}
+	return parseClaudeModelsResponse(resp.Body)
+}
+
+// parseClaudeModelsResponse decodes the Anthropic /v1/models body and returns
+// the model ids. The response shape is:
+//
+//	{"data":[{"id":"claude-opus-5","type":"model",...}, ...]}
+func parseClaudeModelsResponse(r io.Reader) ([]string, error) {
+	var body struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(r).Decode(&body); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, m := range body.Data {
+		if m.ID == "" {
+			continue
+		}
+		out = append(out, m.ID)
 	}
 	return out, nil
 }

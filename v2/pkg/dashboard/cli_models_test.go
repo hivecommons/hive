@@ -85,19 +85,26 @@ func TestDedupeModels(t *testing.T) {
 	}
 }
 
-// TestQueryCLIModels_ClaudeStatic verifies claude returns a non-empty,
-// non-fallback (authoritative static) list without any network call.
-func TestQueryCLIModels_ClaudeStatic(t *testing.T) {
-	s := &Server{cliModels: newCLIModelCache()}
+// TestQueryCLIModels_ClaudeFallbackNoCreds verifies that with no API key and
+// no credentials file, claude discovery skips the network entirely and serves
+// the static fallback (non-empty, fallback=true) with the aliases appended.
+func TestQueryCLIModels_ClaudeFallbackNoCreds(t *testing.T) {
+	withoutClaudeCredentials(t)
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	r := s.queryCLIModels("claude")
 	if len(r.models) == 0 {
 		t.Fatal("claude models should never be empty")
 	}
-	if r.fallback {
-		t.Fatal("claude static list is authoritative, not a fallback")
+	if !r.fallback {
+		t.Fatal("claude with no credential must be marked fallback")
 	}
 	if !contains(r.models, "claude-opus-4-8") {
 		t.Fatalf("claude models missing current id: %v", r.models)
+	}
+	for _, alias := range claudeAlwaysIncludeModels {
+		if !contains(r.models, alias) {
+			t.Fatalf("alias %q missing from fallback claude list: %v", alias, r.models)
+		}
 	}
 }
 
@@ -327,6 +334,7 @@ func TestCliStaticFallback_BobAutoOnly(t *testing.T) {
 // where adding bob narrows or empties another CLI backend's catalog.
 func TestQueryCLIModels_BobDoesNotAffectOtherBackends(t *testing.T) {
 	swapGooseProbe(t, gooseProbeMissing)
+	withoutClaudeCredentials(t)
 	t.Setenv("COPILOT_GITHUB_TOKEN", "")
 	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
 	for _, backend := range []string{"claude", "copilot", "gemini", "goose", "codex"} {
