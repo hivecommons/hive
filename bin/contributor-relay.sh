@@ -278,7 +278,13 @@ function tmuxSendKeys(text) {
     const ctxPct = checkContextUsage();
     const RESET_EVERY_N = 3;
     const needsClaudeClear = BACKEND === 'claude' && ctxPct >= CLEAR_CONTEXT_THRESHOLD_PCT;
-    const needsCliRestart = BACKEND !== 'claude' && tasksCompletedCount > 0 && tasksCompletedCount % RESET_EVERY_N === 0;
+    // Fire the periodic memory-cleanup restart at most ONCE per threshold
+    // crossing (issue #2596). Requiring tasksCompletedCount !== lastResetAtCount
+    // stops the #2203 readiness guard from re-triggering the restart when it
+    // re-enters tmuxSendKeys() at the same, unchanged count — the re-entry that
+    // otherwise loops forever and starves the next task.
+    const needsCliRestart = BACKEND !== 'claude' && tasksCompletedCount > 0 &&
+      tasksCompletedCount % RESET_EVERY_N === 0 && tasksCompletedCount !== lastResetAtCount;
     if (needsClaudeClear) {
       console.log(`Context at ${ctxPct}% — sending /clear before next task`);
       execSync(`tmux send-keys -t ${TMUX_SESSION} Escape`, { timeout: 15000 });
@@ -291,6 +297,11 @@ function tmuxSendKeys(text) {
       tmuxSendEnters();
       sleepMs(3000);
     } else if (needsCliRestart) {
+      // Record that we serviced this count BEFORE relaunching, so when the
+      // readiness callback flushes the queued prompt back through here the
+      // predicate is already false and we fall through to deliver the next task
+      // instead of restarting again (issue #2596).
+      lastResetAtCount = tasksCompletedCount;
       console.log(`Restarting ${BACKEND} CLI for memory cleanup (task ${tasksCompletedCount})`);
       execSync(`tmux send-keys -t ${TMUX_SESSION} C-c`, { timeout: 15000 });
       sleepMs(1000);
@@ -534,6 +545,17 @@ function checkTmuxIdle() {
 const TASK_GRACE_PERIOD_MS = 180000;
 let taskAssignedAt = 0;
 let tasksCompletedCount = 0;
+// The completed-task count at which the periodic memory-cleanup restart last
+// fired (issue #2596). The restart predicate below is re-entered by the #2203
+// readiness/pending-task guard: the restart queues the prompt, clears cliReady,
+// relaunches, and the readiness callback calls flushPendingTask() ->
+// tmuxSendKeys() again. tasksCompletedCount only changes on an actual
+// completion, so without latching, "count % RESET_EVERY_N === 0" stays true and
+// the CLI restarts forever, never delivering the next task. Latching the count
+// makes the reset one-shot per threshold crossing; a value that no real count
+// reaches keeps the first crossing (count 0 is excluded anyway) from being
+// treated as already-serviced.
+let lastResetAtCount = -1;
 const PR_REVIEW_EVERY_N = 5;
 let taskTimeoutHandle = null;
 let lastProgressTick = 0;
@@ -890,6 +912,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getCliReady: () => cliReady,
     getPendingTask: () => pendingTask,
     setPendingTask: (v) => { pendingTask = v; },
+    setTasksCompletedCount: (v) => { tasksCompletedCount = v; },
+    getTasksCompletedCount: () => tasksCompletedCount,
+    setLastResetAtCount: (v) => { lastResetAtCount = v; },
+    getLastResetAtCount: () => lastResetAtCount,
     getCurrentTask: () => currentTask,
     setWs: (w) => { ws = w; },
   };
