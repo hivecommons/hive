@@ -26,6 +26,9 @@ func runDashboardIntegratedSetup(ctx context.Context, request dashboard.Integrat
 		if err := requireDashboardPreflightReceipt(ctx, request); err != nil {
 			return nil, err
 		}
+		mutationCtx, cancel := durableDashboardLifecycleContext(ctx)
+		defer cancel()
+		ctx = mutationCtx
 	}
 	baseArgs := []string{
 		"setup", "--json",

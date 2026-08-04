@@ -60,12 +60,19 @@ func loadAuthoritativeVisualWorkContract() (integrated.Config, bool, error) {
 		if err != nil {
 			return integrated.Config{}, false, fmt.Errorf("resolve HIVE_STATE_DIR: %w", err)
 		}
-		info, statErr := os.Stat(stateDir)
-		if statErr != nil || !info.IsDir() {
-			if statErr == nil {
-				statErr = errors.New("path is not a directory")
-			}
+		info, statErr := os.Lstat(stateDir)
+		if os.IsNotExist(statErr) {
+			// A successful managed uninstall removes the exact repository state
+			// while the long-running dashboard retains its explicit selection.
+			// The persistent root was already validated above, so absence here is
+			// the authoritative dormant state, not an ephemeral fallback.
+			return integrated.Config{}, false, nil
+		}
+		if statErr != nil {
 			return integrated.Config{}, false, fmt.Errorf("HIVE_STATE_DIR %s is unavailable: %w", stateDir, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return integrated.Config{}, false, fmt.Errorf("HIVE_STATE_DIR %s is unavailable: path must be a real directory", stateDir)
 		}
 	} else {
 		stateDir, exists, err = integrated.CurrentState(integratedStateRoot())

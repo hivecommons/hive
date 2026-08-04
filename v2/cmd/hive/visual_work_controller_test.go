@@ -66,6 +66,19 @@ func TestLoadAuthoritativeVisualWorkContractDoesNotCreateExplicitState(t *testin
 	}
 }
 
+func TestLoadAuthoritativeVisualWorkContractTreatsRemovedExplicitStateAsDormant(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "removed-after-uninstall")
+	t.Setenv("HIVE_STATE_DIR", stateDir)
+
+	installed, exists, err := loadAuthoritativeVisualWorkContract()
+	if err != nil || exists || installed.Repository != "" {
+		t.Fatalf("removed explicit state = %+v exists=%t err=%v", installed, exists, err)
+	}
+	if _, statErr := os.Lstat(stateDir); !os.IsNotExist(statErr) {
+		t.Fatalf("read-only dormant load created removed state: %v", statErr)
+	}
+}
+
 func TestLoadAuthoritativeVisualWorkContractRejectsNonemptyStateWithoutContract(t *testing.T) {
 	stateDir := t.TempDir()
 	integratedDir := filepath.Join(stateDir, "integrated")

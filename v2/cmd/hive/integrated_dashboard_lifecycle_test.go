@@ -404,6 +404,46 @@ func TestDashboardIntegratedTriggerUsesExistingNormalService(t *testing.T) {
 	}
 }
 
+func TestDashboardIntegratedTriggerSurvivesCallerCancellation(t *testing.T) {
+	stateDir := writeDashboardLifecycleContract(t)
+	installDashboardLifecycleFakes(t)
+	dashboardLifecycleCLIRunner = func(_ context.Context, _ []string, _ string, _ bool) (map[string]any, []byte, error) {
+		return map[string]any{
+			"schema_version": "hive.status.v1",
+			"config":         map[string]any{"repository": "owner/repository"},
+		}, []byte(`{"schema_version":"hive.status.v1"}`), nil
+	}
+	request := dashboard.IntegratedLifecycleRequest{
+		Repository: "owner/repository", Operation: "control-plan", Action: "trigger",
+		RequestID: "cycle-a-trigger-disconnect-001",
+	}
+	plan, err := runDashboardIntegratedLifecycle(context.Background(), request, "owner-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Operation = "control-apply"
+	request.ExpectedPlanSHA256, _ = plan["plan_sha256"].(string)
+	caller, cancelCaller := context.WithCancel(context.Background())
+	cancelCaller()
+	dashboardLifecycleTrigger = func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("durable trigger inherited caller cancellation: %v", err)
+		}
+		if _, ok := ctx.Deadline(); !ok {
+			t.Fatal("durable trigger has no bounded deadline")
+		}
+		return nil
+	}
+	result, err := runDashboardIntegratedLifecycle(caller, request, "owner-token")
+	if err != nil || result["outcome"] != "completed" {
+		t.Fatalf("result=%v err=%v", result, err)
+	}
+	ledger, err := loadDashboardLifecycleLedger(stateDir)
+	if err != nil || len(ledger.Entries) != 1 || ledger.Entries[0].Status != "completed" {
+		t.Fatalf("ledger=%+v err=%v", ledger, err)
+	}
+}
+
 func TestDashboardIntegratedTriggerTreatsSetupBaselineProgressAsHeld(t *testing.T) {
 	writeDashboardLifecycleContract(t)
 	installDashboardLifecycleFakes(t)

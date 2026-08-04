@@ -25,7 +25,10 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/visualhive/normalservice"
 )
 
-const dashboardLifecycleLedgerSchema = "hive.dashboard-integrated-requests.v1"
+const (
+	dashboardLifecycleLedgerSchema    = "hive.dashboard-integrated-requests.v1"
+	dashboardLifecycleMutationTimeout = 55 * time.Minute
+)
 
 var (
 	dashboardLifecycleCLIRunner      = runDashboardLifecycleCLI
@@ -110,14 +113,26 @@ func runDashboardIntegratedLifecycle(ctx context.Context, request dashboard.Inte
 		}, token, false)
 		return result, runErr
 	case "baseline-approve":
-		return runDashboardBaselineApproval(ctx, stateDir, request, token)
+		mutationCtx, cancel := durableDashboardLifecycleContext(ctx)
+		defer cancel()
+		return runDashboardBaselineApproval(mutationCtx, stateDir, request, token)
 	case "control-plan":
 		return dashboardIntegratedControlPlan(ctx, stateDir, request, token)
 	case "control-apply":
-		return runDashboardIntegratedControl(ctx, stateDir, request, token)
+		mutationCtx, cancel := durableDashboardLifecycleContext(ctx)
+		defer cancel()
+		return runDashboardIntegratedControl(mutationCtx, stateDir, request, token)
 	default:
 		return nil, fmt.Errorf("unsupported integrated dashboard operation %q", request.Operation)
 	}
+}
+
+// Dashboard mutations are durably bound before they begin. Once accepted,
+// their completion must not depend on an ingress or browser keeping the HTTP
+// connection open. The bounded child retains request values but survives a
+// caller disconnect; exact request receipts make a later retry a replay.
+func durableDashboardLifecycleContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), dashboardLifecycleMutationTimeout)
 }
 
 func dashboardIntegratedUninstalledRead(ctx context.Context, request dashboard.IntegratedLifecycleRequest, token string) (map[string]any, error) {
