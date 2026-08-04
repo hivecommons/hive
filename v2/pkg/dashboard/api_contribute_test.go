@@ -166,8 +166,9 @@ func TestContributeLanding(t *testing.T) {
 }
 
 // TestContributeLandingHasOpsTab pins the additive tab chrome: the landing page
-// must now render the Onboarding / Management & Operations tab bar, the new ops
-// panel, AND still carry the existing onboarding content unchanged.
+// must now render the Onboarding / Management / Operations tab bar (the former
+// single "Management & Operations" tab is split in two), the Operations panel,
+// AND still carry the existing onboarding content unchanged.
 func TestContributeLandingHasOpsTab(t *testing.T) {
 	setupContributeEnv(t)
 	s := NewServer(0, slog.Default())
@@ -182,12 +183,17 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 	}
 	body := w.Body.String()
 
-	// New tab chrome.
+	// New tab chrome: THREE tabs now — Onboarding, Management, Operations.
 	for _, want := range []string{
 		`class="page-tabs"`,
 		`data-panel="tab-onboarding"`,
+		`data-panel="tab-manage"`,
 		`data-panel="tab-ops"`,
-		`Management &amp; Operations`,
+		`id="ptab-manage"`,
+		`id="ptab-ops"`,
+		`>Management<`,  // Management tab label (controls only)
+		`>Operations<`,  // Operations tab label (monitoring)
+		`id="tab-manage"`,
 		`id="tab-ops"`,
 		`Connected clankers`,
 		`id="work-list"`,
@@ -195,8 +201,31 @@ func TestContributeLandingHasOpsTab(t *testing.T) {
 		`opened`, // pipeline node
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("ops tab chrome missing %q", want)
+			t.Errorf("tab chrome missing %q", want)
 		}
+	}
+
+	// The single "Management & Operations" tab was split; that combined label
+	// must no longer appear.
+	if strings.Contains(body, "Management &amp; Operations") {
+		t.Error(`combined "Management & Operations" tab label still present after the split`)
+	}
+
+	// The split must place the admin CONTROLS block under Management and the
+	// monitoring panels (clankers list / my work / pipeline) under Operations.
+	// Verify ordering: ops-admin appears inside tab-manage, before tab-ops opens.
+	iManage := strings.Index(body, `id="tab-manage"`)
+	iAdmin := strings.Index(body, `id="ops-admin"`)
+	iOps := strings.Index(body, `id="tab-ops"`)
+	iClankers := strings.Index(body, `<h3>Connected clankers</h3>`)
+	if iManage < 0 || iAdmin < 0 || iOps < 0 || iClankers < 0 {
+		t.Fatalf("missing anchors: manage=%d admin=%d ops=%d clankers=%d", iManage, iAdmin, iOps, iClankers)
+	}
+	if !(iManage < iAdmin && iAdmin < iOps) {
+		t.Errorf("admin controls must render under Management (before Operations): manage=%d admin=%d ops=%d", iManage, iAdmin, iOps)
+	}
+	if !(iOps < iClankers) {
+		t.Errorf("Connected clankers must render under Operations (after tab-ops opens): ops=%d clankers=%d", iOps, iClankers)
 	}
 
 	// Existing onboarding content must still be present and unchanged.

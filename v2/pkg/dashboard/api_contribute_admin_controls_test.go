@@ -9,14 +9,18 @@ import (
 	"testing"
 )
 
-// #2534 — Operator admin controls mirrored into the Management & Operations tab.
+// #2534 — Operator admin controls. Originally in a single "Management & Operations"
+// tab; that tab is now split into "Management" (the admin CONTROLS block below) and
+// "Operations" (monitoring + the per-clanker controls). The gating is unchanged and
+// applies to controls in BOTH tabs.
 //
 // These tests pin two things:
 //   1. The UI: the /contribute page must ship the (initially hidden) admin-controls
 //      markup that mirrors the Governor Hub config — suspend/skip toggles, the
 //      admission-filter editors, and the per-contributor action wiring — plus the
 //      /api/role gate and the themed confirm modal. Rendering is gated CLIENT-side
-//      by initAdmin() reading /api/role; a read viewer never enables it.
+//      by initAdmin() reading /api/role; a read viewer never enables it. The SAME
+//      gate (adminEnabled) governs the per-clanker controls now under Operations.
 //   2. The server boundary: the contributor mutation endpoints the tab drives
 //      (trust / revoke / delete) must reject a "read" viewer with 403 and allow
 //      owner + read-write — because roleEnforcement EXEMPTS the /api/contribute*
@@ -95,6 +99,36 @@ func TestOpsTabHasAdminControlsMarkup(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("read-only ops panel content missing %q (must remain intact)", want)
 		}
+	}
+
+	// Split placement: the admin CONTROLS block moved to the Management panel;
+	// the per-clanker controls + monitoring stayed under Operations.
+	iManage := strings.Index(body, `id="tab-manage"`)
+	iAdmin := strings.Index(body, `id="ops-admin"`)
+	iOps := strings.Index(body, `id="tab-ops"`)
+	iClankerCtl := strings.Index(body, `data-role="revoke"`)
+	if iManage < 0 || iAdmin < 0 || iOps < 0 || iClankerCtl < 0 {
+		t.Fatalf("anchors missing: manage=%d admin=%d ops=%d clankerCtl=%d", iManage, iAdmin, iOps, iClankerCtl)
+	}
+	if !(iManage < iAdmin && iAdmin < iOps) {
+		t.Errorf("admin controls must be under Management, before Operations: manage=%d admin=%d ops=%d", iManage, iAdmin, iOps)
+	}
+	if iClankerCtl < iOps {
+		t.Errorf("per-clanker controls must stay under Operations (after tab-ops): ops=%d clankerCtl=%d", iOps, iClankerCtl)
+	}
+
+	// One gate for both tabs: the per-clanker controls are emitted only when
+	// adminEnabled is set, which initAdmin() sets solely for owner/read-write.
+	// This is the same gate as the Management admin block — the split must not
+	// give the Operations controls a weaker (or absent) gate.
+	if !strings.Contains(body, `if(adminEnabled&&c.contributor_id){`) {
+		t.Error("per-clanker controls must remain gated on adminEnabled (owner/read-write only)")
+	}
+	// initAdmin() must run for the Management OR the Operations tab, so a viewer
+	// landing straight on Operations still resolves their role for the per-row
+	// controls (and read viewers still get none).
+	if !strings.Contains(body, `dp==='tab-ops'||dp==='tab-manage'`) {
+		t.Error("initAdmin() must be wired to run when either the Management or Operations tab is opened")
 	}
 }
 
@@ -221,5 +255,31 @@ func TestGovernorHubAcceptsSkipAssigned(t *testing.T) {
 	}
 	if got, ok := cfg.Hub["contribute_skip_assigned_to_others"]; !ok || got != true {
 		t.Errorf("config hub missing/false contribute_skip_assigned_to_others: %v (ok=%v)", got, ok)
+	}
+}
+
+// TestGovernorHubSave_ReadViewerForbidden proves the Management-tab filter-save
+// boundary: a "read" viewer's PUT /api/config/governor/hub is 403'd by the
+// roleEnforcement middleware, independent of the UI hiding. This is the server
+// gate behind the Management admin block after the tab split — the split must not
+// weaken it. Exercised through the full handler chain (Handler()) so the
+// middleware actually runs.
+func TestGovernorHubSave_ReadViewerForbidden(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Hub.ContributeSuspended = false
+
+	h := s.Handler()
+	req := httptest.NewRequest(http.MethodPut, "/api/config/governor/hub",
+		strings.NewReader(`{"contribute_suspended":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Hive-Role", "read")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("read viewer PUT /api/config/governor/hub got %d, want 403 (body: %s)", w.Code, w.Body.String())
+	}
+	if deps.Config.Hub.ContributeSuspended {
+		t.Error("read viewer mutated Config.Hub.ContributeSuspended through the filter-save endpoint")
 	}
 }

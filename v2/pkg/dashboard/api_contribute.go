@@ -474,7 +474,8 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 </style></head><body>
 <div class="page-tabs" role="tablist">
 <button class="page-tab active" role="tab" id="ptab-onboarding" aria-selected="true" data-panel="tab-onboarding">Onboarding</button>
-<button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Management &amp; Operations</button>
+<button class="page-tab" role="tab" id="ptab-manage" aria-selected="false" data-panel="tab-manage">Management</button>
+<button class="page-tab" role="tab" id="ptab-ops" aria-selected="false" data-panel="tab-ops">Operations</button>
 </div>
 <div class="tab-panel active" id="tab-onboarding" role="tabpanel" aria-labelledby="ptab-onboarding">
 <div class="page">
@@ -652,10 +653,14 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </div>
 </div>
 </div>
-<div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
+<!-- Management tab — operator admin CONTROLS only. Split out of the former
+     single "Management & Operations" tab so controls (this panel) and monitoring
+     (the Operations panel below) live apart. The admin block below is moved here
+     verbatim; nothing about its gating, IDs, or endpoints changed. -->
+<div class="tab-panel" id="tab-manage" role="tabpanel" aria-labelledby="ptab-manage">
 <div class="ops">
-<h1>Management &amp; Operations</h1>
-<p class="subtitle" style="font-size:.95rem">An operations view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The read-only panels below surface what this hive already knows; operators with write access also get the admin controls, mirrored from the Governor Hub configuration.</p>
+<h1>Management</h1>
+<p class="subtitle" style="font-size:.95rem">Operator admin controls for the contributor (&ldquo;clanker&rdquo;) fleet, mirrored from the Governor Hub configuration. Owner &amp; read-write only &mdash; a read viewer sees no controls here. Live monitoring of the fleet lives under the <strong style="color:#e6edf3">Operations</strong> tab.</p>
 
 <!-- #2534 Operator admin controls. Hidden by default; shown only after /api/role
      reports owner or read-write. These mirror the Governor Hub config section
@@ -696,6 +701,17 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 <p class="admin-note" id="admin-save-hint">Suspend / skip toggles apply immediately. Filter edits apply on Save. Both persist through <code>PUT /api/config/governor/hub</code>.</p>
 </div>
 </div>
+</div>
+</div>
+<!-- Operations tab — MONITORING. The Connected-clankers list (with its per-row
+     trust / Revoke / Remove controls, still owner/read-write gated), My work
+     queue, and the read-only Pipeline & policy panel. Split out of the former
+     "Management & Operations" tab; the admin CONTROLS moved to the Management
+     panel above, everything here stayed put. -->
+<div class="tab-panel" id="tab-ops" role="tabpanel" aria-labelledby="ptab-ops">
+<div class="ops">
+<h1>Operations</h1>
+<p class="subtitle" style="font-size:.95rem">A live view over the contributor (&ldquo;clanker&rdquo;) fleet and its in-flight work. The panels below surface what this hive already knows; the per-clanker trust / revoke / remove controls are owner &amp; read-write only. Admin controls (suspend, admission filters) live under the <strong style="color:#e6edf3">Management</strong> tab.</p>
 
 <div class="ops-grid">
 <div>
@@ -737,14 +753,22 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 // Tab switching for the /contribute page. Additive: leaves onboarding intact.
 var tabs=document.querySelectorAll('.page-tab');
 var panels=document.querySelectorAll('.tab-panel');
-var opsStarted=false;
+var opsStarted=false;   // Operations fleet polling started
+var adminStarted=false; // /api/role gate resolved (adminEnabled set)
+// The role gate now backs controls in BOTH tabs: the admin block under Management
+// AND the per-clanker trust/revoke/remove buttons under Operations. So initAdmin()
+// must run when EITHER tab is first opened — otherwise a viewer who lands straight
+// on Operations would never resolve their role and would lose the per-row controls.
+// It is idempotent (fetches /api/role once) and independent of opsPoll().
 tabs.forEach(function(t){t.addEventListener('click',function(){
   tabs.forEach(function(x){x.classList.remove('active');x.setAttribute('aria-selected','false');});
   panels.forEach(function(p){p.classList.remove('active');});
   t.classList.add('active');t.setAttribute('aria-selected','true');
   var panel=document.getElementById(t.getAttribute('data-panel'));
   if(panel)panel.classList.add('active');
-  if(t.getAttribute('data-panel')==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();initAdmin();}
+  var dp=t.getAttribute('data-panel');
+  if((dp==='tab-ops'||dp==='tab-manage')&&!adminStarted){adminStarted=true;initAdmin();}
+  if(dp==='tab-ops'&&!opsStarted){opsStarted=true;opsPoll();}
 });});
 
 var currentFilter='all';
