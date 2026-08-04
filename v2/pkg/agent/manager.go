@@ -147,9 +147,14 @@ type ProjectContext struct {
 }
 
 type Manager struct {
-	agents           map[string]*AgentProcess
-	idToName         map[string]string
-	mu               sync.RWMutex
+	agents   map[string]*AgentProcess
+	idToName map[string]string
+	mu       sync.RWMutex
+	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
+	// the output-capture goroutines, and taking m.mu there risks the startup
+	// re-entrancy deadlock class (see the 2026-07 provisionWG incident).
+	thrashMu         sync.Mutex
+	thrash           map[string]*thrashState
 	logger           *slog.Logger
 	workDir          string
 	project          ProjectContext
@@ -1872,6 +1877,7 @@ func (m *Manager) pollTmuxOutput(name, session string, buf *RingBuffer, ctx cont
 			for _, l := range newLines {
 				buf.Write(l)
 				m.logOutputSignals(name, l)
+				m.checkBlockedThrash(name, l)
 			}
 			prevLines = filtered
 		}
@@ -1894,6 +1900,94 @@ func (m *Manager) logOutputSignals(agent, line string) {
 			return
 		}
 	}
+}
+
+// Blocked-action thrash breaker: an agent that keeps hammering a policy wall
+// (e.g. git push in ADVISORY mode, blocked every ~3s by git-credential-hive)
+// burns model tokens indefinitely with zero possible output — observed live
+// 2026-08-04 on a hosted L2 hive whose guide agent retried a blocked push
+// every 3 seconds. The hub, not the model, breaks the loop: thrashThreshold
+// blocked-action lines within thrashWindow pauses the session (visible,
+// reversible, stops governor kicks) with the reason spelled out.
+const (
+	thrashWindow    = 60 * time.Second
+	thrashThreshold = 5
+	thrashCooldown  = 10 * time.Minute
+)
+
+// blockedActionMarkers are the policy-wall stderr lines that can never
+// succeed by retrying. Keep in sync with bin/git-credential-hive.sh and the
+// proxy's hard-deny responses.
+var blockedActionMarkers = []string{
+	"git push blocked:",
+	"blocked by hive policy",
+}
+
+type thrashState struct {
+	times    []time.Time
+	lastTrip time.Time
+}
+
+// checkBlockedThrash records a blocked-action output line for the agent and,
+// past the threshold, pauses the agent asynchronously (never inline: this is
+// called from the output-capture goroutine and Pause takes m.mu).
+func (m *Manager) checkBlockedThrash(agent, line string) {
+	matched := false
+	for _, marker := range blockedActionMarkers {
+		if strings.Contains(line, marker) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return
+	}
+	now := time.Now()
+	m.thrashMu.Lock()
+	if m.thrash == nil {
+		m.thrash = map[string]*thrashState{}
+	}
+	st := m.thrash[agent]
+	if st == nil {
+		st = &thrashState{}
+		m.thrash[agent] = st
+	}
+	trip := recordBlockedAndCheck(st, now, thrashWindow, thrashThreshold, thrashCooldown)
+	m.thrashMu.Unlock()
+	if !trip {
+		return
+	}
+	reason := fmt.Sprintf("blocked-action loop: %d+ policy-blocked attempts in %s — the block is terminal in this mode; paused to stop token burn", thrashThreshold, thrashWindow)
+	m.logger.Warn("thrash breaker tripped", "agent", agent, "line", truncateStr(line, 160))
+	go func() {
+		if err := m.Pause(agent, "thrash-breaker", reason); err != nil {
+			m.logger.Warn("thrash breaker pause failed", "agent", agent, "error", err)
+		}
+	}()
+}
+
+// recordBlockedAndCheck is the pure sliding-window decision: append now, drop
+// entries older than window, and report whether the threshold is crossed
+// outside the cooldown. Split out for direct unit testing.
+func recordBlockedAndCheck(st *thrashState, now time.Time, window time.Duration, threshold int, cooldown time.Duration) bool {
+	st.times = append(st.times, now)
+	cutoff := now.Add(-window)
+	kept := st.times[:0]
+	for _, t := range st.times {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	st.times = kept
+	if len(st.times) < threshold {
+		return false
+	}
+	if !st.lastTrip.IsZero() && now.Sub(st.lastTrip) < cooldown {
+		return false
+	}
+	st.lastTrip = now
+	st.times = nil
+	return true
 }
 
 var kickRefusalPatterns = []string{
