@@ -361,10 +361,18 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <h3>How it works</h3>
 <div style="margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
 <span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
+<label style="font-size:.9rem;color:#8b949e">OS:</label>
+<select id="os-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
+<option value="macos" selected>macOS</option>
+<option value="linux">Linux</option>
+<option value="windows">Windows</option>
+</select>
+</span>
+<span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap">
 <label style="font-size:.9rem;color:#8b949e">Choose your CLI:</label>
 <select id="cli-select" style="background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:6px 12px;font-size:.9rem;cursor:pointer">
 <option value="claude" data-install="npm i -g @anthropic-ai/claude-code" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="">Claude Code</option>
-<option value="copilot" data-install="" data-host-install="" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
+<option value="copilot" data-install="" data-host-install="npm install -g @github/copilot # uses your existing gh auth" data-model-flag="--model" data-default-model="">GitHub Copilot</option>
 <option value="pi" data-install="" data-host-install="curl -fsSL https://pi.dev/install.sh | sh" data-model-flag="--model" data-default-model="">Pi</option>
 <option value="goose" data-install="" data-host-install="# Install Goose: https://github.com/block/goose/releases\n# Install Ollama: https://ollama.com/download\nollama pull llama3.2:3b\nexport GOOSE_PROVIDER=ollama GOOSE_MODEL=llama3.2:3b" data-model-flag="" data-default-model="">Goose</option>
 <option value="litellm" data-install="" data-host-install="npm i -g @anthropic-ai/claude-code" data-model-flag="--model" data-default-model="" data-env="# Your own LiteLLM proxy — exported locally, never sent to the hive\nexport HIVE_LITELLM_ENDPOINT=https://your-litellm-host:4000\nexport HIVE_LITELLM_API_KEY=sk-your-litellm-key  # only if your proxy needs one">LiteLLM (Claude Code + your proxy)</option>
@@ -398,7 +406,9 @@ code{background:#0d1117;padding:2px 8px;border-radius:4px;font-size:.9rem}
 <p style="color:#8b949e;margin-bottom:8px">Copy and paste these commands to get started:</p>
 <div style="margin-top:16px;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:16px;position:relative">
 <button id="copy-btn" style="position:absolute;top:8px;right:8px;background:#238636;color:#fff;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:.75rem">Copy</button>
-<pre id="copy-cmds" style="color:#e6edf3;font-size:.85rem;margin:0;overflow-x:auto;white-space:pre">brew install just gh
+<pre id="copy-cmds" style="color:#e6edf3;font-size:.85rem;margin:0;overflow-x:auto;white-space:pre"># Default shown: macOS + Claude Code + containerized mode.
+# Use the OS / CLI / Mode / Runtime selectors above to customize.
+brew install just gh
 git clone -b v2 https://github.com/kubestellar/hive && cd hive
 export HIVE_HUB=%s
 just contribute-setup claude
@@ -406,18 +416,28 @@ just contribute-hive</pre>
 </div>
 <script>
 (function(){
+var osSel=document.getElementById('os-select');
 var sel=document.getElementById('cli-select');
 var modeSel=document.getElementById('mode-select');
 var runtimeSel=document.getElementById('runtime-select');
 var runtimeGroup=document.getElementById('runtime-group');
 var cmds=document.getElementById('copy-cmds');
 var hubURL='%s';
-var containerTpl='brew install just gh\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive';
-var hostTpl='brew install just gh\nINSTALL\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive CLI local';
+// Prerequisite line (just + gh) per OS, using each project's own documented
+// install method. macOS stays brew install just gh — the historical default.
+var prereqByOS={
+macos:'brew install just gh',
+linux:'curl --proto \'=https\' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to ~/.local/bin\n(type -p wget >/dev/null || (sudo apt update && sudo apt install wget -y)) && sudo mkdir -p -m 755 /etc/apt/keyrings && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && sudo mkdir -p -m 755 /etc/apt/sources.list.d && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt update && sudo apt install gh -y',
+windows:'winget install --id Casey.Just --exact\nwinget install --id GitHub.cli'
+};
+var containerTpl='PREREQ\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive';
+var hostTpl='PREREQ\nINSTALL\ngit clone -b v2 https://github.com/kubestellar/hive && cd hive\nexport HIVE_HUB='+hubURL+'\njust contribute-setup CLI\njust contribute-hive CLI local';
 var modelRow=document.getElementById('model-row');
 var modelInput=document.getElementById('model-input');
 function updateCmds(){update();}
 function update(){
+var os=osSel.value;
+var prereq=prereqByOS[os]||prereqByOS.macos;
 var cli=sel.value;
 var opt=sel.options[sel.selectedIndex];
 var mode=modeSel.value;
@@ -444,11 +464,12 @@ if(mode==='host'){
 tpl=hostTpl;
 install=opt.getAttribute('data-host-install');
 if(!install)install='# '+cli+' uses your existing gh auth';
-cmds.textContent=tpl.replace('INSTALL',install.replace(/\\n/g,'\n')).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
+cmds.textContent=tpl.replace('PREREQ',prereq).replace('INSTALL',install.replace(/\\n/g,'\n')).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
 }else{
-cmds.textContent=containerTpl.replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
+cmds.textContent=containerTpl.replace('PREREQ',prereq).replace(/CLI/g,cli).replace('just contribute-setup',preLines+'just contribute-setup');
 }
 }
+osSel.addEventListener('change',update);
 sel.addEventListener('change',function(){modelInput.value='';update();});
 modeSel.addEventListener('change',update);
 runtimeSel.addEventListener('change',update);
@@ -471,7 +492,7 @@ setTimeout(function(){btn.textContent='Copy';btn.style.background='#238636'},200
 </script>
 </div>
 <p style="color:#6e7681;font-size:.78rem;margin-top:8px">Containerized mode auto-detects docker, then podman &mdash; force one with <code>export HIVE_CONTAINER_RUNTIME=podman</code>. Rootless podman (keep-id, SELinux labels) is handled automatically.</p>
-<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=contribute,enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
+<p style="color:#6e7681;font-size:.78rem;margin-top:8px">Don't see your CLI? <a href="https://github.com/kubestellar/hive/issues/new?title=CLI+request:+&labels=enhancement" target="_blank" style="color:#58a6ff">Open an issue</a> and we'll add support for it.</p>
 <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
 <a href="/leaderboard" style="display:inline-block;padding:8px 20px;background:#161b22;border:1px solid #30363d;border-radius:8px;color:#58a6ff;text-decoration:none;font-size:.9rem">🏆 View Leaderboard</a>
 </div>
