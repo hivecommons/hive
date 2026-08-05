@@ -2783,6 +2783,8 @@ function statusPill(s){
 }
 function renderWork(list){
   lastWork=list;
+  // reload bridge — overwritten by the next poll, including to empty.
+  ccOpsCacheWrite(OPS_CACHE_WORK_KEY,lastWork);
   // "Done" is special: the fleet work array holds ONLY in-flight tasks, so a naive
   // status filter is always empty. Instead, source "Done" from the completed activity
   // events (the real completion history). All/Active/Review keep filtering the
@@ -2902,6 +2904,8 @@ function ccQueueMatches(q){
 }
 function ccRenderQueue(flip){
   var el=document.getElementById('cc-queue');if(!el)return;
+  // reload bridge — overwritten by the next poll, including to empty.
+  ccOpsCacheWrite(OPS_CACHE_QUEUE_KEY,ccQueue);
   // Item count badge, same style as "My work"'s #work-count — kept in sync on
   // every render (initial load, SSE queue push, poll fallback, drag-reorder).
   var qc=document.getElementById('queue-count');
@@ -3174,6 +3178,58 @@ var OPS_RAIL_KEY='hive.ops.devlog.collapsed';
 var opsRailInit=false;
 function ccRailRead(){try{return localStorage.getItem(OPS_RAIL_KEY)==='1';}catch(e){return false;}}
 function ccRailWrite(collapsed){try{if(collapsed)localStorage.setItem(OPS_RAIL_KEY,'1');else localStorage.removeItem(OPS_RAIL_KEY);}catch(e){}}
+
+// ── Ops panel reload-bridge cache ───────────────────────────────────────────────
+// On a page refresh the ready-work queue, opportunistic work, and my-work panels
+// sit on their "Loading…" placeholders until the first poll/SSE frame returns,
+// which reads as a flash of empty. To bridge that gap we mirror each panel's DATA
+// (the arrays, never rendered HTML) into localStorage as it renders and hydrate
+// from it on load. The cache is ONLY a reload bridge: the very next successful
+// poll overwrites both the DOM and the cache — INCLUDING overwriting to a
+// genuinely-empty result — so stale work can never persist. Fresh window is short
+// (OPS_CACHE_TTL_MS) so a long-closed tab does not resurrect ancient state.
+var OPS_CACHE_QUEUE_KEY='hive.ops.cache.queue';
+var OPS_CACHE_WORK_KEY='hive.ops.cache.work';
+var OPS_CACHE_OPP_KEY='hive.ops.cache.opp';
+var OPS_CACHE_TTL_MS=5*60*1000; // 5 minutes: the cache is a reload bridge, not a store
+// ccOpsCacheWrite stores an array under key with a timestamp. Guarded like the
+// rail helpers: private mode / quota errors degrade silently. Called on every
+// render, so an empty array is persisted too (the next poll's empty overwrites the
+// previous non-empty cache — no phantom work).
+function ccOpsCacheWrite(key,arr){
+  try{localStorage.setItem(key,JSON.stringify({t:new Date().getTime(),d:arr||[]}));}catch(e){}
+}
+// ccOpsCacheRead returns the cached array if present and fresher than the TTL,
+// else null. Any parse/storage error yields null (degrade to placeholders).
+function ccOpsCacheRead(key){
+  try{
+    var raw=localStorage.getItem(key);if(!raw)return null;
+    var o=JSON.parse(raw);
+    if(!o||typeof o.t!=='number'||!o.d)return null;
+    if((new Date().getTime()-o.t)>OPS_CACHE_TTL_MS)return null;
+    return o.d;
+  }catch(e){return null;}
+}
+// ccHydrateOpsFromCache paints the three panels from the reload-bridge cache
+// BEFORE the first poll returns, so a refresh shows the previous content instead
+// of an empty flash. It sets the same state vars the live path uses (ccQueue /
+// lastWork / ccOppItems) then calls the existing render fns, so the next poll
+// overwrites them cleanly (including to empty). Every step is guarded so a bad
+// cache entry can never block the live wiring that follows in ccStart().
+function ccHydrateOpsFromCache(){
+  try{
+    var q=ccOpsCacheRead(OPS_CACHE_QUEUE_KEY);
+    if(q&&q.length){ccQueue=q.slice();ccRenderQueue();}
+  }catch(e){}
+  try{
+    var w=ccOpsCacheRead(OPS_CACHE_WORK_KEY);
+    if(w&&w.length){renderWork(w);}
+  }catch(e){}
+  try{
+    var o=ccOpsCacheRead(OPS_CACHE_OPP_KEY);
+    if(o&&o.length){ccOppItems=o.slice();ccRenderOpportunistic();}
+  }catch(e){}
+}
 function ccRailApply(rail,btn,collapsed){
   rail.classList.toggle('collapsed',collapsed);
   if(btn){
@@ -3404,6 +3460,11 @@ function ccQueuePoll(){ // fallback when SSE is down: refresh queue only
 function ccStopFallback(){if(ccQueuePollTimer){clearTimeout(ccQueuePollTimer);ccQueuePollTimer=null;}}
 function ccStart(){
   if(ccStarted)return;ccStarted=true;
+  // Paint the queue / opportunistic / my-work panels from the reload-bridge cache
+  // FIRST, before any poll returns, so a refresh shows the previous content instead
+  // of an empty flash. The next successful poll overwrites both DOM and cache
+  // (including to empty), so this is purely a bridge across the reload gap.
+  try{ccHydrateOpsFromCache();}catch(e){console.error('ops cache hydrate failed',e);}
   // Seed + poll the Live Activity rail from the RELIABLE polling endpoint (the same
   // source Onboarding uses) so the rail shows the backlog immediately and stays
   // current even when the SSE stream delivers nothing (hosted spokes). SSE, when it
@@ -3481,6 +3542,8 @@ function ccOppPoll(){
 function ccOppHeatClass(h){h=h||0;if(h>=6)return '';if(h>=3)return 'warm';return 'cool';}
 function ccRenderOpportunistic(){
   var el=document.getElementById('opp-list');if(!el)return;
+  // reload bridge — overwritten by the next poll, including to empty.
+  ccOpsCacheWrite(OPS_CACHE_OPP_KEY,ccOppItems);
   var cnt=document.getElementById('opp-count');
   if(cnt)cnt.textContent=ccOppItems.length?(ccOppItems.length+' found'):'';
   if(!ccOppItems.length){el.innerHTML='<div class="ops-empty">Nothing fresh to surface right now &mdash; the backlog is quiet.</div>';return;}
