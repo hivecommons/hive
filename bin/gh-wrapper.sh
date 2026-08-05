@@ -16,7 +16,13 @@
 
 set -euo pipefail
 
-REAL_GH="/usr/bin/gh"
+# The real gh binary is installed at /opt/hive/bin/gh-real (v2/Dockerfile:74),
+# NOT /usr/bin/gh — which does not exist in the image. A stale /usr/bin/gh path
+# made the guard below fire "gh CLI is not available" for every agent gh call,
+# silently breaking the CLI GitHub workflow (issue/PR view, create, merge). Keep
+# the legacy path as a fallback for any environment that does ship it there.
+REAL_GH="/opt/hive/bin/gh-real"
+[[ -x "$REAL_GH" ]] || REAL_GH="/usr/bin/gh"
 RESTRICTIONS_DIR="/etc/hive/restrictions"
 
 # Guard: if the real gh binary is not installed, tell the agent to use MCP instead.
