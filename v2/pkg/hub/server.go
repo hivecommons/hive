@@ -662,9 +662,17 @@ type HubServer struct {
 	// only ever sees its own path and cannot race a test redirecting the
 	// global for the next server (the TestLoadRegistry -race failure).
 	registryPath string
-	hubGitHash   string
-	hubGitBranch string
-	hubSecret    string
+	// alertAcksPath is this server's on-disk alert-acknowledgements file,
+	// captured from the package-level default at construction and immutable
+	// afterwards. Same rationale as registryPath: multiple tests each
+	// temporarily redirect the alertAcksPath global to their own t.TempDir()
+	// and restore it on return, so a per-instance field (read via ackPath())
+	// keeps every server's persistence calls pinned to the path it was built
+	// with instead of whatever the global happens to hold when save/load runs.
+	alertAcksPath string
+	hubGitHash    string
+	hubGitBranch  string
+	hubSecret     string
 	// lastHubUpgradeTrigger debounces the hub self-upgrade rollout restart so the
 	// every-cycle behind-latest check doesn't re-restart while a rollout is still
 	// in flight. See the auto-upgrade block in the SHA-poll loop. It also marks
@@ -927,6 +935,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		logger:                  logger,
 		saveCh:                  make(chan struct{}, 1),
 		registryPath:            registryPath,
+		alertAcksPath:           alertAcksPath,
 		hubGitHash:              gitHash,
 		hubGitBranch:            gitBranch,
 		hubSecret:               secret,
@@ -2150,8 +2159,8 @@ type FleetStats struct {
 	// public). Computing them here counts every hive while disclosing none: like
 	// every other field on this struct they are scalars, and no name, org, repo,
 	// owner or URL is derivable from them.
-	AgentsRunning int    `json:"agents_running"`
-	Contributors  int    `json:"contributors"`
+	AgentsRunning int `json:"agents_running"`
+	Contributors  int `json:"contributors"`
 	// ContributorsTotal is the fleet-wide count of REGISTERED (unique) known
 	// contributors, summed from each hive's ContributorCount rather than
 	// ActiveContributors. Contributors above tracks who is CURRENTLY active,
@@ -2515,6 +2524,22 @@ func (s *HubServer) regPath() string {
 		return s.registryPath
 	}
 	return registryPath
+}
+
+// ackPath returns this server's alert-acks file path: the per-instance field
+// captured at construction, or — for servers built directly in tests as bare
+// &HubServer{...} literals without one — the package-level default. Same
+// rationale as regPath: saveAlertAcks/loadAlertAcks are only ever called
+// synchronously (an admin HTTP request, or NewHubServer's own startup path),
+// never from a goroutine that outlives its caller, so reading the instance
+// field here — rather than the mutable global — is what stops one test's
+// temporary redirect of alertAcksPath from being observed by a server built
+// (and exercised) by a different test.
+func (s *HubServer) ackPath() string {
+	if s.alertAcksPath != "" {
+		return s.alertAcksPath
+	}
+	return alertAcksPath
 }
 
 // saveRegistryNow marshals and writes the registry to disk immediately, via a

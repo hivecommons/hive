@@ -34,9 +34,17 @@ const alertProvStatusError = "error"
 // one more SOURCE feeding this model — no rule here needs to be rewritten, and
 // nothing here recomputes a drift signal itself.
 
-// alertAcksPath is the on-disk file where admin alert acknowledgements are
-// persisted so a silenced alert stays silenced across a hub restart or upgrade.
-// A var (not a const) so tests can point it at a temp dir.
+// alertAcksPath is the DEFAULT on-disk file where admin alert acknowledgements
+// are persisted so a silenced alert stays silenced across a hub restart or
+// upgrade. A var (not a const) so tests can redirect it at a temp dir before
+// constructing a server; production keeps the default. NewHubServer copies it
+// into the per-instance HubServer.alertAcksPath at construction, and
+// saveAlertAcks/loadAlertAcks read that field via ackPath() — never this
+// global directly — so one test's temporary redirect of this var can never be
+// observed by a *HubServer another test already built (the
+// TestAlertAcksPersistRoundTrip flake: two servers built back-to-back in the
+// same test both resolve to the SAME path this way, while any concurrently
+// running test's redirect is invisible to them).
 var alertAcksPath = "/data/saas/hub-alert-acks.json"
 
 // Alert severities, ordered most- to least-urgent. Kept as named constants so
@@ -1065,16 +1073,17 @@ func (s *HubServer) saveAlertAcks() {
 		s.logger.Error("failed to marshal alert acks for persistence", "error", err)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(alertAcksPath), 0o755); err != nil {
+	path := s.ackPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		s.logger.Error("failed to create alert acks dir", "error", err)
 		return
 	}
-	tmpPath := alertAcksPath + ".tmp"
+	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		s.logger.Error("failed to write alert acks tmp file", "error", err)
 		return
 	}
-	if err := os.Rename(tmpPath, alertAcksPath); err != nil {
+	if err := os.Rename(tmpPath, path); err != nil {
 		s.logger.Error("failed to rename alert acks file", "error", err)
 	}
 }
@@ -1085,7 +1094,7 @@ func (s *HubServer) loadAlertAcks() {
 	if s == nil || s.alerts == nil {
 		return
 	}
-	data, err := os.ReadFile(alertAcksPath)
+	data, err := os.ReadFile(s.ackPath())
 	if err != nil {
 		if !os.IsNotExist(err) {
 			s.logger.Error("failed to read persisted alert acks", "error", err)
