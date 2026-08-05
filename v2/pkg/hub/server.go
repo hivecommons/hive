@@ -1389,6 +1389,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			if floatingAtLatest {
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				// The upgrade is done — drop the start clock so the next one
+				// times from zero, not from this completed rollout.
+				entry.UpgradeStartedAt = time.Time{}
 				entry.OrphanedUpgradeSweeps = 0
 			} else if h.Upgrading && !payload.Upgrading && (sameCommit(payload.GitHash, h.UpgradeTarget) || (registryLatestSHA != "" && sameCommit(payload.GitHash, registryLatestSHA))) {
 				// Non-upgrading heartbeat at the target SHA or at latest —
@@ -1399,6 +1402,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// full SHA and the target/latest was the 7-char short form.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				// Upgrade landed — clear the start clock so the next upgrade
+				// times from zero.
+				entry.UpgradeStartedAt = time.Time{}
 				// The upgrade landed, so any orphan-sweep retry budget spent
 				// getting here is no longer relevant. Reset it, or a hive that
 				// needed one sweep on each of three separate upgrades would be
@@ -1408,6 +1414,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// Upgrading with no target (stale flag from config-only restart).
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				entry.UpgradeStartedAt = time.Time{}
 			} else if payload.UpgradeFailed {
 				// The spoke just told us the upgrade FAILED. That is direct
 				// evidence and must beat the inference below, which would
@@ -1416,10 +1423,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				// permanent spinner straight back.
 				entry.Upgrading = false
 				entry.UpgradeTarget = ""
+				entry.UpgradeStartedAt = time.Time{}
 			} else if h.Upgrading && h.UpgradeTarget != "" {
 				if entry.GitHash != h.GitHash && entry.GitHash != "" {
 					entry.Upgrading = false
 					entry.UpgradeTarget = ""
+					entry.UpgradeStartedAt = time.Time{}
 				} else {
 					entry.Upgrading = true
 					entry.UpgradeTarget = h.UpgradeTarget
@@ -1666,8 +1675,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			delete(s.heartbeatSwitchTag, payload.HiveID)
 			for i := range s.registry.Hives {
 				if s.registry.Hives[i].ID == payload.HiveID {
-					s.registry.Hives[i].Upgrading = false
-					s.registry.Hives[i].UpgradeTarget = ""
+					s.clearUpgradeLatch(i)
 					break
 				}
 			}

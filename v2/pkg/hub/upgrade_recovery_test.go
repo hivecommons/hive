@@ -125,8 +125,14 @@ func TestTriggerAutoUpgradesRecoversStaleManualUpgrade(t *testing.T) {
 	if !s.registry.Hives[0].Upgrading {
 		t.Error("recovery must keep the durable Upgrading latch until the spoke reports the target")
 	}
-	if age := time.Since(s.registry.Hives[0].UpgradeStartedAt); age > time.Minute {
-		t.Errorf("recovery must refresh UpgradeStartedAt, still %v old", age)
+	// Re-arming delivery for the SAME target must PRESERVE the original start
+	// time, not refresh it. A crash-looping self-upgrade re-enters this recovery
+	// every staleUpgradeTimeout with the same target; refreshing the clock reset
+	// the displayed "Upgrading Ns" each cycle, so the true elapsed never crossed
+	// the stuck threshold and AlertTypeStuckUpgrade never fired. The 30-minute
+	// start this hive began with must survive the re-arm so the elapsed is honest.
+	if age := time.Since(s.registry.Hives[0].UpgradeStartedAt); age < 29*time.Minute {
+		t.Errorf("recovery re-arming the same target must PRESERVE UpgradeStartedAt so the elapsed is honest, but it was refreshed to %v old", age)
 	}
 }
 

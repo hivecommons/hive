@@ -47,6 +47,53 @@ const upgradeKubectlTimeout = 15 * time.Second
 // most once, short enough that a cluster coming back online is picked up soon.
 const clusterUnreachableTTL = 10 * time.Minute
 
+// beginUpgrade marks the registry entry at index i as upgrading toward target
+// and stamps UpgradeStartedAt so the dashboard can show a TRUE elapsed time.
+//
+// The invariant it enforces: UpgradeStartedAt is the moment an upgrade toward a
+// given target FIRST began, and it survives every retry of that same upgrade. A
+// hive that is already Upgrading toward the SAME target keeps its original start
+// time — it is retrying, not starting over. Only a genuinely new upgrade (the
+// hive was not upgrading, or the target actually changed) re-stamps the clock.
+//
+// This is the fix for the reset-every-retry bug: a crash-looping self-upgrade
+// re-enters the arm/retry paths every heartbeat cycle with the SAME target, and
+// each re-stamp of UpgradeStartedAt to time.Now() reset the displayed
+// "Upgrading Ns" back toward zero. The elapsed time therefore never crossed
+// staleUpgradeTimeout, so the row never turned red and the stuck-upgrade alert
+// never fired even while the hive thrashed for hours. Routing every site that
+// sets Upgrading=true through this one helper makes the invariant impossible to
+// violate in one place and not another.
+//
+// The caller MUST hold s.mu. i must be a valid index into s.registry.Hives.
+func (s *HubServer) beginUpgrade(i int, target string) {
+	h := &s.registry.Hives[i]
+	// (Re)stamp the start ONLY on a genuinely new upgrade: the hive was not
+	// already upgrading, or it is now aimed at a different target. A retry
+	// toward the same target keeps the original start so the timer is honest.
+	if !h.Upgrading || h.UpgradeTarget != target || h.UpgradeStartedAt.IsZero() {
+		h.UpgradeStartedAt = time.Now()
+	}
+	h.Upgrading = true
+	h.UpgradeTarget = target
+}
+
+// clearUpgradeLatch drops every trace of an in-flight upgrade on the entry at
+// index i: the Upgrading flag, its target, AND the start clock. Zeroing
+// UpgradeStartedAt on completion/cancel/orphan-clear guarantees the NEXT upgrade
+// starts a fresh timer even if some future path forgot to re-stamp — the
+// stuck-upgrade signal is only as honest as the clock it reads. Callers that
+// clear Upgrading MUST route through this so the invariant (a non-zero
+// UpgradeStartedAt implies an upgrade is genuinely in flight) holds everywhere.
+//
+// The caller MUST hold s.mu. i must be a valid index into s.registry.Hives.
+func (s *HubServer) clearUpgradeLatch(i int) {
+	h := &s.registry.Hives[i]
+	h.Upgrading = false
+	h.UpgradeTarget = ""
+	h.UpgradeStartedAt = time.Time{}
+}
+
 type SaaSUser struct {
 	GitHubUsername string            `json:"github_username"`
 	CreatedAt      string            `json:"created_at"`
@@ -3340,9 +3387,7 @@ func (s *HubServer) handleUpgradeHive(w http.ResponseWriter, r *http.Request) {
 				branch = "v2"
 			}
 			latestSHA = getLatestSHAForBranch(branch)
-			s.registry.Hives[i].Upgrading = true
-			s.registry.Hives[i].UpgradeTarget = latestSHA
-			s.registry.Hives[i].UpgradeStartedAt = time.Now()
+			s.beginUpgrade(i, latestSHA)
 			break
 		}
 	}
@@ -3485,9 +3530,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		s.heartbeatSwitchTag[id] = imageTag
 		for i := range s.registry.Hives {
 			if s.registry.Hives[i].ID == id {
-				s.registry.Hives[i].Upgrading = true
-				s.registry.Hives[i].UpgradeTarget = imageTag
-				s.registry.Hives[i].UpgradeStartedAt = time.Now()
+				s.beginUpgrade(i, imageTag)
 				break
 			}
 		}
@@ -3509,9 +3552,7 @@ func (s *HubServer) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i := range s.registry.Hives {
 		if s.registry.Hives[i].ID == id {
-			s.registry.Hives[i].Upgrading = true
-			s.registry.Hives[i].UpgradeTarget = branchToTag(body.Branch) + "-latest"
-			s.registry.Hives[i].UpgradeStartedAt = time.Now()
+			s.beginUpgrade(i, branchToTag(body.Branch)+"-latest")
 			break
 		}
 	}
@@ -3827,9 +3868,7 @@ func (s *HubServer) handleToggleAutoUpgrade(w http.ResponseWriter, r *http.Reque
 			s.mu.Lock()
 			for i := range s.registry.Hives {
 				if s.registry.Hives[i].ID == id {
-					s.registry.Hives[i].Upgrading = true
-					s.registry.Hives[i].UpgradeTarget = latestSHA
-					s.registry.Hives[i].UpgradeStartedAt = time.Now()
+					s.beginUpgrade(i, latestSHA)
 					break
 				}
 			}
@@ -4583,8 +4622,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 				s.mu.Lock()
 				for i := range s.registry.Hives {
 					if s.registry.Hives[i].ID == h.ID {
-						s.registry.Hives[i].Upgrading = false
-						s.registry.Hives[i].UpgradeTarget = ""
+						s.clearUpgradeLatch(i)
 						break
 					}
 				}
@@ -4647,8 +4685,17 @@ func (s *HubServer) triggerAutoUpgrades() {
 					s.mu.Lock()
 					for i := range s.registry.Hives {
 						if s.registry.Hives[i].ID == h.ID {
-							s.registry.Hives[i].UpgradeTarget = recoverTarget
-							s.registry.Hives[i].UpgradeStartedAt = time.Now()
+							// Route through beginUpgrade so the start time
+							// SURVIVES a same-target re-arm (the crash-loop retry
+							// case): re-arming delivery for the same target must
+							// not reset the elapsed clock, or a thrashing upgrade
+							// never crosses staleUpgradeTimeout and the stuck-
+							// upgrade alert never fires. A genuinely advanced
+							// target (recoverTarget != old UpgradeTarget) is a new
+							// upgrade and DOES get a fresh clock. A lost/zero start
+							// is re-stamped either way, which self-heals the
+							// ibm-alchemy zero-timestamp wedge.
+							s.beginUpgrade(i, recoverTarget)
 							break
 						}
 					}
@@ -4756,9 +4803,7 @@ func (s *HubServer) triggerAutoUpgrades() {
 		s.mu.Lock()
 		for i := range s.registry.Hives {
 			if s.registry.Hives[i].ID == h.ID {
-				s.registry.Hives[i].Upgrading = true
-				s.registry.Hives[i].UpgradeTarget = latestSHA
-				s.registry.Hives[i].UpgradeStartedAt = time.Now()
+				s.beginUpgrade(i, latestSHA)
 				break
 			}
 		}

@@ -211,6 +211,11 @@ func (s *HubServer) sweepOrphanedUpgrades() {
 			sweeps:    h.OrphanedUpgradeSweeps,
 		})
 		h.Upgrading = false
+		// The orphaned attempt is being abandoned — drop its start clock so the
+		// re-armed (or next) upgrade times from zero rather than inheriting this
+		// dead attempt's elapsed. beginUpgrade will stamp a fresh start when the
+		// recovery/heartbeat path re-enters.
+		h.UpgradeStartedAt = time.Time{}
 
 		if exhausted {
 			// Stop retrying. Re-arming again would just reproduce the same
