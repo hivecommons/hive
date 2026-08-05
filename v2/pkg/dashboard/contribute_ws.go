@@ -2411,6 +2411,10 @@ func (h *ContributeWSHub) reclaimExpiredLeases(now time.Time) int {
 			c.currentPrompt = ""
 			c.currentLabels = nil
 			c.tokenMintedAt = time.Time{}
+			// #2675: clear credential state so a stale pendingToken cannot leak to the
+			// now-idle connection (mirrors RequeueContributorTask cleanup).
+			c.pendingToken = ""
+			c.credentialDelivered = false
 			c.currentTaskGen = h.nextTaskGen()
 			c.lastLeaseRenew = time.Time{}
 			targets = append(targets, expiredTarget{conn: c, task: released})
