@@ -1485,6 +1485,60 @@ func (h *ContributeWSHub) CooldownCounts() (cooldown, inFlight int) {
 	return cooldown, inFlight
 }
 
+// HeldCount returns how many OPERATOR-HELD issues are also present in the current
+// actionable universe — i.e. held issues that WOULD be offerable if not parked. It
+// mirrors what the ready queue actually surfaces as Held (ReadyQueue appends exactly
+// these), so the header "N on hold" tally matches the greyed rows the operator sees,
+// rather than counting stale hold keys for issues no longer actionable. Read-only:
+// it mutates nothing and adds no enforcement. Uses the SAME canonical "%s#%d" key
+// form (repo.Full # number) every admission check builds, so it cannot silently miss
+// on a repo-name spelling mismatch (the #2648 class of bug).
+func (h *ContributeWSHub) HeldCount() int {
+	if h == nil || h.server == nil {
+		return 0
+	}
+	var hold map[string]struct{}
+	if h.server.deps != nil && h.server.deps.Config != nil {
+		hold = queueHoldSet(h.server.deps.Config.Hub.ContributeQueueHold)
+	}
+	if len(hold) == 0 {
+		return 0
+	}
+	h.server.statusMu.RLock()
+	status := h.server.status
+	h.server.statusMu.RUnlock()
+	if status == nil {
+		return 0
+	}
+	count := 0
+	for _, repo := range status.Repos {
+		for _, raw := range repo.ActionableIssues {
+			b, err := json.Marshal(raw)
+			if err != nil {
+				continue
+			}
+			var issue map[string]any
+			if err := json.Unmarshal(b, &issue); err != nil {
+				continue
+			}
+			number := 0
+			switch n := issue["number"].(type) {
+			case float64:
+				number = int(n)
+			case int:
+				number = n
+			}
+			if number == 0 {
+				continue
+			}
+			if _, isHeld := hold[fmt.Sprintf("%s#%d", repo.Full, number)]; isHeld {
+				count++
+			}
+		}
+	}
+	return count
+}
+
 func (h *ContributeWSHub) ActiveConnections() []ContributorConnection {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

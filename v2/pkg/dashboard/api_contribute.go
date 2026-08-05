@@ -271,6 +271,10 @@ func (s *Server) registerContributeRoutes() {
 	// issue so it is never offered until Resumed — a persistent hold DISTINCT from
 	// the time-based cooldown. Body: {"key":"owner/repo#number","held":true|false}.
 	s.mux.HandleFunc("POST /api/contribute/queue/hold", s.handleContributeQueueHold)
+	// Resume-all (bulk clear): drops the ENTIRE operator hold set in one call so an
+	// operator does not have to Resume parked issues one at a time. Same owner/read-
+	// write gate and refreshAndPersist path as the single-issue hold endpoint above.
+	s.mux.HandleFunc("POST /api/contribute/queue/hold/clear", s.handleContributeQueueHoldClear)
 	// Contributor-owned LABEL INTERESTS (#2637): a contributor's opt-in list of
 	// GitHub labels they can help with, used to surface/prioritise matching issues
 	// FOR THEM on the Operations queue. Self-service (identity resolved server-side,
@@ -1073,12 +1077,21 @@ code{background:var(--cc-bg);padding:2px 8px;border-radius:4px;font-size:.9rem}
 .cc-q-moverow input:focus{border-color:#1f6feb}
 .cc-q-moverow button{background:#1f6feb;border:none;color:#fff;font:inherit;font-size:.76rem;font-weight:600;padding:5px 10px;border-radius:6px;cursor:pointer}
 .cc-q-moverow button:hover{background:#388bfd}
+/* Optional hold-reason field (#queue-hold-reason) in the ⋯ menu — a compact inline
+   note the operator can fill before Hold. Empty is fine (holding without a note). */
+.cc-q-holdreason{padding:2px 9px 7px}
+.cc-q-holdreason-input{width:100%%;box-sizing:border-box;background:#0d1117;border:1px solid #30363d;border-radius:6px;color:#e6edf3;font:inherit;font-size:.76rem;padding:4px 7px;outline:none;color-scheme:dark}
+.cc-q-holdreason-input:focus{border-color:#1f6feb}
 /* On-hold rows (#queue-hold): a manually-parked issue stays VISIBLE but is clearly
    not going to be offered — dimmed to ~55%% opacity with an amber "on hold" pill.
    Never hidden, so the operator can always see and Resume it. */
 .cc-q-item.cc-q-held{opacity:.55}
 .cc-q-item.cc-q-held:hover{opacity:.8}
 .cc-q-held-tag{margin-left:7px;font-size:.6rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#d29922;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.3);border-radius:999px;padding:0 6px;vertical-align:middle}
+/* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
+   least one held issue and the viewer is owner/read-write (JS-toggled display). */
+.queue-resume-all-btn{margin-left:8px;font-size:.7rem;font-weight:600;color:#d29922;background:rgba(210,153,34,.1);border:1px solid rgba(210,153,34,.35);border-radius:6px;padding:2px 8px;cursor:pointer;vertical-align:middle;line-height:1.4}
+.queue-resume-all-btn:hover{background:rgba(210,153,34,.2)}
 /* ── Opportunistic Work (#2592) — a small, CALM discovery panel. Intentionally
    quiet: no loud "recommended!" chrome, just a short curated list with a subtle
    heat dot and an unobtrusive "add to queue" affordance (owner/read-write only). */
@@ -1893,7 +1906,9 @@ Contributors subscribe to labels (e.g. <code>nvidia</code>) so matching issues a
 <div class="work-list" id="work-list"><div class="ops-empty">Loading work&hellip;</div></div>
 </div>
 <div class="ops-card card-accent" style="margin-top:20px">
-<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
+<div class="ops-card-head"><span class="feed-dot"></span><h3>Ready-work queue</h3><span class="ops-card-count" id="queue-count"></span><!-- Resume-all (#queue-hold): bulk-clears the operator hold set. Hidden by default;
+     ccRenderResumeAll() reveals it only for an owner/read-write viewer when at least
+     one issue is on hold. Themed confirm (adminConfirm), never native confirm. --><button type="button" class="queue-resume-all-btn" id="queue-resume-all-btn" style="display:none" title="Resume every held issue">&#x25B6; Resume all</button><!-- Cooldown explainer (#2649 companion): a circled-i affordance whose popover
      explains what "in cooldown" in the count means and how an issue lands there.
      Numbers here are the REAL server constants (168h with-PR, ~4h no-PR, ~6h
      quarantine after 3 consecutive failures) — keep them in sync with
@@ -3159,6 +3174,10 @@ async function initAdmin(){
     adminHub=(cd&&cd.hub)?cd.hub:{};
   }catch(e){adminHub={};}
   renderAdminControls();
+  // Resume-all (#queue-hold): wire the header button once, now that we know the viewer
+  // is owner/read-write. Visibility is still driven by ccRenderResumeAll (count-gated).
+  var resumeAllBtn=document.getElementById('queue-resume-all-btn');
+  if(resumeAllBtn&&!resumeAllBtn._wired){resumeAllBtn._wired=true;resumeAllBtn.addEventListener('click',function(e){e.stopPropagation();ccResumeAll();});}
   // The ready-work queue may have rendered before this role check resolved (SSE
   // hello / poll fires immediately on tab open). Re-render now that adminEnabled is
   // true so the grab bars appear for this owner/read-write viewer.
@@ -3461,6 +3480,7 @@ async function opsPoll(){
     // field stays 0. A re-render picks up the fresh values.
     ccCooldownCount=(data&&typeof data.cooldown_count==='number')?data.cooldown_count:0;
     ccInFlightCount=(data&&typeof data.in_flight_count==='number')?data.in_flight_count:0;
+    ccHeldCount=(data&&typeof data.held_count==='number')?data.held_count:0;
     safeRender('queue-counts',function(){if(typeof ccRenderQueue==='function')ccRenderQueue();});
     safeRender('cooldown-count',function(){if(typeof ccRenderCooldownCount==='function')ccRenderCooldownCount();});
   }catch(e){
@@ -3503,6 +3523,7 @@ var ccCompleteStreak={};   // username -> consecutive completes (achievement com
 var ccLastAch=0;           // debounce achievement pops
 var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
 var ccInFlightCount=0;     // issues currently held by a live connection (fleet payload)
+var ccHeldCount=0;         // issues manually PARKED by the operator (fleet payload, on-hold tally)
 
 // ── Label-affinity (#2637): the viewer's own label interests ───────────────────
 // ccInterests is this viewer's opt-in label list (normalised lower-case). Loaded
@@ -3640,6 +3661,7 @@ function ccRenderQueue(flip){
     var segs=[ccQueue.length+' ready'];
     if(ccCooldownCount>0)segs.push(ccCooldownCount+' in cooldown');
     if(ccInFlightCount>0)segs.push(ccInFlightCount+' in flight');
+    if(ccHeldCount>0)segs.push(ccHeldCount+' on hold');
     qc.textContent=segs.join(' · ');
   }
   // No-blink guard: if a per-row ⋯ menu / "Move to #" dialog is OPEN and this is a
@@ -3649,6 +3671,10 @@ function ccRenderQueue(flip){
   // hands. We already updated the header tally above so counts stay live; we mark the
   // render DEFERRED so ccCloseQueueMenus replays it the moment the menu closes.
   if(!flip&&document.querySelector('.cc-q-menu.open')){ccQueueRenderDeferred=true;return;}
+  // Resume-all affordance (#queue-hold): a single "Resume all (H)" button next to the
+  // header, shown ONLY to an owner/read-write viewer (adminEnabled) and ONLY when at
+  // least one issue is on hold. Kept in sync with the tally above on every render.
+  ccRenderResumeAll();
   // Label-affinity (#2637): re-tag + float this viewer's interested items. No-op
   // when no interests are set (order preserved); skipped mid-drag so an operator
   // reorder is not fought by an interest re-float. See ccApplyInterestsToQueue.
@@ -3715,7 +3741,12 @@ function ccRenderQueue(flip){
     var mineCls=mine?' cc-q-mine':'';
     var mineTag=mine?'<span class="cc-q-mine-tag" title="Matches one of your label interests">for you</span>':'';
     var heldCls=isHeld?' cc-q-held':'';
-    var heldTag=isHeld?'<span class="cc-q-held-tag" title="On hold — parked by the operator; not offered until resumed">&#x23F8; on hold</span>':'';
+    // On-hold badge tooltip (#queue-hold-reason): when the operator attached a note,
+    // show "On hold — <reason>"; otherwise fall back to the generic text. esc() guards
+    // the operator-supplied reason so it can never inject markup into the title attr.
+    var heldReason=(q.held_reason||'').toString();
+    var heldTitle=heldReason?('On hold — '+heldReason):'On hold — parked by the operator; not offered until resumed';
+    var heldTag=isHeld?'<span class="cc-q-held-tag" title="'+esc(heldTitle)+'">&#x23F8; on hold</span>':'';
     // PR→issue badge (#2612 part c): if the triage poll resolved a fixing PR for
     // this issue (open/merged), show a small link. Absent until ccTriagePoll runs,
     // and simply omitted when no PR is linked — never blocks the queue render.
@@ -3821,6 +3852,14 @@ function ccQueueMenuHTML(key,pos,total,isHeld){
   // carries the CURRENT held state so the click handler knows which way to flip.
   var holdLabel=isHeld?'Resume':'Hold';
   var holdIcon=isHeld?'&#x25B6;':'&#x23F8;'; // ▶ resume / ⏸ hold
+  // Optional hold reason (#queue-hold-reason): an inline note field shown ONLY when the
+  // item is NOT yet held (a reason is attached when parking). The Hold click reads this
+  // input's value and passes it to ccToggleHold. Absent for a held item (Resume needs
+  // no note). Uses a distinct id ('hr-'+key) so it never collides with the mover input.
+  var reasonRow=isHeld?'':(
+    '<div class="cc-q-holdreason">'+
+      '<input type="text" id="hr-'+esc(key)+'" class="cc-q-holdreason-input" maxlength="200" placeholder="Optional hold reason&hellip;" data-qkey="'+esc(key)+'" aria-label="Optional hold reason" autocomplete="off">'+
+    '</div>');
   return '<span class="cc-q-menu-wrap">'+
     '<button type="button" class="cc-q-menu-btn" aria-haspopup="true" aria-expanded="false" title="More actions" data-qkey="'+esc(key)+'">&#x22EF;</button>'+
     '<div class="cc-q-menu" role="menu">'+
@@ -3828,6 +3867,7 @@ function ccQueueMenuHTML(key,pos,total,isHeld){
       '<button type="button" class="cc-q-act" role="menuitem" data-act="bottom" data-qkey="'+esc(key)+'"'+(atBottom?' disabled style="opacity:.5;cursor:default"':'')+'><span class="cc-q-menu-ic">&#x2B07;</span>Move to bottom</button>'+
       '<div class="cc-q-menu-sep"></div>'+
       '<button type="button" class="cc-q-act" role="menuitem" data-act="hold" data-held="'+(isHeld?'1':'0')+'" data-qkey="'+esc(key)+'"><span class="cc-q-menu-ic">'+holdIcon+'</span>'+holdLabel+'</button>'+
+      reasonRow+
       '<div class="cc-q-menu-sep"></div>'+
       '<div class="cc-q-moverow">'+
         '<label for="mv-'+esc(key)+'">Move to&nbsp;#</label>'+
@@ -3890,7 +3930,17 @@ function ccBindQueueMenus(root){
   })(bots[b2]);}
   var holds=root.querySelectorAll('.cc-q-act[data-act=hold]');
   for(var h2=0;h2<holds.length;h2++){(function(act){
-    act.addEventListener('click',function(e){e.stopPropagation();if(act.disabled)return;ccCloseQueueMenus();ccToggleHold(act.getAttribute('data-qkey'),act.getAttribute('data-held')!=='1');});
+    act.addEventListener('click',function(e){
+      e.stopPropagation();if(act.disabled)return;
+      var key=act.getAttribute('data-qkey');
+      var willHold=act.getAttribute('data-held')!=='1';
+      // Read the optional inline reason (present only on the not-yet-held menu) BEFORE
+      // closing the menu tears the input out of the DOM. Ignored on resume (willHold=false).
+      var reason='';
+      if(willHold){var ri=root.querySelector('#'+cssEscRaw('hr-'+key));if(ri)reason=ri.value||'';}
+      ccCloseQueueMenus();
+      ccToggleHold(key,willHold,reason);
+    });
   })(holds[h2]);}
   var gos=root.querySelectorAll('.cc-q-act-go');
   for(var g=0;g<gos.length;g++){(function(go){
@@ -3907,7 +3957,13 @@ function ccBindQueueMenus(root){
 // cssEscId escapes a qkey for use in a querySelector id lookup (the key contains
 // '/' and '#'). Prefer CSS.escape when present; fall back to a manual escape.
 function cssEscId(id){
-  var raw='mv-'+id;
+  return cssEscRaw('mv-'+id);
+}
+// cssEscRaw escapes an ALREADY-PREFIXED id (e.g. 'hr-owner/repo#1') for a
+// querySelector '#'+... lookup. Same escape as cssEscId but without the baked-in
+// 'mv-' prefix, so callers that use a different prefix (the hold-reason input's
+// 'hr-') get a correct selector instead of a doubled 'mv-' that never matches.
+function cssEscRaw(raw){
   if(window.CSS&&CSS.escape)return CSS.escape(raw);
   return raw.replace(/([^a-zA-Z0-9_-])/g,'\\$1');
 }
@@ -4034,9 +4090,13 @@ function ccPersistQueueOrder(){
 // computes) is reflected: a newly-held row re-appears greyed at the bottom, a
 // resumed row rejoins the offerable list. Owner/read-write only; a read viewer 403s
 // here, but the Hold/Resume action is never rendered for them (adminEnabled gate).
-function ccToggleHold(key,held){
+function ccToggleHold(key,held,reason){
   if(!key)return;
-  fetch('/api/contribute/queue/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:key,held:!!held})})
+  // reason is OPTIONAL and only meaningful on hold=true; the server ignores it on
+  // resume. Trimmed here so a whitespace-only note is treated as "no reason".
+  var body={key:key,held:!!held};
+  if(held&&reason&&reason.trim())body.reason=reason.trim();
+  fetch('/api/contribute/queue/hold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
     .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
     .then(function(){
       // Re-hydrate from the server so held tagging + offer-eligibility are authoritative.
@@ -4044,6 +4104,36 @@ function ccToggleHold(key,held){
     })
     .then(function(d){if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}})
     .catch(function(){/* a read viewer would 403; the UI never shows the action to them */});
+}
+// ccRenderResumeAll shows/hides the header "Resume all" button. It is visible ONLY
+// when the viewer is owner/read-write (adminEnabled) AND at least one issue is on
+// hold (ccHeldCount>0); otherwise it is hidden. The label carries the live count so
+// the operator sees how many resuming will clear. Called on every ccRenderQueue.
+function ccRenderResumeAll(){
+  var btn=document.getElementById('queue-resume-all-btn');if(!btn)return;
+  if(adminEnabled&&ccHeldCount>0){
+    btn.style.display='';
+    btn.textContent='▶ Resume all ('+ccHeldCount+')'; // ▶ Resume all (N)
+  }else{
+    btn.style.display='none';
+  }
+}
+// ccResumeAll bulk-clears the ENTIRE operator hold set via POST
+// /api/contribute/queue/hold/clear, after a themed confirm (never native confirm).
+// On success it re-fetches the queue so every previously-held row rejoins the
+// offerable list. Owner/read-write only; a read viewer 403s, but the button is never
+// shown to them (adminEnabled gate in ccRenderResumeAll).
+function ccResumeAll(){
+  if(ccHeldCount<=0)return;
+  adminConfirm('Resume all held issues','Resume every issue currently on hold ('+ccHeldCount+') so they can be offered again. This clears the entire operator hold set at once. Individual holds can be re-applied afterwards from each row&rsquo;s ⋯ menu.','Resume all',function(){
+    fetch('/api/contribute/queue/hold/clear',{method:'POST',headers:{'Content-Type':'application/json'}})
+      .then(function(r){if(!r.ok)throw new Error('http '+r.status);return r.json();})
+      .then(function(){
+        return fetch('/api/contribute/queue').then(function(r){return r.json();});
+      })
+      .then(function(d){if(d&&d.queue){ccQueue=d.queue.slice();ccRenderQueue();}toast('Resumed all held issues',true);})
+      .catch(function(){toast('Could not resume all held issues',false);});
+  });
 }
 function ccSetLive(state){ // 'live' | 'poll' | 'connecting'
   // Drive BOTH the queue-head pill (#cc-live, unchanged) and the mirror pill that
@@ -5011,10 +5101,13 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 	// of the queue); inFlightCount = issues currently held by a live connection.
 	// Both are read-only tallies the queue header / Management tab surface (#2649
 	// configurable cooldown).
-	cooldownCount, inFlightCount := 0, 0
+	// heldCount = operator-held issues still in the actionable universe (would be
+	// offerable but for the manual hold); the queue header surfaces it as "H on hold".
+	cooldownCount, inFlightCount, heldCount := 0, 0, 0
 	if s.contributeHub != nil {
 		snap = s.contributeHub.FleetSnapshot()
 		cooldownCount, inFlightCount = s.contributeHub.CooldownCounts()
+		heldCount = s.contributeHub.HeldCount()
 	}
 	jsonResponse(w, map[string]any{
 		"clankers":        snap.Clankers,
@@ -5022,6 +5115,7 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 		"policy":          s.buildContributeAdmissionPolicy(),
 		"cooldown_count":  cooldownCount,
 		"in_flight_count": inFlightCount,
+		"held_count":      heldCount,
 	})
 }
 
@@ -5296,6 +5390,12 @@ func (s *Server) handleContributeQueueOrder(w http.ResponseWriter, r *http.Reque
 // nor slow the per-selectTask membership lookup.
 const maxQueueHoldKeys = 512
 
+// maxQueueHoldReasonLen bounds the OPTIONAL operator note stored with a hold so a
+// stored reason can never balloon hive.yaml. A hold reason is a short annotation
+// (why this issue is parked), not free-form prose, so a compact cap is plenty; an
+// over-long note is truncated rather than rejected (the hold itself must still succeed).
+const maxQueueHoldReasonLen = 200
+
 // handleContributeQueueHold toggles the OPERATOR HOLD on one ready-work issue.
 // A held issue is parked INDEFINITELY — never offered — until the operator Resumes
 // it; this is DISTINCT from the time-based cooldown, which self-clears. It is a
@@ -5315,6 +5415,11 @@ func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		Key  string `json:"key"`
 		Held bool   `json:"held"`
+		// Reason is an OPTIONAL short operator note explaining WHY the issue is being
+		// parked, surfaced in the on-hold badge tooltip. Ignored when held=false (the
+		// reason is dropped alongside the key on resume). Empty means "no note" — the
+		// badge falls back to its generic text, so holding without a reason is unchanged.
+		Reason string `json:"reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		jsonError(w, "invalid request", http.StatusBadRequest)
@@ -5324,6 +5429,11 @@ func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Reques
 	if key == "" || !queueOrderKeyPattern.MatchString(key) {
 		jsonError(w, "invalid issue key", http.StatusBadRequest)
 		return
+	}
+	// Bound the note so a stored reason can never balloon the persisted config.
+	reason := strings.TrimSpace(body.Reason)
+	if len(reason) > maxQueueHoldReasonLen {
+		reason = reason[:maxQueueHoldReasonLen]
 	}
 	// Rebuild the hold set: drop the target key (and any malformed/duplicate
 	// stragglers) first, then re-add it when held=true. This keeps the stored list
@@ -5351,10 +5461,61 @@ func (s *Server) handleContributeQueueHold(w http.ResponseWriter, r *http.Reques
 		cleaned = append(cleaned, key)
 	}
 	s.deps.Config.Hub.ContributeQueueHold = cleaned
+	// Maintain the OPTIONAL parallel reason map (#queue-hold-reason). On hold=true with
+	// a non-empty note, store it under the canonical key; on hold=false (resume) or an
+	// empty note, drop any prior entry. Prune to the current held set so a reason can
+	// never outlive its hold. Built fresh each write (nil-safe) so it stays well-formed.
+	reasons := pruneQueueHoldReasons(s.deps.Config.Hub.ContributeQueueHoldReasons, cleaned)
+	if body.Held && reason != "" {
+		reasons[key] = reason
+	} else {
+		delete(reasons, key)
+	}
+	if len(reasons) == 0 {
+		reasons = nil // omitempty: no reasons => field absent, snapshot unchanged
+	}
+	s.deps.Config.Hub.ContributeQueueHoldReasons = reasons
 	s.auditFromRequest(r, "contribute_queue_hold", auditDetail("key", key, "held", strconv.FormatBool(body.Held)), "")
 	s.refreshAndPersist()
-	s.logger.Info("contribute queue hold updated", "key", key, "held", body.Held, "total_held", len(cleaned))
-	jsonResponse(w, map[string]any{"ok": true, "key": key, "held": body.Held, "hold": cleaned})
+	s.logger.Info("contribute queue hold updated", "key", key, "held", body.Held, "total_held", len(cleaned), "has_reason", body.Held && reason != "")
+	jsonResponse(w, map[string]any{"ok": true, "key": key, "held": body.Held, "hold": cleaned, "reason": reason})
+}
+
+// handleContributeQueueHoldClear RESUMES ALL held issues in one call: it drops the
+// entire operator hold set (ContributeQueueHold) and its parallel reason map, then
+// persists through the SAME refreshAndPersist path as the single-issue hold endpoint.
+// This is the bulk companion to handleContributeQueueHold — same owner/read-write
+// gate (requireContributorWrite; a read/anon caller gets 403), same persistence.
+// Idempotent: clearing an already-empty set is a clean no-op that still persists.
+func (s *Server) handleContributeQueueHoldClear(w http.ResponseWriter, r *http.Request) {
+	if !s.requireContributorWrite(w, r) {
+		return
+	}
+	cleared := len(s.deps.Config.Hub.ContributeQueueHold)
+	s.deps.Config.Hub.ContributeQueueHold = nil
+	s.deps.Config.Hub.ContributeQueueHoldReasons = nil
+	s.auditFromRequest(r, "contribute_queue_hold_clear", auditDetail("cleared", strconv.Itoa(cleared)), "")
+	s.refreshAndPersist()
+	s.logger.Info("contribute queue hold cleared (resume all)", "cleared", cleared)
+	jsonResponse(w, map[string]any{"ok": true, "cleared": cleared, "hold": []string{}})
+}
+
+// pruneQueueHoldReasons returns a fresh copy of src keeping ONLY entries whose key is
+// present in keep (the current held set). It is the invariant that keeps the parallel
+// reason map from leaking a note for an issue that is no longer held. nil-safe: a nil
+// src yields an empty (non-nil) map ready to write into.
+func pruneQueueHoldReasons(src map[string]string, keep []string) map[string]string {
+	held := make(map[string]struct{}, len(keep))
+	for _, k := range keep {
+		held[k] = struct{}{}
+	}
+	out := make(map[string]string, len(keep))
+	for k, v := range src {
+		if _, ok := held[k]; ok && strings.TrimSpace(v) != "" {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // ── Contributor management ─────────────────────────────────────────────────

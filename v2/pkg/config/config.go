@@ -1928,6 +1928,19 @@ type HubConfig struct {
 	// as ContributeQueueOrder so it survives restart, and edited only through the
 	// authenticated POST /api/contribute/queue/hold endpoint (owner/read-write only).
 	ContributeQueueHold []string `yaml:"contribute_queue_hold,omitempty"`
+	// ContributeQueueHoldReasons is an OPTIONAL parallel map (canonical
+	// "owner/repo#number" key -> short operator note) annotating why an issue in
+	// ContributeQueueHold was parked. It is a companion to — not a replacement for —
+	// ContributeQueueHold: the []string set above remains the authoritative source of
+	// truth for WHICH issues are held (every admission check reads it); this map only
+	// carries the human-facing REASON, surfaced in the on-hold badge tooltip. A hold
+	// with no reason simply has no entry here (the badge falls back to its generic
+	// text), so holding without a note works exactly as before. Kept as a parallel
+	// map, rather than folding the reason into ContributeQueueHold, so the many
+	// read sites of the []string set stay untouched. Written only by the same
+	// authenticated POST /api/contribute/queue/hold endpoint that maintains the set,
+	// and pruned to the held keys on every write so it never leaks stale reasons.
+	ContributeQueueHoldReasons map[string]string `yaml:"contribute_queue_hold_reasons,omitempty"`
 	// ContributeRequireExplicitAccept gates HOW a contributor's scoped GitHub
 	// credential is delivered relative to task acceptance (kubestellar/hive#2537).
 	// The credential is ALWAYS delivered only AFTER an acceptance decision — it no

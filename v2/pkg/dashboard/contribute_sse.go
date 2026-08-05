@@ -88,6 +88,12 @@ type ReadyQueueItem struct {
 	// is persistent and only clears when the operator Resumes it. omitempty so a
 	// snapshot with no holds is byte-for-byte unchanged.
 	Held bool `json:"held,omitempty"`
+	// HeldReason is the OPTIONAL short operator note attached when the issue was
+	// parked (Config.Hub.ContributeQueueHoldReasons). Only ever set on a Held item;
+	// the Operations tab shows it in the on-hold badge tooltip ("On hold — <reason>").
+	// Empty when the operator held with no note, so the badge falls back to its
+	// generic text. omitempty so a hold without a reason is byte-for-byte unchanged.
+	HeldReason string `json:"held_reason,omitempty"`
 }
 
 // sseSubscriber is one connected browser. events is the fan-out channel; done is
@@ -199,9 +205,11 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 
 	var disabledRepos []string
 	var held map[string]struct{}
+	var holdReasons map[string]string
 	if h.server.deps != nil && h.server.deps.Config != nil {
 		disabledRepos = h.server.deps.Config.Hub.DisabledRepos
 		held = queueHoldSet(h.server.deps.Config.Hub.ContributeQueueHold)
+		holdReasons = h.server.deps.Config.Hub.ContributeQueueHoldReasons
 	}
 
 	// heldItems collects issues the operator parked. They are NEVER offered — kept
@@ -243,16 +251,18 @@ func (h *ContributeWSHub) ReadyQueue(limit int) []ReadyQueueItem {
 			// heldItems (tagged Held) so it stays visible-but-dimmed for the operator.
 			// Checked before cooldown/active so a held-AND-cooled issue still shows as
 			// held (the operator's manual decision is the stronger, persistent signal).
-			if _, isHeld := held[fmt.Sprintf("%s#%d", repo.Full, number)]; isHeld {
+			holdKey := fmt.Sprintf("%s#%d", repo.Full, number)
+			if _, isHeld := held[holdKey]; isHeld {
 				title, _ := issue["title"].(string)
 				url, _ := issue["url"].(string)
 				heldItems = append(heldItems, ReadyQueueItem{
-					Repo:   repo.Full,
-					Number: number,
-					Title:  title,
-					URL:    url,
-					Labels: stringSliceFromAny(issue["labels"]),
-					Held:   true,
+					Repo:       repo.Full,
+					Number:     number,
+					Title:      title,
+					URL:        url,
+					Labels:     stringSliceFromAny(issue["labels"]),
+					Held:       true,
+					HeldReason: holdReasons[holdKey], // "" when no note (map miss) — omitempty
 				})
 				continue
 			}
