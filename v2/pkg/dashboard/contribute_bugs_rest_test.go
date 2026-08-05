@@ -130,38 +130,51 @@ func TestMeCardRankAmongContributorsOnly(t *testing.T) {
 	}
 }
 
-// TestClientTileFirstClassBadgeNoOverlap proves the "First-class" badge sits in its
-// OWN layout slot (a sibling block on its own line via .ct-body flex column), NOT
-// absolutely positioned over the tile name/subtitle — so it can't overlap the tool
-// name or vendor subtitle at narrow tile widths (#2602 tiles overlapped). Also proves
-// the first-class set now includes LiteLLM + OpenRouter (six peers).
-func TestClientTileFirstClassBadgeNoOverlap(t *testing.T) {
+// TestClientTileFirstClassBadgeRemoved proves the visible "First-class" pill was
+// removed from the client tiles per operator request (Claude Code, GitHub
+// Copilot, Pi, Goose, LiteLLM, OpenRouter all lose the badge; the tiles
+// themselves — emblem + name + vendor subtitle — stay). It also proves the
+// .ct-parity CSS class was cleaned up rather than left dangling, and that
+// peer:true is retained as a pure ORDERING signal (first-class tools still lead
+// the grid via tileOrder()) even though it no longer renders a badge.
+func TestClientTileFirstClassBadgeRemoved(t *testing.T) {
 	body := renderContributePage(t)
 
-	// The badge lives inside .ct-body (the name+badge column), not floated over text.
-	if !strings.Contains(body, `'<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span>'+parity+'</span></button>'`) {
-		t.Error("First-class badge is not inside the .ct-body layout slot (may overlap the name)")
+	// The badge text/class/JS variable must be gone entirely.
+	if strings.Contains(body, "First-class") {
+		t.Error("the \"First-class\" badge text must be removed from the client tiles")
 	}
-	// .ct-body is a flex COLUMN so the badge stacks below the name; .ct-parity is NOT
-	// absolutely positioned and no longer uses margin-left:auto to sit on the name row.
-	if !strings.Contains(body, ".client-tile .ct-body{display:flex;flex-direction:column;") {
-		t.Error(".ct-body is not a flex column (badge would not get its own line)")
+	if strings.Contains(body, "ct-parity") {
+		t.Error("the now-unused .ct-parity class must be cleaned up, not left dangling")
 	}
-	if strings.Contains(body, ".client-tile .ct-parity{position:absolute") {
-		t.Error("First-class badge is absolutely positioned over the tile text (overlap)")
-	}
-	if strings.Contains(body, ".client-tile .ct-parity{margin-left:auto;") {
-		t.Error("First-class badge still uses margin-left:auto (shares the name's row → overlap)")
+	if strings.Contains(body, "var parity=") {
+		t.Error("the parity badge variable must be removed from buildTiles, not just unused")
 	}
 
-	// The first-class set is now six: LiteLLM + OpenRouter joined the original four.
-	for _, peer := range []string{"litellm:{name:'LiteLLM',tag:'your proxy',peer:true}", "openrouter:{name:'OpenRouter',tag:'your key',peer:true}"} {
+	// The tile markup itself must remain: emblem + name (+ vendor subtitle),
+	// with nothing concatenated after the name span.
+	if !strings.Contains(body, `'<span class="ct-body"><span class="ct-name">'+c.name+(c.tag?'<small>'+c.tag+'</small>':'')+'</span></span></button>'`) {
+		t.Error("tile markup must render emblem+name+subtitle only, with the badge span removed")
+	}
+	// .ct-body stays a flex column (layout for name/subtitle); this is unrelated
+	// to the removed badge and must not have been collapsed by the cleanup.
+	if !strings.Contains(body, ".client-tile .ct-body{display:flex;flex-direction:column;") {
+		t.Error(".ct-body flex-column layout must remain intact after removing the badge")
+	}
+
+	// peer:true is KEPT as an ordering signal — first-class tools still lead the
+	// grid (tileOrder() puts peers first) — for all six first-class clients.
+	for _, peer := range []string{
+		"claude:{name:'Claude Code'", "copilot:{name:'GitHub Copilot',tag:'GitHub',peer:true}",
+		"pi:{name:'Pi',tag:'pi.dev',peer:true}", "goose:{name:'Goose',tag:'Block (Ollama)',peer:true}",
+		"litellm:{name:'LiteLLM',tag:'your proxy',peer:true}", "openrouter:{name:'OpenRouter',tag:'your key',peer:true}",
+	} {
 		if !strings.Contains(body, peer) {
-			t.Errorf("expected new first-class client marked peer:true: %q", peer)
+			t.Errorf("expected first-class client still marked peer:true for ordering: %q", peer)
 		}
 	}
 	if strings.Count(body, "peer:true") < 6 {
-		t.Errorf("expected 6 first-class (peer:true) clients, got %d", strings.Count(body, "peer:true"))
+		t.Errorf("expected 6 peer:true (ordering-only, no badge) clients, got %d", strings.Count(body, "peer:true"))
 	}
 	// The remaining tiles stay non-first-class.
 	for _, nonPeer := range []string{"vllm:{name:'vLLM'", "'llm-d':{name:'llm-d'", "bob:{name:'Bob'", "other:{name:'Other'"} {

@@ -531,7 +531,7 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 		allDone := true
 		ciChecksFound := 0
 		for _, cr := range checkRuns.CheckRuns {
-			if cr.GetName() == "tide" {
+			if isMetaCheck(cr.GetName()) {
 				continue
 			}
 			ciChecksFound++
@@ -557,6 +557,116 @@ func (c *Client) EnrichCIStatus(ctx context.Context, prs []PullRequest) {
 			prs[i].CIStatus = ciStatusPending
 		}
 	}
+}
+
+// isMetaCheck reports check runs that are merge-gates or deploy-status
+// mirrors, NOT code CI. They must not drive CIStatus: a stale
+// enforce-guardrails (red-main era) or Netlify status left three
+// actually-green PRs classified ci_failing and invisible to the merge sweep
+// for hours (2026-08-04). The merge step itself re-enforces these gates —
+// counting them here only poisons the eligibility signal.
+func isMetaCheck(name string) bool {
+	switch name {
+	case "tide", "enforce-guardrails":
+		return true
+	}
+	for _, prefix := range []string{"Header rules", "Pages changed", "Redirect rules", "netlify/", "copilot"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// Bounds for fetchFailureExcerpt: annotations are fetched for at most
+// excerptMaxRuns failing check runs, keeping at most excerptMaxLines lines and
+// excerptMaxChars characters total. Enough to carry a stack of real errors
+// into a kick prompt without flooding it.
+const (
+	excerptMaxRuns  = 2
+	excerptMaxLines = 8
+	excerptMaxChars = 900
+)
+
+// fetchFailureExcerpt pulls the raw error lines from the annotations of the
+// given failing check runs. Annotations capture workflow ##[error] lines (test
+// failures, compile errors), which is exactly the evidence fix agents never
+// see from a bare "CI failed" status. Works on GitHub and GHE through the
+// client's configured API base; on errors it degrades to "" — the excerpt is
+// an enrichment, never a gate.
+func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, runIDs []int64, runNames []string) string {
+	var lines []string
+	total := 0
+	seen := map[string]bool{}
+	for idx, id := range runIDs {
+		if idx >= excerptMaxRuns || len(lines) >= excerptMaxLines {
+			break
+		}
+		anns, _, err := c.client.Checks.ListCheckRunAnnotations(ctx, owner, repo, id, &gh.ListOptions{PerPage: 20})
+		if err != nil {
+			continue
+		}
+		name := ""
+		if idx < len(runNames) {
+			name = runNames[idx]
+		}
+		for _, a := range anns {
+			level := a.GetAnnotationLevel()
+			if level != "failure" && level != "warning" {
+				continue
+			}
+			msg := strings.TrimSpace(a.GetMessage())
+			if msg == "" || seen[msg] {
+				continue
+			}
+			seen[msg] = true
+			line := msg
+			if name != "" {
+				line = name + ": " + msg
+			}
+			if nl := strings.IndexByte(line, '\n'); nl > 0 {
+				line = line[:nl]
+			}
+			if len(line) > 300 {
+				line = line[:300]
+			}
+			if total+len(line) > excerptMaxChars {
+				return strings.Join(lines, "\n")
+			}
+			lines = append(lines, line)
+			total += len(line)
+			if len(lines) >= excerptMaxLines {
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// CreateIssueComment posts a comment on an issue or PR. The signature mirrors
+// forge.Forge.CreateIssueComment so escalation callers can swap in a neutral
+// forge adapter on non-GitHub hives without changing call sites.
+func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int, body string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	_, _, err := c.client.Issues.CreateComment(ctx, owner, repoName, number, &gh.IssueComment{Body: gh.Ptr(body)})
+	return err
+}
+
+// AddLabels adds labels to an issue or PR (no-op for an empty list), mirroring
+// forge.Forge.AddLabels for the same swap-in reason as CreateIssueComment.
+func (c *Client) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
+	if c == nil {
+		return ErrNoGitHubClient
+	}
+	if len(labels) == 0 {
+		return nil
+	}
+	owner, repoName := c.splitRepo(repo)
+	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repoName, number, labels)
+	return err
 }
 
 func extractLabels(labels []*gh.Label) []string {

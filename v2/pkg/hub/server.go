@@ -83,6 +83,11 @@ type FleetStatsSnapshot struct {
 	Hives        int `json:"hives"`
 	Reporting    int `json:"reporting"`
 	Eligible     int `json:"eligible"`
+	// ContributorsTotal carries the registered-contributor total (see
+	// FleetStats.ContributorsTotal) into the last-known-good fallback so a
+	// recollecting fleet still serves a stable figure instead of dropping to
+	// 0 while coverage is below the publish threshold.
+	ContributorsTotal int `json:"contributors_total"`
 	// CollectedAt is when this aggregate was computed, i.e. what "as of" means
 	// on the public page.
 	CollectedAt time.Time `json:"collected_at"`
@@ -93,6 +98,13 @@ type RegistryEntry struct {
 	Name  string   `json:"name"`
 	Org   string   `json:"org"`
 	Repos []string `json:"repos"`
+	// ProjectName is the hive's operator-editable display name, overlaid onto the
+	// registry entry from the authoritative SaaSHive record (sh.ProjectName) on
+	// the heartbeat path — NOT reported by the spoke. It is what the My Hives row
+	// renders as the editable top line; when empty the client falls back to the
+	// org/repo-derived label (see hiveLabel in the dashboard JS), exactly as
+	// before this field existed. handleRenameHive is the only writer.
+	ProjectName string `json:"projectName,omitempty"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as, as
 	// reported by the spoke. The hub needs it to echo project config back
 	// without blanking it, and it is the author the fleet-stats counts are
@@ -510,6 +522,49 @@ func repoRefHost(s string) string {
 		return parts[0]
 	}
 	return ""
+}
+
+// repoDisplayLine derives the human-readable "owner/repo" project line shown in
+// My Hives (the name-cell second line) and in audit/timeline strings, from a
+// hive's org + primary repo. It is the doubling-safe replacement for the naive
+// org + "/" + primaryRepo join.
+//
+// Why a join is not enough: primaryRepo is stored VERBATIM and, for some hives,
+// already carries a full "owner/repo" path rather than a bare repo name. Live
+// fleet evidence: a GitHub Pages / GHE hive was recorded with
+//
+//	org         = "castrojo.github.io"   (a HOST wrongly parsed into the org field)
+//	primaryRepo = "castrojo/endusers"    (already owner/repo)
+//
+// so org + "/" + primaryRepo rendered "castrojo.github.io/castrojo/endusers" —
+// the host masquerading as an org, with the owner doubled. When primaryRepo
+// already contains a slash it is a complete path and is returned as-is; only a
+// bare repo name is qualified with the org. The result never contains a
+// dangling slash: with one half known it returns that half alone, with neither
+// it returns "".
+//
+//	repoDisplayLine("myorg", "repo")               -> "myorg/repo"
+//	repoDisplayLine("castrojo.github.io", "castrojo/endusers") -> "castrojo/endusers"
+//	repoDisplayLine("myorg", "")                   -> "myorg"
+//	repoDisplayLine("", "owner/repo")              -> "owner/repo"
+//	repoDisplayLine("", "")                        -> ""
+//
+// The dashboard JS hiveLabel() mirrors this logic; keep the two in sync.
+func repoDisplayLine(org, primaryRepo string) string {
+	org = strings.TrimSpace(org)
+	primaryRepo = strings.TrimSpace(primaryRepo)
+	if primaryRepo == "" {
+		return org
+	}
+	// A primaryRepo that already carries an "owner/repo" path is complete;
+	// prefixing the org would double the owner (the github.io/GHE defect).
+	if strings.Contains(primaryRepo, "/") {
+		return primaryRepo
+	}
+	if org == "" {
+		return primaryRepo
+	}
+	return org + "/" + primaryRepo
 }
 
 // sameGitHubHost reports whether two host labels refer to the same GitHub. Both
@@ -1208,6 +1263,11 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if sh := loadSaaSHive(payload.HiveID); sh != nil {
 		clusterID = sh.ClusterID
 		entry.ProvStatus = sh.Status
+		// The SaaS store is authoritative for the operator-editable display name
+		// (handleRenameHive persists it here), so overlay it onto the registry
+		// entry the dashboard renders. The spoke never reports this, so a blank
+		// ProjectName simply leaves the client on its org/repo fallback label.
+		entry.ProjectName = sh.ProjectName
 	}
 	if clusterID == "" && payload.ClusterID != "" {
 		clusterID = sanitizeHeartbeatField(payload.ClusterID)
@@ -2092,7 +2152,16 @@ type FleetStats struct {
 	// owner or URL is derivable from them.
 	AgentsRunning int    `json:"agents_running"`
 	Contributors  int    `json:"contributors"`
-	UpdatedAt     string `json:"updated_at"`
+	// ContributorsTotal is the fleet-wide count of REGISTERED (unique) known
+	// contributors, summed from each hive's ContributorCount rather than
+	// ActiveContributors. Contributors above tracks who is CURRENTLY active,
+	// which legitimately drops to 0 whenever nobody happens to be connected —
+	// on the hub landing page that reads as "this fleet has no
+	// contributors", which is false. ContributorsTotal is stable across quiet
+	// periods because a contributor stays registered whether or not they are
+	// active right now, so the public tile should prefer it.
+	ContributorsTotal int    `json:"contributors_total"`
+	UpdatedAt         string `json:"updated_at"`
 	// Reporting is the number of eligible hives that actually contributed a
 	// fresh count to the totals above; Eligible is how many were considered.
 	// Without this pair the totals are indistinguishable from a healthy fleet:
@@ -2220,6 +2289,9 @@ func (s *HubServer) computeFleetStats() FleetStats {
 		fs.Hives++
 		fs.AgentsRunning += h.AgentCount
 		fs.Contributors += h.ActiveContributors
+		// Registered (not active) so the total does not crater to 0 whenever
+		// nobody happens to be connected at collection time.
+		fs.ContributorsTotal += h.ContributorCount
 		for _, r := range h.Repos {
 			if r == "" {
 				continue
@@ -2317,14 +2389,15 @@ func (s *HubServer) fleetStatsLKG() *FleetStatsSnapshot {
 func (s *HubServer) recordFleetStatsLKG(fs FleetStats, collectedAt time.Time) {
 	s.mu.Lock()
 	s.registry.FleetStatsLKG = &FleetStatsSnapshot{
-		ReposManaged: fs.ReposManaged,
-		PRsMerged:    fs.PRsMerged,
-		PRsRejected:  fs.PRsRejected,
-		CVEsClosed:   fs.CVEsClosed,
-		Hives:        fs.Hives,
-		Reporting:    fs.Reporting,
-		Eligible:     fs.Eligible,
-		CollectedAt:  collectedAt.UTC(),
+		ReposManaged:      fs.ReposManaged,
+		PRsMerged:         fs.PRsMerged,
+		PRsRejected:       fs.PRsRejected,
+		CVEsClosed:        fs.CVEsClosed,
+		Hives:             fs.Hives,
+		Reporting:         fs.Reporting,
+		Eligible:          fs.Eligible,
+		ContributorsTotal: fs.ContributorsTotal,
+		CollectedAt:       collectedAt.UTC(),
 	}
 	s.mu.Unlock()
 	s.requestSave()
@@ -2358,6 +2431,7 @@ func (s *HubServer) handleFleetStats(w http.ResponseWriter, r *http.Request) {
 		fs.PRsMerged = lkg.PRsMerged
 		fs.PRsRejected = lkg.PRsRejected
 		fs.CVEsClosed = lkg.CVEsClosed
+		fs.ContributorsTotal = lkg.ContributorsTotal
 		fs.StaleData = true
 		fs.AsOf = lkg.CollectedAt.UTC().Format(time.RFC3339)
 		s.logger.Warn("fleet stats: serving last-known-good totals; live coverage is below the publish threshold",

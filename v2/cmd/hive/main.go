@@ -1531,6 +1531,14 @@ func main() {
 	fleetStatsCollector.EnablePersistence("/data/fleet-stats.json")
 	go fleetStatsCollector.Start(ctx)
 
+	// Persistent hourly metrics behind the Operations + Leaderboard sparklines
+	// (queue depth, tasks/hour, fleet size, per-contributor completions). The
+	// store loads any prior 7-day history from the /data PVC on first use and the
+	// rollup goroutine samples + buckets hourly, so a rolling upgrade resumes the
+	// trend instead of flattening it. Bound to ctx so it shuts down cleanly with
+	// the rest of the background loops (no goroutine leak). See contribute_metrics.go.
+	dashSrv.StartContributeMetrics(ctx)
+
 	var lastActionable atomic.Pointer[github.ActionableResult]
 	refreshDashboard := func() {
 		actionable := lastActionable.Load()
@@ -3976,17 +3984,28 @@ func runEvalCycle(
 		actionable.Issues.SLAViolations,
 	)
 
-	// Restarted agents need a kick even if the governor wouldn't schedule one this cycle.
+	// Crash-restarted agents may get a "resume" kick ahead of their cadence
+	// slot so work interrupted mid-task resumes promptly — but ONLY through
+	// the governor's gate (#2573). Unconditionally kicking every restarted
+	// agent meant a crash-looping CLI was kicked on every eval cycle,
+	// burning backend tokens far faster than any configured cadence and
+	// bypassing the budget gate; AllowResumeKick bounds resume kicks to one
+	// per cadence interval and respects mode pauses and the budget.
 	if len(restartedAgents) > 0 {
 		dueSet := make(map[string]bool, len(agentsDue))
 		for _, a := range agentsDue {
 			dueSet[a] = true
 		}
 		for _, a := range restartedAgents {
-			if !dueSet[a] {
-				agentsDue = append(agentsDue, a)
-				logger.Info("adding restarted agent to kick list", "agent", a)
+			if dueSet[a] {
+				continue
 			}
+			if !gov.AllowResumeKick(a) {
+				logger.Info("restarted agent NOT resume-kicked (cadence/budget gate); it will be kicked at its next scheduled slot", "agent", a)
+				continue
+			}
+			agentsDue = append(agentsDue, a)
+			logger.Info("adding restarted agent to kick list", "agent", a)
 		}
 	}
 
@@ -4010,6 +4029,14 @@ func runEvalCycle(
 			continue
 		}
 		if onDemandSet[name] {
+			continue
+		}
+		// Operator-paused agents must consume NOTHING (#2573). SendKick
+		// would reject the kick anyway (paused ⇒ not running), but skipping
+		// here keeps paused agents out of BuildKickMessages and the audit
+		// log, and avoids a spurious "failed to send kick" error every eval
+		// cycle for a deliberate pause.
+		if agentMgr.IsPaused(name) {
 			continue
 		}
 		filteredDue = append(filteredDue, name)
@@ -4121,7 +4148,12 @@ func runEvalCycle(
 		dashSrv.SetAdvisoryDigest(digest)
 		statusPayload.AdvisoryDigest = digest
 
-		if digest.TotalCount > 0 {
+		// Post whenever there is something CURRENT to say: open findings, or
+		// recently resolved ones. The latter matters for healing (#2575): when
+		// the last finding resolves, TotalCount drops to 0 but the pinned
+		// digest comment must still be rewritten — otherwise it freezes on its
+		// last non-empty state and keeps showing the healed finding forever.
+		if digest.TotalCount > 0 || len(digest.RecentlyResolved) > 0 {
 			// Log severity breakdown and contributing agents
 			bySeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
 			agentNames := make([]string, 0, len(digest.ByAgent))
@@ -4241,6 +4273,19 @@ func runEvalCycle(
 						dashSrv.SetGitHubAppPermIssue("")
 						dashSrv.SetGitHubAppRequired(false)
 						dashSrv.ClearPendingGitHubAppInstall()
+						// The same proof retires stale ACCESS findings (#2575):
+						// an advisory bead like "Insufficient repo permissions"
+						// created while the App genuinely could not write was
+						// never re-validated, so it stayed in the digest forever
+						// after the App was correctly installed. A successful
+						// App-authenticated digest post is the strongest
+						// possible evidence the condition has healed, so close
+						// those beads now; the next cycle's digest moves them to
+						// "Recently Resolved" and rewrites the pinned comment.
+						if healed := advisory.CloseHealedAppAuthFindings(beadStores); len(healed) > 0 {
+							logger.Info("closed healed GitHub App access findings after successful App digest post",
+								"count", len(healed), "titles", strings.Join(healed, "; "))
+						}
 					}
 				}
 			}
@@ -4799,6 +4844,24 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 				Author:  pr.Author,
 				HeadSHA: pr.HeadSHA,
 			})
+			continue
+		}
+
+		// A PR whose CI is still "pending" is nonetheless merge-eligible when
+		// GitHub itself reports it as mergeable (mergeStateStatus=unstable):
+		// that state means every REQUIRED check has passed and only
+		// non-required checks remain outstanding. Those non-required checks —
+		// a cancelled Mobile Browser Tests, a still-running coverage-report,
+		// perpetually-pending tide — can never complete on their own, so
+		// waiting for CIStatus=="success" (all checks done) leaves cleanly
+		// mergeable PRs frozen out of the sweep indefinitely (observed
+		// 2026-08-04: three green console PRs stuck for hours). The merge step
+		// re-enforces branch protection, so trusting the mergeable verdict here
+		// cannot merge anything GitHub would actually block.
+		if pr.CIStatus == "pending" && pr.Mergeable != github.MergeableYes {
+			// Genuinely not ready: a required check is still running (or
+			// mergeability is unknown/no). Leave it out of both buckets, as
+			// before — it neither merges nor gets a fix dispatched.
 			continue
 		}
 

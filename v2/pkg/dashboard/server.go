@@ -160,6 +160,14 @@ type Server struct {
 
 	contributeHub *ContributeWSHub
 
+	// contributeMetrics holds the persistent hourly time-series behind the
+	// Operations + Leaderboard sparklines (queue depth, tasks/hour, fleet size,
+	// per-user completions). Lazily built via contributeMetricsStore() so the
+	// zero-value Server needs no constructor change; the rollup goroutine is
+	// started by StartContributeMetrics(ctx). See contribute_metrics.go.
+	contributeMetricsOnce sync.Once
+	contributeMetrics     *metricsStore
+
 	inferenceMu        sync.RWMutex
 	inferenceEndpoints map[string][]string // backend id → list of base URLs
 

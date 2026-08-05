@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -32,6 +33,51 @@ func TestSSEEventsIsPublic(t *testing.T) {
 	}
 }
 
+// syncRecorder wraps httptest.ResponseRecorder with a mutex so the test goroutine
+// can poll the body while the SSE handler goroutine is still writing to it.
+// httptest.ResponseRecorder is NOT safe for concurrent use — reading rec.Body
+// directly while handleContributeEvents streams into it is a data race (#2581).
+// It implements http.Flusher (delegating to the recorder) so the handler streams.
+type syncRecorder struct {
+	mu  sync.Mutex
+	rec *httptest.ResponseRecorder
+}
+
+func newSyncRecorder() *syncRecorder {
+	return &syncRecorder{rec: httptest.NewRecorder()}
+}
+
+func (s *syncRecorder) Header() http.Header {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rec.Header()
+}
+
+func (s *syncRecorder) Write(b []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rec.Write(b)
+}
+
+func (s *syncRecorder) WriteHeader(code int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rec.WriteHeader(code)
+}
+
+func (s *syncRecorder) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rec.Flush()
+}
+
+// BodyString returns the body accumulated so far, synchronized with the writer.
+func (s *syncRecorder) BodyString() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rec.Body.String()
+}
+
 // TestSSEStreamsAppendedActivity connects a subscriber, appends an activity event,
 // and asserts the event is streamed as an SSE "data:" frame. Then it cancels the
 // request context and asserts the subscriber is unregistered (leak-safe cleanup).
@@ -45,10 +91,11 @@ func TestSSEStreamsAppendedActivity(t *testing.T) {
 		t.Fatalf("expected 0 subscribers at start, got %d", got)
 	}
 
-	// httptest.ResponseRecorder implements http.Flusher, so the handler streams.
+	// syncRecorder implements http.Flusher, so the handler streams; its mutex makes
+	// concurrent handler writes + test-side body polls race-free.
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodGet, "/api/contribute/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := newSyncRecorder()
 
 	done := make(chan struct{})
 	go func() {
@@ -65,8 +112,8 @@ func TestSSEStreamsAppendedActivity(t *testing.T) {
 
 	// The event must reach the stream as an SSE data frame carrying the username.
 	waitFor(t, func() bool {
-		return strings.Contains(rec.Body.String(), "kylerankin") &&
-			strings.Contains(rec.Body.String(), "data:")
+		b := rec.BodyString()
+		return strings.Contains(b, "kylerankin") && strings.Contains(b, "data:")
 	}, "activity event to stream to subscriber")
 
 	// Disconnect: cancelling the context must tear the handler down AND unregister
@@ -94,11 +141,11 @@ func TestSSEHelloReplaysRecentActivity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	req := httptest.NewRequest(http.MethodGet, "/api/contribute/events", nil).WithContext(ctx)
-	rec := httptest.NewRecorder()
+	rec := newSyncRecorder()
 	go s.handleContributeEvents(rec, req)
 
 	waitFor(t, func() bool {
-		b := rec.Body.String()
+		b := rec.BodyString()
 		return strings.Contains(b, `"type":"hello"`) && strings.Contains(b, "castrojo")
 	}, "hello frame with replayed activity")
 }

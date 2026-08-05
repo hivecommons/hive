@@ -147,8 +147,18 @@ contribute-check-backend backend="claude":
         echo "  Claude Code will run with ANTHROPIC_BASE_URL=${HIVE_LITELLM_ENDPOINT}"
         echo "  Set the model your proxy serves: export AGENT_MODEL=<model>"
         ;;
+      agy)
+        if command -v agy &>/dev/null; then
+          echo "agy CLI detected ($(agy --version 2>&1 | head -1))"
+          echo "  Models: gemini-3.6-flash, claude-sonnet-4-6, gpt-oss-120b, and more"
+          echo "  Set model: --model gemini-3.6-flash-high"
+        else
+          echo "ERROR: agy CLI not found. Install: https://antigravity.dev"
+          exit 1
+        fi
+        ;;
       *)
-        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, litellm"
+        echo "ERROR: Unknown backend '{{backend}}'. Supported: claude, copilot, goose, codex, pi, bob, agy, litellm"
         exit 1
         ;;
     esac
@@ -292,7 +302,15 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
     CONTRIBUTOR_USERNAME=${GH_USER}
     AGENT_BACKEND={{backend}}
     EOF
+      # contributor.env holds HIVE_REGISTRATION_TOKEN, the sole long-lived
+      # bearer credential for the contributor WebSocket. Match the 0600 perms
+      # of its sibling secret files (gh-auth.env, claude-config.json) so the
+      # token is not left world-readable at the default umask (0644).
+      chmod 600 "{{config_dir}}/contributor.env"
     fi
+    # Re-tighten on every run: existing users may already have a 0644 file
+    # created before this fix. Fix it in place if present.
+    chmod 600 "{{config_dir}}/contributor.env" 2>/dev/null || true
     echo "${MSG} — ${GH_USER} (${CID})"
     echo ""
 
@@ -307,6 +325,9 @@ contribute-setup backend="claude": check-version (contribute-check-backend backe
       grep -v '^HIVE_LITELLM_ENDPOINT=' "{{config_dir}}/contributor.env" > "{{config_dir}}/contributor.env.tmp" || true
       echo "HIVE_LITELLM_ENDPOINT=${HIVE_LITELLM_ENDPOINT}" >> "{{config_dir}}/contributor.env.tmp"
       mv "{{config_dir}}/contributor.env.tmp" "{{config_dir}}/contributor.env"
+      # The rewrite recreates the file at the default umask (0644), dropping
+      # the 0600 perms. Re-tighten so the token stays owner-only.
+      chmod 600 "{{config_dir}}/contributor.env"
     fi
 
     # Copy CLI config for Docker container (Colima can't bind-mount files)
@@ -520,6 +541,12 @@ contribute-hive backend="" mode="docker": check-version
           ;;
         codex)
           [ -d "${HOME}/.codex" ] && CLI_MOUNTS="-v ${HOME}/.codex:/home/dev/.codex${VOLSUF}"
+          ;;
+        pi)
+          [ -d "${HOME}/.pi" ] && CLI_MOUNTS="-v ${HOME}/.pi:/home/dev/.pi${VOLSUF}"
+          ;;
+        agy)
+          [ -d "${HOME}/.antigravitycli" ] && CLI_MOUNTS="-v ${HOME}/.antigravitycli:/home/dev/.antigravitycli${VOLSUF}"
           ;;
       esac
       CONTAINER_NAME="hive-contributor-${BACKEND}-$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' ')"
