@@ -264,7 +264,7 @@ func isolatedRepositoryTestWorkflowJobs(config Config, prerequisite, condition s
 func isolatedVisualExecutionWorkflowJob(config Config, pullRequest bool, condition ...string) string {
 	gate := ""
 	checkoutRef := "${{ github.sha }}"
-	rawArtifact := "visual-hive-raw-${{ github.run_id }}"
+	rawArtifact := "visual-hive-raw-${{ github.run_id }}-${{ github.run_attempt }}"
 	modeArgs := "--mode full --ci --continue-on-error --skip-install"
 	captureScope := ""
 	targetPipelineEnv := ""
@@ -279,7 +279,7 @@ func isolatedVisualExecutionWorkflowJob(config Config, pullRequest bool, conditi
 	if pullRequest {
 		gate = "    needs: setup-authorization\n    if: ${{ github.event_name == 'pull_request' && needs.setup-authorization.outputs.operation != 'uninstall' }}\n"
 		checkoutRef = "${{ github.event.pull_request.head.sha }}"
-		rawArtifact = "visual-hive-pr-raw-${{ github.run_id }}"
+		rawArtifact = "visual-hive-pr-raw-${{ github.run_id }}-${{ github.run_attempt }}"
 		// The pinned producer must expose --runtime-sidecar before this generated
 		// lane can run. Never omit the flag or synthesize runtime identity in Hive:
 		// an actual PR evaluation without the producer-written sidecar fails closed
@@ -572,7 +572,7 @@ func isolatedSetupBaselineCaptureWorkflowJobs(config Config) string {
 	target = strings.ReplaceAll(target, visualExecutionJobName, setupBaselineCaptureJobID)
 	target = strings.Replace(target, "name: "+setupBaselineCaptureJobID, "name: "+hivegithub.SetupBaselineCaptureJobDisplayName, 1)
 	target = strings.Replace(target, "--mode full --ci --continue-on-error --skip-install", "--mode full --ci --continue-on-error --skip-install --bootstrap-baselines", 1)
-	target = strings.ReplaceAll(target, "visual-hive-raw-${{ github.run_id }}", "setup-baseline-raw-${{ github.run_id }}")
+	target = strings.ReplaceAll(target, "visual-hive-raw-${{ github.run_id }}-${{ github.run_attempt }}", "setup-baseline-raw-${{ github.run_id }}-${{ github.run_attempt }}")
 	verifier := fmt.Sprintf(`  %s:
     name: %s
     needs: %s
@@ -587,7 +587,7 @@ func isolatedSetupBaselineCaptureWorkflowJobs(config Config) string {
       - name: Download isolated baseline capture
         uses: actions/download-artifact@%s
         with:
-          name: setup-baseline-raw-${{ github.run_id }}
+          name: setup-baseline-raw-${{ github.run_id }}-${{ github.run_attempt }}
           path: .visual-hive
       - name: Validate exact Linux baseline candidate set
         shell: bash
@@ -697,7 +697,7 @@ func productionAggregatorWorkflowJob(config Config, needs string) string {
       - name: Download isolated raw Visual evidence
         uses: actions/download-artifact@%s
         with:
-          name: visual-hive-raw-${{ github.run_id }}
+          name: visual-hive-raw-${{ github.run_id }}-${{ github.run_attempt }}
           path: .visual-hive
       - name: Rebuild and validate runner-owned lifecycle evidence
         shell: bash
@@ -778,7 +778,7 @@ func pullRequestAggregatorWorkflowJob(config Config, needs string) string {
         if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
         uses: actions/download-artifact@%s
         with:
-          name: visual-hive-pr-raw-${{ github.run_id }}
+          name: visual-hive-pr-raw-${{ github.run_id }}-${{ github.run_attempt }}
           path: .visual-hive
       - name: Capture runner-owned pull request scope
         if: ${{ needs.setup-authorization.outputs.operation != 'uninstall' }}
