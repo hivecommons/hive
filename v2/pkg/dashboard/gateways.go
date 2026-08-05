@@ -14,15 +14,47 @@ package dashboard
 // hive.yaml — the key value never enters hive.yaml, logs, or API responses.
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kubestellar/hive/v2/pkg/config"
+	"github.com/kubestellar/hive/v2/pkg/watsonx"
 )
+
+// watsonxProbeMintTimeout bounds the IAM token mint done just to run a
+// save-time/discover /v1/models probe, so a slow IAM endpoint cannot stall the
+// dashboard request. Independent of the probe's own HTTP timeout.
+const watsonxProbeMintTimeout = 10 * time.Second
+
+// gatewayProbeAuth resolves the bearer + extra request headers a /v1/models
+// probe (or model discovery) should present for a gateway. For every kind
+// except watsonx this is just the resolved key as the Bearer and no extra
+// headers — identical to the prior behavior. For watsonx it mints (and caches)
+// an IAM token from the resolved IBM Cloud API key and adds the X-IBM-Project-ID
+// header; a mint failure is returned so the probe surfaces a real error instead
+// of silently sending the raw key. Never logs the key or token.
+func gatewayProbeAuth(kind, key, projectID string) (bearer string, headers map[string]string, err error) {
+	if kind != config.GatewayKindWatsonx {
+		return key, nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), watsonxProbeMintTimeout)
+	defer cancel()
+	token, err := watsonx.DefaultMinter.Token(ctx, key)
+	if err != nil {
+		return "", nil, err
+	}
+	headers = map[string]string{}
+	if projectID != "" {
+		headers[watsonx.ProjectIDHeader] = projectID
+	}
+	return token, headers, nil
+}
 
 const (
 	// openRouterBaseURL is the OpenAI-compatible base URL for OpenRouter. Used
@@ -46,6 +78,7 @@ var validGatewayKinds = map[string]bool{
 	config.GatewayKindLiteLLM:    true,
 	config.GatewayKindVLLM:       true,
 	config.GatewayKindLLMD:       true,
+	config.GatewayKindWatsonx:    true,
 	config.GatewayKindCustom:     true,
 }
 
@@ -67,8 +100,13 @@ func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
 		"api_key_file":  gw.APIKeyFile,
 		"default_model": gw.DefaultModel,
 		"ca_bundle":     gw.CABundle,
-		"hasKey":        key != "",
-		"keyHint":       keyHint,
+		// watsonx-only identifiers (not secrets) — empty for other kinds and
+		// omitted from hive.yaml via omitempty, so existing gateways are
+		// unaffected.
+		"project_id": gw.ProjectID,
+		"region":     gw.Region,
+		"hasKey":     key != "",
+		"keyHint":    keyHint,
 	}
 }
 
@@ -103,6 +141,8 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		APIKeyFile   *string `json:"api_key_file"`
 		DefaultModel *string `json:"default_model"`
 		CABundle     *string `json:"ca_bundle"`
+		ProjectID    *string `json:"project_id"`
+		Region       *string `json:"region"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -130,7 +170,7 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		kind = config.GatewayKindCustom
 	}
 	if !validGatewayKinds[kind] {
-		jsonError(w, fmt.Sprintf("invalid gateway kind %q (openrouter, litellm, vllm, llm-d, custom)", kind), http.StatusBadRequest)
+		jsonError(w, fmt.Sprintf("invalid gateway kind %q (openrouter, litellm, vllm, llm-d, watsonx, custom)", kind), http.StatusBadRequest)
 		return
 	}
 
@@ -183,6 +223,8 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		gw.APIKeyFile = gws[idx].APIKeyFile
 		gw.DefaultModel = gws[idx].DefaultModel
 		gw.CABundle = gws[idx].CABundle
+		gw.ProjectID = gws[idx].ProjectID
+		gw.Region = gws[idx].Region
 	}
 	if body.APIKeyEnv != nil {
 		gw.APIKeyEnv = strings.TrimSpace(*body.APIKeyEnv)
@@ -196,9 +238,36 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 	if body.CABundle != nil {
 		gw.CABundle = strings.TrimSpace(*body.CABundle)
 	}
+	if body.ProjectID != nil {
+		gw.ProjectID = strings.TrimSpace(*body.ProjectID)
+	}
+	if body.Region != nil {
+		gw.Region = strings.TrimSpace(*body.Region)
+	}
+
+	submittedKey := strings.TrimSpace(body.APIKey)
+
+	// watsonx needs two things an ordinary OpenAI-compatible gateway does not:
+	// a project id (scopes billing/limits; sent as the X-IBM-Project-ID header)
+	// and an IBM Cloud API key (exchanged for a short-lived IAM bearer — the raw
+	// key is never sent). Reject a watsonx gateway missing either so the failure
+	// is a clear config error now, not an opaque 401/400 at agent inference time.
+	// Checked BEFORE the key is written to disk so an invalid watsonx config
+	// never leaves a stray secret file behind.
+	if kind == config.GatewayKindWatsonx {
+		if gw.ProjectID == "" {
+			jsonError(w, "watsonx gateway requires a project_id (the watsonx project or space id)", http.StatusBadRequest)
+			return
+		}
+		// A key is present if one was just submitted or a prior reference
+		// resolves to a value.
+		if submittedKey == "" && gw.ResolveAPIKey() == "" {
+			jsonError(w, "watsonx gateway requires an IBM Cloud API key", http.StatusBadRequest)
+			return
+		}
+	}
 
 	// Store a submitted key VALUE outside hive.yaml and point api_key_file at it.
-	submittedKey := strings.TrimSpace(body.APIKey)
 	if submittedKey != "" {
 		path, err := s.storeGatewayAPIKey(name, submittedKey)
 		if err != nil {
@@ -289,9 +358,11 @@ func (s *Server) handleGovernorGatewaysDelete(w http.ResponseWriter, r *http.Req
 // key. Returns {ok, models:[...]} or {ok:false, error}.
 func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name     string `json:"name"`
-		Endpoint string `json:"endpoint"`
-		APIKey   string `json:"api_key"`
+		Name      string `json:"name"`
+		Endpoint  string `json:"endpoint"`
+		APIKey    string `json:"api_key"`
+		Kind      string `json:"kind"`
+		ProjectID string `json:"project_id"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -307,17 +378,46 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 		return
 	}
 	key := strings.TrimSpace(body.APIKey)
-	if key == "" {
-		// Fall back to the stored key for an existing gateway of this name, so
-		// editing an existing gateway populates its models without retyping.
+	kind := strings.ToLower(strings.TrimSpace(body.Kind))
+	projectID := strings.TrimSpace(body.ProjectID)
+	// For fields the form did not send (editing an existing gateway without
+	// retyping the key, or a kind/project the client omitted), fall back to the
+	// stored gateway of this name.
+	if key == "" || kind == "" || projectID == "" {
 		if gw := s.deps.Config.Governor.ResolveGateway(strings.TrimSpace(body.Name)); gw != nil {
-			key = gw.ResolveAPIKey()
+			if key == "" {
+				key = gw.ResolveAPIKey()
+			}
+			if kind == "" {
+				kind = gw.Kind
+			}
+			if projectID == "" {
+				projectID = gw.ProjectID
+			}
 		}
 	}
-	models, err := fetchModelsFromEndpoint(endpoint, key)
+	bearer, headers, err := gatewayProbeAuth(kind, key, projectID)
 	if err != nil {
+		// For watsonx a mint failure (no/invalid key yet) still offers the
+		// static Granite list so the Default Model dropdown is never a dead end.
+		if kind == config.GatewayKindWatsonx {
+			jsonResponse(w, map[string]interface{}{"ok": true, "models": watsonx.GraniteFallbackModels, "fallback": true})
+			return
+		}
 		jsonResponse(w, map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), key)})
 		return
+	}
+	models, err := fetchModelsWithHeaders(endpoint, bearer, headers)
+	if err != nil {
+		if kind == config.GatewayKindWatsonx {
+			jsonResponse(w, map[string]interface{}{"ok": true, "models": watsonx.GraniteFallbackModels, "fallback": true})
+			return
+		}
+		jsonResponse(w, map[string]interface{}{"ok": false, "error": redactSecret(redactSecret(err.Error(), key), bearer)})
+		return
+	}
+	if len(models) == 0 && kind == config.GatewayKindWatsonx {
+		models = watsonx.GraniteFallbackModels
 	}
 	jsonResponse(w, map[string]interface{}{"ok": true, "models": models})
 }
@@ -353,9 +453,15 @@ func (s *Server) gatewayProbeResult(gw config.GatewayConfig, overrideKey string)
 	if probeKey == "" {
 		probeKey = gw.ResolveAPIKey()
 	}
-	n, err := probeLiteLLMModels(ep, probeKey)
+	bearer, headers, err := gatewayProbeAuth(gw.Kind, probeKey, gw.ProjectID)
 	if err != nil {
 		return map[string]interface{}{"ok": false, "error": redactSecret(err.Error(), probeKey)}
+	}
+	n, err := probeModelsWithHeaders(ep, bearer, headers)
+	if err != nil {
+		// Redact both the raw key and the minted bearer (watsonx) from any
+		// echoed upstream error body.
+		return map[string]interface{}{"ok": false, "error": redactSecret(redactSecret(err.Error(), probeKey), bearer)}
 	}
 	return map[string]interface{}{"ok": true, "model_count": n}
 }

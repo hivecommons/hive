@@ -618,19 +618,39 @@ type GatewayConfig struct {
 	// "openrouter", "corp-litellm"). Must be non-empty and unique per hive.
 	Name string `yaml:"name" json:"name"`
 	// Kind drives preset defaults + labeling: openrouter | litellm | vllm |
-	// llm-d | custom. Purely descriptive at runtime (all are OpenAI-compatible);
-	// the endpoint is what actually routes.
+	// llm-d | watsonx | custom. Purely descriptive at runtime (all are
+	// OpenAI-compatible); the endpoint is what actually routes. The one
+	// exception is "watsonx", which additionally needs an IAM-minted bearer
+	// (not the raw key) and a project_id header — see ProjectID below and the
+	// watsonx token minter (pkg/watsonx).
 	Kind string `yaml:"kind" json:"kind,omitempty"`
 	// Endpoint is the OpenAI-compatible base URL, e.g. https://openrouter.ai/api/v1.
+	// For a watsonx gateway this is the model-gateway base
+	// https://<region>.ml.cloud.ibm.com/ml/gateway — hive appends /v1/models and
+	// /v1/chat/completions to reach watsonx's OpenAI-compatible surface
+	// (.../ml/gateway/v1/models, .../ml/gateway/v1/chat/completions).
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
 	// APIKeyEnv / APIKeyFile resolve this gateway's key (env var NAME and/or file
 	// PATH — never the value). Empty is allowed for keyless endpoints (some vLLM).
+	// For watsonx this resolves the IBM Cloud API key that is exchanged for a
+	// short-lived IAM token; the raw key is never sent as the bearer.
 	APIKeyEnv  string `yaml:"api_key_env" json:"api_key_env,omitempty"`
 	APIKeyFile string `yaml:"api_key_file" json:"api_key_file,omitempty"`
 	// DefaultModel is used when an agent routed through this gateway selects none.
 	DefaultModel string `yaml:"default_model" json:"default_model,omitempty"`
 	// CABundle is an optional PEM path for a private CA (never disables verify).
 	CABundle string `yaml:"ca_bundle" json:"ca_bundle,omitempty"`
+	// ProjectID is the watsonx project (or space) id an OpenAI client does not
+	// send but watsonx requires for billing/limits. It is sent as the
+	// X-IBM-Project-ID header on outbound requests to a watsonx gateway. Only
+	// meaningful for Kind == watsonx; omitempty keeps existing gateways
+	// byte-identical in hive.yaml. Not a secret (an identifier, not a
+	// credential), so unlike the key it is stored inline.
+	ProjectID string `yaml:"project_id,omitempty" json:"project_id,omitempty"`
+	// Region is the watsonx region slug (e.g. us-south, eu-de, jp-tok) the UI
+	// preset uses to build the endpoint template. Purely a convenience for the
+	// preset; Endpoint is authoritative. Only meaningful for Kind == watsonx.
+	Region string `yaml:"region,omitempty" json:"region,omitempty"`
 }
 
 // gatewayKind values.
@@ -639,6 +659,7 @@ const (
 	GatewayKindLiteLLM    = "litellm"
 	GatewayKindVLLM       = "vllm"
 	GatewayKindLLMD       = "llm-d"
+	GatewayKindWatsonx    = "watsonx"
 	GatewayKindCustom     = "custom"
 
 	// legacyLiteLLMGatewayName is the name of the implicit gateway synthesized

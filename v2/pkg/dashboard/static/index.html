@@ -14406,6 +14406,10 @@ function burnAreaChart() {
       { kind: 'litellm',    label: 'LiteLLM',    endpoint: '' },
       { kind: 'vllm',       label: 'vLLM',       endpoint: '' },
       { kind: 'llm-d',      label: 'llm-d',      endpoint: '' },
+      // watsonx: the OpenAI-compatible model-gateway base. hive appends
+      // /v1/models and /v1/chat/completions to reach .../ml/gateway/v1/...
+      // Replace <region> with your watsonx region (us-south, eu-de, jp-tok, …).
+      { kind: 'watsonx',    label: 'watsonx',    endpoint: 'https://us-south.ml.cloud.ibm.com/ml/gateway' },
       { kind: 'custom',     label: 'Custom',     endpoint: '' },
     ];
 
@@ -14415,6 +14419,7 @@ function burnAreaChart() {
       litellm:    { label: 'LiteLLM',    color: 'var(--accent)' },
       vllm:       { label: 'vLLM',       color: 'var(--green)' },
       'llm-d':    { label: 'llm-d',      color: 'var(--purple, #a78bfa)' },
+      watsonx:    { label: 'watsonx',    color: 'var(--blue, #3b82f6)' },
       custom:     { label: 'Custom',     color: 'var(--muted)' },
     };
 
@@ -14804,7 +14809,7 @@ function burnAreaChart() {
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
-      const gw = existing || { name: '', kind: 'custom', endpoint: '', default_model: '', hasKey: false };
+      const gw = existing || { name: '', kind: 'custom', endpoint: '', default_model: '', hasKey: false, project_id: '' };
       const presetButtons = GATEWAY_PRESETS.map(function(p) {
         const active = gw.kind === p.kind;
         return `<button type="button" onclick="applyGatewayPreset('${p.kind}')" data-gw-preset="${p.kind}" style="padding:5px 12px;border:1px solid ${active ? 'var(--cyan)' : 'var(--border)'};border-radius:6px;background:${active ? 'var(--cyan)' : 'var(--bg)'};color:${active ? 'var(--bg)' : 'var(--fg)'};cursor:pointer;font-size:0.74rem;font-weight:600">${esc(p.label)}</button>`;
@@ -14824,6 +14829,11 @@ function burnAreaChart() {
           <div class="config-field" style="margin-bottom:10px">
             <label>Endpoint URL</label>
             <input type="text" id="gw-endpoint" value="${esc(gw.endpoint || '')}" placeholder="https://…/v1" onchange="onGatewayEndpointOrKeyChange()">
+          </div>
+          <div class="config-field" id="gw-project-id-field" style="margin-bottom:10px;display:${(gw.kind === 'watsonx') ? 'block' : 'none'}">
+            <label>watsonx Project ID</label>
+            <input type="text" id="gw-project-id" value="${esc(gw.project_id || '')}" placeholder="e.g. 63dc4cf1-252f-424b-b52d-5cdd9814987f" onchange="onGatewayEndpointOrKeyChange()">
+            <div style="font-size:0.7rem;margin-top:3px;color:var(--muted)">Required for watsonx — sent as the X-IBM-Project-ID header. Your API key is exchanged for a short-lived IAM token; the raw key is never sent.</div>
           </div>
           <div class="config-field" style="margin-bottom:10px">
             <label>API Key</label>
@@ -14861,6 +14871,9 @@ function burnAreaChart() {
       // Only overwrite the endpoint when the preset carries one, so switching
       // to Custom doesn't wipe a URL the user already typed.
       if (epEl && preset.endpoint) epEl.value = preset.endpoint;
+      // The watsonx project-id field is only relevant for the watsonx kind.
+      const projField = document.getElementById('gw-project-id-field');
+      if (projField) projField.style.display = (preset.kind === 'watsonx') ? 'block' : 'none';
       // Re-render the preset button row so the active highlight follows.
       document.querySelectorAll('[data-gw-preset]').forEach(function(btn) {
         const active = btn.getAttribute('data-gw-preset') === preset.kind;
@@ -14936,6 +14949,8 @@ function burnAreaChart() {
       const nameEl = document.getElementById('gw-name');
       const epEl = document.getElementById('gw-endpoint');
       const keyEl = document.getElementById('gw-apikey');
+      const kindEl = document.getElementById('gw-kind');
+      const projEl = document.getElementById('gw-project-id');
       const endpoint = epEl ? epEl.value.trim() : '';
       if (!endpoint) return;
       // Preserve whatever the user has currently chosen before re-rendering.
@@ -14947,7 +14962,11 @@ function burnAreaChart() {
           body: JSON.stringify({
             name: nameEl ? nameEl.value.trim() : '',
             endpoint: endpoint,
-            api_key: keyEl ? keyEl.value.trim() : ''
+            api_key: keyEl ? keyEl.value.trim() : '',
+            // watsonx discovery needs the kind + project id to mint the IAM
+            // token and set X-IBM-Project-ID; harmless for other kinds.
+            kind: kindEl ? kindEl.value : '',
+            project_id: projEl ? projEl.value.trim() : ''
           })
         });
         const data = await res.json().catch(() => ({}));
@@ -14967,15 +14986,20 @@ function burnAreaChart() {
       const kind = (document.getElementById('gw-kind') || {}).value || 'custom';
       const endpoint = (document.getElementById('gw-endpoint') || {}).value || '';
       const apiKey = (document.getElementById('gw-apikey') || {}).value || '';
+      const projectId = (document.getElementById('gw-project-id') || {}).value || '';
       const defaultModel = gatewayCurrentDefaultModel();
       const resultEl = document.getElementById('gw-form-result');
       if (!name.trim()) { showToast('Gateway name is required', 'error'); return; }
       if (!endpoint.trim()) { showToast('Endpoint is required', 'error'); return; }
+      if (kind === 'watsonx' && !projectId.trim()) { showToast('watsonx requires a Project ID', 'error'); return; }
       const payload = {
         name: name.trim(),
         kind: kind,
         endpoint: endpoint.trim(),
         default_model: defaultModel,
+        // Always sent so clearing the field on a non-watsonx gateway persists;
+        // omitempty on the server keeps it out of hive.yaml when blank.
+        project_id: projectId.trim(),
       };
       // Only send api_key when the user typed one (empty = keep existing key).
       if (apiKey.trim()) payload.api_key = apiKey.trim();

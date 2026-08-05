@@ -50,6 +50,7 @@ import (
 	"github.com/kubestellar/hive/v2/pkg/snapshot"
 	"github.com/kubestellar/hive/v2/pkg/tokens"
 	"github.com/kubestellar/hive/v2/pkg/trajectory"
+	"github.com/kubestellar/hive/v2/pkg/watsonx"
 )
 
 var (
@@ -2434,12 +2435,35 @@ func main() {
 					if model == "" {
 						model = gw.DefaultModel
 					}
+					// watsonx authenticates the OpenAI-compatible model gateway
+					// with a short-lived IAM bearer minted from the IBM Cloud API
+					// key (NOT the raw key), and scopes billing/limits by a
+					// project id sent as X-IBM-Project-ID. Mint (cached) and set
+					// both here; every other kind sends the resolved key verbatim.
+					apiKey := gw.ResolveAPIKey()
+					var extraHeaders map[string]string
+					if strings.EqualFold(gw.Kind, config.GatewayKindWatsonx) {
+						token, terr := watsonx.DefaultMinter.Token(context.Background(), apiKey)
+						if terr != nil {
+							logger.Warn("watsonx IAM token mint failed; agent inference will fail until the key/project are valid",
+								"agent", agentName, "gateway", backend, "error", terr.Error())
+							// Leave apiKey as-is (the raw key). watsonx will reject
+							// it, surfacing a clear upstream 401 rather than a
+							// silent success — better than dropping the route.
+						} else {
+							apiKey = token
+						}
+						if gw.ProjectID != "" {
+							extraHeaders = map[string]string{watsonx.ProjectIDHeader: gw.ProjectID}
+						}
+					}
 					githubProxy.SetInferenceRoute(agentName, &proxy.InferenceRoute{
-						Backend:  backend,
-						Endpoint: endpoint,
-						Model:    model,
-						APIKey:   gw.ResolveAPIKey(),
-						CABundle: gw.CABundle,
+						Backend:      backend,
+						Endpoint:     endpoint,
+						Model:        model,
+						APIKey:       apiKey,
+						CABundle:     gw.CABundle,
+						ExtraHeaders: extraHeaders,
 					})
 					return
 				}

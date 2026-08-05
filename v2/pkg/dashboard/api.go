@@ -3566,9 +3566,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			// actually in force.
 			"contribute_cooldown_enabled": cfg.Hub.IsContributeCooldownEnabled(),
 			"contribute_cooldown_hours":   cfg.Hub.ContributeCooldownHoursOrDefault(),
-			"disabled_repos":                     cfg.Hub.DisabledRepos,
-			"disabled_tiers":                     cfg.Hub.DisabledTiers,
-			"tier_limits":                        cfg.Hub.TierLimits,
+			"disabled_repos":              cfg.Hub.DisabledRepos,
+			"disabled_tiers":              cfg.Hub.DisabledTiers,
+			"tier_limits":                 cfg.Hub.TierLimits,
 			// available_repos is the READ-ONLY list of repo full-names the hive knows
 			// about (from the live status snapshot), so the Management tab can render
 			// a per-repo enable toggle mirror of the Governor Hub "Repos for Contribute"
@@ -4146,6 +4146,14 @@ func redactLiteLLMKeyMaterial(s string) string {
 // so the UI can show e.g. LiteLLM's "token not found" instead of a bare
 // status code.
 func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
+	return probeModelsWithHeaders(endpoint, apiKey, nil)
+}
+
+// probeModelsWithHeaders is probeLiteLLMModels with an optional set of extra
+// request headers (e.g. watsonx's X-IBM-Project-ID). apiKey, when non-empty, is
+// still sent as the Bearer — for watsonx the caller passes the minted IAM token
+// as apiKey, not the raw key.
+func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]string) (int, error) {
 	modelsURL := strings.TrimRight(endpoint, "/") + "/v1/models"
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
@@ -4153,6 +4161,11 @@ func probeLiteLLMModels(endpoint, apiKey string) (int, error) {
 	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range extraHeaders {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
 	}
 	client := &http.Client{Timeout: litellmProbeTimeout}
 	resp, err := client.Do(req)
@@ -5443,6 +5456,13 @@ func fetchModelsFromEndpoints(endpoints []string, apiKey string) []string {
 }
 
 func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
+	return fetchModelsWithHeaders(baseURL, apiKey, nil)
+}
+
+// fetchModelsWithHeaders is fetchModelsFromEndpoint with optional extra request
+// headers (e.g. watsonx's X-IBM-Project-ID). apiKey, when non-empty, is sent as
+// the Bearer; for watsonx the caller passes the minted IAM token as apiKey.
+func fetchModelsWithHeaders(baseURL, apiKey string, extraHeaders map[string]string) ([]string, error) {
 	modelsURL := strings.TrimRight(baseURL, "/") + "/v1/models"
 	client := &http.Client{Timeout: inferenceModelQueryTimeout}
 	req, err := http.NewRequest("GET", modelsURL, nil)
@@ -5451,6 +5471,11 @@ func fetchModelsFromEndpoint(baseURL, apiKey string) ([]string, error) {
 	}
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range extraHeaders {
+		if v != "" {
+			req.Header.Set(k, v)
+		}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
